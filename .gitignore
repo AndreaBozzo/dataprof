@@ -1,1 +1,24 @@
+# Build artifacts
 /target
+**/*.rs.bk
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files  
+.DS_Store
+Thumbs.db
+
+# Test files
+test.csv
+*.tmp
+
+# Logs
+*.log
+
+# Claude files
+CLAUDE.md
+.claude/

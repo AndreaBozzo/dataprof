@@ -1,86 +1,102 @@
-use dataprof::*;
+use dataprof::{analyze_csv, DataType};
 use std::fs::File;
 use std::io::Write;
 use tempfile::tempdir;
 
 #[test]
 fn test_basic_csv_analysis() {
-    // Crea CSV di test
+    // Create test CSV
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test.csv");
     let mut file = File::create(&file_path).unwrap();
 
-    writeln!(file, "id,name,email,amount,date").unwrap();
+    writeln!(file, "id,name,email,amount,signup_date").unwrap();
     writeln!(file, "1,Alice,alice@example.com,100.50,2024-01-01").unwrap();
     writeln!(file, "2,Bob,bob@example.com,200.75,2024-01-02").unwrap();
-    writeln!(file, "3,Charlie,charlie@example,150.00,01/02/2024").unwrap(); // Email invalida, formato data diverso
-    writeln!(file, "4,David,,120.00,2024-01-04").unwrap(); // Email mancante
+    writeln!(file, "3,Charlie,charlie@invalid,150.00,2024-01-03").unwrap(); // Invalid email
+    writeln!(file, "4,David,,120.00,2024-01-04").unwrap(); // Missing email
 
-    // Analizza
-    let sampler = Sampler::new(0.1);
-    let (df, _) = sampler.sample_csv(&file_path).unwrap();
-    let profiles = analyze_dataframe(&df);
-    let issues = QualityChecker::check_dataframe(&df, &profiles);
+    // Analyze
+    let profiles = analyze_csv(&file_path).unwrap();
 
-    // Verifica risultati
-    assert_eq!(df.width(), 5);
-    assert_eq!(df.height(), 4);
+    // Verify results
+    assert_eq!(profiles.len(), 5);
 
-    // Dovrebbe trovare issues
-    assert!(!issues.is_empty());
+    // Check ID column (should be Integer)
+    let id_profile = profiles.iter().find(|p| p.name == "id").unwrap();
+    assert!(matches!(id_profile.data_type, DataType::Integer));
+    assert_eq!(id_profile.null_count, 0);
 
-    // Verifica pattern detection
+    // Check email column (should have Email pattern)
     let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
-    assert!(!email_profile.patterns.is_empty());
+    assert!(matches!(email_profile.data_type, DataType::String));
+    assert_eq!(email_profile.null_count, 1); // David's missing email
+    
+    // Should detect email pattern (75% of non-null values are valid emails)
+    let has_email_pattern = email_profile.patterns
+        .iter()
+        .any(|p| p.name == "Email" && p.match_percentage > 50.0);
+    assert!(has_email_pattern);
+
+    // Check date column (should be Date type)
+    let date_profile = profiles.iter().find(|p| p.name == "signup_date").unwrap();
+    assert!(matches!(date_profile.data_type, DataType::Date));
 }
 
 #[test]
-fn test_large_file_sampling() {
+fn test_pattern_detection() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("large.csv");
+    let file_path = dir.path().join("patterns.csv");
     let mut file = File::create(&file_path).unwrap();
 
-    // Header
-    writeln!(file, "id,value").unwrap();
+    writeln!(file, "email,phone,url").unwrap();
+    writeln!(file, "john@example.com,555-123-4567,https://example.com").unwrap();
+    writeln!(file, "jane@test.org,(555) 234-5678,http://test.org").unwrap();
+    writeln!(file, "invalid-email,555.345.6789,not-a-url").unwrap();
 
-    // Genera 100k righe
-    for i in 0..100_000 {
-        writeln!(file, "{},{}", i, i * 2).unwrap();
-    }
+    let profiles = analyze_csv(&file_path).unwrap();
 
-    // Test sampling
-    let sampler = Sampler::new(10.0);
-    let (df, sample_info) = sampler.sample_csv(&file_path).unwrap();
+    // Email column should detect Email pattern
+    let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
+    let email_pattern = email_profile.patterns.iter()
+        .find(|p| p.name == "Email").unwrap();
+    assert_eq!(email_pattern.match_count, 2); // 2 out of 3 are valid emails
 
-    // Verifica che abbia fatto sampling
-    assert!(df.height() < 100_000);
-    assert!(sample_info.sampling_ratio < 1.0);
+    // Phone column should detect US phone pattern
+    let phone_profile = profiles.iter().find(|p| p.name == "phone").unwrap();
+    let phone_pattern = phone_profile.patterns.iter()
+        .find(|p| p.name == "Phone (US)").unwrap();
+    assert_eq!(phone_pattern.match_count, 3); // All 3 match US phone pattern
+
+    // URL column should detect URL pattern
+    let url_profile = profiles.iter().find(|p| p.name == "url").unwrap();
+    let url_pattern = url_profile.patterns.iter()
+        .find(|p| p.name == "URL").unwrap();
+    assert_eq!(url_pattern.match_count, 2); // 2 out of 3 are valid URLs
 }
 
 #[test]
-fn test_quality_issues_detection() {
-    use polars::prelude::*;
+fn test_numeric_analysis() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("numbers.csv");
+    let mut file = File::create(&file_path).unwrap();
 
-    // Crea DataFrame con issues
-    let df = df![
-        "id" => [1, 2, 3, 4, 5],
-        "value" => [10.0, 20.0, 30.0, 1000.0, 40.0], // 1000 è outlier
-        "category" => ["A", "A", "B", "B", "A"],
-        "date" => ["2024-01-01", "2024-01-02", "01/03/2024", "2024-01-04", "05/01/2024"], // Formati misti
-    ]
-    .unwrap();
+    writeln!(file, "integers,floats,mixed").unwrap();
+    writeln!(file, "1,1.5,text").unwrap();
+    writeln!(file, "2,2.7,456").unwrap();
+    writeln!(file, "3,3.9,more text").unwrap();
 
-    let profiles = analyze_dataframe(&df);
-    let issues = QualityChecker::check_dataframe(&df, &profiles);
+    let profiles = analyze_csv(&file_path).unwrap();
 
-    // Dovrebbe trovare outlier e date miste
-    let outlier_issue = issues
-        .iter()
-        .find(|i| matches!(i, QualityIssue::Outliers { .. }));
-    assert!(outlier_issue.is_some());
+    // Integers column
+    let int_profile = profiles.iter().find(|p| p.name == "integers").unwrap();
+    assert!(matches!(int_profile.data_type, DataType::Integer));
+    
+    // Floats column  
+    let float_profile = profiles.iter().find(|p| p.name == "floats").unwrap();
+    assert!(matches!(float_profile.data_type, DataType::Float));
 
-    let date_issue = issues
-        .iter()
-        .find(|i| matches!(i, QualityIssue::MixedDateFormats { .. }));
-    assert!(date_issue.is_some());
+    // Mixed column (should be String since not all numeric)
+    let mixed_profile = profiles.iter().find(|p| p.name == "mixed").unwrap();
+    assert!(matches!(mixed_profile.data_type, DataType::String));
 }
