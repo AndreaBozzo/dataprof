@@ -5,16 +5,14 @@ use std::time::Instant;
 use anyhow::Result;
 
 mod types;
-mod sampler;
-mod analyzer;
-mod quality;
-mod reporter;
+mod analysis;
+mod input;
+mod output;
 
 use crate::types::*;
-use crate::sampler::Sampler;
-use crate::analyzer::analyze_dataframe;
-use crate::quality::QualityChecker;
-use crate::reporter::TerminalReporter;
+use crate::input::Sampler;
+use crate::analysis::{analyze_dataframe, QualityChecker};
+use crate::output::{TerminalReporter, create_progress_bar};
 
 #[derive(Parser)]
 #[command(name = "dataprof")]
@@ -99,12 +97,12 @@ fn check_command(file: PathBuf, _fast: bool, max_rows: Option<usize>) -> Result<
     }
     
     // Sample and analyze
-    let pb = reporter::create_progress_bar(100, "Reading file...");
+    let pb = create_progress_bar(100, "Reading file...");
     let (df, sample_info) = sampler.sample_csv(&file)?;
     pb.finish_and_clear();
     
     // Analyze columns
-    let pb = reporter::create_progress_bar(df.width() as u64, "Analyzing columns...");
+    let pb = create_progress_bar(df.width() as u64, "Analyzing columns...");
     let profiles = analyze_dataframe(&df);
     pb.finish_and_clear();
     
