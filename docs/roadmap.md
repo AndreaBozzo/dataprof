@@ -220,7 +220,7 @@ impl Sampler {
     pub fn sample_csv(&self, path: &Path) -> Result<(DataFrame, SampleInfo)> {
         // Prima, conta rapidamente le righe (opzionale)
         let total_rows = self.estimate_total_rows(path)?;
-        
+
         // Usa Polars lazy reading per efficienza
         let df = CsvReader::from_path(path)?
             .has_header(true)
@@ -239,16 +239,16 @@ impl Sampler {
     fn estimate_total_rows(&self, path: &Path) -> Result<Option<usize>> {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
-        
+
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
-        
+
         // Leggi prime 1000 righe per stimare
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
         let mut bytes_read = 0u64;
         let mut line_count = 0;
-        
+
         while line_count < 1000 {
             match lines.next() {
                 Some(Ok(line)) => {
@@ -258,7 +258,7 @@ impl Sampler {
                 _ => break,
             }
         }
-        
+
         if line_count > 0 {
             let avg_line_size = bytes_read / line_count;
             let estimated_rows = (file_size / avg_line_size) as usize;
@@ -301,21 +301,21 @@ use std::collections::HashMap;
 use chrono::NaiveDate;
 
 // Pattern comuni pre-compilati
-static EMAIL_REGEX: Lazy<Regex> = Lazy::new(|| 
+static EMAIL_REGEX: Lazy<Regex> = Lazy::new(||
     Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap()
 );
 
-static PHONE_IT_REGEX: Lazy<Regex> = Lazy::new(|| 
+static PHONE_IT_REGEX: Lazy<Regex> = Lazy::new(||
     Regex::new(r"^(\+39|0039|39)?[ ]?[0-9]{2,4}[ ]?[0-9]{5,10}$").unwrap()
 );
 
-static FISCAL_CODE_IT_REGEX: Lazy<Regex> = Lazy::new(|| 
+static FISCAL_CODE_IT_REGEX: Lazy<Regex> = Lazy::new(||
     Regex::new(r"^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$").unwrap()
 );
 
 static DATE_FORMATS: &[&str] = &[
     "%Y-%m-%d",
-    "%d/%m/%Y", 
+    "%d/%m/%Y",
     "%d-%m-%Y",
     "%Y/%m/%d",
     "%d.%m.%Y",
@@ -327,27 +327,27 @@ impl Analyzer {
     pub fn analyze_column(series: &Series) -> ColumnProfile {
         let name = series.name().to_string();
         let null_count = series.null_count();
-        
+
         // Detect data type
         let data_type = Self::infer_data_type(series);
-        
+
         // Get statistics based on type
         let stats = Self::compute_stats(series, &data_type);
-        
+
         // Detect patterns for string columns
         let patterns = if matches!(data_type, DataType::String) {
             Self::detect_patterns(series)
         } else {
             vec![]
         };
-        
+
         // Count unique values (solo per colonne piccole)
         let unique_count = if series.len() < 1_000_000 {
             Some(series.n_unique().unwrap_or(0))
         } else {
             None
         };
-        
+
         ColumnProfile {
             name,
             data_type,
@@ -357,20 +357,20 @@ impl Analyzer {
             stats,
         }
     }
-    
+
     fn infer_data_type(series: &Series) -> DataType {
         // Prova conversioni in ordine di specificità
         if series.dtype() == &polars::datatypes::DataType::Utf8 {
             // Per stringhe, controlla se sono date/numeri
             let sample = series.head(Some(1000));
-            
+
             // Check date
             for format in DATE_FORMATS {
                 if let Ok(_) = sample.utf8().unwrap().as_date(Some(format), false) {
                     return DataType::Date;
                 }
             }
-            
+
             // Check numeric
             if let Ok(_) = sample.cast(&polars::datatypes::DataType::Float64) {
                 let success_rate = sample.len() - sample.null_count();
@@ -379,12 +379,12 @@ impl Analyzer {
                 }
             }
         }
-        
+
         // Map Polars dtype to our DataType
         match series.dtype() {
-            polars::datatypes::DataType::Int32 | 
+            polars::datatypes::DataType::Int32 |
             polars::datatypes::DataType::Int64 => DataType::Integer,
-            polars::datatypes::DataType::Float32 | 
+            polars::datatypes::DataType::Float32 |
             polars::datatypes::DataType::Float64 => DataType::Float,
             polars::datatypes::DataType::Boolean => DataType::Boolean,
             polars::datatypes::DataType::Date => DataType::Date,
@@ -392,28 +392,28 @@ impl Analyzer {
             _ => DataType::String,
         }
     }
-    
+
     fn detect_patterns(series: &Series) -> Vec<Pattern> {
         let mut patterns = Vec::new();
-        
+
         if let Ok(str_series) = series.utf8() {
             // Prendi un sample per performance
             let sample_size = 1000.min(series.len());
             let sample = str_series.head(Some(sample_size));
-            
+
             // Test patterns
             let test_patterns = vec![
                 ("Email", &*EMAIL_REGEX),
                 ("Italian Phone", &*PHONE_IT_REGEX),
                 ("Italian Fiscal Code", &*FISCAL_CODE_IT_REGEX),
             ];
-            
+
             for (name, regex) in test_patterns {
                 let matches = sample.into_iter()
                     .filter_map(|opt| opt)
                     .filter(|s| regex.is_match(s))
                     .count();
-                
+
                 if matches > 0 {
                     let percentage = matches as f64 / sample_size as f64 * 100.0;
                     patterns.push(Pattern {
@@ -425,16 +425,16 @@ impl Analyzer {
                 }
             }
         }
-        
+
         patterns
     }
-    
+
     fn compute_stats(series: &Series, data_type: &DataType) -> ColumnStats {
         match data_type {
             DataType::Integer | DataType::Float => {
                 let stats = series.cast(&polars::datatypes::DataType::Float64)
                     .unwrap_or(series.clone());
-                
+
                 ColumnStats::Numeric {
                     min: stats.min().unwrap_or(0.0),
                     max: stats.max().unwrap_or(0.0),
@@ -447,12 +447,12 @@ impl Analyzer {
                     let lengths: Vec<usize> = str_series.into_iter()
                         .filter_map(|opt| opt.map(|s| s.len()))
                         .collect();
-                    
+
                     if !lengths.is_empty() {
                         let min = *lengths.iter().min().unwrap_or(&0);
                         let max = *lengths.iter().max().unwrap_or(&0);
                         let avg = lengths.iter().sum::<usize>() as f64 / lengths.len() as f64;
-                        
+
                         ColumnStats::Text {
                             min_length: min,
                             max_length: max,
@@ -506,20 +506,20 @@ pub struct QualityChecker;
 impl QualityChecker {
     pub fn check_dataframe(df: &DataFrame, profiles: &[ColumnProfile]) -> Vec<QualityIssue> {
         let mut issues = Vec::new();
-        
+
         for (column, profile) in df.get_columns().iter().zip(profiles.iter()) {
             // Check nulls
             if let Some(issue) = Self::check_nulls(column, profile) {
                 issues.push(issue);
             }
-            
+
             // Check mixed date formats
             if matches!(profile.data_type, DataType::String) {
                 if let Some(issue) = Self::check_date_formats(column) {
                     issues.push(issue);
                 }
             }
-            
+
             // Check duplicates (solo per colonne che dovrebbero essere unique)
             if let Some(unique_count) = profile.unique_count {
                 if unique_count < column.len() * 95 / 100 {
@@ -528,7 +528,7 @@ impl QualityChecker {
                     }
                 }
             }
-            
+
             // Check outliers per colonne numeriche
             if matches!(profile.data_type, DataType::Integer | DataType::Float) {
                 if let Some(issue) = Self::check_outliers(column) {
@@ -536,10 +536,10 @@ impl QualityChecker {
                 }
             }
         }
-        
+
         issues
     }
-    
+
     fn check_nulls(column: &Series, profile: &ColumnProfile) -> Option<QualityIssue> {
         let null_count = column.null_count();
         if null_count > 0 {
@@ -553,12 +553,12 @@ impl QualityChecker {
             None
         }
     }
-    
+
     fn check_date_formats(column: &Series) -> Option<QualityIssue> {
         if let Ok(str_series) = column.utf8() {
             let mut format_counts = HashMap::new();
             let sample = str_series.head(Some(1000));
-            
+
             for value in sample.into_iter().filter_map(|v| v) {
                 for format in &[
                     r"\d{4}-\d{2}-\d{2}",  // YYYY-MM-DD
@@ -571,7 +571,7 @@ impl QualityChecker {
                     }
                 }
             }
-            
+
             if format_counts.len() > 1 {
                 return Some(QualityIssue::MixedDateFormats {
                     column: column.name().to_string(),
@@ -581,12 +581,12 @@ impl QualityChecker {
         }
         None
     }
-    
+
     fn check_duplicates(column: &Series) -> Option<QualityIssue> {
         let total = column.len();
         let unique = column.n_unique().unwrap_or(total);
         let duplicate_count = total - unique;
-        
+
         if duplicate_count > 0 {
             Some(QualityIssue::Duplicates {
                 column: column.name().to_string(),
@@ -596,13 +596,13 @@ impl QualityChecker {
             None
         }
     }
-    
+
     fn check_outliers(column: &Series) -> Option<QualityIssue> {
         if let Ok(numeric) = column.cast(&polars::datatypes::DataType::Float64) {
             let mean = numeric.mean().unwrap_or(0.0);
             let std = numeric.std(1).unwrap_or(1.0);
             let threshold = 3.0; // 3 sigma rule
-            
+
             let outliers: Vec<String> = numeric
                 .into_iter()
                 .enumerate()
@@ -619,7 +619,7 @@ impl QualityChecker {
                 })
                 .take(10) // Limita a 10 esempi
                 .collect();
-            
+
             if !outliers.is_empty() {
                 return Some(QualityIssue::Outliers {
                     column: column.name().to_string(),
@@ -652,12 +652,12 @@ impl TerminalReporter {
         Self::print_column_summary(&report.column_profiles);
         Self::print_recommendations(&report.issues);
     }
-    
+
     fn print_header(file_info: &FileInfo) {
         let title = format!("📊 {} ", file_info.path).bold().blue();
         println!("{}", title);
         println!("{}", "═".repeat(50));
-        
+
         if let Some(rows) = file_info.total_rows {
             println!("📁 Rows: {} | Columns: {} | Size: {:.1} MB",
                 format!("{:,}", rows).yellow(),
@@ -671,29 +671,29 @@ impl TerminalReporter {
             );
         }
     }
-    
+
     fn print_scan_info(scan_info: &ScanInfo) {
         println!("\n✅ {} | ⏱️  {:.1}s",
             format!("Scanned: {:,} rows", scan_info.rows_scanned).green(),
             scan_info.scan_time_ms as f64 / 1000.0
         );
-        
+
         if scan_info.sampling_ratio < 1.0 {
             println!("📊 Sample rate: {:.1}%", scan_info.sampling_ratio * 100.0);
         }
     }
-    
+
     fn print_quality_issues(issues: &[QualityIssue]) {
         if issues.is_empty() {
             println!("\n✨ {}", "No quality issues found!".green().bold());
             return;
         }
-        
-        println!("\n⚠️  {} {}", 
+
+        println!("\n⚠️  {} {}",
             "QUALITY ISSUES FOUND:".red().bold(),
             format!("({})", issues.len()).red()
         );
-        
+
         // Ordina per severity
         let mut sorted_issues = issues.to_vec();
         sorted_issues.sort_by_key(|i| match i.severity() {
@@ -701,16 +701,16 @@ impl TerminalReporter {
             Severity::Medium => 1,
             Severity::Low => 2,
         });
-        
+
         for (idx, issue) in sorted_issues.iter().enumerate() {
             let severity_icon = match issue.severity() {
                 Severity::High => "🔴",
                 Severity::Medium => "🟡",
                 Severity::Low => "🔵",
             };
-            
+
             print!("\n{}. {} ", idx + 1, severity_icon);
-            
+
             match issue {
                 QualityIssue::MixedDateFormats { column, formats } => {
                     println!("[{}]: Mixed date formats", column.yellow());
@@ -719,21 +719,21 @@ impl TerminalReporter {
                     }
                 }
                 QualityIssue::NullValues { column, count, percentage } => {
-                    println!("[{}]: {} null values ({:.1}%)", 
-                        column.yellow(), 
+                    println!("[{}]: {} null values ({:.1}%)",
+                        column.yellow(),
                         format!("{:,}", count).red(),
                         percentage
                     );
                 }
                 QualityIssue::Duplicates { column, count } => {
-                    println!("[{}]: {} duplicate values", 
-                        column.yellow(), 
+                    println!("[{}]: {} duplicate values",
+                        column.yellow(),
                         format!("{:,}", count).red()
                     );
                 }
                 QualityIssue::Outliers { column, values, threshold } => {
-                    println!("[{}]: Outliers detected (>{}σ)", 
-                        column.yellow(), 
+                    println!("[{}]: Outliers detected (>{}σ)",
+                        column.yellow(),
                         threshold
                     );
                     for (i, val) in values.iter().take(3).enumerate() {
@@ -752,59 +752,59 @@ impl TerminalReporter {
             }
         }
     }
-    
+
     fn print_column_summary(profiles: &[ColumnProfile]) {
         println!("\n📋 {}", "COLUMN SUMMARY:".bold());
-        
+
         for profile in profiles.iter().take(5) {  // Mostra prime 5 colonne
             print!("\n[{}] ", profile.name.cyan());
             print!("{} ", format!("{:?}", profile.data_type).dimmed());
-            
+
             if let Some(unique) = profile.unique_count {
                 print!("| {} unique ", unique.to_string().green());
             }
-            
+
             if profile.null_count > 0 {
                 print!("| {} nulls ", profile.null_count.to_string().red());
             }
-            
+
             // Mostra patterns trovati
             for pattern in &profile.patterns {
                 if pattern.match_percentage > 50.0 {
                     print!("| {} ", format!("{}✓", pattern.name).green());
                 }
             }
-            
+
             println!();
-            
+
             // Mostra stats inline
             match &profile.stats {
                 ColumnStats::Numeric { min, max, mean, .. } => {
-                    println!("   └─ Range: [{:.2} - {:.2}], Mean: {:.2}", 
+                    println!("   └─ Range: [{:.2} - {:.2}], Mean: {:.2}",
                         min, max, mean);
                 }
                 ColumnStats::Text { min_length, max_length, avg_length } => {
-                    println!("   └─ Length: [{} - {}], Avg: {:.1}", 
+                    println!("   └─ Length: [{} - {}], Avg: {:.1}",
                         min_length, max_length, avg_length);
                 }
                 _ => {}
             }
         }
-        
+
         if profiles.len() > 5 {
             println!("\n... and {} more columns", profiles.len() - 5);
         }
     }
-    
+
     fn print_recommendations(issues: &[QualityIssue]) {
         if issues.is_empty() {
             return;
         }
-        
+
         println!("\n💡 {}", "QUICK FIX COMMANDS:".bold().green());
-        
+
         let mut fixes = Vec::new();
-        
+
         for issue in issues {
             match issue {
                 QualityIssue::MixedDateFormats { .. } => {
@@ -820,12 +820,12 @@ impl TerminalReporter {
                 _ => {}
             }
         }
-        
+
         if !fixes.is_empty() {
-            println!("   dataprof fix <file> --{} --output cleaned.csv", 
+            println!("   dataprof fix <file> --{} --output cleaned.csv",
                 fixes.join(" --"));
         }
-        
+
         println!("   dataprof export-duckdb <file> --clean");
     }
 }
@@ -883,26 +883,26 @@ enum Commands {
     Check {
         /// Input file path
         file: PathBuf,
-        
+
         /// Use fast sampling (default: true)
         #[arg(long, default_value = "true")]
         fast: bool,
-        
+
         /// Maximum rows to scan
         #[arg(long)]
         max_rows: Option<usize>,
     },
-    
+
     /// Deep analysis of the dataset
     Analyze {
         /// Input file path
         file: PathBuf,
-        
+
         /// Output format (terminal, json, html)
         #[arg(long, default_value = "terminal")]
         output: String,
     },
-    
+
     /// Compare two datasets
     Diff {
         /// First file
@@ -914,7 +914,7 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     match cli.command {
         Commands::Check { file, fast, max_rows } => {
             check_command(file, fast, max_rows)?;
@@ -926,43 +926,43 @@ fn main() -> Result<()> {
             println!("Diff command coming in week 3!");
         }
     }
-    
+
     Ok(())
 }
 
 fn check_command(file: PathBuf, fast: bool, max_rows: Option<usize>) -> Result<()> {
     let start = Instant::now();
-    
+
     // Header
-    println!("\n{} {}", 
-        "⚡".yellow(), 
+    println!("\n{} {}",
+        "⚡".yellow(),
         "DataProfiler Quick Check".bold()
     );
-    
+
     // Get file info
     let metadata = std::fs::metadata(&file)?;
     let file_size_mb = metadata.len() as f64 / 1_048_576.0;
-    
+
     // Create sampler
     let mut sampler = Sampler::new(file_size_mb);
     if let Some(max) = max_rows {
         // Override con max_rows se specificato
         sampler = Sampler { target_rows: max };
     }
-    
+
     // Sample and analyze
     let pb = reporter::create_progress_bar(100, "Reading file...");
     let (df, sample_info) = sampler.sample_csv(&file)?;
     pb.finish_and_clear();
-    
+
     // Analyze columns
     let pb = reporter::create_progress_bar(df.width() as u64, "Analyzing columns...");
     let profiles = analyze_dataframe(&df);
     pb.finish_and_clear();
-    
+
     // Check quality
     let issues = QualityChecker::check_dataframe(&df, &profiles);
-    
+
     // Create report
     let report = QualityReport {
         file_info: FileInfo {
@@ -979,10 +979,10 @@ fn check_command(file: PathBuf, fast: bool, max_rows: Option<usize>) -> Result<(
         column_profiles: profiles,
         issues,
     };
-    
+
     // Print report
     TerminalReporter::report(&report);
-    
+
     Ok(())
 }
 
@@ -1032,26 +1032,26 @@ fn test_basic_csv_analysis() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test.csv");
     let mut file = File::create(&file_path).unwrap();
-    
+
     writeln!(file, "id,name,email,amount,date").unwrap();
     writeln!(file, "1,Alice,alice@example.com,100.50,2024-01-01").unwrap();
     writeln!(file, "2,Bob,bob@example.com,200.75,2024-01-02").unwrap();
     writeln!(file, "3,Charlie,charlie@example,150.00,01/02/2024").unwrap(); // Email invalida, formato data diverso
     writeln!(file, "4,David,,120.00,2024-01-04").unwrap(); // Email mancante
-    
+
     // Analizza
     let sampler = Sampler::new(0.1);
     let (df, _) = sampler.sample_csv(&file_path).unwrap();
     let profiles = analyze_dataframe(&df);
     let issues = QualityChecker::check_dataframe(&df, &profiles);
-    
+
     // Verifica risultati
     assert_eq!(df.width(), 5);
     assert_eq!(df.height(), 4);
-    
+
     // Dovrebbe trovare issues
     assert!(!issues.is_empty());
-    
+
     // Verifica pattern detection
     let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
     assert!(!email_profile.patterns.is_empty());
@@ -1062,19 +1062,19 @@ fn test_large_file_sampling() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("large.csv");
     let mut file = File::create(&file_path).unwrap();
-    
+
     // Header
     writeln!(file, "id,value").unwrap();
-    
+
     // Genera 100k righe
     for i in 0..100_000 {
         writeln!(file, "{},{}", i, i * 2).unwrap();
     }
-    
+
     // Test sampling
     let sampler = Sampler::new(10.0);
     let (df, sample_info) = sampler.sample_csv(&file_path).unwrap();
-    
+
     // Verifica che abbia fatto sampling
     assert!(df.height() < 100_000);
     assert!(sample_info.sampling_ratio < 1.0);
@@ -1083,7 +1083,7 @@ fn test_large_file_sampling() {
 #[test]
 fn test_quality_issues_detection() {
     use polars::prelude::*;
-    
+
     // Crea DataFrame con issues
     let df = df![
         "id" => [1, 2, 3, 4, 5],
@@ -1091,14 +1091,14 @@ fn test_quality_issues_detection() {
         "category" => ["A", "A", "B", "B", "A"],
         "date" => ["2024-01-01", "2024-01-02", "01/03/2024", "2024-01-04", "05/01/2024"], // Formati misti
     ].unwrap();
-    
+
     let profiles = analyze_dataframe(&df);
     let issues = QualityChecker::check_dataframe(&df, &profiles);
-    
+
     // Dovrebbe trovare outlier e date miste
     let outlier_issue = issues.iter().find(|i| matches!(i, QualityIssue::Outliers { .. }));
     assert!(outlier_issue.is_some());
-    
+
     let date_issue = issues.iter().find(|i| matches!(i, QualityIssue::MixedDateFormats { .. }));
     assert!(date_issue.is_some());
 }
@@ -1161,7 +1161,7 @@ dataprof analyze data.csv --output report.html
 ```
 ⚡ DataProfiler Quick Check
 
-📊 examples/sample_data.csv 
+📊 examples/sample_data.csv
 ══════════════════════════════════════════════════
 
 📁 Rows: 8 | Columns: 6 | Size: 0.0 MB
@@ -1185,19 +1185,19 @@ dataprof analyze data.csv --output report.html
 
 📋 COLUMN SUMMARY:
 
-[customer_id] String | 7 unique 
+[customer_id] String | 7 unique
    └─ Length: [10 - 10], Avg: 10.0
 
-[order_date] String 
+[order_date] String
    └─ Length: [10 - 10], Avg: 10.0
 
-[amount] Float | 1 nulls 
+[amount] Float | 1 nulls
    └─ Range: [78.90 - 12500.00], Mean: 1973.19
 
-[email] String | 1 nulls | Email✓ 
+[email] String | 1 nulls | Email✓
    └─ Length: [7 - 25], Avg: 18.4
 
-[phone] String | Italian Phone✓ 
+[phone] String | Italian Phone✓
    └─ Length: [9 - 15], Avg: 12.6
 
 ... and 1 more columns
@@ -1241,7 +1241,7 @@ dataprof analyze data.csv --output report.html
 
 5. **Progress feedback**: Per file grandi, mostra sempre progress. Gli utenti odiano non sapere cosa sta succedendo.
 
-Questo dovrebbe darti una base solida per le prime 2 settimane! Il codice è completo e testato, pronto per essere esteso. 
+Questo dovrebbe darti una base solida per le prime 2 settimane! Il codice è completo e testato, pronto per essere esteso.
 
 Vuoi che approfondiamo qualche parte specifica? Per esempio:
 - Pattern detection per dati italiani specifici (P.IVA, CAP, etc.)

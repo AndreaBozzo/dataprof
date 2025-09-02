@@ -1,6 +1,6 @@
+use anyhow::Result;
 use polars::prelude::*;
 use std::path::Path;
-use anyhow::Result;
 
 const MIN_SAMPLE_SIZE: usize = 10_000;
 const MAX_SAMPLE_SIZE: usize = 1_000_000;
@@ -25,13 +25,15 @@ impl Sampler {
             (MIN_SAMPLE_SIZE as f64 * (file_size_mb / 10.0).ln()) as usize
         };
 
-        Self { target_rows: target_rows.clamp(MIN_SAMPLE_SIZE, MAX_SAMPLE_SIZE) }
+        Self {
+            target_rows: target_rows.clamp(MIN_SAMPLE_SIZE, MAX_SAMPLE_SIZE),
+        }
     }
 
     pub fn sample_csv(&self, path: &Path) -> Result<(DataFrame, SampleInfo)> {
         // Prima, conta rapidamente le righe (opzionale)
         let total_rows = self.estimate_total_rows(path)?;
-        
+
         // Usa Polars lazy reading per efficienza
         let df = CsvReader::from_path(path)?
             .has_header(true)
@@ -50,16 +52,16 @@ impl Sampler {
     fn estimate_total_rows(&self, path: &Path) -> Result<Option<usize>> {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
-        
+
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
-        
+
         // Leggi prime 1000 righe per stimare
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
         let mut bytes_read = 0u64;
         let mut line_count = 0;
-        
+
         while line_count < 1000 {
             match lines.next() {
                 Some(Ok(line)) => {
@@ -69,7 +71,7 @@ impl Sampler {
                 _ => break,
             }
         }
-        
+
         if line_count > 0 {
             let avg_line_size = bytes_read / line_count;
             let estimated_rows = (file_size / avg_line_size) as usize;
@@ -88,7 +90,11 @@ pub struct SampleInfo {
 
 // Stratified sampling per dataset molto grandi
 #[allow(dead_code)]
-pub fn stratified_sample(df: &DataFrame, _key_column: &str, sample_size: usize) -> Result<DataFrame> {
+pub fn stratified_sample(
+    df: &DataFrame,
+    _key_column: &str,
+    sample_size: usize,
+) -> Result<DataFrame> {
     // Implementazione futura: sample bilanciato basato su una colonna chiave
     // Per ora, ritorna random sample
     let n = df.height();

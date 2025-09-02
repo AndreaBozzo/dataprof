@@ -1,10 +1,10 @@
-pub mod types;
 pub mod analysis;
 pub mod input;
 pub mod output;
+pub mod types;
 
 // Re-export for convenience
-pub use types::*;
-pub use analysis::{analyze_dataframe, QualityChecker};
-pub use input::{Sampler, SampleInfo};
+pub use analysis::{QualityChecker, analyze_dataframe};
+pub use input::{SampleInfo, Sampler};
 pub use output::{TerminalReporter, create_progress_bar};
+pub use types::*;

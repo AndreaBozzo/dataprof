@@ -12,7 +12,7 @@ pub struct QualityReport {
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub path: String,
-    pub total_rows: Option<usize>,  // None se non conosciuto
+    pub total_rows: Option<usize>, // None se non conosciuto
     pub total_columns: usize,
     pub file_size_mb: f64,
 }
@@ -48,10 +48,23 @@ pub enum DataType {
 
 #[derive(Debug, Clone)]
 pub enum ColumnStats {
-    Numeric { min: f64, max: f64, mean: f64, #[allow(dead_code)] std: f64 },
-    Text { min_length: usize, max_length: usize, avg_length: f64 },
+    Numeric {
+        min: f64,
+        max: f64,
+        mean: f64,
+        #[allow(dead_code)]
+        std: f64,
+    },
+    Text {
+        min_length: usize,
+        max_length: usize,
+        avg_length: f64,
+    },
     #[allow(dead_code)]
-    Temporal { min: NaiveDateTime, max: NaiveDateTime },
+    Temporal {
+        min: NaiveDateTime,
+        max: NaiveDateTime,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -96,9 +109,13 @@ impl QualityIssue {
         match self {
             QualityIssue::MixedDateFormats { .. } => Severity::High,
             QualityIssue::NullValues { percentage, .. } => {
-                if *percentage > 10.0 { Severity::High }
-                else if *percentage > 1.0 { Severity::Medium }
-                else { Severity::Low }
+                if *percentage > 10.0 {
+                    Severity::High
+                } else if *percentage > 1.0 {
+                    Severity::Medium
+                } else {
+                    Severity::Low
+                }
             }
             QualityIssue::Duplicates { .. } => Severity::Medium,
             QualityIssue::Outliers { .. } => Severity::Low,

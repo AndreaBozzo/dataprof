@@ -115,7 +115,7 @@ jobs:
         echo "" >> dependency-report.md
         echo "## Outdated Dependencies" >> dependency-report.md
         cargo outdated --format json | jq -r '
-          .dependencies[] | 
+          .dependencies[] |
           "- **\(.name)**: \(.project) → \(.latest) (\(.kind))"
         ' >> dependency-report.md || echo "No JSON output from cargo-outdated"
 

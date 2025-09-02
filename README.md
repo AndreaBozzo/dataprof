@@ -7,8 +7,8 @@
 
 ## 🎯 Visione del Progetto
 
-DataProfiler è un CLI tool **in sviluppo** scritto in Rust che fornisce analisi istantanea e profonda dei dati, con un focus su **usabilità**, 
-**performance** e **insights azionabili**. A differenza di tool esistenti come qsv che sono suite complete, DataProfiler si concentra 
+DataProfiler è un CLI tool **in sviluppo** scritto in Rust che fornisce analisi istantanea e profonda dei dati, con un focus su **usabilità**,
+**performance** e **insights azionabili**. A differenza di tool esistenti come qsv che sono suite complete, DataProfiler si concentra
 esclusivamente sul profiling con output ricchi e immediatamente utilizzabili.
 
 ## 🚀 Caratteristiche Innovative
@@ -125,7 +125,7 @@ dataprof compare before.csv after.csv
 ## 🛠️ Architettura Tecnica
 
 ### Stack Tecnologico
-- **Parser Multi-formato**: 
+- **Parser Multi-formato**:
   - `arrow-rs` per Parquet/Arrow
   - `polars` per operazioni DataFrame velocissime
   - `calamine` per Excel
@@ -276,14 +276,14 @@ analysis:
     enabled: true
     max_rows: 1_000_000
     confidence: 0.95
-  
+
   patterns:
     custom:
       - name: "Italian Fiscal Code"
         regex: "^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$"
       - name: "Order ID"
         regex: "^ORD-[0-9]{8}$"
-  
+
   quality:
     thresholds:
       missing_data_warning: 0.05
@@ -295,7 +295,7 @@ output:
     colors: true
     charts: true
     max_width: 120
-  
+
   html:
     template: "corporate"
     include_raw_data: false

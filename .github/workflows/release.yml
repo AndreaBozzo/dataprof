@@ -33,37 +33,37 @@ jobs:
         prerelease: ${{ contains(github.ref_name || github.event.inputs.version, '-') }}
         body: |
           ## 🚀 DataProfiler CLI ${{ github.ref_name || github.event.inputs.version }}
-          
+
           Fast data profiling and quality checking for large datasets.
-          
+
           ### 📦 Installation
-          
+
           Download the appropriate binary for your platform:
           - **Linux**: `dataprof-x86_64-unknown-linux-gnu`
-          - **Windows**: `dataprof-x86_64-pc-windows-msvc.exe`  
+          - **Windows**: `dataprof-x86_64-pc-windows-msvc.exe`
           - **macOS**: `dataprof-x86_64-apple-darwin`
-          
+
           ### 🛠️ Usage
-          
+
           ```bash
           # Quick quality check
           ./dataprof check data.csv
-          
-          # Deep analysis  
+
+          # Deep analysis
           ./dataprof analyze data.csv
-          
+
           # Compare datasets (coming soon)
           ./dataprof diff file1.csv file2.csv
           ```
-          
+
           ### ✨ Features
-          
+
           - **Smart Sampling**: Adaptive sampling based on file size
           - **Quality Detection**: Null values, duplicates, outliers, mixed formats
           - **Pattern Recognition**: Email, phone, date format detection
           - **Rich Output**: Colored terminal reports with statistics
           - **Performance**: Built with Rust + Polars for speed
-          
+
           ---
           *See [README.md](https://github.com/AndreaBozzo/dataprof/blob/master/README.md) for full documentation*
 

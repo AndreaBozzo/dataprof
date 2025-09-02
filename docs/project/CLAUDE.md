@@ -44,7 +44,7 @@ Quick quality check with smart sampling
 dataprof check data.csv [--max-rows 1000] [--fast]
 ```
 
-### analyze  
+### analyze
 Deep analysis with multiple output formats
 ```bash
 dataprof analyze data.csv [--output terminal|json|html]
@@ -64,7 +64,7 @@ dataprof diff file1.csv file2.csv
 
 ## Quality Issues Detected
 - **Null Values**: Missing data detection with percentages
-- **Duplicates**: Duplicate value identification  
+- **Duplicates**: Duplicate value identification
 - **Outliers**: Statistical outliers using 3-sigma rule
 - **Mixed Date Formats**: Inconsistent date formatting
 - **Mixed Types**: Type inconsistencies in columns
