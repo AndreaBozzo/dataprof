@@ -1,5 +1,10 @@
 # DataProfiler CLI - Un Tool Rust Innovativo per l'Analisi dei Dati
 
+[![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
+[![Release](https://github.com/AndreaBozzo/dataprof/workflows/Release/badge.svg)](https://github.com/AndreaBozzo/dataprof/releases)
+[![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+
 ## 🎯 Visione del Progetto
 
 DataProfiler è un CLI tool **in sviluppo** scritto in Rust che fornisce analisi istantanea e profonda dei dati, con un focus su **usabilità**, 
@@ -345,3 +350,57 @@ Una volta stabile, il progetto potrebbe:
 - Creare plugin per IDE/editor
 
 Questo progetto ha il potenziale per diventare il go-to tool per data profiling in Rust, colmando il gap tra tool command-line basilari e suite complete ma complesse.
+
+## 🔧 Sviluppo e CI/CD
+
+### Workflow GitHub Actions
+
+Il progetto include workflow automatizzati per garantire qualità e facilità di distribuzione:
+
+- **🧪 CI Workflow** (`.github/workflows/ci.yml`):
+  - Test su Rust stable e MSRV (1.70.0)
+  - Controlli formatazione (`cargo fmt`)
+  - Linting avanzato (`cargo clippy`)
+  - Test automatici su tutte le piattaforme
+  - Security audit con `cargo audit`
+  - Code coverage con `cargo-llvm-cov`
+
+- **🚀 Release Workflow** (`.github/workflows/release.yml`):
+  - Build automatico per Linux, Windows, macOS (x86_64 + ARM)
+  - Creazione release GitHub con binari
+  - Pubblicazione su crates.io
+  - Release notes automatiche
+
+- **⚡ Performance Workflow** (`.github/workflows/optimize.yml`):
+  - Cache warming settimanale delle dipendenze
+  - Profiling dei tempi di build
+  - Check aggiornamenti dipendenze
+  - Benchmark automatici
+
+### Setup Sviluppo Locale
+
+```bash
+# Clone e setup
+git clone https://github.com/AndreaBozzo/dataprof.git
+cd dataprof
+
+# Install pre-commit hooks (opzionale)
+pip install pre-commit
+pre-commit install
+
+# Build veloce per sviluppo
+cargo build
+
+# Test completi
+cargo test
+
+# Linting e formatting
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+```
+
+### Configurazioni Incluse
+
+- **`.rustfmt.toml`**: Stile codice consistente
+- **`.clippy.toml`**: Linting personalizzato per data processing
+- **`.pre-commit-config.yaml`**: Hook automatici per qualità codice

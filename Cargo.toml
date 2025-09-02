@@ -33,7 +33,24 @@ tempfile = "3.10"   # Test files
 name = "dataprof"
 path = "src/main.rs"
 
+[lib]
+name = "dataprof"
+path = "src/lib.rs"
+
+# Debug profile per sviluppo veloce
+[profile.dev]
+opt-level = 1        # Ottimizzazione minima per compilazione veloce
+debug = true         # Mantieni simboli debug
+split-debuginfo = "packed"  # Su Windows
+incremental = true   # Build incrementali
+
+# Profile per test veloci
+[profile.test]
+opt-level = 1
+
+# Release profile ottimizzato
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
+panic = "abort"      # Riduce dimensione binario

@@ -1,0 +1,126 @@
+name: Performance & Optimization
+
+on:
+  schedule:
+    # Run weekly to keep cache warm
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cache-dependencies:
+    name: Warm Dependency Cache
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        cache-all-crates: true
+
+    - name: Build dependencies only
+      run: |
+        # Build only dependencies, not our code
+        cargo build --release --verbose
+        cargo build --dev --verbose
+
+    - name: Clean our artifacts but keep deps
+      run: |
+        # Remove our compiled code but keep dependencies
+        find target -name "*dataprof*" -type f -delete
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Run benchmarks
+      run: cargo bench --verbose || echo "No benchmarks configured yet"
+
+    - name: Test performance on sample data
+      run: |
+        cargo build --release
+        if [ -f "examples/sample_data.csv" ]; then
+          echo "Testing performance on sample data..."
+          time ./target/release/dataprof check examples/sample_data.csv
+          time ./target/release/dataprof analyze examples/sample_data.csv
+        fi
+
+  profile-build-time:
+    name: Profile Build Times
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-timings
+      run: cargo install cargo-timings
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Profile build times
+      run: |
+        cargo clean
+        cargo timings --release --verbose
+
+    - name: Upload timing report
+      uses: actions/upload-artifact@v4
+      with:
+        name: cargo-timings
+        path: target/cargo-timings/
+
+  dependency-update:
+    name: Check Dependency Updates
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-outdated
+      run: cargo install cargo-outdated
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check for outdated dependencies
+      run: cargo outdated --verbose
+
+    - name: Generate dependency report
+      run: |
+        echo "# Dependency Report" > dependency-report.md
+        echo "Generated on $(date)" >> dependency-report.md
+        echo "" >> dependency-report.md
+        echo "## Outdated Dependencies" >> dependency-report.md
+        cargo outdated --format json | jq -r '
+          .dependencies[] | 
+          "- **\(.name)**: \(.project) → \(.latest) (\(.kind))"
+        ' >> dependency-report.md || echo "No JSON output from cargo-outdated"
+
+    - name: Upload dependency report
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependency-report
+        path: dependency-report.md

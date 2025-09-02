@@ -68,18 +68,49 @@ impl Analyzer {
             // Per stringhe, controlla se sono date/numeri
             let sample = series.head(Some(1000));
             
-            // Check date
-            for format in DATE_FORMATS {
-                if let Ok(_) = sample.str().unwrap().as_date(Some(format), false) {
-                    return DataType::Date;
+            if let Ok(str_series) = sample.str() {
+                let total_values = sample.len() - sample.null_count();
+                if total_values == 0 {
+                    return DataType::String;
                 }
-            }
-            
-            // Check numeric
-            if let Ok(_) = sample.cast(&polars::datatypes::DataType::Float64) {
-                let success_rate = sample.len() - sample.null_count();
-                if success_rate as f64 / sample.len() as f64 > 0.9 {
-                    return DataType::Float;
+                
+                // Check date - deve avere almeno 80% di successo
+                for format in DATE_FORMATS {
+                    let mut successful_parses = 0;
+                    for value in str_series.into_iter().filter_map(|v| v) {
+                        if chrono::NaiveDate::parse_from_str(value, format).is_ok() {
+                            successful_parses += 1;
+                        }
+                    }
+                    let success_rate = successful_parses as f64 / total_values as f64;
+                    if success_rate > 0.8 {
+                        return DataType::Date;
+                    }
+                }
+                
+                // Check numeric - controllo più rigoroso
+                let mut successful_numeric_parses = 0;
+                for value in str_series.into_iter().filter_map(|v| v) {
+                    // Deve essere SOLO numerico (no lettere, no trattini, no spazi eccetto decimali)
+                    if value.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == '+') {
+                        if value.parse::<f64>().is_ok() {
+                            successful_numeric_parses += 1;
+                        }
+                    }
+                }
+                let numeric_success_rate = successful_numeric_parses as f64 / total_values as f64;
+                if numeric_success_rate > 0.9 {
+                    // Controlla se sono tutti interi
+                    let mut all_integers = true;
+                    for value in str_series.into_iter().filter_map(|v| v) {
+                        if let Ok(num) = value.parse::<f64>() {
+                            if num.fract() != 0.0 {
+                                all_integers = false;
+                                break;
+                            }
+                        }
+                    }
+                    return if all_integers { DataType::Integer } else { DataType::Float };
                 }
             }
         }

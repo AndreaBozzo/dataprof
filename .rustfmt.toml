@@ -1,0 +1,37 @@
+# DataProfiler CLI - Rust formatting configuration
+
+# Edition
+edition = "2024"
+
+# Line width
+max_width = 100
+comment_width = 80
+
+# Imports
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+
+# Functions
+fn_single_line = false
+where_single_line = true
+
+# Spaces and alignment
+indent_style = "Block"
+use_small_heuristics = "Default"
+
+# Comments
+normalize_comments = true
+wrap_comments = true
+
+# Strings and arrays
+format_strings = true
+format_macro_matchers = true
+
+# Control flow
+control_brace_style = "AlwaysSameLine"
+brace_style = "SameLineWhere"
+
+# Misc
+remove_nested_parens = true
+normalize_doc_attributes = true
