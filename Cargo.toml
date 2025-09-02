@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Core
-polars = { version = "0.49", features = ["lazy", "csv", "temporal", "strings"] }
+polars = { version = "0.35", features = ["lazy", "csv", "temporal", "strings"] }
 
 # CLI
 clap = { version = "4.5", features = ["derive", "cargo"] }
