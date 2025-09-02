@@ -2,6 +2,12 @@
 name = "dataprof"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+authors = ["Andrea Bozzo"]
+description = "A fast, lightweight CLI tool for CSV data profiling and analysis"
+repository = "https://github.com/AndreaBozzo/dataprof"
+keywords = ["csv", "data", "analysis", "profiling", "cli"]
+categories = ["command-line-utilities", "data-structures"]
 
 [dependencies]
 # CSV parsing only
