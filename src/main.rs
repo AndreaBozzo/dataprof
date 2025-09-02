@@ -1,152 +1,75 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use colored::*;
 use std::path::PathBuf;
-use std::time::Instant;
-
-mod analysis;
-mod input;
-mod output;
-mod types;
-
-use crate::analysis::{analyze_dataframe, QualityChecker};
-use crate::input::Sampler;
-use crate::output::{create_progress_bar, TerminalReporter};
-use crate::types::*;
+use dataprof::{analyze_csv, ColumnProfile, ColumnStats, DataType};
 
 #[derive(Parser)]
 #[command(name = "dataprof")]
-#[command(about = "Fast data profiling and quality checking for large datasets")]
-#[command(version)]
+#[command(about = "A simple CSV data profiler")]
 struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Quick quality check with smart sampling
-    Check {
-        /// Input file path
-        file: PathBuf,
-
-        /// Use fast sampling (default: true)
-        #[arg(long, default_value = "true")]
-        fast: bool,
-
-        /// Maximum rows to scan
-        #[arg(long)]
-        max_rows: Option<usize>,
-    },
-
-    /// Deep analysis of the dataset
-    Analyze {
-        /// Input file path
-        file: PathBuf,
-
-        /// Output format (terminal, json, html)
-        #[arg(long, default_value = "terminal")]
-        output: String,
-    },
-
-    /// Compare two datasets
-    Diff {
-        /// First file
-        file1: PathBuf,
-        /// Second file
-        file2: PathBuf,
-    },
+    /// CSV file to analyze
+    file: PathBuf,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Check {
-            file,
-            fast,
-            max_rows,
-        } => {
-            check_command(file, fast, max_rows)?;
-        }
-        Commands::Analyze { file, output } => {
-            analyze_command(file, output)?;
-        }
-        Commands::Diff { file1: _, file2: _ } => {
-            println!("Diff command coming in week 3!");
-        }
+    println!("{}", "📊 DataProfiler - Analyzing CSV...".bright_blue().bold());
+    println!();
+
+    let profiles = analyze_csv(&cli.file)?;
+    
+    // Display results
+    for profile in profiles {
+        display_profile(&profile);
+        println!();
     }
 
     Ok(())
 }
 
-fn check_command(file: PathBuf, _fast: bool, max_rows: Option<usize>) -> Result<()> {
-    let start = Instant::now();
-
-    // Header
-    println!("\n{} {}", "⚡".yellow(), "DataProfiler Quick Check".bold());
-
-    // Get file info
-    let metadata = std::fs::metadata(&file)?;
-    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
-
-    // Create sampler
-    let mut sampler = Sampler::new(file_size_mb);
-    if let Some(max) = max_rows {
-        // Override con max_rows se specificato
-        sampler = Sampler { target_rows: max };
-    }
-
-    // Sample and analyze
-    let pb = create_progress_bar(100, "Reading file...");
-    let (df, sample_info) = sampler.sample_csv(&file)?;
-    pb.finish_and_clear();
-
-    // Analyze columns
-    let pb = create_progress_bar(df.width() as u64, "Analyzing columns...");
-    let profiles = analyze_dataframe(&df);
-    pb.finish_and_clear();
-
-    // Check quality
-    let issues = QualityChecker::check_dataframe(&df, &profiles);
-
-    // Create report
-    let report = QualityReport {
-        file_info: FileInfo {
-            path: file.display().to_string(),
-            total_rows: sample_info.total_rows,
-            total_columns: df.width(),
-            file_size_mb,
-        },
-        scan_info: ScanInfo {
-            rows_scanned: sample_info.sampled_rows,
-            sampling_ratio: sample_info.sampling_ratio,
-            scan_time_ms: start.elapsed().as_millis(),
-        },
-        column_profiles: profiles,
-        issues,
+fn display_profile(profile: &ColumnProfile) {
+    println!("{} {}", "Column:".bright_yellow(), profile.name.bright_white().bold());
+    
+    let type_str = match profile.data_type {
+        DataType::String => "String".green(),
+        DataType::Integer => "Integer".blue(),  
+        DataType::Float => "Float".cyan(),
+        DataType::Date => "Date".magenta(),
     };
+    println!("  Type: {}", type_str);
+    
+    println!("  Records: {}", profile.total_count);
+    
+    if profile.null_count > 0 {
+        let pct = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
+        println!("  Nulls: {} ({:.1}%)", profile.null_count.to_string().red(), pct);
+    } else {
+        println!("  Nulls: {}", "0".green());
+    }
 
-    // Print report
-    TerminalReporter::report(&report);
-
-    Ok(())
-}
-
-fn analyze_command(file: PathBuf, output: String) -> Result<()> {
-    match output.as_str() {
-        "terminal" => check_command(file, false, None),
-        "json" => {
-            println!("JSON output coming soon!");
-            Ok(())
+    match &profile.stats {
+        ColumnStats::Numeric { min, max, mean } => {
+            println!("  Min: {:.2}", min);
+            println!("  Max: {:.2}", max);
+            println!("  Mean: {:.2}", mean);
         }
-        "html" => {
-            println!("HTML output coming soon!");
-            Ok(())
+        ColumnStats::Text { min_length, max_length, avg_length } => {
+            println!("  Min Length: {}", min_length);
+            println!("  Max Length: {}", max_length);
+            println!("  Avg Length: {:.1}", avg_length);
         }
-        _ => {
-            eprintln!("Unknown output format: {}", output);
-            Ok(())
+    }
+
+    // Show detected patterns
+    if !profile.patterns.is_empty() {
+        println!("  {}", "Patterns:".bright_cyan());
+        for pattern in &profile.patterns {
+            println!("    {} - {} matches ({:.1}%)", 
+                pattern.name.bright_white(), 
+                pattern.match_count, 
+                pattern.match_percentage);
         }
     }
 }

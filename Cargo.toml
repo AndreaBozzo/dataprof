@@ -4,30 +4,24 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Core
-polars = { version = "0.35", features = ["lazy", "csv", "temporal", "strings"] }
+# CSV parsing only
+csv = "1.3"
+serde = { version = "1.0", features = ["derive"] }
 
 # CLI
-clap = { version = "4.5", features = ["derive", "cargo"] }
-indicatif = "0.17"  # Progress bars
-colored = "2.1"     # Colored terminal output
+clap = { version = "4.5", features = ["derive"] }
 
-# Performance
-rayon = "1.10"      # Parallel processing
-ahash = "0.8"       # Faster hashmaps
+# Terminal output
+colored = "2.1"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
 
-# Utilities
-chrono = "0.4"
+# Pattern detection
 regex = "1.10"
-once_cell = "1.19"  # For regex caching
 
 [dev-dependencies]
-criterion = "0.5"   # Benchmarking
-tempfile = "3.10"   # Test files
+tempfile = "3.10"
 
 [[bin]]
 name = "dataprof"

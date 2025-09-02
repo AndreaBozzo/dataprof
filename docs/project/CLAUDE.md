@@ -3,6 +3,10 @@
 ## Overview
 Fast data profiling and quality checking tool for large datasets built in Rust with Polars.
 
+**RULES**
+- Start simple, then iterate.
+- Best practices,always.
+
 ## Architecture
 
 ### Core Components

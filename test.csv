@@ -1,0 +1,7 @@
+name,age,salary,email,phone,signup_date
+John,25,50000.5,john@example.com,555-123-4567,2023-01-15
+Jane,30,75000.75,jane@example.com,555-234-5678,2023-02-20
+Bob,35,60000,bob@example.com,(555) 345-6789,2023-03-10
+Alice,,45000.25,alice@example.com,555.456.7890,2023-04-05
+Mike,40,85000,,555-567-8901,2023-05-12
+Sarah,28,72000,sarah@test.org,+1-555-678-9012,2023-06-01
