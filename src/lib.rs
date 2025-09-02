@@ -79,11 +79,11 @@ fn infer_type(data: &[String]) -> DataType {
 
     // Check dates first (before numeric to catch date-like numbers)
     let date_formats = [
-        r"^\d{4}-\d{2}-\d{2}$",     // YYYY-MM-DD
-        r"^\d{2}/\d{2}/\d{4}$",     // DD/MM/YYYY or MM/DD/YYYY
-        r"^\d{2}-\d{2}-\d{4}$",     // DD-MM-YYYY
+        r"^\d{4}-\d{2}-\d{2}$", // YYYY-MM-DD
+        r"^\d{2}/\d{2}/\d{4}$", // DD/MM/YYYY or MM/DD/YYYY
+        r"^\d{2}-\d{2}-\d{4}$", // DD-MM-YYYY
     ];
-    
+
     for pattern in &date_formats {
         let regex = Regex::new(pattern).unwrap();
         let date_matches = non_empty.iter().filter(|s| regex.is_match(s)).count();
@@ -116,13 +116,14 @@ fn infer_type(data: &[String]) -> DataType {
 }
 
 fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
-    let numbers: Vec<f64> = data
-        .iter()
-        .filter_map(|s| s.parse::<f64>().ok())
-        .collect();
+    let numbers: Vec<f64> = data.iter().filter_map(|s| s.parse::<f64>().ok()).collect();
 
     if numbers.is_empty() {
-        return ColumnStats::Numeric { min: 0.0, max: 0.0, mean: 0.0 };
+        return ColumnStats::Numeric {
+            min: 0.0,
+            max: 0.0,
+            mean: 0.0,
+        };
     }
 
     let min = numbers.iter().copied().fold(f64::INFINITY, f64::min);
@@ -136,7 +137,11 @@ fn calculate_text_stats(data: &[String]) -> ColumnStats {
     let non_empty: Vec<&String> = data.iter().filter(|s| !s.is_empty()).collect();
 
     if non_empty.is_empty() {
-        return ColumnStats::Text { min_length: 0, max_length: 0, avg_length: 0.0 };
+        return ColumnStats::Text {
+            min_length: 0,
+            max_length: 0,
+            avg_length: 0.0,
+        };
     }
 
     let lengths: Vec<usize> = non_empty.iter().map(|s| s.len()).collect();
@@ -144,13 +149,17 @@ fn calculate_text_stats(data: &[String]) -> ColumnStats {
     let max_length = *lengths.iter().max().unwrap();
     let avg_length = lengths.iter().sum::<usize>() as f64 / lengths.len() as f64;
 
-    ColumnStats::Text { min_length, max_length, avg_length }
+    ColumnStats::Text {
+        min_length,
+        max_length,
+        avg_length,
+    }
 }
 
 fn detect_patterns(data: &[String]) -> Vec<Pattern> {
     let mut patterns = Vec::new();
     let non_empty: Vec<&String> = data.iter().filter(|s| !s.is_empty()).collect();
-    
+
     if non_empty.is_empty() {
         return patterns;
     }
@@ -158,18 +167,28 @@ fn detect_patterns(data: &[String]) -> Vec<Pattern> {
     // Common patterns to check
     let pattern_checks = [
         ("Email", r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
-        ("Phone (US)", r"^\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}$"),
-        ("Phone (IT)", r"^\+39|0039|39?[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{5,10}$"),
+        (
+            "Phone (US)",
+            r"^\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}$",
+        ),
+        (
+            "Phone (IT)",
+            r"^\+39|0039|39?[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{5,10}$",
+        ),
         ("URL", r"^https?://[^\s/$.?#].[^\s]*$"),
-        ("UUID", r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+        (
+            "UUID",
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        ),
     ];
 
     for (name, pattern_str) in &pattern_checks {
         if let Ok(regex) = Regex::new(pattern_str) {
             let matches = non_empty.iter().filter(|s| regex.is_match(s)).count();
             let percentage = (matches as f64 / non_empty.len() as f64) * 100.0;
-            
-            if percentage > 5.0 { // Only show patterns with >5% matches
+
+            if percentage > 5.0 {
+                // Only show patterns with >5% matches
                 patterns.push(Pattern {
                     name: name.to_string(),
                     match_count: matches,

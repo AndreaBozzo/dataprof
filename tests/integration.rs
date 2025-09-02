@@ -31,9 +31,10 @@ fn test_basic_csv_analysis() {
     let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
     assert!(matches!(email_profile.data_type, DataType::String));
     assert_eq!(email_profile.null_count, 1); // David's missing email
-    
+
     // Should detect email pattern (75% of non-null values are valid emails)
-    let has_email_pattern = email_profile.patterns
+    let has_email_pattern = email_profile
+        .patterns
         .iter()
         .any(|p| p.name == "Email" && p.match_percentage > 50.0);
     assert!(has_email_pattern);
@@ -58,20 +59,29 @@ fn test_pattern_detection() {
 
     // Email column should detect Email pattern
     let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
-    let email_pattern = email_profile.patterns.iter()
-        .find(|p| p.name == "Email").unwrap();
+    let email_pattern = email_profile
+        .patterns
+        .iter()
+        .find(|p| p.name == "Email")
+        .unwrap();
     assert_eq!(email_pattern.match_count, 2); // 2 out of 3 are valid emails
 
     // Phone column should detect US phone pattern
     let phone_profile = profiles.iter().find(|p| p.name == "phone").unwrap();
-    let phone_pattern = phone_profile.patterns.iter()
-        .find(|p| p.name == "Phone (US)").unwrap();
+    let phone_pattern = phone_profile
+        .patterns
+        .iter()
+        .find(|p| p.name == "Phone (US)")
+        .unwrap();
     assert_eq!(phone_pattern.match_count, 3); // All 3 match US phone pattern
 
     // URL column should detect URL pattern
     let url_profile = profiles.iter().find(|p| p.name == "url").unwrap();
-    let url_pattern = url_profile.patterns.iter()
-        .find(|p| p.name == "URL").unwrap();
+    let url_pattern = url_profile
+        .patterns
+        .iter()
+        .find(|p| p.name == "URL")
+        .unwrap();
     assert_eq!(url_pattern.match_count, 2); // 2 out of 3 are valid URLs
 }
 
@@ -91,8 +101,8 @@ fn test_numeric_analysis() {
     // Integers column
     let int_profile = profiles.iter().find(|p| p.name == "integers").unwrap();
     assert!(matches!(int_profile.data_type, DataType::Integer));
-    
-    // Floats column  
+
+    // Floats column
     let float_profile = profiles.iter().find(|p| p.name == "floats").unwrap();
     assert!(matches!(float_profile.data_type, DataType::Float));
 

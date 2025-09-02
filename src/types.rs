@@ -19,8 +19,16 @@ pub enum DataType {
 
 #[derive(Debug, Clone)]
 pub enum ColumnStats {
-    Numeric { min: f64, max: f64, mean: f64 },
-    Text { min_length: usize, max_length: usize, avg_length: f64 },
+    Numeric {
+        min: f64,
+        max: f64,
+        mean: f64,
+    },
+    Text {
+        min_length: usize,
+        max_length: usize,
+        avg_length: f64,
+    },
 }
 
 #[derive(Debug, Clone)]
