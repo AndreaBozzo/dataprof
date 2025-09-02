@@ -1,12 +1,11 @@
 [package]
 name = "dataprof"
 version = "0.1.0"
-edition = "2025"
+edition = "2024"
 
 [dependencies]
 # Core
 polars = { version = "0.38", features = ["lazy", "csv", "temporal", "strings"] }
-arrow = "51.0"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "cargo"] }

@@ -42,20 +42,24 @@ pub enum DataType {
     Date,
     DateTime,
     Boolean,
+    #[allow(dead_code)]
     Mixed(Vec<DataType>),
 }
 
 #[derive(Debug, Clone)]
 pub enum ColumnStats {
-    Numeric { min: f64, max: f64, mean: f64, std: f64 },
+    Numeric { min: f64, max: f64, mean: f64, #[allow(dead_code)] std: f64 },
     Text { min_length: usize, max_length: usize, avg_length: f64 },
+    #[allow(dead_code)]
     Temporal { min: NaiveDateTime, max: NaiveDateTime },
 }
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub name: String,
+    #[allow(dead_code)]
     pub regex: String,
+    #[allow(dead_code)]
     pub match_count: usize,
     pub match_percentage: f64,
 }
@@ -80,6 +84,7 @@ pub enum QualityIssue {
         values: Vec<String>,
         threshold: f64,
     },
+    #[allow(dead_code)]
     MixedTypes {
         column: String,
         types: HashMap<String, usize>,
