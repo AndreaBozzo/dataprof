@@ -35,10 +35,9 @@ impl Sampler {
         let total_rows = self.estimate_total_rows(path)?;
 
         // Usa Polars lazy reading per efficienza
-        let df = CsvReader::from_path(path)?
-            .has_header(true)
-            .with_n_rows(Some(self.target_rows))
-            .finish()?;
+        let df = CsvReader::new(std::fs::File::open(path)?)
+            .finish()?
+            .head(Some(self.target_rows));
 
         let sample_info = SampleInfo {
             total_rows,
@@ -102,7 +101,7 @@ pub fn stratified_sample(
         Ok(df.clone())
     } else {
         let fraction = sample_size as f64 / n as f64;
-        df.sample_frac(&Series::new("", &[fraction]), true, true, Some(42))
+        df.sample_frac(&Series::new("".into(), &[fraction]), true, true, Some(42))
             .map_err(|e| anyhow::anyhow!("Sampling error: {}", e))
     }
 }

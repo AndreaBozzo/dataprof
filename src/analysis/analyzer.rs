@@ -19,7 +19,8 @@ static DATE_FORMATS: &[&str] = &["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d",
 pub struct Analyzer;
 
 impl Analyzer {
-    pub fn analyze_column(series: &Series) -> ColumnProfile {
+    pub fn analyze_column(column: &Column) -> ColumnProfile {
+        let series = column.as_series().expect("Column should have series");
         let name = series.name().to_string();
         let null_count = series.null_count();
 
@@ -96,11 +97,11 @@ impl Analyzer {
                     // Controlla se sono tutti interi
                     let mut all_integers = true;
                     for value in str_series.into_iter().flatten() {
-                        if let Ok(num) = value.parse::<f64>()
-                            && num.fract() != 0.0
-                        {
-                            all_integers = false;
-                            break;
+                        if let Ok(num) = value.parse::<f64>() {
+                            if num.fract() != 0.0 {
+                                all_integers = false;
+                                break;
+                            }
                         }
                     }
                     return if all_integers {
@@ -223,6 +224,6 @@ impl Analyzer {
 pub fn analyze_dataframe(df: &DataFrame) -> Vec<ColumnProfile> {
     df.get_columns()
         .iter()
-        .map(Analyzer::analyze_column)
+        .map(|col| Analyzer::analyze_column(col))
         .collect()
 }

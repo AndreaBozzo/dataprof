@@ -9,9 +9,9 @@ mod input;
 mod output;
 mod types;
 
-use crate::analysis::{QualityChecker, analyze_dataframe};
+use crate::analysis::{analyze_dataframe, QualityChecker};
 use crate::input::Sampler;
-use crate::output::{TerminalReporter, create_progress_bar};
+use crate::output::{create_progress_bar, TerminalReporter};
 use crate::types::*;
 
 #[derive(Parser)]

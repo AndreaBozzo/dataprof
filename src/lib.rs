@@ -4,7 +4,7 @@ pub mod output;
 pub mod types;
 
 // Re-export for convenience
-pub use analysis::{QualityChecker, analyze_dataframe};
+pub use analysis::{analyze_dataframe, QualityChecker};
 pub use input::{SampleInfo, Sampler};
-pub use output::{TerminalReporter, create_progress_bar};
+pub use output::{create_progress_bar, TerminalReporter};
 pub use types::*;
