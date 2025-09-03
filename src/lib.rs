@@ -1,14 +1,90 @@
+pub mod html;
+pub mod quality;
+pub mod sampler;
 pub mod types;
 
 use anyhow::Result;
 use csv::ReaderBuilder;
 use regex::Regex;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
 // Re-export types
-pub use types::{ColumnProfile, ColumnStats, DataType, Pattern};
+pub use html::generate_html_report;
+pub use quality::QualityChecker;
+pub use sampler::{SampleInfo, Sampler};
+pub use types::{
+    ColumnProfile, ColumnStats, DataType, FileInfo, Pattern, QualityIssue, QualityReport, ScanInfo,
+};
 
+// Nuova funzione che usa il sampler per file grandi
+pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
+    let metadata = std::fs::metadata(file_path)?;
+    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+
+    let sampler = Sampler::new(file_size_mb);
+    let start = std::time::Instant::now();
+
+    let (records, sample_info) = sampler.sample_csv(file_path)?;
+
+    // Converti i records in formato compatibile
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+
+    if !records.is_empty() {
+        // Usa gli header dal primo record (assumendo che ci siano)
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(file_path)?;
+        let headers = reader.headers()?.clone();
+
+        // Inizializza colonne
+        for header in headers.iter() {
+            columns.insert(header.to_string(), Vec::new());
+        }
+
+        // Aggiungi i dati campionati
+        for record in records {
+            for (i, field) in record.iter().enumerate() {
+                if let Some(header) = headers.get(i) {
+                    if let Some(column_data) = columns.get_mut(header) {
+                        column_data.push(field.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Analizza le colonne
+    let mut column_profiles = Vec::new();
+    for (name, data) in &columns {
+        let profile = analyze_column(name, data);
+        column_profiles.push(profile);
+    }
+
+    // Check quality issues
+    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+
+    let scan_time_ms = start.elapsed().as_millis();
+
+    Ok(QualityReport {
+        file_info: FileInfo {
+            path: file_path.display().to_string(),
+            total_rows: sample_info.total_rows,
+            total_columns: column_profiles.len(),
+            file_size_mb,
+        },
+        column_profiles,
+        issues,
+        scan_info: ScanInfo {
+            rows_scanned: sample_info.sampled_rows,
+            sampling_ratio: sample_info.sampling_ratio,
+            scan_time_ms,
+        },
+    })
+}
+
+// Funzione originale per compatibilità
 pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
@@ -45,6 +121,163 @@ pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
     Ok(profiles)
 }
 
+// Simple JSON/JSONL support
+pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+    let content = std::fs::read_to_string(file_path)?;
+
+    // Try to detect format: JSON array vs JSONL
+    let records: Vec<Value> = if content.trim_start().starts_with('[') {
+        // JSON array
+        serde_json::from_str(&content)?
+    } else {
+        // JSONL - one JSON object per line
+        content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    if records.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Convert JSON objects to flat string columns
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+
+    for record in &records {
+        if let Value::Object(obj) = record {
+            for (key, value) in obj {
+                let column_data = columns.entry(key.clone()).or_default();
+
+                // Convert JSON value to string representation
+                let string_value = match value {
+                    Value::Null => String::new(), // Treat as empty/null
+                    Value::Bool(b) => b.to_string(),
+                    Value::Number(n) => n.to_string(),
+                    Value::String(s) => s.clone(),
+                    Value::Array(_) | Value::Object(_) => {
+                        // For complex types, serialize to JSON string
+                        serde_json::to_string(value).unwrap_or_default()
+                    }
+                };
+
+                column_data.push(string_value);
+            }
+        }
+    }
+
+    // Ensure all columns have the same length (fill missing with empty strings)
+    let max_len = records.len();
+    for values in columns.values_mut() {
+        values.resize(max_len, String::new());
+    }
+
+    // Analyze columns using existing logic
+    let mut profiles = Vec::new();
+    for (name, data) in columns {
+        let profile = analyze_column(&name, &data);
+        profiles.push(profile);
+    }
+
+    Ok(profiles)
+}
+
+// JSON analysis with quality checking
+pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
+    let metadata = std::fs::metadata(file_path)?;
+    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+
+    let start = std::time::Instant::now();
+
+    // Use existing JSON parsing logic
+    let content = std::fs::read_to_string(file_path)?;
+
+    let records: Vec<Value> = if content.trim_start().starts_with('[') {
+        serde_json::from_str(&content)?
+    } else {
+        content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    if records.is_empty() {
+        return Ok(QualityReport {
+            file_info: FileInfo {
+                path: file_path.display().to_string(),
+                total_rows: Some(0),
+                total_columns: 0,
+                file_size_mb,
+            },
+            column_profiles: vec![],
+            issues: vec![],
+            scan_info: ScanInfo {
+                rows_scanned: 0,
+                sampling_ratio: 1.0,
+                scan_time_ms: start.elapsed().as_millis(),
+            },
+        });
+    }
+
+    // Convert to columns
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+
+    for record in &records {
+        if let Value::Object(obj) = record {
+            for (key, value) in obj {
+                let column_data = columns.entry(key.clone()).or_default();
+
+                let string_value = match value {
+                    Value::Null => String::new(),
+                    Value::Bool(b) => b.to_string(),
+                    Value::Number(n) => n.to_string(),
+                    Value::String(s) => s.clone(),
+                    Value::Array(_) | Value::Object(_) => {
+                        serde_json::to_string(value).unwrap_or_default()
+                    }
+                };
+
+                column_data.push(string_value);
+            }
+        }
+    }
+
+    let max_len = records.len();
+    for values in columns.values_mut() {
+        values.resize(max_len, String::new());
+    }
+
+    // Analyze columns
+    let mut column_profiles = Vec::new();
+    for (name, data) in &columns {
+        let profile = analyze_column(name, data);
+        column_profiles.push(profile);
+    }
+
+    // Check quality issues
+    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+
+    let scan_time_ms = start.elapsed().as_millis();
+
+    Ok(QualityReport {
+        file_info: FileInfo {
+            path: file_path.display().to_string(),
+            total_rows: Some(records.len()),
+            total_columns: column_profiles.len(),
+            file_size_mb,
+        },
+        column_profiles,
+        issues,
+        scan_info: ScanInfo {
+            rows_scanned: records.len(),
+            sampling_ratio: 1.0,
+            scan_time_ms,
+        },
+    })
+}
+
 fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
     let total_count = data.len();
     let null_count = data.iter().filter(|s| s.is_empty()).count();
@@ -66,6 +299,7 @@ fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
         data_type,
         null_count,
         total_count,
+        unique_count: Some(data.iter().collect::<std::collections::HashSet<_>>().len()),
         stats,
         patterns,
     }
@@ -191,6 +425,7 @@ fn detect_patterns(data: &[String]) -> Vec<Pattern> {
                 // Only show patterns with >5% matches
                 patterns.push(Pattern {
                     name: name.to_string(),
+                    regex: pattern_str.to_string(),
                     match_count: matches,
                     match_percentage: percentage,
                 });

@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "name": "Mario Rossi",
+    "email": "mario.rossi@email.it",
+    "age": 35,
+    "active": true,
+    "salary": 45000.50,
+    "city": "Milano",
+    "signup_date": "2020-01-15"
+  },
+  {
+    "id": 2,
+    "name": "Luigi Verdi",
+    "email": "luigi.verdi@gmail.com",
+    "age": 28,
+    "active": true,
+    "salary": 35000.00,
+    "city": "Roma",
+    "signup_date": "2021-03-22"
+  },
+  {
+    "id": 3,
+    "name": "Anna Bianchi",
+    "email": null,
+    "age": 42,
+    "active": false,
+    "salary": 55000.75,
+    "city": "Napoli",
+    "signup_date": "2019-07-10"
+  },
+  {
+    "id": 4,
+    "name": "Giuseppe Neri",
+    "email": "giuseppe.neri@invalid",
+    "age": null,
+    "active": true,
+    "salary": 999999.99,
+    "city": "Torino",
+    "signup_date": "22/01/2024"
+  }
+]
