@@ -19,6 +19,7 @@ test_*.rs
 *.pdb
 *.exe
 *.dll
+example_usage/
 
 # Logs
 *.log
