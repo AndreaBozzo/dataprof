@@ -2,9 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use colored::*;
 use dataprof::{
-    analyze_csv, analyze_csv_with_sampling, ColumnProfile, ColumnStats, DataType, QualityIssue,
+    analyze_csv, analyze_csv_with_sampling, analyze_json, analyze_json_with_quality,
+    generate_html_report, ColumnProfile, ColumnStats, DataType, QualityIssue,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "dataprof")]
@@ -16,6 +17,10 @@ struct Cli {
     /// Enable quality checking (shows data issues)
     #[arg(short, long)]
     quality: bool,
+
+    /// Generate HTML report (requires --quality)
+    #[arg(long)]
+    html: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -28,8 +33,20 @@ fn main() -> Result<()> {
     println!();
 
     if cli.quality {
+        // Generate HTML report if requested
+        if let Some(html_path) = &cli.html {
+            if html_path.extension().and_then(|s| s.to_str()) != Some("html") {
+                eprintln!("❌ HTML output file must have .html extension");
+                std::process::exit(1);
+            }
+        }
+
         // Use advanced analysis with quality checking
-        let report = analyze_csv_with_sampling(&cli.file)?;
+        let report = if is_json_file(&cli.file) {
+            analyze_json_with_quality(&cli.file)?
+        } else {
+            analyze_csv_with_sampling(&cli.file)?
+        };
 
         // Show basic file info
         println!(
@@ -51,14 +68,43 @@ fn main() -> Result<()> {
         // Show quality issues first
         display_quality_issues(&report.issues);
 
+        // Generate HTML report if requested
+        if let Some(html_path) = &cli.html {
+            match generate_html_report(&report, html_path) {
+                Ok(_) => {
+                    println!(
+                        "📄 HTML report saved to: {}",
+                        html_path.display().to_string().bright_green()
+                    );
+                    println!();
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to generate HTML report: {}", e);
+                }
+            }
+        }
+
         // Then show column profiles
         for profile in report.column_profiles {
             display_profile(&profile);
             println!();
         }
     } else {
+        // Check if HTML output is requested without quality mode
+        if cli.html.is_some() {
+            eprintln!(
+                "❌ HTML report requires --quality flag. Use: {} --quality --html report.html",
+                "dataprof".bright_blue()
+            );
+            std::process::exit(1);
+        }
+
         // Use simple analysis (backwards compatible)
-        let profiles = analyze_csv(&cli.file)?;
+        let profiles = if is_json_file(&cli.file) {
+            analyze_json(&cli.file)?
+        } else {
+            analyze_csv(&cli.file)?
+        };
 
         // Display results
         for profile in profiles {
@@ -232,4 +278,12 @@ fn display_quality_issues(issues: &[QualityIssue]) {
     }
     println!();
     println!();
+}
+
+fn is_json_file(path: &Path) -> bool {
+    if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
+        matches!(extension.to_lowercase().as_str(), "json" | "jsonl")
+    } else {
+        false
+    }
 }

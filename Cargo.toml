@@ -29,6 +29,9 @@ regex = "1.10"
 # Date/time support
 chrono = "0.4"
 
+# JSON support
+serde_json = "1.0"
+
 [dev-dependencies]
 tempfile = "3.10"
 

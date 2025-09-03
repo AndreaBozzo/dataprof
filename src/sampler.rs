@@ -58,15 +58,13 @@ impl Sampler {
             1
         };
 
-        let mut count = 0;
-        for result in reader.records() {
+        for (count, result) in reader.records().enumerate() {
             if count % skip_factor == 0 {
                 records.push(result?);
                 if records.len() >= self.target_rows {
                     break;
                 }
             }
-            count += 1;
         }
 
         let sample_info = SampleInfo {

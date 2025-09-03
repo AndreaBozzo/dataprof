@@ -1,0 +1,5 @@
+{"timestamp": "2024-01-15T10:30:00Z", "level": "INFO", "message": "User login successful", "user_id": 123, "ip": "192.168.1.1"}
+{"timestamp": "2024-01-15T10:31:15Z", "level": "ERROR", "message": "Database connection failed", "user_id": null, "ip": "10.0.0.5"}
+{"timestamp": "2024-01-15T10:32:00Z", "level": "WARN", "message": "High memory usage detected", "user_id": 456, "ip": "192.168.1.100"}
+{"timestamp": "15/01/2024 10:33:00", "level": "INFO", "message": "User logout", "user_id": 123, "ip": "192.168.1.1"}
+{"timestamp": "2024-01-15T10:34:30Z", "level": "ERROR", "message": "Invalid API key", "user_id": 789, "ip": "203.0.113.1"}
