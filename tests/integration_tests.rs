@@ -56,7 +56,7 @@ fn test_csv_quality_analysis() -> Result<()> {
     let report = analyze_csv_with_sampling(temp_file.path())?;
 
     assert_eq!(report.column_profiles.len(), 3);
-    assert!(report.issues.len() > 0);
+    assert!(!report.issues.is_empty());
 
     // Should detect mixed date formats OR outliers (at least some quality issues)
     let has_mixed_dates = report
