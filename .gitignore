@@ -15,6 +15,10 @@ Thumbs.db
 # Test files
 test.csv
 *.tmp
+test_*.rs
+*.pdb
+*.exe
+*.dll
 
 # Logs
 *.log
