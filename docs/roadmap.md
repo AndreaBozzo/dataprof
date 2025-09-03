@@ -1207,7 +1207,772 @@ dataprof analyze data.csv --output report.html
    dataprof export-duckdb <file> --clean
 ```
 
-## 🎯 Prossimi Step (Week 3+)
+## 🎯 Prossimi Step (Week 2+)
+# DataProfiler v0.2.0 - Piano di Sviluppo 5 Giorni
+
+## 🎯 Obiettivi v0.2.0
+1. **Trasformare in libreria versatile** mantenendo la CLI
+2. **Supporto multi-formato** (JSON/JSONL dal README Phase 2)
+3. **Performance optimizations** per file grandi
+4. **HTML report generation** (dal README Phase 2)
+5. **Data quality scoring** (dal README Phase 2)
+
+---
+
+## 📅 Day 1: Library Extraction & API Design
+
+### Mattina: Separazione lib/CLI
+```rust
+// src/lib.rs - nuova API pubblica
+pub mod profiler;
+pub mod formats;
+pub mod reporters;
+pub mod types;
+
+pub use profiler::{DataProfiler, ProfileOptions};
+pub use formats::{Format, CsvReader, JsonReader};
+pub use reporters::{Reporter, HtmlReporter, TerminalReporter};
+pub use types::{ProfileReport, QualityScore, ColumnProfile};
+
+// Convenience re-exports
+pub use polars::prelude::DataFrame;
+```
+
+### Pomeriggio: Builder Pattern API
+```rust
+// src/profiler.rs
+use std::path::Path;
+
+pub struct DataProfiler {
+    source: DataSource,
+    options: ProfileOptions,
+}
+
+impl DataProfiler {
+    /// Profile da file path (auto-detect formato)
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let format = detect_format(path)?;
+        
+        Ok(Self {
+            source: DataSource::File(path.to_path_buf(), format),
+            options: ProfileOptions::default(),
+        })
+    }
+    
+    /// Profile da DataFrame esistente
+    pub fn from_dataframe(df: DataFrame) -> Self {
+        Self {
+            source: DataSource::DataFrame(df),
+            options: ProfileOptions::default(),
+        }
+    }
+    
+    /// Profile da reader (per streaming/API)
+    pub fn from_reader<R: Read + 'static>(reader: R, format: Format) -> Self {
+        Self {
+            source: DataSource::Reader(Box::new(reader), format),
+            options: ProfileOptions::default(),
+        }
+    }
+    
+    /// Configura sampling
+    pub fn with_sample(mut self, size: Option<usize>) -> Self {
+        self.options.sample_size = size;
+        self
+    }
+    
+    /// Esegui profiling
+    pub fn analyze(self) -> Result<ProfileReport> {
+        match self.source {
+            DataSource::File(path, format) => {
+                let df = load_with_format(&path, format, &self.options)?;
+                self.analyze_dataframe(df)
+            }
+            DataSource::DataFrame(df) => self.analyze_dataframe(df),
+            DataSource::Reader(reader, format) => {
+                let df = read_from_stream(reader, format)?;
+                self.analyze_dataframe(df)
+            }
+        }
+    }
+}
+
+// src/main.rs - CLI diventa thin wrapper
+use dataprof::{DataProfiler, HtmlReporter, TerminalReporter};
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    
+    // Usa la libreria
+    let report = DataProfiler::from_path(&args.file)
+        .with_sample(args.sample)
+        .analyze()?;
+    
+    // Output
+    match args.output {
+        OutputFormat::Terminal => TerminalReporter::new().report(&report),
+        OutputFormat::Html => HtmlReporter::new().save(&report, "report.html")?,
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+    }
+    
+    Ok(())
+}
+```
+
+### Task Day 1:
+- [ ] Creare `lib.rs` con API pulita
+- [ ] Refactor `main.rs` per usare la lib
+- [ ] Aggiungere `examples/` per mostrare uso library
+- [ ] Test che sia ancora tutto funzionante
+
+---
+
+## 📅 Day 2: Multi-Format Support (JSON/JSONL)
+
+### Mattina: Format Detection & Readers
+```rust
+// src/formats/mod.rs
+pub trait FormatReader {
+    fn read(&self, path: &Path, options: &ReadOptions) -> Result<DataFrame>;
+    fn can_handle(&self, path: &Path) -> bool;
+}
+
+// src/formats/json.rs
+use polars::prelude::*;
+use std::fs::File;
+use std::io::BufReader;
+
+pub struct JsonReader;
+
+impl FormatReader for JsonReader {
+    fn read(&self, path: &Path, options: &ReadOptions) -> Result<DataFrame> {
+        // Gestisci JSON array e JSONL
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        
+        if path.extension() == Some("jsonl") {
+            // JSONL: una riga per record
+            self.read_jsonl(reader, options)
+        } else {
+            // JSON: array o object
+            self.read_json_array(reader, options)
+        }
+    }
+}
+
+impl JsonReader {
+    fn read_jsonl(&self, reader: BufReader<File>, options: &ReadOptions) -> Result<DataFrame> {
+        // Sampling per JSONL
+        let lines: Vec<String> = if let Some(limit) = options.sample_size {
+            reader.lines()
+                .take(limit)
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            reader.lines().collect::<Result<Vec<_>, _>>()?
+        };
+        
+        // Parse con serde_json + convert to DataFrame
+        let records: Vec<JsonValue> = lines.iter()
+            .map(|line| serde_json::from_str(line))
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        json_to_dataframe(&records)
+    }
+}
+
+// Auto-detection
+pub fn detect_format(path: &Path) -> Result<Format> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("csv") => Ok(Format::Csv),
+        Some("tsv") => Ok(Format::Tsv),
+        Some("json") => Ok(Format::Json),
+        Some("jsonl") => Ok(Format::JsonLines),
+        Some("parquet") => Ok(Format::Parquet),
+        _ => {
+            // Sniff content
+            let mut file = File::open(path)?;
+            let mut buffer = [0; 512];
+            file.read(&mut buffer)?;
+            
+            if buffer.starts_with(b"[") || buffer.starts_with(b"{") {
+                Ok(Format::Json)
+            } else if buffer.contains(&b',') {
+                Ok(Format::Csv)
+            } else {
+                Err(anyhow!("Cannot detect format"))
+            }
+        }
+    }
+}
+```
+
+### Pomeriggio: Schema Inference per JSON
+```rust
+// src/formats/schema.rs
+use serde_json::Value;
+use std::collections::HashMap;
+
+pub struct JsonSchemaInferrer {
+    samples: Vec<Value>,
+}
+
+impl JsonSchemaInferrer {
+    pub fn infer_schema(&self) -> Result<Schema> {
+        let mut field_types: HashMap<String, DataType> = HashMap::new();
+        
+        for record in &self.samples {
+            if let Value::Object(map) = record {
+                for (key, value) in map {
+                    let inferred_type = self.infer_type(value);
+                    field_types.entry(key.clone())
+                        .and_modify(|t| *t = self.merge_types(*t, inferred_type))
+                        .or_insert(inferred_type);
+                }
+            }
+        }
+        
+        Ok(Schema { fields: field_types })
+    }
+    
+    fn infer_type(&self, value: &Value) -> DataType {
+        match value {
+            Value::Null => DataType::Null,
+            Value::Bool(_) => DataType::Boolean,
+            Value::Number(n) => {
+                if n.is_f64() { DataType::Float64 }
+                else { DataType::Int64 }
+            }
+            Value::String(s) => {
+                // Try date parsing
+                if self.looks_like_date(s) { DataType::Date }
+                else { DataType::Utf8 }
+            }
+            Value::Array(_) => DataType::List,
+            Value::Object(_) => DataType::Struct,
+        }
+    }
+}
+```
+
+### Task Day 2:
+- [ ] Implementare `JsonReader` e `JsonlReader`
+- [ ] Schema inference per JSON
+- [ ] Format auto-detection
+- [ ] Test con file JSON/JSONL reali
+- [ ] Benchmark performance JSON vs CSV
+
+---
+
+## 📅 Day 3: Performance Optimizations
+
+### Mattina: Smart Sampling Strategy
+```rust
+// src/sampling.rs
+use polars::prelude::*;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Seek};
+
+pub struct SmartSampler {
+    strategy: SamplingStrategy,
+}
+
+pub enum SamplingStrategy {
+    /// Prime N righe (veloce)
+    Head(usize),
+    /// Random sampling (statisticamente corretto)
+    Random { size: usize, seed: Option<u64> },
+    /// Systematic sampling (ogni N righe)
+    Systematic { interval: usize },
+    /// Stratified (bilancia per una colonna chiave)
+    Stratified { size: usize, key_column: String },
+}
+
+impl SmartSampler {
+    pub fn sample_file(&self, path: &Path, format: Format) -> Result<DataFrame> {
+        match self.strategy {
+            SamplingStrategy::Head(n) => {
+                // Più veloce: leggi solo prime N
+                match format {
+                    Format::Csv => CsvReader::from_path(path)?
+                        .with_n_rows(Some(n))
+                        .finish(),
+                    Format::Json => self.sample_json_head(path, n),
+                    _ => todo!(),
+                }
+            }
+            SamplingStrategy::Random { size, seed } => {
+                // Prima conta righe totali
+                let total = self.count_rows_fast(path, format)?;
+                
+                if total <= size {
+                    // Leggi tutto
+                    return read_full_file(path, format);
+                }
+                
+                // Sampling probabilistico
+                let probability = size as f64 / total as f64;
+                self.random_sample(path, format, probability, seed)
+            }
+            SamplingStrategy::Systematic { interval } => {
+                // Leggi ogni N righe
+                self.systematic_sample(path, format, interval)
+            }
+            _ => todo!(),
+        }
+    }
+    
+    /// Conta righe velocemente senza parsing
+    fn count_rows_fast(&self, path: &Path, format: Format) -> Result<usize> {
+        match format {
+            Format::Csv => {
+                let file = File::open(path)?;
+                let reader = BufReader::with_capacity(1024 * 1024, file);
+                Ok(reader.lines().count())
+            }
+            Format::JsonLines => {
+                let file = File::open(path)?;
+                let reader = BufReader::new(file);
+                Ok(reader.lines().count())
+            }
+            _ => {
+                // Fallback: leggi tutto
+                let df = read_full_file(path, format)?;
+                Ok(df.height())
+            }
+        }
+    }
+}
+
+// In ProfileOptions
+impl ProfileOptions {
+    pub fn with_smart_sampling(mut self) -> Self {
+        // Auto-decide strategy based on file size
+        self.sampling_strategy = Some(SamplingStrategy::smart_auto());
+        self
+    }
+}
+```
+
+### Pomeriggio: Parallel Column Analysis
+```rust
+// src/analyzer/parallel.rs
+use rayon::prelude::*;
+
+pub fn analyze_columns_parallel(df: &DataFrame, options: &ProfileOptions) -> Vec<ColumnProfile> {
+    df.get_columns()
+        .par_iter()  // Parallel iterator!
+        .map(|series| analyze_single_column(series, options))
+        .collect()
+}
+
+fn analyze_single_column(series: &Series, options: &ProfileOptions) -> ColumnProfile {
+    // Heavy computation per column
+    let stats = compute_statistics(series);
+    let patterns = if options.detect_patterns {
+        detect_patterns_optimized(series)
+    } else {
+        vec![]
+    };
+    
+    ColumnProfile {
+        name: series.name().to_string(),
+        dtype: infer_semantic_type(series),
+        stats,
+        patterns,
+        quality_issues: check_quality_fast(series),
+    }
+}
+
+// Pattern detection ottimizzato
+fn detect_patterns_optimized(series: &Series) -> Vec<PatternMatch> {
+    if series.len() > 10_000 {
+        // Per serie grandi, campiona
+        let sample = series.sample_n(1000, false, false, None).unwrap();
+        detect_on_sample(&sample)
+    } else {
+        detect_patterns_full(series)
+    }
+}
+```
+
+### Task Day 3:
+- [ ] Implementare smart sampling strategies
+- [ ] Aggiungere parallel processing con Rayon
+- [ ] Benchmark su file di varie dimensioni
+- [ ] Ottimizzare pattern detection per performance
+- [ ] Aggiungere progress bars per operazioni lunghe
+
+---
+
+## 📅 Day 4: HTML Report Generation
+
+### Mattina: Template Engine Setup
+```rust
+// src/reporters/html.rs
+use tera::{Tera, Context};
+use crate::types::ProfileReport;
+
+pub struct HtmlReporter {
+    tera: Tera,
+}
+
+impl HtmlReporter {
+    pub fn new() -> Result<Self> {
+        let mut tera = Tera::default();
+        
+        // Template embedded nel binary
+        tera.add_raw_template("report.html", include_str!("../templates/report.html"))?;
+        tera.add_raw_template("column.html", include_str!("../templates/column.html"))?;
+        
+        Ok(Self { tera })
+    }
+    
+    pub fn generate(&self, report: &ProfileReport) -> Result<String> {
+        let mut context = Context::new();
+        
+        // Dati generali
+        context.insert("file_name", &report.file_name);
+        context.insert("total_rows", &report.total_rows);
+        context.insert("total_columns", &report.total_columns);
+        context.insert("quality_score", &report.quality_score);
+        context.insert("scan_time", &report.scan_time_ms);
+        
+        // Grafici come JSON per Chart.js
+        context.insert("quality_chart_data", &self.prepare_quality_chart(report));
+        context.insert("type_distribution", &self.prepare_type_chart(report));
+        
+        // Colonne con statistiche
+        context.insert("columns", &report.columns);
+        
+        self.tera.render("report.html", &context)
+            .map_err(|e| anyhow!("Template error: {}", e))
+    }
+}
+
+// templates/report.html
+const REPORT_TEMPLATE: &str = r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DataProfiler Report - {{ file_name }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 20px; }
+        .header { background: #f0f0f0; padding: 20px; border-radius: 8px; }
+        .metric { display: inline-block; margin: 10px 20px; }
+        .metric-value { font-size: 2em; font-weight: bold; }
+        .quality-score { color: {% if quality_score > 80 %}green{% elif quality_score > 60 %}orange{% else %}red{% endif %}; }
+        .column-card { border: 1px solid #ddd; padding: 15px; margin: 10px 0; }
+        .chart-container { width: 400px; height: 300px; display: inline-block; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📊 Data Profile Report</h1>
+        <div class="metric">
+            <div>File</div>
+            <div class="metric-value">{{ file_name }}</div>
+        </div>
+        <div class="metric">
+            <div>Quality Score</div>
+            <div class="metric-value quality-score">{{ quality_score }}/100</div>
+        </div>
+        <div class="metric">
+            <div>Rows</div>
+            <div class="metric-value">{{ total_rows | number_format }}</div>
+        </div>
+    </div>
+    
+    <div class="charts">
+        <div class="chart-container">
+            <canvas id="qualityChart"></canvas>
+        </div>
+        <div class="chart-container">
+            <canvas id="typeChart"></canvas>
+        </div>
+    </div>
+    
+    <h2>Column Analysis</h2>
+    {% for column in columns %}
+        {% include "column.html" %}
+    {% endfor %}
+    
+    <script>
+        // Quality breakdown chart
+        new Chart(document.getElementById('qualityChart'), {
+            type: 'doughnut',
+            data: {{ quality_chart_data | json }}
+        });
+        
+        // Type distribution
+        new Chart(document.getElementById('typeChart'), {
+            type: 'bar',
+            data: {{ type_distribution | json }}
+        });
+    </script>
+</body>
+</html>
+"#;
+```
+
+### Pomeriggio: Interactive Features
+```rust
+// src/reporters/html_interactive.rs
+impl HtmlReporter {
+    /// Genera report con tabelle interattive
+    pub fn generate_interactive(&self, report: &ProfileReport) -> Result<String> {
+        let mut context = self.base_context(report);
+        
+        // Aggiungi DataTables per interattività
+        context.insert("use_datatables", &true);
+        
+        // Prepara dati per grafici interattivi
+        let column_details: Vec<ColumnDetail> = report.columns.iter()
+            .map(|col| ColumnDetail {
+                name: col.name.clone(),
+                dtype: col.dtype.to_string(),
+                nulls: col.null_count,
+                unique: col.unique_count,
+                patterns: col.patterns.clone(),
+                histogram_data: self.generate_histogram(col),
+                sample_values: self.get_samples(col, 10),
+            })
+            .collect();
+        
+        context.insert("column_details", &column_details);
+        
+        self.tera.render("report_interactive.html", &context)
+    }
+    
+    fn generate_histogram(&self, column: &ColumnProfile) -> Option<HistogramData> {
+        match &column.stats {
+            Stats::Numeric { distribution, .. } => {
+                Some(HistogramData {
+                    bins: distribution.bins.clone(),
+                    counts: distribution.counts.clone(),
+                })
+            }
+            Stats::Categorical { value_counts, .. } => {
+                // Top 10 categorie
+                let top_10: Vec<_> = value_counts.iter()
+                    .take(10)
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect();
+                
+                Some(HistogramData::from_categories(top_10))
+            }
+            _ => None,
+        }
+    }
+}
+```
+
+### Task Day 4:
+- [ ] Setup template engine (Tera o Handlebars)
+- [ ] Design responsive HTML template
+- [ ] Integrare Chart.js per grafici
+- [ ] Aggiungere DataTables per sorting/filtering
+- [ ] Export PDF opzionale
+- [ ] Test su diversi browser
+
+---
+
+## 📅 Day 5: Data Quality Scoring & Polish
+
+### Mattina: Quality Score System
+```rust
+// src/quality/scoring.rs
+use crate::types::{ProfileReport, QualityDimension};
+
+pub struct QualityScorer {
+    weights: QualityWeights,
+}
+
+#[derive(Default)]
+pub struct QualityWeights {
+    pub completeness: f64,  // Default 0.3
+    pub validity: f64,      // Default 0.3
+    pub consistency: f64,   // Default 0.2
+    pub uniqueness: f64,    // Default 0.1
+    pub timeliness: f64,    // Default 0.1
+}
+
+impl QualityScorer {
+    pub fn score(&self, report: &ProfileReport) -> QualityScore {
+        let mut dimensions = Vec::new();
+        
+        // 1. Completeness (quanti null?)
+        let completeness = self.score_completeness(report);
+        dimensions.push(QualityDimension {
+            name: "Completeness".to_string(),
+            score: completeness,
+            weight: self.weights.completeness,
+            issues: self.completeness_issues(report),
+        });
+        
+        // 2. Validity (pattern match, type consistency)
+        let validity = self.score_validity(report);
+        dimensions.push(QualityDimension {
+            name: "Validity".to_string(),
+            score: validity,
+            weight: self.weights.validity,
+            issues: self.validity_issues(report),
+        });
+        
+        // 3. Consistency (formati misti, outliers)
+        let consistency = self.score_consistency(report);
+        // ... etc
+        
+        // Calcola score totale pesato
+        let total_score = dimensions.iter()
+            .map(|d| d.score * d.weight)
+            .sum::<f64>() / dimensions.iter()
+            .map(|d| d.weight)
+            .sum::<f64>();
+        
+        QualityScore {
+            total: (total_score * 100.0) as u8,
+            dimensions,
+            recommendations: self.generate_recommendations(&dimensions),
+        }
+    }
+    
+    fn score_completeness(&self, report: &ProfileReport) -> f64 {
+        let total_cells = report.total_rows * report.total_columns;
+        let total_nulls: usize = report.columns.iter()
+            .map(|c| c.null_count)
+            .sum();
+        
+        1.0 - (total_nulls as f64 / total_cells as f64)
+    }
+    
+    fn score_validity(&self, report: &ProfileReport) -> f64 {
+        // Percentuale di valori che matchano pattern attesi
+        let mut valid_ratio = 1.0;
+        
+        for column in &report.columns {
+            if column.expected_pattern.is_some() {
+                let match_ratio = column.pattern_match_ratio.unwrap_or(0.0);
+                valid_ratio *= match_ratio;
+            }
+        }
+        
+        valid_ratio.powf(1.0 / report.columns.len() as f64)
+    }
+}
+
+// Recommendations engine
+impl QualityScorer {
+    fn generate_recommendations(&self, dimensions: &[QualityDimension]) -> Vec<String> {
+        let mut recommendations = Vec::new();
+        
+        for dim in dimensions {
+            if dim.score < 0.8 {
+                match dim.name.as_str() {
+                    "Completeness" => {
+                        recommendations.push(format!(
+                            "Consider handling missing values in columns: {}",
+                            dim.issues.join(", ")
+                        ));
+                    }
+                    "Validity" => {
+                        recommendations.push(
+                            "Standardize formats for better data quality".to_string()
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        recommendations
+    }
+}
+```
+
+### Pomeriggio: Final Polish & Testing
+```rust
+// src/lib.rs - Final API
+//! # DataProfiler
+//! 
+//! Fast and versatile data profiling for Rust.
+//! 
+//! ## Quick Start
+//! 
+//! ```rust
+//! use dataprof::DataProfiler;
+//! 
+//! // Simple profiling
+//! let report = DataProfiler::from_path("data.csv")?.analyze()?;
+//! println!("Quality score: {}/100", report.quality_score.total);
+//! 
+//! // Advanced usage
+//! let report = DataProfiler::from_path("big_data.json")?
+//!     .with_sample(Some(100_000))
+//!     .parallel(true)
+//!     .analyze()?;
+//! 
+//! // Generate HTML report
+//! report.to_html("report.html")?;
+//! ```
+
+// Examples directory
+// examples/basic.rs
+// examples/streaming.rs  
+// examples/custom_patterns.rs
+// examples/web_service.rs
+
+// Benchmark suite
+// benches/large_files.rs
+// benches/formats_comparison.rs
+```
+
+### Task Day 5:
+- [ ] Implementare quality scoring system
+- [ ] Aggiungere recommendations engine
+- [ ] Documentazione API completa
+- [ ] Examples per ogni use case
+- [ ] Benchmark performance vs v0.1.0
+- [ ] Release checklist (CHANGELOG, version bump, tag)
+
+---
+
+## 🚀 Release Checklist v0.2.0
+
+### Features Complete
+- [ ] Library extraction con API pulita
+- [ ] Multi-format support (CSV, JSON, JSONL)
+- [ ] Performance improvements (sampling, parallel)
+- [ ] HTML report generation
+- [ ] Data quality scoring
+
+### Documentation
+- [ ] API docs complete (`cargo doc`)
+- [ ] README aggiornato con nuovi esempi
+- [ ] CHANGELOG.md con tutte le changes
+- [ ] Migration guide da v0.1.0
+
+### Testing
+- [ ] Unit tests per ogni modulo
+- [ ] Integration tests multi-formato
+- [ ] Benchmark performance
+- [ ] Test su file reali grandi
+
+### Release
+- [ ] Version bump in Cargo.toml
+- [ ] `cargo fmt` e `cargo clippy`
+- [ ] `cargo test --all`
+- [ ] Git tag v0.2.0
+- [ ] `cargo publish`
+
+## 📊 Metriche di Successo v0.2.0
+
+- **Performance**: 2x più veloce su file > 100MB
+- **Versatilità**: Utilizzabile come library in 3+ modi diversi  
+- **Quality Score**: Accuratezza 90%+ nel trovare issues
+- **Developer Experience**: < 5 righe per profiling base
+- **Formati**: Supporto completo CSV, JSON, JSONL
 
 1. **Performance Optimization**
    - Parallel column analysis con Rayon

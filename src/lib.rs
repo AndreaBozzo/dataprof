@@ -1,3 +1,5 @@
+pub mod quality;
+pub mod sampler;
 pub mod types;
 
 use anyhow::Result;
@@ -7,8 +9,79 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // Re-export types
-pub use types::{ColumnProfile, ColumnStats, DataType, Pattern};
+pub use quality::QualityChecker;
+pub use sampler::{SampleInfo, Sampler};
+pub use types::{
+    ColumnProfile, ColumnStats, DataType, FileInfo, Pattern, QualityIssue, QualityReport, ScanInfo,
+};
 
+// Nuova funzione che usa il sampler per file grandi
+pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
+    let metadata = std::fs::metadata(file_path)?;
+    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+
+    let sampler = Sampler::new(file_size_mb);
+    let start = std::time::Instant::now();
+
+    let (records, sample_info) = sampler.sample_csv(file_path)?;
+
+    // Converti i records in formato compatibile
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+
+    if !records.is_empty() {
+        // Usa gli header dal primo record (assumendo che ci siano)
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(file_path)?;
+        let headers = reader.headers()?.clone();
+
+        // Inizializza colonne
+        for header in headers.iter() {
+            columns.insert(header.to_string(), Vec::new());
+        }
+
+        // Aggiungi i dati campionati
+        for record in records {
+            for (i, field) in record.iter().enumerate() {
+                if let Some(header) = headers.get(i) {
+                    if let Some(column_data) = columns.get_mut(header) {
+                        column_data.push(field.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Analizza le colonne
+    let mut column_profiles = Vec::new();
+    for (name, data) in &columns {
+        let profile = analyze_column(name, data);
+        column_profiles.push(profile);
+    }
+
+    // Check quality issues
+    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+
+    let scan_time_ms = start.elapsed().as_millis();
+
+    Ok(QualityReport {
+        file_info: FileInfo {
+            path: file_path.display().to_string(),
+            total_rows: sample_info.total_rows,
+            total_columns: column_profiles.len(),
+            file_size_mb,
+        },
+        column_profiles,
+        issues,
+        scan_info: ScanInfo {
+            rows_scanned: sample_info.sampled_rows,
+            sampling_ratio: sample_info.sampling_ratio,
+            scan_time_ms,
+        },
+    })
+}
+
+// Funzione originale per compatibilità
 pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
@@ -66,6 +139,7 @@ fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
         data_type,
         null_count,
         total_count,
+        unique_count: Some(data.iter().collect::<std::collections::HashSet<_>>().len()),
         stats,
         patterns,
     }
@@ -191,6 +265,7 @@ fn detect_patterns(data: &[String]) -> Vec<Pattern> {
                 // Only show patterns with >5% matches
                 patterns.push(Pattern {
                     name: name.to_string(),
+                    regex: pattern_str.to_string(),
                     match_count: matches,
                     match_percentage: percentage,
                 });
