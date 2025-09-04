@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 
-A fast, lightweight CLI tool for CSV and JSON data profiling and quality analysis written in Rust.
+A fast, lightweight library and CLI tool for CSV and JSON data profiling and quality analysis written in Rust.
 
 ![DataProfiler HTML Report](assets/animations/HTML.gif)
 *Interactive HTML reports with professional data quality insights*
