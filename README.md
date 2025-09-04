@@ -1,4 +1,4 @@
-# DataProfiler CLI
+# DataProfiler
 
 [![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)

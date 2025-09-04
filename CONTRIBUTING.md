@@ -1,4 +1,4 @@
-# Contributing to DataProfiler CLI
+# Contributing to DataProfiler
 
 Thank you for considering contributing to DataProfiler CLI! This document provides guidelines for contributing to the project.
 
