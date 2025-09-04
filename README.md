@@ -19,6 +19,7 @@ A fast, lightweight CLI tool for CSV and JSON data profiling and quality analysi
 
 ## Quick Start
 
+### CLI Tool
 ```bash
 git clone https://github.com/AndreaBozzo/dataprof.git
 cd dataprof
@@ -27,6 +28,23 @@ cargo build --release
 # Analyze your data
 ./target/release/dataprof data.csv
 ./target/release/dataprof --quality --html report.html data.csv
+```
+
+### Rust Library
+Add to your `Cargo.toml`:
+```toml
+[dependencies]
+dataprof = { git = "https://github.com/AndreaBozzo/dataprof.git" }
+```
+
+```rust
+use dataprof::{analyze_csv, analyze_json};
+use std::path::Path;
+
+let profiles = analyze_csv(Path::new("data.csv"))?;
+for profile in profiles {
+    println!("{}: {:?}", profile.name, profile.data_type);
+}
 ```
 
 ## Usage
