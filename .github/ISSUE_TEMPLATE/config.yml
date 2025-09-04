@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Support
+    url: https://github.com/AndreaBozzo/dataprof/discussions
+    about: Ask questions and discuss DataProfiler usage
+  - name: Security Issues
+    url: https://github.com/AndreaBozzo/dataprof/security/advisories/new
+    about: Report security vulnerabilities privately
