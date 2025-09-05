@@ -1,5 +1,5 @@
-pub mod simple;
 pub mod advanced;
+pub mod simple;
 
-pub use simple::*;
 pub use advanced::*;
+pub use simple::*;

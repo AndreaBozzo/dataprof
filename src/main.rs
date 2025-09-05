@@ -2,10 +2,20 @@ use anyhow::Result;
 use clap::Parser;
 use colored::*;
 use dataprof::{
-    analyze_csv, analyze_csv_with_sampling, analyze_json, analyze_json_with_quality,
-    generate_html_report, ColumnProfile, ColumnStats, DataType, QualityIssue,
+    analyze_csv,
+    analyze_csv_with_sampling,
+    analyze_json,
+    analyze_json_with_quality,
+    generate_html_report,
+    ChunkSize,
+    ColumnProfile,
+    ColumnStats,
     // v0.3.0 imports
-    DataProfiler, ChunkSize, SamplingStrategy, ProgressInfo,
+    DataProfiler,
+    DataType,
+    ProgressInfo,
+    QualityIssue,
+    SamplingStrategy,
 };
 use std::path::{Path, PathBuf};
 
@@ -45,11 +55,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let version_info = if cli.streaming {
-        "📊 DataProfiler v0.3.0 - Streaming Analysis".bright_blue().bold()
+        "📊 DataProfiler v0.3.0 - Streaming Analysis"
+            .bright_blue()
+            .bold()
     } else {
         "📊 DataProfiler - Standard Analysis".bright_blue().bold()
     };
-    
+
     println!("{}", version_info);
     println!();
 
@@ -66,7 +78,7 @@ fn main() -> Result<()> {
         let report = if cli.streaming && !is_json_file(&cli.file) {
             // v0.3.0 Streaming API
             let mut profiler = DataProfiler::streaming();
-            
+
             // Configure chunk size
             let chunk_size = if let Some(size) = cli.chunk_size {
                 ChunkSize::Fixed(size)
@@ -74,25 +86,25 @@ fn main() -> Result<()> {
                 ChunkSize::Adaptive
             };
             profiler = profiler.chunk_size(chunk_size);
-            
+
             // Configure progress callback if requested
             if cli.progress {
                 profiler = profiler.progress_callback(|progress: ProgressInfo| {
-                    print!("\r🔄 Processing: {:.1}% ({} rows, {:.1} rows/sec)", 
-                           progress.percentage, 
-                           progress.rows_processed,
-                           progress.processing_speed);
+                    print!(
+                        "\r🔄 Processing: {:.1}% ({} rows, {:.1} rows/sec)",
+                        progress.percentage, progress.rows_processed, progress.processing_speed
+                    );
                     std::io::Write::flush(&mut std::io::stdout()).unwrap();
                 });
             }
-            
+
             let result = profiler.analyze_file(&cli.file)?;
-            
+
             // Clear progress line if it was shown
             if cli.progress {
                 println!(); // New line after progress
             }
-            
+
             result
         } else {
             // Legacy analysis

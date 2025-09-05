@@ -1,7 +1,7 @@
 // New v0.3.0 modular architecture
+pub mod api;
 pub mod core;
 pub mod engines;
-pub mod api;
 
 // Legacy modules for backward compatibility
 pub mod html;
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 // v0.3.0 public API - main exports
-pub use api::{DataProfiler, quick_quality_check, stream_profile};
+pub use api::{quick_quality_check, stream_profile, DataProfiler};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use engines::streaming::ProgressInfo;
 

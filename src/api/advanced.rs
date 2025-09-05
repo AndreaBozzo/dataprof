@@ -1,10 +1,10 @@
 // Advanced API - placeholder for future builder pattern implementations
 // This will contain the ProfileEngine builder from the roadmap
 
+use crate::engines::streaming::StreamingProfiler;
+use crate::types::QualityReport;
 use anyhow::Result;
 use std::path::Path;
-use crate::types::QualityReport;
-use crate::engines::streaming::StreamingProfiler;
 
 pub struct ProfileEngine {
     // TODO: implement advanced configuration options

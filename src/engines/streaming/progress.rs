@@ -23,21 +23,23 @@ impl ProgressInfo {
             Some(total) if total > 0 => (rows_processed as f64 / total as f64) * 100.0,
             _ => 0.0,
         };
-        
+
         let processing_speed = if elapsed_time.as_secs() > 0 {
             rows_processed as f64 / elapsed_time.as_secs_f64()
         } else {
             0.0
         };
-        
+
         let estimated_remaining_time = match (estimated_total_rows, processing_speed > 0.0) {
             (Some(total), true) => {
                 let remaining_rows = total.saturating_sub(rows_processed);
-                Some(Duration::from_secs_f64(remaining_rows as f64 / processing_speed))
-            },
+                Some(Duration::from_secs_f64(
+                    remaining_rows as f64 / processing_speed,
+                ))
+            }
             _ => None,
         };
-        
+
         Self {
             percentage,
             rows_processed,
@@ -70,17 +72,22 @@ impl ProgressTracker {
             update_interval: Duration::from_millis(500), // Update every 500ms
         }
     }
-    
-    pub fn update(&mut self, rows_processed: usize, estimated_total: Option<usize>, current_chunk: usize) {
+
+    pub fn update(
+        &mut self,
+        rows_processed: usize,
+        estimated_total: Option<usize>,
+        current_chunk: usize,
+    ) {
         let now = Instant::now();
-        
+
         // Rate limit updates
         if now.duration_since(self.last_update) < self.update_interval {
             return;
         }
-        
+
         self.last_update = now;
-        
+
         if let Some(ref callback) = self.callback {
             let progress = ProgressInfo::new(
                 rows_processed,
@@ -88,11 +95,11 @@ impl ProgressTracker {
                 now.duration_since(self.start_time),
                 current_chunk,
             );
-            
+
             callback(progress);
         }
     }
-    
+
     pub fn finish(&self, total_rows_processed: usize) {
         if let Some(ref callback) = self.callback {
             let progress = ProgressInfo::new(
@@ -101,7 +108,7 @@ impl ProgressTracker {
                 Instant::now().duration_since(self.start_time),
                 0,
             );
-            
+
             callback(progress);
         }
     }
