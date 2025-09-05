@@ -1,0 +1,34 @@
+id,text_field,number_field,date_field,boolean_field,json_field,special_chars,unicode_field,messy_data
+1,"Normal text",42,"2024-01-01",true,"{""key"": ""value""}","Hello, World!","Café",clean_data
+2,"Text with ""quotes""",3.14159,"2024-02-29",false,"{""array"": [1, 2, 3]}","Special: @#$%^&*()","Naïve","data,with,commas"
+3,"Text with
+newlines",,-999,"01/03/2024",TRUE,NULL,"Symbols: ♠♣♥♦","Москва",
+4,,0,"invalid_date",FALSE,"{""nested"": {""deep"": true}}","Tabs:	spaced","北京","	leading_whitespace"
+5,"Text with 'single quotes'",-999999,"2024-13-45",1,"{malformed json}","Emoji: 😀🎉🚀","العربية","trailing_whitespace	"
+6,"Text with, commas, everywhere",999999.999,"2024-00-00",0,"{""unicode"": ""café""}","Currencies: $€£¥","हिंदी",MiXeD_cAsE_DaTa
+7,"Line1
+Line2
+Line3",1.7976931348623157e+308,"",yes,"{""bool"": true, ""null"": null}","Math: ∑∞±√","日本語","  excessive   spaces  "
+8,"""""",4.9e-324,"1900-01-01",no,"""""","HTML: <script>alert('xss')</script>","한국어","ALLUPPERCASE"
+9,"SQL: '; DROP TABLE test; --",NaN,"9999-12-31",maybe,"{""sql"": ""'; DROP TABLE users; --""}","Brackets: [](){}","Ελληνικά","alllowercase"
+10,NULL,Infinity,"0000-00-00",NULL,"{""inf"": Infinity, ""nan"": NaN}","Slashes: \/\/\\","ไทย","123456789"
+11,"   ","",,"   ","{}","Empty spaces","中文","!@#$%^&*()"
+12,"Text with ""nested """"quotes""""",42.0,"2024-01-01T00:00:00Z",true,"{""timestamp"": ""2024-01-01T00:00:00Z""}","Percentage: 100%","Русский","data123!@#"
+13,"Escaped chars: \n\t\r\\",1e10,"Tue, 01 Jan 2024 00:00:00 GMT",false,"{""escaped"": ""\\n\\t\\r\\\\""}","URLs: https://example.com","Português","fileName.ext"
+14,"Very long text that goes on and on and on and should test the limits of text processing systems with lots of repeated words and phrases to see how well the profiler handles verbose content",2.2250738585072014e-308,"Jan 1, 2024",TRUE,"{""long"": ""Very long JSON value that contains lots of text and should test JSON parsing limits with nested structures and arrays""}","IP: 192.168.1.1","Français","path/to/file.txt"
+15,"Binary data: ���",0x1A,"2024-W01-1",FALSE,"{""binary"": ""\u0000\u0001\u0002""}","Regex: ^[a-z]+$","Deutsch","user@domain.com"
+16,"Control chars: ","42","2024-001",1,"""""","Phone: +1-555-123-4567","Italiano","123-45-6789"
+17,"""Leading quotes",,-0,"Monday, January 1, 2024",0,"{""nested"": {""array"": [{""obj"": true}]}}","UUID: 550e8400-e29b-41d4-a716-446655440000","Español","192.168.0.1"
+18,"Trailing quotes""",3.14,"1st Jan 2024",yes,"{""pi"": 3.14159265359}","MAC: 00:1B:44:11:3A:B7","Nederlands","#hashtag"
+19,"Unicode escapes: \u0041\u0042\u0043",-273.15,"Jan 1st, 2024",no,"{""temp"": -273.15, ""unit"": ""celsius""}","Version: v1.2.3","Svenska","@username"
+20,"Mixed quotes: ""Hello 'World'""",6.022e23,"1/1/2024",maybe,"{""avogadro"": 6.022e23}","Range: 1-100","Norsk","#FF5733"
+21,"Backslashes: C:\\Users\\Name",1.23456789012345e-10,"01-01-2024",undefined,"{""path"": ""C:\\\\Users\\\\Name""}","Time: 12:34:56","Suomi","rgb(255,87,51)"
+22,"Single char: A",-1.5,"2024.01.01",null,"null","Boolean: true/false","Dansk","localhost:3000"
+23,"",42.000000000000001,"24-01-01",TRUE,"{""precision"": 42.000000000000001}","Encoding: UTF-8","Polski","127.0.0.1:8080"
+24,"Repeated: AAAAAAAAAAAAAAAAAAAAAAAAA",999.999,"01.01.24",FALSE,"{""repeat"": ""AAAAAAAAAA""}","Base64: QWxhZGRpbjpvcGVuIHNlc2FtZQ==","Čeština","/dev/null"
+25,"Scientific: 6.02214076e23",1.0000000000000002,"2024年1月1日",1,"{""scientific"": ""6.02214076e23""}","Hex: #DEADBEEF","Slovenčina","C:\\Windows\\System32"
+26,"Mixed separators: 1,234.56",1234.56,"1-Jan-2024",0,"{""number"": 1234.56}","Binary: 01010101","Magyar","/usr/local/bin"
+27,"Zero: 0",-0.0,"Mon Jan 1 2024",yes,"{""zero"": 0, ""negZero"": -0.0}","Octal: 0777","Lietuvių","../config.json"
+28,"Infinity: ∞",2.718281828,"01 JAN 2024",no,"{""e"": 2.718281828}","Roman: MMXXIV","Latviešu","~/.bashrc"
+29,"Pi: π",3.141592654,"1 January 2024",maybe,"{""pi"": 3.141592654}","Greek: αβγδε","Eesti","${HOME}/docs"
+30,"Empty JSON: {}",,"2024-366",NULL,"{}","Punctuation: .,;:!?","Suomi","file:///C:/temp"
