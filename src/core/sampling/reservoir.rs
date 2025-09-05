@@ -311,8 +311,7 @@ mod tests {
         }
 
         // Process more records
-        let mut replacement_occurred = false;
-        let initial_sample = sampler.get_sample_indices().to_vec();
+        let _initial_sample = sampler.get_sample_indices().to_vec();
 
         for i in 3..20 {
             sampler.process_record(i);
@@ -364,17 +363,17 @@ mod tests {
 
         let mut sampler = WeightedReservoirSampler::new(10, weights);
 
-        let mut high_selected = 0;
-        let mut low_selected = 0;
+        let mut _high_selected = 0;
+        let mut _low_selected = 0;
 
         // Process records with different weights
         for i in 0..50 {
             let category = if i % 2 == 0 { "high" } else { "low" };
             if sampler.process_weighted_record(i, category) {
                 if category == "high" {
-                    high_selected += 1;
+                    _high_selected += 1;
                 } else {
-                    low_selected += 1;
+                    _low_selected += 1;
                 }
             }
         }

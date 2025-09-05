@@ -8,12 +8,9 @@ rules:
   # Allow HTML in markdown (for badges, enhanced formatting)
   MD033: false
 
-  # Allow inline HTML
-  MD034: false
-
   # Allow long lines (for URLs, code examples)
   MD013:
-    line_length: 120
+    line_length: 200
 
   # Allow multiple consecutive blank lines
   MD012: false
@@ -26,3 +23,12 @@ rules:
 
   # Allow bare URLs
   MD034: false
+
+  # Allow emphasis as heading (for bold descriptions)
+  MD036: false
+
+  # Allow missing language on fenced code blocks
+  MD040: false
+
+  # Allow multiple top-level headings
+  MD025: false

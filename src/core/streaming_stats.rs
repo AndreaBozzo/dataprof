@@ -232,10 +232,7 @@ impl StreamingColumnCollection {
         I: IntoIterator<Item = String>,
     {
         for (header, value) in headers.iter().zip(values) {
-            let stats = self
-                .columns
-                .entry(header.clone())
-                .or_insert_with(StreamingStatistics::new);
+            let stats = self.columns.entry(header.clone()).or_default();
             stats.update(&value);
         }
     }

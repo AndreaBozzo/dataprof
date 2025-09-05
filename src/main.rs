@@ -59,14 +59,14 @@ fn main() -> Result<()> {
 
     // Enhanced error handling wrapper
     if let Err(e) = run_analysis(&cli) {
-        handle_error(&e, &cli.file);
+        handle_error(&e, cli.file.as_path());
         std::process::exit(1);
     }
 
     Ok(())
 }
 
-fn handle_error(error: &anyhow::Error, file_path: &PathBuf) {
+fn handle_error(error: &anyhow::Error, file_path: &Path) {
     // Check if it's our custom error type
     if let Some(dp_error) = error.downcast_ref::<DataProfilerError>() {
         let severity_icon = match dp_error.severity() {
@@ -98,7 +98,7 @@ fn handle_error(error: &anyhow::Error, file_path: &PathBuf) {
 
             // Suggest similar files
             if let Ok(entries) =
-                std::fs::read_dir(file_path.parent().unwrap_or(&std::path::Path::new(".")))
+                std::fs::read_dir(file_path.parent().unwrap_or(std::path::Path::new(".")))
             {
                 let similar_files: Vec<_> = entries
                     .filter_map(|entry| entry.ok())

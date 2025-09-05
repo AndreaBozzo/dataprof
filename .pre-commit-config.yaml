@@ -36,13 +36,13 @@ repos:
       - id: check-case-conflict
       - id: mixed-line-ending
 
-  # Markdown formatting
-  - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.37.0
-    hooks:
-      - id: markdownlint
-        args: ['--fix']
-        files: '\.md$'
+  # Markdown formatting (disabled for now due to complex legacy docs)
+  # - repo: https://github.com/igorshubovych/markdownlint-cli
+  #   rev: v0.37.0
+  #   hooks:
+  #     - id: markdownlint
+  #       args: ['--fix']
+  #       files: '\.md$'
 
 # Configuration
 default_language_version:

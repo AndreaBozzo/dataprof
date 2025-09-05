@@ -218,9 +218,9 @@ fn test_full_integration() -> Result<()> {
         let memory_report = MemoryEfficientProfiler::new().analyze_file(test_file)?;
 
         // Basic consistency checks
-        assert!(streaming_report.column_profiles.len() > 0);
-        assert!(columnar_report.column_profiles.len() > 0);
-        assert!(memory_report.column_profiles.len() > 0);
+        assert!(!streaming_report.column_profiles.is_empty());
+        assert!(!columnar_report.column_profiles.is_empty());
+        assert!(!memory_report.column_profiles.is_empty());
 
         println!("  ✓ All profilers processed successfully");
         println!(

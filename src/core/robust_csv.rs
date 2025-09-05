@@ -5,6 +5,9 @@ use std::path::Path;
 
 use crate::core::errors::DataProfilerError;
 
+/// Result type for robust CSV parsing operations
+pub type RobustParseResult = (Option<Vec<String>>, Vec<Vec<String>>);
+
 /// Robust CSV parser that handles edge cases and malformed data
 pub struct RobustCsvParser {
     pub flexible: bool,
@@ -261,7 +264,7 @@ impl RobustCsvParser {
         data: &str,
         delimiter: u8,
         has_headers: bool,
-    ) -> Result<(Option<Vec<String>>, Vec<Vec<String>>)> {
+    ) -> Result<RobustParseResult> {
         let mut reader = ReaderBuilder::new()
             .delimiter(delimiter)
             .has_headers(has_headers)
@@ -308,11 +311,9 @@ impl RobustCsvParser {
         let reader = BufReader::new(file);
         let mut diagnostics = CsvDiagnostics::default();
 
-        let mut _line_number = 0;
         let mut field_counts = std::collections::HashMap::new();
 
         for line_result in reader.lines() {
-            _line_number += 1;
             let line = line_result?;
 
             if line.trim().is_empty() {
@@ -475,7 +476,7 @@ mod tests {
         writeln!(temp_file, "name,age,city")?;
         writeln!(temp_file, "Alice,25,New York")?;
         writeln!(temp_file, "Bob,30")?; // Inconsistent
-        writeln!(temp_file, "")?; // Empty line
+        writeln!(temp_file)?; // Empty line
         writeln!(temp_file, "Charlie,35,London")?;
         temp_file.flush()?;
 

@@ -297,7 +297,7 @@ impl TrueStreamingProfiler {
         for column_name in column_stats.column_names() {
             if let Some(stats) = column_stats.get_column_stats(&column_name) {
                 // Use sample values from streaming stats for quality checking
-                let sample_values: Vec<String> = stats.sample_values().iter().cloned().collect();
+                let sample_values: Vec<String> = stats.sample_values().to_vec();
 
                 samples.insert(column_name, sample_values);
             }

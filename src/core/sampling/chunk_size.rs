@@ -1,11 +1,12 @@
 use sysinfo::System;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ChunkSize {
     /// Fixed chunk size in rows
     Fixed(usize),
 
     /// Adaptive based on available memory
+    #[default]
     Adaptive,
 
     /// Custom sizing function - cannot derive Debug/Clone with function pointer
@@ -47,11 +48,5 @@ impl ChunkSize {
         } else {
             rows_per_chunk
         }
-    }
-}
-
-impl Default for ChunkSize {
-    fn default() -> Self {
-        ChunkSize::Adaptive
     }
 }

@@ -11,6 +11,12 @@ pub struct SimdStats {
     pub max: f64,
 }
 
+impl Default for SimdStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimdStats {
     pub fn new() -> Self {
         Self {
@@ -70,10 +76,10 @@ pub fn compute_stats_simd(values: &[f64]) -> SimdStats {
         let vec = f64x4::new([chunk[0], chunk[1], chunk[2], chunk[3]]);
 
         // Accumulate sum
-        sum_vec = sum_vec + vec;
+        sum_vec += vec;
 
         // Accumulate sum of squares
-        sum_squares_vec = sum_squares_vec + (vec * vec);
+        sum_squares_vec += vec * vec;
 
         // Update min/max
         min_vec = min_vec.min(vec);
@@ -123,7 +129,7 @@ pub fn sum_simd(values: &[f64]) -> f64 {
 
     for chunk in chunks {
         let vec = f64x4::new([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        sum_vec = sum_vec + vec;
+        sum_vec += vec;
     }
 
     let sum_array: [f64; 4] = sum_vec.to_array();
@@ -201,7 +207,7 @@ pub fn dot_product_simd(a: &[f64], b: &[f64]) -> f64 {
         let vec_a = f64x4::new([chunk_a[0], chunk_a[1], chunk_a[2], chunk_a[3]]);
         let vec_b = f64x4::new([chunk_b[0], chunk_b[1], chunk_b[2], chunk_b[3]]);
 
-        dot_vec = dot_vec + (vec_a * vec_b);
+        dot_vec += vec_a * vec_b;
     }
 
     let dot_array: [f64; 4] = dot_vec.to_array();

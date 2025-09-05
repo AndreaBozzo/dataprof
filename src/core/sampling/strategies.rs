@@ -420,7 +420,7 @@ mod tests {
         }
 
         // Should sample at least initial_size but not more than max_size
-        assert!(included_count >= 10 && included_count <= 50);
+        assert!((10..=50).contains(&included_count));
     }
 
     #[test]

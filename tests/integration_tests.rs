@@ -8,7 +8,6 @@ use dataprof::{
     analyze_json_with_quality,
     generate_html_report,
     quick_quality_check,
-    ChunkSize,
     // v0.3.0 imports for testing new API
     DataProfiler,
 };
@@ -314,7 +313,7 @@ fn test_v030_quick_quality_check() -> Result<()> {
     let quality_score = quick_quality_check(temp_file.path())?;
 
     // Should return a score between 0-100
-    assert!(quality_score >= 0.0 && quality_score <= 100.0);
+    assert!((0.0..=100.0).contains(&quality_score));
     // With no quality issues, should be 100.0
     assert_eq!(quality_score, 100.0);
 
