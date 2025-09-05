@@ -58,7 +58,8 @@ impl DataProfilerError {
         let suggestion = if original_error.contains("field") && original_error.contains("record") {
             format!("The CSV file '{}' has inconsistent column counts. This often happens with:\n  • Text fields containing commas without proper quoting\n  • Mixed line endings (Windows/Unix)\n  • Embedded newlines in data\n\n  DataProfiler will attempt to parse it with flexible mode automatically.", file_path)
         } else if original_error.contains("UTF-8") {
-            "The file contains non-UTF-8 characters. Try converting it to UTF-8 encoding.".to_string()
+            "The file contains non-UTF-8 characters. Try converting it to UTF-8 encoding."
+                .to_string()
         } else if original_error.contains("permission") {
             "Check file permissions - you may not have read access to this file.".to_string()
         } else {
@@ -168,7 +169,7 @@ impl DataProfilerError {
     pub fn category(&self) -> &'static str {
         match self {
             DataProfilerError::CsvParsingError { .. } => "csv_parsing",
-            DataProfilerError::FileNotFound { .. } => "file_not_found", 
+            DataProfilerError::FileNotFound { .. } => "file_not_found",
             DataProfilerError::UnsupportedFormat { .. } => "unsupported_format",
             DataProfilerError::MemoryLimitExceeded => "memory_limit",
             DataProfilerError::InvalidConfiguration { .. } => "configuration",
@@ -217,7 +218,7 @@ impl fmt::Display for ErrorSeverity {
         let s = match self {
             ErrorSeverity::Critical => "CRITICAL",
             ErrorSeverity::High => "HIGH",
-            ErrorSeverity::Medium => "MEDIUM", 
+            ErrorSeverity::Medium => "MEDIUM",
             ErrorSeverity::Low => "LOW",
             ErrorSeverity::Info => "INFO",
         };
@@ -229,7 +230,7 @@ impl fmt::Display for ErrorSeverity {
 impl From<anyhow::Error> for DataProfilerError {
     fn from(err: anyhow::Error) -> Self {
         let error_str = err.to_string();
-        
+
         // Try to categorize the error based on its message
         if error_str.contains("No such file") || error_str.contains("not found") {
             DataProfilerError::FileNotFound {
@@ -241,18 +242,12 @@ impl From<anyhow::Error> for DataProfilerError {
                 suggestion: "Try using robust CSV parsing mode".to_string(),
             }
         } else if error_str.contains("JSON") {
-            DataProfilerError::JsonParsingError {
-                message: error_str,
-            }
+            DataProfilerError::JsonParsingError { message: error_str }
         } else if error_str.contains("permission") {
-            DataProfilerError::IoError {
-                message: error_str,
-            }
+            DataProfilerError::IoError { message: error_str }
         } else {
             // Generic error
-            DataProfilerError::IoError {
-                message: error_str,
-            }
+            DataProfilerError::IoError { message: error_str }
         }
     }
 }
@@ -307,10 +302,10 @@ mod tests {
     #[test]
     fn test_error_suggestions() {
         let config_error = DataProfilerError::invalid_config(
-            "Invalid chunk size", 
-            "Use a value between 1000 and 100000"
+            "Invalid chunk size",
+            "Use a value between 1000 and 100000",
         );
-        
+
         let error_string = config_error.to_string();
         assert!(error_string.contains("Invalid chunk size"));
         assert!(error_string.contains("💡"));

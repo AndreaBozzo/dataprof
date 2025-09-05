@@ -45,7 +45,7 @@ impl RobustCsvParser {
     pub fn detect_delimiter(&self, file_path: &Path) -> Result<u8> {
         let file = std::fs::File::open(file_path)?;
         let reader = BufReader::new(file);
-        
+
         let mut lines: Vec<String> = Vec::new();
         for (i, line) in reader.lines().enumerate() {
             if i >= 5 {
@@ -128,7 +128,10 @@ impl RobustCsvParser {
         match self.try_strict_parsing(file_path, delimiter) {
             Ok(result) => return Ok(result),
             Err(e) => {
-                eprintln!("⚠️ Strict CSV parsing failed: {}. Trying flexible parsing...", e);
+                eprintln!(
+                    "⚠️ Strict CSV parsing failed: {}. Trying flexible parsing...",
+                    e
+                );
             }
         }
 
@@ -193,7 +196,7 @@ impl RobustCsvParser {
             match result {
                 Ok(record) => {
                     let mut row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
-                    
+
                     // Normalize field count
                     if self.allow_variable_columns {
                         if row.len() < expected_field_count {
@@ -203,33 +206,39 @@ impl RobustCsvParser {
                             // Truncate extra fields (or combine them)
                             if row.len() == expected_field_count + 1 {
                                 // Often the last field contains the delimiter, combine last two
-                                if let (Some(second_last), Some(last)) = (row.get(expected_field_count - 1), row.get(expected_field_count)) {
-                                    let combined = format!("{}{}{}", second_last, delimiter as char, last);
+                                if let (Some(second_last), Some(last)) = (
+                                    row.get(expected_field_count - 1),
+                                    row.get(expected_field_count),
+                                ) {
+                                    let combined =
+                                        format!("{}{}{}", second_last, delimiter as char, last);
                                     row[expected_field_count - 1] = combined;
                                 }
                             }
                             row.truncate(expected_field_count);
                         }
                     }
-                    
+
                     records.push(row);
                 }
                 Err(e) => {
                     error_count += 1;
-                    
+
                     // Use enhanced error reporting
-                    let enhanced_error = DataProfilerError::csv_parsing(&e.to_string(), "current file");
+                    let enhanced_error =
+                        DataProfilerError::csv_parsing(&e.to_string(), "current file");
                     eprintln!(
                         "⚠️ Row {}: {}",
                         row_index + 2, // +2 because row_index is 0-based and we have headers
                         enhanced_error
                     );
-                    
+
                     if error_count > max_errors {
                         return Err(DataProfilerError::csv_parsing(
                             &format!("Too many parsing errors ({})", error_count),
-                            "current file"
-                        ).into());
+                            "current file",
+                        )
+                        .into());
                     }
                 }
             }
@@ -305,7 +314,7 @@ impl RobustCsvParser {
         for line_result in reader.lines() {
             _line_number += 1;
             let line = line_result?;
-            
+
             if line.trim().is_empty() {
                 diagnostics.empty_lines += 1;
                 continue;
@@ -337,7 +346,8 @@ impl RobustCsvParser {
         }
 
         diagnostics.field_count_variations = field_counts.len();
-        diagnostics.inconsistent_field_rows = diagnostics.total_lines - diagnostics.consistent_field_rows;
+        diagnostics.inconsistent_field_rows =
+            diagnostics.total_lines - diagnostics.consistent_field_rows;
 
         Ok(diagnostics)
     }
@@ -360,25 +370,38 @@ impl CsvDiagnostics {
         println!("🔍 CSV File Diagnostics:");
         println!("  Total lines: {}", self.total_lines);
         println!("  Empty lines: {}", self.empty_lines);
-        println!("  Most common field count: {}", self.most_common_field_count);
-        println!("  Consistent rows: {} ({:.1}%)", 
-                 self.consistent_field_rows,
-                 self.consistent_field_rows as f64 / self.total_lines as f64 * 100.0);
-        
+        println!(
+            "  Most common field count: {}",
+            self.most_common_field_count
+        );
+        println!(
+            "  Consistent rows: {} ({:.1}%)",
+            self.consistent_field_rows,
+            self.consistent_field_rows as f64 / self.total_lines as f64 * 100.0
+        );
+
         if self.inconsistent_field_rows > 0 {
-            println!("  ⚠️ Inconsistent rows: {} ({:.1}%)", 
-                     self.inconsistent_field_rows,
-                     self.inconsistent_field_rows as f64 / self.total_lines as f64 * 100.0);
+            println!(
+                "  ⚠️ Inconsistent rows: {} ({:.1}%)",
+                self.inconsistent_field_rows,
+                self.inconsistent_field_rows as f64 / self.total_lines as f64 * 100.0
+            );
         }
-        
+
         if self.field_count_variations > 1 {
-            println!("  ⚠️ Different field counts detected: {}", self.field_count_variations);
+            println!(
+                "  ⚠️ Different field counts detected: {}",
+                self.field_count_variations
+            );
         }
-        
+
         if self.unmatched_quotes > 0 {
-            println!("  ⚠️ Lines with unmatched quotes: {}", self.unmatched_quotes);
+            println!(
+                "  ⚠️ Lines with unmatched quotes: {}",
+                self.unmatched_quotes
+            );
         }
-        
+
         if self.null_bytes > 0 {
             println!("  ⚠️ Lines with null bytes: {}", self.null_bytes);
         }

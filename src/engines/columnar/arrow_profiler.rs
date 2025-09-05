@@ -197,12 +197,12 @@ impl ColumnAnalyzer {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 self.update_numeric_stats(value);
-                
+
                 // Add to unique values (with limit)
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-                
+
                 // Keep samples for pattern detection
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value.to_string());
@@ -217,11 +217,11 @@ impl ColumnAnalyzer {
             if let Some(value) = array.value(i).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                
+
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-                
+
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value.to_string());
                 }
@@ -235,11 +235,11 @@ impl ColumnAnalyzer {
             if let Some(value) = array.value(i).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                
+
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-                
+
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value.to_string());
                 }
@@ -253,11 +253,11 @@ impl ColumnAnalyzer {
             if let Some(value) = array.value(i).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                
+
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-                
+
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value.to_string());
                 }
@@ -271,11 +271,11 @@ impl ColumnAnalyzer {
             if !array.is_null(i) {
                 let value = array.value(i);
                 self.update_text_stats(value);
-                
+
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-                
+
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value.to_string());
                 }
@@ -289,11 +289,11 @@ impl ColumnAnalyzer {
             if !array.is_null(i) {
                 let value = array.value(i);
                 self.update_text_stats(value);
-                
+
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-                
+
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value.to_string());
                 }
@@ -309,11 +309,11 @@ impl ColumnAnalyzer {
                 // This is a simplified approach - in practice we'd need more sophisticated conversion
                 let value = format!("value_{}", i); // Placeholder
                 self.update_text_stats(&value);
-                
+
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.clone());
                 }
-                
+
                 if self.sample_values.len() < 100 {
                     self.sample_values.push(value);
                 }
@@ -325,12 +325,12 @@ impl ColumnAnalyzer {
     fn update_numeric_stats(&mut self, value: f64) {
         self.sum += value;
         self.sum_squares += value * value;
-        
+
         self.min_value = Some(match self.min_value {
             Some(min) => min.min(value),
             None => value,
         });
-        
+
         self.max_value = Some(match self.max_value {
             Some(max) => max.max(value),
             None => value,
@@ -346,7 +346,7 @@ impl ColumnAnalyzer {
 
     fn to_column_profile(self, name: String) -> ColumnProfile {
         let data_type = self.infer_data_type();
-        
+
         let stats = match data_type {
             DataType::Integer | DataType::Float => ColumnStats::Numeric {
                 min: self.min_value.unwrap_or(0.0),
@@ -363,7 +363,7 @@ impl ColumnAnalyzer {
                 } else {
                     0.0
                 };
-                
+
                 ColumnStats::Text {
                     min_length: if self.min_length == usize::MAX { 0 } else { self.min_length },
                     max_length: self.max_length,
@@ -399,7 +399,7 @@ impl ColumnAnalyzer {
                         .take(sample_size)
                         .filter(|s| self.looks_like_date(s))
                         .count();
-                    
+
                     if date_like_count as f64 / sample_size as f64 > 0.7 {
                         DataType::Date
                     } else {
@@ -415,13 +415,13 @@ impl ColumnAnalyzer {
 
     fn looks_like_date(&self, value: &str) -> bool {
         use regex::Regex;
-        
+
         let date_patterns = [
             r"^\d{4}-\d{2}-\d{2}$",
             r"^\d{2}/\d{2}/\d{4}$",
             r"^\d{2}-\d{2}-\d{4}$",
         ];
-        
+
         date_patterns.iter().any(|pattern| {
             Regex::new(pattern)
                 .map(|re| re.is_match(value))
@@ -451,12 +451,12 @@ mod tests {
         let report = profiler.analyze_csv_file(temp_file.path())?;
 
         assert_eq!(report.column_profiles.len(), 4);
-        
+
         // Find age column and verify it's detected correctly
         let age_column = report.column_profiles.iter()
             .find(|p| p.name == "age")
             .expect("Age column should exist");
-        
+
         // With Arrow's type inference, this should be detected as integer
         assert_eq!(age_column.total_count, 3);
 

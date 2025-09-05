@@ -67,7 +67,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
 
     // Convert records to column format for analysis
     let mut columns: HashMap<String, Vec<String>> = HashMap::new();
-    
+
     // Initialize columns
     for header in &headers {
         columns.insert(header.clone(), Vec::new());
@@ -183,7 +183,10 @@ pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
     match try_strict_csv_parsing(file_path) {
         Ok(profiles) => return Ok(profiles),
         Err(e) => {
-            eprintln!("⚠️ Strict CSV parsing failed: {}. Using robust parsing...", e);
+            eprintln!(
+                "⚠️ Strict CSV parsing failed: {}. Using robust parsing...",
+                e
+            );
         }
     }
 
@@ -193,10 +196,10 @@ pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
         .allow_variable_columns(true);
 
     let (headers, records) = parser.parse_csv(file_path)?;
-    
+
     // Convert records to column format
     let mut columns: HashMap<String, Vec<String>> = HashMap::new();
-    
+
     // Initialize columns
     for header in &headers {
         columns.insert(header.clone(), Vec::new());

@@ -11,11 +11,11 @@ use dataprof::{
     ChunkSize,
     ColumnProfile,
     ColumnStats,
-    DataProfilerError,
-    ErrorSeverity,
     // v0.3.0 imports
     DataProfiler,
+    DataProfilerError,
     DataType,
+    ErrorSeverity,
     ProgressInfo,
     QualityIssue,
     // SamplingStrategy, // Future CLI integration
@@ -56,13 +56,13 @@ struct Cli {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     // Enhanced error handling wrapper
     if let Err(e) = run_analysis(&cli) {
         handle_error(&e, &cli.file);
         std::process::exit(1);
     }
-    
+
     Ok(())
 }
 
@@ -76,23 +76,30 @@ fn handle_error(error: &anyhow::Error, file_path: &PathBuf) {
             ErrorSeverity::Low => "🔵",
             ErrorSeverity::Info => "ℹ️",
         };
-        
-        eprintln!("\n{} {} Error: {}", severity_icon, dp_error.severity(), dp_error);
+
+        eprintln!(
+            "\n{} {} Error: {}",
+            severity_icon,
+            dp_error.severity(),
+            dp_error
+        );
     } else {
         // Handle generic errors with enhanced suggestions
         let error_str = error.to_string();
-        
+
         if error_str.contains("No such file") || error_str.contains("not found") {
             let file_error = DataProfilerError::file_not_found(file_path.display().to_string());
             eprintln!("\n🔴 CRITICAL Error: {}", file_error);
-            
+
             // Provide additional context
             if let Some(parent) = file_path.parent() {
                 eprintln!("📂 Looking in directory: {}", parent.display());
             }
-            
+
             // Suggest similar files
-            if let Ok(entries) = std::fs::read_dir(file_path.parent().unwrap_or(&std::path::Path::new("."))) {
+            if let Ok(entries) =
+                std::fs::read_dir(file_path.parent().unwrap_or(&std::path::Path::new(".")))
+            {
                 let similar_files: Vec<_> = entries
                     .filter_map(|entry| entry.ok())
                     .filter(|entry| {
@@ -104,7 +111,7 @@ fn handle_error(error: &anyhow::Error, file_path: &PathBuf) {
                     })
                     .take(3)
                     .collect();
-                
+
                 if !similar_files.is_empty() {
                     eprintln!("🔍 Similar files found:");
                     for entry in similar_files {
@@ -113,7 +120,8 @@ fn handle_error(error: &anyhow::Error, file_path: &PathBuf) {
                 }
             }
         } else if error_str.contains("CSV") {
-            let csv_error = DataProfilerError::csv_parsing(&error_str, &file_path.display().to_string());
+            let csv_error =
+                DataProfilerError::csv_parsing(&error_str, &file_path.display().to_string());
             eprintln!("\n🟠 HIGH Error: {}", csv_error);
         } else {
             eprintln!("\n❌ Error: {}", error);
@@ -184,7 +192,10 @@ fn run_analysis(cli: &Cli) -> Result<()> {
                 match analyze_csv_with_sampling(&cli.file) {
                     Ok(report) => report,
                     Err(e) => {
-                        eprintln!("⚠️ Standard analysis failed: {}. Using robust parsing...", e);
+                        eprintln!(
+                            "⚠️ Standard analysis failed: {}. Using robust parsing...",
+                            e
+                        );
                         analyze_csv_robust(&cli.file)?
                     }
                 }

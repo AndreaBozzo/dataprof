@@ -1,4 +1,4 @@
-# DataProfiler 📊 
+# DataProfiler 📊
 
 [![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
@@ -26,13 +26,14 @@ cd dataprof && cargo build --release
 # Large files (streaming)
 ./target/release/dataprof huge_file.csv --streaming --progress
 
-# Generate HTML report  
+# Generate HTML report
 ./target/release/dataprof data.csv --quality --html report.html
 ```
 
 ## 📊 Example Output
 
 ### Basic Analysis
+
 ```
 📊 DataProfiler - Standard Analysis
 
@@ -47,7 +48,7 @@ Column: email
     Email - 6 matches (75.0%)
 
 Column: amount
-  Type: Float  
+  Type: Float
   Records: 10
   Nulls: 1 (10.0%)
   Min: 0.00
@@ -56,6 +57,7 @@ Column: amount
 ```
 
 ### Quality Issues Detection
+
 ```
 📊 DataProfiler - Standard Analysis
 
@@ -66,7 +68,7 @@ Column: amount
 1. 🔴 CRITICAL [email]: 2 null values (20.0%)
 2. 🔴 CRITICAL [order_date]: Mixed date formats
      - DD/MM/YYYY: 2 rows
-     - YYYY-MM-DD: 5 rows  
+     - YYYY-MM-DD: 5 rows
      - YYYY/MM/DD: 1 rows
      - DD-MM-YYYY: 1 rows
 3. 🟡 WARNING [phone]: 1 null values (10.0%)
@@ -78,11 +80,13 @@ Column: amount
 ## ⚡ Features
 
 ### v0.3.0 New Features
+
 - **🚀 SIMD Acceleration**: 10x speedup on numeric computations
-- **🌊 Streaming Processing**: Handle files larger than available RAM  
+- **🌊 Streaming Processing**: Handle files larger than available RAM
 - **💾 Memory Efficient**: Adaptive engines for optimal performance
 
 ### Core Features
+
 - **🔍 Fast Analysis**: Lightning-fast profiling of CSV, JSON, and JSONL files
 - **🧠 Smart Detection**: Auto-detects data types, patterns (emails, phones), and quality issues
 - **⚠️ Quality Insights**: Finds null values, duplicates, outliers, and format inconsistencies
@@ -113,6 +117,7 @@ Options:
 ## 🛠️ As a Library
 
 Add to your `Cargo.toml`:
+
 ```toml
 [dependencies]
 dataprof = { git = "https://github.com/AndreaBozzo/dataprof.git" }
@@ -123,8 +128,8 @@ use dataprof::analyze_csv;
 
 let profiles = analyze_csv("data.csv")?;
 for profile in profiles {
-    println!("{}: {:?} ({}% nulls)", 
-             profile.name, 
+    println!("{}: {:?} ({}% nulls)",
+             profile.name,
              profile.data_type,
              profile.null_count as f32 / profile.total_count as f32 * 100.0);
 }
@@ -149,9 +154,10 @@ for profile in profiles {
 Requirements: Rust 1.70+
 
 ### Quick Setup
+
 ```bash
 # Automated setup (installs pre-commit hooks, tools)
-bash scripts/setup-dev.sh        # Linux/macOS  
+bash scripts/setup-dev.sh        # Linux/macOS
 # or
 pwsh scripts/setup-dev.ps1        # Windows
 
@@ -165,6 +171,7 @@ cargo clippy                      # Lint code
 ### Development Tools
 
 #### Using just (Recommended)
+
 ```bash
 cargo install just                # Install task runner
 just                              # Show all tasks
@@ -175,6 +182,7 @@ just example data.csv             # Run example analysis
 ```
 
 #### Using pre-commit (Quality Gates)
+
 ```bash
 pip install pre-commit            # Install pre-commit
 pre-commit install                # Install hooks
@@ -182,9 +190,10 @@ pre-commit run --all-files        # Run all checks
 ```
 
 #### Manual Commands
+
 ```bash
 cargo build --release             # Build optimized
-cargo test --lib                  # Fast library tests  
+cargo test --lib                  # Fast library tests
 cargo test --test integration_tests # Integration tests
 cargo test --test v03_comprehensive # Comprehensive tests
 cargo fmt --all                   # Format code
@@ -192,9 +201,11 @@ cargo clippy --all-targets --all-features -- -D warnings # Lint
 ```
 
 ### Quality Assurance
+
 The project uses automated quality checks:
+
 - **Pre-commit hooks**: Format, lint, test on every commit
-- **Continuous Integration**: 61/61 tests passing (100% success rate)  
+- **Continuous Integration**: 61/61 tests passing (100% success rate)
 - **Code coverage**: All major functions tested
 - **Performance benchmarks**: Verified 10x SIMD improvements
 

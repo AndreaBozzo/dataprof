@@ -3,9 +3,9 @@ use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
 /// Enhanced reservoir sampling implementation based on Vitter's algorithm
-/// 
+///
 /// This is a proper implementation of Algorithm R with optimizations:
-/// - True randomness with seedable RNG for reproducibility  
+/// - True randomness with seedable RNG for reproducibility
 /// - Optimized skip calculation using geometric distribution
 /// - Memory-efficient storage of sample indices
 /// - Support for weighted sampling
@@ -79,17 +79,17 @@ impl ReservoirSampler {
 
         // Calculate if this record should replace one in the reservoir
         let random_index = self.rng.gen_range(0..self.total_processed);
-        
+
         if random_index < self.capacity {
             // Replace the record at random_index in reservoir
             let replace_position = random_index % self.capacity;
             self.reservoir[replace_position] = record_index;
             self.stats.replacement_count += 1;
             self.stats.records_sampled += 1;
-            
+
             // Calculate next skip using geometric distribution
             self.calculate_next_skip();
-            
+
             return true;
         }
 
@@ -107,7 +107,7 @@ impl ReservoirSampler {
         } else {
             1
         };
-        
+
         self.next_record = self.total_processed + skip.max(1);
         self.stats.skip_count += skip;
     }
@@ -226,21 +226,22 @@ impl MultiReservoirSampler {
 
     /// Process a record for a specific category/type
     pub fn process_categorized_record(&mut self, record_index: usize, category: &str) -> bool {
-        let reservoir = self.reservoirs
+        let reservoir = self
+            .reservoirs
             .entry(category.to_string())
             .or_insert_with(|| ReservoirSampler::new(self.default_capacity));
-        
+
         reservoir.process_record(record_index)
     }
 
     /// Get combined sample from all reservoirs
     pub fn get_combined_sample(&self) -> Vec<usize> {
         let mut combined = Vec::new();
-        
+
         for reservoir in self.reservoirs.values() {
             combined.extend_from_slice(reservoir.get_sample_indices());
         }
-        
+
         // Sort for consistent ordering
         combined.sort_unstable();
         combined
@@ -248,7 +249,8 @@ impl MultiReservoirSampler {
 
     /// Get samples by category
     pub fn get_samples_by_category(&self) -> HashMap<String, Vec<usize>> {
-        self.reservoirs.iter()
+        self.reservoirs
+            .iter()
             .map(|(category, reservoir)| {
                 (category.clone(), reservoir.get_sample_indices().to_vec())
             })
@@ -257,10 +259,9 @@ impl MultiReservoirSampler {
 
     /// Get statistics for all reservoirs
     pub fn get_all_stats(&self) -> HashMap<String, ReservoirStats> {
-        self.reservoirs.iter()
-            .map(|(category, reservoir)| {
-                (category.clone(), reservoir.get_stats().clone())
-            })
+        self.reservoirs
+            .iter()
+            .map(|(category, reservoir)| (category.clone(), reservoir.get_stats().clone()))
             .collect()
     }
 }
@@ -272,7 +273,7 @@ mod tests {
     #[test]
     fn test_basic_reservoir_sampling() {
         let mut sampler = ReservoirSampler::new(10);
-        
+
         // Process 100 records
         let mut selected_count = 0;
         for i in 0..100 {
@@ -280,7 +281,7 @@ mod tests {
                 selected_count += 1;
             }
         }
-        
+
         // Should have exactly 10 samples
         assert_eq!(sampler.sample_size(), 10);
         assert_eq!(sampler.get_sample_indices().len(), 10);
@@ -290,12 +291,12 @@ mod tests {
     #[test]
     fn test_reservoir_filling_phase() {
         let mut sampler = ReservoirSampler::new(5);
-        
+
         // First 5 records should all be selected
         for i in 0..5 {
             assert!(sampler.process_record(i));
         }
-        
+
         assert_eq!(sampler.sample_size(), 5);
         assert!(sampler.is_full());
     }
@@ -303,25 +304,25 @@ mod tests {
     #[test]
     fn test_replacement_phase() {
         let mut sampler = ReservoirSampler::with_seed(3, 42); // Fixed seed for reproducibility
-        
+
         // Fill reservoir
         for i in 0..3 {
             sampler.process_record(i);
         }
-        
+
         // Process more records
         let mut replacement_occurred = false;
         let initial_sample = sampler.get_sample_indices().to_vec();
-        
+
         for i in 3..20 {
             sampler.process_record(i);
         }
-        
+
         let final_sample = sampler.get_sample_indices().to_vec();
-        
+
         // Sample size should remain the same
         assert_eq!(final_sample.len(), 3);
-        
+
         // Some replacements should have occurred
         assert!(sampler.get_stats().replacement_count > 0);
     }
@@ -329,11 +330,11 @@ mod tests {
     #[test]
     fn test_sampling_ratio() {
         let mut sampler = ReservoirSampler::new(10);
-        
+
         for i in 0..100 {
             sampler.process_record(i);
         }
-        
+
         let ratio = sampler.sampling_ratio();
         assert!((ratio - 0.1).abs() < 0.01); // Should be ~10%
     }
@@ -341,16 +342,16 @@ mod tests {
     #[test]
     fn test_reset_functionality() {
         let mut sampler = ReservoirSampler::new(5);
-        
+
         for i in 0..10 {
             sampler.process_record(i);
         }
-        
+
         assert_eq!(sampler.sample_size(), 5);
         assert!(sampler.total_processed > 0);
-        
+
         sampler.reset();
-        
+
         assert_eq!(sampler.sample_size(), 0);
         assert_eq!(sampler.total_processed, 0);
     }
@@ -360,12 +361,12 @@ mod tests {
         let mut weights = HashMap::new();
         weights.insert("high".to_string(), 3.0);
         weights.insert("low".to_string(), 1.0);
-        
+
         let mut sampler = WeightedReservoirSampler::new(10, weights);
-        
+
         let mut high_selected = 0;
         let mut low_selected = 0;
-        
+
         // Process records with different weights
         for i in 0..50 {
             let category = if i % 2 == 0 { "high" } else { "low" };
@@ -377,7 +378,7 @@ mod tests {
                 }
             }
         }
-        
+
         // High weight records should be selected more frequently
         // This is probabilistic, so we allow some variance
         assert!(sampler.get_sample_indices().len() <= 10);
@@ -386,15 +387,15 @@ mod tests {
     #[test]
     fn test_multi_reservoir() {
         let mut sampler = MultiReservoirSampler::new(5);
-        
+
         for i in 0..20 {
             let category = format!("type_{}", i % 3);
             sampler.process_categorized_record(i, &category);
         }
-        
+
         let combined = sampler.get_combined_sample();
         assert!(combined.len() <= 15); // Max 5 per category * 3 categories
-        
+
         let by_category = sampler.get_samples_by_category();
         assert_eq!(by_category.len(), 3); // Should have 3 categories
     }
@@ -403,12 +404,12 @@ mod tests {
     fn test_deterministic_with_seed() {
         let mut sampler1 = ReservoirSampler::with_seed(5, 123);
         let mut sampler2 = ReservoirSampler::with_seed(5, 123);
-        
+
         for i in 0..50 {
             sampler1.process_record(i);
             sampler2.process_record(i);
         }
-        
+
         // Same seed should produce identical samples
         assert_eq!(sampler1.get_sample_indices(), sampler2.get_sample_indices());
     }

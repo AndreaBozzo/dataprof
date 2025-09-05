@@ -13,13 +13,13 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v5
-    
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-      
+
     - name: Cache dependencies
       uses: actions/cache@v4
       with:
@@ -28,13 +28,13 @@ jobs:
           ~/.cargo/git
           target
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        
+
     - name: Run tests
       run: cargo test --verbose
-      
+
     - name: Check formatting
       run: cargo fmt --all -- --check
-      
+
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -44,12 +44,12 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        
+
     steps:
     - uses: actions/checkout@v5
-    
+
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-      
+
     - name: Build
       run: cargo build --release --verbose

@@ -8,7 +8,7 @@ echo "🔧 Setting up development environment for DataProfiler v0.3.0..."
 # Check if pre-commit is available
 if ! command -v pre-commit &> /dev/null; then
     echo "⚠️ pre-commit not found. Installing..."
-    
+
     # Try different installation methods
     if command -v pip &> /dev/null; then
         pip install pre-commit
@@ -51,7 +51,7 @@ if ! rustup component list --installed | grep -q rustfmt; then
     rustup component add rustfmt
 fi
 
-# Install clippy if not present  
+# Install clippy if not present
 if ! rustup component list --installed | grep -q clippy; then
     echo "  📦 Installing clippy..."
     rustup component add clippy

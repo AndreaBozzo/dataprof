@@ -5,7 +5,7 @@ pub enum ChunkSize {
     /// Fixed chunk size in rows
     Fixed(usize),
 
-    /// Adaptive based on available memory  
+    /// Adaptive based on available memory
     Adaptive,
 
     /// Custom sizing function - cannot derive Debug/Clone with function pointer

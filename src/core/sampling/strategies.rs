@@ -67,12 +67,12 @@ impl SamplingState {
             importance_scores: Vec::new(),
         }
     }
-    
+
     /// Initialize reservoir sampler with given capacity
     pub fn init_reservoir(&mut self, capacity: usize) {
         self.reservoir_sampler = Some(ReservoirSampler::new(capacity));
     }
-    
+
     /// Get or initialize reservoir sampler
     pub fn get_or_init_reservoir(&mut self, capacity: usize) -> &mut ReservoirSampler {
         if self.reservoir_sampler.is_none() {

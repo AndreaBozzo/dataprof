@@ -13,9 +13,9 @@ updates:
     commit-message:
       prefix: "deps"
       include: "scope"
-    
+
   # GitHub Actions
-  - package-ecosystem: "github-actions" 
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"

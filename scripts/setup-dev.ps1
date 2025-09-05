@@ -5,7 +5,7 @@ Write-Host "🔧 Setting up development environment for DataProfiler v0.3.0..." 
 # Check if pre-commit is available
 if (-not (Get-Command pre-commit -ErrorAction SilentlyContinue)) {
     Write-Host "⚠️ pre-commit not found. Installing..." -ForegroundColor Yellow
-    
+
     # Try to install via pip
     if (Get-Command pip -ErrorAction SilentlyContinue) {
         pip install pre-commit

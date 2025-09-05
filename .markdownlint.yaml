@@ -7,22 +7,22 @@ extends: default
 rules:
   # Allow HTML in markdown (for badges, enhanced formatting)
   MD033: false
-  
+
   # Allow inline HTML
   MD034: false
-  
+
   # Allow long lines (for URLs, code examples)
   MD013:
     line_length: 120
-    
+
   # Allow multiple consecutive blank lines
   MD012: false
-  
+
   # Allow multiple headings with same content
   MD024: false
-  
+
   # Allow trailing punctuation in headers
   MD026: false
-  
+
   # Allow bare URLs
   MD034: false

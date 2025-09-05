@@ -1,6 +1,7 @@
 # DataProfiler v0.3.0 - Performance & Scale Vision
 
 ## 🎯 Tema Principale: "Gigabyte-Ready"
+
 La v0.3.0 si concentra su **performance estreme** e **scalabilità**, rendendo DataProfiler utilizzabile su dataset di qualsiasi dimensione.
 
 ---
@@ -8,6 +9,7 @@ La v0.3.0 si concentra su **performance estreme** e **scalabilità**, rendendo D
 ## 🚀 Core Features v0.3.0
 
 ### 1. **Streaming Architecture**
+
 Processare file più grandi della RAM disponibile senza problemi.
 
 ```rust
@@ -25,12 +27,14 @@ let report = profiler
 ```
 
 **Implementazione:**
+
 - **Memory-mapped files** per accesso efficiente
 - **Chunked processing** con state aggregation
 - **Spill-to-disk** per operazioni che richiedono sorting
 - **Adaptive chunk sizing** basato su memoria disponibile
 
 ### 2. **Distributed Processing (Optional)**
+
 Per dataset veramente enormi o ambienti cluster.
 
 ```rust
@@ -45,6 +49,7 @@ let report = DataProfiler::distributed()
 ```
 
 ### 3. **Query Engine Integration**
+
 Profiling diretto su database senza export.
 
 ```rust
@@ -64,6 +69,7 @@ let report = DataProfiler::from_duckdb()
 ```
 
 ### 4. **Incremental Profiling**
+
 Aggiorna profili esistenti con nuovi dati senza riprocessare tutto.
 
 ```rust
@@ -90,6 +96,7 @@ DataProfiler::monitor()
 ```
 
 ### 5. **SIMD & GPU Acceleration**
+
 Sfruttare hardware moderno per performance estreme.
 
 ```rust
@@ -103,26 +110,27 @@ let report = DataProfiler::from_path("data.csv")
 ```
 
 ### 6. **Advanced Sampling Strategies**
+
 Sampling statisticamente rigoroso per dataset enormi.
 
 ```rust
 pub enum SamplingStrategy {
     /// Reservoir sampling per streaming
     Reservoir { size: usize },
-    
+
     /// Stratified per bilanciare categorie
-    Stratified { 
+    Stratified {
         key_columns: Vec<String>,
-        samples_per_stratum: usize 
+        samples_per_stratum: usize
     },
-    
+
     /// Progressive sampling - ferma quando confidence è raggiunta
     Progressive {
         initial_size: usize,
         confidence_level: f64,
         max_size: usize,
     },
-    
+
     /// Importance sampling per anomaly detection
     Importance {
         weight_fn: Box<dyn Fn(&Row) -> f64>,
@@ -138,7 +146,7 @@ let report = DataProfiler::from_path("huge.csv")
     })
     .analyze()?;
 
-println!("Analyzed {} rows to reach 99% confidence", 
+println!("Analyzed {} rows to reach 99% confidence",
          report.metadata.rows_analyzed);
 ```
 
@@ -147,13 +155,14 @@ println!("Analyzed {} rows to reach 99% confidence",
 ## 🔥 Performance Optimizations
 
 ### 1. **Zero-Copy Operations**
+
 ```rust
 // Evita copie inutili usando Arrow direttamente
 impl DataProfiler {
     pub fn from_arrow_ipc(path: &Path) -> Self {
         // Legge Arrow IPC format senza conversioni
     }
-    
+
     pub fn from_arrow_mmap(path: &Path) -> Self {
         // Memory-map Arrow files per zero-copy access
     }
@@ -161,6 +170,7 @@ impl DataProfiler {
 ```
 
 ### 2. **Columnar Processing**
+
 ```rust
 // Processa per colonna, non per riga
 // Migliore per cache CPU e SIMD
@@ -177,16 +187,17 @@ impl ColumnAnalyzer {
 ```
 
 ### 3. **Adaptive Algorithms**
+
 ```rust
 // Sceglie algoritmo basato su caratteristiche dei dati
 impl PatternDetector {
     fn detect(&self, column: &Series) -> Vec<Pattern> {
         let characteristics = self.analyze_characteristics(column);
-        
+
         match characteristics {
-            Characteristics { cardinality: Low, length: Short } => 
+            Characteristics { cardinality: Low, length: Short } =>
                 self.exact_matching(column),
-            Characteristics { cardinality: High, length: Long } => 
+            Characteristics { cardinality: High, length: Long } =>
                 self.probabilistic_detection(column),
             _ => self.hybrid_approach(column),
         }
@@ -195,6 +206,7 @@ impl PatternDetector {
 ```
 
 ### 4. **Caching & Memoization**
+
 ```rust
 // Cache intelligente multi-livello
 pub struct ProfileCache {
@@ -227,7 +239,8 @@ impl DataProfiler {
 
 ## 🔧 API Evolution
 
-### Simple API ancora più semplice:
+### Simple API ancora più semplice
+
 ```rust
 // One-liner profiling
 let score = dataprof::quick_quality_check("data.csv")?;
@@ -238,7 +251,8 @@ dataprof::stream_profile("huge.csv", |chunk_report| {
 })?;
 ```
 
-### Power-user API:
+### Power-user API
+
 ```rust
 // Full control
 let engine = ProfileEngine::builder()
@@ -260,6 +274,7 @@ let report = engine
 ## 🌟 Killer Features Uniche
 
 ### 1. **Live Profiling Dashboard**
+
 ```rust
 // Web UI locale per monitoring real-time
 DataProfiler::dashboard()
@@ -272,6 +287,7 @@ DataProfiler::dashboard()
 ```
 
 ### 2. **Smart Suggestions Engine**
+
 ```rust
 let suggestions = report.optimization_suggestions();
 
@@ -282,6 +298,7 @@ let suggestions = report.optimization_suggestions();
 ```
 
 ### 3. **Profile Comparison & Drift Detection**
+
 ```rust
 let baseline = DataProfiler::from_path("january.csv").analyze()?;
 let current = DataProfiler::from_path("december.csv").analyze()?;
@@ -328,6 +345,7 @@ dataprof/
 ## 🎯 Use Case Examples v0.3.0
 
 ### 1. **Data Pipeline Integration**
+
 ```python
 # Python binding example
 import dataprof
@@ -342,6 +360,7 @@ def validate_data(file_path):
 ```
 
 ### 2. **Real-time Monitoring**
+
 ```rust
 // Kafka stream profiling
 let profiler = DataProfiler::streaming()
@@ -360,6 +379,7 @@ kafka_consumer
 ```
 
 ### 3. **CI/CD Data Quality Gates**
+
 ```yaml
 # GitHub Action
 - name: Data Quality Check
@@ -376,16 +396,19 @@ kafka_consumer
 ## 🔮 Future Beyond v0.3.0
 
 ### v0.4.0: "AI-Powered"
+
 - Anomaly detection with ML
 - Auto-fix suggestions
 - Pattern learning from history
 
 ### v0.5.0: "Enterprise"
+
 - Multi-tenancy
 - Audit trails
 - Compliance reporting (GDPR, HIPAA)
 
 ### v1.0.0: "Platform"
+
 - Plugin ecosystem
 - Custom rule engines
 - Integration marketplace
@@ -395,6 +418,7 @@ kafka_consumer
 ## 🚧 Implementation Status (ACTUAL CURRENT STATE)
 
 ### ✅ **FULLY IMPLEMENTED & TESTED**
+
 - **✅ Modular Architecture**: Complete core/, engines/, api/, acceleration/ structure
 - **✅ Memory Mapping**: `MemoryMappedCsvReader` for large files (memmap2)
 - **✅ True Streaming Processing**: `TrueStreamingProfiler` with incremental statistics
@@ -407,17 +431,20 @@ kafka_consumer
 - **✅ Backward Compatibility**: All v0.1.0 functionality preserved
 
 ### 🔄 **PARTIALLY IMPLEMENTED**
+
 - **🔄 Arrow Integration**: Disabled due to dependency conflicts (will be re-enabled)
 - **🔄 Reservoir Sampling**: Works but needs algorithm refinement
 - **🔄 Error Handling**: Basic error handling, could be more robust
 
 ### ❌ **NOT YET IMPLEMENTED**
+
 - **❌ GPU Processing**: Not implemented (roadmap for v0.4.0)
-- **❌ Distributed Processing**: Not implemented (roadmap for v0.4.0)  
+- **❌ Distributed Processing**: Not implemented (roadmap for v0.4.0)
 - **❌ Incremental Profiling**: Not implemented (roadmap for v0.4.0)
 - **❌ Query Engine Integration**: Not implemented (roadmap for v0.4.0)
 
 ### 📊 **VERIFIED Performance Status**
+
 | Feature | ACTUAL Status ✅ | Target v0.3.0 | Test Results |
 |---------|------------------|---------------|--------------|
 | Memory Usage | < 100MB for multi-GB files ✅ | < 100MB per GB | ✅ Tested with 50k+ rows |
@@ -426,18 +453,21 @@ kafka_consumer
 | Scalability | Memory-bounded, not size-bounded ✅ | Handle 100GB+ files | ✅ Streaming architecture |
 
 ### 🧪 **TEST COVERAGE**
+
 - **✅ 10/11 v0.3.0 Tests Pass** (91% success rate)
 - **✅ Memory Mapping**: Tested with temp files
-- **✅ True Streaming**: Tested with 5000+ rows  
+- **✅ True Streaming**: Tested with 5000+ rows
 - **✅ SIMD Acceleration**: Tested with 1000+ numeric values
 - **✅ Columnar Processing**: Tested with mixed data types
 - **✅ Advanced Sampling**: Progressive & Reservoir tested
 - **✅ Memory Efficiency**: Tested with memory pressure scenarios
 
 ## 🎯 **What This Release ACTUALLY Provides**
+
 This is a **PRODUCTION-READY v0.3.0** with REAL performance improvements:
+
 - ✅ **True streaming processing** that handles files larger than available RAM
-- ✅ **SIMD-accelerated statistics** for 10x faster numeric computations  
+- ✅ **SIMD-accelerated statistics** for 10x faster numeric computations
 - ✅ **Memory-efficient profilers** with automatic selection by file size
 - ✅ **Advanced sampling strategies** for statistical accuracy on large datasets
 - ✅ **Columnar processing** for better cache performance
@@ -447,7 +477,7 @@ This is a **PRODUCTION-READY v0.3.0** with REAL performance improvements:
 ## 📈 Success Metrics v0.3.0 (TARGET)
 
 - **Performance**: Gestire 1TB di dati su laptop standard
-- **Scalability**: Linear scaling fino a 100 nodi  
+- **Scalability**: Linear scaling fino a 100 nodi
 - **Efficiency**: < 100MB RAM per GB di dati processati
 - **Speed**: Real-time profiling per stream < 100k events/sec
 - **Adoption**: 1000+ GitHub stars, 50+ contributors
@@ -455,6 +485,7 @@ This is a **PRODUCTION-READY v0.3.0** with REAL performance improvements:
 ---
 
 ## 🛣️ **Next Steps for Full v0.3.0**
+
 1. Implement real streaming with memory mapping
 2. Add SIMD acceleration for numeric computations
 3. Implement true chunked processing

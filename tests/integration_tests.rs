@@ -1,4 +1,5 @@
 use anyhow::Result;
+use dataprof::core::sampling::{ReservoirSampler, SamplingStrategy};
 use dataprof::{
     analyze_csv,
     analyze_csv_robust,
@@ -8,10 +9,9 @@ use dataprof::{
     generate_html_report,
     quick_quality_check,
     ChunkSize,
-    // v0.3.0 imports for testing new API  
+    // v0.3.0 imports for testing new API
     DataProfiler,
 };
-use dataprof::core::sampling::{ReservoirSampler, SamplingStrategy};
 use std::fs;
 use std::io::Write;
 use tempfile::{tempdir, NamedTempFile};
@@ -381,14 +381,14 @@ fn test_improved_reservoir_sampling_deterministic() -> Result<()> {
     assert_eq!(sampler1.get_sample_indices(), sampler2.get_sample_indices());
     assert_eq!(sampler1.sample_size(), 10);
     assert_eq!(sampler2.sample_size(), 10);
-    
+
     Ok(())
 }
 
 #[test]
 fn test_improved_reservoir_sampling_statistics() -> Result<()> {
     let mut sampler = ReservoirSampler::new(50);
-    
+
     for i in 0..1000 {
         sampler.process_record(i);
     }
@@ -396,14 +396,14 @@ fn test_improved_reservoir_sampling_statistics() -> Result<()> {
     let stats = sampler.get_stats();
     assert_eq!(stats.records_processed, 1000);
     assert_eq!(sampler.sample_size(), 50);
-    
+
     // Sampling ratio should be 5% (50/1000)
     let ratio = sampler.sampling_ratio();
     assert!((ratio - 0.05).abs() < 0.001);
-    
+
     // Should have some replacements after filling phase
     assert!(stats.replacement_count > 0);
-    
+
     Ok(())
 }
 
@@ -421,103 +421,114 @@ fn test_robust_csv_parsing_vs_standard() -> Result<()> {
     // Standard parsing might fail, but robust should work
     let robust_result = analyze_csv_robust(temp_file.path());
     assert!(robust_result.is_ok());
-    
+
     let report = robust_result?;
     assert_eq!(report.column_profiles.len(), 3);
-    
+
     // Should have processed all rows (possibly with some corrections)
     assert!(report.scan_info.rows_scanned >= 4);
-    
+
     Ok(())
 }
 
 #[test]
 fn test_sampling_strategy_adaptive_selection() -> Result<()> {
     // Test adaptive strategy selection based on data size
-    
+
     // Small dataset - should use no sampling
     let small_strategy = SamplingStrategy::adaptive(Some(1000), 1.0);
     matches!(small_strategy, SamplingStrategy::None);
-    
+
     // Medium dataset - should use random sampling
     let medium_strategy = SamplingStrategy::adaptive(Some(50000), 10.0);
     matches!(medium_strategy, SamplingStrategy::Random { .. });
-    
+
     // Large dataset - should use progressive sampling
     let large_strategy = SamplingStrategy::adaptive(Some(500000), 50.0);
     matches!(large_strategy, SamplingStrategy::Progressive { .. });
-    
+
     // Very large file - should use multi-stage sampling
     let huge_strategy = SamplingStrategy::adaptive(Some(10000000), 2000.0);
     matches!(huge_strategy, SamplingStrategy::MultiStage { .. });
-    
+
     Ok(())
 }
 
 #[test]
 fn test_enhanced_error_handling() -> Result<()> {
     use std::path::Path;
-    
+
     // Test with non-existent file - should fail at both strict and robust parsing
     let non_existent = Path::new("this_file_does_not_exist.csv");
     let result = analyze_csv(non_existent);
     assert!(result.is_err());
-    
+
     // Test that enhanced error system works with invalid file path
     // The function should fail when trying to read the non-existent file
     let error_str = result.unwrap_err().to_string();
-    
+
     // Should contain some form of file not found error or robust parser failure message
-    let has_file_error = error_str.contains("not found") || 
-                        error_str.contains("No such file") ||
-                        error_str.contains("Impossibile trovare") ||
-                        error_str.contains("file specificato") ||
-                        error_str.contains("(os error 2)") ||
-                        error_str.contains("Both strict and flexible CSV parsing failed");
-    
-    assert!(has_file_error, "Error should indicate file not found or parsing failure, got: {}", error_str);
-    
+    let has_file_error = error_str.contains("not found")
+        || error_str.contains("No such file")
+        || error_str.contains("Impossibile trovare")
+        || error_str.contains("file specificato")
+        || error_str.contains("(os error 2)")
+        || error_str.contains("Both strict and flexible CSV parsing failed");
+
+    assert!(
+        has_file_error,
+        "Error should indicate file not found or parsing failure, got: {}",
+        error_str
+    );
+
     Ok(())
 }
 
-#[test] 
+#[test]
 fn test_large_file_performance_with_sampling() -> Result<()> {
     let mut temp_file = NamedTempFile::new()?;
     writeln!(temp_file, "id,category,value,timestamp")?;
-    
+
     // Generate larger dataset to test sampling performance
     for i in 1..=50000 {
         let category = format!("cat_{}", i % 10);
         let timestamp = format!("2024-01-{:02}T10:00:00Z", (i % 30) + 1);
-        writeln!(temp_file, "{},{},{},{}", i, category, (i as f64 * 1.5) as i32, timestamp)?;
+        writeln!(
+            temp_file,
+            "{},{},{},{}",
+            i,
+            category,
+            (i as f64 * 1.5) as i32,
+            timestamp
+        )?;
     }
-    
+
     let start_time = std::time::Instant::now();
     let report = analyze_csv_with_sampling(temp_file.path())?;
     let duration = start_time.elapsed();
-    
+
     // Should complete in reasonable time (less than 5 seconds)
     assert!(duration.as_secs() < 5);
-    
+
     // Should have used sampling
     assert!(report.scan_info.sampling_ratio < 1.0);
-    
+
     // Should still detect all columns correctly
     assert_eq!(report.column_profiles.len(), 4);
-    
+
     // Find timestamp column and verify it's detected as date
     let timestamp_profile = report
         .column_profiles
         .iter()
         .find(|p| p.name == "timestamp")
         .unwrap();
-    
+
     // Should detect as string or date type
     assert!(matches!(
         timestamp_profile.data_type,
         dataprof::DataType::String | dataprof::DataType::Date
     ));
-    
+
     Ok(())
 }
 
@@ -528,21 +539,24 @@ fn test_streaming_mode_vs_standard_mode() -> Result<()> {
     for i in 1..=1000 {
         writeln!(temp_file, "{},user_{},{}", i, i, 80 + (i % 20))?;
     }
-    
+
     // Test standard mode
     let standard_report = analyze_csv_with_sampling(temp_file.path())?;
-    
+
     // Test streaming mode
     let streaming_profiler = DataProfiler::streaming();
     let streaming_report = streaming_profiler.analyze_file(temp_file.path())?;
-    
+
     // Both should detect same number of columns
-    assert_eq!(standard_report.column_profiles.len(), streaming_report.column_profiles.len());
-    
+    assert_eq!(
+        standard_report.column_profiles.len(),
+        streaming_report.column_profiles.len()
+    );
+
     // Both should process all rows (since file is not that large)
     assert_eq!(standard_report.scan_info.rows_scanned, 1000);
     assert_eq!(streaming_report.scan_info.rows_scanned, 1000);
-    
+
     // Column types should be consistent
     for std_profile in &standard_report.column_profiles {
         let streaming_profile = streaming_report
@@ -552,6 +566,6 @@ fn test_streaming_mode_vs_standard_mode() -> Result<()> {
             .unwrap();
         assert_eq!(std_profile.data_type, streaming_profile.data_type);
     }
-    
+
     Ok(())
 }
