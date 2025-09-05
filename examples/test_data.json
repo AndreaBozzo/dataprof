@@ -1,0 +1,82 @@
+[
+    {
+        "id": 1,
+        "name": "Alice Johnson",
+        "email": "alice@example.com",
+        "age": 28,
+        "salary": 75000.50,
+        "department": "Engineering",
+        "hire_date": "2022-01-15",
+        "active": true,
+        "skills": ["Python", "JavaScript", "SQL"],
+        "address": {
+            "street": "123 Main St",
+            "city": "New York",
+            "zip": "10001"
+        }
+    },
+    {
+        "id": 2,
+        "name": "Bob Smith",
+        "email": "bob@example.com",
+        "age": 32,
+        "salary": 82000.75,
+        "department": "Marketing",
+        "hire_date": "2021-06-20",
+        "active": true,
+        "skills": ["SEO", "Analytics", "Content"],
+        "address": {
+            "street": "456 Oak Ave",
+            "city": "San Francisco",
+            "zip": "94102"
+        }
+    },
+    {
+        "id": 3,
+        "name": "Charlie Brown",
+        "email": "charlie.brown@example.com",
+        "age": null,
+        "salary": 95000.00,
+        "department": "Engineering",
+        "hire_date": "2020-03-10",
+        "active": false,
+        "skills": ["Java", "Spring", "Docker"],
+        "address": {
+            "street": "789 Pine Rd",
+            "city": "Austin",
+            "zip": "73301"
+        }
+    },
+    {
+        "id": 4,
+        "name": "Diana Wilson",
+        "email": "diana@example.com",
+        "age": 29,
+        "salary": 68000.25,
+        "department": "Sales",
+        "hire_date": "2023-02-01",
+        "active": true,
+        "skills": ["CRM", "Negotiation"],
+        "address": {
+            "street": "321 Elm St",
+            "city": "Chicago",
+            "zip": "60601"
+        }
+    },
+    {
+        "id": 5,
+        "name": "Eve Davis",
+        "email": "eve.davis@company.org",
+        "age": 35,
+        "salary": null,
+        "department": "HR",
+        "hire_date": "2019-11-15",
+        "active": true,
+        "skills": ["Recruiting", "Training"],
+        "address": {
+            "street": "654 Maple Ave",
+            "city": "Seattle",
+            "zip": "98101"
+        }
+    }
+]

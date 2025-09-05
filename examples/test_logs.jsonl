@@ -1,0 +1,10 @@
+{"timestamp": "2024-01-01T10:00:00Z", "level": "INFO", "message": "Application started", "user_id": 1001, "ip": "192.168.1.100", "duration_ms": 250}
+{"timestamp": "2024-01-01T10:01:30Z", "level": "WARN", "message": "High memory usage detected", "user_id": null, "ip": "192.168.1.101", "duration_ms": 1500}
+{"timestamp": "2024-01-01T10:02:15Z", "level": "ERROR", "message": "Database connection failed", "user_id": 1002, "ip": "10.0.0.1", "duration_ms": 5000}
+{"timestamp": "2024-01-01T10:03:00Z", "level": "INFO", "message": "User login successful", "user_id": 1003, "ip": "203.0.113.1", "duration_ms": 180}
+{"timestamp": "01/01/2024 10:04:00", "level": "DEBUG", "message": "Cache hit for user profile", "user_id": 1001, "ip": "192.168.1.100", "duration_ms": 50}
+{"timestamp": "2024-01-01T10:05:30Z", "level": "ERROR", "message": "Payment processing error", "user_id": 1004, "ip": "172.16.0.1", "duration_ms": 2300}
+{"timestamp": "2024-01-01T10:06:45Z", "level": "INFO", "message": "Report generation completed", "user_id": null, "ip": "192.168.1.102", "duration_ms": 8500}
+{"timestamp": "2024-01-01T10:07:20Z", "level": "WARN", "message": "Disk space low", "user_id": null, "ip": "localhost", "duration_ms": 100}
+{"timestamp": "2024-01-01T10:08:00Z", "level": "INFO", "message": "Backup completed successfully", "user_id": 9999, "ip": "127.0.0.1", "duration_ms": 15000}
+{"timestamp": "Jan 1, 2024 10:09:15", "level": "FATAL", "message": "System shutdown initiated", "user_id": 0, "ip": "::1", "duration_ms": 0}
