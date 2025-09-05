@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "dataprof"
+description = "Fast, lightweight data profiling and quality assessment library"
+authors = [{name = "Andrea Bozzo", email = "andrea@example.com"}]
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research", 
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["data", "profiling", "quality", "csv", "json", "analysis", "performance"]
+license = {file = "LICENSE"}
+readme = "README.md"
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/AndreaBozzo/dataprof"
+Repository = "https://github.com/AndreaBozzo/dataprof"
+Issues = "https://github.com/AndreaBozzo/dataprof/issues"
+
+[tool.maturin]
+features = ["python"]
+module-name = "dataprof"

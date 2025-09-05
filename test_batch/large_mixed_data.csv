@@ -1,0 +1,31 @@
+id,name,age,salary,department,hire_date,performance_score,active,email,notes,latitude,longitude
+1,Alice Johnson,28,75000.50,Engineering,2019-03-15,8.7,true,alice.johnson@company.com,"High performer, team lead",40.7128,-74.0060
+2,Bob Smith,35,65000.00,Marketing,2018-07-22,7.2,true,bob.smith@company.com,"Good at presentations, needs improvement in analytics",34.0522,-118.2437
+3,Charlie Brown,42,95000.75,Engineering,2015-11-08,9.1,true,charlie.brown@company.com,"Senior architect, mentor to junior developers",37.7749,-122.4194
+4,Diana Prince,29,58000.00,HR,2020-01-20,8.3,true,diana.prince@company.com,"Excellent communication skills, handles conflicts well",41.8781,-87.6298
+5,Edward Norton,31,70000.00,Finance,2019-09-12,7.8,false,edward.norton@company.com,"Left for better opportunity, was reliable",25.7617,-80.1918
+6,Fiona Green,26,52000.00,Marketing,2021-04-03,6.9,true,fiona.green@company.com,"Creative thinker, sometimes misses deadlines",39.7392,-104.9903
+7,George Wilson,38,88000.50,Engineering,2017-02-28,8.9,true,george.wilson@company.com,"Full-stack expert, leads technical discussions",47.6062,-122.3321
+8,Helen Davis,33,62000.00,Sales,2018-12-10,7.5,true,helen.davis@company.com,"Consistent performer, good with clients",30.2672,-97.7431
+9,Ian Clarke,45,110000.00,Management,2014-05-17,9.3,true,ian.clarke@company.com,"VP of Engineering, strategic thinker",42.3601,-71.0589
+10,Jane Doe,27,54000.00,HR,2020-08-14,7.1,true,jane.doe@company.com,"Process oriented, attention to detail",32.7767,-96.7970
+11,,32,67000.00,Finance,2019-06-21,NULL,true,,"Missing name, null performance score",38.9072,-77.0369
+12,Kevin Liu,29,73000.50,Engineering,,8.4,true,kevin.liu@company.com,"Recently hired, no hire date recorded",33.4484,-112.0740
+13,Linda Martinez,36,NULL,Marketing,2017-09-30,7.6,false,linda.martinez@company.com,"Salary data missing, left company",29.7604,-95.3698
+14,Mike Anderson,NULL,61000.00,Sales,2020-11-25,6.8,true,mike.anderson@company.com,"Age not recorded during onboarding",35.2271,-80.8431
+15,Nancy Taylor,40,84000.00,Finance,2016-03-07,NULL,true,nancy.taylor@company.com,"Performance review pending",39.9526,-75.1652
+16,Oliver Thomas,28,69000.50,Engineering,2021-01-18,8.2,true,,"Email not provided, privacy concerns",43.0389,-87.9065
+17,Patricia White,34,56000.00,HR,2019-10-05,7.3,NULL,patricia.white@company.com,"Active status unclear",36.1627,-86.7816
+18,Quinn Roberts,31,77000.00,,2018-04-14,8.6,true,quinn.roberts@company.com,"Department reassignment in progress",39.1612,-75.5264
+19,Rachel Green,27,59000.00,Marketing,2020-12-02,INVALID,true,rachel.green@company.com,"Invalid performance score entered",33.7490,-84.3880
+20,Steve Jobs,41,92000.50,Engineering,2015-08-19,9.0,true,steve.jobs@company.com,"Not the famous one, just coincidence",45.5152,-122.6784
+21,Tina Turner,39,78000.00,Sales,2017-11-26,8.1,true,tina.turner@company.com,"Also not the famous one",38.5816,-92.1890
+22,Uma Thurman,30,64000.00,Finance,2019-12-15,7.7,false,uma.thurman@company.com,"Another coincidental name",41.2033,-77.1945
+23,Victor Hugo,44,105000.00,Management,2013-07-04,9.2,true,victor.hugo@company.com,"Director of Operations, not the author",40.0583,-74.4057
+24,Wendy Williams,26,51000.00,HR,2021-05-20,6.5,true,wendy.williams@company.com,"Entry level, showing improvement",35.7796,-78.6382
+25,Xavier Naidoo,33,71000.00,Engineering,2018-09-08,8.0,true,xavier.naidoo@company.com,"Backend specialist, reliable coder",32.0835,-81.0998
+26,Yuki Tanaka,28,66000.00,Marketing,2020-02-29,7.4,true,yuki.tanaka@company.com,"International marketing specialist",25.0343,-77.3963
+27,Zoe Adams,37,80000.50,Finance,2016-12-11,8.8,true,zoe.adams@company.com,"Senior analyst, data visualization expert",44.9778,-93.2650
+28,Aaron Black,32,68000.00,Sales,2019-07-16,7.9,true,aaron.black@company.com,"Territory manager for west coast",47.0379,-122.9015
+29,Betty White,29,57000.00,HR,2020-09-23,7.0,false,betty.white@company.com,"Not the actress, left for family reasons",36.7783,-119.4179
+30,Carlos Santana,35,74000.50,Engineering,2017-01-05,8.5,true,carlos.santana@company.com,"DevOps engineer, not the musician",40.7589,-111.8883

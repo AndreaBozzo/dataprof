@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::collections::HashMap;
 
 // Main report structure
@@ -7,6 +8,48 @@ pub struct QualityReport {
     pub column_profiles: Vec<ColumnProfile>,
     pub issues: Vec<QualityIssue>,
     pub scan_info: ScanInfo,
+}
+
+impl QualityReport {
+    /// Calculate overall quality score based on issues severity
+    pub fn quality_score(&self) -> Result<f64> {
+        if self.issues.is_empty() {
+            return Ok(100.0);
+        }
+
+        let total_columns = self.column_profiles.len() as f64;
+        if total_columns == 0.0 {
+            return Ok(100.0);
+        }
+
+        // Calculate penalty based on issue severity
+        let mut total_penalty = 0.0;
+        for issue in &self.issues {
+            let penalty = match issue {
+                QualityIssue::MixedDateFormats { .. } => 20.0, // Critical
+                QualityIssue::NullValues { percentage, .. } => {
+                    if *percentage > 50.0 {
+                        20.0
+                    } else if *percentage > 20.0 {
+                        15.0
+                    } else {
+                        10.0
+                    }
+                }
+                QualityIssue::MixedTypes { .. } => 20.0, // Critical
+                QualityIssue::Outliers { .. } => 10.0,   // Medium
+                QualityIssue::Duplicates { .. } => 5.0,  // Warning
+            };
+            total_penalty += penalty;
+        }
+
+        // Normalize penalty relative to number of columns
+        let normalized_penalty = total_penalty / total_columns;
+
+        // Quality score: 100 - penalty, but never below 0
+        let score = (100.0 - normalized_penalty).max(0.0);
+        Ok(score)
+    }
 }
 
 #[derive(Debug, Clone)]

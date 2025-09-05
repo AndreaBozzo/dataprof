@@ -1,0 +1,6 @@
+id,name,email,age,salary,department,hire_date,active
+1,Andrea Rossi,andrea.rossi@company.com,35,45000.50,Engineering,2020-01-15,true
+2,Marco Verdi,marco.verdi@company.com,28,35000.00,Marketing,2021-03-22,true
+3,Sara Bianchi,sara.bianchi@company.com,42,55000.75,Engineering,2019-07-10,true
+4,Luca Neri,luca.neri@company.com,31,40000.00,Sales,2022-01-05,true
+5,Elena Rosa,elena.rosa@company.com,29,38000.25,Marketing,2021-11-18,false

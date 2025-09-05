@@ -8,10 +8,12 @@ use dataprof::{
     analyze_json,
     analyze_json_with_quality,
     generate_html_report,
+    // v0.3.0 imports
+    BatchConfig,
+    BatchProcessor,
     ChunkSize,
     ColumnProfile,
     ColumnStats,
-    // v0.3.0 imports
     DataProfiler,
     DataProfilerError,
     DataType,
@@ -26,7 +28,7 @@ use std::path::{Path, PathBuf};
 #[command(name = "dataprof")]
 #[command(about = "Fast CSV data profiler with quality checking - v0.3.0 Streaming Edition")]
 struct Cli {
-    /// CSV file to analyze
+    /// File, directory, or glob pattern to analyze (use . for current dir with --glob)
     file: PathBuf,
 
     /// Enable quality checking (shows data issues)
@@ -52,6 +54,22 @@ struct Cli {
     /// Enable sampling for very large datasets
     #[arg(long)]
     sample: Option<usize>,
+
+    /// Process directory recursively
+    #[arg(short, long)]
+    recursive: bool,
+
+    /// Use glob pattern for file matching (e.g., "data/**/*.csv")
+    #[arg(long)]
+    glob: Option<String>,
+
+    /// Enable parallel processing for multiple files
+    #[arg(long)]
+    parallel: bool,
+
+    /// Maximum number of concurrent files to process
+    #[arg(long, default_value = "0")]
+    max_concurrent: usize,
 }
 
 fn main() -> Result<()> {
@@ -59,7 +77,7 @@ fn main() -> Result<()> {
 
     // Enhanced error handling wrapper
     if let Err(e) = run_analysis(&cli) {
-        handle_error(&e, cli.file.as_path());
+        handle_error(&e, &cli.file);
         std::process::exit(1);
     }
 
@@ -131,6 +149,16 @@ fn handle_error(error: &anyhow::Error, file_path: &Path) {
 }
 
 fn run_analysis(cli: &Cli) -> Result<()> {
+    // Check for batch processing modes first
+    if let Some(glob_pattern) = &cli.glob {
+        return run_batch_glob(cli, glob_pattern);
+    }
+
+    if cli.file.is_dir() {
+        return run_batch_directory(cli);
+    }
+
+    // Single file processing (existing logic)
     let version_info = if cli.streaming {
         "📊 DataProfiler v0.3.0 - Streaming Analysis"
             .bright_blue()
@@ -439,5 +467,142 @@ fn is_json_file(path: &Path) -> bool {
         matches!(extension.to_lowercase().as_str(), "json" | "jsonl")
     } else {
         false
+    }
+}
+
+/// Run batch processing with glob pattern
+fn run_batch_glob(cli: &Cli, pattern: &str) -> Result<()> {
+    println!(
+        "{}",
+        "🔍 DataProfiler v0.3.0 - Batch Analysis (Glob)"
+            .bright_blue()
+            .bold()
+    );
+
+    let config = create_batch_config(cli);
+    let processor = BatchProcessor::with_config(config);
+
+    let result = processor.process_glob(pattern)?;
+    display_batch_results(&result, cli);
+
+    Ok(())
+}
+
+/// Run batch processing on directory
+fn run_batch_directory(cli: &Cli) -> Result<()> {
+    println!(
+        "{}",
+        "📁 DataProfiler v0.3.0 - Batch Analysis (Directory)"
+            .bright_blue()
+            .bold()
+    );
+
+    let config = create_batch_config(cli);
+    let processor = BatchProcessor::with_config(config);
+
+    let result = processor.process_directory(&cli.file)?;
+    display_batch_results(&result, cli);
+
+    Ok(())
+}
+
+/// Create batch configuration from CLI options
+fn create_batch_config(cli: &Cli) -> BatchConfig {
+    let max_concurrent = if cli.max_concurrent > 0 {
+        cli.max_concurrent
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+    };
+
+    BatchConfig {
+        parallel: cli.parallel,
+        max_concurrent,
+        recursive: cli.recursive,
+        extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
+        exclude_patterns: vec![
+            "**/.*".to_string(),
+            "**/*tmp*".to_string(),
+            "**/*temp*".to_string(),
+        ],
+    }
+}
+
+/// Display batch processing results
+fn display_batch_results(result: &dataprof::BatchResult, cli: &Cli) {
+    println!("\n📈 Batch Quality Analysis");
+
+    // Overall summary
+    if result.summary.failed > 0 {
+        let failure_rate =
+            (result.summary.failed as f64 / result.summary.total_files as f64) * 100.0;
+        println!("⚠️ {:.1}% of files failed processing", failure_rate);
+    }
+
+    if result.summary.total_issues > 0 {
+        println!(
+            "🔍 Found {} quality issues across {} files",
+            result.summary.total_issues, result.summary.successful
+        );
+
+        if result.summary.average_quality_score < 80.0 {
+            println!(
+                "📊 Average Quality Score: {:.1}% - {} BELOW THRESHOLD",
+                result.summary.average_quality_score,
+                "⚠️".yellow()
+            );
+        } else {
+            println!(
+                "📊 Average Quality Score: {:.1}% - {} GOOD",
+                result.summary.average_quality_score,
+                "✅".green()
+            );
+        }
+    }
+
+    // Show top problematic files
+    if cli.quality && !result.reports.is_empty() {
+        println!("\n🔍 Quality Issues by File:");
+
+        let mut file_scores: Vec<_> = result
+            .reports
+            .iter()
+            .filter_map(|(path, report)| {
+                report
+                    .quality_score()
+                    .ok()
+                    .map(|score| (path, report, score))
+            })
+            .collect();
+
+        file_scores.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+
+        for (path, report, score) in file_scores.iter().take(10) {
+            let icon = if *score < 60.0 {
+                "🔴"
+            } else if *score < 80.0 {
+                "🟡"
+            } else {
+                "✅"
+            };
+            println!(
+                "  {} {:.1}% - {} ({} issues)",
+                icon,
+                score,
+                path.file_name().unwrap().to_string_lossy(),
+                report.issues.len()
+            );
+        }
+    }
+
+    // Processing performance
+    if result.summary.total_files > 1 {
+        let files_per_sec =
+            result.summary.successful as f64 / result.summary.processing_time_seconds;
+        println!(
+            "\n⚡ Processed {:.1} files/sec ({:.2}s total)",
+            files_per_sec, result.summary.processing_time_seconds
+        );
     }
 }
