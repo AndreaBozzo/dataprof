@@ -2,6 +2,8 @@ use anyhow::Result;
 use dataprof::{
     analyze_csv, analyze_csv_with_sampling, analyze_json, analyze_json_with_quality,
     generate_html_report,
+    // v0.3.0 imports for testing new API
+    DataProfiler, ChunkSize, quick_quality_check,
 };
 use std::fs;
 use std::io::Write;
@@ -288,6 +290,78 @@ fn test_file_info_accuracy() -> Result<()> {
     if let Some(total_rows) = report.file_info.total_rows {
         assert_eq!(total_rows, 2); // Excluding header
     }
+
+    Ok(())
+}
+
+// ============ v0.3.0 API Tests ============
+
+#[test]
+fn test_v030_quick_quality_check() -> Result<()> {
+    let mut temp_file = NamedTempFile::new()?;
+    writeln!(temp_file, "name,score")?;
+    writeln!(temp_file, "Alice,95")?;
+    writeln!(temp_file, "Bob,87")?;
+    writeln!(temp_file, "Charlie,92")?;
+
+    let quality_score = quick_quality_check(temp_file.path())?;
+    
+    // Should return a score between 0-100
+    assert!(quality_score >= 0.0 && quality_score <= 100.0);
+    // With no quality issues, should be 100.0
+    assert_eq!(quality_score, 100.0);
+
+    Ok(())
+}
+
+#[test]
+fn test_v030_streaming_profiler_basic() -> Result<()> {
+    let mut temp_file = NamedTempFile::new()?;
+    writeln!(temp_file, "id,name,value")?;
+    writeln!(temp_file, "1,test1,100")?;
+    writeln!(temp_file, "2,test2,200")?;
+    writeln!(temp_file, "3,test3,300")?;
+
+    let profiler = DataProfiler::streaming();
+    let report = profiler.analyze_file(temp_file.path())?;
+
+    assert_eq!(report.column_profiles.len(), 3);
+    assert_eq!(report.file_info.total_columns, 3);
+    
+    // Should have processed all rows
+    assert_eq!(report.scan_info.rows_scanned, 3);
+    
+    // Find profiles by name
+    let id_profile = report.column_profiles.iter().find(|p| p.name == "id").unwrap();
+    let name_profile = report.column_profiles.iter().find(|p| p.name == "name").unwrap();
+    let value_profile = report.column_profiles.iter().find(|p| p.name == "value").unwrap();
+
+    assert!(matches!(id_profile.data_type, dataprof::DataType::Integer));
+    assert!(matches!(name_profile.data_type, dataprof::DataType::String));
+    assert!(matches!(value_profile.data_type, dataprof::DataType::Integer));
+
+    Ok(())
+}
+
+#[test]
+fn test_v030_streaming_with_chunk_size() -> Result<()> {
+    let mut temp_file = NamedTempFile::new()?;
+    writeln!(temp_file, "data")?;
+    for i in 1..=100 {
+        writeln!(temp_file, "{}", i)?;
+    }
+
+    // Test with fixed chunk size
+    let profiler = DataProfiler::streaming()
+        .chunk_size(ChunkSize::Fixed(10));
+    let report = profiler.analyze_file(temp_file.path())?;
+
+    assert_eq!(report.column_profiles.len(), 1);
+    assert_eq!(report.scan_info.rows_scanned, 100);
+
+    let data_profile = &report.column_profiles[0];
+    assert_eq!(data_profile.name, "data");
+    assert!(matches!(data_profile.data_type, dataprof::DataType::Integer));
 
     Ok(())
 }

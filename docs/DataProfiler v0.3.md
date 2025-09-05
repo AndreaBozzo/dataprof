@@ -392,10 +392,63 @@ kafka_consumer
 
 ---
 
-## 📈 Success Metrics v0.3.0
+## 🚧 Implementation Status (Current Release)
+
+### ✅ **IMPLEMENTED (Architecture Preview)**
+- **Modular Architecture**: core/, engines/, api/ structure created
+- **Streaming API Interface**: `DataProfiler::streaming()` functional  
+- **Progress Callbacks**: Real-time progress tracking works
+- **Adaptive Chunking**: `ChunkSize::Adaptive` with system memory detection
+- **CLI Integration**: --streaming, --progress, --chunk-size flags
+- **Backward Compatibility**: All v0.1.0 functionality preserved
+- **Quality Checking**: Issue detection works in streaming mode
+
+### ❌ **NOT YET IMPLEMENTED (Placeholders)**
+- **Real Streaming**: Still loads all data into HashMap (NOT memory-efficient)
+- **Memory Mapping**: memmap2 dependency added but not used
+- **Chunked Processing**: Processes chunks but aggregates all in memory
+- **SIMD Acceleration**: Interface exists but no SIMD code
+- **GPU Processing**: Not implemented
+- **Columnar Processing**: Still row-based processing
+- **Advanced Sampling**: Strategies defined but use basic logic
+- **Distributed Processing**: Complete placeholder
+- **Incremental Profiling**: Not implemented
+- **Query Engine Integration**: Not implemented
+
+### 🔄 **PARTIALLY IMPLEMENTED**
+- **Sampling Strategies**: Enums defined, basic should_include() logic
+- **Progress Tracking**: Works but not with real chunked processing
+- **Performance Optimizations**: Better architecture, but core algorithms unchanged
+
+### 📊 **Current vs Target Performance**
+| Feature | Current Status | Target v0.3.0 |
+|---------|----------------|---------------|
+| Memory Usage | Same as v0.1.0 (HashMap) | < 100MB per GB |
+| Large Files | Works but uses full RAM | Streaming processing |
+| Speed | ~Same as v0.1.0 | 10x faster with SIMD |
+| Scalability | Single-machine only | Multi-node support |
+
+## 🎯 **What This Release Provides**
+This is an **Architecture Preview** that lays the foundation for v0.3.0's performance features:
+- Clean modular design for future implementations
+- Streaming API that will be enhanced with real streaming
+- Progress tracking system for long operations  
+- Backward compatibility with improved CLI
+
+## 📈 Success Metrics v0.3.0 (TARGET)
 
 - **Performance**: Gestire 1TB di dati su laptop standard
-- **Scalability**: Linear scaling fino a 100 nodi
+- **Scalability**: Linear scaling fino a 100 nodi  
 - **Efficiency**: < 100MB RAM per GB di dati processati
 - **Speed**: Real-time profiling per stream < 100k events/sec
 - **Adoption**: 1000+ GitHub stars, 50+ contributors
+
+---
+
+## 🛣️ **Next Steps for Full v0.3.0**
+1. Implement real streaming with memory mapping
+2. Add SIMD acceleration for numeric computations
+3. Implement true chunked processing
+4. Add Arrow columnar support
+5. Implement advanced sampling strategies
+6. Add distributed processing support
