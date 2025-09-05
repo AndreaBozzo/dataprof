@@ -1,7 +1,7 @@
 // Advanced API - placeholder for future builder pattern implementations
 // This will contain the ProfileEngine builder from the roadmap
 
-use crate::engines::streaming::StreamingProfiler;
+// use crate::engines::streaming::StreamingProfiler; // Will be used in future iterations
 use crate::types::QualityReport;
 use anyhow::Result;
 use std::path::Path;

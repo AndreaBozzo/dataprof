@@ -3,9 +3,9 @@ use csv::ReaderBuilder;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::core::sampling::{ChunkSize, SampleInfo, SamplingStrategy};
+use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::progress::{ProgressCallback, ProgressTracker};
-use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
+use crate::types::{FileInfo, QualityReport, ScanInfo};
 use crate::{analyze_column, QualityChecker};
 
 pub struct StreamingProfiler {
@@ -126,6 +126,7 @@ impl StreamingProfiler {
         if rows_in_current_chunk > 0 {
             self.process_chunk(&mut all_column_data, &current_chunk_data);
             chunk_count += 1;
+            progress_tracker.update(total_rows_processed, estimated_total_rows, chunk_count);
         }
 
         progress_tracker.finish(total_rows_processed);

@@ -1,4 +1,5 @@
 // New v0.3.0 modular architecture
+pub mod acceleration;
 pub mod api;
 pub mod core;
 pub mod engines;

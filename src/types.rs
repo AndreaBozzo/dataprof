@@ -36,7 +36,7 @@ pub struct ColumnProfile {
     pub patterns: Vec<Pattern>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataType {
     String,
     Integer,

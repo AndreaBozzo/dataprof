@@ -1,12 +1,14 @@
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::engines::streaming::{ProgressInfo, StreamingProfiler};
+use crate::engines::streaming::{
+    MemoryEfficientProfiler, ProgressInfo, StreamingProfiler, TrueStreamingProfiler,
+};
 use crate::types::QualityReport;
 use anyhow::Result;
 use std::path::Path;
 
 /// One-liner API for quick profiling - exactly as shown in the roadmap
 pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
-    let report = StreamingProfiler::new()
+    let report = choose_best_profiler(file_path.as_ref())?
         .sampling(SamplingStrategy::adaptive(None, 0.0))
         .analyze_file(file_path.as_ref())?;
 
@@ -21,20 +23,84 @@ pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
     Ok(quality_score)
 }
 
+/// Helper function to choose the best profiler based on file size
+fn choose_best_profiler(file_path: &Path) -> Result<ProfilerChoice> {
+    let metadata = std::fs::metadata(file_path)?;
+    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+
+    if file_size_mb > 200.0 {
+        // Use true streaming profiler for very large files (>200MB)
+        Ok(ProfilerChoice::TrueStreaming(TrueStreamingProfiler::new()))
+    } else if file_size_mb > 50.0 {
+        // Use memory-efficient profiler for moderately large files (50-200MB)
+        Ok(ProfilerChoice::MemoryEfficient(
+            MemoryEfficientProfiler::new(),
+        ))
+    } else {
+        // Use regular streaming profiler for smaller files (<50MB)
+        Ok(ProfilerChoice::Streaming(StreamingProfiler::new()))
+    }
+}
+
+enum ProfilerChoice {
+    Streaming(StreamingProfiler),
+    MemoryEfficient(MemoryEfficientProfiler),
+    TrueStreaming(TrueStreamingProfiler),
+}
+
+impl ProfilerChoice {
+    fn sampling(self, strategy: SamplingStrategy) -> Self {
+        match self {
+            ProfilerChoice::Streaming(profiler) => {
+                ProfilerChoice::Streaming(profiler.sampling(strategy))
+            }
+            ProfilerChoice::MemoryEfficient(profiler) => {
+                ProfilerChoice::MemoryEfficient(profiler.sampling(strategy))
+            }
+            ProfilerChoice::TrueStreaming(profiler) => {
+                ProfilerChoice::TrueStreaming(profiler.sampling(strategy))
+            }
+        }
+    }
+
+    fn analyze_file(self, file_path: &Path) -> Result<QualityReport> {
+        match self {
+            ProfilerChoice::Streaming(profiler) => profiler.analyze_file(file_path),
+            ProfilerChoice::MemoryEfficient(profiler) => profiler.analyze_file(file_path),
+            ProfilerChoice::TrueStreaming(profiler) => profiler.analyze_file(file_path),
+        }
+    }
+}
+
 /// Stream profiling with callback - as shown in the roadmap
 pub fn stream_profile<P, F>(file_path: P, _callback: F) -> Result<QualityReport>
 where
     P: AsRef<Path>,
     F: Fn(QualityReport) + Send + Sync + 'static,
 {
-    StreamingProfiler::new()
-        .chunk_size(ChunkSize::Adaptive)
-        .progress_callback(move |progress| {
-            // For chunk-based callback, we'd need to modify the streaming profiler
-            // to produce intermediate reports. For now, this is a placeholder.
-            println!("Progress: {:.1}%", progress.percentage);
-        })
-        .analyze_file(file_path.as_ref())
+    // Choose best profiler and add progress callback
+    let profiler_choice = choose_best_profiler(file_path.as_ref())?;
+
+    match profiler_choice {
+        ProfilerChoice::Streaming(profiler) => profiler
+            .chunk_size(ChunkSize::Adaptive)
+            .progress_callback(move |progress| {
+                println!("Progress: {:.1}%", progress.percentage);
+            })
+            .analyze_file(file_path.as_ref()),
+        ProfilerChoice::MemoryEfficient(profiler) => profiler
+            .chunk_size(ChunkSize::Adaptive)
+            .progress_callback(move |progress| {
+                println!("Progress: {:.1}%", progress.percentage);
+            })
+            .analyze_file(file_path.as_ref()),
+        ProfilerChoice::TrueStreaming(profiler) => profiler
+            .chunk_size(ChunkSize::Adaptive)
+            .progress_callback(move |progress| {
+                println!("Progress: {:.1}%", progress.percentage);
+            })
+            .analyze_file(file_path.as_ref()),
+    }
 }
 
 /// Simple builder API that maintains backward compatibility

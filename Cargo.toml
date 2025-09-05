@@ -41,6 +41,11 @@ rayon = "1.8"
 # Memory mapping for large files
 memmap2 = "0.9"
 
+# SIMD acceleration
+wide = "0.7"
+
+# Note: Arrow will be added in a future iteration once version conflicts are resolved
+
 [dev-dependencies]
 tempfile = "3.10"
 

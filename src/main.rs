@@ -15,7 +15,7 @@ use dataprof::{
     DataType,
     ProgressInfo,
     QualityIssue,
-    SamplingStrategy,
+    // SamplingStrategy, // Future CLI integration
 };
 use std::path::{Path, PathBuf};
 
