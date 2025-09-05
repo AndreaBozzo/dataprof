@@ -1,3 +1,9 @@
+// New v0.3.0 modular architecture
+pub mod core;
+pub mod engines;
+pub mod api;
+
+// Legacy modules for backward compatibility
 pub mod html;
 pub mod quality;
 pub mod sampler;
@@ -10,7 +16,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
-// Re-export types
+// v0.3.0 public API - main exports
+pub use api::{DataProfiler, quick_quality_check, stream_profile};
+pub use core::sampling::{ChunkSize, SamplingStrategy};
+pub use engines::streaming::ProgressInfo;
+
+// Legacy re-exports for backward compatibility
 pub use html::generate_html_report;
 pub use quality::QualityChecker;
 pub use sampler::{SampleInfo, Sampler};
@@ -349,7 +360,7 @@ fn infer_type(data: &[String]) -> DataType {
     DataType::String
 }
 
-fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
+pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
     let numbers: Vec<f64> = data.iter().filter_map(|s| s.parse::<f64>().ok()).collect();
 
     if numbers.is_empty() {
@@ -367,7 +378,7 @@ fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
     ColumnStats::Numeric { min, max, mean }
 }
 
-fn calculate_text_stats(data: &[String]) -> ColumnStats {
+pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     let non_empty: Vec<&String> = data.iter().filter(|s| !s.is_empty()).collect();
 
     if non_empty.is_empty() {
@@ -390,7 +401,7 @@ fn calculate_text_stats(data: &[String]) -> ColumnStats {
     }
 }
 
-fn detect_patterns(data: &[String]) -> Vec<Pattern> {
+pub fn detect_patterns(data: &[String]) -> Vec<Pattern> {
     let mut patterns = Vec::new();
     let non_empty: Vec<&String> = data.iter().filter(|s| !s.is_empty()).collect();
 

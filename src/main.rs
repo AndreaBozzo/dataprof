@@ -4,12 +4,14 @@ use colored::*;
 use dataprof::{
     analyze_csv, analyze_csv_with_sampling, analyze_json, analyze_json_with_quality,
     generate_html_report, ColumnProfile, ColumnStats, DataType, QualityIssue,
+    // v0.3.0 imports
+    DataProfiler, ChunkSize, SamplingStrategy, ProgressInfo,
 };
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "dataprof")]
-#[command(about = "Fast CSV data profiler with quality checking")]
+#[command(about = "Fast CSV data profiler with quality checking - v0.3.0 Streaming Edition")]
 struct Cli {
     /// CSV file to analyze
     file: PathBuf,
@@ -21,15 +23,34 @@ struct Cli {
     /// Generate HTML report (requires --quality)
     #[arg(long)]
     html: Option<PathBuf>,
+
+    /// Use streaming engine for large files (v0.3.0)
+    #[arg(long)]
+    streaming: bool,
+
+    /// Show progress during processing (requires --streaming)
+    #[arg(long)]
+    progress: bool,
+
+    /// Override chunk size for streaming (default: adaptive)
+    #[arg(long)]
+    chunk_size: Option<usize>,
+
+    /// Enable sampling for very large datasets
+    #[arg(long)]
+    sample: Option<usize>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    println!(
-        "{}",
-        "📊 DataProfiler - Analyzing CSV...".bright_blue().bold()
-    );
+    let version_info = if cli.streaming {
+        "📊 DataProfiler v0.3.0 - Streaming Analysis".bright_blue().bold()
+    } else {
+        "📊 DataProfiler - Standard Analysis".bright_blue().bold()
+    };
+    
+    println!("{}", version_info);
     println!();
 
     if cli.quality {
@@ -42,10 +63,44 @@ fn main() -> Result<()> {
         }
 
         // Use advanced analysis with quality checking
-        let report = if is_json_file(&cli.file) {
-            analyze_json_with_quality(&cli.file)?
+        let report = if cli.streaming && !is_json_file(&cli.file) {
+            // v0.3.0 Streaming API
+            let mut profiler = DataProfiler::streaming();
+            
+            // Configure chunk size
+            let chunk_size = if let Some(size) = cli.chunk_size {
+                ChunkSize::Fixed(size)
+            } else {
+                ChunkSize::Adaptive
+            };
+            profiler = profiler.chunk_size(chunk_size);
+            
+            // Configure progress callback if requested
+            if cli.progress {
+                profiler = profiler.progress_callback(|progress: ProgressInfo| {
+                    print!("\r🔄 Processing: {:.1}% ({} rows, {:.1} rows/sec)", 
+                           progress.percentage, 
+                           progress.rows_processed,
+                           progress.processing_speed);
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                });
+            }
+            
+            let result = profiler.analyze_file(&cli.file)?;
+            
+            // Clear progress line if it was shown
+            if cli.progress {
+                println!(); // New line after progress
+            }
+            
+            result
         } else {
-            analyze_csv_with_sampling(&cli.file)?
+            // Legacy analysis
+            if is_json_file(&cli.file) {
+                analyze_json_with_quality(&cli.file)?
+            } else {
+                analyze_csv_with_sampling(&cli.file)?
+            }
         };
 
         // Show basic file info
