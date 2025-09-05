@@ -22,6 +22,7 @@ colored = "3.0"
 
 # Error handling
 anyhow = "1.0"
+thiserror = "1.0"
 
 # Pattern detection
 regex = "1.10"
@@ -43,6 +44,10 @@ memmap2 = "0.9"
 
 # SIMD acceleration
 wide = "0.7"
+
+# Random number generation for sampling
+rand = { version = "0.8", features = ["small_rng"] }
+rand_chacha = "0.3"
 
 # Note: Arrow will be added in a future iteration once version conflicts are resolved
 

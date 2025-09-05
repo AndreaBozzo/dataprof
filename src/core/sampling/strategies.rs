@@ -2,6 +2,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
+use super::reservoir::ReservoirSampler;
+
 #[derive(Debug, Clone)]
 pub enum SamplingStrategy {
     /// No sampling - analyze all data
@@ -46,9 +48,8 @@ pub struct SamplingState {
     stratum_counts: HashMap<String, usize>,
     stratum_samples: HashMap<String, usize>,
 
-    /// Reservoir state
-    reservoir: Vec<usize>,
-    reservoir_total: usize,
+    /// Enhanced reservoir sampler
+    reservoir_sampler: Option<ReservoirSampler>,
 
     /// Importance sampling state
     #[allow(dead_code)] // Future use for importance sampling
@@ -62,10 +63,22 @@ impl SamplingState {
             progressive_confidence: 0.0,
             stratum_counts: HashMap::new(),
             stratum_samples: HashMap::new(),
-            reservoir: Vec::new(),
-            reservoir_total: 0,
+            reservoir_sampler: None,
             importance_scores: Vec::new(),
         }
+    }
+    
+    /// Initialize reservoir sampler with given capacity
+    pub fn init_reservoir(&mut self, capacity: usize) {
+        self.reservoir_sampler = Some(ReservoirSampler::new(capacity));
+    }
+    
+    /// Get or initialize reservoir sampler
+    pub fn get_or_init_reservoir(&mut self, capacity: usize) -> &mut ReservoirSampler {
+        if self.reservoir_sampler.is_none() {
+            self.init_reservoir(capacity);
+        }
+        self.reservoir_sampler.as_mut().unwrap()
     }
 }
 
@@ -181,35 +194,13 @@ impl SamplingStrategy {
     fn reservoir_sample(
         &self,
         row_index: usize,
-        total_processed: usize,
+        _total_processed: usize,
         size: usize,
         state: &mut SamplingState,
     ) -> bool {
-        state.reservoir_total = total_processed;
-
-        if state.reservoir.len() < size {
-            // Still filling the reservoir
-            state.reservoir.push(row_index);
-            true
-        } else {
-            // Reservoir is full, decide whether to replace an existing element
-            let mut hasher = DefaultHasher::new();
-            row_index.hash(&mut hasher);
-            let hash = hasher.finish();
-
-            // Probability of inclusion is size/total_processed
-            let random_choice = (hash % total_processed as u64) as usize;
-
-            if random_choice < size {
-                // Replace a random element in the reservoir
-                let replace_idx = (hash / total_processed as u64) as usize % size;
-                state.reservoir[replace_idx] = row_index;
-                true
-            } else {
-                // This element is not selected
-                false
-            }
-        }
+        // Use the enhanced reservoir sampler
+        let reservoir = state.get_or_init_reservoir(size);
+        reservoir.process_record(row_index)
     }
 
     fn stratified_sample(

@@ -17,8 +17,12 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::robust_csv::RobustCsvParser;
+
 // v0.3.0 public API - main exports
 pub use api::{quick_quality_check, stream_profile, DataProfiler};
+pub use core::errors::{DataProfilerError, ErrorSeverity};
+pub use core::robust_csv::CsvDiagnostics;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use engines::streaming::ProgressInfo;
 
@@ -30,7 +34,84 @@ pub use types::{
     ColumnProfile, ColumnStats, DataType, FileInfo, Pattern, QualityIssue, QualityReport, ScanInfo,
 };
 
-// Nuova funzione che usa il sampler per file grandi
+// v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
+pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
+    let metadata = std::fs::metadata(file_path)?;
+    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+    let start = std::time::Instant::now();
+
+    // Use robust CSV parser
+    let parser = RobustCsvParser::new()
+        .flexible(true)
+        .allow_variable_columns(true);
+
+    let (headers, records) = parser.parse_csv(file_path)?;
+
+    if records.is_empty() {
+        return Ok(QualityReport {
+            file_info: FileInfo {
+                path: file_path.display().to_string(),
+                total_rows: Some(0),
+                total_columns: headers.len(),
+                file_size_mb,
+            },
+            column_profiles: vec![],
+            issues: vec![],
+            scan_info: ScanInfo {
+                rows_scanned: 0,
+                sampling_ratio: 1.0,
+                scan_time_ms: start.elapsed().as_millis(),
+            },
+        });
+    }
+
+    // Convert records to column format for analysis
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    
+    // Initialize columns
+    for header in &headers {
+        columns.insert(header.clone(), Vec::new());
+    }
+
+    // Add data from records
+    for record in &records {
+        for (i, header) in headers.iter().enumerate() {
+            let value = record.get(i).unwrap_or(&String::new()).clone();
+            if let Some(column_data) = columns.get_mut(header) {
+                column_data.push(value);
+            }
+        }
+    }
+
+    // Analyze columns
+    let mut column_profiles = Vec::new();
+    for (name, data) in &columns {
+        let profile = analyze_column(name, data);
+        column_profiles.push(profile);
+    }
+
+    // Check quality issues
+    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+    let scan_time_ms = start.elapsed().as_millis();
+
+    Ok(QualityReport {
+        file_info: FileInfo {
+            path: file_path.display().to_string(),
+            total_rows: Some(records.len()),
+            total_columns: headers.len(),
+            file_size_mb,
+        },
+        column_profiles,
+        issues,
+        scan_info: ScanInfo {
+            rows_scanned: records.len(),
+            sampling_ratio: 1.0,
+            scan_time_ms,
+        },
+    })
+}
+
+// Enhanced function that uses robust parsing with sampling for large files
 pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
     let file_size_mb = metadata.len() as f64 / 1_048_576.0;
@@ -96,10 +177,56 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
     })
 }
 
-// Funzione originale per compatibilità
+// Enhanced original function with robust parsing fallback for compatibility
 pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+    // First try strict CSV parsing
+    match try_strict_csv_parsing(file_path) {
+        Ok(profiles) => return Ok(profiles),
+        Err(e) => {
+            eprintln!("⚠️ Strict CSV parsing failed: {}. Using robust parsing...", e);
+        }
+    }
+
+    // Fallback to robust parsing
+    let parser = RobustCsvParser::new()
+        .flexible(true)
+        .allow_variable_columns(true);
+
+    let (headers, records) = parser.parse_csv(file_path)?;
+    
+    // Convert records to column format
+    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    
+    // Initialize columns
+    for header in &headers {
+        columns.insert(header.clone(), Vec::new());
+    }
+
+    // Add data from records
+    for record in &records {
+        for (i, header) in headers.iter().enumerate() {
+            let value = record.get(i).unwrap_or(&String::new()).clone();
+            if let Some(column_data) = columns.get_mut(header) {
+                column_data.push(value);
+            }
+        }
+    }
+
+    // Analyze each column
+    let mut profiles = Vec::new();
+    for (name, data) in columns {
+        let profile = analyze_column(&name, &data);
+        profiles.push(profile);
+    }
+
+    Ok(profiles)
+}
+
+// Helper function for strict CSV parsing
+fn try_strict_csv_parsing(file_path: &Path) -> Result<Vec<ColumnProfile>> {
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
+        .flexible(false) // Strict parsing
         .from_path(file_path)?;
 
     // Get headers
