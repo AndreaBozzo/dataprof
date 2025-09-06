@@ -360,8 +360,6 @@ impl Default for BatchProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn test_batch_config_default() {
@@ -390,15 +388,19 @@ mod tests {
 
     #[test]
     fn test_process_files() -> Result<()> {
-        // Create test CSV files with proper extensions
-        let mut temp_file1 = NamedTempFile::with_suffix(".csv")?;
-        writeln!(temp_file1, "name,age")?;
-        writeln!(temp_file1, "Alice,25")?;
-        writeln!(temp_file1, "Bob,30")?;
+        // Create test CSV files in current directory to avoid temp path exclusions
+        let temp_dir = std::env::temp_dir();
+        let test_file1 = temp_dir.join("test_batch1.csv");
+        let test_file2 = temp_dir.join("test_batch2.csv");
 
-        let mut temp_file2 = NamedTempFile::with_suffix(".csv")?;
-        writeln!(temp_file2, "id,value")?;
-        writeln!(temp_file2, "1,100")?;
+        // Write test data
+        std::fs::write(&test_file1, "name,age\nAlice,25\nBob,30\n")?;
+        std::fs::write(&test_file2, "id,value\n1,100\n")?;
+
+        // Ensure cleanup
+        let _cleanup = FileCleanup {
+            files: vec![test_file1.clone(), test_file2.clone()],
+        };
 
         let config = BatchConfig {
             parallel: false,
@@ -408,10 +410,7 @@ mod tests {
             exclude_patterns: vec![], // No exclusions for test
         };
         let processor = BatchProcessor { config };
-        let files = vec![
-            temp_file1.path().to_path_buf(),
-            temp_file2.path().to_path_buf(),
-        ];
+        let files = vec![test_file1, test_file2];
 
         let result = processor.process_files(&files)?;
 
@@ -420,5 +419,17 @@ mod tests {
         assert_eq!(result.summary.failed, 0);
 
         Ok(())
+    }
+
+    struct FileCleanup {
+        files: Vec<std::path::PathBuf>,
+    }
+
+    impl Drop for FileCleanup {
+        fn drop(&mut self) {
+            for file in &self.files {
+                let _ = std::fs::remove_file(file);
+            }
+        }
     }
 }

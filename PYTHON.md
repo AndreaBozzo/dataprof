@@ -38,6 +38,7 @@ import dataprof
 
 # Analyze CSV file
 profiles = dataprof.analyze_csv_file("data.csv")
+
 for profile in profiles:
     print(f"{profile.name}: {profile.data_type} (nulls: {profile.null_percentage:.1f}%)")
 
@@ -101,7 +102,7 @@ Process files matching a glob pattern.
 
 **Parameters:**
 - `pattern`: Glob pattern (e.g., "/data/**/*.csv")
-- `parallel`: Enable parallel processing  
+- `parallel`: Enable parallel processing
 - `max_concurrent`: Max concurrent files (default: CPU count)
 
 **Returns:**
@@ -191,10 +192,10 @@ import dataprof
 def quality_gate(**context):
     file_path = context['params']['file_path']
     report = dataprof.analyze_csv_with_quality(file_path)
-    
+
     if report.quality_score() < 80.0:
         raise ValueError(f"Quality too low: {report.quality_score():.1f}%")
-    
+
     return report.quality_score()
 
 dag = DAG('data_quality', schedule_interval='@daily')
@@ -227,7 +228,7 @@ report = dataprof.analyze_csv_with_quality('{{ table_name }}.csv')
 if report.quality_score() < 85.0:
     raise Exception(f"Quality gate failed: {report.quality_score():.1f}%")
   {% endset %}
-  
+
   {{ run_python(python_script) }}
 {% endmacro %}
 ```
