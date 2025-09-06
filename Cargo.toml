@@ -46,7 +46,7 @@ memmap2 = "0.9"
 wide = "0.7"
 
 # Random number generation for sampling
-rand = { version = "0.8", features = ["small_rng"] }
+rand = { version = "0.9", features = ["small_rng"] }
 rand_chacha = "0.3"
 
 # Batch processing support
