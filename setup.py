@@ -3,7 +3,7 @@ from setuptools_rust import Binding, RustExtension
 
 setup(
     name="dataprof",
-    version="0.3.0",
+    version="0.3.1",
     author="Andrea Bozzo",
     author_email="andreabozzo92@gmail.com",
     description="A fast, lightweight CLI tool for CSV data profiling and analysis",
@@ -24,7 +24,7 @@ setup(
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "Intended Audience :: Science/Research",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
