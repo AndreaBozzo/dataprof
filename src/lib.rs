@@ -4,11 +4,10 @@ pub mod api;
 pub mod core;
 pub mod engines;
 
-// Legacy modules for backward compatibility
-pub mod html;
-pub mod quality;
-pub mod sampler;
+// Organized modules
+pub mod output;
 pub mod types;
+pub mod utils;
 
 // Python bindings (optional)
 #[cfg(feature = "python")]
@@ -31,13 +30,13 @@ pub use core::robust_csv::CsvDiagnostics;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use engines::streaming::ProgressInfo;
 
-// Legacy re-exports for backward compatibility
-pub use html::generate_html_report;
-pub use quality::QualityChecker;
-pub use sampler::{SampleInfo, Sampler};
+// Re-exports for backward compatibility
+pub use output::html::generate_html_report;
 pub use types::{
     ColumnProfile, ColumnStats, DataType, FileInfo, Pattern, QualityIssue, QualityReport, ScanInfo,
 };
+pub use utils::quality::QualityChecker;
+pub use utils::sampler::{SampleInfo, Sampler};
 
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {

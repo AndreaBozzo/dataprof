@@ -1,0 +1,10 @@
+include README.md
+include LICENSE
+include Cargo.toml
+include Cargo.lock
+recursive-include src *.rs
+recursive-include python *.py
+exclude target/
+exclude .git/
+exclude test_*.csv
+exclude *.pdb
