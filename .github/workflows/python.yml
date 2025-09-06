@@ -127,7 +127,7 @@ jobs:
         path: dist
     - name: Install wheel
       run: |
-        pip install dist/*.whl
+        pip install --find-links dist dataprof
         pip install pytest
     - name: Test Python bindings
       run: |
