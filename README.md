@@ -10,11 +10,34 @@
 
 🏗️ **Library-first design** for easy integration • ⚡ **10x faster** than pandas • 🌊 **Handles datasets larger than RAM** • 🔍 **Robust quality checking** for dirty data
 
+📦 **Available for both Rust and Python** • 🐍 `pip install dataprof` • 🦀 `cargo add dataprof`
+
 ![DataProfiler HTML Report](assets/animations/HTML.gif)
 
 ## 🚀 Quick Start
 
-### As a Rust Library
+### 🐍 Python Users
+
+```bash
+pip install dataprof
+```
+
+```python
+import dataprof
+
+# Analyze CSV files with ease
+profiles = dataprof.analyze_csv_file("data.csv")
+for profile in profiles:
+    print(f"{profile.name}: {profile.data_type} (null: {profile.null_percentage:.1f}%)")
+
+# Quality checking with detailed reports
+report = dataprof.analyze_csv_with_quality("dataset.csv")
+print(f"Quality score: {report.quality_score():.1f}%")
+```
+
+👉 **[Complete Python Guide →](PYTHON.md)**
+
+### 🦀 Rust Library
 
 ```bash
 cargo add dataprof
