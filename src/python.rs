@@ -294,13 +294,23 @@ fn analyze_json_file(path: &str) -> PyResult<Vec<PyColumnProfile>> {
 
 /// Batch process multiple files using glob pattern
 #[pyfunction]
-#[pyo3(signature = (pattern, _parallel=None, _max_concurrent=None))]
+#[pyo3(signature = (pattern, parallel=None, max_concurrent=None))]
 fn batch_analyze_glob(
     pattern: &str,
-    _parallel: Option<bool>,
-    _max_concurrent: Option<usize>,
+    parallel: Option<bool>,
+    max_concurrent: Option<usize>,
 ) -> PyResult<PyBatchResult> {
-    let processor = BatchProcessor::new();
+    use crate::core::batch::BatchConfig;
+    
+    let config = BatchConfig {
+        parallel: parallel.unwrap_or(true),
+        max_concurrent: max_concurrent.unwrap_or_else(num_cpus::get),
+        recursive: false, // Not applicable for glob patterns
+        extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
+        exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+    };
+    
+    let processor = BatchProcessor::with_config(config);
     let result = processor
         .process_glob(pattern)
         .map_err(|e| PyRuntimeError::new_err(format!("Batch processing failed: {}", e)))?;
@@ -310,14 +320,24 @@ fn batch_analyze_glob(
 
 /// Batch process all files in a directory
 #[pyfunction]
-#[pyo3(signature = (directory, _recursive=None, _parallel=None, _max_concurrent=None))]
+#[pyo3(signature = (directory, recursive=None, parallel=None, max_concurrent=None))]
 fn batch_analyze_directory(
     directory: &str,
-    _recursive: Option<bool>,
-    _parallel: Option<bool>,
-    _max_concurrent: Option<usize>,
+    recursive: Option<bool>,
+    parallel: Option<bool>,
+    max_concurrent: Option<usize>,
 ) -> PyResult<PyBatchResult> {
-    let processor = BatchProcessor::new();
+    use crate::core::batch::BatchConfig;
+    
+    let config = BatchConfig {
+        parallel: parallel.unwrap_or(true),
+        max_concurrent: max_concurrent.unwrap_or_else(num_cpus::get),
+        recursive: recursive.unwrap_or(false),
+        extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
+        exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+    };
+    
+    let processor = BatchProcessor::with_config(config);
     let result = processor
         .process_directory(std::path::Path::new(directory))
         .map_err(|e| PyRuntimeError::new_err(format!("Batch processing failed: {}", e)))?;
