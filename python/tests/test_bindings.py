@@ -11,10 +11,10 @@ def test_csv_analysis():
     """Test basic CSV analysis functionality"""
     print("🧪 Testing CSV analysis...")
 
-    # Use test files from test_batch directory
-    test_file = os.path.join("..", "test_batch", "customer_data_clean.csv")
+    # Use test files from tests/data directory
+    test_file = os.path.join("..", "..", "tests", "data", "customer_data_clean.csv")
     if not os.path.exists(test_file):
-        test_file = os.path.join("test_batch", "customer_data_clean.csv")
+        test_file = os.path.join("tests", "data", "customer_data_clean.csv")
 
     if not os.path.exists(test_file):
         print("❌ Test file not found")
