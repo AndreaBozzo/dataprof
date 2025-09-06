@@ -130,4 +130,4 @@ jobs:
         pip install pytest
     - name: Test Python bindings
       run: |
-        python python/test_bindings.py
+        python python/tests/test_bindings.py
