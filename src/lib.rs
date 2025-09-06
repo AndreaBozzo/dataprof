@@ -465,10 +465,11 @@ fn infer_type(data: &[String]) -> DataType {
     ];
 
     for pattern in &date_formats {
-        let regex = Regex::new(pattern).unwrap();
-        let date_matches = non_empty.iter().filter(|s| regex.is_match(s)).count();
-        if date_matches as f64 / non_empty.len() as f64 > 0.8 {
-            return DataType::Date;
+        if let Ok(regex) = Regex::new(pattern) {
+            let date_matches = non_empty.iter().filter(|s| regex.is_match(s)).count();
+            if date_matches as f64 / non_empty.len() as f64 > 0.8 {
+                return DataType::Date;
+            }
         }
     }
 
@@ -525,9 +526,13 @@ pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     }
 
     let lengths: Vec<usize> = non_empty.iter().map(|s| s.len()).collect();
-    let min_length = *lengths.iter().min().unwrap();
-    let max_length = *lengths.iter().max().unwrap();
-    let avg_length = lengths.iter().sum::<usize>() as f64 / lengths.len() as f64;
+    let min_length = lengths.iter().min().copied().unwrap_or(0);
+    let max_length = lengths.iter().max().copied().unwrap_or(0);
+    let avg_length = if lengths.is_empty() {
+        0.0
+    } else {
+        lengths.iter().sum::<usize>() as f64 / lengths.len() as f64
+    };
 
     ColumnStats::Text {
         min_length,

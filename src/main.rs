@@ -199,7 +199,7 @@ fn run_analysis(cli: &Cli) -> Result<()> {
                         "\r🔄 Processing: {:.1}% ({} rows, {:.1} rows/sec)",
                         progress.percentage, progress.rows_processed, progress.processing_speed
                     );
-                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
                 });
             }
 
@@ -576,7 +576,7 @@ fn display_batch_results(result: &dataprof::BatchResult, cli: &Cli) {
             })
             .collect();
 
-        file_scores.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+        file_scores.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
 
         for (path, report, score) in file_scores.iter().take(10) {
             let icon = if *score < 60.0 {
@@ -590,7 +590,7 @@ fn display_batch_results(result: &dataprof::BatchResult, cli: &Cli) {
                 "  {} {:.1}% - {} ({} issues)",
                 icon,
                 score,
-                path.file_name().unwrap().to_string_lossy(),
+                path.file_name().map_or("unknown".into(), |name| name.to_string_lossy()),
                 report.issues.len()
             );
         }

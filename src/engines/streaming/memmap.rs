@@ -172,7 +172,7 @@ mod tests {
         assert!(headers.is_some());
         assert_eq!(records.len(), 3);
 
-        let header_record = headers.unwrap();
+        let header_record = headers.expect("Headers should be present in test data");
         assert_eq!(header_record.get(0), Some("name"));
         assert_eq!(header_record.get(1), Some("age"));
         assert_eq!(header_record.get(2), Some("city"));

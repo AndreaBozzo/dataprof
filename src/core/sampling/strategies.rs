@@ -78,7 +78,9 @@ impl SamplingState {
         if self.reservoir_sampler.is_none() {
             self.init_reservoir(capacity);
         }
-        self.reservoir_sampler.as_mut().unwrap()
+        self.reservoir_sampler
+            .as_mut()
+            .expect("Reservoir sampler should be initialized after init_reservoir call")
     }
 }
 
