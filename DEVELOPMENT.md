@@ -10,7 +10,7 @@ master (production)
   └── staging (development/integration)
         ↑
         ├── feature/database-connectors
-        ├── feature/arrow-integration  
+        ├── feature/arrow-integration
         ├── bugfix/unwrap-cleanup
         └── ... (other feature branches)
 ```
@@ -70,7 +70,7 @@ gh pr create --base master --title "Release v0.3.2" --body "Production release f
 ```
 
 **Production PR includes**:
-- 🔒 **Security audit**: Vulnerability scanning, secret detection  
+- 🔒 **Security audit**: Vulnerability scanning, secret detection
 - 🚀 **Performance validation**: Benchmark tests, memory usage
 - 📚 **Documentation checks**: Version consistency, changelog
 - 🧪 **Comprehensive testing**: All platforms, all features
@@ -83,7 +83,7 @@ gh pr create --base master --title "Release v0.3.2" --body "Production release f
 
 **Jobs**:
 - **quick-check**: Fast feedback (format, lint, basic checks)
-- **test-suite**: Comprehensive testing across platforms/Rust versions  
+- **test-suite**: Comprehensive testing across platforms/Rust versions
 - **performance-check**: Memory analysis, basic performance validation
 - **security-audit**: Dependency vulnerabilities, unsafe code detection
 - **dev-environment**: Development tools validation
@@ -100,7 +100,7 @@ gh pr create --base master --title "Release v0.3.2" --body "Production release f
 - **documentation-check**: Release documentation validation
 - **production-ready**: Final approval gate
 
-### `ci.yml` - Master Protection  
+### `ci.yml` - Master Protection
 **Triggers**: Push/PR to `master` (direct PRs blocked)
 
 Lightweight checks for master branch protection.
@@ -116,7 +116,7 @@ cargo clippy -- -D warnings       # Lint with no warnings
 cargo test                         # All tests pass
 
 # Avoid in production code:
-.unwrap()                          # Use proper error handling  
+.unwrap()                          # Use proper error handling
 .expect()                          # Return Result<T, Error>
 panic!()                           # Graceful error handling
 
@@ -136,7 +136,7 @@ Description: imperative mood, lowercase
 
 Examples:
 feat(connectors): add PostgreSQL database connector
-fix(parsing): handle malformed CSV headers gracefully  
+fix(parsing): handle malformed CSV headers gracefully
 docs(api): update streaming API documentation
 refactor(lib): extract column analysis to separate module
 ```
@@ -145,7 +145,7 @@ refactor(lib): extract column analysis to separate module
 
 - **Unit tests**: New code must include unit tests
 - **Integration tests**: Major features need integration tests
-- **Error path testing**: Test failure scenarios  
+- **Error path testing**: Test failure scenarios
 - **Performance tests**: Benchmark critical paths
 - **Documentation tests**: Ensure doc examples work
 
@@ -173,7 +173,7 @@ refactor(lib): extract column analysis to separate module
 Follow [Semantic Versioning](https://semver.org/):
 - `MAJOR.MINOR.PATCH`
 - **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)  
+- **MINOR**: New features (backward compatible)
 - **PATCH**: Bug fixes (backward compatible)
 
 ## 🛡️ Branch Protection Rules
@@ -185,7 +185,7 @@ Follow [Semantic Versioning](https://semver.org/):
 - ✅ Restrict pushes to admins only
 - ✅ Require PRs from staging branch only
 
-### Staging Branch Protection  
+### Staging Branch Protection
 - ✅ Require status checks to pass
 - ✅ Allow development team push access
 - ✅ Require PR reviews for external contributors
@@ -211,7 +211,7 @@ time ./target/release/dataprof-cli large_file.csv --quality
 
 **Q: Memory leak detected**
 ```bash
-# Test with AddressSanitizer  
+# Test with AddressSanitizer
 RUSTFLAGS="-Zsanitizer=address" cargo test
 # Check unsafe code blocks for proper cleanup
 ```
@@ -219,7 +219,7 @@ RUSTFLAGS="-Zsanitizer=address" cargo test
 ### Getting Help
 
 - 💬 **Discussions**: GitHub Discussions for questions
-- 🐛 **Issues**: GitHub Issues for bugs/feature requests  
+- 🐛 **Issues**: GitHub Issues for bugs/feature requests
 - 📧 **Maintainers**: Tag @AndreaBozzo for urgent issues
 - 📖 **Documentation**: Check docs/ directory
 
@@ -231,7 +231,7 @@ RUSTFLAGS="-Zsanitizer=address" cargo test
 - 🧪 **Test coverage**: Target >80% on core modules
 - 🔒 **Security scan**: Zero high-severity vulnerabilities
 
-### Performance Metrics  
+### Performance Metrics
 - ⚡ **Processing speed**: Monitor throughput trends
 - 💾 **Memory usage**: Track memory efficiency
 - 📈 **Regression detection**: Alert on >10% performance drops
@@ -245,7 +245,7 @@ RUSTFLAGS="-Zsanitizer=address" cargo test
 git checkout staging && git pull origin staging
 git checkout -b feature/my-feature
 
-# Daily development  
+# Daily development
 cargo fmt && cargo clippy && cargo test
 git add . && git commit -m "feat: my changes"
 git push origin feature/my-feature
@@ -254,7 +254,7 @@ git push origin feature/my-feature
 gh pr create --base staging --title "Add my feature"
 
 # Prepare production release
-git checkout staging && git pull origin staging  
+git checkout staging && git pull origin staging
 gh pr create --base master --title "Release v0.3.x"
 ```
 

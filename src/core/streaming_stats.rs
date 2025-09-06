@@ -170,10 +170,13 @@ impl StreamingStatistics {
             };
         }
 
-        let min_length = *self.text_lengths.iter().min().unwrap();
-        let max_length = *self.text_lengths.iter().max().unwrap();
-        let avg_length =
-            self.text_lengths.iter().sum::<usize>() as f64 / self.text_lengths.len() as f64;
+        let min_length = self.text_lengths.iter().min().copied().unwrap_or(0);
+        let max_length = self.text_lengths.iter().max().copied().unwrap_or(0);
+        let avg_length = if self.text_lengths.is_empty() {
+            0.0
+        } else {
+            self.text_lengths.iter().sum::<usize>() as f64 / self.text_lengths.len() as f64
+        };
 
         TextLengthStats {
             min_length,
@@ -344,7 +347,9 @@ mod tests {
         collection.process_record(&headers, vec!["Alice".to_string(), "25".to_string()]);
         collection.process_record(&headers, vec!["Bob".to_string(), "30".to_string()]);
 
-        let age_stats = collection.get_column_stats("age").unwrap();
+        let age_stats = collection
+            .get_column_stats("age")
+            .expect("Age column should exist in test");
         assert_eq!(age_stats.count, 2);
         assert_eq!(age_stats.mean(), 27.5);
     }

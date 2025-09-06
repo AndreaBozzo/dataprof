@@ -2,6 +2,7 @@
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 use std::path::Path;
 
 use crate::core::batch::{BatchProcessor, BatchResult};
