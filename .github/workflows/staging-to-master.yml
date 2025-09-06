@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is-staging-pr: ${{ steps.check-source.outputs.is-staging }}
-    
+
     steps:
     - name: Check PR source branch
       id: check-source
@@ -36,7 +36,7 @@ jobs:
         echo "❌ Production releases must come from staging branch"
         echo "📋 Required workflow:"
         echo "  1. Create feature branch from staging"
-        echo "  2. Make changes and test in staging"  
+        echo "  2. Make changes and test in staging"
         echo "  3. Create PR: staging -> master"
         echo ""
         echo "🔧 To fix this:"
@@ -47,11 +47,11 @@ jobs:
 
   # Production-specific tests (beyond what ci.yml covers)
   production-tests:
-    name: Production Cross-Platform Tests  
+    name: Production Cross-Platform Tests
     runs-on: ${{ matrix.os }}
     needs: validate-pr
     if: needs.validate-pr.outputs.is-staging-pr == 'true'
-    
+
     strategy:
       fail-fast: true  # Fail fast for production releases
       matrix:
@@ -110,18 +110,18 @@ jobs:
     - name: Check for vulnerabilities
       run: |
         echo "🔒 Production security check..."
-        
+
         # Check for hardcoded secrets
         if grep -r -E "(password|secret|token|key)" src/ --include="*.rs" | grep -v "// " | grep -v "/\*"; then
           echo "❌ Potential hardcoded secrets found in production code"
           exit 1
         fi
-        
+
         # Verify no debug prints in release
         if grep -r -E "println!|eprintln!|dbg!" src/ --include="*.rs" | grep -v "// " | grep -v "/\*" | grep -v "test"; then
           echo "⚠️ Debug prints found - consider if appropriate for production"
         fi
-        
+
         echo "✅ Security audit passed"
 
   # Performance benchmarking for production
@@ -144,13 +144,13 @@ jobs:
     - name: Create performance test data
       run: |
         echo "Creating test datasets..."
-        
+
         # Small dataset (quick test)
         echo "name,age,salary,department" > small_test.csv
         for i in {1..1000}; do
           echo "User$i,$((20 + i % 50)),$((30000 + i * 10)),Dept$((i % 5))" >> small_test.csv
         done
-        
+
         # Medium dataset (performance test)
         echo "name,age,salary,department,active,join_date" > medium_test.csv
         for i in {1..50000}; do
@@ -160,20 +160,20 @@ jobs:
     - name: Performance benchmark
       run: |
         echo "🚀 Running production performance tests..."
-        
+
         # Test small file (should be very fast)
         echo "Testing small dataset..."
         time ./target/release/dataprof-cli small_test.csv --quality
-        
+
         # Test medium file (validate performance claims)
         echo "Testing medium dataset..."
         start_time=$(date +%s.%N)
         ./target/release/dataprof-cli medium_test.csv --quality
         end_time=$(date +%s.%N)
-        
+
         duration=$(echo "$end_time - $start_time" | bc -l)
         echo "Medium dataset analysis took: ${duration} seconds"
-        
+
         # Validate performance is reasonable (should be under 5 seconds for 50k rows)
         if (( $(echo "$duration > 5.0" | bc -l) )); then
           echo "❌ Performance regression detected: ${duration}s > 5.0s threshold"
@@ -181,7 +181,7 @@ jobs:
         else
           echo "✅ Performance within acceptable limits: ${duration}s"
         fi
-        
+
         # Memory usage test
         echo "Testing memory usage..."
         /usr/bin/time -v ./target/release/dataprof-cli medium_test.csv --quality 2>&1 | grep "Maximum resident set size"
@@ -206,17 +206,17 @@ jobs:
       run: |
         echo "📚 Validating documentation..."
         cargo doc --all-features --no-deps
-        
+
         # Check for broken doc links would go here
         echo "✅ Documentation builds successfully"
 
     - name: Validate version consistency
       run: |
         echo "🔍 Checking version consistency..."
-        
+
         CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "//g' | sed 's/"//g')
         echo "Cargo.toml version: $CARGO_VERSION"
-        
+
         # Check if version follows semantic versioning
         if [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           echo "✅ Version format is valid: $CARGO_VERSION"
@@ -229,7 +229,7 @@ jobs:
       run: |
         if [[ -f "CHANGELOG.md" ]]; then
           echo "✅ Changelog exists"
-          
+
           # Check if changelog mentions current version
           CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "//g' | sed 's/"//g')
           if grep -q "$CARGO_VERSION" CHANGELOG.md; then
@@ -258,27 +258,27 @@ jobs:
         echo "🚀 Performance: ${{ needs.performance-validation.result }}"
         echo "📚 Documentation: ${{ needs.documentation-check.result }}"
         echo ""
-        
+
         # Check if all required checks passed
         if [[ "${{ needs.production-tests.result }}" == "success" && \
               "${{ needs.security-production-audit.result }}" == "success" && \
               "${{ needs.performance-validation.result }}" == "success" && \
               "${{ needs.documentation-check.result }}" == "success" ]]; then
-          
+
           echo "🎉 All production checks passed!"
           echo "✅ This PR is ready for production deployment"
-          
+
           # Post success comment (if we had GitHub token with write permissions)
           echo "## ✅ Production Ready"
           echo ""
           echo "All production readiness checks have passed:"
           echo "- ✅ Cross-platform testing"
-          echo "- ✅ Security audit"  
+          echo "- ✅ Security audit"
           echo "- ✅ Performance validation"
           echo "- ✅ Documentation checks"
           echo ""
           echo "This PR is approved for merge to master."
-          
+
         else
           echo "❌ Production readiness checks failed!"
           echo "Please address the failing checks before merging to master."

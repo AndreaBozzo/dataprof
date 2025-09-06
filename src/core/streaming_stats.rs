@@ -347,7 +347,9 @@ mod tests {
         collection.process_record(&headers, vec!["Alice".to_string(), "25".to_string()]);
         collection.process_record(&headers, vec!["Bob".to_string(), "30".to_string()]);
 
-        let age_stats = collection.get_column_stats("age").expect("Age column should exist in test");
+        let age_stats = collection
+            .get_column_stats("age")
+            .expect("Age column should exist in test");
         assert_eq!(age_stats.count, 2);
         assert_eq!(age_stats.mean(), 27.5);
     }

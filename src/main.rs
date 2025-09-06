@@ -590,7 +590,8 @@ fn display_batch_results(result: &dataprof::BatchResult, cli: &Cli) {
                 "  {} {:.1}% - {} ({} issues)",
                 icon,
                 score,
-                path.file_name().map_or("unknown".into(), |name| name.to_string_lossy()),
+                path.file_name()
+                    .map_or("unknown".into(), |name| name.to_string_lossy()),
                 report.issues.len()
             );
         }

@@ -22,7 +22,7 @@ This directory contains the CI/CD workflows for DataProfiler. Each workflow has 
 
 **Why lightweight**: Master should only receive PRs from staging that already passed comprehensive tests.
 
-### `python.yml` - Python Package Release  
+### `python.yml` - Python Package Release
 **When**: Master branch changes or version tags
 
 **Jobs**:
@@ -90,7 +90,7 @@ graph TD
 ```yaml
 # Each workflow uses distinct cache keys
 staging-dev: "staging-${{ matrix.os }}-${{ matrix.rust }}-${{ hashFiles }}"
-staging-prod: "prod-${{ matrix.os }}-${{ hashFiles }}"  
+staging-prod: "prod-${{ matrix.os }}-${{ hashFiles }}"
 master-ci: "master-ci-${{ hashFiles }}"
 python: "python-${{ matrix.target }}-${{ hashFiles }}"
 ```
@@ -108,7 +108,7 @@ python: "python-${{ matrix.target }}-${{ hashFiles }}"
 - **continue-on-error: true** - For experimental features (nightly Rust)
 - **Non-blocking performance checks** - Don't block development for minor perf issues
 
-### Production (staging-to-master.yml)  
+### Production (staging-to-master.yml)
 - **fail-fast: true** - Stop immediately on any failure
 - **Strict error handling** - All checks must pass
 - **Performance regressions** - Block if >10% slower
@@ -117,7 +117,7 @@ python: "python-${{ matrix.target }}-${{ hashFiles }}"
 
 ### Success Rate Targets
 - `ci.yml`: >99% (should rarely fail)
-- `python.yml`: >95% (complex multi-platform builds)  
+- `python.yml`: >95% (complex multi-platform builds)
 - `staging-dev.yml`: >90% (catches development issues)
 - `staging-to-master.yml`: >95% (production readiness)
 
@@ -157,7 +157,7 @@ python: "python-${{ matrix.target }}-${{ hashFiles }}"
 
 ### Planned Enhancements
 - **Benchmark tracking**: Historical performance trend monitoring
-- **Coverage reporting**: Automated test coverage analysis  
+- **Coverage reporting**: Automated test coverage analysis
 - **Dependency updates**: Automated Dependabot integration
 - **Security scanning**: Advanced SAST/DAST integration
 
@@ -175,7 +175,7 @@ python: "python-${{ matrix.target }}-${{ hashFiles }}"
 # Trigger staging development workflow
 git push origin staging
 
-# Trigger production release workflow  
+# Trigger production release workflow
 gh pr create --base master --head staging
 
 # Manual workflow trigger (if enabled)
