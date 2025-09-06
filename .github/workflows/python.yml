@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
+        target: [x86_64, aarch64, armv7, s390x, ppc64le]
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v4
@@ -25,7 +25,7 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --find-interpreter --features python
+        args: --release --out dist --find-interpreter --features python --skip-auditwheel
         sccache: 'true'
         manylinux: auto
     - name: Upload wheels
@@ -49,7 +49,7 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --find-interpreter --features python
+        args: --release --out dist --find-interpreter --features python --skip-auditwheel
         sccache: 'true'
     - name: Upload wheels
       uses: actions/upload-artifact@v4
@@ -71,7 +71,7 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --find-interpreter --features python
+        args: --release --out dist --find-interpreter --features python --skip-auditwheel
         sccache: 'true'
     - name: Upload wheels
       uses: actions/upload-artifact@v4
