@@ -85,7 +85,7 @@ def test_batch_analysis():
     test_dir = "temp_test_batch"
     try:
         os.makedirs(test_dir, exist_ok=True)
-        
+
         # Create test CSV files
         test_files = []
         for i in range(2):
@@ -95,13 +95,13 @@ def test_batch_analysis():
                 f.write("name,age,city\n")
                 f.write(f"Person{i},2{i},City{i}\n")
                 f.write(f"User{i},3{i},Town{i}\n")
-        
+
         # Test batch processing
         result = dataprof.batch_analyze_directory(test_dir, recursive=False, parallel=True)
         print(f"✅ Processed {result.processed_files} files in {result.total_duration_secs:.2f}s")
         print(f"📊 Average quality: {result.average_quality_score:.1f}%")
         print(f"⚠️ Total issues: {result.total_quality_issues}")
-        
+
         # Cleanup
         for test_file in test_files:
             try:
@@ -112,9 +112,9 @@ def test_batch_analysis():
             os.rmdir(test_dir)
         except:
             pass
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
         # Cleanup on error

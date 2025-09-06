@@ -301,7 +301,7 @@ fn batch_analyze_glob(
     max_concurrent: Option<usize>,
 ) -> PyResult<PyBatchResult> {
     use crate::core::batch::BatchConfig;
-    
+
     let config = BatchConfig {
         parallel: parallel.unwrap_or(true),
         max_concurrent: max_concurrent.unwrap_or_else(num_cpus::get),
@@ -309,7 +309,7 @@ fn batch_analyze_glob(
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
     };
-    
+
     let processor = BatchProcessor::with_config(config);
     let result = processor
         .process_glob(pattern)
@@ -328,7 +328,7 @@ fn batch_analyze_directory(
     max_concurrent: Option<usize>,
 ) -> PyResult<PyBatchResult> {
     use crate::core::batch::BatchConfig;
-    
+
     let config = BatchConfig {
         parallel: parallel.unwrap_or(true),
         max_concurrent: max_concurrent.unwrap_or_else(num_cpus::get),
@@ -336,7 +336,7 @@ fn batch_analyze_directory(
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
     };
-    
+
     let processor = BatchProcessor::with_config(config);
     let result = processor
         .process_directory(std::path::Path::new(directory))
