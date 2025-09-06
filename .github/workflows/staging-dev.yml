@@ -111,15 +111,15 @@ jobs:
     - name: Test with minimal features
       run: cargo test --no-default-features --verbose
 
-    - name: Test with all features
+    - name: Test with all features (non-macOS)
+      if: matrix.os != 'macos-latest'
+      run: cargo test --all-features --verbose
+
+    - name: Test with core features (macOS)
+      if: matrix.os == 'macos-latest'
       run: |
-        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
-          echo "🍎 macOS: Testing without Python features due to PyO3 0.24+ compatibility issues"
-          cargo test --features="" --verbose
-        else
-          echo "🐧 Linux/Windows: Testing with all features including Python bindings"
-          cargo test --all-features --verbose
-        fi
+        echo "🍎 macOS: Testing without Python features due to PyO3 0.24+ compatibility issues"
+        cargo test --verbose
 
   # Performance and memory checks
   performance-check:
