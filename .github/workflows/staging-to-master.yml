@@ -1,0 +1,301 @@
+name: Staging to Master - Production Release
+
+on:
+  pull_request:
+    branches: [ master, main ]
+    # Only trigger when PR is from staging branch
+    types: [opened, synchronize, reopened]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Validate that this is a staging->master PR
+  validate-pr:
+    name: Validate Production Release PR
+    runs-on: ubuntu-latest
+    outputs:
+      is-staging-pr: ${{ steps.check-source.outputs.is-staging }}
+    
+    steps:
+    - name: Check PR source branch
+      id: check-source
+      run: |
+        if [[ "${{ github.head_ref }}" == "staging" ]]; then
+          echo "✅ Valid staging->master PR"
+          echo "is-staging=true" >> $GITHUB_OUTPUT
+        else
+          echo "⚠️ Direct PR to master from non-staging branch detected"
+          echo "is-staging=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Enforce staging workflow
+      if: steps.check-source.outputs.is-staging != 'true'
+      run: |
+        echo "❌ Production releases must come from staging branch"
+        echo "📋 Required workflow:"
+        echo "  1. Create feature branch from staging"
+        echo "  2. Make changes and test in staging"  
+        echo "  3. Create PR: staging -> master"
+        echo ""
+        echo "🔧 To fix this:"
+        echo "  1. Close this PR"
+        echo "  2. Merge your changes to staging first"
+        echo "  3. Create new PR from staging to master"
+        exit 1
+
+  # Production-specific tests (beyond what ci.yml covers)
+  production-tests:
+    name: Production Cross-Platform Tests  
+    runs-on: ${{ matrix.os }}
+    needs: validate-pr
+    if: needs.validate-pr.outputs.is-staging-pr == 'true'
+    
+    strategy:
+      fail-fast: true  # Fail fast for production releases
+      matrix:
+        os: [windows-latest, macos-latest]  # Linux covered by ci.yml
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: prod-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run platform-specific tests
+      run: cargo test --all-features --verbose
+
+    - name: Build and verify release binary
+      run: cargo build --release --verbose
+
+    - name: Verify CLI works on platform
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          ./target/release/dataprof-cli.exe --help
+        else
+          ./target/release/dataprof-cli --help
+        fi
+
+  # Security audit for production
+  security-production-audit:
+    name: Production Security Audit
+    runs-on: ubuntu-latest
+    needs: validate-pr
+    if: needs.validate-pr.outputs.is-staging-pr == 'true'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install security audit tools
+      run: |
+        cargo install cargo-audit
+        cargo install cargo-deny || echo "cargo-deny installation failed, skipping"
+
+    - name: Run security audit
+      run: cargo audit
+
+    - name: Check for vulnerabilities
+      run: |
+        echo "🔒 Production security check..."
+        
+        # Check for hardcoded secrets
+        if grep -r -E "(password|secret|token|key)" src/ --include="*.rs" | grep -v "// " | grep -v "/\*"; then
+          echo "❌ Potential hardcoded secrets found in production code"
+          exit 1
+        fi
+        
+        # Verify no debug prints in release
+        if grep -r -E "println!|eprintln!|dbg!" src/ --include="*.rs" | grep -v "// " | grep -v "/\*" | grep -v "test"; then
+          echo "⚠️ Debug prints found - consider if appropriate for production"
+        fi
+        
+        echo "✅ Security audit passed"
+
+  # Performance benchmarking for production
+  performance-validation:
+    name: Production Performance Validation
+    runs-on: ubuntu-latest
+    needs: validate-pr
+    if: needs.validate-pr.outputs.is-staging-pr == 'true'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build optimized release
+      run: cargo build --release
+
+    - name: Create performance test data
+      run: |
+        echo "Creating test datasets..."
+        
+        # Small dataset (quick test)
+        echo "name,age,salary,department" > small_test.csv
+        for i in {1..1000}; do
+          echo "User$i,$((20 + i % 50)),$((30000 + i * 10)),Dept$((i % 5))" >> small_test.csv
+        done
+        
+        # Medium dataset (performance test)
+        echo "name,age,salary,department,active,join_date" > medium_test.csv
+        for i in {1..50000}; do
+          echo "User$i,$((20 + i % 50)),$((30000 + i * 10)),Dept$((i % 10)),true,2023-01-$((1 + i % 28))" >> medium_test.csv
+        done
+
+    - name: Performance benchmark
+      run: |
+        echo "🚀 Running production performance tests..."
+        
+        # Test small file (should be very fast)
+        echo "Testing small dataset..."
+        time ./target/release/dataprof-cli small_test.csv --quality
+        
+        # Test medium file (validate performance claims)
+        echo "Testing medium dataset..."
+        start_time=$(date +%s.%N)
+        ./target/release/dataprof-cli medium_test.csv --quality
+        end_time=$(date +%s.%N)
+        
+        duration=$(echo "$end_time - $start_time" | bc -l)
+        echo "Medium dataset analysis took: ${duration} seconds"
+        
+        # Validate performance is reasonable (should be under 5 seconds for 50k rows)
+        if (( $(echo "$duration > 5.0" | bc -l) )); then
+          echo "❌ Performance regression detected: ${duration}s > 5.0s threshold"
+          exit 1
+        else
+          echo "✅ Performance within acceptable limits: ${duration}s"
+        fi
+        
+        # Memory usage test
+        echo "Testing memory usage..."
+        /usr/bin/time -v ./target/release/dataprof-cli medium_test.csv --quality 2>&1 | grep "Maximum resident set size"
+
+  # Documentation and changelog validation
+  documentation-check:
+    name: Documentation & Release Notes
+    runs-on: ubuntu-latest
+    needs: validate-pr
+    if: needs.validate-pr.outputs.is-staging-pr == 'true'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history for changelog
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Check documentation builds
+      run: |
+        echo "📚 Validating documentation..."
+        cargo doc --all-features --no-deps
+        
+        # Check for broken doc links would go here
+        echo "✅ Documentation builds successfully"
+
+    - name: Validate version consistency
+      run: |
+        echo "🔍 Checking version consistency..."
+        
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "//g' | sed 's/"//g')
+        echo "Cargo.toml version: $CARGO_VERSION"
+        
+        # Check if version follows semantic versioning
+        if [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "✅ Version format is valid: $CARGO_VERSION"
+        else
+          echo "❌ Invalid version format: $CARGO_VERSION"
+          exit 1
+        fi
+
+    - name: Check changelog
+      run: |
+        if [[ -f "CHANGELOG.md" ]]; then
+          echo "✅ Changelog exists"
+          
+          # Check if changelog mentions current version
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "//g' | sed 's/"//g')
+          if grep -q "$CARGO_VERSION" CHANGELOG.md; then
+            echo "✅ Changelog includes current version $CARGO_VERSION"
+          else
+            echo "⚠️ Changelog should be updated for version $CARGO_VERSION"
+          fi
+        else
+          echo "⚠️ No CHANGELOG.md found - consider adding one for releases"
+        fi
+
+  # Final production readiness gate
+  production-ready:
+    name: Production Readiness Gate
+    runs-on: ubuntu-latest
+    needs: [validate-pr, production-tests, security-production-audit, performance-validation, documentation-check]
+    if: always() && needs.validate-pr.outputs.is-staging-pr == 'true'
+
+    steps:
+    - name: Evaluate production readiness
+      run: |
+        echo "📋 Production Readiness Summary"
+        echo "================================"
+        echo "🏗️ Production tests: ${{ needs.production-tests.result }}"
+        echo "🔒 Security audit: ${{ needs.security-production-audit.result }}"
+        echo "🚀 Performance: ${{ needs.performance-validation.result }}"
+        echo "📚 Documentation: ${{ needs.documentation-check.result }}"
+        echo ""
+        
+        # Check if all required checks passed
+        if [[ "${{ needs.production-tests.result }}" == "success" && \
+              "${{ needs.security-production-audit.result }}" == "success" && \
+              "${{ needs.performance-validation.result }}" == "success" && \
+              "${{ needs.documentation-check.result }}" == "success" ]]; then
+          
+          echo "🎉 All production checks passed!"
+          echo "✅ This PR is ready for production deployment"
+          
+          # Post success comment (if we had GitHub token with write permissions)
+          echo "## ✅ Production Ready"
+          echo ""
+          echo "All production readiness checks have passed:"
+          echo "- ✅ Cross-platform testing"
+          echo "- ✅ Security audit"  
+          echo "- ✅ Performance validation"
+          echo "- ✅ Documentation checks"
+          echo ""
+          echo "This PR is approved for merge to master."
+          
+        else
+          echo "❌ Production readiness checks failed!"
+          echo "Please address the failing checks before merging to master."
+          exit 1
+        fi
+
+    - name: Production deployment checklist
+      if: success()
+      run: |
+        echo "📋 Pre-deployment Checklist"
+        echo "=========================="
+        echo "Before merging to master, ensure:"
+        echo "- [ ] All feature work is complete"
+        echo "- [ ] Breaking changes are documented"
+        echo "- [ ] Version number is updated appropriately"
+        echo "- [ ] Changelog is updated"
+        echo "- [ ] Release notes are prepared"
+        echo "- [ ] Documentation is current"
+        echo ""
+        echo "🚀 Ready for production deployment!"

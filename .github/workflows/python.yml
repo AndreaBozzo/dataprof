@@ -6,6 +6,8 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
+  # Only run Python builds for releases or explicit master changes
+  # Staging development is handled by staging-dev.yml
 
 permissions:
   contents: read

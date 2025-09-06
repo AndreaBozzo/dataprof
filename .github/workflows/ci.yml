@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  # Exclude staging - it has its own workflow
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,10 +41,8 @@ jobs:
 
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ubuntu-latest
+    # Only basic build check for master - comprehensive builds in staging-to-master.yml
 
     steps:
     - uses: actions/checkout@v5
@@ -51,5 +50,14 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Build
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: master-ci-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build release
       run: cargo build --release --verbose
