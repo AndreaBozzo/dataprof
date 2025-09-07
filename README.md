@@ -61,7 +61,7 @@ dataprof . --database "mysql://root:pass@localhost:3306/shop" \
 dataprof sales --database "./analytics.duckdb" --quality --batch-size 50000
 ```
 
-👉 **[Complete Database Guide →](DATABASE_CONNECTORS.md)**
+👉 **[Complete Database Guide →](docs/database-connectors.md)**
 
 ### 🦀 Rust Library
 

@@ -237,9 +237,9 @@ impl DatabaseConnector for MySqlConnector {
                 .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
 
             let query = r#"
-                SELECT COLUMN_NAME 
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_NAME = ? 
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = ?
                 ORDER BY ORDINAL_POSITION
             "#;
 

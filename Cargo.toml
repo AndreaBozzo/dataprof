@@ -99,11 +99,11 @@ panic = "abort"      # Riduce dimensione binario
 [features]
 default = []
 python = ["dep:pyo3"]
-database = ["dep:tokio", "dep:async-trait", "dep:sqlx", "dep:deadpool-postgres", "dep:deadpool-sqlite", "dep:mysql_async", "dep:duckdb", "dep:url"]
+database = ["dep:tokio", "dep:async-trait", "dep:sqlx", "dep:deadpool-postgres", "dep:deadpool-sqlite", "dep:mysql_async", "dep:url"]
 postgres = ["database"]
 mysql = ["database"]
 sqlite = ["database"]
-duckdb = ["database"]
+duckdb = ["database", "dep:duckdb"]
 
 # Python extension configuration
 [lib]

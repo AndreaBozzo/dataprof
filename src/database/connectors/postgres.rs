@@ -237,9 +237,9 @@ impl DatabaseConnector for PostgresConnector {
                 .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
 
             let query = r#"
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = $1 
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = $1
                 ORDER BY ordinal_position
             "#;
 
