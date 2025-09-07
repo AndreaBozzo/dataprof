@@ -9,6 +9,10 @@ pub mod output;
 pub mod types;
 pub mod utils;
 
+// Database connectors (optional)
+#[cfg(feature = "database")]
+pub mod database;
+
 // Python bindings (optional)
 #[cfg(feature = "python")]
 pub mod python;
@@ -37,6 +41,13 @@ pub use types::{
 };
 pub use utils::quality::QualityChecker;
 pub use utils::sampler::{SampleInfo, Sampler};
+
+// Database connectors re-exports (optional)
+#[cfg(feature = "database")]
+pub use database::{
+    create_connector, profile_database, DatabaseConfig, DatabaseConnector, DuckDbConnector,
+    MySqlConnector, PostgresConnector, SqliteConnector,
+};
 
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {

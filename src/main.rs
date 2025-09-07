@@ -24,6 +24,10 @@ use dataprof::{
 };
 use std::path::{Path, PathBuf};
 
+// Database support (optional)
+#[cfg(feature = "database")]
+use dataprof::{profile_database, DatabaseConfig};
+
 #[derive(Parser)]
 #[command(name = "dataprof")]
 #[command(about = "Fast CSV data profiler with quality checking - v0.3.0 Streaming Edition")]
@@ -70,6 +74,21 @@ struct Cli {
     /// Maximum number of concurrent files to process
     #[arg(long, default_value = "0")]
     max_concurrent: usize,
+
+    /// Database connection string (requires --database feature)
+    #[cfg(feature = "database")]
+    #[arg(long)]
+    database: Option<String>,
+
+    /// SQL query to execute (use with --database)
+    #[cfg(feature = "database")]
+    #[arg(long)]
+    query: Option<String>,
+
+    /// Batch size for database streaming (default: 10000)
+    #[cfg(feature = "database")]
+    #[arg(long, default_value = "10000")]
+    batch_size: usize,
 }
 
 fn main() -> Result<()> {
@@ -149,7 +168,13 @@ fn handle_error(error: &anyhow::Error, file_path: &Path) {
 }
 
 fn run_analysis(cli: &Cli) -> Result<()> {
-    // Check for batch processing modes first
+    // Check for database mode first
+    #[cfg(feature = "database")]
+    if let Some(connection_string) = &cli.database {
+        return run_database_analysis(cli, connection_string);
+    }
+
+    // Check for batch processing modes
     if let Some(glob_pattern) = &cli.glob {
         return run_batch_glob(cli, glob_pattern);
     }
@@ -606,4 +631,92 @@ fn display_batch_results(result: &dataprof::BatchResult, cli: &Cli) {
             files_per_sec, result.summary.processing_time_seconds
         );
     }
+}
+
+/// Run database analysis
+#[cfg(feature = "database")]
+fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
+    use tokio;
+
+    println!(
+        "{}",
+        "🗃️ DataProfiler v0.3.0 - Database Analysis"
+            .bright_blue()
+            .bold()
+    );
+    println!();
+
+    // Default query or table (use file parameter as table name if no query provided)
+    let query = if let Some(sql_query) = &cli.query {
+        sql_query.clone()
+    } else {
+        let table_name = cli.file.display().to_string();
+        if table_name.is_empty() || table_name == "." {
+            return Err(anyhow::anyhow!("Please specify either --query 'SELECT * FROM table' or provide table name as file argument"));
+        }
+        format!("SELECT * FROM {}", table_name)
+    };
+
+    // Create database configuration
+    let config = DatabaseConfig {
+        connection_string: connection_string.to_string(),
+        batch_size: cli.batch_size,
+        max_connections: Some(10),
+        connection_timeout: Some(std::time::Duration::from_secs(30)),
+    };
+
+    // Run async analysis
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| anyhow::anyhow!("Failed to create async runtime: {}", e))?;
+
+    let report = rt.block_on(async { profile_database(config, &query).await })?;
+
+    println!(
+        "🔗 {} | {} columns | {} rows",
+        connection_string
+            .split('@')
+            .next_back()
+            .unwrap_or(connection_string),
+        report.file_info.total_columns,
+        report.file_info.total_rows.unwrap_or(0)
+    );
+
+    if report.scan_info.rows_scanned > 0 {
+        let scan_time_sec = report.scan_info.scan_time_ms as f64 / 1000.0;
+        let rows_per_sec = report.scan_info.rows_scanned as f64 / scan_time_sec;
+        println!(
+            "⚡ Processed {} rows in {:.1}s ({:.0} rows/sec)",
+            report.scan_info.rows_scanned, scan_time_sec, rows_per_sec
+        );
+    }
+    println!();
+
+    if cli.quality {
+        // Show quality issues
+        display_quality_issues(&report.issues);
+
+        // Generate HTML report if requested
+        if let Some(html_path) = &cli.html {
+            match generate_html_report(&report, html_path) {
+                Ok(_) => {
+                    println!(
+                        "📄 HTML report saved to: {}",
+                        html_path.display().to_string().bright_green()
+                    );
+                    println!();
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to generate HTML report: {}", e);
+                }
+            }
+        }
+    }
+
+    // Show column profiles
+    for profile in report.column_profiles {
+        display_profile(&profile);
+        println!();
+    }
+
+    Ok(())
 }

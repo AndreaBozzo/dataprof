@@ -23,6 +23,13 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: cargo-test-database
+        name: cargo test database features
+        entry: cargo test --features database --lib
+        language: system
+        types: [rust]
+        pass_filenames: false
+
   # General file formatting
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0
