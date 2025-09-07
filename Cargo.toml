@@ -60,9 +60,7 @@ pyo3 = { version = "0.24.1", features = ["extension-module"], optional = true }
 # Database connectors
 tokio = { version = "1.0", features = ["full"], optional = true }
 async-trait = { version = "0.1", optional = true }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid"], optional = true }
-deadpool-postgres = { version = "0.14", optional = true }
-deadpool-sqlite = { version = "0.8", optional = true }
+sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "chrono", "uuid"], optional = true }
 mysql_async = { version = "0.34", optional = true }
 duckdb = { version = "1.1", optional = true }
 url = { version = "2.5", optional = true }
@@ -99,7 +97,7 @@ panic = "abort"      # Riduce dimensione binario
 [features]
 default = []
 python = ["dep:pyo3"]
-database = ["dep:tokio", "dep:async-trait", "dep:sqlx", "dep:deadpool-postgres", "dep:deadpool-sqlite", "dep:mysql_async", "dep:url"]
+database = ["dep:tokio", "dep:async-trait", "dep:sqlx", "dep:mysql_async", "dep:url"]
 postgres = ["database"]
 mysql = ["database"]
 sqlite = ["database"]
