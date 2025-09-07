@@ -76,16 +76,26 @@ jobs:
     - name: Run platform-specific tests (core)
       run: cargo test --lib --verbose
 
-    - name: Run platform-specific tests (database - optional)
-      run: cargo test --lib --features database --verbose || echo "Database tests failed - system dependencies may be missing"
-      continue-on-error: true
+    - name: Run PostgreSQL tests  
+      run: cargo test --lib --features postgres --verbose
+
+    - name: Run MySQL tests
+      run: cargo test --lib --features mysql --verbose
+
+    - name: Run SQLite tests
+      run: cargo test --lib --features sqlite --verbose
 
     - name: Build and verify release binary (core)
       run: cargo build --release --verbose
 
-    - name: Build and verify release binary (database - optional)
-      run: cargo build --release --features database --verbose || echo "Database build failed - system dependencies may be missing"
-      continue-on-error: true
+    - name: Build PostgreSQL features
+      run: cargo build --release --features postgres --verbose
+
+    - name: Build MySQL features  
+      run: cargo build --release --features mysql --verbose
+
+    - name: Build SQLite features
+      run: cargo build --release --features sqlite --verbose
 
     - name: Verify CLI works on platform
       shell: bash

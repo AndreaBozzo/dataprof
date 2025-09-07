@@ -45,8 +45,14 @@ jobs:
     - name: Run core tests
       run: cargo test --lib --verbose
 
-    - name: Run database tests
-      run: cargo test --features database --verbose
+    - name: Run PostgreSQL tests
+      run: cargo test --features postgres --verbose
+
+    - name: Run MySQL tests  
+      run: cargo test --features mysql --verbose
+
+    - name: Run SQLite tests
+      run: cargo test --features sqlite --verbose
 
     - name: Check formatting
       run: cargo fmt --all -- --check
@@ -54,8 +60,14 @@ jobs:
     - name: Run clippy (core features)
       run: cargo clippy --lib -- -D warnings
 
-    - name: Run clippy (database features)
-      run: cargo clippy --lib --features database -- -D warnings
+    - name: Run clippy (PostgreSQL features)
+      run: cargo clippy --lib --features postgres -- -D warnings
+
+    - name: Run clippy (MySQL features)
+      run: cargo clippy --lib --features mysql -- -D warnings
+
+    - name: Run clippy (SQLite features)
+      run: cargo clippy --lib --features sqlite -- -D warnings
 
   build:
     name: Build
@@ -80,6 +92,11 @@ jobs:
     - name: Build release (core features)
       run: cargo build --release --verbose
 
-    - name: Build release (with database features - optional)
-      run: cargo build --release --features database --verbose || echo "Database build failed - this is expected if system dependencies are missing"
-      continue-on-error: true
+    - name: Build release (PostgreSQL features)
+      run: cargo build --release --features postgres --verbose
+
+    - name: Build release (MySQL features) 
+      run: cargo build --release --features mysql --verbose
+
+    - name: Build release (SQLite features)
+      run: cargo build --release --features sqlite --verbose
