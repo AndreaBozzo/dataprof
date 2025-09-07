@@ -50,9 +50,13 @@ jobs:
     - name: Check for common issues
       run: |
         echo "🔍 Checking for unsafe unwrap() calls..."
-        if find src -name "*.rs" -exec grep -l "\.unwrap()" {} \; | head -5; then
-          echo "❌ Found unwrap() calls - consider proper error handling"
+        UNWRAP_FILES=$(find src -name "*.rs" -exec grep -l "\.unwrap()" {} \; 2>/dev/null || true)
+        if [ -n "$UNWRAP_FILES" ]; then
+          echo "❌ Found unwrap() calls in:"
+          echo "$UNWRAP_FILES"
           exit 1
+        else
+          echo "✅ No unsafe unwrap() calls found"
         fi
 
         echo "🔍 Checking for TODO/FIXME comments..."
