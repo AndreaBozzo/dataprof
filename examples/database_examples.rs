@@ -306,24 +306,27 @@ mod tests {
         use dataprof::database::connection::ConnectionInfo;
 
         // Test PostgreSQL parsing
-        let pg_info =
-            ConnectionInfo::parse("postgresql://user:pass@localhost:5432/testdb").unwrap();
+        let pg_info = ConnectionInfo::parse("postgresql://user:pass@localhost:5432/testdb")
+            .expect("Failed to parse PostgreSQL connection");
         assert_eq!(pg_info.database_type(), "postgresql");
         assert_eq!(pg_info.host, Some("localhost".to_string()));
         assert_eq!(pg_info.port, Some(5432));
 
         // Test MySQL parsing
-        let mysql_info = ConnectionInfo::parse("mysql://root:secret@127.0.0.1:3306/myapp").unwrap();
+        let mysql_info = ConnectionInfo::parse("mysql://root:secret@127.0.0.1:3306/myapp")
+            .expect("Failed to parse MySQL connection");
         assert_eq!(mysql_info.database_type(), "mysql");
         assert_eq!(mysql_info.username, Some("root".to_string()));
 
         // Test SQLite file
-        let sqlite_info = ConnectionInfo::parse("data.db").unwrap();
+        let sqlite_info =
+            ConnectionInfo::parse("data.db").expect("Failed to parse SQLite connection");
         assert_eq!(sqlite_info.database_type(), "sqlite");
         assert_eq!(sqlite_info.path, Some("data.db".to_string()));
 
         // Test DuckDB file
-        let duckdb_info = ConnectionInfo::parse("analytics.duckdb").unwrap();
+        let duckdb_info =
+            ConnectionInfo::parse("analytics.duckdb").expect("Failed to parse DuckDB connection");
         assert_eq!(duckdb_info.database_type(), "duckdb");
     }
 }

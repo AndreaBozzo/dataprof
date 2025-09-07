@@ -166,10 +166,16 @@ mod tests {
             map
         };
 
-        let merged = merge_column_batches(vec![batch1, batch2]).unwrap();
+        let merged = merge_column_batches(vec![batch1, batch2]).expect("Failed to merge batches");
 
-        assert_eq!(merged.get("col1").unwrap(), &vec!["a", "b", "c", "d"]);
-        assert_eq!(merged.get("col2").unwrap(), &vec!["1", "2", "3", "4"]);
+        assert_eq!(
+            merged.get("col1").expect("col1 not found"),
+            &vec!["a", "b", "c", "d"]
+        );
+        assert_eq!(
+            merged.get("col2").expect("col2 not found"),
+            &vec!["1", "2", "3", "4"]
+        );
     }
 
     #[test]

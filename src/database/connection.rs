@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn test_parse_postgresql_connection() {
         let conn_str = "postgresql://user:pass@localhost:5432/mydb";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.scheme, "postgresql");
         assert_eq!(info.host, Some("localhost".to_string()));
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_parse_mysql_connection() {
         let conn_str = "mysql://root:password@127.0.0.1:3306/testdb";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.scheme, "mysql");
         assert_eq!(info.host, Some("127.0.0.1".to_string()));
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn test_parse_sqlite_connection() {
         let conn_str = "sqlite:///path/to/db.sqlite";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.scheme, "sqlite");
         assert_eq!(info.database_type(), "sqlite");
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn test_parse_file_path() {
         let conn_str = "/path/to/database.db";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.scheme, "file");
         assert_eq!(info.path, Some("/path/to/database.db".to_string()));
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_parse_duckdb_file() {
         let conn_str = "/path/to/data.duckdb";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.scheme, "file");
         assert_eq!(info.path, Some("/path/to/data.duckdb".to_string()));

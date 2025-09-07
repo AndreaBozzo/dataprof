@@ -102,7 +102,7 @@ mod connection_tests {
     #[test]
     fn test_parse_postgresql_connection_string() {
         let conn_str = "postgresql://user:pass@localhost:5432/mydb";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.database_type(), "postgresql");
         assert_eq!(info.host, Some("localhost".to_string()));
@@ -115,7 +115,7 @@ mod connection_tests {
     #[test]
     fn test_parse_mysql_connection_string() {
         let conn_str = "mysql://root:password@127.0.0.1:3306/testdb";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.database_type(), "mysql");
         assert_eq!(info.host, Some("127.0.0.1".to_string()));
@@ -128,7 +128,7 @@ mod connection_tests {
     #[test]
     fn test_parse_sqlite_path() {
         let conn_str = "/path/to/database.db";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.database_type(), "sqlite");
         assert_eq!(info.path, Some("/path/to/database.db".to_string()));
@@ -137,7 +137,7 @@ mod connection_tests {
     #[test]
     fn test_parse_duckdb_path() {
         let conn_str = "/path/to/data.duckdb";
-        let info = ConnectionInfo::parse(conn_str).unwrap();
+        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
 
         assert_eq!(info.database_type(), "duckdb");
         assert_eq!(info.path, Some("/path/to/data.duckdb".to_string()));
@@ -208,10 +208,16 @@ mod streaming_tests {
             map
         };
 
-        let merged = merge_column_batches(vec![batch1, batch2]).unwrap();
+        let merged = merge_column_batches(vec![batch1, batch2]).expect("Failed to merge batches");
 
-        assert_eq!(merged.get("col1").unwrap(), &vec!["a", "b", "c", "d"]);
-        assert_eq!(merged.get("col2").unwrap(), &vec!["1", "2", "3", "4"]);
+        assert_eq!(
+            merged.get("col1").expect("col1 not found"),
+            &vec!["a", "b", "c", "d"]
+        );
+        assert_eq!(
+            merged.get("col2").expect("col2 not found"),
+            &vec!["1", "2", "3", "4"]
+        );
     }
 
     #[test]
