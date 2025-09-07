@@ -37,6 +37,13 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: cargo-clippy-duckdb
+        name: cargo clippy (duckdb)
+        entry: bash -c 'if command -v duckdb >/dev/null 2>&1 || [ -f /usr/local/lib/libduckdb.so ]; then cargo clippy --lib --features duckdb -- -D warnings; else echo "⚠️ DuckDB not available, skipping clippy"; fi'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
       - id: cargo-test-core
         name: cargo test (core)
         entry: cargo test --lib
@@ -61,6 +68,13 @@ repos:
       - id: cargo-test-sqlite
         name: cargo test (sqlite)
         entry: cargo test --features sqlite --lib
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test-duckdb
+        name: cargo test (duckdb) 
+        entry: bash -c 'if command -v duckdb >/dev/null 2>&1 || [ -f /usr/local/lib/libduckdb.so ]; then cargo test --features duckdb --lib; else echo "⚠️ DuckDB not available, skipping tests"; fi'
         language: system
         types: [rust]
         pass_filenames: false
