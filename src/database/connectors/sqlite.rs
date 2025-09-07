@@ -23,6 +23,7 @@ pub struct SqliteConnector {
     #[cfg(feature = "sqlite")]
     pool: Option<SqlitePool>,
     #[cfg(not(feature = "sqlite"))]
+    #[allow(dead_code)]
     pool: Option<()>,
 }
 
@@ -46,6 +47,7 @@ impl SqliteConnector {
     }
 
     /// Get the database file path
+    #[allow(dead_code)]
     fn get_db_path(&self) -> Result<String> {
         if let Some(path) = &self.connection_info.path {
             Ok(path.clone())
@@ -103,6 +105,7 @@ impl DatabaseConnector for SqliteConnector {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "sqlite")]
         {
@@ -152,6 +155,7 @@ impl DatabaseConnector for SqliteConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn profile_query_streaming(
         &mut self,
         query: &str,
@@ -244,6 +248,7 @@ impl DatabaseConnector for SqliteConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn get_table_schema(&mut self, table_name: &str) -> Result<Vec<String>> {
         #[cfg(feature = "sqlite")]
         {
@@ -278,6 +283,7 @@ impl DatabaseConnector for SqliteConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn count_table_rows(&mut self, table_name: &str) -> Result<u64> {
         #[cfg(feature = "sqlite")]
         {

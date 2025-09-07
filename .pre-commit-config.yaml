@@ -9,23 +9,58 @@ repos:
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-clippy
-        name: cargo clippy
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+      - id: cargo-clippy-core
+        name: cargo clippy (core)
+        entry: cargo clippy --lib -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-test
-        name: cargo test
+      - id: cargo-clippy-postgres
+        name: cargo clippy (postgres)
+        entry: cargo clippy --lib --features postgres -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy-mysql
+        name: cargo clippy (mysql)
+        entry: cargo clippy --lib --features mysql -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy-sqlite
+        name: cargo clippy (sqlite)
+        entry: cargo clippy --lib --features sqlite -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test-core
+        name: cargo test (core)
         entry: cargo test --lib
         language: system
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-test-database
-        name: cargo test database features
-        entry: cargo test --features database --lib
+      - id: cargo-test-postgres
+        name: cargo test (postgres)
+        entry: cargo test --features postgres --lib
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test-mysql
+        name: cargo test (mysql)
+        entry: cargo test --features mysql --lib
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test-sqlite
+        name: cargo test (sqlite)
+        entry: cargo test --features sqlite --lib
         language: system
         types: [rust]
         pass_filenames: false

@@ -20,6 +20,7 @@ pub struct DuckDbConnector {
     #[cfg(feature = "duckdb")]
     db_path: String,
     #[cfg(not(feature = "duckdb"))]
+    #[allow(dead_code)]
     db_path: String,
 }
 
@@ -85,6 +86,7 @@ impl DatabaseConnector for DuckDbConnector {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "duckdb")]
         {
@@ -172,6 +174,7 @@ impl DatabaseConnector for DuckDbConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn profile_query_streaming(
         &mut self,
         query: &str,
@@ -338,6 +341,7 @@ impl DatabaseConnector for DuckDbConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn get_table_schema(&mut self, table_name: &str) -> Result<Vec<String>> {
         #[cfg(feature = "duckdb")]
         {
@@ -387,6 +391,7 @@ impl DatabaseConnector for DuckDbConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn count_table_rows(&mut self, table_name: &str) -> Result<u64> {
         #[cfg(feature = "duckdb")]
         {

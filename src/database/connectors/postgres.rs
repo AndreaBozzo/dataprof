@@ -23,6 +23,7 @@ pub struct PostgresConnector {
     #[cfg(feature = "postgres")]
     pool: Option<PgPool>,
     #[cfg(not(feature = "postgres"))]
+    #[allow(dead_code)]
     pool: Option<()>,
 }
 
@@ -87,6 +88,7 @@ impl DatabaseConnector for PostgresConnector {
         Ok(())
     }
 
+    #[allow(unused_variables)]
     async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "postgres")]
         {
@@ -136,6 +138,7 @@ impl DatabaseConnector for PostgresConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn profile_query_streaming(
         &mut self,
         query: &str,
@@ -228,6 +231,7 @@ impl DatabaseConnector for PostgresConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn get_table_schema(&mut self, table_name: &str) -> Result<Vec<String>> {
         #[cfg(feature = "postgres")]
         {
@@ -268,6 +272,7 @@ impl DatabaseConnector for PostgresConnector {
         }
     }
 
+    #[allow(unused_variables)]
     async fn count_table_rows(&mut self, table_name: &str) -> Result<u64> {
         #[cfg(feature = "postgres")]
         {

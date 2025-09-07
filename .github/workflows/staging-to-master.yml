@@ -76,7 +76,7 @@ jobs:
     - name: Run platform-specific tests (core)
       run: cargo test --lib --verbose
 
-    - name: Run PostgreSQL tests  
+    - name: Run PostgreSQL tests
       run: cargo test --lib --features postgres --verbose
 
     - name: Run MySQL tests
@@ -91,7 +91,7 @@ jobs:
     - name: Build PostgreSQL features
       run: cargo build --release --features postgres --verbose
 
-    - name: Build MySQL features  
+    - name: Build MySQL features
       run: cargo build --release --features mysql --verbose
 
     - name: Build SQLite features

@@ -48,7 +48,7 @@ jobs:
     - name: Run PostgreSQL tests
       run: cargo test --features postgres --verbose
 
-    - name: Run MySQL tests  
+    - name: Run MySQL tests
       run: cargo test --features mysql --verbose
 
     - name: Run SQLite tests
@@ -95,7 +95,7 @@ jobs:
     - name: Build release (PostgreSQL features)
       run: cargo build --release --features postgres --verbose
 
-    - name: Build release (MySQL features) 
+    - name: Build release (MySQL features)
       run: cargo build --release --features mysql --verbose
 
     - name: Build release (SQLite features)
