@@ -4,10 +4,22 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version type to release'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+        - auto
+        - patch
+        - minor
+        - major
 
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   release:
@@ -22,45 +34,121 @@ jobs:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Install semantic-release
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install semantic-release and plugins
       run: |
         npm install -g semantic-release@22
         npm install -g @semantic-release/changelog@6
         npm install -g @semantic-release/git@10
         npm install -g @semantic-release/github@9
+        npm install -g @semantic-release/exec@6
 
-    - name: Create release configuration
+    - name: Get current version
+      id: current_version
+      run: |
+        CURRENT_VERSION=$(grep '^version =' Cargo.toml | sed 's/version = "//' | sed 's/"//')
+        echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "Current version: $CURRENT_VERSION"
+
+    - name: Create enhanced release configuration
       run: |
         cat > .releaserc.json << 'EOF'
         {
           "branches": ["master"],
+          "tagFormat": "v${version}",
           "plugins": [
-            "@semantic-release/commit-analyzer",
-            "@semantic-release/release-notes-generator",
-            "@semantic-release/changelog",
-            "@semantic-release/github",
-            ["@semantic-release/git", {
-              "assets": ["CHANGELOG.md", "Cargo.toml"],
-              "message": "chore(release): ${nextRelease.version} [skip ci]"
-            }]
+            [
+              "@semantic-release/commit-analyzer",
+              {
+                "preset": "conventionalcommits",
+                "releaseRules": [
+                  { "type": "feat", "release": "minor" },
+                  { "type": "fix", "release": "patch" },
+                  { "type": "perf", "release": "patch" },
+                  { "type": "docs", "release": false },
+                  { "type": "style", "release": false },
+                  { "type": "refactor", "release": "patch" },
+                  { "type": "test", "release": false },
+                  { "type": "chore", "release": false },
+                  { "breaking": true, "release": "major" }
+                ]
+              }
+            ],
+            [
+              "@semantic-release/release-notes-generator",
+              {
+                "preset": "conventionalcommits",
+                "presetConfig": {
+                  "types": [
+                    { "type": "feat", "section": "🚀 Features" },
+                    { "type": "fix", "section": "🐛 Bug Fixes" },
+                    { "type": "perf", "section": "⚡ Performance" },
+                    { "type": "refactor", "section": "♻️ Refactoring" },
+                    { "type": "docs", "section": "📚 Documentation", "hidden": false },
+                    { "type": "style", "section": "💎 Styles", "hidden": true },
+                    { "type": "test", "section": "🧪 Tests", "hidden": true },
+                    { "type": "chore", "section": "🔧 Chores", "hidden": true }
+                  ]
+                }
+              }
+            ],
+            [
+              "@semantic-release/exec",
+              {
+                "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
+              }
+            ],
+            [
+              "@semantic-release/changelog",
+              {
+                "changelogFile": "CHANGELOG.md"
+              }
+            ],
+            [
+              "@semantic-release/git",
+              {
+                "assets": ["CHANGELOG.md", "Cargo.toml"],
+                "message": "chore(release): v${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+              }
+            ],
+            [
+              "@semantic-release/github",
+              {
+                "successComment": "🎉 This issue has been resolved in version ${nextRelease.version}",
+                "failTitle": "❌ The automated release failed",
+                "failComment": "The release from branch ${branch.name} had failed due to the following errors:\n- ${errors.map(err => err.message).join('\\n- ')}"
+              }
+            ]
           ]
         }
         EOF
 
-    - name: Update Cargo.toml version
+    - name: Check if release is needed
+      id: check_release
       run: |
-        # Get next version from semantic-release
-        NEXT_VERSION=$(npx semantic-release --dry-run 2>&1 | grep -o 'The next release version is [0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/The next release version is //' || echo "")
+        echo "Checking if release is needed..."
+        DRY_RUN_OUTPUT=$(npx semantic-release --dry-run 2>&1)
+        echo "$DRY_RUN_OUTPUT"
 
-        if [[ -n "$NEXT_VERSION" ]]; then
-          echo "Updating Cargo.toml to version: $NEXT_VERSION"
-          sed -i "s/^version = \".*\"/version = \"$NEXT_VERSION\"/" Cargo.toml
-          git add Cargo.toml
+        if echo "$DRY_RUN_OUTPUT" | grep -q "The next release version is"; then
+          NEXT_VERSION=$(echo "$DRY_RUN_OUTPUT" | grep -o 'The next release version is [0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/The next release version is //')
+          echo "needed=true" >> $GITHUB_OUTPUT
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Release needed: $NEXT_VERSION"
         else
-          echo "No new version to release"
+          echo "needed=false" >> $GITHUB_OUTPUT
+          echo "ℹ️  No release needed - no significant changes found"
         fi
 
     - name: Run semantic release
+      if: steps.check_release.outputs.needed == 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GIT_AUTHOR_NAME: "dataprof-release-bot"
@@ -68,5 +156,57 @@ jobs:
         GIT_COMMITTER_NAME: "dataprof-release-bot"
         GIT_COMMITTER_EMAIL: "release-bot@dataprof.dev"
       run: |
-        echo "Running semantic release..."
+        echo "🚀 Creating release ${{ steps.check_release.outputs.version }}..."
         npx semantic-release
+
+    - name: Trigger Python bindings build
+      if: steps.check_release.outputs.needed == 'true'
+      run: |
+        echo "🐍 Triggering Python bindings workflow..."
+        # The Python workflow will be triggered automatically by the new tag
+
+    - name: Release summary
+      run: |
+        echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ steps.check_release.outputs.needed }}" == "true" ]]; then
+          echo "✅ **Release Created**: v${{ steps.check_release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Updated Cargo.toml version" >> $GITHUB_STEP_SUMMARY
+          echo "- Generated CHANGELOG.md" >> $GITHUB_STEP_SUMMARY
+          echo "- Created GitHub release" >> $GITHUB_STEP_SUMMARY
+          echo "- Triggered Python bindings build" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ **No Release Needed**: No significant changes found" >> $GITHUB_STEP_SUMMARY
+          echo "Current version: ${{ steps.current_version.outputs.current }}" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  # Optional manual version bump
+  manual-release:
+    name: Manual Version Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.version_type != 'auto'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install semantic-release
+      run: npm install -g semantic-release@22
+
+    - name: Force release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GIT_AUTHOR_NAME: "dataprof-release-bot"
+        GIT_AUTHOR_EMAIL: "release-bot@dataprof.dev"
+        GIT_COMMITTER_NAME: "dataprof-release-bot"
+        GIT_COMMITTER_EMAIL: "release-bot@dataprof.dev"
+      run: |
+        echo "🚀 Forcing ${{ github.event.inputs.version_type }} release..."
+        npx semantic-release --no-ci
