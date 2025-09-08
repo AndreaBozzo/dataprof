@@ -48,7 +48,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
         };
 
         Self {
-            name: profile.name,
+            name: profile.name.clone(),
             data_type: match profile.data_type {
                 DataType::Integer => "integer".to_string(),
                 DataType::Float => "float".to_string(),
@@ -171,7 +171,7 @@ pub struct PyQualityReport {
 impl From<&QualityReport> for PyQualityReport {
     fn from(report: &QualityReport) -> Self {
         Self {
-            file_path: report.file_info.path,
+            file_path: report.file_info.path.clone(),
             total_rows: report.file_info.total_rows,
             total_columns: report.file_info.total_columns,
             column_profiles: report

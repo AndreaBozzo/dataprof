@@ -213,8 +213,8 @@ impl SamplingStrategy {
         state: &mut SamplingState,
     ) -> bool {
         if let Some(data) = row_data {
-            // Create stratum key from specified columns (not a secret - just sampling key)
-            let stratum_key = key_columns
+            // Create stratum identifier from specified columns  
+            let stratum_id = key_columns
                 .iter()
                 .filter_map(|col| data.get(col))
                 .cloned()
@@ -224,14 +224,14 @@ impl SamplingStrategy {
             // Count total rows in this stratum
             *state
                 .stratum_counts
-                .entry(stratum_key.to_string())
+                .entry(stratum_id.to_string())
                 .or_insert(0) += 1;
 
             // Check if we need more samples from this stratum
-            let current_samples = *state.stratum_samples.get(&stratum_key).unwrap_or(&0);
+            let current_samples = *state.stratum_samples.get(&stratum_id).unwrap_or(&0);
 
             if current_samples < samples_per_stratum {
-                *state.stratum_samples.entry(stratum_key).or_insert(0) += 1;
+                *state.stratum_samples.entry(stratum_id).or_insert(0) += 1;
                 true
             } else {
                 false
