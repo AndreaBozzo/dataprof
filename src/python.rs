@@ -48,7 +48,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
         };
 
         Self {
-            name: profile.name.clone(),
+            name: profile.name,
             data_type: match profile.data_type {
                 DataType::Integer => "integer".to_string(),
                 DataType::Float => "float".to_string(),
@@ -91,7 +91,7 @@ impl From<&QualityIssue> for PyQualityIssue {
                 percentage,
             } => Self {
                 issue_type: "null_values".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "medium".to_string(),
                 count: Some(*count),
                 percentage: Some(*percentage),
@@ -102,7 +102,7 @@ impl From<&QualityIssue> for PyQualityIssue {
             },
             QualityIssue::Duplicates { column, count } => Self {
                 issue_type: "duplicates".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "low".to_string(),
                 count: Some(*count),
                 percentage: None,
@@ -114,7 +114,7 @@ impl From<&QualityIssue> for PyQualityIssue {
                 threshold,
             } => Self {
                 issue_type: "outliers".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "medium".to_string(),
                 count: Some(values.len()),
                 percentage: None,
@@ -128,7 +128,7 @@ impl From<&QualityIssue> for PyQualityIssue {
             },
             QualityIssue::MixedDateFormats { column, formats } => Self {
                 issue_type: "mixed_date_formats".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "high".to_string(),
                 count: Some(formats.len()),
                 percentage: None,
@@ -136,7 +136,7 @@ impl From<&QualityIssue> for PyQualityIssue {
             },
             QualityIssue::MixedTypes { column, types } => Self {
                 issue_type: "mixed_types".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "high".to_string(),
                 count: Some(types.len()),
                 percentage: None,
@@ -171,7 +171,7 @@ pub struct PyQualityReport {
 impl From<&QualityReport> for PyQualityReport {
     fn from(report: &QualityReport) -> Self {
         Self {
-            file_path: report.file_info.path.clone(),
+            file_path: report.file_info.path,
             total_rows: report.file_info.total_rows,
             total_columns: report.file_info.total_columns,
             column_profiles: report

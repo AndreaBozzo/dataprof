@@ -32,7 +32,7 @@ impl QualityChecker {
                         // Solo se i duplicati sono significativi (>5% dei dati)
                         if duplicate_count as f64 / profile.total_count as f64 > 0.05 {
                             issues.push(QualityIssue::Duplicates {
-                                column: profile.name.clone(),
+                                column: profile.name.to_string(),
                                 count: duplicate_count,
                             });
                         }
@@ -55,7 +55,7 @@ impl QualityChecker {
         if profile.null_count > 0 {
             let percentage = profile.null_count as f64 / profile.total_count as f64 * 100.0;
             Some(QualityIssue::NullValues {
-                column: profile.name.clone(),
+                column: profile.name.to_string(),
                 count: profile.null_count,
                 percentage,
             })

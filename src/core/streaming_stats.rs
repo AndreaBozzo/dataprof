@@ -105,7 +105,7 @@ impl StreamingStatistics {
             if self.unique_values.len() >= self.max_unique_values {
                 break;
             }
-            self.unique_values.insert(value.clone());
+            self.unique_values.insert(value.to_string());
         }
 
         // Merge sample values (with limit)
@@ -113,7 +113,7 @@ impl StreamingStatistics {
             if self.sample_values.len() >= self.max_sample_size {
                 break;
             }
-            self.sample_values.push(value.clone());
+            self.sample_values.push(value.to_string());
         }
 
         // Merge text lengths
@@ -235,7 +235,7 @@ impl StreamingColumnCollection {
         I: IntoIterator<Item = String>,
     {
         for (header, value) in headers.iter().zip(values) {
-            let stats = self.columns.entry(header.clone()).or_default();
+            let stats = self.columns.entry(header.to_string()).or_default();
             stats.update(&value);
         }
     }

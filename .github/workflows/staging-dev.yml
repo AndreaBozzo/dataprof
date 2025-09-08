@@ -130,7 +130,7 @@ jobs:
       run: |
         echo "🚀 Quick build check..."
         cargo build --release
-        
+
         echo "✅ Build completed successfully"
 
   # Final status check

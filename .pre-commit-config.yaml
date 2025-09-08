@@ -73,7 +73,7 @@ repos:
         pass_filenames: false
 
       - id: cargo-test-duckdb
-        name: cargo test (duckdb) 
+        name: cargo test (duckdb)
         entry: bash -c 'if command -v duckdb >/dev/null 2>&1 || [ -f /usr/local/lib/libduckdb.so ]; then cargo test --features duckdb --lib; else echo "⚠️ DuckDB not available, skipping tests"; fi'
         language: system
         types: [rust]

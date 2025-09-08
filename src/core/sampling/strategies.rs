@@ -222,7 +222,10 @@ impl SamplingStrategy {
                 .join("|");
 
             // Count total rows in this stratum
-            *state.stratum_counts.entry(stratum_key.clone()).or_insert(0) += 1;
+            *state
+                .stratum_counts
+                .entry(stratum_key.to_string())
+                .or_insert(0) += 1;
 
             // Check if we need more samples from this stratum
             let current_samples = *state.stratum_samples.get(&stratum_key).unwrap_or(&0);
