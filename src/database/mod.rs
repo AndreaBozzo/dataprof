@@ -82,6 +82,7 @@ pub fn create_connector(config: DatabaseConfig) -> Result<Box<dyn DatabaseConnec
     } else if connection_str.starts_with("sqlite://")
         || connection_str.ends_with(".db")
         || connection_str.ends_with(".sqlite")
+        || connection_str == ":memory:"
     {
         Ok(Box::new(connectors::sqlite::SqliteConnector::new(config)?))
     } else if connection_str.ends_with(".duckdb") || connection_str.contains("duckdb") {
