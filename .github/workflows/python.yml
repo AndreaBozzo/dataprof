@@ -113,6 +113,7 @@ jobs:
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         packages-dir: dist/
+        skip-existing: true
 
   publish-crates:
     name: Publish to crates.io

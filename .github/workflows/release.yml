@@ -57,75 +57,30 @@ jobs:
         echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         echo "Current version: $CURRENT_VERSION"
 
-    - name: Create enhanced release configuration
+    - name: Create simplified release configuration
       run: |
         cat > .releaserc.json << 'EOF'
         {
           "branches": ["master"],
           "tagFormat": "v${version}",
           "plugins": [
-            [
-              "@semantic-release/commit-analyzer",
-              {
-                "preset": "conventionalcommits",
-                "releaseRules": [
-                  { "type": "feat", "release": "minor" },
-                  { "type": "fix", "release": "patch" },
-                  { "type": "perf", "release": "patch" },
-                  { "type": "docs", "release": false },
-                  { "type": "style", "release": false },
-                  { "type": "refactor", "release": "patch" },
-                  { "type": "test", "release": false },
-                  { "type": "chore", "release": false },
-                  { "breaking": true, "release": "major" }
-                ]
-              }
-            ],
-            [
-              "@semantic-release/release-notes-generator",
-              {
-                "preset": "conventionalcommits",
-                "presetConfig": {
-                  "types": [
-                    { "type": "feat", "section": "🚀 Features" },
-                    { "type": "fix", "section": "🐛 Bug Fixes" },
-                    { "type": "perf", "section": "⚡ Performance" },
-                    { "type": "refactor", "section": "♻️ Refactoring" },
-                    { "type": "docs", "section": "📚 Documentation", "hidden": false },
-                    { "type": "style", "section": "💎 Styles", "hidden": true },
-                    { "type": "test", "section": "🧪 Tests", "hidden": true },
-                    { "type": "chore", "section": "🔧 Chores", "hidden": true }
-                  ]
-                }
-              }
-            ],
+            "@semantic-release/commit-analyzer",
+            "@semantic-release/release-notes-generator",
             [
               "@semantic-release/exec",
               {
                 "prepareCmd": "sed -i 's/^version = \".*\"/version = \"${nextRelease.version}\"/' Cargo.toml"
               }
             ],
-            [
-              "@semantic-release/changelog",
-              {
-                "changelogFile": "CHANGELOG.md"
-              }
-            ],
+            "@semantic-release/changelog",
             [
               "@semantic-release/git",
               {
                 "assets": ["CHANGELOG.md", "Cargo.toml"],
-                "message": "chore(release): v${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+                "message": "chore(release): v${nextRelease.version} [skip ci]"
               }
             ],
-            [
-              "@semantic-release/github",
-              {
-                "successComment": "🎉 This issue has been resolved in version ${nextRelease.version}",
-                "failTitle": "❌ The automated release failed",
-                "failComment": "The release from branch ${branch.name} had failed due to the following errors:\n- ${errors.map(err => err.message).join('\\n- ')}"
-              }
-            ]
+            "@semantic-release/github"
           ]
         }
         EOF
@@ -134,17 +89,29 @@ jobs:
       id: check_release
       run: |
         echo "Checking if release is needed..."
+        set +e  # Don't exit on error
         DRY_RUN_OUTPUT=$(npx semantic-release --dry-run 2>&1)
-        echo "$DRY_RUN_OUTPUT"
+        EXIT_CODE=$?
+        set -e  # Re-enable exit on error
 
+        echo "Dry run output:"
+        echo "$DRY_RUN_OUTPUT"
+        echo "Exit code: $EXIT_CODE"
+
+        # Check for successful dry run with new version
         if echo "$DRY_RUN_OUTPUT" | grep -q "The next release version is"; then
           NEXT_VERSION=$(echo "$DRY_RUN_OUTPUT" | grep -o 'The next release version is [0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/The next release version is //')
           echo "needed=true" >> $GITHUB_OUTPUT
           echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
           echo "✅ Release needed: $NEXT_VERSION"
-        else
+        # Check for no release needed message
+        elif echo "$DRY_RUN_OUTPUT" | grep -q -i "no release"; then
           echo "needed=false" >> $GITHUB_OUTPUT
           echo "ℹ️  No release needed - no significant changes found"
+        # Handle other cases (errors, etc.)
+        else
+          echo "needed=false" >> $GITHUB_OUTPUT
+          echo "⚠️  Unable to determine release need, skipping (exit code: $EXIT_CODE)"
         fi
 
     - name: Run semantic release
