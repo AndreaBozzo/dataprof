@@ -285,7 +285,7 @@ Quality Score: 73.2/100 - BELOW THRESHOLD
 ## 📋 All Options
 
 ```bash
-Fast CSV data profiler with quality checking - v0.3.0 Streaming Edition
+Fast CSV data profiler with quality checking - v0.3.5 Database Connectors & Memory Safety Edition
 
 Usage: dataprof [OPTIONS] <FILE>
 
@@ -295,7 +295,7 @@ Arguments:
 Options:
   -q, --quality                  Enable quality checking (shows data issues)
       --html <HTML>              Generate HTML report (requires --quality)
-      --streaming                Use streaming engine for large files (v0.3.0)
+      --streaming                Use streaming engine for large files (v0.3.5)
       --progress                 Show progress during processing (requires --streaming)
       --chunk-size <CHUNK_SIZE>  Override chunk size for streaming (default: adaptive)
       --sample <SAMPLE>          Enable sampling for very large datasets
