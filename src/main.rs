@@ -30,7 +30,9 @@ use dataprof::{profile_database, DatabaseConfig};
 
 #[derive(Parser)]
 #[command(name = "dataprof")]
-#[command(about = "Fast CSV data profiler with quality checking - v0.3.5 DB Connectors & Memory Safety Edition")]
+#[command(
+    about = "Fast CSV data profiler with quality checking - v0.3.5 DB Connectors & Memory Safety Edition"
+)]
 struct Cli {
     /// File, directory, or glob pattern to analyze (use . for current dir with --glob)
     file: PathBuf,

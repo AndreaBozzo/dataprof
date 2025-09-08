@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Memory Safety & Performance
 - **NEW:** Comprehensive memory leak detection system with `MemoryTracker`
-- **NEW:** RAII patterns for automatic resource cleanup 
+- **NEW:** RAII patterns for automatic resource cleanup
 - **NEW:** Memory-mapped file tracking for large CSV processing
 - **NEW:** Reduced memory allocations by 28% (68→49 clone() calls optimized)
 - **NEW:** Public memory monitoring APIs: `check_memory_leaks()`, `get_memory_usage_stats()`
