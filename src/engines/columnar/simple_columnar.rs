@@ -43,13 +43,13 @@ impl SimpleColumnarProfiler {
             .has_headers(true)
             .from_path(file_path)?;
 
-        let headers = reader.headers()?.clone();
+        let headers = reader.headers()?;
         let header_names: Vec<String> = headers.iter().map(|s| s.to_string()).collect();
 
         // Organize data by columns for better processing
         let mut columnar_data: HashMap<String, Vec<String>> = HashMap::new();
         for header in &header_names {
-            columnar_data.insert(header.clone(), Vec::new());
+            columnar_data.insert(header.to_string(), Vec::new());
         }
 
         let mut total_rows = 0;

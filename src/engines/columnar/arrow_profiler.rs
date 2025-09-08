@@ -57,7 +57,7 @@ impl ArrowProfiler {
             // Process each column in the batch
             for (col_idx, column) in batch.columns().iter().enumerate() {
                 let field = batch.schema().field(col_idx);
-                let column_name = field.name().clone();
+                let column_name = field.name().to_string();
 
                 let analyzer = column_analyzers
                     .entry(column_name)
@@ -334,12 +334,12 @@ impl ColumnAnalyzer {
                 let value = format!("value_{}", i); // Placeholder
                 self.update_text_stats(&value);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.clone());
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.clone());
                 }
 
-                if self.sample_values.len() < 100 {
-                    self.sample_values.push(value);
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value);
                 }
             }
         }

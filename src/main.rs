@@ -647,8 +647,8 @@ fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
     println!();
 
     // Default query or table (use file parameter as table name if no query provided)
-    let query = if let Some(sql_query) = &cli.query {
-        sql_query.clone()
+    let query = if let Some(sql_query) = cli.query.as_ref() {
+        sql_query.to_string()
     } else {
         let table_name = cli.file.display().to_string();
         if table_name.is_empty() || table_name == "." {

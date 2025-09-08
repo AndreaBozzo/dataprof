@@ -71,8 +71,10 @@ impl StreamingProfiler {
         let headers = reader.headers()?.clone();
 
         // Initialize columns
+        let mut _all_column_data: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         for header in headers.iter() {
-            all_column_data.insert(header.to_string(), Vec::new());
+            _all_column_data.insert(header.to_string(), Vec::new());
         }
 
         // Process in chunks

@@ -32,7 +32,7 @@ impl Sampler {
 
         let mut reader = ReaderBuilder::new().has_headers(true).from_path(path)?;
 
-        let _headers = reader.headers()?.clone();
+        let _headers = reader.headers()?;
         let mut records = Vec::new();
 
         // Se il file è piccolo, leggi tutto
