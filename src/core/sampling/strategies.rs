@@ -213,7 +213,7 @@ impl SamplingStrategy {
         state: &mut SamplingState,
     ) -> bool {
         if let Some(data) = row_data {
-            // Create stratum identifier from specified columns  
+            // Create stratum identifier from specified columns
             let stratum_id = key_columns
                 .iter()
                 .filter_map(|col| data.get(col))
