@@ -57,6 +57,13 @@ num_cpus = "1.16"
 # Python bindings
 pyo3 = { version = "0.24.1", features = ["extension-module"], optional = true }
 
+# Database connectors
+tokio = { version = "1.0", features = ["full"], optional = true }
+async-trait = { version = "0.1", optional = true }
+sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "chrono", "uuid"], optional = true, default-features = false }
+duckdb = { version = "1.1", optional = true }
+url = { version = "2.5", optional = true }
+
 # Note: Arrow will be added in a future iteration once version conflicts are resolved
 
 [dev-dependencies]
@@ -85,10 +92,20 @@ codegen-units = 1
 opt-level = 3
 panic = "abort"      # Riduce dimensione binario
 
-# Python extension features
+# Features
 [features]
 default = []
-python = ["pyo3"]
+
+# Individual features
+python = ["dep:pyo3"]
+database = ["dep:tokio", "dep:async-trait", "dep:url"]
+postgres = ["database", "dep:sqlx", "sqlx/postgres"]
+mysql = ["database", "dep:sqlx", "sqlx/mysql"] 
+sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
+duckdb = ["database", "dep:duckdb"]
+
+# Sensible feature combinations (do NOT use --all-features due to dependency conflicts)
+production = ["postgres", "mysql"]  # Most common production databases
 
 # Python extension configuration
 [lib]

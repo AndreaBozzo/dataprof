@@ -1,0 +1,6 @@
+[advisories]
+# Allow RSA timing attack vulnerability as it has no fix available
+# and requires very specific attack scenarios to exploit
+ignore = [
+    "RUSTSEC-2023-0071", # RSA Marvin Attack - no fix available
+]

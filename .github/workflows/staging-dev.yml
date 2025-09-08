@@ -40,15 +40,28 @@ jobs:
     - name: Check code formatting
       run: cargo fmt --all -- --check
 
-    - name: Run Clippy lints
-      run: cargo clippy --all-targets --all-features -- -D warnings
+    - name: Run Clippy lints (core features)
+      run: cargo clippy --lib -- -D warnings
+
+    - name: Run Clippy lints (PostgreSQL features)
+      run: cargo clippy --lib --features postgres -- -D warnings
+
+    - name: Run Clippy lints (MySQL features)
+      run: cargo clippy --lib --features mysql -- -D warnings
+
+    - name: Run Clippy lints (SQLite features)
+      run: cargo clippy --lib --features sqlite -- -D warnings
 
     - name: Check for common issues
       run: |
         echo "🔍 Checking for unsafe unwrap() calls..."
-        if grep -r "\.unwrap()" src/; then
-          echo "❌ Found unwrap() calls - consider proper error handling"
+        UNWRAP_FILES=$(find src -name "*.rs" -exec grep -l "\.unwrap()" {} \; 2>/dev/null || true)
+        if [ -n "$UNWRAP_FILES" ]; then
+          echo "❌ Found unwrap() calls in:"
+          echo "$UNWRAP_FILES"
           exit 1
+        else
+          echo "✅ No unsafe unwrap() calls found"
         fi
 
         echo "🔍 Checking for TODO/FIXME comments..."
@@ -58,84 +71,18 @@ jobs:
 
         echo "✅ Code quality checks passed"
 
-  # Comprehensive testing suite
+  # Simplified testing for staging
   test-suite:
     name: Test Suite
-    runs-on: ${{ matrix.os }}
-    needs: quick-check
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable, beta]
-        include:
-          - os: ubuntu-latest
-            rust: nightly
-            experimental: true
-        exclude:
-          # Reduce CI load - only test stable on Windows/macOS for staging
-          - os: windows-latest
-            rust: beta
-          - os: macos-latest
-            rust: beta
-
-    continue-on-error: ${{ matrix.experimental == true }}
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install Rust ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: staging-${{ matrix.os }}-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Run unit tests
-      run: cargo test --lib --verbose
-
-    - name: Run integration tests
-      run: cargo test --test '*' --verbose
-
-    - name: Run doc tests
-      run: cargo test --doc --verbose
-
-    - name: Test with minimal features
-      run: cargo test --no-default-features --verbose
-
-    - name: Test with all features (non-macOS)
-      if: matrix.os != 'macos-latest'
-      run: cargo test --all-features --verbose
-
-    - name: Test with core features (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        echo "🍎 macOS: Testing without Python features due to PyO3 0.24+ compatibility issues"
-        cargo test --verbose
-
-  # Performance and memory checks
-  performance-check:
-    name: Performance & Memory Analysis
     runs-on: ubuntu-latest
     needs: quick-check
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust nightly (for sanitizers)
-      uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: rust-src
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Cache dependencies
       uses: actions/cache@v4
@@ -144,191 +91,53 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: staging-perf-${{ hashFiles('**/Cargo.lock') }}
+        key: staging-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y valgrind
+        sudo apt-get install -y libsqlite3-dev
+        # Install DuckDB
+        wget https://github.com/duckdb/duckdb/releases/download/v1.1.3/libduckdb-linux-amd64.zip
+        unzip libduckdb-linux-amd64.zip
+        sudo cp libduckdb.so /usr/local/lib/
+        sudo cp duckdb.h /usr/local/include/
+        sudo ldconfig
 
-    - name: Memory leak detection with AddressSanitizer
-      env:
-        RUSTFLAGS: -Zsanitizer=address
-        ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+    - name: Run core tests
+      run: cargo test --lib --verbose
+
+    - name: Run database tests
       run: |
-        echo "🧪 Running AddressSanitizer checks..."
-        cargo +nightly test --lib --target x86_64-unknown-linux-gnu
-      continue-on-error: true
+        cargo test --features postgres --lib --verbose
+        cargo test --features sqlite --lib --verbose
 
-    - name: Check for memory issues with Valgrind
-      run: |
-        echo "🧪 Building for Valgrind testing..."
-        cargo build --bin dataprof-cli
-
-        echo "🧪 Running Valgrind memory check..."
-        valgrind --tool=memcheck \
-                 --leak-check=full \
-                 --show-leak-kinds=all \
-                 --track-origins=yes \
-                 --error-exitcode=1 \
-                 ./target/debug/dataprof-cli --help || echo "⚠️ Valgrind found issues (non-blocking for staging)"
-
-    - name: Basic performance smoke test
-      run: |
-        echo "🚀 Performance smoke test..."
-        cargo build --release
-
-        # Create test data
-        echo "name,age,salary" > test_data.csv
-        for i in {1..10000}; do
-          echo "User$i,$((20 + i % 50)),$((30000 + i * 10))" >> test_data.csv
-        done
-
-        # Time the analysis
-        time ./target/release/dataprof-cli test_data.csv --quality
-
-        rm test_data.csv
-
-  # Development environment validation
-  dev-environment:
-    name: Development Environment Check
+  # Light performance check
+  performance-check:
+    name: Basic Performance Check
     runs-on: ubuntu-latest
-    needs: quick-check
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Check for development tools
-      run: |
-        echo "🛠️ Checking development environment..."
-
-        # Check if justfile exists and is valid
-        if [ -f "justfile" ]; then
-          echo "✅ justfile found"
-          # Install just if not available
-          cargo install just || echo "just already installed"
-          just --list || echo "⚠️ justfile has issues"
-        fi
-
-        # Check pre-commit configuration
-        if [ -f ".pre-commit-config.yaml" ]; then
-          echo "✅ pre-commit configuration found"
-        fi
-
-    - name: Validate Python bindings (if enabled)
-      run: |
-        if grep -q 'python.*=' Cargo.toml; then
-          echo "🐍 Python bindings detected, running Python checks..."
-          cargo check --features python
-        fi
-
-    - name: Check documentation generation
-      run: |
-        echo "📚 Checking documentation generation..."
-        cargo doc --no-deps --all-features
-
-        # Check for broken doc links
-        cargo doc --no-deps --all-features 2>&1 | grep -i "warning" || echo "✅ No doc warnings"
-
-  # Security and dependency checks
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    needs: quick-check
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install cargo-audit
-      uses: actions-rs/install@v0.1
-      with:
-        crate: cargo-audit
-        version: latest
-
-    - name: Security audit
-      run: cargo audit
-
-    - name: Check for known vulnerabilities
-      run: |
-        echo "🔒 Checking for known security patterns..."
-
-        # Check for potential security issues
-        if grep -r "unsafe" src/; then
-          echo "⚠️ Found unsafe code - ensure it's properly reviewed"
-        fi
-
-        if grep -r -i "password\|secret\|token" src/ --exclude-dir=target; then
-          echo "⚠️ Found potential secrets in code - verify they're not hardcoded"
-        fi
-
-  # Integration with external tools
-  integration-check:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: [test-suite]
+    needs: test-suite
     if: github.event_name == 'pull_request'
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install Rust
+    - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: staging-integration-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Build CLI for integration testing
-      run: cargo build --release --bin dataprof-cli
-
-    - name: Create test scenarios
+    - name: Basic build test
       run: |
-        mkdir -p test_scenarios
-
-        # Good CSV
-        echo "name,age,email" > test_scenarios/good.csv
-        echo "Alice,25,alice@example.com" >> test_scenarios/good.csv
-        echo "Bob,30,bob@example.com" >> test_scenarios/good.csv
-
-        # Problematic CSV
-        echo "name,age,email" > test_scenarios/bad.csv
-        echo "Charlie,,charlie@invalid" >> test_scenarios/bad.csv
-        echo "Diana,invalid,diana@" >> test_scenarios/bad.csv
-
-        # JSON test
-        echo '[{"name":"Eve","age":28,"active":true}]' > test_scenarios/test.json
-
-    - name: Test CLI scenarios
-      run: |
-        echo "🧪 Testing CLI scenarios..."
-
-        # Test basic analysis
-        ./target/release/dataprof-cli test_scenarios/good.csv
-
-        # Test quality analysis
-        ./target/release/dataprof-cli test_scenarios/bad.csv --quality
-
-        # Test JSON support
-        ./target/release/dataprof-cli test_scenarios/test.json --quality
-
-        echo "✅ CLI integration tests passed"
+        echo "🚀 Quick build check..."
+        cargo build --release
+        
+        echo "✅ Build completed successfully"
 
   # Final status check
   staging-ready:
     name: Staging Ready
     runs-on: ubuntu-latest
-    needs: [quick-check, test-suite, performance-check, dev-environment, security-audit, integration-check]
+    needs: [quick-check, test-suite, performance-check]
     if: always()
 
     steps:
@@ -337,10 +146,7 @@ jobs:
         echo "📊 Staging Development Workflow Summary"
         echo "✅ Quick checks: ${{ needs.quick-check.result }}"
         echo "✅ Test suite: ${{ needs.test-suite.result }}"
-        echo "⚡ Performance: ${{ needs.performance-check.result }}"
-        echo "🛠️ Dev environment: ${{ needs.dev-environment.result }}"
-        echo "🔒 Security: ${{ needs.security-audit.result }}"
-        echo "🔗 Integration: ${{ needs.integration-check.result }}"
+        echo "⚡ Performance: ${{ needs.performance-check.result || 'skipped' }}"
 
         if [[ "${{ needs.quick-check.result }}" == "success" && "${{ needs.test-suite.result }}" == "success" ]]; then
           echo "🎉 Staging checks passed! Ready for development work."

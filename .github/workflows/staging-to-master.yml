@@ -73,11 +73,29 @@ jobs:
           target
         key: prod-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Run platform-specific tests
-      run: cargo test --all-features --verbose
+    - name: Run platform-specific tests (core)
+      run: cargo test --lib --verbose
 
-    - name: Build and verify release binary
+    - name: Run PostgreSQL tests
+      run: cargo test --lib --features postgres --verbose
+
+    - name: Run MySQL tests
+      run: cargo test --lib --features mysql --verbose
+
+    - name: Run SQLite tests
+      run: cargo test --lib --features sqlite --verbose
+
+    - name: Build and verify release binary (core)
       run: cargo build --release --verbose
+
+    - name: Build PostgreSQL features
+      run: cargo build --release --features postgres --verbose
+
+    - name: Build MySQL features
+      run: cargo build --release --features mysql --verbose
+
+    - name: Build SQLite features
+      run: cargo build --release --features sqlite --verbose
 
     - name: Verify CLI works on platform
       shell: bash
@@ -205,7 +223,7 @@ jobs:
     - name: Check documentation builds
       run: |
         echo "📚 Validating documentation..."
-        cargo doc --all-features --no-deps
+        cargo doc --no-deps
 
         # Check for broken doc links would go here
         echo "✅ Documentation builds successfully"
