@@ -44,7 +44,7 @@ impl MemoryTracker {
     pub fn track_allocation(&self, resource_id: String, size_bytes: usize, resource_type: &str) {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
 
         let info = AllocationInfo {
@@ -69,7 +69,7 @@ impl MemoryTracker {
     pub fn detect_leaks(&self) -> Vec<MemoryLeak> {
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
 
         let threshold_bytes = self.leak_threshold_mb * 1024 * 1024;
