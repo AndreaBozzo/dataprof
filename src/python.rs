@@ -2,6 +2,7 @@
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 use std::path::Path;
 
 use crate::core::batch::{BatchProcessor, BatchResult};
@@ -90,7 +91,7 @@ impl From<&QualityIssue> for PyQualityIssue {
                 percentage,
             } => Self {
                 issue_type: "null_values".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "medium".to_string(),
                 count: Some(*count),
                 percentage: Some(*percentage),
@@ -101,7 +102,7 @@ impl From<&QualityIssue> for PyQualityIssue {
             },
             QualityIssue::Duplicates { column, count } => Self {
                 issue_type: "duplicates".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "low".to_string(),
                 count: Some(*count),
                 percentage: None,
@@ -113,7 +114,7 @@ impl From<&QualityIssue> for PyQualityIssue {
                 threshold,
             } => Self {
                 issue_type: "outliers".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "medium".to_string(),
                 count: Some(values.len()),
                 percentage: None,
@@ -127,7 +128,7 @@ impl From<&QualityIssue> for PyQualityIssue {
             },
             QualityIssue::MixedDateFormats { column, formats } => Self {
                 issue_type: "mixed_date_formats".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "high".to_string(),
                 count: Some(formats.len()),
                 percentage: None,
@@ -135,7 +136,7 @@ impl From<&QualityIssue> for PyQualityIssue {
             },
             QualityIssue::MixedTypes { column, types } => Self {
                 issue_type: "mixed_types".to_string(),
-                column: column.clone(),
+                column: column.to_string(),
                 severity: "high".to_string(),
                 count: Some(types.len()),
                 percentage: None,

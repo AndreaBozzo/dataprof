@@ -8,9 +8,11 @@
 
 **High-performance data quality library for production pipelines**
 
-🏗️ **Library-first design** for easy integration • ⚡ **10x faster** than pandas • 🌊 **Handles datasets larger than RAM** • 🔍 **Robust quality checking** for dirty data
+🏗️ **Library-first design** for easy integration • ⚡ **10x faster** than pandas • 🌊 **Handles datasets larger than RAM** • 🔍 **Robust quality checking** for dirty data • 🗃️ **Direct database connectivity**
 
 📦 **Available for both Rust and Python** • 🐍 `pip install dataprof` • 🦀 `cargo add dataprof`
+
+🗃️ **NEW: Database Connectors** - Profile data directly from PostgreSQL, MySQL, SQLite, and DuckDB without exports!
 
 ![DataProfiler HTML Report](assets/animations/HTML.gif)
 
@@ -36,6 +38,30 @@ print(f"Quality score: {report.quality_score():.1f}%")
 ```
 
 👉 **[Complete Python Guide →](PYTHON.md)**
+
+### 🗃️ Database Profiling (NEW!)
+
+```bash
+# Install with database support
+pip install dataprof[database]
+# or
+cargo install dataprof --features database
+```
+
+```bash
+# Profile PostgreSQL table directly
+dataprof users --database "postgresql://user:pass@localhost:5432/mydb" --quality
+
+# Analyze with custom query
+dataprof . --database "mysql://root:pass@localhost:3306/shop" \
+  --query "SELECT * FROM orders WHERE date > '2024-01-01'" \
+  --quality --html report.html
+
+# DuckDB analytics
+dataprof sales --database "./analytics.duckdb" --quality --batch-size 50000
+```
+
+👉 **[Complete Database Guide →](docs/database-connectors.md)**
 
 ### 🦀 Rust Library
 
@@ -259,7 +285,7 @@ Quality Score: 73.2/100 - BELOW THRESHOLD
 ## 📋 All Options
 
 ```bash
-Fast CSV data profiler with quality checking - v0.3.0 Streaming Edition
+Fast CSV data profiler with quality checking - v0.3.5 Database Connectors & Memory Safety Edition
 
 Usage: dataprof [OPTIONS] <FILE>
 
@@ -269,7 +295,7 @@ Arguments:
 Options:
   -q, --quality                  Enable quality checking (shows data issues)
       --html <HTML>              Generate HTML report (requires --quality)
-      --streaming                Use streaming engine for large files (v0.3.0)
+      --streaming                Use streaming engine for large files (v0.3.5)
       --progress                 Show progress during processing (requires --streaming)
       --chunk-size <CHUNK_SIZE>  Override chunk size for streaming (default: adaptive)
       --sample <SAMPLE>          Enable sampling for very large datasets

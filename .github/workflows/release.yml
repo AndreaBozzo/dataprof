@@ -1,0 +1,72 @@
+name: Automated Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip-release]') }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install semantic-release
+      run: |
+        npm install -g semantic-release@22
+        npm install -g @semantic-release/changelog@6
+        npm install -g @semantic-release/git@10
+        npm install -g @semantic-release/github@9
+
+    - name: Create release configuration
+      run: |
+        cat > .releaserc.json << 'EOF'
+        {
+          "branches": ["master"],
+          "plugins": [
+            "@semantic-release/commit-analyzer",
+            "@semantic-release/release-notes-generator",
+            "@semantic-release/changelog",
+            "@semantic-release/github",
+            ["@semantic-release/git", {
+              "assets": ["CHANGELOG.md", "Cargo.toml"],
+              "message": "chore(release): ${nextRelease.version} [skip ci]"
+            }]
+          ]
+        }
+        EOF
+
+    - name: Update Cargo.toml version
+      run: |
+        # Get next version from semantic-release
+        NEXT_VERSION=$(npx semantic-release --dry-run 2>&1 | grep -o 'The next release version is [0-9]\+\.[0-9]\+\.[0-9]\+' | sed 's/The next release version is //' || echo "")
+
+        if [[ -n "$NEXT_VERSION" ]]; then
+          echo "Updating Cargo.toml to version: $NEXT_VERSION"
+          sed -i "s/^version = \".*\"/version = \"$NEXT_VERSION\"/" Cargo.toml
+          git add Cargo.toml
+        else
+          echo "No new version to release"
+        fi
+
+    - name: Run semantic release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GIT_AUTHOR_NAME: "dataprof-release-bot"
+        GIT_AUTHOR_EMAIL: "release-bot@dataprof.dev"
+        GIT_COMMITTER_NAME: "dataprof-release-bot"
+        GIT_COMMITTER_EMAIL: "release-bot@dataprof.dev"
+      run: |
+        echo "Running semantic release..."
+        npx semantic-release

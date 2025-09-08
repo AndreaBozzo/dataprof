@@ -28,9 +28,18 @@ fn test_csv_basic_analysis() -> Result<()> {
     assert_eq!(profiles.len(), 3);
 
     // Find profiles by name (order not guaranteed in HashMap)
-    let age_profile = profiles.iter().find(|p| p.name == "age").unwrap();
-    let name_profile = profiles.iter().find(|p| p.name == "name").unwrap();
-    let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
+    let age_profile = profiles
+        .iter()
+        .find(|p| p.name == "age")
+        .expect("Test assertion failed");
+    let name_profile = profiles
+        .iter()
+        .find(|p| p.name == "name")
+        .expect("Test assertion failed");
+    let email_profile = profiles
+        .iter()
+        .find(|p| p.name == "email")
+        .expect("Test assertion failed");
 
     // Check null counts
     assert_eq!(age_profile.null_count, 1); // age has one null
@@ -104,7 +113,10 @@ fn test_json_basic_analysis() -> Result<()> {
 
     assert_eq!(profiles.len(), 3);
 
-    let age_profile = profiles.iter().find(|p| p.name == "age").unwrap();
+    let age_profile = profiles
+        .iter()
+        .find(|p| p.name == "age")
+        .expect("Test assertion failed");
     assert_eq!(age_profile.null_count, 1);
 
     Ok(())
@@ -179,8 +191,14 @@ fn test_pattern_detection() -> Result<()> {
 
     let profiles = analyze_csv(temp_file.path())?;
 
-    let email_profile = profiles.iter().find(|p| p.name == "email").unwrap();
-    let phone_profile = profiles.iter().find(|p| p.name == "phone").unwrap();
+    let email_profile = profiles
+        .iter()
+        .find(|p| p.name == "email")
+        .expect("Test assertion failed");
+    let phone_profile = profiles
+        .iter()
+        .find(|p| p.name == "phone")
+        .expect("Test assertion failed");
 
     // Check email pattern detection
     let has_email_pattern = email_profile.patterns.iter().any(|p| p.name == "Email");
@@ -228,10 +246,22 @@ fn test_data_type_inference() -> Result<()> {
 
     assert_eq!(profiles.len(), 4);
 
-    let text_profile = profiles.iter().find(|p| p.name == "text").unwrap();
-    let int_profile = profiles.iter().find(|p| p.name == "integer").unwrap();
-    let float_profile = profiles.iter().find(|p| p.name == "float").unwrap();
-    let date_profile = profiles.iter().find(|p| p.name == "date").unwrap();
+    let text_profile = profiles
+        .iter()
+        .find(|p| p.name == "text")
+        .expect("Test assertion failed");
+    let int_profile = profiles
+        .iter()
+        .find(|p| p.name == "integer")
+        .expect("Test assertion failed");
+    let float_profile = profiles
+        .iter()
+        .find(|p| p.name == "float")
+        .expect("Test assertion failed");
+    let date_profile = profiles
+        .iter()
+        .find(|p| p.name == "date")
+        .expect("Test assertion failed");
 
     assert!(matches!(text_profile.data_type, dataprof::DataType::String));
     assert!(matches!(int_profile.data_type, dataprof::DataType::Integer));
@@ -342,17 +372,17 @@ fn test_v030_streaming_profiler_basic() -> Result<()> {
         .column_profiles
         .iter()
         .find(|p| p.name == "id")
-        .unwrap();
+        .expect("Test assertion failed");
     let name_profile = report
         .column_profiles
         .iter()
         .find(|p| p.name == "name")
-        .unwrap();
+        .expect("Test assertion failed");
     let value_profile = report
         .column_profiles
         .iter()
         .find(|p| p.name == "value")
-        .unwrap();
+        .expect("Test assertion failed");
 
     assert!(matches!(id_profile.data_type, dataprof::DataType::Integer));
     assert!(matches!(name_profile.data_type, dataprof::DataType::String));
@@ -520,7 +550,7 @@ fn test_large_file_performance_with_sampling() -> Result<()> {
         .column_profiles
         .iter()
         .find(|p| p.name == "timestamp")
-        .unwrap();
+        .expect("Test assertion failed");
 
     // Should detect as string or date type
     assert!(matches!(
@@ -562,7 +592,7 @@ fn test_streaming_mode_vs_standard_mode() -> Result<()> {
             .column_profiles
             .iter()
             .find(|p| p.name == std_profile.name)
-            .unwrap();
+            .expect("Test assertion failed");
         assert_eq!(std_profile.data_type, streaming_profile.data_type);
     }
 

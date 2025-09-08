@@ -283,4 +283,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+See [LICENSE](LICENSE) for details.

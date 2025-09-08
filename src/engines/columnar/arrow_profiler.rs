@@ -57,7 +57,7 @@ impl ArrowProfiler {
             // Process each column in the batch
             for (col_idx, column) in batch.columns().iter().enumerate() {
                 let field = batch.schema().field(col_idx);
-                let column_name = field.name().clone();
+                let column_name = field.name().to_string();
 
                 let analyzer = column_analyzers
                     .entry(column_name)
@@ -167,22 +167,46 @@ impl ColumnAnalyzer {
 
         match array.data_type() {
             arrow::datatypes::DataType::Float64 => {
-                self.process_float64_array(array.as_any().downcast_ref::<Float64Array>().unwrap())?;
+                if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
+                    self.process_float64_array(float_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Float64Array"));
+                }
             }
             arrow::datatypes::DataType::Float32 => {
-                self.process_float32_array(array.as_any().downcast_ref::<Float32Array>().unwrap())?;
+                if let Some(float_array) = array.as_any().downcast_ref::<Float32Array>() {
+                    self.process_float32_array(float_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Float32Array"));
+                }
             }
             arrow::datatypes::DataType::Int64 => {
-                self.process_int64_array(array.as_any().downcast_ref::<Int64Array>().unwrap())?;
+                if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
+                    self.process_int64_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Int64Array"));
+                }
             }
             arrow::datatypes::DataType::Int32 => {
-                self.process_int32_array(array.as_any().downcast_ref::<Int32Array>().unwrap())?;
+                if let Some(int_array) = array.as_any().downcast_ref::<Int32Array>() {
+                    self.process_int32_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Int32Array"));
+                }
             }
             arrow::datatypes::DataType::Utf8 => {
-                self.process_string_array(array.as_any().downcast_ref::<StringArray>().unwrap())?;
+                if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
+                    self.process_string_array(string_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to StringArray"));
+                }
             }
             arrow::datatypes::DataType::LargeUtf8 => {
-                self.process_large_string_array(array.as_any().downcast_ref::<LargeStringArray>().unwrap())?;
+                if let Some(string_array) = array.as_any().downcast_ref::<LargeStringArray>() {
+                    self.process_large_string_array(string_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to LargeStringArray"));
+                }
             }
             _ => {
                 // For other types, convert to string and process
@@ -310,12 +334,12 @@ impl ColumnAnalyzer {
                 let value = format!("value_{}", i); // Placeholder
                 self.update_text_stats(&value);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.clone());
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.clone());
                 }
 
-                if self.sample_values.len() < 100 {
-                    self.sample_values.push(value);
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value);
                 }
             }
         }

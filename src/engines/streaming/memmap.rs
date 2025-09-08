@@ -1,3 +1,4 @@
+use crate::core::MemoryTracker;
 use anyhow::Result;
 use memmap2::Mmap;
 use std::fs::File;
@@ -8,17 +9,33 @@ use std::path::Path;
 pub struct MemoryMappedCsvReader {
     mmap: Mmap,
     file_size: u64,
+    memory_tracker: MemoryTracker,
+    resource_id: String,
 }
 
 impl MemoryMappedCsvReader {
     pub fn new(path: &Path) -> Result<Self> {
+        Self::new_with_tracker(path, MemoryTracker::default())
+    }
+
+    pub fn new_with_tracker(path: &Path, memory_tracker: MemoryTracker) -> Result<Self> {
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
 
         // Memory map the file
         let mmap = unsafe { Mmap::map(&file)? };
 
-        Ok(Self { mmap, file_size })
+        let resource_id = format!("mmap_{}", path.display());
+
+        // Track the memory mapping
+        memory_tracker.track_allocation(resource_id.clone(), file_size as usize, "memory_map");
+
+        Ok(Self {
+            mmap,
+            file_size,
+            memory_tracker,
+            resource_id,
+        })
     }
 
     /// Get file size in bytes
@@ -143,6 +160,23 @@ impl MemoryMappedCsvReader {
         let estimated_rows = (self.file_size * sample_lines as u64) / SAMPLE_SIZE as u64;
         Ok(estimated_rows as usize)
     }
+
+    /// Check for memory leaks in the memory tracker
+    pub fn check_memory_leaks(&self) -> String {
+        self.memory_tracker.report_leaks()
+    }
+
+    /// Get memory usage statistics
+    pub fn get_memory_stats(&self) -> (usize, usize, usize) {
+        self.memory_tracker.get_memory_stats()
+    }
+}
+
+impl Drop for MemoryMappedCsvReader {
+    fn drop(&mut self) {
+        // Automatically track deallocation when dropped
+        self.memory_tracker.track_deallocation(&self.resource_id);
+    }
 }
 
 #[cfg(test)]
@@ -172,7 +206,7 @@ mod tests {
         assert!(headers.is_some());
         assert_eq!(records.len(), 3);
 
-        let header_record = headers.unwrap();
+        let header_record = headers.expect("Headers should be present in test data");
         assert_eq!(header_record.get(0), Some("name"));
         assert_eq!(header_record.get(1), Some("age"));
         assert_eq!(header_record.get(2), Some("city"));

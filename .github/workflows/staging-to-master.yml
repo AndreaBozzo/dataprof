@@ -1,0 +1,100 @@
+name: Staging to Master - Simple Production Release
+
+on:
+  pull_request:
+    branches: [master, main]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # Validate this is from staging
+  validate-staging-pr:
+    name: Validate Staging PR
+    runs-on: ubuntu-latest
+    outputs:
+      is-staging: ${{ steps.check.outputs.is-staging }}
+
+    steps:
+    - name: Check PR source
+      id: check
+      run: |
+        if [[ "${{ github.head_ref }}" == "staging" ]]; then
+          echo "✅ Valid staging→master PR"
+          echo "is-staging=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Only staging→master PRs allowed"
+          echo "is-staging=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+  # Essential production tests only
+  production-tests:
+    name: Production Tests
+    runs-on: ubuntu-latest
+    needs: validate-staging-pr
+    if: needs.validate-staging-pr.outputs.is-staging == 'true'
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Run all tests
+      run: cargo test --verbose
+
+    - name: Test with features
+      run: |
+        cargo test --features postgres --verbose
+        cargo test --features mysql --verbose
+        cargo test --features sqlite --verbose
+
+    - name: Build release
+      run: cargo build --release --verbose
+
+    - name: Verify CLI works
+      run: ./target/release/dataprof-cli --help
+
+  # Basic security check
+  security-check:
+    name: Security Check
+    runs-on: ubuntu-latest
+    needs: validate-staging-pr
+    if: needs.validate-staging-pr.outputs.is-staging == 'true'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Basic security audit
+      run: |
+        # Check for obvious secrets (basic)
+        if grep -r -E "(password|secret|token|key)\s*=" src/ --include="*.rs" 2>/dev/null; then
+          echo "⚠️ Potential hardcoded secrets found"
+          exit 1
+        fi
+
+        # Check for debug prints in production
+        if grep -r -E "println!|dbg!" src/ --include="*.rs" | grep -v test | grep -v "//.*println!" 2>/dev/null; then
+          echo "⚠️ Debug prints found in production code"
+        fi
+
+        echo "✅ Basic security check passed"
+
+  # Simple readiness gate
+  production-ready:
+    name: Production Ready
+    runs-on: ubuntu-latest
+    needs: [validate-staging-pr, production-tests, security-check]
+    if: always() && needs.validate-staging-pr.outputs.is-staging == 'true'
+
+    steps:
+    - name: Check readiness
+      run: |
+        echo "📋 Production Readiness Check"
+        echo "Tests: ${{ needs.production-tests.result }}"
+        echo "Security: ${{ needs.security-check.result }}"
+
+        if [[ "${{ needs.production-tests.result }}" == "success" &&
+              "${{ needs.security-check.result }}" == "success" ]]; then
+          echo "🎉 Ready for production!"
+        else
+          echo "❌ Not ready for production"
+          exit 1
+        fi

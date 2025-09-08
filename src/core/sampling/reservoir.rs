@@ -252,7 +252,10 @@ impl MultiReservoirSampler {
         self.reservoirs
             .iter()
             .map(|(category, reservoir)| {
-                (category.clone(), reservoir.get_sample_indices().to_vec())
+                (
+                    category.to_string(),
+                    reservoir.get_sample_indices().to_vec(),
+                )
             })
             .collect()
     }
@@ -261,7 +264,7 @@ impl MultiReservoirSampler {
     pub fn get_all_stats(&self) -> HashMap<String, ReservoirStats> {
         self.reservoirs
             .iter()
-            .map(|(category, reservoir)| (category.clone(), reservoir.get_stats().clone()))
+            .map(|(category, reservoir)| (category.to_string(), reservoir.get_stats().clone()))
             .collect()
     }
 }

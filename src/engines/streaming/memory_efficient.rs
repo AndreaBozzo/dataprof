@@ -322,8 +322,8 @@ impl MemoryEfficientProfiler {
             .sampling(self.sampling_strategy.clone());
 
         let profiler = if let Some(callback) = &self.progress_callback {
-            let callback_clone = callback.clone();
-            profiler.progress_callback(move |info| callback_clone(info))
+            let cb = callback.clone();
+            profiler.progress_callback(move |info| cb(info))
         } else {
             profiler
         };

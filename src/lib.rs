@@ -9,6 +9,10 @@ pub mod output;
 pub mod types;
 pub mod utils;
 
+// Database connectors (optional)
+#[cfg(feature = "database")]
+pub mod database;
+
 // Python bindings (optional)
 #[cfg(feature = "python")]
 pub mod python;
@@ -37,6 +41,13 @@ pub use types::{
 };
 pub use utils::quality::QualityChecker;
 pub use utils::sampler::{SampleInfo, Sampler};
+
+// Database connectors re-exports (optional)
+#[cfg(feature = "database")]
+pub use database::{
+    create_connector, profile_database, DatabaseConfig, DatabaseConnector, DuckDbConnector,
+    MySqlConnector, PostgresConnector, SqliteConnector,
+};
 
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
@@ -74,15 +85,15 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
 
     // Initialize columns
     for header in &headers {
-        columns.insert(header.clone(), Vec::new());
+        columns.insert(header.to_string(), Vec::new());
     }
 
     // Add data from records
     for record in &records {
         for (i, header) in headers.iter().enumerate() {
-            let value = record.get(i).unwrap_or(&String::new()).clone();
+            let value = record.get(i).map_or("", |v| v);
             if let Some(column_data) = columns.get_mut(header) {
-                column_data.push(value);
+                column_data.push(value.to_string());
             }
         }
     }
@@ -133,18 +144,19 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
         let mut reader = ReaderBuilder::new()
             .has_headers(true)
             .from_path(file_path)?;
-        let headers = reader.headers()?.clone();
+        let headers = reader.headers()?;
 
-        // Inizializza colonne
-        for header in headers.iter() {
-            columns.insert(header.to_string(), Vec::new());
+        // Inizializza colonne usando iteratore direttamente senza clone
+        let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
+        for header_name in header_names.iter() {
+            columns.insert(header_name.to_string(), Vec::new());
         }
 
         // Aggiungi i dati campionati
         for record in records {
             for (i, field) in record.iter().enumerate() {
-                if let Some(header) = headers.get(i) {
-                    if let Some(column_data) = columns.get_mut(header) {
+                if let Some(header_name) = header_names.get(i) {
+                    if let Some(column_data) = columns.get_mut(header_name) {
                         column_data.push(field.to_string());
                     }
                 }
@@ -206,15 +218,15 @@ pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 
     // Initialize columns
     for header in &headers {
-        columns.insert(header.clone(), Vec::new());
+        columns.insert(header.to_string(), Vec::new());
     }
 
     // Add data from records
     for record in &records {
         for (i, header) in headers.iter().enumerate() {
-            let value = record.get(i).unwrap_or(&String::new()).clone();
+            let value = record.get(i).map_or("", |v| v);
             if let Some(column_data) = columns.get_mut(header) {
-                column_data.push(value);
+                column_data.push(value.to_string());
             }
         }
     }
@@ -236,21 +248,22 @@ fn try_strict_csv_parsing(file_path: &Path) -> Result<Vec<ColumnProfile>> {
         .flexible(false) // Strict parsing
         .from_path(file_path)?;
 
-    // Get headers
-    let headers = reader.headers()?.clone();
+    // Get headers without clone
+    let headers = reader.headers()?;
+    let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
     let mut columns: HashMap<String, Vec<String>> = HashMap::new();
 
     // Initialize columns
-    for header in headers.iter() {
-        columns.insert(header.to_string(), Vec::new());
+    for header_name in header_names.iter() {
+        columns.insert(header_name.to_string(), Vec::new());
     }
 
     // Read records
     for result in reader.records() {
         let record = result?;
         for (i, field) in record.iter().enumerate() {
-            if let Some(header) = headers.get(i) {
-                if let Some(column_data) = columns.get_mut(header) {
+            if let Some(header_name) = header_names.get(i) {
+                if let Some(column_data) = columns.get_mut(header_name) {
                     column_data.push(field.to_string());
                 }
             }
@@ -294,14 +307,14 @@ pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
     for record in &records {
         if let Value::Object(obj) = record {
             for (key, value) in obj {
-                let column_data = columns.entry(key.clone()).or_default();
+                let column_data = columns.entry(key.to_string()).or_default();
 
                 // Convert JSON value to string representation
                 let string_value = match value {
                     Value::Null => String::new(), // Treat as empty/null
                     Value::Bool(b) => b.to_string(),
                     Value::Number(n) => n.to_string(),
-                    Value::String(s) => s.clone(),
+                    Value::String(s) => s.to_string(),
                     Value::Array(_) | Value::Object(_) => {
                         // For complex types, serialize to JSON string
                         serde_json::to_string(value).unwrap_or_default()
@@ -373,13 +386,13 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
     for record in &records {
         if let Value::Object(obj) = record {
             for (key, value) in obj {
-                let column_data = columns.entry(key.clone()).or_default();
+                let column_data = columns.entry(key.to_string()).or_default();
 
                 let string_value = match value {
                     Value::Null => String::new(),
                     Value::Bool(b) => b.to_string(),
                     Value::Number(n) => n.to_string(),
-                    Value::String(s) => s.clone(),
+                    Value::String(s) => s.to_string(),
                     Value::Array(_) | Value::Object(_) => {
                         serde_json::to_string(value).unwrap_or_default()
                     }
@@ -465,10 +478,11 @@ fn infer_type(data: &[String]) -> DataType {
     ];
 
     for pattern in &date_formats {
-        let regex = Regex::new(pattern).unwrap();
-        let date_matches = non_empty.iter().filter(|s| regex.is_match(s)).count();
-        if date_matches as f64 / non_empty.len() as f64 > 0.8 {
-            return DataType::Date;
+        if let Ok(regex) = Regex::new(pattern) {
+            let date_matches = non_empty.iter().filter(|s| regex.is_match(s)).count();
+            if date_matches as f64 / non_empty.len() as f64 > 0.8 {
+                return DataType::Date;
+            }
         }
     }
 
@@ -525,9 +539,13 @@ pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     }
 
     let lengths: Vec<usize> = non_empty.iter().map(|s| s.len()).collect();
-    let min_length = *lengths.iter().min().unwrap();
-    let max_length = *lengths.iter().max().unwrap();
-    let avg_length = lengths.iter().sum::<usize>() as f64 / lengths.len() as f64;
+    let min_length = lengths.iter().min().copied().unwrap_or(0);
+    let max_length = lengths.iter().max().copied().unwrap_or(0);
+    let avg_length = if lengths.is_empty() {
+        0.0
+    } else {
+        lengths.iter().sum::<usize>() as f64 / lengths.len() as f64
+    };
 
     ColumnStats::Text {
         min_length,
@@ -580,4 +598,20 @@ pub fn detect_patterns(data: &[String]) -> Vec<Pattern> {
     }
 
     patterns
+}
+
+/// Global memory leak detection utility
+pub fn check_memory_leaks() -> String {
+    use crate::core::MemoryTracker;
+
+    let global_tracker = MemoryTracker::default();
+    global_tracker.report_leaks()
+}
+
+/// Get global memory usage statistics
+pub fn get_memory_usage_stats() -> (usize, usize, usize) {
+    use crate::core::MemoryTracker;
+
+    let global_tracker = MemoryTracker::default();
+    global_tracker.get_memory_stats()
 }
