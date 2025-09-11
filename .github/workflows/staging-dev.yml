@@ -52,6 +52,9 @@ jobs:
     - name: Run Clippy lints (SQLite features)
       run: cargo clippy --lib --features sqlite -- -D warnings
 
+    - name: Run Clippy lints (Apache Arrow features)
+      run: cargo clippy --lib --features arrow -- -D warnings
+
     - name: Check for common issues
       run: |
         echo "🔍 Checking for unsafe unwrap() calls..."
@@ -112,6 +115,13 @@ jobs:
         cargo test --features postgres --lib --verbose
         cargo test --features sqlite --lib --verbose
 
+    - name: Run Arrow integration tests
+      run: |
+        echo "🚀 Testing Apache Arrow integration..."
+        cargo test --features arrow --lib --verbose
+        cargo test --features arrow test_arrow_api_integration --verbose
+        echo "✅ Arrow integration tests completed"
+
   # Light performance check
   performance-check:
     name: Basic Performance Check
@@ -130,8 +140,15 @@ jobs:
       run: |
         echo "🚀 Quick build check..."
         cargo build --release
-
         echo "✅ Build completed successfully"
+
+    - name: Arrow performance validation
+      run: |
+        echo "⚡ Testing Arrow performance integration..."
+        cargo build --release --features arrow
+        echo "🔍 Running Arrow memory efficiency test..."
+        cargo test --release --features arrow test_arrow_memory_efficiency -- --nocapture
+        echo "✅ Arrow performance validation completed"
 
   # Final status check
   staging-ready:

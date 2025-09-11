@@ -17,6 +17,10 @@ pub mod database;
 #[cfg(feature = "python")]
 pub mod python;
 
+// Apache Arrow integration (optional)
+#[cfg(feature = "arrow")]
+pub use engines::columnar::ArrowProfiler;
+
 use anyhow::Result;
 use csv::ReaderBuilder;
 use regex::Regex;

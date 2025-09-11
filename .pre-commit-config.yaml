@@ -44,6 +44,13 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: cargo-clippy-arrow
+        name: cargo clippy (arrow)
+        entry: cargo clippy --lib --features arrow -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
       - id: cargo-test-core
         name: cargo test (core)
         entry: cargo test --lib
@@ -75,6 +82,13 @@ repos:
       - id: cargo-test-duckdb
         name: cargo test (duckdb)
         entry: bash -c 'if command -v duckdb >/dev/null 2>&1 || [ -f /usr/local/lib/libduckdb.so ]; then cargo test --features duckdb --lib; else echo "⚠️ DuckDB not available, skipping tests"; fi'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test-arrow
+        name: cargo test (arrow)
+        entry: bash -c 'echo "🚀 Testing Apache Arrow integration..." && cargo test --features arrow --lib && cargo test --features arrow test_arrow_api_integration && echo "✅ Arrow tests passed"'
         language: system
         types: [rust]
         pass_filenames: false

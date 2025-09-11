@@ -28,8 +28,20 @@ fn choose_best_profiler(file_path: &Path) -> Result<ProfilerChoice> {
     let metadata = std::fs::metadata(file_path)?;
     let file_size_mb = metadata.len() as f64 / 1_048_576.0;
 
-    if file_size_mb > 200.0 {
-        // Use true streaming profiler for very large files (>200MB)
+    if file_size_mb > 500.0 {
+        // Use Arrow profiler for very large files (>500MB) when available
+        #[cfg(feature = "arrow")]
+        {
+            Ok(ProfilerChoice::Arrow(
+                crate::engines::columnar::ArrowProfiler::new(),
+            ))
+        }
+        #[cfg(not(feature = "arrow"))]
+        {
+            Ok(ProfilerChoice::TrueStreaming(TrueStreamingProfiler::new()))
+        }
+    } else if file_size_mb > 200.0 {
+        // Use true streaming profiler for very large files (200-500MB)
         Ok(ProfilerChoice::TrueStreaming(TrueStreamingProfiler::new()))
     } else if file_size_mb > 50.0 {
         // Use memory-efficient profiler for moderately large files (50-200MB)
@@ -46,6 +58,8 @@ enum ProfilerChoice {
     Streaming(StreamingProfiler),
     MemoryEfficient(MemoryEfficientProfiler),
     TrueStreaming(TrueStreamingProfiler),
+    #[cfg(feature = "arrow")]
+    Arrow(crate::engines::columnar::ArrowProfiler),
 }
 
 impl ProfilerChoice {
@@ -60,6 +74,11 @@ impl ProfilerChoice {
             ProfilerChoice::TrueStreaming(profiler) => {
                 ProfilerChoice::TrueStreaming(profiler.sampling(strategy))
             }
+            #[cfg(feature = "arrow")]
+            ProfilerChoice::Arrow(profiler) => {
+                // Arrow profiler doesn't support sampling strategies yet - processes all data efficiently
+                ProfilerChoice::Arrow(profiler)
+            }
         }
     }
 
@@ -68,6 +87,8 @@ impl ProfilerChoice {
             ProfilerChoice::Streaming(profiler) => profiler.analyze_file(file_path),
             ProfilerChoice::MemoryEfficient(profiler) => profiler.analyze_file(file_path),
             ProfilerChoice::TrueStreaming(profiler) => profiler.analyze_file(file_path),
+            #[cfg(feature = "arrow")]
+            ProfilerChoice::Arrow(profiler) => profiler.analyze_csv_file(file_path),
         }
     }
 }
@@ -100,6 +121,11 @@ where
                 println!("Progress: {:.1}%", progress.percentage);
             })
             .analyze_file(file_path.as_ref()),
+        #[cfg(feature = "arrow")]
+        ProfilerChoice::Arrow(profiler) => {
+            println!("Using Arrow columnar profiler for high performance...");
+            profiler.analyze_csv_file(file_path.as_ref())
+        }
     }
 }
 
@@ -114,6 +140,12 @@ impl DataProfiler {
         Self {
             inner: StreamingProfiler::new(),
         }
+    }
+
+    /// Create an Arrow-based columnar profiler for high performance on large files
+    #[cfg(feature = "arrow")]
+    pub fn columnar() -> crate::engines::columnar::ArrowProfiler {
+        crate::engines::columnar::ArrowProfiler::new()
     }
 
     /// Create from path - backward compatibility
