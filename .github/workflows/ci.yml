@@ -54,6 +54,13 @@ jobs:
     - name: Run SQLite tests
       run: cargo test --features sqlite --verbose
 
+    - name: Run Apache Arrow tests
+      run: |
+        echo "🚀 Testing Apache Arrow integration..."
+        cargo test --features arrow --lib --verbose
+        cargo test --features arrow test_arrow_api_integration --verbose
+        echo "✅ Arrow tests completed"
+
     - name: Check formatting
       run: cargo fmt --all -- --check
 
@@ -68,6 +75,9 @@ jobs:
 
     - name: Run clippy (SQLite features)
       run: cargo clippy --lib --features sqlite -- -D warnings
+
+    - name: Run clippy (Apache Arrow features)
+      run: cargo clippy --lib --features arrow -- -D warnings
 
   build:
     name: Build
@@ -100,3 +110,6 @@ jobs:
 
     - name: Build release (SQLite features)
       run: cargo build --release --features sqlite --verbose
+
+    - name: Build release (Apache Arrow features)
+      run: cargo build --release --features arrow --verbose
