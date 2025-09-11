@@ -1,0 +1,32 @@
+# Global code owners - require review for all changes
+* @AndreaBozzo
+
+# Core library code - critical paths
+/src/ @AndreaBozzo
+/Cargo.toml @AndreaBozzo
+/Cargo.lock @AndreaBozzo
+
+# API changes require careful review
+/src/api/ @AndreaBozzo
+/src/lib.rs @AndreaBozzo
+
+# Performance-critical components
+/src/engines/ @AndreaBozzo
+/src/acceleration/ @AndreaBozzo
+
+# Database connectors
+/src/database/ @AndreaBozzo
+
+# Configuration and workflow changes
+/.github/ @AndreaBozzo
+/pyproject.toml @AndreaBozzo
+/setup.py @AndreaBozzo
+
+# Documentation changes
+/README.md @AndreaBozzo
+/CHANGELOG.md @AndreaBozzo
+/docs/ @AndreaBozzo
+
+# Test infrastructure
+/tests/ @AndreaBozzo
+/benches/ @AndreaBozzo
