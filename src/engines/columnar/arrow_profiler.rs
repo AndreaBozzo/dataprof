@@ -85,8 +85,8 @@ impl ArrowProfiler {
 
         // Convert analyzers to column profiles
         let mut column_profiles = Vec::new();
-        for (name, analyzer) in column_analyzers {
-            let profile = analyzer.to_column_profile(name);
+        for (name, analyzer) in &column_analyzers {
+            let profile = analyzer.to_column_profile(name.clone());
             column_profiles.push(profile);
         }
 
@@ -378,7 +378,7 @@ impl ColumnAnalyzer {
         self.total_length += len;
     }
 
-    fn to_column_profile(self, name: String) -> ColumnProfile {
+    fn to_column_profile(&self, name: String) -> ColumnProfile {
         let data_type = self.infer_data_type();
 
         let stats = match data_type {
