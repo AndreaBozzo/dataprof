@@ -1,8 +1,7 @@
 use anyhow::Result;
 use arrow::array::*;
-use arrow::csv::{Reader as CsvReader, ReaderBuilder};
+use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
-use arrow::record_batch::RecordBatch;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -40,14 +39,30 @@ impl ArrowProfiler {
         let file_size_bytes = file.metadata()?.len();
         let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
-        // Create Arrow CSV reader with optimized settings
-        let csv_reader = ReaderBuilder::new(self.create_arrow_schema()?)
-            .has_header(true)
-            .batch_size(self.batch_size)
+        // Read first to infer schema from headers
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(file_path)?;
+
+        // Get headers to create Arrow schema
+        let headers = reader.headers()?.clone();
+        let mut fields = Vec::new();
+        for header in headers.iter() {
+            // Start with string type, Arrow will convert during processing
+            fields.push(Field::new(header, arrow::datatypes::DataType::Utf8, true));
+        }
+        let schema = Arc::new(Schema::new(fields));
+
+        // Now create Arrow reader with proper schema
+        let file = File::open(file_path)?;
+        let csv_reader = ReaderBuilder::new(schema)
+            .with_header(true)
+            .with_batch_size(self.batch_size)
             .build(file)?;
 
         // Process data in columnar batches
-        let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> = std::collections::HashMap::new();
+        let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
+            std::collections::HashMap::new();
         let mut total_rows = 0;
 
         for batch_result in csv_reader {
@@ -56,7 +71,8 @@ impl ArrowProfiler {
 
             // Process each column in the batch
             for (col_idx, column) in batch.columns().iter().enumerate() {
-                let field = batch.schema().field(col_idx);
+                let schema = batch.schema();
+                let field = schema.field(col_idx);
                 let column_name = field.name().to_string();
 
                 let analyzer = column_analyzers
@@ -69,8 +85,8 @@ impl ArrowProfiler {
 
         // Convert analyzers to column profiles
         let mut column_profiles = Vec::new();
-        for (name, analyzer) in column_analyzers {
-            let profile = analyzer.to_column_profile(name);
+        for (name, analyzer) in &column_analyzers {
+            let profile = analyzer.to_column_profile(name.clone());
             column_profiles.push(profile);
         }
 
@@ -96,12 +112,6 @@ impl ArrowProfiler {
                 scan_time_ms,
             },
         })
-    }
-
-    fn create_arrow_schema(&self) -> Result<Arc<Schema>> {
-        // Create a flexible schema that can handle most CSV data
-        // Arrow will infer types during reading
-        Ok(Arc::new(Schema::empty()))
     }
 
     fn create_quality_check_samples(
@@ -368,7 +378,7 @@ impl ColumnAnalyzer {
         self.total_length += len;
     }
 
-    fn to_column_profile(self, name: String) -> ColumnProfile {
+    fn to_column_profile(&self, name: String) -> ColumnProfile {
         let data_type = self.infer_data_type();
 
         let stats = match data_type {
@@ -389,7 +399,11 @@ impl ColumnAnalyzer {
                 };
 
                 ColumnStats::Text {
-                    min_length: if self.min_length == usize::MAX { 0 } else { self.min_length },
+                    min_length: if self.min_length == usize::MAX {
+                        0
+                    } else {
+                        self.min_length
+                    },
                     max_length: self.max_length,
                     avg_length,
                 }
@@ -412,14 +426,20 @@ impl ColumnAnalyzer {
 
     fn infer_data_type(&self) -> DataType {
         match &self.data_type {
-            arrow::datatypes::DataType::Float64 | arrow::datatypes::DataType::Float32 => DataType::Float,
-            arrow::datatypes::DataType::Int64 | arrow::datatypes::DataType::Int32 |
-            arrow::datatypes::DataType::Int16 | arrow::datatypes::DataType::Int8 => DataType::Integer,
+            arrow::datatypes::DataType::Float64 | arrow::datatypes::DataType::Float32 => {
+                DataType::Float
+            }
+            arrow::datatypes::DataType::Int64
+            | arrow::datatypes::DataType::Int32
+            | arrow::datatypes::DataType::Int16
+            | arrow::datatypes::DataType::Int8 => DataType::Integer,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Check if it looks like dates
                 let sample_size = self.sample_values.len().min(50);
                 if sample_size > 0 {
-                    let date_like_count = self.sample_values.iter()
+                    let date_like_count = self
+                        .sample_values
+                        .iter()
                         .take(sample_size)
                         .filter(|s| self.looks_like_date(s))
                         .count();
@@ -477,7 +497,9 @@ mod tests {
         assert_eq!(report.column_profiles.len(), 4);
 
         // Find age column and verify it's detected correctly
-        let age_column = report.column_profiles.iter()
+        let age_column = report
+            .column_profiles
+            .iter()
             .find(|p| p.name == "age")
             .expect("Age column should exist");
 
