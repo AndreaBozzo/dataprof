@@ -103,13 +103,14 @@ incremental = true   # Build incrementali
 # Profile per test veloci
 [profile.test]
 opt-level = 1
+panic = "unwind"     # Required for tests
 
 # Release profile ottimizzato
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
-panic = "abort"      # Riduce dimensione binario
+# Removed panic = "abort" to avoid conflicts with tests
 
 # Bench profile (based on release but allows unwinding for benchmarks)
 [profile.bench]
