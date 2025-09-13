@@ -7,7 +7,7 @@ We are committed to providing a friendly, safe and welcoming environment for all
 ## Expected Behavior
 
 - Use welcoming and inclusive language
-- Be respectful of differing viewpoints and experiences  
+- Be respectful of differing viewpoints and experiences
 - Gracefully accept constructive criticism
 - Focus on what is best for the community
 - Show empathy towards other community members

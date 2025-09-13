@@ -1,0 +1,59 @@
+# Tarpaulin Configuration for DataProfiler
+# Run with: cargo tarpaulin --config tarpaulin.toml
+
+[tool.tarpaulin.default]
+# Output formats
+out = ["Html", "Json", "Lcov"]
+output-dir = "coverage"
+
+# Coverage thresholds
+fail-under = 80  # Fail if coverage is below 80%
+
+# Include/exclude patterns
+include-tests = false  # Don't include test code in coverage
+exclude-files = [
+    "target/*",
+    "tests/*",
+    "benches/*",
+    "examples/*",
+    "src/main.rs",     # CLI entry point
+    "src/python.rs",   # Python bindings (optional feature)
+]
+
+# Test execution
+timeout = 300  # 5 minutes timeout
+follow-exec = true
+post-args = ["--", "--test-threads=1"]
+
+# Report configuration
+verbose = true
+color = "auto"
+
+[tool.tarpaulin.ci]
+# Configuration for CI environments
+out = ["Lcov", "Json"]
+output-dir = "coverage"
+fail-under = 75  # Slightly lower threshold for CI
+exclude-files = [
+    "target/*",
+    "tests/*",
+    "benches/*",
+    "examples/*",
+    "src/main.rs",
+    "src/python.rs",
+]
+timeout = 600  # Longer timeout for CI
+
+[tool.tarpaulin.quick]
+# Quick coverage check during development
+out = ["Json"]
+exclude-files = [
+    "target/*",
+    "tests/*",
+    "benches/*",
+    "examples/*",
+    "src/main.rs",
+    "src/python.rs",
+]
+timeout = 120
+fail-under = 70
