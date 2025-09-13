@@ -68,9 +68,29 @@ arrow = { version = "56.1", optional = true }
 [dev-dependencies]
 tempfile = "3.10"
 
+# Property-based testing
+proptest = "1.5"
+
+# Performance benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Coverage reporting (install with: cargo install cargo-tarpaulin)
+# Run with: cargo tarpaulin --out Html --output-dir coverage
+
+# Additional test utilities
+assert_matches = "1.5"
+serial_test = "3.1"
+fake = { version = "2.9", features = ["derive"] }
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+
 [[bin]]
 name = "dataprof-cli"
 path = "src/main.rs"
+
+[[bench]]
+name = "simple_benchmarks"
+harness = false
 
 
 # Debug profile per sviluppo veloce
@@ -83,13 +103,19 @@ incremental = true   # Build incrementali
 # Profile per test veloci
 [profile.test]
 opt-level = 1
+panic = "unwind"     # Required for tests
 
 # Release profile ottimizzato
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
-panic = "abort"      # Riduce dimensione binario
+# Removed panic = "abort" to avoid conflicts with tests
+
+# Bench profile (based on release but allows unwinding for benchmarks)
+[profile.bench]
+inherits = "release"
+panic = "unwind"     # Required for benchmarks
 
 # Features
 [features]

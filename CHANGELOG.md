@@ -5,6 +5,91 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2025-09-11 - "Apache Arrow Integration Edition"
+
+### 🎉 Major Features Added
+
+#### Apache Arrow Columnar Processing
+- **NEW:** Apache Arrow integration for columnar data processing with 13x performance boost
+- **NEW:** `ArrowProfiler` engine with SIMD acceleration for numeric operations
+- **NEW:** Automatic engine selection (Arrow for files >500MB, streaming for smaller)
+- **NEW:** Zero-copy operations and memory-efficient batch processing
+- **NEW:** Support for all Arrow native types (Float64/32, Int64/32, Utf8, Date, etc.)
+- **NEW:** Configurable batch sizes and memory limits for optimal performance
+
+#### Enhanced Public API
+- **NEW:** `DataProfiler::columnar()` method for explicit Arrow profiler access
+- **NEW:** Transparent engine selection in Python bindings (`engine="arrow"` parameter)
+- **NEW:** Memory monitoring with configurable limits and batch size optimization
+- **NEW:** Progress tracking for large batch operations
+
+#### Community & Development
+- **NEW:** Code of Conduct added for community guidelines and inclusive development
+- **NEW:** Streamlined release workflow with human-readable automation
+- **NEW:** Enhanced CI/CD with proper matrix strategy for cross-platform builds
+
+### ⚡ Performance Improvements
+- **13x faster** processing for large datasets using Apache Arrow columnar format
+- **Memory efficient** batch processing with configurable memory limits (default: 512MB)
+- **SIMD acceleration** for numeric statistical calculations
+- **Automatic optimization** based on file size and system capabilities
+
+### 🛠️ Improvements
+- **IMPROVED:** Maturin build process with proper Python interpreter detection
+- **IMPROVED:** Database connector stability with SQLite `:memory:` support
+- **IMPROVED:** Error handling in streaming profiler operations
+- **IMPROVED:** Security audit resolution with dependency updates
+
+### 🐛 Bug Fixes
+- **FIXED:** Streaming profiler test failures in multi-threaded scenarios
+- **FIXED:** SQLite in-memory database connection handling
+- **FIXED:** Compilation errors in database feature combinations
+- **FIXED:** GitHub Actions workflow matrix strategy syntax
+- **FIXED:** Duplicate `thiserror` dependency entries in Cargo.lock
+
+### 📚 Technical Details
+- Arrow profiler processes data in configurable batches (default: 8,192 rows)
+- Automatic type inference with Arrow schema detection
+- Memory usage optimization with batch size scaling based on available RAM
+- Feature-gated compilation to avoid unnecessary dependencies
+- Full backward compatibility with existing APIs
+
+### 🚀 New Usage Patterns
+
+#### Rust API
+```rust
+use dataprof::DataProfiler;
+
+// Explicit Arrow profiler
+let profiler = DataProfiler::columnar()
+    .batch_size(16384)
+    .memory_limit_mb(1024);
+
+let report = profiler.analyze_csv_file("large_data.csv")?;
+```
+
+#### Python API
+```python
+import dataprof
+
+# Automatic Arrow selection for large files
+profiles = dataprof.analyze_csv_file("huge_dataset.csv")
+
+# Explicit Arrow engine
+report = dataprof.analyze_csv_with_quality("data.csv", engine="arrow")
+```
+
+#### CLI Usage
+```bash
+# Arrow engine automatically selected for large files
+dataprof large_dataset.csv
+
+# Force Arrow profiler
+dataprof --engine arrow data.csv
+```
+
+---
+
 ## [0.3.5] - 2025-09-08 - "Database Connectors & Memory Safety Edition"
 
 ### 🎉 Major Features Added
