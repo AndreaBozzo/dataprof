@@ -5,6 +5,9 @@ on:
     branches: [master, main]
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+
 jobs:
   # Validate this is from staging
   validate-staging-pr:

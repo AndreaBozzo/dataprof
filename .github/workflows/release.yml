@@ -10,6 +10,10 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write  # For creating releases
+  id-token: write  # For PyPI publishing
+
 jobs:
   # Step 1: Create GitHub Release
   github-release:
