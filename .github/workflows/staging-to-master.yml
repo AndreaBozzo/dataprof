@@ -40,6 +40,15 @@ jobs:
     - name: Run all tests
       run: cargo test --verbose
 
+    - name: Run integration tests
+      run: cargo test --test "*" --verbose
+
+    - name: Run error handling tests
+      run: cargo test --test error_handling_simple --verbose
+
+    - name: Run data quality tests
+      run: cargo test --test data_quality_simple --verbose
+
     - name: Test with features
       run: |
         cargo test --features postgres --verbose

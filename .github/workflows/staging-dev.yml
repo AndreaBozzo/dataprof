@@ -110,6 +110,15 @@ jobs:
     - name: Run core tests
       run: cargo test --lib --verbose
 
+    - name: Run integration tests
+      run: cargo test --test "*" --verbose
+
+    - name: Run error handling tests
+      run: cargo test --test error_handling_simple --verbose
+
+    - name: Run data quality tests
+      run: cargo test --test data_quality_simple --verbose
+
     - name: Run database tests
       run: |
         cargo test --features postgres --lib --verbose
@@ -149,6 +158,12 @@ jobs:
         echo "🔍 Running Arrow memory efficiency test..."
         cargo test --release --features arrow test_arrow_memory_efficiency -- --nocapture
         echo "✅ Arrow performance validation completed"
+
+    - name: Run performance benchmarks
+      run: |
+        echo "📊 Running performance benchmarks..."
+        cargo bench --no-run
+        echo "✅ Benchmark build completed"
 
   # Final status check
   staging-ready:
