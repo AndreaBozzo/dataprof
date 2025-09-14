@@ -266,6 +266,7 @@ jobs:
             gh release upload ${{ needs.create-release.outputs.tag }} "$wheel"
           fi
         done
+      shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
