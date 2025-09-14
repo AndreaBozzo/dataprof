@@ -169,12 +169,10 @@ jobs:
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
           BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}.exe"
           cp "target/${{ matrix.target }}/release/dataprof-cli.exe" "$BINARY_NAME"
-          echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
           echo "Created Windows binary: $BINARY_NAME"
         else
           BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}"
           cp "target/${{ matrix.target }}/release/dataprof-cli" "$BINARY_NAME"
-          echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
           echo "Created binary: $BINARY_NAME"
         fi
 
@@ -190,7 +188,19 @@ jobs:
 
     - name: Upload binary to release
       run: |
-        gh release upload ${{ needs.create-release.outputs.tag }} "$BINARY_NAME"
+        TAG="${{ needs.create-release.outputs.tag }}"
+        VERSION=$(echo "$TAG" | sed 's/^v//')
+
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}.exe"
+        else
+          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}"
+        fi
+
+        echo "Uploading binary: $BINARY_NAME"
+        ls -la "$BINARY_NAME"
+        gh release upload "$TAG" "$BINARY_NAME"
+      shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
