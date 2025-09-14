@@ -1,6 +1,6 @@
 [package]
 name = "dataprof"
-version = "0.3.6"
+version = "0.4.0"
 edition = "2021"
 license = "GPL-3.0"
 authors = ["Andrea Bozzo"]
@@ -68,9 +68,40 @@ arrow = { version = "56.1", optional = true }
 [dev-dependencies]
 tempfile = "3.10"
 
+# Property-based testing
+proptest = "1.5"
+
+# Performance benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Memory profiling for benchmarks (Windows compatibility issue with pprof 0.13)
+# pprof = { version = "0.13", features = ["criterion", "protobuf-codec"] }
+
+# Coverage reporting (install with: cargo install cargo-tarpaulin)
+# Run with: cargo tarpaulin --out Html --output-dir coverage
+
+# Additional test utilities
+assert_matches = "1.5"
+serial_test = "3.1"
+fake = { version = "2.9", features = ["derive"] }
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+
 [[bin]]
 name = "dataprof-cli"
 path = "src/main.rs"
+
+[[bench]]
+name = "simple_benchmarks"
+harness = false
+
+[[bench]]
+name = "large_scale_benchmarks"
+harness = false
+
+[[bench]]
+name = "memory_benchmarks"
+harness = false
 
 
 # Debug profile per sviluppo veloce
@@ -83,13 +114,17 @@ incremental = true   # Build incrementali
 # Profile per test veloci
 [profile.test]
 opt-level = 1
+# panic = "unwind" is default for tests
 
 # Release profile ottimizzato
 [profile.release]
 lto = true
 codegen-units = 1
 opt-level = 3
-panic = "abort"      # Riduce dimensione binario
+
+# Bench profile (based on release, panic unwind is default for benchmarks)
+[profile.bench]
+inherits = "release"
 
 # Features
 [features]
@@ -106,6 +141,7 @@ duckdb = ["database", "dep:duckdb"]
 
 # Sensible feature combinations (do NOT use --all-features due to dependency conflicts)
 production = ["postgres", "mysql"]  # Most common production databases
+
 
 # Python extension configuration
 [lib]

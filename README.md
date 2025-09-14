@@ -34,7 +34,7 @@ import dataprof
 report = dataprof.analyze_csv_with_quality("data.csv")
 print(f"Quality score: {report.quality_score():.1f}%")
 
-# Profile database table directly  
+# Profile database table directly
 profiles = dataprof.analyze_database("postgresql://user:pass@host/db", "users")
 ```
 

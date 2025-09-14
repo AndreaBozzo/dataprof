@@ -12,6 +12,9 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+
 jobs:
   # Quick feedback for developers
   quick-check:
@@ -110,6 +113,15 @@ jobs:
     - name: Run core tests
       run: cargo test --lib --verbose
 
+    - name: Run integration tests
+      run: cargo test --test "*" --verbose
+
+    - name: Run error handling tests
+      run: cargo test --test error_handling_simple --verbose
+
+    - name: Run data quality tests
+      run: cargo test --test data_quality_simple --verbose
+
     - name: Run database tests
       run: |
         cargo test --features postgres --lib --verbose
@@ -122,39 +134,12 @@ jobs:
         cargo test --features arrow test_arrow_api_integration --verbose
         echo "✅ Arrow integration tests completed"
 
-  # Light performance check
-  performance-check:
-    name: Basic Performance Check
-    runs-on: ubuntu-latest
-    needs: test-suite
-    if: github.event_name == 'pull_request'
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install Rust stable
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Basic build test
-      run: |
-        echo "🚀 Quick build check..."
-        cargo build --release
-        echo "✅ Build completed successfully"
-
-    - name: Arrow performance validation
-      run: |
-        echo "⚡ Testing Arrow performance integration..."
-        cargo build --release --features arrow
-        echo "🔍 Running Arrow memory efficiency test..."
-        cargo test --release --features arrow test_arrow_memory_efficiency -- --nocapture
-        echo "✅ Arrow performance validation completed"
 
   # Final status check
   staging-ready:
     name: Staging Ready
     runs-on: ubuntu-latest
-    needs: [quick-check, test-suite, performance-check]
+    needs: [quick-check, test-suite]
     if: always()
 
     steps:
@@ -163,7 +148,6 @@ jobs:
         echo "📊 Staging Development Workflow Summary"
         echo "✅ Quick checks: ${{ needs.quick-check.result }}"
         echo "✅ Test suite: ${{ needs.test-suite.result }}"
-        echo "⚡ Performance: ${{ needs.performance-check.result || 'skipped' }}"
 
         if [[ "${{ needs.quick-check.result }}" == "success" && "${{ needs.test-suite.result }}" == "success" ]]; then
           echo "🎉 Staging checks passed! Ready for development work."

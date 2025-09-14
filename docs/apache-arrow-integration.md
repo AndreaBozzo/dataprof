@@ -6,7 +6,7 @@ DataProfiler leverages Apache Arrow's columnar processing capabilities for high-
 
 Apache Arrow provides:
 - **Columnar memory format** for efficient data processing
-- **Zero-copy operations** reducing memory overhead 
+- **Zero-copy operations** reducing memory overhead
 - **SIMD acceleration** for numeric computations
 - **Batch processing** for large datasets
 - **Memory efficiency** through columnar organization
@@ -37,14 +37,14 @@ async fn main() -> anyhow::Result<()> {
     let profiler = DataProfiler::columnar()
         .batch_size(8192)
         .memory_limit_mb(1024);
-    
+
     let report = profiler.analyze_csv_file("large_data.csv")?;
-    
-    println!("Processed {} rows in {}ms", 
+
+    println!("Processed {} rows in {}ms",
         report.scan_info.rows_scanned,
         report.scan_info.scan_time_ms
     );
-    
+
     Ok(())
 }
 ```
@@ -117,7 +117,7 @@ Arrow profiler supports all Arrow native types with optimized processing:
 - **Int64/Int32/Int16/Int8** - Fast integer operations
 - **Decimal** - High-precision numeric analysis
 
-### String Types  
+### String Types
 - **Utf8** - Standard string processing
 - **LargeUtf8** - For long text fields
 - **Binary** - Binary data analysis
@@ -147,11 +147,11 @@ let report = profiler.analyze_csv_file("mixed_types.csv")?;
 for profile in &report.column_profiles {
     match &profile.stats {
         ColumnStats::Numeric { min, max, mean } => {
-            println!("Numeric column {}: [{}, {}] avg={}", 
+            println!("Numeric column {}: [{}, {}] avg={}",
                 profile.name, min, max, mean);
         }
         ColumnStats::Text { avg_length, .. } => {
-            println!("Text column {}: avg_len={}", 
+            println!("Text column {}: avg_len={}",
                 profile.name, avg_length);
         }
     }
@@ -217,7 +217,7 @@ def profile_partition(partition_files):
     for file_path in partition_files:
         try:
             report = dataprof.analyze_csv_with_quality(
-                file_path, 
+                file_path,
                 engine="arrow",
                 batch_size=32768
             )
@@ -276,7 +276,7 @@ report = dataprof.analyze_delta_table(
 # Check data quality trends over versions
 for version in range(max(0, delta_table.version() - 5), delta_table.version() + 1):
     version_report = dataprof.analyze_delta_table(
-        delta_table, 
+        delta_table,
         engine="arrow",
         version=version
     )
@@ -359,15 +359,15 @@ import time
 def monitor_memory():
     process = psutil.Process()
     start_memory = process.memory_info().rss / 1024 / 1024  # MB
-    
+
     report = dataprof.analyze_csv_file(
         "large_file.csv",
         engine="arrow",
         batch_size=16384
     )
-    
+
     peak_memory = process.memory_info().rss / 1024 / 1024  # MB
-    
+
     print(f"Memory usage: {start_memory:.1f}MB -> {peak_memory:.1f}MB")
     print(f"Memory efficiency: {peak_memory - start_memory:.1f}MB for {report.scan_info.rows_scanned:,} rows")
 
@@ -456,7 +456,7 @@ pip install dataprof[arrow]
 ## Best Practices
 
 1. **Choose appropriate batch sizes** based on available memory
-2. **Use Arrow for files > 500MB** for optimal performance  
+2. **Use Arrow for files > 500MB** for optimal performance
 3. **Monitor memory usage** during processing
 4. **Enable SIMD** optimizations when available
 5. **Profile Parquet files** directly for best performance

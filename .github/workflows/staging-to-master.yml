@@ -5,6 +5,9 @@ on:
     branches: [master, main]
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+
 jobs:
   # Validate this is from staging
   validate-staging-pr:
@@ -39,6 +42,15 @@ jobs:
 
     - name: Run all tests
       run: cargo test --verbose
+
+    - name: Run integration tests
+      run: cargo test --test "*" --verbose
+
+    - name: Run error handling tests
+      run: cargo test --test error_handling_simple --verbose
+
+    - name: Run data quality tests
+      run: cargo test --test data_quality_simple --verbose
 
     - name: Test with features
       run: |

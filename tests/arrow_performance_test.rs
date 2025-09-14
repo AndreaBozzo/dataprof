@@ -5,6 +5,7 @@ use std::time::Instant;
 use tempfile::NamedTempFile;
 
 /// Generate a large CSV file for testing Arrow performance
+#[allow(dead_code)]
 fn generate_large_csv(rows: usize) -> Result<NamedTempFile, Box<dyn std::error::Error>> {
     let mut temp_file = NamedTempFile::new()?;
 

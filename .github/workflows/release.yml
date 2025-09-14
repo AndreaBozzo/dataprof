@@ -3,44 +3,180 @@ name: Release
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g., v0.3.6)'
-        required: true
-        type: string
+
+permissions:
+  contents: write  # For creating releases and uploading assets
+  id-token: write  # For PyPI publishing
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUST_BACKTRACE: short
+  RUSTUP_MAX_RETRIES: 10
 
 jobs:
-  # Step 1: Create GitHub Release
-  github-release:
+  # Step 1: Generate release notes and create GitHub release
+  create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
     steps:
     - uses: actions/checkout@v4
-    
-    - name: Get tag name
+      with:
+        fetch-depth: 0  # Need full history for changelog
+
+    - name: Get tag and version info
       id: tag
       run: |
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
-        else
-          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Create Release
+        TAG=${GITHUB_REF#refs/tags/}
+        VERSION=${TAG#v}
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Tag: $TAG, Version: $VERSION"
+
+    - name: Get previous tag for changelog
+      id: prev-tag
       run: |
+        PREV_TAG=$(git describe --tags --abbrev=0 ${{ steps.tag.outputs.tag }}^)
+        echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+        echo "Previous tag: $PREV_TAG"
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        echo "Generating changelog from ${{ steps.prev-tag.outputs.prev_tag }} to ${{ steps.tag.outputs.tag }}..."
+
+        # Get commit messages and format them
+        CHANGELOG=$(git log --pretty=format:"- %s" ${{ steps.prev-tag.outputs.prev_tag }}..${{ steps.tag.outputs.tag }} | \
+          grep -E "(feat|fix|refactor|perf|docs|test):" | \
+          sed 's/feat:/✨ **Feature:**/g' | \
+          sed 's/fix:/🐛 **Fix:**/g' | \
+          sed 's/refactor:/🔧 **Refactor:**/g' | \
+          sed 's/perf:/⚡ **Performance:**/g' | \
+          sed 's/docs:/📚 **Documentation:**/g' | \
+          sed 's/test:/🧪 **Testing:**/g' | \
+          head -20)
+
+        if [ -z "$CHANGELOG" ]; then
+          CHANGELOG="- Various improvements and bug fixes"
+        fi
+
+        # Generate full release notes
+        cat > release_notes.md << EOF
+        ## What's Changed
+
+        $CHANGELOG
+
+        ## 📦 Assets
+
+        ### CLI Binaries
+        - **Linux (x86_64)**: \`dataprof-${{ steps.tag.outputs.version }}-x86_64-unknown-linux-gnu\`
+        - **macOS (Intel)**: \`dataprof-${{ steps.tag.outputs.version }}-x86_64-apple-darwin\`
+        - **macOS (Apple Silicon)**: \`dataprof-${{ steps.tag.outputs.version }}-aarch64-apple-darwin\`
+        - **Windows**: \`dataprof-${{ steps.tag.outputs.version }}-x86_64-pc-windows-msvc.exe\`
+
+        ### Python Package
+        - Available on [PyPI](https://pypi.org/project/dataprof/): \`pip install dataprof==${{ steps.tag.outputs.version }}\`
+        - Platform wheels for Linux, macOS, and Windows
+
+        ### Rust Crate
+        - Available on [crates.io](https://crates.io/crates/dataprof): \`cargo add dataprof@${{ steps.tag.outputs.version }}\`
+
+        ## 🚀 Installation
+
+        \`\`\`bash
+        # CLI via Cargo
+        cargo install dataprof@${{ steps.tag.outputs.version }}
+
+        # Python package
+        pip install dataprof==${{ steps.tag.outputs.version }}
+
+        # Or download binaries from this release
+        \`\`\`
+
+        ---
+        🤖 Generated with [Claude Code](https://claude.ai/code)
+        EOF
+
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        cat release_notes.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create GitHub Release
+      run: |
+        echo "Creating release ${{ steps.tag.outputs.tag }}..."
         gh release create ${{ steps.tag.outputs.tag }} \
-          --title "${{ steps.tag.outputs.tag }} - Apache Arrow Integration" \
-          --notes "**🚀 Performance:** 13x faster with Apache Arrow integration
+          --title "DataProfiler ${{ steps.tag.outputs.tag }}" \
+          --notes-file release_notes.md \
+          --draft
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-        ### Features
-        - New \`DataProfiler::columnar()\` API
-        - Auto-selection for large files (>500MB)
-        - 13.49x speedup on large CSV files
-        - Backward compatibility maintained
+  # Step 2: Build CLI binaries for multiple platforms
+  build-binaries:
+    name: Build CLI Binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: dataprof-linux-x64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: dataprof-linux-arm64
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            name: dataprof-macos-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: dataprof-macos-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: dataprof-windows-x64.exe
 
-        🤖 Generated with [Claude Code](https://claude.ai/code)" \
-          --latest || echo "Release already exists"
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Install cross-compilation tools
+      if: matrix.cross
+      run: cargo install cross
+
+    - name: Build binary
+      run: |
+        if [ "${{ matrix.cross }}" = "true" ]; then
+          cross build --release --target ${{ matrix.target }} --bin dataprof-cli --features="arrow"
+        else
+          cargo build --release --target ${{ matrix.target }} --bin dataprof-cli --features="arrow"
+        fi
+      shell: bash
+
+    - name: Prepare binary for upload
+      run: |
+        VERSION=${{ needs.create-release.outputs.tag }}
+        VERSION=${VERSION#v}
+
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          cp target/${{ matrix.target }}/release/dataprof-cli.exe dataprof-$VERSION-${{ matrix.target }}.exe
+          echo "BINARY_NAME=dataprof-$VERSION-${{ matrix.target }}.exe" >> $GITHUB_ENV
+        else
+          cp target/${{ matrix.target }}/release/dataprof-cli dataprof-$VERSION-${{ matrix.target }}
+          echo "BINARY_NAME=dataprof-$VERSION-${{ matrix.target }}" >> $GITHUB_ENV
+        fi
+      shell: bash
+
+    - name: Upload binary to release
+      run: |
+        gh release upload ${{ needs.create-release.outputs.tag }} "$BINARY_NAME"
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -48,11 +184,11 @@ jobs:
   crates-publish:
     name: Publish to Crates.io
     runs-on: ubuntu-latest
-    needs: github-release
+    needs: create-release
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    
+
     - name: Publish to crates.io
       run: |
         echo "📦 Publishing to crates.io..."
@@ -70,31 +206,29 @@ jobs:
 
   # Step 3: Build Python Wheels
   python-wheels:
-    name: Build Python Wheels
+    name: Build Python Wheels (${{ matrix.os }}-${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    needs: github-release
+    needs: create-release
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64
-          - os: ubuntu-latest  
+          - os: ubuntu-latest
             target: aarch64
           - os: windows-latest
             target: x64
-          - os: windows-latest
-            target: x86
-          - os: macos-latest
+          - os: macos-13
             target: x86_64
           - os: macos-latest
             target: aarch64
-    
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        
+
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
@@ -102,12 +236,24 @@ jobs:
         args: --release --out dist --find-interpreter --features python
         sccache: 'true'
         manylinux: auto
-        
-    - name: Upload wheels
+
+    - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.target }}
         path: dist
+
+    - name: Upload wheels to release
+      run: |
+        cd dist
+        for wheel in *.whl; do
+          if [ -f "$wheel" ]; then
+            echo "Uploading wheel: $wheel"
+            gh release upload ${{ needs.create-release.outputs.tag }} "$wheel"
+          fi
+        done
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Step 4: Publish to PyPI
   pypi-publish:
@@ -123,10 +269,26 @@ jobs:
         pattern: wheels-*
         merge-multiple: true
         path: dist
-        
+
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         packages-dir: dist/
         skip-existing: true
         print-hash: true
+
+  # Step 5: Finalize release (make it public)
+  finalize-release:
+    name: Finalize Release
+    runs-on: ubuntu-latest
+    needs: [create-release, build-binaries, crates-publish, pypi-publish]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Mark release as published
+      run: |
+        echo "🚀 Finalizing release ${{ needs.create-release.outputs.tag }}..."
+        gh release edit ${{ needs.create-release.outputs.tag }} --draft=false
+        echo "✅ Release ${{ needs.create-release.outputs.tag }} is now public!"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

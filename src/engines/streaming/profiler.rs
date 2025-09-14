@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::progress::{ProgressCallback, ProgressTracker};
 use crate::types::{FileInfo, QualityReport, ScanInfo};
-use crate::{analyze_column, QualityChecker};
+use crate::{analysis::analyze_column, QualityChecker};
 
 pub struct StreamingProfiler {
     chunk_size: ChunkSize,
