@@ -100,7 +100,7 @@ jobs:
       - name: Run memory check
         run: |
           echo "🧠 Running memory efficiency check..."
-          cargo bench --bench memory_benchmarks -- --sample-size 5 --measurement-time 15 "memory_pattern/1K"
+          cargo bench --bench memory_benchmarks -- --sample-size 10 --measurement-time 10 "memory_pattern/1K"
           echo "✅ Memory check completed"
 
   # Full benchmark suite for main/staging branches
@@ -268,17 +268,17 @@ jobs:
               cargo bench --bench simple_benchmarks
               ;;
             "large-scale")
-              cargo bench --bench large_scale_benchmarks -- --sample-size 5
+              cargo bench --bench large_scale_benchmarks -- --sample-size 10
               ;;
             "memory")
-              cargo bench --bench memory_benchmarks -- --sample-size 5
+              cargo bench --bench memory_benchmarks -- --sample-size 10
               ;;
             "comparison")
               python scripts/benchmark_comparison.py 1 5 25
               ;;
             "all"|*)
               cargo bench --bench simple_benchmarks -- --sample-size 10
-              cargo bench --bench memory_benchmarks -- --sample-size 5 "memory_pattern/1K"
+              cargo bench --bench memory_benchmarks -- --sample-size 10 "memory_pattern/1K"
               python scripts/benchmark_comparison.py 1 10
               ;;
           esac
