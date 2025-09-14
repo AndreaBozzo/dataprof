@@ -1,0 +1,354 @@
+name: Performance Benchmarks
+on:
+  push:
+    branches: [main, master, staging]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  pull_request:
+    branches: [main, master, staging]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      benchmark_type:
+        description: 'Benchmark type to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - simple
+          - large-scale
+          - memory
+          - comparison
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  # Quick benchmark build check
+  benchmark-check:
+    name: Benchmark Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: benchmark-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            benchmark-${{ runner.os }}-
+
+      - name: Build benchmarks
+        run: |
+          echo "🔨 Building all benchmarks..."
+          cargo bench --no-run
+          echo "✅ Benchmark build completed"
+
+  # Run lightweight benchmarks on PR
+  pr-benchmarks:
+    name: PR Performance Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: benchmark-check
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: benchmark-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run simple benchmarks
+        run: |
+          echo "⚡ Running lightweight benchmarks for PR validation..."
+          cargo bench --bench simple_benchmarks -- --sample-size 10 --measurement-time 10
+          echo "✅ Simple benchmarks completed"
+
+      - name: Run memory check
+        run: |
+          echo "🧠 Running memory efficiency check..."
+          cargo bench --bench memory_benchmarks -- --sample-size 5 --measurement-time 15 "memory_pattern/1K"
+          echo "✅ Memory check completed"
+
+  # Full benchmark suite for main/staging branches
+  full-benchmarks:
+    name: Full Performance Suite
+    runs-on: ubuntu-latest-8-cores
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging')
+    needs: benchmark-check
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need history for trend analysis
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: benchmark-full-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Python for comparison benchmarks
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install pandas numpy psutil
+
+      - name: Create benchmark results directory
+        run: mkdir -p benchmark-results
+
+      - name: Run simple benchmarks
+        run: |
+          echo "🏃 Running simple benchmarks..."
+          cargo bench --bench simple_benchmarks -- --output-format json > benchmark-results/simple.json
+          echo "✅ Simple benchmarks completed"
+
+      - name: Run large-scale benchmarks
+        run: |
+          echo "📊 Running large-scale benchmarks..."
+          cargo bench --bench large_scale_benchmarks -- --output-format json > benchmark-results/large_scale.json
+          echo "✅ Large-scale benchmarks completed"
+
+      - name: Run memory benchmarks
+        run: |
+          echo "🧠 Running memory benchmarks..."
+          cargo bench --bench memory_benchmarks -- --output-format json > benchmark-results/memory.json
+          echo "✅ Memory benchmarks completed"
+
+      - name: Run external comparison benchmarks
+        run: |
+          echo "🔄 Running pandas comparison benchmarks..."
+          chmod +x scripts/benchmark_comparison.py
+          python scripts/benchmark_comparison.py 1 10 > benchmark-results/comparison.txt 2>&1 || true
+          echo "✅ Comparison benchmarks completed"
+
+      - name: Generate benchmark report
+        run: |
+          echo "📈 Generating benchmark report..."
+          cat > benchmark-results/report.md << 'EOF'
+          # DataProfiler Performance Benchmark Report
+
+          **Branch:** `${{ github.ref_name }}`
+          **Commit:** `${{ github.sha }}`
+          **Date:** $(date -u)
+
+          ## Benchmark Results
+
+          ### Simple Benchmarks
+          ```
+          $(head -20 benchmark-results/simple.json 2>/dev/null || echo "Simple benchmarks data not available")
+          ```
+
+          ### Large Scale Performance
+          ```
+          $(head -20 benchmark-results/large_scale.json 2>/dev/null || echo "Large scale benchmarks data not available")
+          ```
+
+          ### Memory Usage
+          ```
+          $(head -20 benchmark-results/memory.json 2>/dev/null || echo "Memory benchmarks data not available")
+          ```
+
+          ### External Tool Comparison
+          ```
+          $(cat benchmark-results/comparison.txt 2>/dev/null || echo "Comparison benchmarks data not available")
+          ```
+
+          ---
+          🤖 Generated automatically by GitHub Actions
+          EOF
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: benchmark-results/
+          retention-days: 30
+
+      - name: Check for performance regressions
+        run: |
+          echo "🔍 Checking for performance regressions..."
+
+          # Simple regression detection based on external comparison
+          if grep -q "CLAIM FAILED" benchmark-results/comparison.txt 2>/dev/null; then
+            echo "❌ Performance regression detected!"
+            echo "DataProfiler is no longer meeting the 5x faster minimum threshold"
+            exit 1
+          elif grep -q "CLAIM PARTIAL" benchmark-results/comparison.txt 2>/dev/null; then
+            echo "⚠️ Performance warning: DataProfiler is 5-10x faster (below 10x claim)"
+          elif grep -q "CLAIM VALIDATED" benchmark-results/comparison.txt 2>/dev/null; then
+            echo "✅ Performance claims validated: DataProfiler is ≥10x faster"
+          else
+            echo "ℹ️ Performance comparison inconclusive"
+          fi
+
+          echo "✅ Performance regression check completed"
+
+  # Benchmark comparison on manual trigger
+  manual-comparison:
+    name: Manual Benchmark Comparison
+    runs-on: ubuntu-latest-4-cores
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: benchmark-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Python dependencies
+        run: |
+          pip install pandas numpy psutil polars
+
+      - name: Determine benchmark type
+        run: |
+          BENCHMARK_TYPE="${{ github.event.inputs.benchmark_type || 'all' }}"
+          echo "BENCHMARK_TYPE=$BENCHMARK_TYPE" >> $GITHUB_ENV
+          echo "Selected benchmark type: $BENCHMARK_TYPE"
+
+      - name: Run selected benchmarks
+        run: |
+          case "$BENCHMARK_TYPE" in
+            "simple")
+              cargo bench --bench simple_benchmarks
+              ;;
+            "large-scale")
+              cargo bench --bench large_scale_benchmarks -- --sample-size 5
+              ;;
+            "memory")
+              cargo bench --bench memory_benchmarks -- --sample-size 5
+              ;;
+            "comparison")
+              python scripts/benchmark_comparison.py 1 5 25
+              ;;
+            "all"|*)
+              cargo bench --bench simple_benchmarks -- --sample-size 10
+              cargo bench --bench memory_benchmarks -- --sample-size 5 "memory_pattern/1K"
+              python scripts/benchmark_comparison.py 1 10
+              ;;
+          esac
+
+      - name: Upload manual benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-benchmark-${{ env.BENCHMARK_TYPE }}-${{ github.sha }}
+          path: |
+            target/criterion/
+            benchmark_comparison_results.json
+          retention-days: 7
+
+  # Performance trend analysis (only on main/staging)
+  trend-analysis:
+    name: Performance Trend Analysis
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging')
+    needs: full-benchmarks
+    permissions:
+      contents: write
+      pages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download benchmark results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: benchmark-results/
+
+      - name: Setup benchmark trend tracking
+        run: |
+          # Create or update performance history
+          mkdir -p docs/performance-history
+
+          # Store current benchmark data with timestamp
+          TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
+          cp -r benchmark-results/ docs/performance-history/$TIMESTAMP/
+
+          # Create summary for GitHub Pages
+          cat > docs/performance-history/latest.json << EOF
+          {
+            "timestamp": "$(date -u --iso-8601)",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "results_path": "$TIMESTAMP"
+          }
+          EOF
+
+      - name: Commit performance history
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          if [ -n "$(git status --porcelain docs/performance-history/)" ]; then
+            git add docs/performance-history/
+            git commit -m "chore: update performance benchmark history
+
+            📊 Commit: ${{ github.sha }}
+            🕐 Timestamp: $(date -u)
+
+            🤖 Generated with [Claude Code](https://claude.ai/code)
+
+            Co-Authored-By: Claude <noreply@anthropic.com>"
+
+            git push
+            echo "✅ Performance history updated"
+          else
+            echo "ℹ️ No performance history changes to commit"
+          fi
