@@ -341,8 +341,8 @@ jobs:
           }
           EOF
 
-          # Create simple HTML dashboard
-          cat > performance-site/index.html << 'EOF'
+          # Create simple HTML dashboard with proper timestamp substitution
+          cat > performance-site/index.html << EOF
           <!DOCTYPE html>
           <html>
           <head>
@@ -362,7 +362,7 @@ jobs:
           <body>
             <div class="header">
               <h1>🚀 DataProfiler Performance Dashboard</h1>
-              <p class="timestamp">Last updated: $(date -u)</p>
+              <p class="timestamp">Last updated: \$(date -u)</p>
               <p>Commit: <code>${{ github.sha }}</code> | Branch: <code>${{ github.ref_name }}</code></p>
             </div>
 
@@ -389,8 +389,19 @@ jobs:
             </div>
 
             <script>
-              // Load comparison results dynamically
-              fetch('data/$TIMESTAMP/comparison.txt')
+              // Load latest results using metadata
+              fetch('data/latest.json')
+                .then(response => response.json())
+                .then(metadata => {
+                  const timestamp = metadata.results_path;
+
+                  // Update links
+                  document.querySelector('a[href*="report.md"]').href = 'data/' + timestamp + '/report.md';
+                  document.querySelector('a[href*="comparison.txt"]').href = 'data/' + timestamp + '/comparison.txt';
+
+                  // Load comparison results
+                  return fetch('data/' + timestamp + '/comparison.txt');
+                })
                 .then(response => response.text())
                 .then(data => {
                   document.getElementById('comparison-results').textContent = data;
