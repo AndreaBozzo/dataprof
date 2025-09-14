@@ -296,15 +296,16 @@ jobs:
             benchmark_comparison_results.json
           retention-days: 7
 
-  # Performance trend analysis (only on main/staging)
+  # Performance trend analysis with GitHub Pages
   trend-analysis:
     name: Performance Trend Analysis
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     needs: full-benchmarks
     permissions:
-      contents: write
+      contents: read
       pages: write
+      id-token: write
 
     steps:
       - name: Checkout code
@@ -316,43 +317,100 @@ jobs:
           name: benchmark-results-${{ github.sha }}
           path: benchmark-results/
 
-      - name: Setup benchmark trend tracking
+      - name: Setup performance data for GitHub Pages
         run: |
-          # Create or update performance history
-          mkdir -p docs/performance-history
+          # Create performance data structure
+          mkdir -p performance-site/{data,assets}
 
-          # Store current benchmark data with timestamp
+          # Store current benchmark with timestamp
           TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
-          cp -r benchmark-results/ docs/performance-history/$TIMESTAMP/
+          mkdir -p performance-site/data/$TIMESTAMP
+          cp -r benchmark-results/* performance-site/data/$TIMESTAMP/
 
-          # Create summary for GitHub Pages
-          cat > docs/performance-history/latest.json << EOF
+          # Create latest.json with metadata
+          cat > performance-site/data/latest.json << EOF
           {
             "timestamp": "$(date -u --iso-8601)",
             "commit": "${{ github.sha }}",
             "branch": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}",
             "results_path": "$TIMESTAMP"
           }
           EOF
 
-      - name: Commit performance history
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          # Create simple HTML dashboard
+          cat > performance-site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>DataProfiler Performance Dashboard</title>
+            <meta charset="utf-8">
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 40px; }
+              .header { border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 30px; }
+              .metric { background: #f8f9fa; padding: 20px; margin: 10px 0; border-radius: 6px; }
+              .success { border-left: 4px solid #28a745; }
+              .warning { border-left: 4px solid #ffc107; }
+              .error { border-left: 4px solid #dc3545; }
+              pre { background: #f1f3f4; padding: 15px; overflow-x: auto; border-radius: 4px; }
+              .timestamp { color: #6c757d; font-size: 0.9em; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>🚀 DataProfiler Performance Dashboard</h1>
+              <p class="timestamp">Last updated: $(date -u)</p>
+              <p>Commit: <code>${{ github.sha }}</code> | Branch: <code>${{ github.ref_name }}</code></p>
+            </div>
 
-          if [ -n "$(git status --porcelain docs/performance-history/)" ]; then
-            git add docs/performance-history/
-            git commit -m "chore: update performance benchmark history
+            <div class="metric success">
+              <h3>📊 Latest Benchmark Results</h3>
+              <p>Performance benchmarks completed successfully.</p>
+              <a href="data/$TIMESTAMP/report.md">📋 Full Report</a> |
+              <a href="data/$TIMESTAMP/comparison.txt">🔄 pandas Comparison</a>
+            </div>
 
-            📊 Commit: ${{ github.sha }}
-            🕐 Timestamp: $(date -u)
+            <div class="metric">
+              <h3>🏗️ Build Information</h3>
+              <ul>
+                <li><strong>Run ID:</strong> ${{ github.run_id }}</li>
+                <li><strong>Workflow:</strong> Performance Benchmarks</li>
+                <li><strong>Trigger:</strong> ${{ github.event_name }}</li>
+              </ul>
+            </div>
 
-            🤖 Generated with [Claude Code](https://claude.ai/code)
+            <div class="metric">
+              <h3>📈 Performance Claims Validation</h3>
+              <p>Automated validation of "10x faster than pandas" claims through CI benchmarks.</p>
+              <pre id="comparison-results">Loading comparison results...</pre>
+            </div>
 
-            Co-Authored-By: Claude <noreply@anthropic.com>"
+            <script>
+              // Load comparison results dynamically
+              fetch('data/$TIMESTAMP/comparison.txt')
+                .then(response => response.text())
+                .then(data => {
+                  document.getElementById('comparison-results').textContent = data;
+                })
+                .catch(err => {
+                  document.getElementById('comparison-results').textContent = 'Comparison results not available';
+                });
+            </script>
+          </body>
+          </html>
+          EOF
 
-            git push
-            echo "✅ Performance history updated"
-          else
-            echo "ℹ️ No performance history changes to commit"
-          fi
+      - name: Store performance data as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-history-${{ github.sha }}
+          path: performance-site/
+          retention-days: 90
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./performance-site
+          destination_dir: performance
+          keep_files: true
