@@ -91,30 +91,6 @@ jobs:
     - name: Run clippy (Apache Arrow features)
       run: cargo clippy --lib --features arrow -- -D warnings
 
-  benchmark:
-    name: Performance Benchmarks
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v5
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Run benchmarks
-      run: |
-        echo "🚀 Running performance benchmarks..."
-        cargo bench --no-run  # Build benchmarks only
-        echo "✅ Benchmark build completed"
 
   coverage:
     name: Test Coverage
