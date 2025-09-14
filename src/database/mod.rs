@@ -9,6 +9,7 @@
 //! Supports streaming/chunked processing for large datasets and maintains
 //! the same data profiling features as file-based sources.
 
+use crate::analysis::analyze_column;
 use crate::types::{FileInfo, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -144,7 +145,7 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
     let total_rows = columns.values().next().map(|v| v.len()).unwrap_or(0);
 
     for (name, data) in &columns {
-        let profile = crate::analyze_column(name, data);
+        let profile = analyze_column(name, data);
         column_profiles.push(profile);
     }
 
