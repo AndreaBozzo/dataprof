@@ -5,6 +5,8 @@ on:
     paths:
       - 'src/**'
       - 'benches/**'
+      - 'scripts/benchmark_comparison.py'
+      - '.github/workflows/benchmarks.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
   pull_request:
@@ -12,6 +14,8 @@ on:
     paths:
       - 'src/**'
       - 'benches/**'
+      - 'scripts/benchmark_comparison.py'
+      - '.github/workflows/benchmarks.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
   # Allow manual triggering
@@ -144,19 +148,19 @@ jobs:
       - name: Run simple benchmarks
         run: |
           echo "🏃 Running simple benchmarks..."
-          cargo bench --bench simple_benchmarks -- --output-format json > benchmark-results/simple.json
+          cargo bench --bench simple_benchmarks > benchmark-results/simple.txt 2>&1
           echo "✅ Simple benchmarks completed"
 
       - name: Run large-scale benchmarks
         run: |
           echo "📊 Running large-scale benchmarks..."
-          cargo bench --bench large_scale_benchmarks -- --output-format json > benchmark-results/large_scale.json
+          cargo bench --bench large_scale_benchmarks > benchmark-results/large_scale.txt 2>&1
           echo "✅ Large-scale benchmarks completed"
 
       - name: Run memory benchmarks
         run: |
           echo "🧠 Running memory benchmarks..."
-          cargo bench --bench memory_benchmarks -- --output-format json > benchmark-results/memory.json
+          cargo bench --bench memory_benchmarks > benchmark-results/memory.txt 2>&1
           echo "✅ Memory benchmarks completed"
 
       - name: Run external comparison benchmarks
@@ -180,17 +184,17 @@ jobs:
 
           ### Simple Benchmarks
           ```
-          $(head -20 benchmark-results/simple.json 2>/dev/null || echo "Simple benchmarks data not available")
+          $(head -20 benchmark-results/simple.txt 2>/dev/null || echo "Simple benchmarks data not available")
           ```
 
           ### Large Scale Performance
           ```
-          $(head -20 benchmark-results/large_scale.json 2>/dev/null || echo "Large scale benchmarks data not available")
+          $(head -20 benchmark-results/large_scale.txt 2>/dev/null || echo "Large scale benchmarks data not available")
           ```
 
           ### Memory Usage
           ```
-          $(head -20 benchmark-results/memory.json 2>/dev/null || echo "Memory benchmarks data not available")
+          $(head -20 benchmark-results/memory.txt 2>/dev/null || echo "Memory benchmarks data not available")
           ```
 
           ### External Tool Comparison
