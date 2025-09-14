@@ -162,15 +162,29 @@ jobs:
 
     - name: Prepare binary for upload
       run: |
-        VERSION=${{ needs.create-release.outputs.tag }}
-        VERSION=${VERSION#v}
+        TAG="${{ needs.create-release.outputs.tag }}"
+        VERSION=$(echo "$TAG" | sed 's/^v//')
+        echo "Tag: $TAG, Version: $VERSION"
 
         if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          cp target/${{ matrix.target }}/release/dataprof-cli.exe dataprof-$VERSION-${{ matrix.target }}.exe
-          echo "BINARY_NAME=dataprof-$VERSION-${{ matrix.target }}.exe" >> $GITHUB_ENV
+          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}.exe"
+          cp "target/${{ matrix.target }}/release/dataprof-cli.exe" "$BINARY_NAME"
+          echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
+          echo "Created Windows binary: $BINARY_NAME"
         else
-          cp target/${{ matrix.target }}/release/dataprof-cli dataprof-$VERSION-${{ matrix.target }}
-          echo "BINARY_NAME=dataprof-$VERSION-${{ matrix.target }}" >> $GITHUB_ENV
+          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/dataprof-cli" "$BINARY_NAME"
+          echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
+          echo "Created binary: $BINARY_NAME"
+        fi
+
+        # Verify file exists
+        if [ -f "$BINARY_NAME" ]; then
+          echo "✅ Binary created successfully: $BINARY_NAME"
+          ls -la "$BINARY_NAME"
+        else
+          echo "❌ Binary not found: $BINARY_NAME"
+          exit 1
         fi
       shell: bash
 
