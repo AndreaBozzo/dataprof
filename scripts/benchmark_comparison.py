@@ -77,7 +77,9 @@ class BenchmarkRunner:
         print("Benchmarking DataProfiler...")
 
         # Use pre-built binary to avoid cargo run overhead
-        binary_path = Path('target/release/dataprof-cli.exe').resolve()
+        import platform
+        binary_name = 'dataprof-cli.exe' if platform.system() == 'Windows' else 'dataprof-cli'
+        binary_path = Path(f'target/release/{binary_name}').resolve()
 
         # Build if binary doesn't exist
         if not binary_path.exists():
@@ -90,7 +92,6 @@ class BenchmarkRunner:
                 raise Exception(f"Failed to build DataProfiler: {build_result.stderr}")
 
         # Measure time more accurately - direct subprocess timing
-        import subprocess
         start_time = time.time()
 
         result = subprocess.run([
