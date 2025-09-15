@@ -167,6 +167,7 @@ fn get_memory_usage() -> usize {
                 }
             }
         }
+        return 0; // Fallback if VmRSS not found
     }
 
     #[cfg(target_os = "macos")]
