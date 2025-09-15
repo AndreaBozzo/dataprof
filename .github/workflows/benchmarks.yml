@@ -140,7 +140,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install pandas numpy psutil
+          pip install pandas numpy psutil polars great-expectations
 
       - name: Create benchmark results directory
         run: mkdir -p benchmark-results
@@ -166,8 +166,20 @@ jobs:
       - name: Run external comparison benchmarks
         run: |
           echo "🔄 Running pandas comparison benchmarks..."
-          python scripts/benchmark_comparison.py 1 10 > benchmark-results/comparison.txt 2>&1
+          python scripts/benchmark_comparison.py 1 5 10 > benchmark-results/comparison.txt 2>&1
           echo "✅ Comparison benchmarks completed"
+
+      - name: Performance regression analysis
+        run: |
+          echo "🔍 Running performance regression analysis..."
+          if [[ -f "benchmark-results/benchmark_comparison_results.json" ]]; then
+            python scripts/performance_regression_check.py benchmark-results/benchmark_comparison_results.json \
+              --baseline benchmark-results/performance_baseline.json \
+              --update-baseline > benchmark-results/regression_analysis.txt 2>&1
+            echo "✅ Regression analysis completed"
+          else
+            echo "⚠️ No benchmark results file found for regression analysis"
+          fi
 
       - name: Generate benchmark report
         run: |
@@ -199,6 +211,11 @@ jobs:
           ### External Tool Comparison
           ```
           $(cat benchmark-results/comparison.txt 2>/dev/null || echo "Comparison benchmarks data not available")
+          ```
+
+          ### Performance Regression Analysis
+          ```
+          $(cat benchmark-results/regression_analysis.txt 2>/dev/null || echo "Regression analysis data not available")
           ```
 
           ---
@@ -273,7 +290,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install pandas numpy psutil polars
+          pip install pandas numpy psutil polars great-expectations polars
 
       - name: Determine benchmark type
         run: |
@@ -309,7 +326,7 @@ jobs:
           name: manual-benchmark-${{ env.BENCHMARK_TYPE }}-${{ github.sha }}
           path: |
             target/criterion/
-            benchmark_comparison_results.json
+            benchmark-results/
           retention-days: 7
 
   # Performance trend analysis with GitHub Pages

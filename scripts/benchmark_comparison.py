@@ -208,6 +208,74 @@ class BenchmarkRunner:
                 'error': str(e)
             }
 
+    def benchmark_great_expectations(self, csv_path: Path) -> Dict[str, Any]:
+        """Benchmark Great Expectations (if available and within time limits)"""
+        try:
+            import great_expectations as gx
+            from great_expectations.dataset import PandasDataset
+            print("Benchmarking Great Expectations...")
+
+            # Check file size - skip GE for large files to respect GitHub Actions limits
+            file_size_mb = csv_path.stat().st_size / (1024 * 1024)
+            if file_size_mb > 25:  # Skip GE for files > 25MB on CI
+                print(f"Skipping Great Expectations for {file_size_mb:.1f}MB file (too large for CI)")
+                return {
+                    'tool': 'great_expectations',
+                    'success': False,
+                    'error': f'Skipped for large file ({file_size_mb:.1f}MB) - CI time limits'
+                }
+
+            def run_great_expectations():
+                # Read with pandas first (GE uses pandas internally)
+                df = pd.read_csv(csv_path)
+
+                # Convert to Great Expectations dataset
+                ge_df = PandasDataset(df)
+
+                # Basic profiling similar to DataProfiler
+                profile = {}
+
+                # Basic statistics for numeric columns
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                for col in numeric_cols:
+                    profile[col] = {
+                        'mean': ge_df.expect_column_mean_to_be_between(col, None, None).result.get('observed_value'),
+                        'std': ge_df.expect_column_stdev_to_be_between(col, None, None).result.get('observed_value'),
+                        'null_count': ge_df.expect_column_values_to_not_be_null(col).result.get('unexpected_count', 0)
+                    }
+
+                return {
+                    'rows': len(df),
+                    'columns': len(df.columns),
+                    'profile': profile,
+                    'data_types': df.dtypes.to_dict()
+                }
+
+            time_taken, memory_used, result = self.measure_memory_and_time(run_great_expectations)
+
+            return {
+                'tool': 'great_expectations',
+                'time_seconds': time_taken,
+                'memory_mb': memory_used,
+                'rows_processed': result['rows'],
+                'columns_processed': result['columns'],
+                'success': True
+            }
+        except ImportError:
+            print("Great Expectations not available, skipping...")
+            return {
+                'tool': 'great_expectations',
+                'success': False,
+                'error': 'Not installed'
+            }
+        except Exception as e:
+            print(f"Great Expectations error: {e}")
+            return {
+                'tool': 'great_expectations',
+                'success': False,
+                'error': str(e)
+            }
+
 def run_comparison_benchmark(size_mb: int) -> Dict[str, Any]:
     """Run comparison benchmark for given file size"""
 
@@ -223,6 +291,7 @@ def run_comparison_benchmark(size_mb: int) -> Dict[str, Any]:
             ('DataProfiler', runner.benchmark_dataprof),
             ('pandas', runner.benchmark_pandas),
             ('polars', runner.benchmark_polars),
+            ('great_expectations', runner.benchmark_great_expectations),
         ]
 
         for tool_name, benchmark_func in tools:
@@ -308,13 +377,21 @@ def analyze_performance_claims(results: List[Dict[str, Any]]) -> None:
                 print("⚖️  BALANCED: Different performance trade-offs")
 
 def main():
+    # Detect CI environment
+    is_ci = os.getenv('CI') == 'true' or os.getenv('GITHUB_ACTIONS') == 'true'
+
     if len(sys.argv) > 1:
         sizes = [int(x) for x in sys.argv[1:]]
     else:
-        sizes = [1, 10, 50]  # Default test sizes
+        # Optimize for CI limits - smaller sizes to respect GitHub Actions time constraints
+        if is_ci:
+            sizes = [1, 5, 10]  # CI-optimized sizes
+        else:
+            sizes = [1, 10, 50]  # Local development sizes
 
     print("🚀 DataProfiler Performance Comparison")
     print("="*50)
+    print(f"Environment: {'CI' if is_ci else 'Local'}")
     print(f"Testing file sizes: {sizes}MB")
 
     all_results = []
@@ -328,7 +405,7 @@ def main():
     analyze_performance_claims(all_results)
 
     # Save results to JSON for CI
-    results_file = Path('benchmark_comparison_results.json')
+    results_file = Path('benchmark-results/benchmark_comparison_results.json')
     with open(results_file, 'w') as f:
         json.dump(all_results, f, indent=2)
 
