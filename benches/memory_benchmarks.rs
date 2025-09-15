@@ -167,6 +167,7 @@ fn get_memory_usage() -> usize {
                 }
             }
         }
+        return 0; // Fallback if VmRSS not found
     }
 
     #[cfg(target_os = "macos")]
@@ -194,11 +195,11 @@ fn get_memory_usage() -> usize {
     {
         // Windows memory detection disabled - would require winapi dependency
         // For benchmarking purposes, we'll use a simplified approach
-        return 0;
+        0
     }
 
     // Fallback: return 0 if unable to detect
-    0
+    // Note: This code is unreachable on Windows due to early return above
 }
 
 /// Memory leak detection benchmark

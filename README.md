@@ -8,13 +8,13 @@
 
 **High-performance data quality library for production pipelines**
 
-DataProfiler analyzes datasets 13x faster than pandas, handles unlimited file sizes through streaming, and detects 30+ quality issues automatically. Built in Rust with Python bindings and direct database connectivity.
+DataProfiler analyzes datasets with 20x better memory efficiency than pandas, handles unlimited file sizes through streaming, and detects 30+ quality issues automatically. Built in Rust with Python bindings and direct database connectivity.
 
 ![DataProfiler HTML Report](assets/animations/HTML.gif)
 
 ## ✨ Key Features
 
-- **⚡ High Performance**: 13x faster than pandas with Apache Arrow integration
+- **⚡ High Performance**: 20x more memory efficient than pandas with Apache Arrow integration
 - **🌊 Scalable**: Stream processing for files larger than RAM (tested up to 100GB)
 - **🔍 Smart Quality Detection**: Automatically finds nulls, duplicates, outliers, format issues
 - **🗃️ Database Connectivity**: Direct profiling of PostgreSQL, MySQL, SQLite, DuckDB
@@ -112,6 +112,7 @@ dataprof daily_sales --database "mysql://user:pass@prod-db/warehouse" \
 | **[Python API](https://github.com/AndreaBozzo/dataprof/wiki/Python-Bindings)** | Complete Python reference with examples |
 | **[Database Connectors](https://github.com/AndreaBozzo/dataprof/wiki/Database-Connectors)** | PostgreSQL, MySQL, SQLite, DuckDB integration |
 | **[Apache Arrow Integration](https://github.com/AndreaBozzo/dataprof/wiki/Apache-Arrow-Integration)** | High-performance columnar processing guide |
+| **[Performance Guide](https://github.com/AndreaBozzo/dataprof/wiki/Performance-Guide)** | Benchmarks, optimization tips, and tool selection |
 
 Additional resources: [CHANGELOG](CHANGELOG.md) • [CONTRIBUTING](CONTRIBUTING.md) • [LICENSE](LICENSE)
 
