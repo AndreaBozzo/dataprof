@@ -31,6 +31,7 @@ pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::robust_csv::CsvDiagnostics;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use engines::streaming::ProgressInfo;
+pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
 // Re-exports for backward compatibility
 pub use output::html::generate_html_report;

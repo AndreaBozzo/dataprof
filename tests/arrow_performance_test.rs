@@ -1,6 +1,7 @@
 #[cfg(feature = "arrow")]
 use dataprof::DataProfiler;
 use std::io::Write;
+#[cfg(feature = "arrow")]
 use std::time::Instant;
 use tempfile::NamedTempFile;
 

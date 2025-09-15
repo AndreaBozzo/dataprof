@@ -78,8 +78,10 @@ fn test_csv_with_different_delimiters() -> Result<()> {
     write!(temp_file, "{}", semicolon_csv)?;
     temp_file.flush()?;
 
-    let mut parser = RobustCsvParser::default();
-    parser.delimiter = Some(b';');
+    let parser = RobustCsvParser {
+        delimiter: Some(b';'),
+        ..Default::default()
+    };
 
     let result = parser.parse_csv(temp_file.path());
     assert!(result.is_ok());

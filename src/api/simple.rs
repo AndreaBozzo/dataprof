@@ -1,16 +1,16 @@
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::engines::streaming::{
-    MemoryEfficientProfiler, ProgressInfo, StreamingProfiler, TrueStreamingProfiler,
-};
+use crate::engines::streaming::{ProgressInfo, StreamingProfiler};
+use crate::engines::{AdaptiveProfiler, ProcessingType};
 use crate::types::QualityReport;
 use anyhow::Result;
 use std::path::Path;
 
-/// One-liner API for quick profiling - exactly as shown in the roadmap
+/// One-liner API for quick profiling with intelligent engine selection
 pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
-    let report = choose_best_profiler(file_path.as_ref())?
-        .sampling(SamplingStrategy::adaptive(None, 0.0))
-        .analyze_file(file_path.as_ref())?;
+    let profiler = AdaptiveProfiler::new().with_logging(false); // Disable logging for quick checks
+
+    let report =
+        profiler.analyze_file_with_context(file_path.as_ref(), ProcessingType::QualityFocused)?;
 
     // Calculate a simple quality score based on issues
     let total_issues = report.issues.len();
@@ -23,110 +23,17 @@ pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
     Ok(quality_score)
 }
 
-/// Helper function to choose the best profiler based on file size
-fn choose_best_profiler(file_path: &Path) -> Result<ProfilerChoice> {
-    let metadata = std::fs::metadata(file_path)?;
-    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
-
-    if file_size_mb > 500.0 {
-        // Use Arrow profiler for very large files (>500MB) when available
-        #[cfg(feature = "arrow")]
-        {
-            Ok(ProfilerChoice::Arrow(
-                crate::engines::columnar::ArrowProfiler::new(),
-            ))
-        }
-        #[cfg(not(feature = "arrow"))]
-        {
-            Ok(ProfilerChoice::TrueStreaming(TrueStreamingProfiler::new()))
-        }
-    } else if file_size_mb > 200.0 {
-        // Use true streaming profiler for very large files (200-500MB)
-        Ok(ProfilerChoice::TrueStreaming(TrueStreamingProfiler::new()))
-    } else if file_size_mb > 50.0 {
-        // Use memory-efficient profiler for moderately large files (50-200MB)
-        Ok(ProfilerChoice::MemoryEfficient(
-            MemoryEfficientProfiler::new(),
-        ))
-    } else {
-        // Use regular streaming profiler for smaller files (<50MB)
-        Ok(ProfilerChoice::Streaming(StreamingProfiler::new()))
-    }
-}
-
-enum ProfilerChoice {
-    Streaming(StreamingProfiler),
-    MemoryEfficient(MemoryEfficientProfiler),
-    TrueStreaming(TrueStreamingProfiler),
-    #[cfg(feature = "arrow")]
-    Arrow(crate::engines::columnar::ArrowProfiler),
-}
-
-impl ProfilerChoice {
-    fn sampling(self, strategy: SamplingStrategy) -> Self {
-        match self {
-            ProfilerChoice::Streaming(profiler) => {
-                ProfilerChoice::Streaming(profiler.sampling(strategy))
-            }
-            ProfilerChoice::MemoryEfficient(profiler) => {
-                ProfilerChoice::MemoryEfficient(profiler.sampling(strategy))
-            }
-            ProfilerChoice::TrueStreaming(profiler) => {
-                ProfilerChoice::TrueStreaming(profiler.sampling(strategy))
-            }
-            #[cfg(feature = "arrow")]
-            ProfilerChoice::Arrow(profiler) => {
-                // Arrow profiler doesn't support sampling strategies yet - processes all data efficiently
-                ProfilerChoice::Arrow(profiler)
-            }
-        }
-    }
-
-    fn analyze_file(self, file_path: &Path) -> Result<QualityReport> {
-        match self {
-            ProfilerChoice::Streaming(profiler) => profiler.analyze_file(file_path),
-            ProfilerChoice::MemoryEfficient(profiler) => profiler.analyze_file(file_path),
-            ProfilerChoice::TrueStreaming(profiler) => profiler.analyze_file(file_path),
-            #[cfg(feature = "arrow")]
-            ProfilerChoice::Arrow(profiler) => profiler.analyze_csv_file(file_path),
-        }
-    }
-}
-
-/// Stream profiling with callback - as shown in the roadmap
+/// Stream profiling with intelligent engine selection and progress logging
 pub fn stream_profile<P, F>(file_path: P, _callback: F) -> Result<QualityReport>
 where
     P: AsRef<Path>,
     F: Fn(QualityReport) + Send + Sync + 'static,
 {
-    // Choose best profiler and add progress callback
-    let profiler_choice = choose_best_profiler(file_path.as_ref())?;
+    let profiler = AdaptiveProfiler::new()
+        .with_logging(true) // Enable progress logging
+        .with_performance_logging(true);
 
-    match profiler_choice {
-        ProfilerChoice::Streaming(profiler) => profiler
-            .chunk_size(ChunkSize::Adaptive)
-            .progress_callback(move |progress| {
-                println!("Progress: {:.1}%", progress.percentage);
-            })
-            .analyze_file(file_path.as_ref()),
-        ProfilerChoice::MemoryEfficient(profiler) => profiler
-            .chunk_size(ChunkSize::Adaptive)
-            .progress_callback(move |progress| {
-                println!("Progress: {:.1}%", progress.percentage);
-            })
-            .analyze_file(file_path.as_ref()),
-        ProfilerChoice::TrueStreaming(profiler) => profiler
-            .chunk_size(ChunkSize::Adaptive)
-            .progress_callback(move |progress| {
-                println!("Progress: {:.1}%", progress.percentage);
-            })
-            .analyze_file(file_path.as_ref()),
-        #[cfg(feature = "arrow")]
-        ProfilerChoice::Arrow(profiler) => {
-            println!("Using Arrow columnar profiler for high performance...");
-            profiler.analyze_csv_file(file_path.as_ref())
-        }
-    }
+    profiler.analyze_file_with_context(file_path.as_ref(), ProcessingType::StreamingRequired)
 }
 
 /// Simple builder API that maintains backward compatibility
@@ -135,6 +42,11 @@ pub struct DataProfiler {
 }
 
 impl DataProfiler {
+    /// Create an adaptive profiler with intelligent engine selection (RECOMMENDED)
+    pub fn auto() -> AdaptiveProfiler {
+        AdaptiveProfiler::new()
+    }
+
     /// Create a streaming profiler - API from roadmap
     pub fn streaming() -> Self {
         Self {
