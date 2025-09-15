@@ -2,6 +2,13 @@
 /target
 **/*.rs.bk
 
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+
 # IDE files
 .vscode/
 .idea/
