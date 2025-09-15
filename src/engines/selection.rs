@@ -255,7 +255,6 @@ impl EngineSelector {
         let mut sorted_engines: Vec<_> = scores.into_iter().collect();
         sorted_engines.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-
         let primary_engine = sorted_engines[0].0.clone();
         let confidence = sorted_engines[0].1;
 
