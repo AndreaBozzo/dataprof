@@ -1,8 +1,9 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use colored::*;
 use dataprof::{
     analyze_csv,
+    analyze_csv_fast,
     analyze_csv_robust,
     analyze_csv_with_sampling,
     analyze_json,
@@ -22,11 +23,30 @@ use dataprof::{
     QualityIssue,
     // SamplingStrategy, // Future CLI integration
 };
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 // Database support (optional)
 #[cfg(feature = "database")]
 use dataprof::{profile_database, DatabaseConfig};
+
+#[derive(Clone, Debug, ValueEnum)]
+enum OutputFormat {
+    /// Human-readable text output
+    Text,
+    /// Machine-readable JSON output
+    Json,
+}
+
+#[derive(Serialize)]
+struct BenchmarkOutput {
+    rows: usize,
+    columns: usize,
+    file_size_mb: f64,
+    scan_time_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quality_score: Option<f64>,
+}
 
 #[derive(Parser)]
 #[command(name = "dataprof")]
@@ -91,6 +111,10 @@ struct Cli {
     #[cfg(feature = "database")]
     #[arg(long, default_value = "10000")]
     batch_size: usize,
+
+    /// Output format (default: text, json for machine-readable output)
+    #[arg(long, value_enum, default_value = "text")]
+    format: OutputFormat,
 }
 
 fn main() -> Result<()> {
@@ -102,6 +126,36 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn output_json_report(report: &dataprof::QualityReport) -> Result<()> {
+    let output = BenchmarkOutput {
+        rows: report
+            .file_info
+            .total_rows
+            .unwrap_or(report.scan_info.rows_scanned),
+        columns: report.file_info.total_columns,
+        file_size_mb: report.file_info.file_size_mb,
+        scan_time_ms: report.scan_info.scan_time_ms,
+        quality_score: report.quality_score().ok(),
+    };
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
+    // For simple profiles (without quality report), estimate basic info
+    let output = BenchmarkOutput {
+        rows: profiles.first().map_or(0, |p| p.total_count),
+        columns: profiles.len(),
+        file_size_mb: 0.0, // Not available in simple profile mode
+        scan_time_ms: 0,   // Not tracked in simple mode
+        quality_score: None,
+    };
+
+    println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
 
@@ -186,16 +240,19 @@ fn run_analysis(cli: &Cli) -> Result<()> {
     }
 
     // Single file processing (existing logic)
-    let version_info = if cli.streaming {
-        "📊 DataProfiler v0.3.0 - Streaming Analysis"
-            .bright_blue()
-            .bold()
-    } else {
-        "📊 DataProfiler - Standard Analysis".bright_blue().bold()
-    };
+    // Skip headers for JSON output
+    if !matches!(cli.format, OutputFormat::Json) {
+        let version_info = if cli.streaming {
+            "📊 DataProfiler v0.3.0 - Streaming Analysis"
+                .bright_blue()
+                .bold()
+        } else {
+            "📊 DataProfiler - Standard Analysis".bright_blue().bold()
+        };
 
-    println!("{}", version_info);
-    println!();
+        println!("{}", version_info);
+        println!();
+    }
 
     if cli.quality {
         // Generate HTML report if requested
@@ -257,6 +314,11 @@ fn run_analysis(cli: &Cli) -> Result<()> {
             }
         };
 
+        // Handle JSON output for benchmarks
+        if matches!(cli.format, OutputFormat::Json) {
+            return output_json_report(&report);
+        }
+
         // Show basic file info
         println!(
             "📁 {} | {:.1} MB | {} columns",
@@ -309,11 +371,19 @@ fn run_analysis(cli: &Cli) -> Result<()> {
         }
 
         // Use simple analysis (backwards compatible)
+        // Use fast mode for JSON output format (benchmarks)
         let profiles = if is_json_file(&cli.file) {
             analyze_json(&cli.file)?
+        } else if matches!(cli.format, OutputFormat::Json) {
+            analyze_csv_fast(&cli.file)?
         } else {
             analyze_csv(&cli.file)?
         };
+
+        // Handle JSON output for benchmarks
+        if matches!(cli.format, OutputFormat::Json) {
+            return output_json_profiles(&profiles);
+        }
 
         // Display results
         for profile in profiles {

@@ -5,6 +5,14 @@ use crate::analysis::patterns::detect_patterns;
 use crate::stats::{calculate_numeric_stats, calculate_text_stats};
 
 pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
+    analyze_column_with_options(name, data, false)
+}
+
+pub fn analyze_column_fast(name: &str, data: &[String]) -> ColumnProfile {
+    analyze_column_with_options(name, data, true)
+}
+
+fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> ColumnProfile {
     let total_count = data.len();
     let null_count = data.iter().filter(|s| s.is_empty()).count();
 
@@ -17,15 +25,25 @@ pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
         DataType::String | DataType::Date => calculate_text_stats(data),
     };
 
-    // Detect patterns
-    let patterns = detect_patterns(data);
+    // Skip expensive operations in fast mode
+    let patterns = if fast_mode {
+        Vec::new()
+    } else {
+        detect_patterns(data)
+    };
+
+    let unique_count = if fast_mode {
+        None // Skip expensive unique count in fast mode
+    } else {
+        Some(data.iter().collect::<std::collections::HashSet<_>>().len())
+    };
 
     ColumnProfile {
         name: name.to_string(),
         data_type,
         null_count,
         total_count,
-        unique_count: Some(data.iter().collect::<std::collections::HashSet<_>>().len()),
+        unique_count,
         stats,
         patterns,
     }

@@ -41,11 +41,13 @@ pub use utils::quality::QualityChecker;
 pub use utils::sampler::{SampleInfo, Sampler};
 
 // Re-export moved parsing functions for API compatibility
-pub use parsers::csv::{analyze_csv, analyze_csv_robust, analyze_csv_with_sampling};
+pub use parsers::csv::{
+    analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
+};
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
 // Re-export moved analysis functions for API compatibility
-pub use analysis::{detect_patterns, infer_type};
+pub use analysis::{analyze_column_fast, detect_patterns, infer_type};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (optional)
