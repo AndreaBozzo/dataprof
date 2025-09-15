@@ -72,6 +72,24 @@ impl EngineSelector {
         }
     }
 
+    /// Create EngineSelector with fixed system resources for testing
+    #[cfg(test)]
+    pub fn new_with_resources(
+        available_memory_mb: f64,
+        cpu_cores: usize,
+        memory_pressure: f64,
+        arrow_available: bool,
+    ) -> Self {
+        Self {
+            system_resources: SystemResources {
+                available_memory_mb,
+                cpu_cores,
+                memory_pressure,
+            },
+            arrow_available,
+        }
+    }
+
     /// Detect if Arrow is available at runtime
     fn detect_arrow_availability() -> bool {
         // Try to create an ArrowProfiler to test availability
@@ -236,6 +254,7 @@ impl EngineSelector {
         // Find the best engine
         let mut sorted_engines: Vec<_> = scores.into_iter().collect();
         sorted_engines.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
 
         let primary_engine = sorted_engines[0].0.clone();
         let confidence = sorted_engines[0].1;
@@ -429,7 +448,13 @@ mod tests {
 
     #[test]
     fn test_engine_selection_small_file() -> Result<()> {
-        let selector = EngineSelector::new();
+        // Use fixed resources for deterministic testing
+        let selector = EngineSelector::new_with_resources(
+            4096.0, // 4GB available memory
+            4,      // 4 CPU cores
+            0.3,    // Low memory pressure
+            false,  // Arrow not available
+        );
 
         // Create small test file
         let mut temp_file = NamedTempFile::new()?;
@@ -453,7 +478,14 @@ mod tests {
 
     #[test]
     fn test_engine_selection_large_file() {
-        let selector = EngineSelector::new();
+        // Use fixed resources for deterministic testing
+        // High memory pressure to ensure TrueStreaming gets bonus points
+        let selector = EngineSelector::new_with_resources(
+            2048.0, // 2GB available memory
+            8,      // 8 CPU cores
+            0.75,   // High memory pressure (>0.7) for TrueStreaming bonus
+            false,  // Arrow not available for this test
+        );
 
         let characteristics = FileCharacteristics {
             file_size_mb: 1200.0, // Much larger to clearly favor TrueStreaming
