@@ -83,7 +83,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 # Additional test utilities
 assert_matches = "1.5"
 serial_test = "3.1"
-fake = { version = "2.9", features = ["derive"] }
+fake = { version = "4.4", features = ["derive"] }
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
 
