@@ -1,6 +1,7 @@
 [build]
 # Use a shorter path to avoid Windows path length issues and improve performance
-target-dir = "C:/temp/dataprof-target"
+# Use relative path for cross-platform compatibility
+target-dir = "target"
 
 [target.x86_64-pc-windows-msvc]
 # Optimize for faster builds on Windows
