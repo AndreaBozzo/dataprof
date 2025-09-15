@@ -456,8 +456,8 @@ mod tests {
         let selector = EngineSelector::new();
 
         let characteristics = FileCharacteristics {
-            file_size_mb: 600.0,
-            estimated_rows: Some(1_000_000),
+            file_size_mb: 1200.0, // Much larger to clearly favor TrueStreaming
+            estimated_rows: Some(5_000_000),
             estimated_columns: Some(50),
             has_mixed_types: false,
             has_numeric_majority: true,
