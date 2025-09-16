@@ -190,6 +190,11 @@ async fn streaming_example() -> Result<()> {
         batch_size: 100000,       // Large batches for efficiency
         max_connections: Some(3), // Conservative connection usage
         connection_timeout: Some(std::time::Duration::from_secs(60)),
+        retry_config: Some(dataprof::database::RetryConfig::default()),
+        sampling_config: Some(dataprof::database::SamplingConfig::quick_sample(50000)),
+        enable_ml_readiness: true,
+        ssl_config: Some(dataprof::database::SslConfig::default()),
+        load_credentials_from_env: false,
     };
 
     // Query that returns millions of rows
