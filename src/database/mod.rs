@@ -311,7 +311,7 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
 
-    Ok(QualityReport {
+    let report = QualityReport {
         file_info: FileInfo {
             path: format!(
                 "Database: {} ({})",
@@ -333,7 +333,9 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
             sampling_ratio,
             scan_time_ms,
         },
-    })
+    };
+
+    Ok(report)
 }
 
 /// Enhanced database profiling with ML readiness assessment

@@ -28,7 +28,7 @@ use dataprof::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-// Database support (optional)
+// Database support (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 use dataprof::{profile_database, DatabaseConfig};
 

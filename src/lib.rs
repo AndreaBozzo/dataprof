@@ -12,7 +12,7 @@ pub mod stats;
 pub mod types;
 pub mod utils;
 
-// Database connectors (optional)
+// Database connectors (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub mod database;
 
@@ -51,11 +51,13 @@ pub use parsers::json::{analyze_json, analyze_json_with_quality};
 pub use analysis::{analyze_column_fast, detect_patterns, infer_type};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
-// Database connectors re-exports (optional)
+// Database connectors re-exports (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub use database::{
-    create_connector, profile_database, DatabaseConfig, DatabaseConnector, DuckDbConnector,
-    MySqlConnector, PostgresConnector, SqliteConnector,
+    assess_ml_readiness, create_connector, profile_database, profile_database_with_ml,
+    DatabaseConfig, DatabaseConnector, DatabaseCredentials, DuckDbConnector, MLReadinessScore,
+    MySqlConnector, PostgresConnector, RetryConfig, SamplingConfig,
+    SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
 };
 
 /// Global memory leak detection utility
