@@ -20,6 +20,11 @@ mod sqlite_tests {
             batch_size: 1000,
             max_connections: Some(1),
             connection_timeout: Some(std::time::Duration::from_secs(5)),
+            retry_config: Some(dataprof::database::RetryConfig::default()),
+            sampling_config: None,
+            enable_ml_readiness: false,
+            ssl_config: Some(dataprof::database::SslConfig::default()),
+            load_credentials_from_env: false,
         };
 
         let mut connector = create_connector(config)?;
@@ -41,6 +46,11 @@ mod sqlite_tests {
             batch_size: 1000,
             max_connections: Some(1),
             connection_timeout: Some(std::time::Duration::from_secs(5)),
+            retry_config: Some(dataprof::database::RetryConfig::default()),
+            sampling_config: None,
+            enable_ml_readiness: false,
+            ssl_config: Some(dataprof::database::SslConfig::default()),
+            load_credentials_from_env: false,
         };
 
         // Use the high-level profile_database function
@@ -79,6 +89,11 @@ mod duckdb_tests {
             batch_size: 1000,
             max_connections: Some(1),
             connection_timeout: Some(std::time::Duration::from_secs(5)),
+            retry_config: Some(dataprof::database::RetryConfig::default()),
+            sampling_config: None,
+            enable_ml_readiness: false,
+            ssl_config: Some(dataprof::database::SslConfig::default()),
+            load_credentials_from_env: false,
         };
 
         let mut connector = create_connector(config)?;
@@ -247,6 +262,147 @@ mod streaming_tests {
 
         assert_eq!(progress.batches_processed, 2);
         assert_eq!(progress.processed_rows, 500);
+    }
+}
+
+/// Tests for new enhanced database features
+#[cfg(all(test, feature = "database"))]
+mod enhanced_features_tests {
+    use super::*;
+    use dataprof::database::{SamplingConfig, SamplingStrategy, SslConfig};
+
+    #[test]
+    fn test_database_config_defaults() {
+        let config = DatabaseConfig::default();
+
+        assert!(config.enable_ml_readiness);
+        assert!(config.load_credentials_from_env);
+        assert!(config.retry_config.is_some());
+        assert!(config.ssl_config.is_some());
+        assert_eq!(config.batch_size, 10000);
+    }
+
+    #[test]
+    fn test_sampling_config_creation() {
+        let quick_sample = SamplingConfig::quick_sample(5000);
+        assert_eq!(quick_sample.sample_size, 5000);
+        assert!(matches!(quick_sample.strategy, SamplingStrategy::Random));
+        assert!(quick_sample.seed.is_some());
+
+        let representative_sample =
+            SamplingConfig::representative_sample(3000, Some("category".to_string()));
+        assert_eq!(representative_sample.sample_size, 3000);
+        assert!(matches!(
+            representative_sample.strategy,
+            SamplingStrategy::Stratified
+        ));
+        assert_eq!(
+            representative_sample.stratify_column,
+            Some("category".to_string())
+        );
+    }
+
+    #[test]
+    fn test_ssl_config_validation() {
+        let ssl_config = SslConfig::default();
+        assert!(ssl_config.validate().is_ok());
+
+        let production_ssl = SslConfig::production();
+        assert!(production_ssl.require_ssl);
+        assert!(production_ssl.verify_server_cert);
+
+        let dev_ssl = SslConfig::development();
+        assert!(!dev_ssl.require_ssl);
+        assert!(!dev_ssl.verify_server_cert);
+    }
+
+    #[test]
+    fn test_sampling_query_generation() {
+        let sampling_config = SamplingConfig::quick_sample(1000);
+
+        // Test with table name
+        let query = sampling_config
+            .generate_sample_query("users", 10000)
+            .unwrap();
+        assert!(query.contains("RANDOM"));
+        assert!(query.contains("LIMIT 1000"));
+
+        // Test with complex query
+        let complex_query = "SELECT u.*, p.name FROM users u JOIN profiles p ON u.id = p.user_id";
+        let sampled_query = sampling_config
+            .generate_sample_query(complex_query, 50000)
+            .unwrap();
+        assert!(sampled_query.contains("sample_subquery"));
+        assert!(sampled_query.contains("LIMIT 1000"));
+    }
+
+    #[test]
+    fn test_ssl_config_apply_to_connection_string() {
+        let mut ssl_config = SslConfig::default();
+        ssl_config.require_ssl = true;
+        ssl_config.ssl_mode = Some("require".to_string());
+
+        let connection_string = "postgresql://user@localhost/db".to_string();
+        let secure_string = ssl_config.apply_to_connection_string(connection_string, "postgresql");
+
+        assert!(secure_string.contains("sslmode=require"));
+    }
+
+    #[test]
+    fn test_sample_info_calculations() {
+        let sample_info =
+            dataprof::database::SampleInfo::new(10000, 1000, SamplingStrategy::Random);
+
+        assert_eq!(sample_info.total_rows, 10000);
+        assert_eq!(sample_info.sampled_rows, 1000);
+        assert_eq!(sample_info.sampling_ratio, 0.1);
+        assert!(sample_info.is_representative);
+
+        // Test with smaller sample that should generate recommendations
+        let small_sample_info =
+            dataprof::database::SampleInfo::new(100000, 100, SamplingStrategy::Random);
+
+        let recommendations = small_sample_info.get_recommendations();
+        assert!(!recommendations.is_empty());
+    }
+
+    #[test]
+    fn test_connection_string_security_validation() {
+        use dataprof::database::validate_connection_security;
+
+        let insecure_conn = "postgresql://user:password@localhost:5432/db";
+        let ssl_config = SslConfig::default();
+
+        let warnings =
+            validate_connection_security(insecure_conn, &ssl_config, "postgresql").unwrap();
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("Password embedded")));
+        assert!(warnings.iter().any(|w| w.contains("localhost")));
+    }
+
+    #[test]
+    fn test_ml_readiness_assessment() {
+        use dataprof::database::assess_ml_readiness;
+        use dataprof::types::{ColumnProfile, ColumnStats, DataType};
+
+        let profile = ColumnProfile {
+            name: "price".to_string(),
+            data_type: DataType::Float,
+            null_count: 10,
+            total_count: 1000,
+            unique_count: Some(800),
+            stats: ColumnStats::Numeric {
+                min: 10.0,
+                max: 1000.0,
+                mean: 250.0,
+            },
+            patterns: vec![],
+        };
+
+        let ml_score = assess_ml_readiness(&[profile], 1000).unwrap();
+        assert!(ml_score.overall_score > 0.5);
+        assert_eq!(ml_score.column_scores.len(), 1);
+        assert!(ml_score.column_scores.contains_key("price"));
     }
 }
 

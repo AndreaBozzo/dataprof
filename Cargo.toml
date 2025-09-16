@@ -128,7 +128,7 @@ inherits = "release"
 
 # Features
 [features]
-default = []
+default = ["postgres", "mysql", "sqlite"]
 
 # Individual features
 python = ["dep:pyo3"]

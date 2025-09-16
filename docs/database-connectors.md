@@ -1,55 +1,98 @@
 # Database Connectors Guide
 
-This guide explains how to use DataProfiler with various database systems for direct data profiling.
+This guide explains how to use DataProfiler with various database systems for direct data profiling with production-ready features including ML readiness assessment, table sampling, and security.
 
 ## Supported Databases
 
-- **PostgreSQL** - Production databases with connection pooling
-- **MySQL/MariaDB** - MySQL-compatible databases
-- **SQLite** - Embedded databases and file-based storage
-- **DuckDB** - Analytical databases and data warehousing
+- **PostgreSQL** - Production databases with connection pooling (✅ **Default**)
+- **MySQL/MariaDB** - MySQL-compatible databases (✅ **Default**)
+- **SQLite** - Embedded databases and file-based storage (✅ **Default**)
+- **DuckDB** - Analytical databases and data warehousing (Optional feature)
+
+## 🚀 New Enhanced Features
+
+### ML Readiness Assessment
+Automatically assess how suitable your database tables are for machine learning:
+- **Column ML scores** based on data type and quality
+- **Feature engineering suggestions** for each column
+- **Table-level recommendations** for ML workflows
+- **Data quality issues** that impact ML training
+
+### Large Dataset Sampling
+Handle massive database tables with intelligent sampling:
+- **Multiple sampling strategies**: Random, Systematic, Stratified, Temporal
+- **Automatic sample size optimization** based on data characteristics
+- **Sample quality assessment** with confidence intervals
+- **Representative sampling** to maintain statistical properties
+
+### Production Security
+Enterprise-ready security and reliability:
+- **SSL/TLS encryption** with certificate validation
+- **Environment variable support** for secure credential management
+- **Connection retry logic** with exponential backoff
+- **Connection health monitoring** and automatic recovery
 
 ## Quick Start
 
 ### Command Line Usage
 
 ```bash
-# PostgreSQL
+# PostgreSQL with ML readiness assessment
 dataprof --database "postgresql://user:password@localhost:5432/mydb" --query "users"
 
-# MySQL
+# MySQL with automatic sampling for large tables
 dataprof --database "mysql://root:password@localhost:3306/mydb" --query "SELECT * FROM orders"
 
 # SQLite file
 dataprof --database "data.db" --query "products"
 
-# DuckDB file
+# DuckDB file (requires --features duckdb)
 dataprof --database "analytics.duckdb" --query "SELECT * FROM sales WHERE date > '2024-01-01'"
 
-# In-memory SQLite
+# In-memory SQLite for testing
 dataprof --database ":memory:" --query "temp_data"
+
+# Environment variables (production recommended)
+export POSTGRES_HOST=prod-db.company.com
+export POSTGRES_USER=readonly_user
+export POSTGRES_PASSWORD=secure_password
+export POSTGRES_DATABASE=analytics
+dataprof --database "postgresql://" --query "user_activity"
 ```
 
 ### Programmatic Usage
 
 ```rust
-use dataprof::{DatabaseConfig, profile_database};
+use dataprof::{DatabaseConfig, profile_database_with_ml, SamplingConfig, SslConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Production-ready configuration
     let config = DatabaseConfig {
         connection_string: "postgresql://user:pass@localhost:5432/mydb".to_string(),
         batch_size: 10000,
         max_connections: Some(5),
         connection_timeout: Some(std::time::Duration::from_secs(30)),
+        // 🚀 New enhanced features
+        enable_ml_readiness: true,
+        sampling_config: Some(SamplingConfig::representative_sample(50000, None)),
+        ssl_config: Some(SslConfig::production()),
+        load_credentials_from_env: true,
+        retry_config: Some(RetryConfig::default()),
     };
 
-    let report = profile_database(config, "SELECT * FROM large_table").await?;
+    // Get both data quality report AND ML readiness assessment
+    let (report, ml_readiness) = profile_database_with_ml(config, "SELECT * FROM large_table").await?;
 
-    println!("Processed {} rows across {} columns",
+    println!("📊 Processed {} rows across {} columns",
         report.file_info.total_rows.unwrap_or(0),
         report.file_info.total_columns
     );
+
+    if let Some(ml_assessment) = ml_readiness {
+        println!("🤖 ML Readiness Score: {:.2}/1.0", ml_assessment.overall_score);
+        println!("💡 Recommendations: {}", ml_assessment.recommendations.len());
+    }
 
     Ok(())
 }
@@ -176,7 +219,7 @@ dataprof --database "postgresql://user:pass@host/db" --query "
 "
 ```
 
-## Configuration Options
+## 🚀 Enhanced Configuration Options
 
 ### DatabaseConfig
 
@@ -186,6 +229,97 @@ dataprof --database "postgresql://user:pass@host/db" --query "
 | `batch_size` | usize | 10000 | Rows per batch for streaming |
 | `max_connections` | Option<u32> | Some(10) | Connection pool size |
 | `connection_timeout` | Option<Duration> | Some(30s) | Connection timeout |
+| **🆕 `enable_ml_readiness`** | bool | true | Enable ML readiness assessment |
+| **🆕 `sampling_config`** | Option<SamplingConfig> | None | Large dataset sampling strategy |
+| **🆕 `ssl_config`** | Option<SslConfig> | Some(default) | SSL/TLS encryption settings |
+| **🆕 `load_credentials_from_env`** | bool | true | Load credentials from environment |
+| **🆕 `retry_config`** | Option<RetryConfig> | Some(default) | Connection retry with backoff |
+
+### 🤖 ML Readiness Assessment
+
+```rust
+// Enable ML readiness scoring
+let config = DatabaseConfig {
+    enable_ml_readiness: true,
+    ..Default::default()
+};
+
+let (report, ml_readiness) = profile_database_with_ml(config, "user_profiles").await?;
+
+if let Some(ml_assessment) = ml_readiness {
+    println!("Overall ML Score: {:.2}", ml_assessment.overall_score);
+
+    // Column-specific scores
+    for (column, score) in &ml_assessment.column_scores {
+        println!("  {}: {:.2}", column, score);
+    }
+
+    // Feature engineering recommendations
+    for recommendation in &ml_assessment.recommendations {
+        println!("💡 {}", recommendation);
+    }
+
+    // Issues that affect ML training
+    for issue in &ml_assessment.issues {
+        println!("⚠️  {}", issue);
+    }
+}
+```
+
+### 📊 Large Dataset Sampling
+
+```rust
+use dataprof::database::{SamplingConfig, SamplingStrategy};
+
+// Quick random sampling for fast analysis
+let quick_sample = SamplingConfig::quick_sample(10000);
+
+// Representative sampling with stratification
+let stratified_sample = SamplingConfig::representative_sample(
+    25000,
+    Some("category".to_string())  // Stratify by category column
+);
+
+// Temporal sampling for time-series data
+let temporal_sample = SamplingConfig::temporal_sample(
+    50000,
+    "created_at".to_string()  // Sample evenly across time
+);
+
+let config = DatabaseConfig {
+    sampling_config: Some(stratified_sample),
+    ..Default::default()
+};
+```
+
+### 🔒 Production Security
+
+```rust
+use dataprof::database::SslConfig;
+
+// Production SSL configuration
+let production_ssl = SslConfig::production(); // Requires SSL, verifies certificates
+let development_ssl = SslConfig::development(); // Relaxed for dev
+
+// Custom SSL configuration
+let custom_ssl = SslConfig {
+    require_ssl: true,
+    verify_server_cert: true,
+    ssl_mode: Some("require".to_string()),
+    ca_cert_path: Some("/etc/ssl/certs/ca.pem".to_string()),
+    ..Default::default()
+};
+
+// Environment variable support (recommended for production)
+// Set: POSTGRES_HOST, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DATABASE
+// Set: POSTGRES_SSL_MODE=require, POSTGRES_SSL_CA=/path/to/ca.pem
+let config = DatabaseConfig {
+    connection_string: "".to_string(), // Will auto-load from environment
+    load_credentials_from_env: true,
+    ssl_config: Some(production_ssl),
+    ..Default::default()
+};
+```
 
 ### CLI Options
 
@@ -196,37 +330,78 @@ dataprof --database "postgresql://user:pass@host/db" --query "
 | `--batch-size` | Streaming batch size | `--batch-size 50000` |
 | `--output` | Output format | `--output json` |
 
-## Error Handling
+### Environment Variables for Production
 
-Common issues and solutions:
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `POSTGRES_HOST` | PostgreSQL host | `prod-db.company.com` |
+| `POSTGRES_USER` | PostgreSQL username | `readonly_user` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `secure_password123` |
+| `POSTGRES_DATABASE` | PostgreSQL database | `analytics` |
+| `POSTGRES_PORT` | PostgreSQL port | `5432` |
+| `POSTGRES_SSL_MODE` | SSL requirement | `require` |
+| `POSTGRES_SSL_CA` | CA certificate path | `/etc/ssl/certs/ca.pem` |
+| `MYSQL_HOST` | MySQL host | `mysql.internal` |
+| `MYSQL_USER` | MySQL username | `app_user` |
+| `MYSQL_PASSWORD` | MySQL password | `mysql_pass` |
+| `DATABASE_URL` | Generic database URL | `postgresql://user:pass@host/db` |
 
-### Connection Errors
+## Error Handling & Troubleshooting
+
+### ✅ Automatic Retry Logic
+
+The enhanced database connector automatically retries failed connections:
+
+```
+RETRY INFO: Retryable database error in 'connect' (attempt 1/3), retrying in 127ms: Connection refused
+RETRY INFO: Retryable database error in 'connect' (attempt 2/3), retrying in 234ms: Connection timeout
+✅ Connection successful on attempt 3
+```
+
+### Common Issues and Solutions
+
+#### 🔌 Connection Errors
 ```
 Failed to connect to PostgreSQL: connection refused
 ```
-**Solutions:**
-- Check database is running
-- Verify connection string credentials
-- Check network connectivity
-- Ensure database accepts connections from your IP
+**Enhanced Solutions:**
+- ✅ **Automatic retry** with exponential backoff (3 attempts by default)
+- ✅ **Environment variables** for secure credential management
+- ✅ **SSL/TLS validation** with helpful error messages
+- Check database is running and accessible
+- Verify firewall rules and network connectivity
 
-### Query Errors
+#### 🔍 Query Errors
 ```
 Query execution failed: table "users" does not exist
 ```
 **Solutions:**
-- Verify table/view exists
-- Check schema permissions
+- Verify table/view exists with `SHOW TABLES` or `\dt`
+- Check schema permissions with `SHOW GRANTS`
 - Use fully qualified table names (`schema.table`)
 
-### Memory Issues
+#### 💾 Large Dataset Handling
 ```
-Out of memory processing large result set
+Processing large table with 50M rows - using automatic sampling
+SAMPLING INFO: Representative sample (2.0%) selected for analysis
+📊 Sample quality: Representative ✅, Confidence: ±0.02
 ```
-**Solutions:**
-- Reduce batch size: `--batch-size 5000`
-- Add LIMIT clause to query
-- Use streaming features (automatic)
+**Automatic Solutions:**
+- ✅ **Intelligent sampling** for tables > 1M rows
+- ✅ **Streaming processing** with configurable batch sizes
+- ✅ **Memory monitoring** and automatic optimization
+- ✅ **Progress tracking** with ETA estimates
+
+#### 🔒 Security Warnings
+```
+SECURITY WARNING: Password embedded in connection string. Consider using environment variables.
+SECURITY WARNING: No SSL/TLS configuration detected. Database traffic may be unencrypted.
+```
+**Production-Ready Solutions:**
+- ✅ **Environment variable** credential loading
+- ✅ **SSL/TLS encryption** with certificate validation
+- ✅ **Connection string masking** in logs
+- ✅ **Security validation** with actionable warnings
 
 ## Performance Tips
 

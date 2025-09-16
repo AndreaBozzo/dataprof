@@ -18,6 +18,11 @@ async fn postgresql_example() -> Result<()> {
         batch_size: 10000,
         max_connections: Some(5),
         connection_timeout: Some(std::time::Duration::from_secs(30)),
+        retry_config: Some(dataprof::database::RetryConfig::default()),
+        sampling_config: None,
+        enable_ml_readiness: true,
+        ssl_config: Some(dataprof::database::SslConfig::default()),
+        load_credentials_from_env: false,
     };
 
     // Profile entire table
