@@ -28,7 +28,7 @@ use dataprof::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-// Database support (optional)
+// Database support (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 use dataprof::{profile_database, DatabaseConfig};
 
@@ -773,6 +773,11 @@ fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
         batch_size: cli.batch_size,
         max_connections: Some(10),
         connection_timeout: Some(std::time::Duration::from_secs(30)),
+        retry_config: Some(dataprof::database::RetryConfig::default()),
+        sampling_config: None,
+        enable_ml_readiness: true,
+        ssl_config: Some(dataprof::database::SslConfig::default()),
+        load_credentials_from_env: true,
     };
 
     // Run async analysis
