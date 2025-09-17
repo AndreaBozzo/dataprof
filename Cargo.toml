@@ -157,7 +157,7 @@ production = ["postgres", "mysql"]  # Most common production databases
 all-db = ["postgres", "mysql", "sqlite", "duckdb"]  # All databases
 
 
-# Python extension configuration
+# Library configuration - rlib for internal use, cdylib for Python bindings
 [lib]
 name = "dataprof"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
