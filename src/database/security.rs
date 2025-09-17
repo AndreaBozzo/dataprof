@@ -567,8 +567,8 @@ mod tests {
         let connection_string = "postgresql://user:pass@localhost:5432/db";
         let ssl_config = SslConfig::default();
 
-        let warnings =
-            validate_connection_security(connection_string, &ssl_config, "postgresql").unwrap();
+        let warnings = validate_connection_security(connection_string, &ssl_config, "postgresql")
+            .expect("Failed to validate connection security");
 
         assert!(!warnings.is_empty());
         assert!(warnings.iter().any(|w| w.contains("Password embedded")));

@@ -106,29 +106,46 @@ harness = false
 
 # Debug profile per sviluppo veloce
 [profile.dev]
-opt-level = 1        # Ottimizzazione minima per compilazione veloce
+opt-level = 0        # Nessuna ottimizzazione per compilazione più veloce
 debug = true         # Mantieni simboli debug
 split-debuginfo = "packed"  # Su Windows
 incremental = true   # Build incrementali
+codegen-units = 256  # Parallelizzazione massima per dev builds
 
 # Profile per test veloci
 [profile.test]
 opt-level = 1
-# panic = "unwind" is default for tests
+debug = 2
+incremental = true
+codegen-units = 256
 
 # Release profile ottimizzato
 [profile.release]
-lto = true
+lto = "thin"        # LTO più veloce di "true"
 codegen-units = 1
 opt-level = 3
+panic = "abort"     # Riduce dimensione binario
 
 # Bench profile (based on release, panic unwind is default for benchmarks)
 [profile.bench]
 inherits = "release"
 
+# Configurazione cache per ottimizzare tempi di build
+[build]
+rustflags = [
+    "-C", "target-cpu=native",  # Ottimizzazione per CPU locale
+]
+
+# Configurazione per dipendenze più veloci
+[profile.dev.package."*"]
+opt-level = 1    # Ottimizza le dipendenze anche in dev mode
+
+[profile.test.package."*"]
+opt-level = 1    # Ottimizza le dipendenze anche nei test
+
 # Features
 [features]
-default = ["postgres", "mysql", "sqlite"]
+default = []  # Minimal by default - MUCH faster compilation
 
 # Individual features
 python = ["dep:pyo3"]
@@ -139,8 +156,10 @@ mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 duckdb = ["database", "dep:duckdb"]
 
-# Sensible feature combinations (do NOT use --all-features due to dependency conflicts)
+# Sensible feature combinations
+minimal = []  # Just CSV processing - fastest builds
 production = ["postgres", "mysql"]  # Most common production databases
+all-db = ["postgres", "mysql", "sqlite", "duckdb"]  # All databases
 
 
 # Python extension configuration

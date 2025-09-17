@@ -361,7 +361,9 @@ mod tests {
     #[test]
     fn test_generate_random_sample_query() {
         let config = SamplingConfig::quick_sample(1000);
-        let query = config.generate_sample_query("users", 10000).unwrap();
+        let query = config
+            .generate_sample_query("users", 10000)
+            .expect("Failed to generate sample query");
 
         assert!(query.contains("RANDOM"));
         assert!(query.contains("LIMIT 1000"));
@@ -376,7 +378,9 @@ mod tests {
             stratify_column: None,
         };
 
-        let query = config.generate_sample_query("orders", 10000).unwrap();
+        let query = config
+            .generate_sample_query("orders", 10000)
+            .expect("Failed to generate sample query");
 
         assert!(query.contains("ROW_NUMBER()"));
         assert!(query.contains("% 10 = 1")); // Every 10th row

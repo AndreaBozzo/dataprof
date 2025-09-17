@@ -217,7 +217,7 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "Success");
+        assert_eq!(result.expect("Expected successful result"), "Success");
         assert_eq!(counter.load(Ordering::SeqCst), 3);
     }
 
