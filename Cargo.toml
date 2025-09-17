@@ -130,11 +130,6 @@ panic = "abort"     # Riduce dimensione binario
 [profile.bench]
 inherits = "release"
 
-# Configurazione cache per ottimizzare tempi di build
-[build]
-rustflags = [
-    "-C", "target-cpu=native",  # Ottimizzazione per CPU locale
-]
 
 # Configurazione per dipendenze più veloci
 [profile.dev.package."*"]
