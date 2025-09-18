@@ -113,6 +113,7 @@ dataprof daily_sales --database "mysql://user:pass@prod-db/warehouse" \
 | **[Database Connectors](https://github.com/AndreaBozzo/dataprof/wiki/Database-Connectors)** | PostgreSQL, MySQL, SQLite, DuckDB integration |
 | **[Apache Arrow Integration](https://github.com/AndreaBozzo/dataprof/wiki/Apache-Arrow-Integration)** | High-performance columnar processing guide |
 | **[Performance Guide](https://github.com/AndreaBozzo/dataprof/wiki/Performance-Guide)** | Benchmarks, optimization tips, and tool selection |
+| **[CLI Guide](https://github.com/AndreaBozzo/dataprof/wiki/CLI-Usage-Guide)** | General CLI usage
 
 Additional resources: [CHANGELOG](CHANGELOG.md) • [CONTRIBUTING](CONTRIBUTING.md) • [LICENSE](LICENSE)
 
