@@ -827,27 +827,27 @@ fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
 
     for profile in &profiles {
         let py_profile = PyColumnProfile::from(profile);
-        data.get_mut("column_name")
-            .unwrap()
-            .push(py_profile.name.into_py(py));
-        data.get_mut("data_type")
-            .unwrap()
-            .push(py_profile.data_type.into_py(py));
-        data.get_mut("total_count")
-            .unwrap()
-            .push(py_profile.total_count.into_py(py));
-        data.get_mut("null_count")
-            .unwrap()
-            .push(py_profile.null_count.into_py(py));
-        data.get_mut("null_percentage")
-            .unwrap()
-            .push(py_profile.null_percentage.into_py(py));
-        data.get_mut("unique_count")
-            .unwrap()
-            .push(py_profile.unique_count.into_py(py));
-        data.get_mut("uniqueness_ratio")
-            .unwrap()
-            .push(py_profile.uniqueness_ratio.into_py(py));
+        if let Some(vec) = data.get_mut("column_name") {
+            vec.push(py_profile.name.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("data_type") {
+            vec.push(py_profile.data_type.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("total_count") {
+            vec.push(py_profile.total_count.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("null_count") {
+            vec.push(py_profile.null_count.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("null_percentage") {
+            vec.push(py_profile.null_percentage.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("unique_count") {
+            vec.push(py_profile.unique_count.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("uniqueness_ratio") {
+            vec.push(py_profile.uniqueness_ratio.into_py(py));
+        }
     }
 
     // Create DataFrame
@@ -888,24 +888,24 @@ fn feature_analysis_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
 
     for feature in &ml_score.feature_analysis {
         let py_feature = PyFeatureAnalysis::from(feature);
-        data.get_mut("column_name")
-            .unwrap()
-            .push(py_feature.column_name.into_py(py));
-        data.get_mut("ml_suitability")
-            .unwrap()
-            .push(py_feature.ml_suitability.into_py(py));
-        data.get_mut("feature_type")
-            .unwrap()
-            .push(py_feature.feature_type.into_py(py));
-        data.get_mut("importance_potential")
-            .unwrap()
-            .push(py_feature.feature_importance_potential.into_py(py));
-        data.get_mut("encoding_suggestions")
-            .unwrap()
-            .push(py_feature.encoding_suggestions.join(", ").into_py(py));
-        data.get_mut("potential_issues")
-            .unwrap()
-            .push(py_feature.potential_issues.join(", ").into_py(py));
+        if let Some(vec) = data.get_mut("column_name") {
+            vec.push(py_feature.column_name.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("ml_suitability") {
+            vec.push(py_feature.ml_suitability.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("feature_type") {
+            vec.push(py_feature.feature_type.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("importance_potential") {
+            vec.push(py_feature.feature_importance_potential.into_py(py));
+        }
+        if let Some(vec) = data.get_mut("encoding_suggestions") {
+            vec.push(py_feature.encoding_suggestions.join(", ").into_py(py));
+        }
+        if let Some(vec) = data.get_mut("potential_issues") {
+            vec.push(py_feature.potential_issues.join(", ").into_py(py));
+        }
     }
 
     // Create DataFrame
