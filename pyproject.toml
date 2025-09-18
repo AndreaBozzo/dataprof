@@ -7,6 +7,8 @@ name = "dataprof"
 description = "Fast, lightweight data profiling and quality assessment library"
 authors = [{name = "Andrea Bozzo", email = "andrea@example.com"}]
 requires-python = ">=3.8"
+dependencies = []
+
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -36,6 +38,12 @@ dynamic = ["version"]
 Homepage = "https://github.com/AndreaBozzo/dataprof"
 Repository = "https://github.com/AndreaBozzo/dataprof"
 Issues = "https://github.com/AndreaBozzo/dataprof/issues"
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.3.0"]
+ml = ["pandas>=1.3.0", "scikit-learn>=1.0.0"]
+jupyter = ["pandas>=1.3.0", "ipython>=7.0.0"]
+all = ["pandas>=1.3.0", "scikit-learn>=1.0.0", "ipython>=7.0.0", "numpy>=1.20.0"]
 
 [tool.maturin]
 features = ["python"]
