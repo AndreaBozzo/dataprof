@@ -255,8 +255,7 @@ pub fn display_completion_summary(files_processed: usize, total_time: Duration, 
     if colored {
         println!(
             "\n🎉 ✨ Analysis complete! Processed {} files in {}",
-            files_processed,
-            time_str
+            files_processed, time_str
         );
     } else {
         println!(

@@ -85,6 +85,11 @@ impl InputValidator {
     /// Validate output directory for HTML reports
     pub fn validate_output_directory(output_path: &Path) -> Result<(), ValidationError> {
         if let Some(parent) = output_path.parent() {
+            // Skip validation if parent is current directory or empty
+            if parent.as_os_str().is_empty() || parent == Path::new(".") {
+                return Ok(());
+            }
+
             if !parent.exists() {
                 return Err(ValidationError {
                     message: format!("Output directory does not exist: {}", parent.display()),

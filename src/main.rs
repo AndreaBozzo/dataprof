@@ -551,6 +551,24 @@ fn run_analysis(cli: &Cli, config: &DataprofConfig) -> Result<()> {
             None
         };
 
+        // Generate HTML report if requested (before any output formatting)
+        if let Some(html_path) = &cli.html {
+            match generate_html_report(&report, html_path) {
+                Ok(_) => {
+                    if matches!(cli.format, OutputFormat::Text) {
+                        println!(
+                            "📄 HTML report saved to: {}",
+                            html_path.display().to_string().bright_green()
+                        );
+                        println!();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to generate HTML report: {}", e);
+                }
+            }
+        }
+
         // Handle enhanced output formatting
         if !matches!(cli.format, OutputFormat::Text) {
             return output_with_formatter(&report, &cli.format, ml_score.as_ref());
@@ -580,22 +598,6 @@ fn run_analysis(cli: &Cli, config: &DataprofConfig) -> Result<()> {
 
         // Show quality issues first
         display_quality_issues(&report.issues);
-
-        // Generate HTML report if requested
-        if let Some(html_path) = &cli.html {
-            match generate_html_report(&report, html_path) {
-                Ok(_) => {
-                    println!(
-                        "📄 HTML report saved to: {}",
-                        html_path.display().to_string().bright_green()
-                    );
-                    println!();
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to generate HTML report: {}", e);
-                }
-            }
-        }
 
         // Then show column profiles
         for profile in report.column_profiles {
