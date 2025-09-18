@@ -7,6 +7,7 @@ pub mod robust_csv;
 pub mod sampling;
 pub mod stats;
 pub mod streaming_stats;
+pub mod validation;
 
 // Re-export core types
 pub use batch::*;
@@ -18,3 +19,4 @@ pub use robust_csv::*;
 pub use sampling::*;
 pub use stats::*;
 pub use streaming_stats::*;
+pub use validation::*;

@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::output::progress::ProgressManager;
 use crate::types::QualityReport;
 use crate::{analyze_csv_robust, analyze_json_with_quality};
 
@@ -37,6 +38,7 @@ impl Default for BatchConfig {
 /// Batch processor for multiple files and directories
 pub struct BatchProcessor {
     config: BatchConfig,
+    progress_manager: Option<ProgressManager>,
 }
 
 /// Result of batch processing operation
@@ -67,12 +69,24 @@ impl BatchProcessor {
     pub fn new() -> Self {
         Self {
             config: BatchConfig::default(),
+            progress_manager: None,
         }
     }
 
     /// Create a batch processor with custom configuration
     pub fn with_config(config: BatchConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            progress_manager: None,
+        }
+    }
+
+    /// Create a batch processor with progress manager
+    pub fn with_progress(config: BatchConfig, progress_manager: ProgressManager) -> Self {
+        Self {
+            config,
+            progress_manager: Some(progress_manager),
+        }
     }
 
     /// Process files matching a glob pattern
@@ -224,6 +238,13 @@ impl BatchProcessor {
             });
         }
 
+        // Create progress bar for batch processing
+        let progress_bar = if let Some(pm) = &self.progress_manager {
+            pm.create_batch_progress(paths.len() as u64)
+        } else {
+            None
+        };
+
         // Configure thread pool if parallel processing is enabled
         if self.config.parallel {
             rayon::ThreadPoolBuilder::new()
@@ -234,18 +255,45 @@ impl BatchProcessor {
 
         // Process files
         let results: Vec<(PathBuf, Result<QualityReport, String>)> = if self.config.parallel {
+            // For parallel processing, we use a mutex to synchronize progress updates
+            let progress_mutex = std::sync::Mutex::new(&progress_bar);
+
             paths
                 .par_iter()
                 .map(|path| {
                     let result = self.process_single_file(path);
+
+                    // Update progress bar
+                    if let Ok(pb_guard) = progress_mutex.lock() {
+                        if let Some(pb) = pb_guard.as_ref() {
+                            pb.inc(1);
+                            pb.set_message(format!(
+                                "Processed {}",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            ));
+                        }
+                    }
+
                     (path.clone(), result)
                 })
                 .collect()
         } else {
+            // Sequential processing with direct progress updates
             paths
                 .iter()
-                .map(|path| {
+                .enumerate()
+                .map(|(i, path)| {
                     let result = self.process_single_file(path);
+
+                    // Update progress bar
+                    if let Some(pb) = &progress_bar {
+                        pb.set_position((i + 1) as u64);
+                        pb.set_message(format!(
+                            "Processed {}",
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                    }
+
                     (path.clone(), result)
                 })
                 .collect()
@@ -297,6 +345,14 @@ impl BatchProcessor {
             average_quality_score,
             processing_time_seconds: processing_time,
         };
+
+        // Finish progress bar
+        if let Some(pb) = &progress_bar {
+            pb.finish_with_message(format!(
+                "Completed {} files ({} successful, {} failed)",
+                summary.total_files, summary.successful, summary.failed
+            ));
+        }
 
         // Print summary
         self.print_summary(&summary);
@@ -409,7 +465,7 @@ mod tests {
             extensions: vec!["csv".to_string()],
             exclude_patterns: vec![], // No exclusions for test
         };
-        let processor = BatchProcessor { config };
+        let processor = BatchProcessor::with_config(config);
         let files = vec![test_file1, test_file2];
 
         let result = processor.process_files(&files)?;

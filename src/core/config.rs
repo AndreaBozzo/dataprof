@@ -154,7 +154,6 @@ pub struct DatabaseSamplingConfig {
     pub auto_sample_threshold: usize,
 }
 
-
 impl Default for OutputConfig {
     fn default() -> Self {
         Self {
