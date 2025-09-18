@@ -23,16 +23,17 @@ impl ProgressManager {
         }
 
         let pb = ProgressBar::new(file_size);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}"
-            )
-            .unwrap()
-            .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
-                write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-            })
-            .progress_chars("🔄🔵⚪"),
-        );
+        if let Ok(style) = ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}"
+        ) {
+            pb.set_style(
+                style
+                    .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                        let _ = write!(w, "{:.1}s", state.eta().as_secs_f64());
+                    })
+                    .progress_chars("🔄🔵⚪"),
+            );
+        }
 
         pb.set_message(format!("Processing {}", file_name));
         Some(pb)
@@ -45,16 +46,17 @@ impl ProgressManager {
         }
 
         let pb = ProgressBar::new(total_files);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.yellow/orange}] {pos:>3}/{len:3} files ({eta}) {msg}"
-            )
-            .unwrap()
-            .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
-                write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-            })
-            .progress_chars("📁📂⚪"),
-        );
+        if let Ok(style) = ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.yellow/orange}] {pos:>3}/{len:3} files ({eta}) {msg}"
+        ) {
+            pb.set_style(
+                style
+                    .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
+                        let _ = write!(w, "{:.1}s", state.eta().as_secs_f64());
+                    })
+                    .progress_chars("📁📂⚪"),
+            );
+        }
 
         pb.set_message("Processing files...");
         Some(pb)
@@ -67,13 +69,13 @@ impl ProgressManager {
         }
 
         let pb = ProgressBar::new(total_steps);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.magenta} [{elapsed_precise}] [{wide_bar:.magenta/pink}] {pos:>2}/{len:2} {msg}"
-            )
-            .unwrap()
-            .progress_chars("🤖🔮⚪"),
-        );
+        if let Ok(style) = ProgressStyle::with_template(
+            "{spinner:.magenta} [{elapsed_precise}] [{wide_bar:.magenta/pink}] {pos:>2}/{len:2} {msg}"
+        ) {
+            pb.set_style(
+                style.progress_chars("🤖🔮⚪"),
+            );
+        }
 
         pb.set_message("ML Readiness Analysis...");
         Some(pb)
@@ -86,13 +88,13 @@ impl ProgressManager {
         }
 
         let pb = ProgressBar::new(total_columns);
-        pb.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.blue} [{elapsed_precise}] [{wide_bar:.blue/cyan}] {pos:>3}/{len:3} columns {msg}"
-            )
-            .unwrap()
-            .progress_chars("🔍🔎⚪"),
-        );
+        if let Ok(style) = ProgressStyle::with_template(
+            "{spinner:.blue} [{elapsed_precise}] [{wide_bar:.blue/cyan}] {pos:>3}/{len:3} columns {msg}"
+        ) {
+            pb.set_style(
+                style.progress_chars("🔍🔎⚪"),
+            );
+        }
 
         pb.set_message("Quality checking...");
         Some(pb)
@@ -105,11 +107,9 @@ impl ProgressManager {
         }
 
         let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::with_template("{spinner:.green} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-        );
+        if let Ok(style) = ProgressStyle::with_template("{spinner:.green} {msg}") {
+            pb.set_style(style.tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]));
+        }
         pb.set_message(message.to_string());
         pb.enable_steady_tick(Duration::from_millis(80));
         Some(pb)
