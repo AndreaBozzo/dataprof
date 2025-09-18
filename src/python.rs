@@ -5,8 +5,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::path::Path;
 
-use crate::analysis::{MlReadinessEngine, MlReadinessScore, FeatureAnalysis, PreprocessingSuggestion};
-use crate::analysis::ml_readiness::{MlRecommendation, MlBlockingIssue, MlReadinessLevel, RecommendationPriority, ImplementationEffort, MlFeatureType, FeatureImportancePotential};
+use crate::analysis::ml_readiness::{
+    FeatureImportancePotential, ImplementationEffort, MlBlockingIssue, MlFeatureType,
+    MlReadinessLevel, MlRecommendation, RecommendationPriority,
+};
+use crate::analysis::{
+    FeatureAnalysis, MlReadinessEngine, MlReadinessScore, PreprocessingSuggestion,
+};
 use crate::core::batch::{BatchProcessor, BatchResult};
 use crate::types::{ColumnProfile, DataType, QualityIssue, QualityReport};
 use crate::{analyze_csv, analyze_csv_robust, analyze_json};
@@ -388,10 +393,26 @@ impl From<&MlReadinessScore> for PyMlReadinessScore {
                 MlReadinessLevel::NeedsWork => "needs_work".to_string(),
                 MlReadinessLevel::NotReady => "not_ready".to_string(),
             },
-            recommendations: score.recommendations.iter().map(PyMlRecommendation::from).collect(),
-            blocking_issues: score.blocking_issues.iter().map(PyMlBlockingIssue::from).collect(),
-            feature_analysis: score.feature_analysis.iter().map(PyFeatureAnalysis::from).collect(),
-            preprocessing_suggestions: score.preprocessing_suggestions.iter().map(PyPreprocessingSuggestion::from).collect(),
+            recommendations: score
+                .recommendations
+                .iter()
+                .map(PyMlRecommendation::from)
+                .collect(),
+            blocking_issues: score
+                .blocking_issues
+                .iter()
+                .map(PyMlBlockingIssue::from)
+                .collect(),
+            feature_analysis: score
+                .feature_analysis
+                .iter()
+                .map(PyFeatureAnalysis::from)
+                .collect(),
+            preprocessing_suggestions: score
+                .preprocessing_suggestions
+                .iter()
+                .map(PyPreprocessingSuggestion::from)
+                .collect(),
         }
     }
 }
@@ -460,7 +481,8 @@ impl PyMlReadinessScore {
             _ => "❓",
         };
 
-        let mut html = format!(r#"
+        let mut html = format!(
+            r#"
 <div style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 8px 0;">
     <h3 style="margin: 0 0 16px 0; color: #333;">
         {icon} ML Readiness Assessment
@@ -526,7 +548,11 @@ impl PyMlReadinessScore {
             features = self.feature_analysis.len(),
             recs = self.recommendations.len(),
             blocks = self.blocking_issues.len(),
-            blocking_color = if self.blocking_issues.is_empty() { "#4CAF50" } else { "#F44336" },
+            blocking_color = if self.blocking_issues.is_empty() {
+                "#4CAF50"
+            } else {
+                "#F44336"
+            },
             comp = self.completeness_score,
             cons = self.consistency_score,
             type_suit = self.type_suitability_score,
@@ -576,7 +602,9 @@ impl PyMlReadinessScore {
         }
 
         // Add feature summary
-        let ready_features: Vec<_> = self.feature_analysis.iter()
+        let ready_features: Vec<_> = self
+            .feature_analysis
+            .iter()
             .filter(|f| f.ml_suitability > 0.7)
             .collect();
 
@@ -782,7 +810,7 @@ fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
         Ok(pd) => pd,
         Err(_) => {
             return Err(PyRuntimeError::new_err(
-                "pandas not available. Install with: pip install pandas"
+                "pandas not available. Install with: pip install pandas",
             ));
         }
     };
@@ -799,13 +827,27 @@ fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
 
     for profile in &profiles {
         let py_profile = PyColumnProfile::from(profile);
-        data.get_mut("column_name").unwrap().push(py_profile.name.into_py(py));
-        data.get_mut("data_type").unwrap().push(py_profile.data_type.into_py(py));
-        data.get_mut("total_count").unwrap().push(py_profile.total_count.into_py(py));
-        data.get_mut("null_count").unwrap().push(py_profile.null_count.into_py(py));
-        data.get_mut("null_percentage").unwrap().push(py_profile.null_percentage.into_py(py));
-        data.get_mut("unique_count").unwrap().push(py_profile.unique_count.into_py(py));
-        data.get_mut("uniqueness_ratio").unwrap().push(py_profile.uniqueness_ratio.into_py(py));
+        data.get_mut("column_name")
+            .unwrap()
+            .push(py_profile.name.into_py(py));
+        data.get_mut("data_type")
+            .unwrap()
+            .push(py_profile.data_type.into_py(py));
+        data.get_mut("total_count")
+            .unwrap()
+            .push(py_profile.total_count.into_py(py));
+        data.get_mut("null_count")
+            .unwrap()
+            .push(py_profile.null_count.into_py(py));
+        data.get_mut("null_percentage")
+            .unwrap()
+            .push(py_profile.null_percentage.into_py(py));
+        data.get_mut("unique_count")
+            .unwrap()
+            .push(py_profile.unique_count.into_py(py));
+        data.get_mut("uniqueness_ratio")
+            .unwrap()
+            .push(py_profile.uniqueness_ratio.into_py(py));
     }
 
     // Create DataFrame
@@ -830,7 +872,7 @@ fn feature_analysis_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
         Ok(pd) => pd,
         Err(_) => {
             return Err(PyRuntimeError::new_err(
-                "pandas not available. Install with: pip install pandas"
+                "pandas not available. Install with: pip install pandas",
             ));
         }
     };
@@ -846,12 +888,24 @@ fn feature_analysis_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
 
     for feature in &ml_score.feature_analysis {
         let py_feature = PyFeatureAnalysis::from(feature);
-        data.get_mut("column_name").unwrap().push(py_feature.column_name.into_py(py));
-        data.get_mut("ml_suitability").unwrap().push(py_feature.ml_suitability.into_py(py));
-        data.get_mut("feature_type").unwrap().push(py_feature.feature_type.into_py(py));
-        data.get_mut("importance_potential").unwrap().push(py_feature.feature_importance_potential.into_py(py));
-        data.get_mut("encoding_suggestions").unwrap().push(py_feature.encoding_suggestions.join(", ").into_py(py));
-        data.get_mut("potential_issues").unwrap().push(py_feature.potential_issues.join(", ").into_py(py));
+        data.get_mut("column_name")
+            .unwrap()
+            .push(py_feature.column_name.into_py(py));
+        data.get_mut("ml_suitability")
+            .unwrap()
+            .push(py_feature.ml_suitability.into_py(py));
+        data.get_mut("feature_type")
+            .unwrap()
+            .push(py_feature.feature_type.into_py(py));
+        data.get_mut("importance_potential")
+            .unwrap()
+            .push(py_feature.feature_importance_potential.into_py(py));
+        data.get_mut("encoding_suggestions")
+            .unwrap()
+            .push(py_feature.encoding_suggestions.join(", ").into_py(py));
+        data.get_mut("potential_issues")
+            .unwrap()
+            .push(py_feature.potential_issues.join(", ").into_py(py));
     }
 
     // Create DataFrame
@@ -889,7 +943,12 @@ impl PyBatchAnalyzer {
     }
 
     /// Exit context manager with cleanup
-    fn __exit__(&mut self, _exc_type: Option<PyObject>, _exc_value: Option<PyObject>, _traceback: Option<PyObject>) -> PyResult<bool> {
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<PyObject>,
+        _exc_value: Option<PyObject>,
+        _traceback: Option<PyObject>,
+    ) -> PyResult<bool> {
         // Clean up temporary files
         for temp_file in &self.temp_files {
             let _ = std::fs::remove_file(temp_file);
@@ -927,7 +986,10 @@ impl PyBatchAnalyzer {
                     batch_results.push(result.into_py(py));
                 }
                 Err(e) => {
-                    return Err(PyRuntimeError::new_err(format!("Failed to analyze {}: {}", path, e)));
+                    return Err(PyRuntimeError::new_err(format!(
+                        "Failed to analyze {}: {}",
+                        path, e
+                    )));
                 }
             }
         }
@@ -964,7 +1026,12 @@ impl PyMlAnalyzer {
     }
 
     /// Exit context manager with cleanup
-    fn __exit__(&mut self, _exc_type: Option<PyObject>, _exc_value: Option<PyObject>, _traceback: Option<PyObject>) -> PyResult<bool> {
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<PyObject>,
+        _exc_value: Option<PyObject>,
+        _traceback: Option<PyObject>,
+    ) -> PyResult<bool> {
         // Clean up temporary files
         for temp_file in &self.temp_files {
             let _ = std::fs::remove_file(temp_file);
@@ -1010,22 +1077,30 @@ impl PyMlAnalyzer {
         }
 
         let total_files = self.ml_results.len();
-        let avg_score = self.ml_results.iter()
-            .map(|r| r.overall_score)
-            .sum::<f64>() / total_files as f64;
+        let avg_score =
+            self.ml_results.iter().map(|r| r.overall_score).sum::<f64>() / total_files as f64;
 
-        let ready_files = self.ml_results.iter()
+        let ready_files = self
+            .ml_results
+            .iter()
             .filter(|r| r.readiness_level == "ready")
             .count();
 
         let total_time: f64 = self.processing_stats.values().sum();
-        let avg_time = if total_files > 0 { total_time / total_files as f64 } else { 0.0 };
+        let avg_time = if total_files > 0 {
+            total_time / total_files as f64
+        } else {
+            0.0
+        };
 
         let mut summary = std::collections::HashMap::new();
         summary.insert("total_files", total_files.into_py(py));
         summary.insert("average_score", avg_score.into_py(py));
         summary.insert("ready_files", ready_files.into_py(py));
-        summary.insert("ready_percentage", ((ready_files as f64 / total_files as f64) * 100.0).into_py(py));
+        summary.insert(
+            "ready_percentage",
+            ((ready_files as f64 / total_files as f64) * 100.0).into_py(py),
+        );
         summary.insert("total_processing_time", total_time.into_py(py));
         summary.insert("average_processing_time", avg_time.into_py(py));
 
@@ -1060,7 +1135,12 @@ impl PyCsvProcessor {
     }
 
     /// Exit context manager with cleanup
-    fn __exit__(&mut self, _exc_type: Option<PyObject>, _exc_value: Option<PyObject>, _traceback: Option<PyObject>) -> PyResult<bool> {
+    fn __exit__(
+        &mut self,
+        _exc_type: Option<PyObject>,
+        _exc_value: Option<PyObject>,
+        _traceback: Option<PyObject>,
+    ) -> PyResult<bool> {
         // Clean up all temporary files
         for temp_file in &self.temp_files {
             let _ = std::fs::remove_file(temp_file);
@@ -1085,7 +1165,9 @@ impl PyCsvProcessor {
 
     /// Process the file in chunks
     fn process_chunks(&mut self, py: Python) -> PyResult<PyObject> {
-        let file_path = self.file_handle.as_ref()
+        let file_path = self
+            .file_handle
+            .as_ref()
             .ok_or_else(|| PyRuntimeError::new_err("No file opened. Call open_file() first."))?;
 
         // Read and process file in chunks
@@ -1128,7 +1210,14 @@ impl PyCsvProcessor {
     /// Get processing statistics
     fn get_processing_info(&self, py: Python) -> PyResult<PyObject> {
         let mut info = std::collections::HashMap::new();
-        info.insert("file_path", self.file_handle.as_ref().unwrap_or(&"None".to_string()).clone().into_py(py));
+        info.insert(
+            "file_path",
+            self.file_handle
+                .as_ref()
+                .unwrap_or(&"None".to_string())
+                .clone()
+                .into_py(py),
+        );
         info.insert("chunk_size", self.chunk_size.into_py(py));
         info.insert("processed_rows", self.processed_rows.into_py(py));
         info.insert("temp_files_created", self.temp_files.len().into_py(py));
@@ -1158,9 +1247,8 @@ fn configure_logging(py: Python, level: Option<String>, format: Option<String>) 
     };
 
     // Set default format if not specified
-    let log_format = format.unwrap_or_else(||
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s".to_string()
-    );
+    let log_format = format
+        .unwrap_or_else(|| "%(asctime)s - %(name)s - %(levelname)s - %(message)s".to_string());
 
     // Configure basic logging
     let kwargs = pyo3::types::PyDict::new(py);
@@ -1228,13 +1316,21 @@ fn log_error(py: Python, message: String, logger_name: Option<String>) -> PyResu
 /// Enhanced CSV analysis with logging
 #[pyfunction]
 #[pyo3(signature = (file_path, log_level = None))]
-fn analyze_csv_with_logging(py: Python, file_path: String, log_level: Option<String>) -> PyResult<Vec<PyColumnProfile>> {
+fn analyze_csv_with_logging(
+    py: Python,
+    file_path: String,
+    log_level: Option<String>,
+) -> PyResult<Vec<PyColumnProfile>> {
     // Configure logging if level is provided
     if let Some(level) = log_level {
         configure_logging(py, Some(level), None)?;
     }
 
-    log_info(py, format!("Starting CSV analysis for: {}", file_path), None)?;
+    log_info(
+        py,
+        format!("Starting CSV analysis for: {}", file_path),
+        None,
+    )?;
 
     // Perform the actual analysis
     let start_time = std::time::Instant::now();
@@ -1243,12 +1339,23 @@ fn analyze_csv_with_logging(py: Python, file_path: String, log_level: Option<Str
 
     match result {
         Ok(profiles) => {
-            log_info(py, format!("CSV analysis completed in {:.3}s. Analyzed {} columns",
-                duration.as_secs_f64(), profiles.len()), None)?;
+            log_info(
+                py,
+                format!(
+                    "CSV analysis completed in {:.3}s. Analyzed {} columns",
+                    duration.as_secs_f64(),
+                    profiles.len()
+                ),
+                None,
+            )?;
             Ok(profiles)
         }
         Err(e) => {
-            log_error(py, format!("CSV analysis failed for {}: {}", file_path, e), None)?;
+            log_error(
+                py,
+                format!("CSV analysis failed for {}: {}", file_path, e),
+                None,
+            )?;
             Err(e)
         }
     }
@@ -1257,13 +1364,21 @@ fn analyze_csv_with_logging(py: Python, file_path: String, log_level: Option<Str
 /// Enhanced ML readiness analysis with logging
 #[pyfunction]
 #[pyo3(signature = (file_path, log_level = None))]
-fn ml_readiness_score_with_logging(py: Python, file_path: String, log_level: Option<String>) -> PyResult<PyMlReadinessScore> {
+fn ml_readiness_score_with_logging(
+    py: Python,
+    file_path: String,
+    log_level: Option<String>,
+) -> PyResult<PyMlReadinessScore> {
     // Configure logging if level is provided
     if let Some(level) = log_level {
         configure_logging(py, Some(level), None)?;
     }
 
-    log_info(py, format!("Starting ML readiness analysis for: {}", file_path), None)?;
+    log_info(
+        py,
+        format!("Starting ML readiness analysis for: {}", file_path),
+        None,
+    )?;
 
     // Perform the actual analysis
     let start_time = std::time::Instant::now();
@@ -1272,12 +1387,24 @@ fn ml_readiness_score_with_logging(py: Python, file_path: String, log_level: Opt
 
     match result {
         Ok(score) => {
-            log_info(py, format!("ML readiness analysis completed in {:.3}s. Score: {:.1}% ({})",
-                duration.as_secs_f64(), score.overall_score, score.readiness_level), None)?;
+            log_info(
+                py,
+                format!(
+                    "ML readiness analysis completed in {:.3}s. Score: {:.1}% ({})",
+                    duration.as_secs_f64(),
+                    score.overall_score,
+                    score.readiness_level
+                ),
+                None,
+            )?;
             Ok(score)
         }
         Err(e) => {
-            log_error(py, format!("ML readiness analysis failed for {}: {}", file_path, e), None)?;
+            log_error(
+                py,
+                format!("ML readiness analysis failed for {}: {}", file_path, e),
+                None,
+            )?;
             Err(e)
         }
     }
