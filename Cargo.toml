@@ -22,7 +22,7 @@ colored = "3.0"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "2.0"
+thiserror = "1.0"
 
 # Pattern detection
 regex = "1.10"
