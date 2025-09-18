@@ -139,9 +139,10 @@ codegen-units = 1
 opt-level = 3
 panic = "abort"     # Riduce dimensione binario
 
-# Bench profile (based on release, panic unwind is default for benchmarks)
+# Bench profile (based on release, but needs panic = "unwind" for benchmarks)
 [profile.bench]
 inherits = "release"
+panic = "unwind"  # Required for benchmarks and tests
 
 
 # Configurazione per dipendenze più veloci
