@@ -12,6 +12,8 @@ DataProfiler analyzes datasets with 20x better memory efficiency than pandas, ha
 
 ![DataProfiler HTML Report](assets/animations/HTML.gif)
 
+![DataProfiler HTML ML Report](assets/screenshots/MLfeatshtml.png)
+
 ## ✨ Key Features
 
 - **⚡ High Performance**: 20x more memory efficient than pandas with Apache Arrow integration
@@ -109,7 +111,10 @@ dataprof daily_sales --database "mysql://user:pass@prod-db/warehouse" \
 
 | Guide | Description |
 |-------|-------------|
-| **[Python API](https://github.com/AndreaBozzo/dataprof/wiki/Python-Bindings)** | Complete Python reference with examples |
+| **[Python Overview](https://github.com/AndreaBozzo/dataprof/wiki/Python-Overview)** | Getting started with Python bindings |
+| **[Python API Reference](https://github.com/AndreaBozzo/dataprof/wiki/Python-API-Reference)** | Complete function and class reference |
+| **[ML Features Guide](https://github.com/AndreaBozzo/dataprof/wiki/Python-ML-Features)** | ML readiness assessment and recommendations |
+| **[Python Integrations](https://github.com/AndreaBozzo/dataprof/wiki/Python-Integrations)** | Pandas, scikit-learn, Jupyter, Airflow integration |
 | **[Database Connectors](https://github.com/AndreaBozzo/dataprof/wiki/Database-Connectors)** | PostgreSQL, MySQL, SQLite, DuckDB integration |
 | **[Apache Arrow Integration](https://github.com/AndreaBozzo/dataprof/wiki/Apache-Arrow-Integration)** | High-performance columnar processing guide |
 | **[Performance Guide](https://github.com/AndreaBozzo/dataprof/wiki/Performance-Guide)** | Benchmarks, optimization tips, and tool selection |
