@@ -39,9 +39,15 @@ jobs:
     - name: Get previous tag for changelog
       id: prev-tag
       run: |
-        PREV_TAG=$(git describe --tags --abbrev=0 ${{ steps.tag.outputs.tag }}^)
+        PREV_TAG=$(git describe --tags --abbrev=0 ${{ steps.tag.outputs.tag }}^ 2>/dev/null || echo "")
+        if [ -z "$PREV_TAG" ]; then
+          # Fallback: get the first commit if no previous tags
+          PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          echo "No previous tag found, using first commit: $PREV_TAG"
+        else
+          echo "Previous tag: $PREV_TAG"
+        fi
         echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
-        echo "Previous tag: $PREV_TAG"
 
     - name: Generate changelog
       id: changelog
@@ -49,7 +55,11 @@ jobs:
         echo "Generating changelog from ${{ steps.prev-tag.outputs.prev_tag }} to ${{ steps.tag.outputs.tag }}..."
 
         # Get commit messages and format them
-        CHANGELOG=$(git log --pretty=format:"- %s" ${{ steps.prev-tag.outputs.prev_tag }}..${{ steps.tag.outputs.tag }} | \
+        PREV_TAG="${{ steps.prev-tag.outputs.prev_tag }}"
+        CURRENT_TAG="${{ steps.tag.outputs.tag }}"
+
+        # Get commit messages and format them (handle both tag and commit hash ranges)
+        CHANGELOG=$(git log --pretty=format:"- %s" "$PREV_TAG".."$CURRENT_TAG" 2>/dev/null | \
           grep -E "(feat|fix|refactor|perf|docs|test):" | \
           sed 's/feat:/✨ **Feature:**/g' | \
           sed 's/fix:/🐛 **Fix:**/g' | \
