@@ -31,6 +31,12 @@ regex = "1.10"
 # JSON support
 serde_json = "1.0"
 
+# Enhanced CLI features - Core functionality
+toml = "0.8"
+log = "0.4"
+indicatif = "0.17"
+# clap_complete = "4.4"  # Temporarily disabled for Windows compatibility
+
 # System info for adaptive chunking
 sysinfo = "0.30"
 
@@ -86,6 +92,10 @@ serial_test = "3.1"
 fake = { version = "2.9", features = ["derive"] }
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
+
+# CLI integration testing - temporarily disabled due to Windows registry issues
+# assert_cmd = "1.0"
+# predicates = "2.1"
 
 [[bin]]
 name = "dataprof-cli"

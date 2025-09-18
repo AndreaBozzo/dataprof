@@ -37,7 +37,7 @@ jobs:
     if: needs.validate-staging-pr.outputs.is-staging == 'true'
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: dtolnay/rust-toolchain@stable
 
     - name: Run all tests
@@ -51,6 +51,9 @@ jobs:
 
     - name: Run data quality tests
       run: cargo test --test data_quality_simple --verbose
+
+    - name: Run CLI integration tests
+      run: cargo test --test cli_basic_tests --verbose
 
     - name: Test with features
       run: |
@@ -72,7 +75,7 @@ jobs:
     if: needs.validate-staging-pr.outputs.is-staging == 'true'
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Basic security audit
       run: |

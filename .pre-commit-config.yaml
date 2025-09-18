@@ -60,6 +60,13 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: cargo-test-cli-basic
+        name: cargo test (CLI basic tests)
+        entry: bash -c 'echo "🔧 Testing CLI basic functionality..." && cargo test --test cli_basic_tests --release && echo "✅ CLI basic tests passed"'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
   # General file formatting
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0

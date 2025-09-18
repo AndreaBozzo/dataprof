@@ -60,6 +60,9 @@ jobs:
     - name: Run data quality tests
       run: cargo test --test data_quality_simple --verbose
 
+    - name: Run CLI integration tests
+      run: cargo test --test cli_basic_tests --verbose
+
 
     - name: Run Apache Arrow tests
       run: |
@@ -77,6 +80,11 @@ jobs:
 
     - name: Run clippy (Apache Arrow features)
       run: cargo clippy --lib --features arrow -- -D warnings
+
+    - name: Security audit
+      run: |
+        cargo install cargo-audit
+        cargo audit --no-fetch || cargo audit
 
 
   coverage:
