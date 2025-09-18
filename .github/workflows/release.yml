@@ -23,7 +23,7 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       changelog: ${{ steps.changelog.outputs.changelog }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         fetch-depth: 0  # Need full history for changelog
 
@@ -140,7 +140,7 @@ jobs:
             name: dataprof-windows-x64.exe
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -210,7 +210,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: create-release
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: dtolnay/rust-toolchain@stable
 
     - name: Publish to crates.io
@@ -248,7 +248,7 @@ jobs:
             target: aarch64
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
@@ -308,7 +308,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [create-release, build-binaries, crates-publish, pypi-publish]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Mark release as published
       run: |

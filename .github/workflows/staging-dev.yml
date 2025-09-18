@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -76,7 +76,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -115,6 +115,9 @@ jobs:
 
     - name: Run data quality tests
       run: cargo test --test data_quality_simple --verbose
+
+    - name: Run CLI integration tests
+      run: cargo test --test cli_basic_tests --verbose
 
 
     - name: Run Arrow integration tests
