@@ -148,7 +148,7 @@ impl SamplingStrategy {
                 self.random_sample(row_index, total_processed, *size)
             }
 
-            SamplingStrategy::Systematic { interval } => row_index % interval == 0,
+            SamplingStrategy::Systematic { interval } => row_index.is_multiple_of(*interval),
 
             SamplingStrategy::Reservoir { size } => {
                 self.reservoir_sample(row_index, total_processed, *size, state)

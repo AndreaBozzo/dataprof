@@ -30,6 +30,14 @@ pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::robust_csv::CsvDiagnostics;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
+
+// CLI-specific exports
+pub use core::config::DataprofConfig;
+pub use core::exit_codes;
+pub use core::validation::{InputValidator, ValidationError};
+
+// ML Analysis exports
+pub use analysis::MlReadinessEngine;
 pub use engines::streaming::ProgressInfo;
 pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
@@ -48,9 +56,7 @@ pub use parsers::csv::{
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
 // Re-export moved analysis functions for API compatibility
-pub use analysis::{
-    analyze_column_fast, detect_patterns, infer_type, MlReadinessEngine, MlReadinessScore,
-};
+pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MlReadinessScore};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (default: postgres, mysql, sqlite)
