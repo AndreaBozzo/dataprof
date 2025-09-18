@@ -48,7 +48,9 @@ pub use parsers::csv::{
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
 // Re-export moved analysis functions for API compatibility
-pub use analysis::{analyze_column_fast, detect_patterns, infer_type};
+pub use analysis::{
+    analyze_column_fast, detect_patterns, infer_type, MlReadinessEngine, MlReadinessScore,
+};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (default: postgres, mysql, sqlite)

@@ -31,6 +31,10 @@ regex = "1.10"
 # JSON support
 serde_json = "1.0"
 
+# Enhanced CLI features - Core functionality
+toml = "0.8"
+log = "0.4"
+
 # System info for adaptive chunking
 sysinfo = "0.30"
 

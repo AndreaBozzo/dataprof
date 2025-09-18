@@ -22,11 +22,16 @@ use dataprof::{
     DataProfilerError,
     DataType,
     ErrorSeverity,
+    MlReadinessEngine,
     ProgressInfo,
     QualityIssue,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+
+// Import new output formatters
+use dataprof::core::DataprofConfig;
+use dataprof::output::formatters::create_formatter;
 
 // Database support (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
@@ -38,6 +43,10 @@ enum OutputFormat {
     Text,
     /// Machine-readable JSON output
     Json,
+    /// CSV format for data processing
+    Csv,
+    /// Plain text without formatting for scripting
+    Plain,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -143,13 +152,59 @@ struct Cli {
     /// Show engine availability and system information
     #[arg(long)]
     engine_info: bool,
+
+    /// Calculate ML Readiness Score for datasets
+    #[arg(long)]
+    ml_score: bool,
+
+    /// Configuration file path (.dataprof.toml)
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Verbosity level (0=quiet, 1=normal, 2=verbose, 3=debug)
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+    verbosity: u8,
+
+    /// Disable colored output
+    #[arg(long)]
+    no_color: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Load configuration with CLI integration
+    let mut config = if let Some(config_path) = &cli.config {
+        DataprofConfig::load_from_file(config_path)?
+    } else {
+        DataprofConfig::load_with_discovery()
+    };
+
+    // Apply CLI overrides to configuration
+    config.merge_with_cli_args(
+        Some(match cli.format {
+            OutputFormat::Text => "text",
+            OutputFormat::Json => "json",
+            OutputFormat::Csv => "csv",
+            OutputFormat::Plain => "plain",
+        }),
+        Some(cli.quality),
+        Some(cli.progress),
+    );
+
+    // Handle verbosity and colors
+    if cli.no_color || std::env::var("NO_COLOR").is_ok() {
+        config.output.colored = false;
+    }
+    if cli.verbosity > 0 {
+        config.output.verbosity = cli.verbosity;
+    }
+
+    // Validate configuration
+    config.validate()?;
+
     // Enhanced error handling wrapper
-    if let Err(e) = run_analysis(&cli) {
+    if let Err(e) = run_analysis(&cli, &config) {
         handle_error(&e, &cli.file);
         std::process::exit(1);
     }
@@ -157,21 +212,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn output_json_report(report: &dataprof::QualityReport) -> Result<()> {
-    let output = BenchmarkOutput {
-        rows: report
-            .file_info
-            .total_rows
-            .unwrap_or(report.scan_info.rows_scanned),
-        columns: report.file_info.total_columns,
-        file_size_mb: report.file_info.file_size_mb,
-        scan_time_ms: report.scan_info.scan_time_ms,
-        quality_score: report.quality_score().ok(),
-    };
-
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
-}
 
 fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
     // For simple profiles (without quality report), estimate basic info
@@ -251,7 +291,7 @@ fn handle_error(error: &anyhow::Error, file_path: &Path) {
     }
 }
 
-fn run_analysis(cli: &Cli) -> Result<()> {
+fn run_analysis(cli: &Cli, config: &DataprofConfig) -> Result<()> {
     // Handle engine info request
     if cli.engine_info {
         return show_engine_info();
@@ -352,9 +392,17 @@ fn run_analysis(cli: &Cli) -> Result<()> {
             }
         };
 
-        // Handle JSON output for benchmarks
-        if matches!(cli.format, OutputFormat::Json) {
-            return output_json_report(&report);
+        // Handle ML scoring if requested
+        let ml_score = if cli.ml_score || config.ml.auto_score {
+            let ml_engine = MlReadinessEngine::new();
+            Some(ml_engine.calculate_ml_score(&report)?)
+        } else {
+            None
+        };
+
+        // Handle enhanced output formatting
+        if !matches!(cli.format, OutputFormat::Text) {
+            return output_with_formatter(&report, &cli.format, ml_score.as_ref());
         }
 
         // Show basic file info
@@ -373,6 +421,11 @@ fn run_analysis(cli: &Cli) -> Result<()> {
             );
         }
         println!();
+
+        // Show ML score if available
+        if let Some(ref score) = ml_score {
+            display_ml_score(score);
+        }
 
         // Show quality issues first
         display_quality_issues(&report.issues);
@@ -998,4 +1051,138 @@ fn run_benchmark_analysis(cli: &Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Enhanced output using formatter pattern
+fn output_with_formatter(
+    report: &dataprof::QualityReport,
+    format: &OutputFormat,
+    ml_score: Option<&dataprof::analysis::MlReadinessScore>,
+) -> Result<()> {
+    let format_str = match format {
+        OutputFormat::Json => "json",
+        OutputFormat::Csv => "csv",
+        OutputFormat::Plain => "plain",
+        OutputFormat::Text => "text", // Fallback
+    };
+
+    let formatter = create_formatter(format_str);
+    let mut output = formatter.format_report(report)?;
+
+    // Add ML score to JSON output if available
+    if matches!(format, OutputFormat::Json) && ml_score.is_some() {
+        let mut json_value: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(summary) = json_value.get_mut("summary") {
+            if let Some(score) = ml_score {
+                summary["ml_readiness"] = serde_json::json!({
+                    "score": score.overall_score,
+                    "level": score.readiness_level,
+                    "recommendations": score.recommendations,
+                    "feature_analysis": score.feature_analysis
+                });
+            }
+        }
+        output = serde_json::to_string_pretty(&json_value)?;
+    }
+
+    println!("{}", output);
+    Ok(())
+}
+
+/// Display ML readiness score in human-readable format
+fn display_ml_score(score: &dataprof::analysis::MlReadinessScore) {
+    use dataprof::analysis::MlReadinessLevel;
+
+    let (level_icon, level_color) = match score.readiness_level {
+        MlReadinessLevel::Ready => ("🚀", "green"),
+        MlReadinessLevel::Good => ("✅", "green"),
+        MlReadinessLevel::NeedsWork => ("⚠️", "yellow"),
+        MlReadinessLevel::NotReady => ("❌", "red"),
+    };
+
+    println!(
+        "🤖 {} Machine Learning Readiness",
+        "ML READINESS SCORE".bright_blue().bold()
+    );
+
+    // Overall score with color coding
+    let score_str = format!("{:.1}%", score.overall_score);
+    let colored_score = match score.readiness_level {
+        MlReadinessLevel::Ready | MlReadinessLevel::Good => score_str.green().bold(),
+        MlReadinessLevel::NeedsWork => score_str.yellow().bold(),
+        MlReadinessLevel::NotReady => score_str.red().bold(),
+    };
+
+    println!(
+        "   {} Overall Score: {} ({})",
+        level_icon,
+        colored_score,
+        format!("{:?}", score.readiness_level).color(level_color)
+    );
+
+    // Component scores
+    println!("   📊 Component Scores:");
+    println!("      • Completeness: {:.1}%", score.completeness_score);
+    println!("      • Consistency:  {:.1}%", score.consistency_score);
+    println!(
+        "      • Type Suitability: {:.1}%",
+        score.type_suitability_score
+    );
+    println!(
+        "      • Feature Quality: {:.1}%",
+        score.feature_quality_score
+    );
+
+    // Blocking issues
+    if !score.blocking_issues.is_empty() {
+        println!("\n   🔴 {} Blocking Issues:", "CRITICAL".red().bold());
+        for issue in &score.blocking_issues {
+            println!("      • {}", issue.description.red());
+            println!("        → {}", issue.resolution_required);
+        }
+    }
+
+    // Top recommendations
+    if !score.recommendations.is_empty() {
+        println!("\n   💡 {} Top Recommendations:", "ML".bright_cyan().bold());
+        for (i, rec) in score.recommendations.iter().take(3).enumerate() {
+            let priority_icon = match rec.priority {
+                dataprof::analysis::ml_readiness::RecommendationPriority::Critical => "🔴",
+                dataprof::analysis::ml_readiness::RecommendationPriority::High => "🟠",
+                dataprof::analysis::ml_readiness::RecommendationPriority::Medium => "🟡",
+                dataprof::analysis::ml_readiness::RecommendationPriority::Low => "🔵",
+            };
+            println!("      {}. {} {}", i + 1, priority_icon, rec.description);
+        }
+
+        if score.recommendations.len() > 3 {
+            println!(
+                "      ... and {} more recommendations",
+                score.recommendations.len() - 3
+            );
+        }
+    }
+
+    // Feature analysis summary
+    let ready_features = score
+        .feature_analysis
+        .iter()
+        .filter(|f| f.ml_suitability > 0.7)
+        .count();
+    let total_features = score.feature_analysis.len();
+
+    println!(
+        "\n   🔧 Feature Analysis: {}/{} features ML-ready (>70% suitability)",
+        ready_features, total_features
+    );
+
+    // Preprocessing steps
+    if !score.preprocessing_suggestions.is_empty() {
+        println!(
+            "   🛠️  Preprocessing Steps: {} recommended",
+            score.preprocessing_suggestions.len()
+        );
+    }
+
+    println!();
 }
