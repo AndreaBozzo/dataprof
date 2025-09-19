@@ -36,9 +36,10 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
             return Err(anyhow::anyhow!("Quoted identifier cannot be empty"));
         }
         // Prevent nested quotes or dangerous characters
-        let quote_char = identifier.chars().nth(0).ok_or_else(|| {
-            anyhow::anyhow!("Invalid identifier format")
-        })?;
+        let quote_char = identifier
+            .chars()
+            .nth(0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid identifier format"))?;
         if inner.contains(quote_char)
             || inner.contains(';')
             || inner.contains('-') && inner.contains('-')
