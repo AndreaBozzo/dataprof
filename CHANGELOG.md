@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ✅ **SQLite** - Embedded database security hardening applied
 - ✅ **DuckDB** - Analytical database connector fully secured
 
+## [0.4.4]
+
 ### 🎉 Major Features Added
 
 #### Python Bindings ML/AI Enhancement - PR #49
