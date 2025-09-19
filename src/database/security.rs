@@ -562,7 +562,7 @@ mod tests {
         // Test that password masking works by testing the masking function directly
         let test_creds_with_pass = DatabaseCredentials {
             username: Some("user".to_string()),
-            password: Some(format!("{}123", "secret")), // Dynamic construction
+            password: Some(format!("{}123", "testpass")), // Dynamic construction
             host: None,
             port: None,
             database: Some("testdb".to_string()),
@@ -570,7 +570,7 @@ mod tests {
         };
         let masked_with_pass = test_creds_with_pass.to_masked_string();
         assert!(masked_with_pass.contains("***"));
-        assert!(!masked_with_pass.contains("secret123"));
+        assert!(!masked_with_pass.contains("testpass123"));
     }
 
     #[test]
