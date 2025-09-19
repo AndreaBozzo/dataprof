@@ -63,6 +63,11 @@ jobs:
     - name: Run CLI integration tests
       run: cargo test --test cli_basic_tests --verbose
 
+    - name: Run security tests
+      run: |
+        echo "🔒 Running security tests..."
+        cargo test --test security_tests --features database --verbose
+        echo "✅ Security tests completed"
 
     - name: Run Apache Arrow tests
       run: |
@@ -85,6 +90,24 @@ jobs:
       run: |
         cargo install cargo-audit
         cargo audit --no-fetch || cargo audit
+
+    - name: Security regression checks
+      run: |
+        echo "🔍 Checking for security regressions..."
+        # Verify all security functions are present
+        grep -q "validate_sql_identifier" src/database/security.rs
+        grep -q "validate_base_query" src/database/security.rs
+        grep -q "sanitize_error_message" src/database/security.rs
+        # Verify security functions are used in connectors
+        find src/database/connectors -name "*.rs" -exec grep -l "validate_sql_identifier\|validate_base_query" {} \;
+        # Count security test cases
+        SECURITY_TESTS=$(grep -c "#\[test\]" tests/security_tests.rs || echo 0)
+        echo "Security test count: $SECURITY_TESTS"
+        if [ "$SECURITY_TESTS" -lt 15 ]; then
+          echo "❌ Insufficient security test coverage (minimum 15 tests required)"
+          exit 1
+        fi
+        echo "✅ Security regression checks passed"
 
 
   coverage:

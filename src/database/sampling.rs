@@ -1,5 +1,6 @@
 //! Database table sampling strategies for large datasets
 
+use crate::database::security::{validate_base_query, validate_sql_identifier};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -94,11 +95,13 @@ impl SamplingConfig {
             SamplingStrategy::Random => {
                 let seed = self.seed.unwrap_or(42);
                 if base_query.trim().to_uppercase().starts_with("SELECT") {
+                    let validated_query = validate_base_query(base_query)?;
                     Ok(format!(
                         "SELECT * FROM ({}) AS sample_subquery ORDER BY RANDOM({}) LIMIT {}",
-                        base_query, seed, self.sample_size
+                        validated_query, seed, self.sample_size
                     ))
                 } else {
+                    validate_sql_identifier(base_query)?;
                     Ok(format!(
                         "SELECT * FROM {} ORDER BY RANDOM({}) LIMIT {}",
                         base_query, seed, self.sample_size
@@ -108,11 +111,13 @@ impl SamplingConfig {
             SamplingStrategy::Systematic => {
                 let step = (total_rows as f64 / self.sample_size as f64).ceil() as u64;
                 if base_query.trim().to_uppercase().starts_with("SELECT") {
+                    let validated_query = validate_base_query(base_query)?;
                     Ok(format!(
                         "SELECT * FROM (SELECT *, ROW_NUMBER() OVER() as rn FROM ({})) AS numbered WHERE rn % {} = 1",
-                        base_query, step
+                        validated_query, step
                     ))
                 } else {
+                    validate_sql_identifier(base_query)?;
                     Ok(format!(
                         "SELECT * FROM (SELECT *, ROW_NUMBER() OVER() as rn FROM {}) AS numbered WHERE rn % {} = 1",
                         base_query, step
@@ -125,19 +130,17 @@ impl SamplingConfig {
             }
             SamplingStrategy::Stratified => {
                 if let Some(stratify_col) = &self.stratify_column {
+                    validate_sql_identifier(stratify_col)?;
                     self.generate_stratified_query(base_query, stratify_col, total_rows)
                 } else {
-                    // Fall back to random sampling
-                    self.generate_sample_query(
-                        &base_query.replace(
-                            &format!("{:?}", SamplingStrategy::Stratified),
-                            &format!("{:?}", SamplingStrategy::Random),
-                        ),
-                        total_rows,
-                    )
+                    // Fall back to random sampling with current configuration
+                    let mut fallback_config = self.clone();
+                    fallback_config.strategy = SamplingStrategy::Random;
+                    fallback_config.generate_sample_query(base_query, total_rows)
                 }
             }
             SamplingStrategy::Temporal { column_name } => {
+                validate_sql_identifier(column_name)?;
                 self.generate_temporal_query(base_query, column_name, total_rows)
             }
             SamplingStrategy::MultiStage => {
@@ -155,13 +158,15 @@ impl SamplingConfig {
 
         if base_query.trim().to_uppercase().starts_with("SELECT") {
             // Complex query - use subquery approach
+            let validated_query = validate_base_query(base_query)?;
             let seed = self.seed.unwrap_or(42);
             Ok(format!(
                 "SELECT * FROM ({}) AS sample_subquery ORDER BY RANDOM({}) LIMIT {}",
-                base_query, seed, self.sample_size
+                validated_query, seed, self.sample_size
             ))
         } else {
             // Simple table - can use TABLESAMPLE
+            validate_sql_identifier(base_query)?;
             Ok(format!(
                 "SELECT * FROM {} TABLESAMPLE SYSTEM ({:.2}) LIMIT {}",
                 base_query, percentage, self.sample_size
@@ -176,9 +181,11 @@ impl SamplingConfig {
         stratify_col: &str,
         _total_rows: u64,
     ) -> Result<String> {
+        // Validate inputs - stratify_col already validated by caller
         let sample_per_stratum = self.sample_size / 10; // Assume up to 10 strata for simplicity
 
         if base_query.trim().to_uppercase().starts_with("SELECT") {
+            let validated_query = validate_base_query(base_query)?;
             Ok(format!(
                 r#"
                 SELECT * FROM (
@@ -188,9 +195,10 @@ impl SamplingConfig {
                 WHERE stratum_rn <= {}
                 LIMIT {}
                 "#,
-                stratify_col, base_query, sample_per_stratum, self.sample_size
+                stratify_col, validated_query, sample_per_stratum, self.sample_size
             ))
         } else {
+            validate_sql_identifier(base_query)?;
             Ok(format!(
                 r#"
                 SELECT * FROM (
@@ -212,8 +220,10 @@ impl SamplingConfig {
         time_col: &str,
         total_rows: u64,
     ) -> Result<String> {
+        // time_col already validated by caller
         // Sample evenly across time periods
         if base_query.trim().to_uppercase().starts_with("SELECT") {
+            let validated_query = validate_base_query(base_query)?;
             Ok(format!(
                 r#"
                 SELECT * FROM (
@@ -224,11 +234,12 @@ impl SamplingConfig {
                 LIMIT {}
                 "#,
                 time_col,
-                base_query,
+                validated_query,
                 (total_rows as f64 / self.sample_size as f64).ceil() as u64,
                 self.sample_size
             ))
         } else {
+            validate_sql_identifier(base_query)?;
             Ok(format!(
                 r#"
                 SELECT * FROM (

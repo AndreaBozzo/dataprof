@@ -1,6 +1,7 @@
 //! SQLite database connector (embedded database)
 
 use crate::database::connection::ConnectionInfo;
+use crate::database::security::{validate_base_query, validate_sql_identifier};
 #[cfg(feature = "sqlite")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
 use crate::database::{DatabaseConfig, DatabaseConnector};
@@ -170,8 +171,13 @@ impl DatabaseConnector for SqliteConnector {
 
             // Get total count for progress tracking
             let count_query = if query.trim().to_uppercase().starts_with("SELECT") {
-                format!("SELECT COUNT(*) FROM ({}) as count_subquery", query)
+                let validated_query = validate_base_query(query)?;
+                format!(
+                    "SELECT COUNT(*) FROM ({}) as count_subquery",
+                    validated_query
+                )
             } else {
+                validate_sql_identifier(query)?;
                 format!("SELECT COUNT(*) FROM {}", query)
             };
 
@@ -185,7 +191,15 @@ impl DatabaseConnector for SqliteConnector {
             let mut offset = 0;
 
             loop {
-                let batch_query = format!("{} LIMIT {} OFFSET {}", query, batch_size, offset);
+                // Validate query before using in LIMIT/OFFSET
+                let validated_query = if query.trim().to_uppercase().starts_with("SELECT") {
+                    validate_base_query(query)?
+                } else {
+                    validate_sql_identifier(query)?;
+                    format!("SELECT * FROM {}", query)
+                };
+                let batch_query =
+                    format!("{} LIMIT {} OFFSET {}", validated_query, batch_size, offset);
 
                 let rows = sqlx::query(&batch_query)
                     .fetch_all(pool)
@@ -292,6 +306,7 @@ impl DatabaseConnector for SqliteConnector {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
 
+            validate_sql_identifier(table_name)?;
             let query = format!("SELECT COUNT(*) FROM {}", table_name);
             let count: i64 = sqlx::query_scalar(&query)
                 .fetch_one(pool)

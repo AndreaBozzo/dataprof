@@ -1,6 +1,7 @@
 //! DuckDB analytical database connector
 
 use crate::database::connection::ConnectionInfo;
+use crate::database::security::{validate_base_query, validate_sql_identifier};
 #[cfg(feature = "duckdb")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
 use crate::database::{DatabaseConfig, DatabaseConnector};
@@ -199,8 +200,13 @@ impl DatabaseConnector for DuckDbConnector {
                     }
                     .map_err(|e| anyhow::anyhow!("Failed to open DuckDB: {}", e))?;
                     let count_query = if query.trim().to_uppercase().starts_with("SELECT") {
-                        format!("SELECT COUNT(*) FROM ({}) as count_subquery", query)
+                        let validated_query = validate_base_query(&query)?;
+                        format!(
+                            "SELECT COUNT(*) FROM ({}) as count_subquery",
+                            validated_query
+                        )
                     } else {
+                        validate_sql_identifier(&query)?;
                         format!("SELECT COUNT(*) FROM {}", query)
                     };
 
@@ -223,7 +229,17 @@ impl DatabaseConnector for DuckDbConnector {
             let mut offset = 0;
 
             loop {
-                let batch_query = format!("{} LIMIT {} OFFSET {}", query, batch_size_copy, offset);
+                // Validate query before using in LIMIT/OFFSET
+                let validated_query = if query.trim().to_uppercase().starts_with("SELECT") {
+                    validate_base_query(&query)?
+                } else {
+                    validate_sql_identifier(&query)?;
+                    format!("SELECT * FROM {}", query)
+                };
+                let batch_query = format!(
+                    "{} LIMIT {} OFFSET {}",
+                    validated_query, batch_size_copy, offset
+                );
 
                 let batch_result = task::spawn_blocking({
                     let db_path = db_path.clone();
@@ -355,6 +371,7 @@ impl DatabaseConnector for DuckDbConnector {
                     Connection::open(&db_path)
                 }
                 .map_err(|e| anyhow::anyhow!("Failed to open DuckDB: {}", e))?;
+                validate_sql_identifier(&table_name)?;
                 let query = format!("DESCRIBE {}", table_name);
 
                 let mut stmt = connection
@@ -405,6 +422,7 @@ impl DatabaseConnector for DuckDbConnector {
                     Connection::open(&db_path)
                 }
                 .map_err(|e| anyhow::anyhow!("Failed to open DuckDB: {}", e))?;
+                validate_sql_identifier(&table_name)?;
                 let query = format!("SELECT COUNT(*) FROM {}", table_name);
 
                 let mut stmt = connection

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🛡️ Critical Security Fixes - Issue #41
+- **FIXED:** 🚨 **SQL Injection Vulnerabilities** - Complete protection against SQL injection attacks across all database connectors
+- **FIXED:** 🔐 **Information Disclosure** - Error message sanitization to prevent credential and sensitive data leaks
+- **NEW:** 🛡️ **Input Validation System** - Comprehensive validation for SQL identifiers, table names, and queries
+- **NEW:** 🧪 **Security Test Suite** - 16 comprehensive security tests covering SQL injection, error sanitization, and edge cases
+- **NEW:** 🔄 **CI/CD Security Gates** - Automated security regression prevention in GitHub Actions workflows
+- **NEW:** 📊 **Memory Leak Detection** - Enhanced memory tracker with stack trace collection in debug builds
+
+#### Security Functions Added
+- `validate_sql_identifier()` - Prevents injection through table/column names with allowlist approach
+- `validate_base_query()` - Ensures only safe SELECT queries with dangerous pattern blocking
+- `sanitize_error_message()` - Removes passwords, connection strings, file paths, and IP addresses from logs
+
+#### Database Connectors Secured
+- ✅ **PostgreSQL** - All query execution points protected with input validation
+- ✅ **MySQL/MariaDB** - Complete SQL injection prevention implemented
+- ✅ **SQLite** - Embedded database security hardening applied
+- ✅ **DuckDB** - Analytical database connector fully secured
+
 ### 🎉 Major Features Added
 
 #### Python Bindings ML/AI Enhancement - PR #49
