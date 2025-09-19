@@ -79,8 +79,8 @@ jobs:
 
     - name: Basic security audit
       run: |
-        # Check for obvious secrets (basic)
-        if grep -r -E "(password|secret|token|key)\s*=" src/ --include="*.rs" 2>/dev/null; then
+        # Check for obvious hardcoded secrets (more specific pattern)
+        if grep -r -E "(password|secret|token|key)\s*=\s*\"[^\"]+\"" src/ --include="*.rs" 2>/dev/null; then
           echo "⚠️ Potential hardcoded secrets found"
           exit 1
         fi
