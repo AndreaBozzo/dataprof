@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔧 CPU Compatibility Improvements
+
+#### Issue: Illegal Instruction Error with v0.4.5 Python Wheels
+- **FIXED:** 🚨 **CPU Compatibility Issue** - v0.4.5 wheels caused "Illegal instruction" errors on older CPUs
+- **NEW:** 🏗️ **Multi-Target Build System** - Release workflow now builds both baseline and optimized wheels
+- **NEW:** 🛡️ **Baseline Compatibility Wheels** - PyPI wheels use `target-cpu=x86-64` for maximum compatibility
+- **NEW:** ⚡ **Performance-Optimized Wheels** - Additional optimized wheels available in GitHub Releases
+- **NEW:** 🔍 **Automated CPU Instruction Verification** - CI checks ensure baseline wheels contain no AVX instructions
+- **IMPROVED:** 📊 **Enhanced Release Documentation** - Clear distinction between baseline and optimized builds
+
+#### Technical Changes
+- **Release Workflow**: Added dual-build strategy with `baseline` and `optimized` CPU profiles
+- **Cargo Configuration**: Set conservative CPU targeting for local development
+- **PyPI Publishing**: Only baseline wheels uploaded for maximum user compatibility
+- **GitHub Releases**: Both baseline and optimized wheels available for advanced users
+- **Verification**: Automated objdump analysis to prevent CPU instruction compatibility issues
+
+#### User Impact
+- ✅ **No more "Illegal instruction" errors** from PyPI installations
+- ✅ **Automatic compatibility** - users get working wheels by default
+- ✅ **Optional performance boost** - optimized wheels available for modern CPUs
+- ✅ **Clear documentation** - users understand the difference between wheel types
+
 ### 🛡️ Critical Security Fixes - Issue #41
 - **FIXED:** 🚨 **SQL Injection Vulnerabilities** - Complete protection against SQL injection attacks across all database connectors
 - **FIXED:** 🔐 **Information Disclosure** - Error message sanitization to prevent credential and sensitive data leaks
