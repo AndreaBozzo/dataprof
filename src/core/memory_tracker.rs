@@ -2,6 +2,47 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(debug_assertions)]
+use std::backtrace::Backtrace;
+
+/// Capture stack trace for debugging memory leaks (debug builds only)
+#[cfg(debug_assertions)]
+fn capture_stack_trace() -> String {
+    let backtrace = Backtrace::force_capture();
+
+    // Filter and format the backtrace to show only relevant frames
+    let trace_str = backtrace.to_string();
+    let lines: Vec<&str> = trace_str.lines().collect();
+
+    // Take up to 10 most relevant frames, skip internal Rust/std frames
+    let relevant_frames: Vec<&str> = lines
+        .into_iter()
+        .filter(|line| {
+            // Skip internal Rust frames and our own memory tracker frames
+            !line.contains("rust_begin_unwind")
+                && !line.contains("rust_panic")
+                && !line.contains("core::panic")
+                && !line.contains("std::panic")
+                && !line.contains("backtrace::capture")
+                && !line.contains("memory_tracker::capture_stack_trace")
+                && !line.contains("memory_tracker::track_allocation")
+        })
+        .take(10)
+        .collect();
+
+    if relevant_frames.is_empty() {
+        "Stack trace not available".to_string()
+    } else {
+        relevant_frames.join("\n")
+    }
+}
+
+/// Placeholder for release builds
+#[cfg(not(debug_assertions))]
+fn capture_stack_trace() -> String {
+    "Stack trace only available in debug builds".to_string()
+}
+
 /// Memory resource tracker to detect potential leaks
 #[derive(Debug, Clone)]
 pub struct MemoryTracker {
@@ -14,7 +55,8 @@ struct AllocationInfo {
     size_bytes: usize,
     timestamp: u64,
     resource_type: String,
-    // stack_trace: String, // TODO: Add in debug builds
+    #[cfg(debug_assertions)]
+    stack_trace: String,
 }
 
 #[derive(Debug)]
@@ -23,6 +65,8 @@ pub struct MemoryLeak {
     pub size_bytes: usize,
     pub age_seconds: u64,
     pub resource_type: String,
+    #[cfg(debug_assertions)]
+    pub stack_trace: String,
 }
 
 impl Default for MemoryTracker {
@@ -47,10 +91,15 @@ impl MemoryTracker {
             .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs();
 
+        #[cfg(debug_assertions)]
+        let stack_trace = capture_stack_trace();
+
         let info = AllocationInfo {
             size_bytes,
             timestamp,
             resource_type: resource_type.to_string(),
+            #[cfg(debug_assertions)]
+            stack_trace,
         };
 
         if let Ok(mut allocations) = self.allocations.lock() {
@@ -89,6 +138,8 @@ impl MemoryTracker {
                             size_bytes: info.size_bytes,
                             age_seconds,
                             resource_type: info.resource_type.clone(),
+                            #[cfg(debug_assertions)]
+                            stack_trace: info.stack_trace.clone(),
                         })
                     } else {
                         None
@@ -123,14 +174,29 @@ impl MemoryTracker {
             let mut report = format!("⚠️  {} potential memory leak(s) detected:\n\n", leaks.len());
 
             for leak in leaks {
-                report.push_str(&format!(
-                    "• Resource: {} ({})\n  Size: {} bytes ({:.2} MB)\n  Age: {}s\n\n",
-                    leak.resource_id,
-                    leak.resource_type,
-                    leak.size_bytes,
-                    leak.size_bytes as f64 / (1024.0 * 1024.0),
-                    leak.age_seconds
-                ));
+                #[cfg(debug_assertions)]
+                {
+                    report.push_str(&format!(
+                        "• Resource: {} ({})\n  Size: {} bytes ({:.2} MB)\n  Age: {}s\n  Stack trace:\n{}\n\n",
+                        leak.resource_id,
+                        leak.resource_type,
+                        leak.size_bytes,
+                        leak.size_bytes as f64 / (1024.0 * 1024.0),
+                        leak.age_seconds,
+                        leak.stack_trace
+                    ));
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    report.push_str(&format!(
+                        "• Resource: {} ({})\n  Size: {} bytes ({:.2} MB)\n  Age: {}s\n\n",
+                        leak.resource_id,
+                        leak.resource_type,
+                        leak.size_bytes,
+                        leak.size_bytes as f64 / (1024.0 * 1024.0),
+                        leak.age_seconds
+                    ));
+                }
             }
 
             report

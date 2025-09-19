@@ -1,5 +1,6 @@
 //! Connection retry logic with exponential backoff
 
+use crate::database::security::sanitize_error_message;
 use anyhow::Result;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -58,13 +59,14 @@ where
                         delay
                     };
 
+                    let sanitized_error = sanitize_error_message(&error.to_string());
                     eprintln!(
                         "Database operation '{}' failed on attempt {}/{}, retrying in {:?}: {}",
                         operation_name,
                         attempt + 1,
                         config.max_retries + 1,
                         actual_delay,
-                        error
+                        sanitized_error
                     );
 
                     sleep(actual_delay).await;
@@ -150,13 +152,14 @@ where
                         delay
                     };
 
+                    let sanitized_error = sanitize_error_message(&error.to_string());
                     eprintln!(
                         "Retryable database error in '{}' (attempt {}/{}), retrying in {:?}: {}",
                         operation_name,
                         attempt + 1,
                         config.max_retries + 1,
                         actual_delay,
-                        error
+                        sanitized_error
                     );
 
                     sleep(actual_delay).await;

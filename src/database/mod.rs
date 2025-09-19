@@ -174,10 +174,14 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
 
     let start = std::time::Instant::now();
 
-    // Determine the actual query to execute
+    // Determine the actual query to execute with proper validation
     let (actual_query, is_table) = if query.trim().to_uppercase().starts_with("SELECT") {
-        (query.to_string(), false)
+        // Validate the SELECT query for safety
+        let validated_query = security::validate_base_query(query)?;
+        (validated_query, false)
     } else {
+        // Validate the table name to prevent injection
+        security::validate_sql_identifier(query)?;
         (format!("SELECT * FROM {}", query), true)
     };
 
