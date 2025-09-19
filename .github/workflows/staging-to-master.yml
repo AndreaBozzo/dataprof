@@ -55,6 +55,12 @@ jobs:
     - name: Run CLI integration tests
       run: cargo test --test cli_basic_tests --verbose
 
+    - name: Run security tests
+      run: |
+        echo "🔒 Running security tests for production..."
+        cargo test --test security_tests --features=database --verbose
+        echo "✅ Security tests passed"
+
     - name: Test with features
       run: |
         cargo test --features postgres --verbose
@@ -77,20 +83,65 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
-    - name: Basic security audit
+    - name: Comprehensive security audit
       run: |
-        # Check for obvious hardcoded secrets (more specific pattern)
+        # Install Rust for security checks
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source ~/.cargo/env
+
+        echo "🔍 Running comprehensive security audit..."
+
+        # Check for hardcoded secrets
         if grep -r -E "(password|secret|token|key)\s*=\s*\"[^\"]+\"" src/ --include="*.rs" 2>/dev/null; then
           echo "⚠️ Potential hardcoded secrets found"
           exit 1
         fi
+
+        # Verify SQL injection protection is in place
+        echo "Checking SQL injection protection..."
+        if ! grep -q "validate_sql_identifier" src/database/security.rs; then
+          echo "❌ SQL injection protection missing"
+          exit 1
+        fi
+
+        if ! grep -q "validate_base_query" src/database/security.rs; then
+          echo "❌ Base query validation missing"
+          exit 1
+        fi
+
+        if ! grep -q "sanitize_error_message" src/database/security.rs; then
+          echo "❌ Error sanitization missing"
+          exit 1
+        fi
+
+        # Verify security functions are used in all connectors
+        CONNECTORS=("sqlite.rs" "postgres.rs" "mysql.rs" "duckdb.rs")
+        for connector in "${CONNECTORS[@]}"; do
+          if [ -f "src/database/connectors/$connector" ]; then
+            if ! grep -q "validate_sql_identifier\|validate_base_query" "src/database/connectors/$connector"; then
+              echo "❌ Security validation missing in $connector"
+              exit 1
+            fi
+          fi
+        done
 
         # Check for debug prints in production
         if grep -r -E "println!|dbg!" src/ --include="*.rs" | grep -v test | grep -v "//.*println!" 2>/dev/null; then
           echo "⚠️ Debug prints found in production code"
         fi
 
-        echo "✅ Basic security check passed"
+        # Run security tests
+        cargo test --test security_tests --features=database
+
+        # Check test coverage
+        SECURITY_TESTS=$(grep -c "#\[test\]" tests/security_tests.rs || echo 0)
+        echo "Security test count: $SECURITY_TESTS"
+        if [ "$SECURITY_TESTS" -lt 15 ]; then
+          echo "❌ Insufficient security test coverage"
+          exit 1
+        fi
+
+        echo "✅ Comprehensive security audit passed"
 
   # Simple readiness gate
   production-ready:
