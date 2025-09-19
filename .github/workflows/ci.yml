@@ -66,7 +66,7 @@ jobs:
     - name: Run security tests
       run: |
         echo "🔒 Running security tests..."
-        cargo test --test security_tests --features=database --verbose
+        cargo test --test security_tests --features database --verbose
         echo "✅ Security tests completed"
 
     - name: Run Apache Arrow tests

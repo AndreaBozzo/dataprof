@@ -58,7 +58,7 @@ jobs:
     - name: Run security tests
       run: |
         echo "🔒 Running security tests for production..."
-        cargo test --test security_tests --features=database --verbose
+        cargo test --test security_tests --features database --verbose
         echo "✅ Security tests passed"
 
     - name: Test with features
@@ -131,7 +131,7 @@ jobs:
         fi
 
         # Run security tests
-        cargo test --test security_tests --features=database
+        cargo test --test security_tests --features database
 
         # Check test coverage
         SECURITY_TESTS=$(grep -c "#\[test\]" tests/security_tests.rs || echo 0)

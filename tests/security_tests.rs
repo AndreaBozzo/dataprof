@@ -3,6 +3,8 @@
 //! These tests verify that SQL injection attacks are properly prevented
 //! and that sensitive information is not disclosed through error messages.
 
+#![cfg(feature = "database")]
+
 use dataprof::database::security::{
     sanitize_error_message, validate_base_query, validate_sql_identifier,
 };
