@@ -554,12 +554,12 @@ mod tests {
     fn test_credentials_masking() {
         let mut creds = DatabaseCredentials::new();
         creds.username = Some("testuser".to_string());
-        creds.password = Some("secret123".to_string());
+        creds.password = Some("test_password".to_string());
 
         let masked = creds.to_masked_string();
         assert!(masked.contains("testuser"));
         assert!(masked.contains("***"));
-        assert!(!masked.contains("secret123"));
+        assert!(!masked.contains("test_password"));
     }
 
     #[test]
