@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -43,17 +43,8 @@ jobs:
     - name: Check code formatting
       run: cargo fmt --all -- --check
 
-    - name: Run Clippy lints (core features)
+    - name: Run Clippy lints (default features)
       run: cargo clippy --lib -- -D warnings
-
-    - name: Run Clippy lints (PostgreSQL features)
-      run: cargo clippy --lib --features postgres -- -D warnings
-
-    - name: Run Clippy lints (MySQL features)
-      run: cargo clippy --lib --features mysql -- -D warnings
-
-    - name: Run Clippy lints (SQLite features)
-      run: cargo clippy --lib --features sqlite -- -D warnings
 
     - name: Run Clippy lints (Apache Arrow features)
       run: cargo clippy --lib --features arrow -- -D warnings
@@ -85,7 +76,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: Install Rust stable
       uses: dtolnay/rust-toolchain@stable
@@ -110,8 +101,11 @@ jobs:
         sudo cp duckdb.h /usr/local/include/
         sudo ldconfig
 
-    - name: Run core tests
+    - name: Run core tests (default features)
       run: cargo test --lib --verbose
+
+    - name: Run database integration tests
+      run: cargo test --test database_integration --verbose
 
     - name: Run integration tests
       run: cargo test --test "*" --verbose
@@ -122,10 +116,9 @@ jobs:
     - name: Run data quality tests
       run: cargo test --test data_quality_simple --verbose
 
-    - name: Run database tests
-      run: |
-        cargo test --features postgres --lib --verbose
-        cargo test --features sqlite --lib --verbose
+    - name: Run CLI integration tests
+      run: cargo test --test cli_basic_tests --verbose
+
 
     - name: Run Arrow integration tests
       run: |

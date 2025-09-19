@@ -22,13 +22,19 @@ use dataprof::{
     DataProfilerError,
     DataType,
     ErrorSeverity,
+    MlReadinessEngine,
     ProgressInfo,
     QualityIssue,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-// Database support (optional)
+// Import new output formatters
+use dataprof::core::{exit_codes, DataprofConfig, InputValidator, ValidationError};
+use dataprof::output::formatters::create_formatter;
+use dataprof::output::progress::{display_startup_banner, ProgressManager};
+
+// Database support (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 use dataprof::{profile_database, DatabaseConfig};
 
@@ -38,6 +44,10 @@ enum OutputFormat {
     Text,
     /// Machine-readable JSON output
     Json,
+    /// CSV format for data processing
+    Csv,
+    /// Plain text without formatting for scripting
+    Plain,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -67,49 +77,116 @@ struct BenchmarkOutput {
 #[derive(Parser)]
 #[command(name = "dataprof")]
 #[command(
-    about = "Fast CSV data profiler with quality checking - v0.3.5 DB Connectors & Memory Safety Edition"
+    about = "Fast CSV data profiler with quality checking - v0.4.1 Enhanced CLI Edition",
+    long_about = r#"DataProfiler CLI - Fast CSV data profiling with ML readiness scoring
+
+A powerful command-line tool for analyzing CSV, JSON, and JSONL files with:
+• Quality assessment and data profiling
+• ML readiness scoring with preprocessing recommendations
+• Multiple output formats (JSON, CSV, HTML, plain text)
+• Batch processing with progress indicators
+• Configuration file support
+
+EXAMPLES:
+  # Basic file analysis
+  dataprof data.csv
+
+  # Generate HTML report with ML scoring
+  dataprof data.csv --html report.html --ml-score
+
+  # Batch process directory with progress
+  dataprof /data/folder --progress --recursive
+
+  # Use glob pattern for multiple files
+  dataprof --glob "data/**/*.csv" --format json
+
+  # Sample large files for faster analysis
+  dataprof large_file.csv --sample 10000 --streaming
+
+  # Custom configuration
+  dataprof data.csv --config .dataprof.toml --verbose
+
+  # Quality-focused analysis with detailed output
+  dataprof data.csv --quality --format csv --verbosity 2
+
+For more information, visit: https://github.com/AndreaBozzo/dataprof"#
 )]
 struct Cli {
-    /// File, directory, or glob pattern to analyze (use . for current dir with --glob)
+    /// Input file, directory, or glob pattern to analyze
+    ///
+    /// Examples:
+    ///   data.csv              Single CSV file
+    ///   /data/folder          Directory (use with --recursive)
+    ///   "data/**/*.csv"       Glob pattern (use with --glob)
     file: PathBuf,
 
-    /// Enable quality checking (shows data issues)
+    /// Enable comprehensive data quality assessment
+    ///
+    /// Performs detailed quality checks including missing value analysis,
+    /// data type validation, pattern detection, and outlier identification.
     #[arg(short, long)]
     quality: bool,
 
-    /// Generate HTML report (requires --quality)
+    /// Generate interactive HTML report at specified path
+    ///
+    /// Creates a comprehensive web-based report with visualizations,
+    /// quality metrics, and recommendations. Example: --html report.html
     #[arg(long)]
     html: Option<PathBuf>,
 
-    /// Use streaming engine for large files (v0.3.0)
+    /// Enable streaming mode for large files (recommended for >100MB)
+    ///
+    /// Processes files in chunks to minimize memory usage. Essential for
+    /// very large datasets or memory-constrained environments.
     #[arg(long)]
     streaming: bool,
 
-    /// Show progress during processing (requires --streaming)
+    /// Show real-time progress indicators (requires --streaming)
+    ///
+    /// Displays progress bars and processing status for batch operations.
+    /// Automatically enabled for long-running operations.
     #[arg(long)]
     progress: bool,
 
-    /// Override chunk size for streaming (default: adaptive)
+    /// Chunk size for streaming mode (rows per chunk)
+    ///
+    /// Controls memory usage vs processing speed trade-off. Auto-detected
+    /// based on available memory if not specified. Example: --chunk-size 1000
     #[arg(long)]
     chunk_size: Option<usize>,
 
-    /// Enable sampling for very large datasets
+    /// Sample size for large file analysis (process only N rows)
+    ///
+    /// Useful for quick analysis of very large files. Randomly samples
+    /// from the entire file for representative results. Example: --sample 10000
     #[arg(long)]
     sample: Option<usize>,
 
-    /// Process directory recursively
+    /// Enable recursive directory scanning
+    ///
+    /// When processing directories, scan all subdirectories for supported files.
+    /// Respects exclude patterns and file type filters.
     #[arg(short, long)]
     recursive: bool,
 
-    /// Use glob pattern for file matching (e.g., "data/**/*.csv")
+    /// Glob pattern for batch file processing
+    ///
+    /// Process multiple files matching a pattern. Supports standard glob syntax:
+    /// *, **, ?, [abc], {csv,json}. Example: --glob "data/**/*.csv"
     #[arg(long)]
     glob: Option<String>,
 
     /// Enable parallel processing for multiple files
+    ///
+    /// Processes multiple files concurrently to improve performance.
+    /// Automatically manages thread pool based on system capabilities.
     #[arg(long)]
     parallel: bool,
 
-    /// Maximum number of concurrent files to process
+    /// Maximum concurrent files for batch processing (0 = auto-detect)
+    ///
+    /// Controls parallelism level for multi-file operations. Auto-detection
+    /// uses CPU count. Lower values reduce memory usage.
     #[arg(long, default_value = "0")]
     max_concurrent: usize,
 
@@ -128,49 +205,131 @@ struct Cli {
     #[arg(long, default_value = "10000")]
     batch_size: usize,
 
-    /// Output format (default: text, json for machine-readable output)
+    /// Output format for results
+    ///
+    /// Available formats:
+    /// • text: Human-readable summary (default)
+    /// • json: Machine-readable JSON output
+    /// • csv:  Structured CSV format
+    /// • plain: Simple text without formatting
     #[arg(long, value_enum, default_value = "text")]
     format: OutputFormat,
 
-    /// Engine selection (default: auto for intelligent selection)
+    /// Processing engine selection (default: auto for intelligent selection)
+    ///
+    /// Available engines: auto, streaming, memory-mapped, standard.
+    /// Auto mode selects the best engine based on file size and system resources.
     #[arg(long, value_enum, default_value = "auto")]
     engine: EngineChoice,
 
-    /// Benchmark all available engines and show performance comparison
+    /// Enable performance benchmark mode
+    ///
+    /// Runs comprehensive performance tests on the provided file.
+    /// Measures processing speed, memory usage, and scalability metrics.
     #[arg(long)]
     benchmark: bool,
 
-    /// Show engine availability and system information
+    /// Show detailed engine information and exit
+    ///
+    /// Displays version, build info, feature flags, and system capabilities.
+    /// Useful for debugging and support purposes.
     #[arg(long)]
     engine_info: bool,
+
+    /// Enable ML readiness scoring and recommendations
+    ///
+    /// Analyzes data suitability for machine learning applications:
+    /// • Feature quality assessment • Encoding recommendations
+    /// • Preprocessing suggestions  • Blocking issue detection
+    #[arg(long)]
+    ml_score: bool,
+
+    /// Configuration file path (.toml format)
+    ///
+    /// Load settings from TOML configuration file. Auto-discovers
+    /// .dataprof.toml in current/parent directories. Example: --config ~/.dataprof.toml
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Verbosity level (can be used multiple times: -v, -vv, -vvv)
+    ///
+    /// • 0: Quiet mode (errors only)
+    /// • 1: Normal output with basic info
+    /// • 2: Verbose with detailed progress
+    /// • 3: Debug mode with trace information
+    #[arg(short = 'v', long, action = clap::ArgAction::Count)]
+    verbosity: u8,
+
+    /// Disable colored output (also set NO_COLOR environment variable)
+    ///
+    /// Forces plain text output without ANSI color codes.
+    /// Useful for CI/CD, logging, or terminal compatibility issues.
+    #[arg(long)]
+    no_color: bool,
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-
-    // Enhanced error handling wrapper
-    if let Err(e) = run_analysis(&cli) {
-        handle_error(&e, &cli.file);
-        std::process::exit(1);
+    // Custom parsing to handle engine-info without file argument
+    let args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--engine-info".to_string()) {
+        return show_engine_info();
     }
 
-    Ok(())
-}
+    let cli = Cli::parse();
 
-fn output_json_report(report: &dataprof::QualityReport) -> Result<()> {
-    let output = BenchmarkOutput {
-        rows: report
-            .file_info
-            .total_rows
-            .unwrap_or(report.scan_info.rows_scanned),
-        columns: report.file_info.total_columns,
-        file_size_mb: report.file_info.file_size_mb,
-        scan_time_ms: report.scan_info.scan_time_ms,
-        quality_score: report.quality_score().ok(),
+    // Input validation with helpful error messages
+    if let Err(e) = validate_cli_inputs(&cli) {
+        eprintln!("❌ {}", e);
+        std::process::exit(InputValidator::get_exit_code(&e));
+    }
+
+    // Load configuration with CLI integration
+    let mut config = if let Some(config_path) = &cli.config {
+        // Validate config file first
+        if let Err(e) = InputValidator::validate_config_file(config_path) {
+            eprintln!("❌ Configuration Error: {}", e);
+            std::process::exit(exit_codes::CONFIG_ERROR);
+        }
+        DataprofConfig::load_from_file(config_path)?
+    } else {
+        DataprofConfig::load_with_discovery()
     };
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
+    // Apply CLI overrides to configuration
+    config.merge_with_cli_args(
+        Some(match cli.format {
+            OutputFormat::Text => "text",
+            OutputFormat::Json => "json",
+            OutputFormat::Csv => "csv",
+            OutputFormat::Plain => "plain",
+        }),
+        Some(cli.quality),
+        Some(cli.progress),
+    );
+
+    // Handle verbosity and colors
+    if cli.no_color || std::env::var("NO_COLOR").is_ok() {
+        config.output.colored = false;
+    }
+    if cli.verbosity > 0 {
+        config.output.verbosity = cli.verbosity;
+    }
+
+    // Validate configuration
+    if let Err(e) = config.validate() {
+        eprintln!("❌ Configuration Error: {}", e);
+        std::process::exit(exit_codes::CONFIG_ERROR);
+    }
+
+    // Enhanced error handling wrapper with proper exit codes
+    match run_analysis(&cli, &config) {
+        Ok(_) => std::process::exit(exit_codes::SUCCESS),
+        Err(e) => {
+            let exit_code = determine_exit_code(&e);
+            handle_error(&e, &cli.file);
+            std::process::exit(exit_code);
+        }
+    }
 }
 
 fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
@@ -251,10 +410,16 @@ fn handle_error(error: &anyhow::Error, file_path: &Path) {
     }
 }
 
-fn run_analysis(cli: &Cli) -> Result<()> {
-    // Handle engine info request
-    if cli.engine_info {
-        return show_engine_info();
+fn run_analysis(cli: &Cli, config: &DataprofConfig) -> Result<()> {
+    // Create progress manager
+    let progress = ProgressManager::new(
+        config.output.show_progress && cli.progress,
+        config.output.verbosity.max(cli.verbosity),
+    );
+
+    // Display startup banner for non-JSON output
+    if !matches!(cli.format, OutputFormat::Json) && config.output.verbosity > 0 {
+        display_startup_banner("0.4.1", config.output.colored);
     }
 
     // Handle benchmark request
@@ -352,9 +517,61 @@ fn run_analysis(cli: &Cli) -> Result<()> {
             }
         };
 
-        // Handle JSON output for benchmarks
-        if matches!(cli.format, OutputFormat::Json) {
-            return output_json_report(&report);
+        // Handle ML scoring if requested
+        let ml_score = if cli.ml_score || config.ml.auto_score {
+            let ml_progress = progress.create_ml_progress(4); // 4 component scores
+
+            if let Some(ref pb) = ml_progress {
+                pb.set_message("Calculating completeness score...");
+                pb.set_position(1);
+            }
+
+            let ml_engine = MlReadinessEngine::new();
+
+            if let Some(ref pb) = ml_progress {
+                pb.set_message("Calculating consistency score...");
+                pb.set_position(2);
+            }
+
+            if let Some(ref pb) = ml_progress {
+                pb.set_message("Analyzing feature quality...");
+                pb.set_position(3);
+            }
+
+            let score = ml_engine.calculate_ml_score(&report)?;
+
+            if let Some(ref pb) = ml_progress {
+                pb.set_message("Generating recommendations...");
+                pb.set_position(4);
+                pb.finish_with_message("ML readiness analysis complete");
+            }
+
+            Some(score)
+        } else {
+            None
+        };
+
+        // Generate HTML report if requested (before any output formatting)
+        if let Some(html_path) = &cli.html {
+            match generate_html_report(&report, html_path) {
+                Ok(_) => {
+                    if matches!(cli.format, OutputFormat::Text) {
+                        println!(
+                            "📄 HTML report saved to: {}",
+                            html_path.display().to_string().bright_green()
+                        );
+                        println!();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to generate HTML report: {}", e);
+                }
+            }
+        }
+
+        // Handle enhanced output formatting
+        if !matches!(cli.format, OutputFormat::Text) {
+            return output_with_formatter(&report, &cli.format, ml_score.as_ref());
         }
 
         // Show basic file info
@@ -374,24 +591,13 @@ fn run_analysis(cli: &Cli) -> Result<()> {
         }
         println!();
 
+        // Show ML score if available
+        if let Some(ref score) = ml_score {
+            display_ml_score(score);
+        }
+
         // Show quality issues first
         display_quality_issues(&report.issues);
-
-        // Generate HTML report if requested
-        if let Some(html_path) = &cli.html {
-            match generate_html_report(&report, html_path) {
-                Ok(_) => {
-                    println!(
-                        "📄 HTML report saved to: {}",
-                        html_path.display().to_string().bright_green()
-                    );
-                    println!();
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to generate HTML report: {}", e);
-                }
-            }
-        }
 
         // Then show column profiles
         for profile in report.column_profiles {
@@ -615,7 +821,8 @@ fn run_batch_glob(cli: &Cli, pattern: &str) -> Result<()> {
     );
 
     let config = create_batch_config(cli);
-    let processor = BatchProcessor::with_config(config);
+    let progress_manager = ProgressManager::new(cli.progress, cli.verbosity);
+    let processor = BatchProcessor::with_progress(config, progress_manager);
 
     let result = processor.process_glob(pattern)?;
     display_batch_results(&result, cli);
@@ -633,7 +840,8 @@ fn run_batch_directory(cli: &Cli) -> Result<()> {
     );
 
     let config = create_batch_config(cli);
-    let processor = BatchProcessor::with_config(config);
+    let progress_manager = ProgressManager::new(cli.progress, cli.verbosity);
+    let processor = BatchProcessor::with_progress(config, progress_manager);
 
     let result = processor.process_directory(&cli.file)?;
     display_batch_results(&result, cli);
@@ -773,6 +981,11 @@ fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
         batch_size: cli.batch_size,
         max_connections: Some(10),
         connection_timeout: Some(std::time::Duration::from_secs(30)),
+        retry_config: Some(dataprof::database::RetryConfig::default()),
+        sampling_config: None,
+        enable_ml_readiness: true,
+        ssl_config: Some(dataprof::database::SslConfig::default()),
+        load_credentials_from_env: true,
     };
 
     // Run async analysis
@@ -993,4 +1206,245 @@ fn run_benchmark_analysis(cli: &Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Enhanced output using formatter pattern
+fn output_with_formatter(
+    report: &dataprof::QualityReport,
+    format: &OutputFormat,
+    ml_score: Option<&dataprof::analysis::MlReadinessScore>,
+) -> Result<()> {
+    let format_str = match format {
+        OutputFormat::Json => "json",
+        OutputFormat::Csv => "csv",
+        OutputFormat::Plain => "plain",
+        OutputFormat::Text => "text", // Fallback
+    };
+
+    let formatter = create_formatter(format_str);
+    let mut output = formatter.format_report(report)?;
+
+    // Add ML score to JSON output if available
+    if matches!(format, OutputFormat::Json) && ml_score.is_some() {
+        let mut json_value: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(summary) = json_value.get_mut("summary") {
+            if let Some(score) = ml_score {
+                summary["ml_readiness"] = serde_json::json!({
+                    "score": score.overall_score,
+                    "level": score.readiness_level,
+                    "recommendations": score.recommendations,
+                    "feature_analysis": score.feature_analysis
+                });
+            }
+        }
+        output = serde_json::to_string_pretty(&json_value)?;
+    }
+
+    println!("{}", output);
+    Ok(())
+}
+
+/// Display ML readiness score in human-readable format
+fn display_ml_score(score: &dataprof::analysis::MlReadinessScore) {
+    use dataprof::analysis::MlReadinessLevel;
+
+    let (level_icon, level_color) = match score.readiness_level {
+        MlReadinessLevel::Ready => ("🚀", "green"),
+        MlReadinessLevel::Good => ("✅", "green"),
+        MlReadinessLevel::NeedsWork => ("⚠️", "yellow"),
+        MlReadinessLevel::NotReady => ("❌", "red"),
+    };
+
+    println!(
+        "🤖 {} Machine Learning Readiness",
+        "ML READINESS SCORE".bright_blue().bold()
+    );
+
+    // Overall score with color coding
+    let score_str = format!("{:.1}%", score.overall_score);
+    let colored_score = match score.readiness_level {
+        MlReadinessLevel::Ready | MlReadinessLevel::Good => score_str.green().bold(),
+        MlReadinessLevel::NeedsWork => score_str.yellow().bold(),
+        MlReadinessLevel::NotReady => score_str.red().bold(),
+    };
+
+    println!(
+        "   {} Overall Score: {} ({})",
+        level_icon,
+        colored_score,
+        format!("{:?}", score.readiness_level).color(level_color)
+    );
+
+    // Component scores
+    println!("   📊 Component Scores:");
+    println!("      • Completeness: {:.1}%", score.completeness_score);
+    println!("      • Consistency:  {:.1}%", score.consistency_score);
+    println!(
+        "      • Type Suitability: {:.1}%",
+        score.type_suitability_score
+    );
+    println!(
+        "      • Feature Quality: {:.1}%",
+        score.feature_quality_score
+    );
+
+    // Blocking issues
+    if !score.blocking_issues.is_empty() {
+        println!("\n   🔴 {} Blocking Issues:", "CRITICAL".red().bold());
+        for issue in &score.blocking_issues {
+            println!("      • {}", issue.description.red());
+            println!("        → {}", issue.resolution_required);
+        }
+    }
+
+    // Top recommendations
+    if !score.recommendations.is_empty() {
+        println!("\n   💡 {} Top Recommendations:", "ML".bright_cyan().bold());
+        for (i, rec) in score.recommendations.iter().take(3).enumerate() {
+            let priority_icon = match rec.priority {
+                dataprof::analysis::ml_readiness::RecommendationPriority::Critical => "🔴",
+                dataprof::analysis::ml_readiness::RecommendationPriority::High => "🟠",
+                dataprof::analysis::ml_readiness::RecommendationPriority::Medium => "🟡",
+                dataprof::analysis::ml_readiness::RecommendationPriority::Low => "🔵",
+            };
+            println!("      {}. {} {}", i + 1, priority_icon, rec.description);
+        }
+
+        if score.recommendations.len() > 3 {
+            println!(
+                "      ... and {} more recommendations",
+                score.recommendations.len() - 3
+            );
+        }
+    }
+
+    // Feature analysis summary
+    let ready_features = score
+        .feature_analysis
+        .iter()
+        .filter(|f| f.ml_suitability > 0.7)
+        .count();
+    let total_features = score.feature_analysis.len();
+
+    println!(
+        "\n   🔧 Feature Analysis: {}/{} features ML-ready (>70% suitability)",
+        ready_features, total_features
+    );
+
+    // Preprocessing steps
+    if !score.preprocessing_suggestions.is_empty() {
+        println!(
+            "   🛠️  Preprocessing Steps: {} recommended",
+            score.preprocessing_suggestions.len()
+        );
+    }
+
+    println!();
+}
+
+/// Validate CLI inputs with helpful error messages
+fn validate_cli_inputs(cli: &Cli) -> Result<(), ValidationError> {
+    // Validate file input (unless it's engine info or benchmark mode)
+    if !cli.engine_info && !cli.benchmark {
+        InputValidator::validate_file_input(&cli.file)?;
+    }
+
+    // Validate HTML output path if specified
+    if let Some(html_path) = &cli.html {
+        InputValidator::validate_output_directory(html_path)?;
+
+        // Ensure HTML extension
+        if html_path.extension().and_then(|s| s.to_str()) != Some("html") {
+            return Err(ValidationError {
+                message: "HTML output file must have .html extension".to_string(),
+                suggestion: format!("Use: {}.html", html_path.with_extension("").display()),
+                error_code: exit_codes::INVALID_ARGUMENT,
+            });
+        }
+    }
+
+    // Validate chunk size
+    if let Some(chunk_size) = cli.chunk_size {
+        InputValidator::validate_chunk_size(chunk_size)?;
+    }
+
+    // Validate sample size
+    if let Some(sample_size) = cli.sample {
+        InputValidator::validate_sample_size(sample_size)?;
+    }
+
+    // Validate argument combinations
+    InputValidator::validate_argument_combinations(
+        cli.streaming,
+        cli.sample,
+        cli.progress,
+        cli.benchmark,
+    )?;
+
+    // Validate database connection if provided
+    #[cfg(feature = "database")]
+    if let Some(connection_string) = &cli.database {
+        InputValidator::validate_database_connection(connection_string)?;
+    }
+
+    // Validate glob pattern if provided
+    if let Some(pattern) = &cli.glob {
+        InputValidator::validate_glob_pattern(pattern)?;
+    }
+
+    // Validate concurrent settings
+    if cli.max_concurrent > 100 {
+        return Err(ValidationError {
+            message: format!("Max concurrent value too high: {}", cli.max_concurrent),
+            suggestion: "Use a reasonable value (1-100) to avoid system overload".to_string(),
+            error_code: exit_codes::INVALID_ARGUMENT,
+        });
+    }
+
+    // HTML requires quality mode
+    if cli.html.is_some() && !cli.quality {
+        return Err(ValidationError {
+            message: "HTML report requires quality checking".to_string(),
+            suggestion: "Add --quality flag when using --html".to_string(),
+            error_code: exit_codes::INVALID_ARGUMENT,
+        });
+    }
+
+    Ok(())
+}
+
+/// Determine appropriate exit code based on error type
+fn determine_exit_code(error: &anyhow::Error) -> i32 {
+    // Check if it's our custom error type first
+    if let Some(dp_error) = error.downcast_ref::<DataProfilerError>() {
+        match dp_error {
+            DataProfilerError::FileNotFound { .. } => exit_codes::FILE_NOT_FOUND,
+            DataProfilerError::UnsupportedFormat { .. } => exit_codes::INVALID_DATA_FORMAT,
+            DataProfilerError::MemoryLimitExceeded => exit_codes::NO_SPACE_LEFT,
+            DataProfilerError::InvalidConfiguration { .. } => exit_codes::CONFIG_ERROR,
+            DataProfilerError::StreamingError { .. } => exit_codes::PROCESSING_ERROR,
+            DataProfilerError::IoError { .. } => exit_codes::GENERAL_ERROR,
+            DataProfilerError::JsonParsingError { .. } => exit_codes::INVALID_DATA_FORMAT,
+            DataProfilerError::CsvParsingError { .. } => exit_codes::INVALID_DATA_FORMAT,
+            _ => exit_codes::PROCESSING_ERROR,
+        }
+    } else if let Some(validation_error) = error.downcast_ref::<ValidationError>() {
+        validation_error.error_code
+    } else {
+        // Handle common error types
+        let error_str = error.to_string().to_lowercase();
+        if error_str.contains("no such file") || error_str.contains("not found") {
+            exit_codes::FILE_NOT_FOUND
+        } else if error_str.contains("permission denied") || error_str.contains("access") {
+            exit_codes::PERMISSION_DENIED
+        } else if error_str.contains("invalid") || error_str.contains("malformed") {
+            exit_codes::INVALID_DATA_FORMAT
+        } else if error_str.contains("database") || error_str.contains("connection") {
+            exit_codes::DATABASE_ERROR
+        } else if error_str.contains("network") || error_str.contains("timeout") {
+            exit_codes::NETWORK_ERROR
+        } else {
+            exit_codes::GENERAL_ERROR
+        }
+    }
 }

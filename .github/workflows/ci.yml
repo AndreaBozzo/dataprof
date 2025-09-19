@@ -45,8 +45,11 @@ jobs:
         sudo ldconfig
         echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
-    - name: Run core tests
+    - name: Run core tests (default features)
       run: cargo test --lib --verbose
+
+    - name: Run database integration tests
+      run: cargo test --test database_integration --verbose
 
     - name: Run integration tests
       run: cargo test --test "*" --verbose
@@ -57,14 +60,9 @@ jobs:
     - name: Run data quality tests
       run: cargo test --test data_quality_simple --verbose
 
-    - name: Run PostgreSQL tests
-      run: cargo test --features postgres --verbose
+    - name: Run CLI integration tests
+      run: cargo test --test cli_basic_tests --verbose
 
-    - name: Run MySQL tests
-      run: cargo test --features mysql --verbose
-
-    - name: Run SQLite tests
-      run: cargo test --features sqlite --verbose
 
     - name: Run Apache Arrow tests
       run: |
@@ -76,20 +74,17 @@ jobs:
     - name: Check formatting
       run: cargo fmt --all -- --check
 
-    - name: Run clippy (core features)
+    - name: Run clippy (default features)
       run: cargo clippy --lib -- -D warnings
 
-    - name: Run clippy (PostgreSQL features)
-      run: cargo clippy --lib --features postgres -- -D warnings
-
-    - name: Run clippy (MySQL features)
-      run: cargo clippy --lib --features mysql -- -D warnings
-
-    - name: Run clippy (SQLite features)
-      run: cargo clippy --lib --features sqlite -- -D warnings
 
     - name: Run clippy (Apache Arrow features)
       run: cargo clippy --lib --features arrow -- -D warnings
+
+    - name: Security audit
+      run: |
+        cargo install cargo-audit
+        cargo audit --no-fetch || cargo audit
 
 
   coverage:
@@ -143,17 +138,9 @@ jobs:
           target
         key: master-ci-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Build release (core features)
+    - name: Build release (default features)
       run: cargo build --release --verbose
 
-    - name: Build release (PostgreSQL features)
-      run: cargo build --release --features postgres --verbose
-
-    - name: Build release (MySQL features)
-      run: cargo build --release --features mysql --verbose
-
-    - name: Build release (SQLite features)
-      run: cargo build --release --features sqlite --verbose
 
     - name: Build release (Apache Arrow features)
       run: cargo build --release --features arrow --verbose

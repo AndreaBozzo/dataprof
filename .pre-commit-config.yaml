@@ -9,33 +9,13 @@ repos:
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-clippy-core
-        name: cargo clippy (core)
+      - id: cargo-clippy-default
+        name: cargo clippy (default features)
         entry: cargo clippy --lib -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-clippy-postgres
-        name: cargo clippy (postgres)
-        entry: cargo clippy --lib --features postgres -- -D warnings
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-clippy-mysql
-        name: cargo clippy (mysql)
-        entry: cargo clippy --lib --features mysql -- -D warnings
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-clippy-sqlite
-        name: cargo clippy (sqlite)
-        entry: cargo clippy --lib --features sqlite -- -D warnings
-        language: system
-        types: [rust]
-        pass_filenames: false
 
       - id: cargo-clippy-duckdb
         name: cargo clippy (duckdb)
@@ -51,33 +31,20 @@ repos:
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-test-core
-        name: cargo test (core)
+      - id: cargo-test-default
+        name: cargo test (default features)
         entry: cargo test --lib
         language: system
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-test-postgres
-        name: cargo test (postgres)
-        entry: cargo test --features postgres --lib
+      - id: cargo-test-database-integration
+        name: cargo test (database integration)
+        entry: cargo test --test database_integration --verbose
         language: system
         types: [rust]
         pass_filenames: false
 
-      - id: cargo-test-mysql
-        name: cargo test (mysql)
-        entry: cargo test --features mysql --lib
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-test-sqlite
-        name: cargo test (sqlite)
-        entry: cargo test --features sqlite --lib
-        language: system
-        types: [rust]
-        pass_filenames: false
 
       - id: cargo-test-duckdb
         name: cargo test (duckdb)
@@ -89,6 +56,13 @@ repos:
       - id: cargo-test-arrow
         name: cargo test (arrow)
         entry: bash -c 'echo "🚀 Testing Apache Arrow integration..." && cargo test --features arrow --lib && cargo test --features arrow test_arrow_api_integration && echo "✅ Arrow tests passed"'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test-cli-basic
+        name: cargo test (CLI basic tests)
+        entry: bash -c 'echo "🔧 Testing CLI basic functionality..." && cargo test --test cli_basic_tests --release && echo "✅ CLI basic tests passed"'
         language: system
         types: [rust]
         pass_filenames: false

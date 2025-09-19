@@ -1,6 +1,6 @@
 [package]
 name = "dataprof"
-version = "0.4.1"
+version = "0.4.4"
 edition = "2021"
 license = "GPL-3.0"
 authors = ["Andrea Bozzo"]
@@ -31,6 +31,12 @@ regex = "1.10"
 # JSON support
 serde_json = "1.0"
 
+# Enhanced CLI features - Core functionality
+toml = "0.8"
+log = "0.4"
+indicatif = "0.17"
+# clap_complete = "4.4"  # Temporarily disabled for Windows compatibility
+
 # System info for adaptive chunking
 sysinfo = "0.30"
 
@@ -39,6 +45,8 @@ rayon = "1.8"
 
 # Memory mapping for large files
 memmap2 = "0.9"
+
+# Note: Async support temporarily disabled
 
 # SIMD acceleration
 wide = "0.7"
@@ -54,8 +62,9 @@ num_cpus = "1.16"
 
 # Python bindings
 pyo3 = { version = "0.24.1", features = ["extension-module"], optional = true }
+# pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"], optional = true }
 
-# Database connectors
+# Database connectors and async runtime
 tokio = { version = "1.0", features = ["full"], optional = true }
 async-trait = { version = "0.1", optional = true }
 sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "chrono", "uuid"], optional = true, default-features = false }
@@ -87,6 +96,10 @@ fake = { version = "2.9", features = ["derive"] }
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
 
+# CLI integration testing - temporarily disabled due to Windows registry issues
+# assert_cmd = "1.0"
+# predicates = "2.1"
+
 [[bin]]
 name = "dataprof-cli"
 path = "src/main.rs"
@@ -106,32 +119,46 @@ harness = false
 
 # Debug profile per sviluppo veloce
 [profile.dev]
-opt-level = 1        # Ottimizzazione minima per compilazione veloce
+opt-level = 0        # Nessuna ottimizzazione per compilazione più veloce
 debug = true         # Mantieni simboli debug
 split-debuginfo = "packed"  # Su Windows
 incremental = true   # Build incrementali
+codegen-units = 256  # Parallelizzazione massima per dev builds
 
 # Profile per test veloci
 [profile.test]
 opt-level = 1
-# panic = "unwind" is default for tests
+debug = 2
+incremental = true
+codegen-units = 256
 
 # Release profile ottimizzato
 [profile.release]
-lto = true
+lto = "thin"        # LTO più veloce di "true"
 codegen-units = 1
 opt-level = 3
+panic = "abort"     # Riduce dimensione binario
 
-# Bench profile (based on release, panic unwind is default for benchmarks)
+# Bench profile (based on release, but needs panic = "unwind" for benchmarks)
 [profile.bench]
 inherits = "release"
+panic = "unwind"  # Required for benchmarks and tests
+
+
+# Configurazione per dipendenze più veloci
+[profile.dev.package."*"]
+opt-level = 1    # Ottimizza le dipendenze anche in dev mode
+
+[profile.test.package."*"]
+opt-level = 1    # Ottimizza le dipendenze anche nei test
 
 # Features
 [features]
-default = []
+default = []  # Minimal by default - MUCH faster compilation
 
 # Individual features
 python = ["dep:pyo3"]
+# python-async = ["python", "dep:pyo3-asyncio", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
 arrow = ["dep:arrow"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
@@ -139,11 +166,13 @@ mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 duckdb = ["database", "dep:duckdb"]
 
-# Sensible feature combinations (do NOT use --all-features due to dependency conflicts)
+# Sensible feature combinations
+minimal = []  # Just CSV processing - fastest builds
 production = ["postgres", "mysql"]  # Most common production databases
+all-db = ["postgres", "mysql", "sqlite", "duckdb"]  # All databases
 
 
-# Python extension configuration
+# Library configuration - rlib for internal use, cdylib for Python bindings
 [lib]
 name = "dataprof"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib", "cdylib"]
