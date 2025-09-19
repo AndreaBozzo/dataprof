@@ -6,21 +6,31 @@
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
 [![PyPI](https://img.shields.io/pypi/v/dataprof.svg)](https://pypi.org/project/dataprof/)
 
-**High-performance data quality library for production pipelines**
 
-DataProfiler analyzes datasets with 20x better memory efficiency than pandas, handles unlimited file sizes through streaming, and detects 30+ quality issues automatically. Built in Rust with Python bindings and direct database connectivity.
+**DISCLAIMER FOR HUMAN READERS**
+
+dataprof, even if working, is in early-stage development, therefore you might encounter bugs, minor or even major ones during your data-quality exploration journey.
+
+Report them appropriately by opening an issue or by mailing the maintainer for security issues.
+
+Thanks for your time here!
+
+**High-performance data quality and ML readiness assessment library**
+
+DataProfiler v0.4.4 delivers 20x better memory efficiency than pandas, unlimited file streaming, 30+ automated quality checks, and **NEW: comprehensive ML readiness assessment**. Built in Rust with full Python bindings and production-ready database connectivity.
 
 ![DataProfiler HTML Report](assets/animations/HTML.gif)
 
 ![DataProfiler HTML ML Report](assets/screenshots/MLfeatshtml.png)
 
-## ✨ Key Features
+## ✨ Key Features (v0.4.4)
 
+- **🤖 ML Readiness Assessment**: Automated feature analysis, blocking issues detection, preprocessing recommendations
 - **⚡ High Performance**: 20x more memory efficient than pandas with Apache Arrow integration
 - **🌊 Scalable**: Stream processing for files larger than RAM (tested up to 100GB)
-- **🔍 Smart Quality Detection**: Automatically finds nulls, duplicates, outliers, format issues
-- **🗃️ Database Connectivity**: Direct profiling of PostgreSQL, MySQL, SQLite, DuckDB
-- **🐍 Python & Rust APIs**: Library-first design with comprehensive bindings
+- **🔍 Smart Quality Detection**: 30+ automated checks for nulls, duplicates, outliers, format issues
+- **🗃️ Production Database Support**: PostgreSQL, MySQL, SQLite, DuckDB with SSL/TLS and retry logic
+- **🐍 Complete Python Integration**: Native bindings with pandas, scikit-learn, Jupyter support
 
 ## 🚀 Quick Start
 
@@ -32,11 +42,15 @@ pip install dataprof
 ```python
 import dataprof
 
-# Analyze CSV with quality assessment
+# NEW v0.4.4: ML readiness assessment
+ml_score = dataprof.ml_readiness_score("data.csv")
+print(f"ML Readiness: {ml_score.readiness_level} ({ml_score.overall_score:.1f}%)")
+
+# Quality analysis with detailed reporting
 report = dataprof.analyze_csv_with_quality("data.csv")
 print(f"Quality score: {report.quality_score():.1f}%")
 
-# Profile database table directly
+# Production database profiling with SSL
 profiles = dataprof.analyze_database("postgresql://user:pass@host/db", "users")
 ```
 
@@ -76,51 +90,62 @@ dataprof huge_file.csv --streaming --progress
 
 ## 💡 Real-World Examples
 
+**NEW v0.4.4: ML Pipeline Integration**
+```python
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.pipeline import Pipeline
+import dataprof
+
+# Step 1: ML readiness assessment guides preprocessing
+ml_score = dataprof.ml_readiness_score("dataset.csv")
+features_df = dataprof.feature_analysis_dataframe("dataset.csv")
+
+# Step 2: Auto-categorize features for scikit-learn pipeline
+numeric_features = features_df[features_df['feature_type'] == 'numeric']['column_name'].tolist()
+categorical_features = features_df[features_df['feature_type'] == 'categorical']['column_name'].tolist()
+
+# Step 3: Build preprocessing pipeline based on DataProf recommendations
+preprocessor = Pipeline([
+    ('scaler', StandardScaler())  # Applied to numeric features
+])
+print(f"✅ Pipeline ready with {len(numeric_features)} numeric, {len(categorical_features)} categorical features")
+```
+
 **Production Quality Gate**
 ```python
-from dataprof import quick_quality_check
+from dataprof import quick_quality_check, ml_readiness_score
 
-def validate_pipeline_data(file_path):
+def validate_ml_pipeline_data(file_path):
     quality_score = quick_quality_check(file_path)
+    ml_score = ml_readiness_score(file_path)
+
     if quality_score < 85.0:
         raise Exception(f"Data quality too low: {quality_score:.1f}%")
-    return quality_score
+    if ml_score.overall_score < 70.0:
+        raise Exception(f"ML readiness too low: {ml_score.overall_score:.1f}%")
+
+    return quality_score, ml_score.overall_score
 ```
 
-**Jupyter Data Exploration**
-```python
-report = dataprof.analyze_csv_with_quality("experiment_data.csv")
-
-# Quick overview
-print(f"📊 Quality: {report.quality_score():.1f}% | Rows: {report.scan_info.rows_scanned:,}")
-
-# Identify issues
-for issue in report.issues:
-    print(f"⚠️ {issue.severity}: {issue.description}")
-```
-
-**Database Monitoring**
+**Database Monitoring with ML Assessment**
 ```bash
-# Monitor daily data loads
-dataprof daily_sales --database "mysql://user:pass@prod-db/warehouse" \
+# Monitor daily data loads with ML readiness
+dataprof daily_sales --database "postgresql://user:pass@prod-db/warehouse" \
   --query "SELECT * FROM sales WHERE date = CURRENT_DATE" \
-  --quality --json | jq '.quality_score'
+  --quality --ml-readiness --json | jq '.ml_readiness.overall_score'
 ```
 
 ## 📖 Documentation
 
 | Guide | Description |
 |-------|-------------|
-| **[Python Overview](https://github.com/AndreaBozzo/dataprof/wiki/Python-Overview)** | Getting started with Python bindings |
-| **[Python API Reference](https://github.com/AndreaBozzo/dataprof/wiki/Python-API-Reference)** | Complete function and class reference |
-| **[ML Features Guide](https://github.com/AndreaBozzo/dataprof/wiki/Python-ML-Features)** | ML readiness assessment and recommendations |
-| **[Python Integrations](https://github.com/AndreaBozzo/dataprof/wiki/Python-Integrations)** | Pandas, scikit-learn, Jupyter, Airflow integration |
-| **[Database Connectors](https://github.com/AndreaBozzo/dataprof/wiki/Database-Connectors)** | PostgreSQL, MySQL, SQLite, DuckDB integration |
-| **[Apache Arrow Integration](https://github.com/AndreaBozzo/dataprof/wiki/Apache-Arrow-Integration)** | High-performance columnar processing guide |
-| **[Performance Guide](https://github.com/AndreaBozzo/dataprof/wiki/Performance-Guide)** | Benchmarks, optimization tips, and tool selection |
-| **[CLI Guide](https://github.com/AndreaBozzo/dataprof/wiki/CLI-Usage-Guide)** | General CLI usage
+| **[Python API Reference](docs/python/API_REFERENCE.md)** | Complete function and class reference |
+| **[ML Features Guide](docs/python/ML_FEATURES.md)** | NEW: ML readiness assessment and preprocessing recommendations |
+| **[Python Integrations](docs/python/INTEGRATIONS.md)** | Pandas, scikit-learn, Jupyter, Airflow workflows |
+| **[Database Connectors](docs/database-connectors.md)** | Production PostgreSQL, MySQL, SQLite, DuckDB with SSL/TLS |
+| **[CLI Usage Guide](docs/CLI_USAGE_GUIDE.md)** | Comprehensive CLI with progress indicators and validation |
 
-Additional resources: [CHANGELOG](CHANGELOG.md) • [CONTRIBUTING](CONTRIBUTING.md) • [LICENSE](LICENSE)
+Resources: [CHANGELOG](CHANGELOG.md) • [CONTRIBUTING](CONTRIBUTING.md) • [LICENSE](LICENSE)
 
 ## 🛠️ Development
 
