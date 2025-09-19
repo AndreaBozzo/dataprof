@@ -54,26 +54,62 @@ jobs:
       run: |
         echo "Generating changelog from ${{ steps.prev-tag.outputs.prev_tag }} to ${{ steps.tag.outputs.tag }}..."
 
-        # Get commit messages and format them
         PREV_TAG="${{ steps.prev-tag.outputs.prev_tag }}"
         CURRENT_TAG="${{ steps.tag.outputs.tag }}"
+        VERSION="${{ steps.tag.outputs.version }}"
 
-        # Get commit messages and format them (handle both tag and commit hash ranges)
-        CHANGELOG=$(git log --pretty=format:"- %s" "$PREV_TAG".."$CURRENT_TAG" 2>/dev/null | \
-          grep -E "(feat|fix|refactor|perf|docs|test):" | \
-          sed 's/feat:/✨ **Feature:**/g' | \
-          sed 's/fix:/🐛 **Fix:**/g' | \
-          sed 's/refactor:/🔧 **Refactor:**/g' | \
-          sed 's/perf:/⚡ **Performance:**/g' | \
-          sed 's/docs:/📚 **Documentation:**/g' | \
-          sed 's/test:/🧪 **Testing:**/g' | \
-          head -20)
-
-        if [ -z "$CHANGELOG" ]; then
-          CHANGELOG="- Various improvements and bug fixes"
+        # Strategy 1: Try to extract from CHANGELOG.md [Unreleased] section
+        echo "🔍 Checking CHANGELOG.md for [Unreleased] section..."
+        if [ -f "CHANGELOG.md" ]; then
+          CHANGELOG_CONTENT=$(awk '/^## \[Unreleased\]/{flag=1;next}/^## \[/{flag=0}flag' CHANGELOG.md | sed '/^$/d')
+          if [ -n "$CHANGELOG_CONTENT" ] && [ "$CHANGELOG_CONTENT" != "## [Unreleased]" ]; then
+            echo "✅ Found rich changelog content in CHANGELOG.md"
+            CHANGELOG="$CHANGELOG_CONTENT"
+            CHANGELOG_SOURCE="changelog"
+          fi
         fi
 
-        # Generate full release notes
+        # Strategy 2: Fallback to PR extraction from merge commits
+        if [ -z "$CHANGELOG" ]; then
+          echo "🔍 Extracting merged PRs since last tag..."
+          PR_COMMITS=$(git log --pretty=format:"%s" "$PREV_TAG".."$CURRENT_TAG" 2>/dev/null | \
+            grep -E "^Merge pull request #[0-9]+" || true)
+
+          if [ -n "$PR_COMMITS" ]; then
+            echo "✅ Found PR merge commits"
+            CHANGELOG=$(echo "$PR_COMMITS" | \
+              sed 's/Merge pull request #\([0-9]*\) from [^:]*: */- 🔀 **PR #\1:** /' | \
+              sed 's/Merge pull request #\([0-9]*\) from .*/- 🔀 **PR #\1:** Merged changes/' | \
+              head -10)
+            CHANGELOG_SOURCE="prs"
+          fi
+        fi
+
+        # Strategy 3: Fallback to conventional commits
+        if [ -z "$CHANGELOG" ]; then
+          echo "🔍 Using conventional commit messages..."
+          CHANGELOG=$(git log --pretty=format:"- %s" "$PREV_TAG".."$CURRENT_TAG" 2>/dev/null | \
+            grep -E "(feat|fix|refactor|perf|docs|test):" | \
+            sed 's/feat:/✨ **Feature:**/g' | \
+            sed 's/fix:/🐛 **Fix:**/g' | \
+            sed 's/refactor:/🔧 **Refactor:**/g' | \
+            sed 's/perf:/⚡ **Performance:**/g' | \
+            sed 's/docs:/📚 **Documentation:**/g' | \
+            sed 's/test:/🧪 **Testing:**/g' | \
+            head -20)
+          CHANGELOG_SOURCE="commits"
+        fi
+
+        # Strategy 4: Final fallback
+        if [ -z "$CHANGELOG" ]; then
+          echo "⚠️ No structured changelog found, using fallback"
+          CHANGELOG="- Various improvements and bug fixes"
+          CHANGELOG_SOURCE="fallback"
+        fi
+
+        echo "📝 Using changelog source: $CHANGELOG_SOURCE"
+
+        # Generate release notes with improved footer
         cat > release_notes.md << EOF
         ## What's Changed
 
@@ -82,31 +118,34 @@ jobs:
         ## 📦 Assets
 
         ### CLI Binaries
-        - **Linux (x86_64)**: \`dataprof-${{ steps.tag.outputs.version }}-x86_64-unknown-linux-gnu\`
-        - **macOS (Intel)**: \`dataprof-${{ steps.tag.outputs.version }}-x86_64-apple-darwin\`
-        - **macOS (Apple Silicon)**: \`dataprof-${{ steps.tag.outputs.version }}-aarch64-apple-darwin\`
-        - **Windows**: \`dataprof-${{ steps.tag.outputs.version }}-x86_64-pc-windows-msvc.exe\`
+        - **Linux (x86_64)**: \`dataprof-$VERSION-x86_64-unknown-linux-gnu\`
+        - **macOS (Intel)**: \`dataprof-$VERSION-x86_64-apple-darwin\`
+        - **macOS (Apple Silicon)**: \`dataprof-$VERSION-aarch64-apple-darwin\`
+        - **Windows**: \`dataprof-$VERSION-x86_64-pc-windows-msvc.exe\`
 
         ### Python Package
-        - Available on [PyPI](https://pypi.org/project/dataprof/): \`pip install dataprof==${{ steps.tag.outputs.version }}\`
+        - Available on [PyPI](https://pypi.org/project/dataprof/): \`pip install dataprof==$VERSION\`
         - Platform wheels for Linux, macOS, and Windows
 
         ### Rust Crate
-        - Available on [crates.io](https://crates.io/crates/dataprof): \`cargo add dataprof@${{ steps.tag.outputs.version }}\`
+        - Available on [crates.io](https://crates.io/crates/dataprof): \`cargo add dataprof@$VERSION\`
 
         ## 🚀 Installation
 
         \`\`\`bash
         # CLI via Cargo
-        cargo install dataprof@${{ steps.tag.outputs.version }}
+        cargo install dataprof@$VERSION
 
         # Python package
-        pip install dataprof==${{ steps.tag.outputs.version }}
+        pip install dataprof==$VERSION
 
         # Or download binaries from this release
         \`\`\`
 
         ---
+
+        📋 **For detailed changes and migration notes, see:** [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)
+
         🤖 Generated with [Claude Code](https://claude.ai/code)
         EOF
 
