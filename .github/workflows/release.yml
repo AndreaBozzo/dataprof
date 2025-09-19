@@ -347,10 +347,12 @@ jobs:
         rust-toolchain: stable
       env:
         RUSTFLAGS: ${{ matrix.rustflags }}
-        # Additional environment variables to ensure compatibility
+        # Additional environment variables to ensure compatibility for all targets
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.rustflags }}
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.rustflags }}
         CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: ${{ matrix.rustflags }}
         CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
+        CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
         # Disable any CPU-specific optimizations in dependencies
         CFLAGS: "-march=x86-64"
         CXXFLAGS: "-march=x86-64"
