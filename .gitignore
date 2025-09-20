@@ -31,6 +31,10 @@ example_usage/
 # Logs
 *.log
 
+# Cargo credentials (never commit these)
+.cargo/credentials
+.cargo/credentials.toml
+
 # Claude files
 CLAUDE.md
 .claude/

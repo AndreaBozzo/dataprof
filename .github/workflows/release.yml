@@ -124,8 +124,10 @@ jobs:
         - **Windows**: \`dataprof-$VERSION-x86_64-pc-windows-msvc.exe\`
 
         ### Python Package
-        - Available on [PyPI](https://pypi.org/project/dataprof/): \`pip install dataprof==$VERSION\`
-        - Platform wheels for Linux, macOS, and Windows
+        - **PyPI (baseline compatibility)**: \`pip install dataprof==$VERSION\`
+        - **GitHub Releases**: Additional optimized wheels available for better performance
+          - **Baseline wheels**: Maximum compatibility (works on all CPUs)
+          - **Optimized wheels**: Performance optimized (requires modern CPUs)
 
         ### Rust Crate
         - Available on [crates.io](https://crates.io/crates/dataprof): \`cargo add dataprof@$VERSION\`
@@ -202,6 +204,9 @@ jobs:
 
     - name: Build binary
       run: |
+        # Use baseline CPU target for maximum compatibility
+        export RUSTFLAGS="-C target-cpu=x86-64"
+
         if [ "${{ matrix.cross }}" = "true" ]; then
           cross build --release --target ${{ matrix.target }} --bin dataprof-cli --features="arrow"
         else
@@ -277,24 +282,53 @@ jobs:
           fi
         fi
 
-  # Step 3: Build Python Wheels
+  # Step 3: Build Python Wheels with CPU Compatibility
   python-wheels:
-    name: Build Python Wheels (${{ matrix.os }}-${{ matrix.target }})
+    name: Build Python Wheels (${{ matrix.os }}-${{ matrix.target }}-${{ matrix.cpu_profile }})
     runs-on: ${{ matrix.os }}
     needs: create-release
     strategy:
       matrix:
         include:
+          # Baseline compatibility builds (maximum compatibility)
           - os: ubuntu-latest
             target: x86_64
+            cpu_profile: baseline
+            rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
           - os: ubuntu-latest
             target: aarch64
+            cpu_profile: baseline
+            rustflags: "-C target-cpu=generic -C opt-level=2"
           - os: windows-latest
             target: x64
+            cpu_profile: baseline
+            rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
           - os: macos-13
             target: x86_64
+            cpu_profile: baseline
+            rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
           - os: macos-latest
             target: aarch64
+            cpu_profile: baseline
+            rustflags: "-C target-cpu=generic -C opt-level=2"
+
+          # Optimized builds (performance optimized)
+          - os: ubuntu-latest
+            target: x86_64
+            cpu_profile: optimized
+            rustflags: "-C target-cpu=native"
+          - os: windows-latest
+            target: x64
+            cpu_profile: optimized
+            rustflags: "-C target-cpu=native"
+          - os: macos-13
+            target: x86_64
+            cpu_profile: optimized
+            rustflags: "-C target-cpu=native"
+          - os: macos-latest
+            target: aarch64
+            cpu_profile: optimized
+            rustflags: "-C target-cpu=native"
 
     steps:
     - uses: actions/checkout@v5
@@ -302,18 +336,80 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Build wheels
+    - name: Build wheels (${{ matrix.cpu_profile }})
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
         args: --release --out dist --find-interpreter --features python
         sccache: 'true'
         manylinux: auto
+        # Ensure compatibility flags are properly set
+        rust-toolchain: stable
+      env:
+        RUSTFLAGS: ${{ matrix.rustflags }}
+        # Additional environment variables to ensure compatibility for all targets
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.rustflags }}
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ matrix.rustflags }}
+        CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: ${{ matrix.rustflags }}
+        CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
+        CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
+        # Disable any CPU-specific optimizations in dependencies
+        CFLAGS: "-march=x86-64"
+        CXXFLAGS: "-march=x86-64"
+
+    - name: Verify wheel compatibility (baseline only)
+      if: matrix.cpu_profile == 'baseline'
+      run: |
+        # Install objdump/readelf for analysis (Linux only for now)
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          echo "🔍 Verifying baseline wheel has no advanced CPU instructions..."
+          cd dist
+
+          for wheel in *.whl; do
+            if [ -f "$wheel" ]; then
+              echo "Analyzing wheel: $wheel"
+
+              # Extract wheel and find .so files
+              python -m zipfile -e "$wheel" wheel_extracted/
+
+              # Check for advanced CPU instructions in shared libraries
+              find wheel_extracted/ -name "*.so" -exec sh -c '
+                echo "Checking $1 for advanced CPU instructions..."
+                if objdump -d "$1" 2>/dev/null | grep -E "(vzeroupper|vmovdqu|vpor|vpaddd)" >/dev/null; then
+                  echo "⚠️  WARNING: Found AVX instructions in $1"
+                  echo "This wheel may not be compatible with older CPUs"
+                else
+                  echo "✅ No advanced CPU instructions found in $1"
+                fi
+              ' _ {} \;
+
+              rm -rf wheel_extracted/
+            fi
+          done
+        else
+          echo "Skipping compatibility check on ${{ matrix.os }}"
+        fi
+      shell: bash
+
+    - name: Rename wheels with CPU profile suffix
+      run: |
+        cd dist
+        for wheel in *.whl; do
+          if [ -f "$wheel" ]; then
+            # Extract base name without .whl extension
+            base_name="${wheel%.whl}"
+            # Add CPU profile suffix before the .whl extension
+            new_name="${base_name}-${{ matrix.cpu_profile }}.whl"
+            mv "$wheel" "$new_name"
+            echo "Renamed: $wheel -> $new_name"
+          fi
+        done
+      shell: bash
 
     - name: Upload wheels as artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: wheels-${{ matrix.os }}-${{ matrix.target }}
+        name: wheels-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.cpu_profile }}
         path: dist
 
     - name: Upload wheels to release
@@ -329,7 +425,7 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Step 4: Publish to PyPI
+  # Step 4: Publish to PyPI (baseline wheels only for maximum compatibility)
   pypi-publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
@@ -337,10 +433,10 @@ jobs:
     permissions:
       id-token: write
     steps:
-    - name: Download all wheels
+    - name: Download baseline wheels only
       uses: actions/download-artifact@v4
       with:
-        pattern: wheels-*
+        pattern: wheels-*-baseline
         merge-multiple: true
         path: dist
 

@@ -7,24 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### 🛡️ Critical Security Fixes - Issue #41
-- **FIXED:** 🚨 **SQL Injection Vulnerabilities** - Complete protection against SQL injection attacks across all database connectors
-- **FIXED:** 🔐 **Information Disclosure** - Error message sanitization to prevent credential and sensitive data leaks
-- **NEW:** 🛡️ **Input Validation System** - Comprehensive validation for SQL identifiers, table names, and queries
-- **NEW:** 🧪 **Security Test Suite** - 16 comprehensive security tests covering SQL injection, error sanitization, and edge cases
-- **NEW:** 🔄 **CI/CD Security Gates** - Automated security regression prevention in GitHub Actions workflows
-- **NEW:** 📊 **Memory Leak Detection** - Enhanced memory tracker with stack trace collection in debug builds
+## [0.4.53] - 2025-09-20 - "CPU Compatibility & Build System Fixes"
 
-#### Security Functions Added
-- `validate_sql_identifier()` - Prevents injection through table/column names with allowlist approach
-- `validate_base_query()` - Ensures only safe SELECT queries with dangerous pattern blocking
-- `sanitize_error_message()` - Removes passwords, connection strings, file paths, and IP addresses from logs
+### 🔧 Critical Bug Fixes & Build System Improvements
 
-#### Database Connectors Secured
-- ✅ **PostgreSQL** - All query execution points protected with input validation
-- ✅ **MySQL/MariaDB** - Complete SQL injection prevention implemented
-- ✅ **SQLite** - Embedded database security hardening applied
-- ✅ **DuckDB** - Analytical database connector fully secured
+#### CPU Compatibility & Multi-Architecture Support
+- **FIXED:** 🚨 **Critical "Illegal instruction" errors** with Python wheels on older CPUs (f53ea50)
+- **NEW:** 🏗️ **Multi-target build system** - Separate baseline and optimized wheel builds
+- **NEW:** 🛡️ **Universal CPU compatibility** - PyPI wheels use conservative `target-cpu=x86-64`
+- **NEW:** ⚡ **Performance-optimized builds** - Available in GitHub Releases for modern CPUs
+- **FIXED:** 🔧 **ARM64 target architecture support** - RUSTFLAGS now apply to all platforms (d41ba0c)
+- **NEW:** 🔍 **Automated CPU instruction verification** - CI prevents AVX instructions in baseline builds
+
+#### Build System & Development Environment
+- **IMPROVED:** 📦 **Cargo.lock consistency** - Fixed line endings and version conflicts (6265ab2)
+- **IMPROVED:** 🧹 **Dependency management** - Updated gitignore and cleaned dependencies (766789f)
+- **FIXED:** 🛠️ **Clippy warnings** - Resolved dead_code warning in memory tracker (3ad2952)
+- **IMPROVED:** 🏗️ **Conservative local builds** - `.cargo/config.toml` configured for compatibility
+
+#### Technical Implementation Details
+- **Release Workflow Enhancements**: Dual-build strategy with CPU profiling
+- **Cross-Platform Support**: ARM64 macOS and Linux targets properly configured
+- **Quality Assurance**: Automated objdump analysis prevents compatibility regressions
+- **Documentation**: Clear wheel type distinction for users
+
+#### User Experience Improvements
+- ✅ **Zero installation failures** - Baseline wheels work on all x86-64 CPUs
+- ✅ **Transparent performance** - Users can choose optimized wheels if desired
+- ✅ **Developer-friendly** - Local builds use safe, compatible settings
+- ✅ **CI/CD reliability** - All architectures properly handled in release pipeline
+
+### 📋 Related Issues Resolved
+- **Issue #51**: ✅ Error message sanitization implemented and verified
+- **Issue #53**: ✅ Memory tracker stack trace collection implemented and verified
+
+### 🔄 Migration & Compatibility
+- **100% Backward Compatible** - No breaking changes to APIs or CLI interfaces
+- **Automatic PyPI Compatibility** - Users get working wheels by default
+- **Optional Performance** - Advanced users can use optimized wheels from GitHub Releases
+- **Developer Workflow** - Local builds automatically use safe CPU targeting
+
+### 📊 Performance & Quality
+- **Zero Regressions** - All existing functionality preserved
+- **Enhanced Reliability** - Reduced build failures and CPU compatibility issues
+- **Better CI/CD** - Improved cross-platform build consistency
+- **Quality Gates** - Automated verification prevents compatibility regressions
+
+### 🚀 Files Changed Summary
+- `.cargo/config.toml` - Conservative CPU targeting for local development
+- `.github/workflows/release.yml` - Multi-target build system with verification
+- `CHANGELOG.md` - Updated with v0.4.53 changes
+- `notebooks/` - Added comprehensive demo notebooks for v0.4.5 features
+- `src/core/memory_tracker.rs` - Fixed clippy warnings
+- `Cargo.lock` - Version and line ending consistency fixes
 
 ## [0.4.4]
 
