@@ -39,6 +39,7 @@ fn capture_stack_trace() -> String {
 
 /// Placeholder for release builds
 #[cfg(not(debug_assertions))]
+#[allow(dead_code)]
 fn capture_stack_trace() -> String {
     "Stack trace only available in debug builds".to_string()
 }
