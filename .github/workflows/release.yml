@@ -396,12 +396,15 @@ jobs:
         cd dist
         for wheel in *.whl; do
           if [ -f "$wheel" ]; then
-            # Extract base name without .whl extension
-            base_name="${wheel%.whl}"
-            # Add CPU profile suffix before the .whl extension
-            new_name="${base_name}-${{ matrix.cpu_profile }}.whl"
-            mv "$wheel" "$new_name"
-            echo "Renamed: $wheel -> $new_name"
+            # Only rename optimized wheels - baseline wheels keep standard names for PyPI
+            if [ "${{ matrix.cpu_profile }}" = "optimized" ]; then
+              base_name="${wheel%.whl}"
+              new_name="${base_name}-optimized.whl"
+              mv "$wheel" "$new_name"
+              echo "Renamed optimized wheel: $wheel -> $new_name"
+            else
+              echo "Keeping baseline wheel name: $wheel"
+            fi
           fi
         done
       shell: bash
@@ -439,6 +442,26 @@ jobs:
         pattern: wheels-*-baseline
         merge-multiple: true
         path: dist
+
+    - name: Verify wheels for PyPI compatibility
+      run: |
+        cd dist
+        echo "🔍 Verifying wheels for PyPI publishing..."
+        for wheel in *.whl; do
+          if [[ "$wheel" == *"-optimized.whl" ]]; then
+            echo "❌ Removing optimized wheel from PyPI upload: $wheel"
+            rm "$wheel"
+          else
+            echo "✅ PyPI-compatible wheel: $wheel"
+          fi
+        done
+
+        wheel_count=$(ls -1 *.whl 2>/dev/null | wc -l)
+        echo "📦 Total wheels for PyPI: $wheel_count"
+        if [ "$wheel_count" -eq 0 ]; then
+          echo "❌ No wheels found for PyPI publishing"
+          exit 1
+        fi
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
