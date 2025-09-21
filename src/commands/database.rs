@@ -2,7 +2,7 @@ use anyhow::Result;
 use colored::*;
 
 use crate::cli::args::Cli;
-use crate::output::{display_profile, display_quality_issues};
+use dataprof::output::{display_profile, display_quality_issues};
 use dataprof::{generate_html_report, profile_database, DatabaseConfig};
 
 #[cfg(feature = "database")]
