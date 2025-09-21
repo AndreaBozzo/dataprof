@@ -417,7 +417,8 @@ mod tests {
     fn test_basic_dataset_generation() {
         let config = DatasetConfig::new(DatasetSize::Micro, DatasetPattern::Basic);
         let temp_path = std::env::temp_dir().join("test_basic_dataset.csv");
-        DatasetGenerator::generate_to_path(&config, &temp_path).expect("Failed to generate test dataset");
+        DatasetGenerator::generate_to_path(&config, &temp_path)
+            .expect("Failed to generate test dataset");
 
         assert!(temp_path.exists());
         let content = fs::read_to_string(&temp_path).expect("Failed to read test dataset");
