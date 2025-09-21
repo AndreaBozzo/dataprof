@@ -108,6 +108,7 @@ impl DomainDatasetGenerator {
         let mut writer = BufWriter::new(file);
 
         // Generate streaming-optimized data with consistent schemas
+        use crate::testing::DatasetPattern;
         match pattern {
             DatasetPattern::Basic => {
                 Self::generate_streaming_basic(&mut writer, config)?;
@@ -118,8 +119,8 @@ impl DomainDatasetGenerator {
             DatasetPattern::Mixed => {
                 Self::generate_streaming_mixed(&mut writer, config)?;
             }
-            _ => {
-                return Err("Pattern not supported for streaming domain".into());
+            DatasetPattern::Wide | DatasetPattern::Deep | DatasetPattern::Unicode | DatasetPattern::Messy => {
+                return Err(format!("Pattern {:?} not supported for streaming domain (only Basic, Numeric, Mixed are supported)", pattern).into());
             }
         }
 

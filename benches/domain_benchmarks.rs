@@ -311,7 +311,7 @@ fn bench_streaming_patterns(c: &mut Criterion) {
 
     for (pattern_name, pattern) in patterns {
         let file_path = DomainDatasets::streaming(DatasetSize::Medium, pattern)
-            .expect("Failed to generate streaming dataset");
+            .unwrap_or_else(|e| panic!("Failed to generate streaming dataset for pattern '{}': {}", pattern_name, e));
         let file_size = std::fs::metadata(&file_path)
             .expect("Failed to read metadata")
             .len();
