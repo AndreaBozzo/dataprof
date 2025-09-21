@@ -895,6 +895,7 @@ dependencies = [
  "glob",
  "glob-match",
  "indicatif",
+ "lazy_static",
  "log",
  "memmap2",
  "num_cpus",

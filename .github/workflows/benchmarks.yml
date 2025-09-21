@@ -28,6 +28,8 @@ on:
         type: choice
         options:
           - all
+          - unified
+          - domain
           - simple
           - large-scale
           - memory
@@ -95,17 +97,17 @@ jobs:
             target
           key: benchmark-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run simple benchmarks
+      - name: Run unified benchmarks (quick)
         run: |
-          echo "⚡ Running lightweight benchmarks for PR validation..."
-          cargo bench --bench simple_benchmarks -- --sample-size 10 --measurement-time 10
-          echo "✅ Simple benchmarks completed"
+          echo "⚡ Running unified benchmarks for PR validation..."
+          cargo bench --bench unified_benchmarks -- --sample-size 10 --measurement-time 10 "micro_performance"
+          echo "✅ Unified benchmarks completed"
 
-      - name: Run memory check
+      - name: Run domain benchmarks (quick)
         run: |
-          echo "🧠 Running memory efficiency check..."
-          cargo bench --bench memory_benchmarks -- --sample-size 10 --measurement-time 10 "memory_pattern/1K"
-          echo "✅ Memory check completed"
+          echo "🏢 Running domain-specific benchmarks for PR validation..."
+          cargo bench --bench domain_benchmarks -- --sample-size 10 --measurement-time 10 "database_patterns"
+          echo "✅ Domain benchmarks completed"
 
   # Full benchmark suite for main/staging branches
   full-benchmarks:
@@ -145,23 +147,25 @@ jobs:
       - name: Create benchmark results directory
         run: mkdir -p benchmark-results
 
-      - name: Run simple benchmarks
+      - name: Run unified benchmarks
         run: |
-          echo "🏃 Running simple benchmarks..."
-          cargo bench --bench simple_benchmarks > benchmark-results/simple.txt 2>&1
-          echo "✅ Simple benchmarks completed"
+          echo "🏃 Running unified benchmarks..."
+          cargo bench --bench unified_benchmarks > benchmark-results/unified.txt 2>&1
+          echo "✅ Unified benchmarks completed"
 
-      - name: Run large-scale benchmarks
+      - name: Run domain-specific benchmarks
         run: |
-          echo "📊 Running large-scale benchmarks..."
-          cargo bench --bench large_scale_benchmarks > benchmark-results/large_scale.txt 2>&1
-          echo "✅ Large-scale benchmarks completed"
+          echo "🏢 Running domain-specific benchmarks..."
+          cargo bench --bench domain_benchmarks > benchmark-results/domain.txt 2>&1
+          echo "✅ Domain benchmarks completed"
 
-      - name: Run memory benchmarks
+      - name: Run legacy benchmarks (for comparison)
         run: |
-          echo "🧠 Running memory benchmarks..."
-          cargo bench --bench memory_benchmarks > benchmark-results/memory.txt 2>&1
-          echo "✅ Memory benchmarks completed"
+          echo "📊 Running legacy benchmarks for comparison..."
+          cargo bench --bench simple_benchmarks > benchmark-results/legacy_simple.txt 2>&1
+          cargo bench --bench large_scale_benchmarks > benchmark-results/legacy_large.txt 2>&1
+          cargo bench --bench memory_benchmarks > benchmark-results/legacy_memory.txt 2>&1
+          echo "✅ Legacy benchmarks completed"
 
       - name: Run external comparison benchmarks
         run: |
@@ -182,22 +186,39 @@ jobs:
             echo '{"version":"1.0","benchmarks":[],"statistics":{}}' > benchmark-results/performance_baseline.json
           fi
 
+          # Check unified benchmark results
+          if [[ -f "benchmark-results/unified_benchmark_results.json" ]]; then
+            python scripts/performance_regression_check.py benchmark-results/unified_benchmark_results.json \
+              --baseline benchmark-results/performance_baseline.json \
+              --update-baseline > benchmark-results/unified_regression_analysis.txt 2>&1 || \
+            echo "Unified regression analysis completed with warnings" > benchmark-results/unified_regression_analysis.txt
+          fi
+
+          # Check domain benchmark results
+          if [[ -f "benchmark-results/domain_benchmark_results.json" ]]; then
+            python scripts/performance_regression_check.py benchmark-results/domain_benchmark_results.json \
+              --baseline benchmark-results/domain_baseline.json \
+              --update-baseline > benchmark-results/domain_regression_analysis.txt 2>&1 || \
+            echo "Domain regression analysis completed with warnings" > benchmark-results/domain_regression_analysis.txt
+          fi
+
+          # Legacy comparison benchmark analysis
           if [[ -f "benchmark-results/benchmark_comparison_results.json" ]]; then
             python scripts/performance_regression_check.py benchmark-results/benchmark_comparison_results.json \
               --baseline benchmark-results/performance_baseline.json \
-              --update-baseline > benchmark-results/regression_analysis.txt 2>&1 || \
-            echo "Regression analysis completed with warnings" > benchmark-results/regression_analysis.txt
+              --update-baseline > benchmark-results/legacy_regression_analysis.txt 2>&1 || \
+            echo "Legacy regression analysis completed with warnings" > benchmark-results/legacy_regression_analysis.txt
             echo "✅ Regression analysis completed"
           else
-            echo "⚠️ No benchmark results file found for regression analysis" > benchmark-results/regression_analysis.txt
-            echo "⚠️ No benchmark results file found for regression analysis"
+            echo "⚠️ No legacy benchmark results file found for regression analysis" > benchmark-results/legacy_regression_analysis.txt
+            echo "⚠️ No legacy benchmark results file found for regression analysis"
           fi
 
       - name: Generate benchmark report
         run: |
           echo "📈 Generating benchmark report..."
 
-          # Create proper report with expanded shell commands
+          # Create comprehensive report with unified and domain benchmarks
           cat > benchmark-results/report.md << EOF
           # DataProfiler Performance Benchmark Report
 
@@ -205,21 +226,16 @@ jobs:
           **Commit:** \`${{ github.sha }}\`
           **Date:** $(date -u)
 
-          ## Benchmark Results
+          ## 🚀 Unified Benchmark Results (New System)
 
-          ### Simple Benchmarks
+          ### Unified Performance Suite
           \`\`\`
-          $(head -20 benchmark-results/simple.txt 2>/dev/null || echo "Simple benchmarks data not available - check workflow logs")
-          \`\`\`
-
-          ### Large Scale Performance
-          \`\`\`
-          $(head -20 benchmark-results/large_scale.txt 2>/dev/null || echo "Large scale benchmarks data not available - check workflow logs")
+          $(head -30 benchmark-results/unified.txt 2>/dev/null || echo "Unified benchmarks data not available - check workflow logs")
           \`\`\`
 
-          ### Memory Usage
+          ### Domain-Specific Performance
           \`\`\`
-          $(head -20 benchmark-results/memory.txt 2>/dev/null || echo "Memory benchmarks data not available - check workflow logs")
+          $(head -30 benchmark-results/domain.txt 2>/dev/null || echo "Domain benchmarks data not available - check workflow logs")
           \`\`\`
 
           ### External Tool Comparison
@@ -227,13 +243,67 @@ jobs:
           $(cat benchmark-results/comparison.txt 2>/dev/null || echo "Comparison benchmarks data not available - check workflow logs")
           \`\`\`
 
-          ### Performance Regression Analysis
+          ## 📊 Regression Analysis
+
+          ### Unified Benchmarks Regression
           \`\`\`
-          $(cat benchmark-results/regression_analysis.txt 2>/dev/null || echo "Regression analysis data not available - baseline file missing")
+          $(cat benchmark-results/unified_regression_analysis.txt 2>/dev/null || echo "Unified regression analysis not available")
+          \`\`\`
+
+          ### Domain Benchmarks Regression
+          \`\`\`
+          $(cat benchmark-results/domain_regression_analysis.txt 2>/dev/null || echo "Domain regression analysis not available")
+          \`\`\`
+
+          ## 📋 Legacy Benchmarks (For Comparison)
+
+          ### Simple Benchmarks
+          \`\`\`
+          $(head -20 benchmark-results/legacy_simple.txt 2>/dev/null || echo "Legacy simple benchmarks data not available")
+          \`\`\`
+
+          ### Large Scale Performance
+          \`\`\`
+          $(head -20 benchmark-results/legacy_large.txt 2>/dev/null || echo "Legacy large scale benchmarks data not available")
+          \`\`\`
+
+          ### Memory Usage
+          \`\`\`
+          $(head -20 benchmark-results/legacy_memory.txt 2>/dev/null || echo "Legacy memory benchmarks data not available")
+          \`\`\`
+
+          ### Legacy Regression Analysis
+          \`\`\`
+          $(cat benchmark-results/legacy_regression_analysis.txt 2>/dev/null || echo "Legacy regression analysis data not available")
+          \`\`\`
+
+          ## 📈 Structured Results (JSON)
+
+          ### Unified Benchmark Results
+          Available at: \`benchmark-results/unified_benchmark_results.json\`
+
+          ### Domain Benchmark Results
+          Available at: \`benchmark-results/domain_benchmark_results.json\`
+
+          ### Unified Report
+          \`\`\`
+          $(cat benchmark-results/unified_benchmark_report.md 2>/dev/null || echo "Unified benchmark report not available")
+          \`\`\`
+
+          ### Domain Report
+          \`\`\`
+          $(cat benchmark-results/domain_benchmark_report.md 2>/dev/null || echo "Domain benchmark report not available")
           \`\`\`
 
           ---
           🤖 Generated automatically by GitHub Actions | Run ID: ${{ github.run_id }}
+
+          **New in this version:**
+          - ✅ Unified benchmark infrastructure with standardized datasets
+          - ✅ Domain-specific test suites (transactions, timeseries, streaming)
+          - ✅ Unified result collection in JSON format
+          - ✅ Cross-platform memory detection
+          - ✅ Statistical rigor and outlier detection preparation
           EOF
 
           echo "✅ Report generated with proper shell expansion"
@@ -317,6 +387,12 @@ jobs:
       - name: Run selected benchmarks
         run: |
           case "$BENCHMARK_TYPE" in
+            "unified")
+              cargo bench --bench unified_benchmarks
+              ;;
+            "domain")
+              cargo bench --bench domain_benchmarks
+              ;;
             "simple")
               cargo bench --bench simple_benchmarks
               ;;
@@ -330,8 +406,9 @@ jobs:
               python scripts/benchmark_comparison.py 1 5 25
               ;;
             "all"|*)
+              cargo bench --bench unified_benchmarks -- --sample-size 10
+              cargo bench --bench domain_benchmarks -- --sample-size 10
               cargo bench --bench simple_benchmarks -- --sample-size 10
-              cargo bench --bench memory_benchmarks -- --sample-size 10 "memory_pattern/1K"
               python scripts/benchmark_comparison.py 1 10
               ;;
           esac
@@ -397,15 +474,22 @@ jobs:
           {
             "files": {
               "report.md": "$(test -f benchmark-results/report.md && echo 'available' || echo 'missing')",
+              "unified.txt": "$(test -f benchmark-results/unified.txt && echo 'available' || echo 'missing')",
+              "domain.txt": "$(test -f benchmark-results/domain.txt && echo 'available' || echo 'missing')",
               "comparison.txt": "$(test -f benchmark-results/comparison.txt && echo 'available' || echo 'missing')",
-              "simple.txt": "$(test -f benchmark-results/simple.txt && echo 'available' || echo 'missing')",
-              "large_scale.txt": "$(test -f benchmark-results/large_scale.txt && echo 'available' || echo 'missing')",
-              "memory.txt": "$(test -f benchmark-results/memory.txt && echo 'available' || echo 'missing')",
-              "regression_analysis.txt": "$(test -f benchmark-results/regression_analysis.txt && echo 'available' || echo 'missing')"
+              "unified_benchmark_results.json": "$(test -f benchmark-results/unified_benchmark_results.json && echo 'available' || echo 'missing')",
+              "domain_benchmark_results.json": "$(test -f benchmark-results/domain_benchmark_results.json && echo 'available' || echo 'missing')",
+              "unified_benchmark_report.md": "$(test -f benchmark-results/unified_benchmark_report.md && echo 'available' || echo 'missing')",
+              "domain_benchmark_report.md": "$(test -f benchmark-results/domain_benchmark_report.md && echo 'available' || echo 'missing')",
+              "legacy_simple.txt": "$(test -f benchmark-results/legacy_simple.txt && echo 'available' || echo 'missing')",
+              "legacy_large.txt": "$(test -f benchmark-results/legacy_large.txt && echo 'available' || echo 'missing')",
+              "legacy_memory.txt": "$(test -f benchmark-results/legacy_memory.txt && echo 'available' || echo 'missing')"
             },
             "summary": {
               "total_files": $(ls benchmark-results/ | wc -l),
-              "successful_benchmarks": "$(grep -c '✅.*completed' benchmark-results/*.txt 2>/dev/null || echo '0')"
+              "successful_benchmarks": "$(grep -c '✅.*completed' benchmark-results/*.txt 2>/dev/null || echo '0')",
+              "unified_system": "$(test -f benchmark-results/unified_benchmark_results.json && echo 'active' || echo 'inactive')",
+              "domain_system": "$(test -f benchmark-results/domain_benchmark_results.json && echo 'active' || echo 'inactive')"
             }
           }
           EOF
@@ -476,13 +560,26 @@ jobs:
               </div>
 
               <div class="metric success">
-                <h3>📊 Latest Benchmark Results <span class="badge badge-success">Live</span></h3>
-                <p>Performance benchmarks completed successfully with comprehensive analysis.</p>
+                <h3>🚀 Latest Unified Benchmark Results <span class="badge badge-success">New System</span></h3>
+                <p>Unified benchmarking infrastructure with standardized datasets and domain-specific tests.</p>
                 <div style="margin-top: 15px;">
                   <a href="data/$TIMESTAMP/report.md">📋 Full Report</a> |
+                  <a href="data/$TIMESTAMP/unified_benchmark_report.md">🎯 Unified Report</a> |
+                  <a href="data/$TIMESTAMP/domain_benchmark_report.md">🏢 Domain Report</a> |
                   <a href="data/$TIMESTAMP/comparison.txt">🔄 pandas Comparison</a> |
                   <a href="https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}">🔍 Workflow Logs</a>
                 </div>
+              </div>
+
+              <div class="metric info">
+                <h3>📈 Benchmark System Modernization</h3>
+                <ul style="list-style: none; padding: 0;">
+                  <li style="margin: 8px 0;"><strong>✅ Unified Infrastructure:</strong> Consolidated from 3 fragmented benchmark files</li>
+                  <li style="margin: 8px 0;"><strong>✅ Domain-Specific Tests:</strong> Transactions, TimeSeries, Streaming data</li>
+                  <li style="margin: 8px 0;"><strong>✅ Standardized Datasets:</strong> 7 realistic patterns (Basic, Mixed, Numeric, Wide, Deep, Unicode, Messy)</li>
+                  <li style="margin: 8px 0;"><strong>✅ JSON Result Collection:</strong> Structured data for CI/CD integration</li>
+                  <li style="margin: 8px 0;"><strong>✅ Statistical Foundation:</strong> Prepared for rigorous analysis</li>
+                </ul>
               </div>
 
               <div class="metric info">
