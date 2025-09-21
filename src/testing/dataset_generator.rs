@@ -417,10 +417,10 @@ mod tests {
     fn test_basic_dataset_generation() {
         let config = DatasetConfig::new(DatasetSize::Micro, DatasetPattern::Basic);
         let temp_path = std::env::temp_dir().join("test_basic_dataset.csv");
-        DatasetGenerator::generate_to_path(&config, &temp_path).unwrap();
+        DatasetGenerator::generate_to_path(&config, &temp_path).expect("Failed to generate test dataset");
 
         assert!(temp_path.exists());
-        let content = fs::read_to_string(&temp_path).unwrap();
+        let content = fs::read_to_string(&temp_path).expect("Failed to read test dataset");
         assert!(content.contains("id,name,age,score"));
         assert!(content.lines().count() > 100);
 
@@ -430,10 +430,10 @@ mod tests {
 
     #[test]
     fn test_mixed_dataset_generation() {
-        let path = StandardDatasets::micro("mixed").unwrap();
+        let path = StandardDatasets::micro("mixed").expect("Failed to generate mixed dataset");
         assert!(path.exists());
 
-        let content = fs::read_to_string(&path).unwrap();
+        let content = fs::read_to_string(&path).expect("Failed to read mixed dataset");
         assert!(content.contains("id,name,email"));
         assert!(content.contains("@example.com"));
 
@@ -443,10 +443,10 @@ mod tests {
 
     #[test]
     fn test_numeric_dataset_generation() {
-        let path = StandardDatasets::small("numeric").unwrap();
+        let path = StandardDatasets::small("numeric").expect("Failed to generate numeric dataset");
         assert!(path.exists());
 
-        let content = fs::read_to_string(&path).unwrap();
+        let content = fs::read_to_string(&path).expect("Failed to read numeric dataset");
         assert!(content.contains("value1,value2,value3"));
 
         // Cleanup

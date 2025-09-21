@@ -6,7 +6,7 @@ pub use dataset_generator::{
     DatasetConfig, DatasetGenerator, DatasetPattern, DatasetSize, StandardDatasets,
 };
 pub use result_collection::{
-    BenchmarkResult, BenchmarkSuiteResults, FileBenchmarkResult, ResultCollector, SuiteMetadata,
+    BenchmarkResult, BenchmarkSuiteResults, CriterionResultParams, FileBenchmarkResult, ResultCollector, SuiteMetadata,
 };
 
 // Domain datasets functionality
