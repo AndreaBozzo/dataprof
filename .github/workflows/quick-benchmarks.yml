@@ -68,13 +68,13 @@ jobs:
         run: |
           echo "⚡ Running micro dataset performance test..."
           # Test only smallest datasets with minimal measurement time
-          timeout 180 cargo bench --bench unified_benchmarks small_performance -- --sample-size 5 --measurement-time 3
+          timeout 180 cargo bench --bench unified_benchmarks small_performance -- --sample-size 10 --measurement-time 3
 
       - name: Quick Smoke Test
         run: |
           echo "💨 Running basic functionality smoke test..."
           # Test core functionality with minimal overhead
-          timeout 120 cargo bench --bench domain_benchmarks micro_performance -- --sample-size 3 --measurement-time 2
+          timeout 120 cargo bench --bench domain_benchmarks micro_performance -- --sample-size 10 --measurement-time 2
 
       - name: Report Quick Results
         run: |
