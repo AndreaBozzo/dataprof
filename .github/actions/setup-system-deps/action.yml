@@ -4,17 +4,18 @@ description: 'Install DuckDB, SQLite and other system dependencies'
 runs:
   using: composite
   steps:
-    - name: Cache system dependencies
-      id: cache-sys-deps
-      uses: actions/cache@v4
-      with:
-        path: |
-          /usr/local/lib/libduckdb.so
-          /usr/local/include/duckdb.h
-        key: system-deps-duckdb-1.1.3-${{ runner.os }}
+    - name: Check if DuckDB is installed
+      id: check-duckdb
+      shell: bash
+      run: |
+        if [ -f "/usr/local/lib/libduckdb.so" ] && [ -f "/usr/local/include/duckdb.h" ]; then
+          echo "duckdb-exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "duckdb-exists=false" >> $GITHUB_OUTPUT
+        fi
 
     - name: Install system dependencies
-      if: steps.cache-sys-deps.outputs.cache-hit != 'true'
+      if: steps.check-duckdb.outputs.duckdb-exists != 'true'
       shell: bash
       run: |
         echo "📦 Installing system dependencies..."
