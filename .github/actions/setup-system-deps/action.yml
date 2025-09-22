@@ -15,6 +15,7 @@ runs:
 
     - name: Install system dependencies
       if: steps.cache-sys-deps.outputs.cache-hit != 'true'
+      shell: bash
       run: |
         echo "📦 Installing system dependencies..."
         sudo apt-get update
@@ -29,11 +30,10 @@ runs:
         rm -f libduckdb-linux-amd64.zip libduckdb.so duckdb.h
 
         echo "✅ System dependencies installed"
-      shell: bash
 
     - name: Configure library paths
+      shell: bash
       run: |
         sudo ldconfig
         echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
         echo "🔗 Library paths configured"
-      shell: bash

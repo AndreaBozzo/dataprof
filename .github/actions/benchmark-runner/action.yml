@@ -29,11 +29,12 @@ runs:
   using: composite
   steps:
     - name: Create output directory
-      run: mkdir -p ${{ inputs.output-dir }}
       shell: bash
+      run: mkdir -p ${{ inputs.output-dir }}
 
     - name: Run unified benchmarks
       if: inputs.benchmark-type == 'unified' || inputs.benchmark-type == 'all'
+      shell: bash
       run: |
         echo "🏃 Running unified benchmarks (${{ inputs.mode }} mode)..."
 
@@ -48,10 +49,10 @@ runs:
         fi
 
         echo "✅ Unified benchmarks completed"
-      shell: bash
 
     - name: Run domain benchmarks
       if: inputs.benchmark-type == 'domain' || inputs.benchmark-type == 'all'
+      shell: bash
       run: |
         echo "🏢 Running domain-specific benchmarks (${{ inputs.mode }} mode)..."
 
@@ -66,10 +67,10 @@ runs:
         fi
 
         echo "✅ Domain benchmarks completed"
-      shell: bash
 
     - name: Run statistical benchmarks
       if: inputs.benchmark-type == 'statistical' || inputs.benchmark-type == 'all'
+      shell: bash
       run: |
         echo "📊 Running statistical rigor benchmarks (${{ inputs.mode }} mode)..."
 
@@ -84,9 +85,9 @@ runs:
         fi
 
         echo "✅ Statistical benchmarks completed"
-      shell: bash
 
     - name: Benchmark summary
+      shell: bash
       run: |
         echo "📊 Benchmark Summary"
         echo "=================="
@@ -100,4 +101,3 @@ runs:
         fi
 
         echo "✅ Benchmark execution completed"
-      shell: bash

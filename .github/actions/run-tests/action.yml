@@ -19,32 +19,32 @@ runs:
   steps:
     - name: Run core tests
       if: inputs.test-type == 'core' || inputs.test-type == 'all'
+      shell: bash
       run: |
         echo "🧪 Running core tests..."
         timeout ${{ inputs.timeout }}m cargo test --lib --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
         echo "✅ Core tests completed"
-      shell: bash
 
     - name: Run integration tests
       if: inputs.test-type == 'integration' || inputs.test-type == 'all'
+      shell: bash
       run: |
         echo "🔧 Running integration tests..."
         timeout ${{ inputs.timeout }}m cargo test --test '*' --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
         echo "✅ Integration tests completed"
-      shell: bash
 
     - name: Run doc tests
       if: inputs.test-type == 'all'
+      shell: bash
       run: |
         echo "📚 Running documentation tests..."
         timeout 5m cargo test --doc --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
         echo "✅ Doc tests completed"
-      shell: bash
 
     - name: Test report summary
+      shell: bash
       run: |
         echo "📊 Test Summary for ${{ inputs.test-type }} tests"
         echo "Features: ${{ inputs.features || 'default' }}"
         echo "Timeout: ${{ inputs.timeout }}m"
         echo "✅ All tests passed successfully"
-      shell: bash

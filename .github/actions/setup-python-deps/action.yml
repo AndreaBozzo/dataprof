@@ -16,16 +16,16 @@ runs:
         cache: 'pip'
 
     - name: Install dependencies
+      shell: bash
       run: |
         echo "📦 Installing Python dependencies..."
         pip install --upgrade pip
         pip install pandas numpy psutil polars great-expectations
         echo "✅ Python dependencies installed"
-      shell: bash
 
     - name: Verify Python environment
+      shell: bash
       run: |
         echo "🐍 Python environment verification..."
         python --version
         pip list | grep -E "(pandas|numpy|polars|great-expectations)"
-      shell: bash
