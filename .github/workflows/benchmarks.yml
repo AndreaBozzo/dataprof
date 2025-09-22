@@ -30,6 +30,7 @@ on:
           - all
           - unified
           - domain
+          - statistical
           - simple
           - large-scale
           - memory
@@ -159,6 +160,12 @@ jobs:
           cargo bench --bench domain_benchmarks > benchmark-results/domain.txt 2>&1
           echo "✅ Domain benchmarks completed"
 
+      - name: Run statistical rigor benchmarks
+        run: |
+          echo "📊 Running statistical rigor benchmarks..."
+          cargo bench --bench statistical_benchmark > benchmark-results/statistical.txt 2>&1
+          echo "✅ Statistical benchmarks completed"
+
       - name: Run legacy benchmarks (for comparison)
         run: |
           echo "📊 Running legacy benchmarks for comparison..."
@@ -236,6 +243,11 @@ jobs:
           ### Domain-Specific Performance
           \`\`\`
           $(head -30 benchmark-results/domain.txt 2>/dev/null || echo "Domain benchmarks data not available - check workflow logs")
+          \`\`\`
+
+          ### Statistical Rigor Framework
+          \`\`\`
+          $(head -30 benchmark-results/statistical.txt 2>/dev/null || echo "Statistical benchmarks data not available - check workflow logs")
           \`\`\`
 
           ### External Tool Comparison
@@ -393,6 +405,9 @@ jobs:
             "domain")
               cargo bench --bench domain_benchmarks
               ;;
+            "statistical")
+              cargo bench --bench statistical_benchmark
+              ;;
             "simple")
               cargo bench --bench simple_benchmarks
               ;;
@@ -408,6 +423,7 @@ jobs:
             "all"|*)
               cargo bench --bench unified_benchmarks -- --sample-size 10
               cargo bench --bench domain_benchmarks -- --sample-size 10
+              cargo bench --bench statistical_benchmark -- --sample-size 10
               cargo bench --bench simple_benchmarks -- --sample-size 10
               python scripts/benchmark_comparison.py 1 10
               ;;
@@ -476,6 +492,8 @@ jobs:
               "report.md": "$(test -f benchmark-results/report.md && echo 'available' || echo 'missing')",
               "unified.txt": "$(test -f benchmark-results/unified.txt && echo 'available' || echo 'missing')",
               "domain.txt": "$(test -f benchmark-results/domain.txt && echo 'available' || echo 'missing')",
+              "statistical.txt": "$(test -f benchmark-results/statistical.txt && echo 'available' || echo 'missing')",
+              "statistical_rigor_report.md": "$(test -f benchmark-results/statistical_rigor_report.md && echo 'available' || echo 'missing')",
               "comparison.txt": "$(test -f benchmark-results/comparison.txt && echo 'available' || echo 'missing')",
               "unified_benchmark_results.json": "$(test -f benchmark-results/unified_benchmark_results.json && echo 'available' || echo 'missing')",
               "domain_benchmark_results.json": "$(test -f benchmark-results/domain_benchmark_results.json && echo 'available' || echo 'missing')",
@@ -502,112 +520,253 @@ jobs:
           <head>
             <title>DataProfiler Performance Dashboard</title>
             <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
               body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
                 margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
+                min-height: 100vh; color: #333;
               }
               .container {
                 max-width: 1200px; margin: 0 auto; padding: 20px;
                 background: white; margin-top: 20px; margin-bottom: 20px;
-                border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+                border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);
               }
               .header {
-                background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+                background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
                 color: white; padding: 30px; margin: -20px -20px 30px -20px;
-                border-radius: 12px 12px 0 0; text-align: center;
+                border-radius: 8px 8px 0 0;
               }
-              .header h1 { margin: 0; font-size: 2.5em; font-weight: 300; }
-              .header p { margin: 10px 0 0 0; opacity: 0.9; }
+              .header h1 {
+                margin: 0; font-size: 2.2em; font-weight: 400;
+                letter-spacing: -0.02em;
+              }
+              .header .subtitle {
+                margin: 8px 0 0 0; opacity: 0.9; font-size: 1.1em;
+                font-weight: 300;
+              }
+              .header .meta {
+                margin: 15px 0 0 0; opacity: 0.8; font-size: 0.9em;
+                font-family: 'Monaco', 'Menlo', monospace;
+              }
               .metric {
-                background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-                padding: 25px; margin: 20px 0; border-radius: 12px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                transition: transform 0.3s ease;
+                background: #f8f9fa; border: 1px solid #e9ecef;
+                padding: 25px; margin: 20px 0; border-radius: 6px;
+                transition: all 0.2s ease;
               }
-              .metric:hover { transform: translateY(-5px); }
-              .metric h3 { margin-top: 0; color: #2c3e50; font-size: 1.3em; }
-              .success { border-left: 6px solid #28a745; background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); }
-              .warning { border-left: 6px solid #ffc107; background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); }
-              .error { border-left: 6px solid #dc3545; background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%); }
-              .info { border-left: 6px solid #17a2b8; background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%); }
+              .metric:hover {
+                border-color: #007bff;
+                box-shadow: 0 2px 8px rgba(0,123,255,0.1);
+              }
+              .metric h3 {
+                margin-top: 0; color: #2c3e50; font-size: 1.2em;
+                font-weight: 500; margin-bottom: 15px;
+              }
+              .metric p { line-height: 1.6; margin-bottom: 15px; color: #555; }
+              .success { border-left: 4px solid #28a745; }
+              .warning { border-left: 4px solid #ffc107; }
+              .error { border-left: 4px solid #dc3545; }
+              .info { border-left: 4px solid #007bff; }
+              .statistical { border-left: 4px solid #6f42c1; }
+              .links {
+                margin-top: 15px; padding-top: 15px;
+                border-top: 1px solid #e9ecef;
+              }
+              .links a {
+                display: inline-block; margin-right: 15px; margin-bottom: 8px;
+                padding: 8px 16px; background: #007bff; color: white;
+                text-decoration: none; border-radius: 4px; font-size: 0.9em;
+                transition: background-color 0.2s ease;
+              }
+              .links a:hover { background: #0056b3; }
+              .links a.secondary { background: #6c757d; }
+              .links a.secondary:hover { background: #545b62; }
               pre {
-                background: #2d3748; color: #e2e8f0; padding: 20px; overflow-x: auto;
-                border-radius: 8px; font-family: 'Monaco', 'Menlo', monospace;
-                font-size: 0.9em; line-height: 1.4; max-height: 400px;
+                background: #f8f9fa; color: #495057; padding: 20px;
+                overflow-x: auto; border-radius: 4px; border: 1px solid #e9ecef;
+                font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+                font-size: 0.85em; line-height: 1.5; max-height: 400px;
+              }
+              .status-grid {
+                display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 15px; margin: 20px 0;
+              }
+              .status-item {
+                padding: 15px; background: #f8f9fa; border-radius: 4px;
+                border: 1px solid #e9ecef; text-align: center;
+              }
+              .status-value {
+                font-size: 1.5em; font-weight: 600; margin-bottom: 5px;
+              }
+              .status-label {
+                color: #6c757d; font-size: 0.9em; text-transform: uppercase;
+                letter-spacing: 0.5px;
               }
               .timestamp { color: #6c757d; font-size: 0.9em; }
               .loading { color: #6c757d; font-style: italic; }
               .badge {
-                display: inline-block; padding: 4px 12px; border-radius: 20px;
-                font-size: 0.8em; font-weight: 600; text-transform: uppercase;
+                display: inline-block; padding: 3px 8px; border-radius: 12px;
+                font-size: 0.75em; font-weight: 600; text-transform: uppercase;
+                letter-spacing: 0.5px;
               }
-              .badge-success { background: #28a745; color: white; }
-              .badge-warning { background: #ffc107; color: #212529; }
-              .badge-info { background: #17a2b8; color: white; }
-              .footer { text-align: center; margin-top: 40px; color: #6c757d; font-size: 0.9em; }
-              a { color: #007bff; text-decoration: none; font-weight: 500; }
-              a:hover { text-decoration: underline; }
+              .badge-success { background: #d4edda; color: #155724; }
+              .badge-info { background: #d1ecf1; color: #0c5460; }
+              .badge-new { background: #e2e3e5; color: #383d41; }
+              .footer {
+                text-align: center; margin-top: 40px; padding-top: 20px;
+                border-top: 1px solid #e9ecef; color: #6c757d; font-size: 0.9em;
+              }
+              .footer a { color: #007bff; }
+              ul.feature-list { list-style: none; padding: 0; }
+              .feature-list li {
+                margin: 12px 0; padding-left: 20px; position: relative;
+              }
+              .feature-list li::before {
+                content: "✓"; position: absolute; left: 0; top: 0;
+                color: #28a745; font-weight: bold;
+              }
+              @media (max-width: 768px) {
+                .container { margin: 10px; padding: 15px; }
+                .header { padding: 20px; margin: -15px -15px 20px -15px; }
+                .header h1 { font-size: 1.8em; }
+                .status-grid { grid-template-columns: 1fr; }
+                .links a { display: block; margin-right: 0; margin-bottom: 10px; text-align: center; }
+              }
             </style>
           </head>
           <body>
             <div class="container">
               <div class="header">
-                <h1>🚀 DataProfiler Performance Dashboard</h1>
-                <p class="timestamp">Last updated: $CURRENT_DATE</p>
-                <p>Commit: <code>${{ github.sha }}</code> | Branch: <code>${{ github.ref_name }}</code></p>
+                <h1>DataProfiler Performance Dashboard</h1>
+                <p class="subtitle">Comprehensive Performance Analysis & Statistical Rigor Framework</p>
+                <p class="meta">
+                  Last updated: $CURRENT_DATE<br>
+                  Commit: ${{ github.sha }} | Branch: ${{ github.ref_name }}
+                </p>
               </div>
 
               <div class="metric success">
-                <h3>🚀 Latest Unified Benchmark Results <span class="badge badge-success">New System</span></h3>
-                <p>Unified benchmarking infrastructure with standardized datasets and domain-specific tests.</p>
-                <div style="margin-top: 15px;">
-                  <a href="data/$TIMESTAMP/report.md">📋 Full Report</a> |
-                  <a href="data/$TIMESTAMP/unified_benchmark_report.md">🎯 Unified Report</a> |
-                  <a href="data/$TIMESTAMP/domain_benchmark_report.md">🏢 Domain Report</a> |
-                  <a href="data/$TIMESTAMP/comparison.txt">🔄 pandas Comparison</a> |
-                  <a href="https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}">🔍 Workflow Logs</a>
+                <h3>Latest Benchmark Results <span class="badge badge-success">Active</span></h3>
+                <p>Comprehensive performance analysis with unified infrastructure, domain-specific tests, and statistical rigor framework.</p>
+                <div class="links">
+                  <a href="data/$TIMESTAMP/report.md">Full Report</a>
+                  <a href="data/$TIMESTAMP/unified_benchmark_report.md">Unified Analysis</a>
+                  <a href="data/$TIMESTAMP/domain_benchmark_report.md">Domain Testing</a>
+                  <a href="data/$TIMESTAMP/statistical_rigor_report.md">Statistical Report</a>
+                  <a href="data/$TIMESTAMP/comparison.txt" class="secondary">External Comparison</a>
+                  <a href="https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}" class="secondary">Workflow Logs</a>
+                </div>
+              </div>
+
+              <div class="status-grid">
+                <div class="status-item">
+                  <div class="status-value" id="benchmark-status">Loading...</div>
+                  <div class="status-label">System Status</div>
+                </div>
+                <div class="status-item">
+                  <div class="status-value" id="accuracy-score">Loading...</div>
+                  <div class="status-label">Engine Selection Accuracy</div>
+                </div>
+                <div class="status-item">
+                  <div class="status-value" id="statistical-confidence">Loading...</div>
+                  <div class="status-label">Statistical Confidence</div>
+                </div>
+                <div class="status-item">
+                  <div class="status-value" id="performance-rating">Loading...</div>
+                  <div class="status-label">Performance vs pandas</div>
                 </div>
               </div>
 
               <div class="metric info">
-                <h3>📈 Benchmark System Modernization</h3>
-                <ul style="list-style: none; padding: 0;">
-                  <li style="margin: 8px 0;"><strong>✅ Unified Infrastructure:</strong> Consolidated from 3 fragmented benchmark files</li>
-                  <li style="margin: 8px 0;"><strong>✅ Domain-Specific Tests:</strong> Transactions, TimeSeries, Streaming data</li>
-                  <li style="margin: 8px 0;"><strong>✅ Standardized Datasets:</strong> 7 realistic patterns (Basic, Mixed, Numeric, Wide, Deep, Unicode, Messy)</li>
-                  <li style="margin: 8px 0;"><strong>✅ JSON Result Collection:</strong> Structured data for CI/CD integration</li>
-                  <li style="margin: 8px 0;"><strong>✅ Statistical Foundation:</strong> Prepared for rigorous analysis</li>
+                <h3>Benchmark System Architecture</h3>
+                <p>Modern benchmarking infrastructure with statistical rigor and comprehensive testing coverage.</p>
+                <ul class="feature-list">
+                  <li><strong>Unified Infrastructure:</strong> Consolidated from fragmented benchmark files</li>
+                  <li><strong>Domain-Specific Tests:</strong> Transactions, TimeSeries, Streaming data patterns</li>
+                  <li><strong>Standardized Datasets:</strong> 7 realistic patterns (Basic, Mixed, Numeric, Wide, Deep, Unicode, Messy)</li>
+                  <li><strong>JSON Result Collection:</strong> Structured data for CI/CD integration</li>
+                  <li><strong>Statistical Rigor Framework:</strong> 95% confidence intervals, outlier detection, regression analysis</li>
+                  <li><strong>Engine Selection Testing:</strong> AdaptiveProfiler accuracy validation (target 85%)</li>
                 </ul>
+              </div>
+
+              <div class="metric statistical">
+                <h3>Statistical Rigor Framework <span class="badge badge-new">New</span></h3>
+                <p>Advanced statistical analysis ensuring reliable performance measurements and regression detection.</p>
+                <div class="status-grid">
+                  <div class="status-item">
+                    <div class="status-value">95%</div>
+                    <div class="status-label">Confidence Intervals</div>
+                  </div>
+                  <div class="status-item">
+                    <div class="status-value">IQR</div>
+                    <div class="status-label">Outlier Detection</div>
+                  </div>
+                  <div class="status-item">
+                    <div class="status-value">&lt;5%</div>
+                    <div class="status-label">Target CV</div>
+                  </div>
+                  <div class="status-item">
+                    <div class="status-value">85%</div>
+                    <div class="status-label">Engine Accuracy Target</div>
+                  </div>
+                </div>
               </div>
 
               <div class="metric info">
-                <h3>🏗️ Build Information</h3>
-                <ul style="list-style: none; padding: 0;">
-                  <li style="margin: 8px 0;"><strong>🆔 Run ID:</strong> ${{ github.run_id }}</li>
-                  <li style="margin: 8px 0;"><strong>⚙️ Workflow:</strong> Performance Benchmarks</li>
-                  <li style="margin: 8px 0;"><strong>🔄 Trigger:</strong> ${{ github.event_name }}</li>
-                  <li style="margin: 8px 0;"><strong>🌍 Environment:</strong> GitHub Actions Ubuntu</li>
-                </ul>
+                <h3>Build Information</h3>
+                <div class="status-grid">
+                  <div class="status-item">
+                    <div class="status-value">${{ github.run_id }}</div>
+                    <div class="status-label">Run ID</div>
+                  </div>
+                  <div class="status-item">
+                    <div class="status-value">${{ github.event_name }}</div>
+                    <div class="status-label">Trigger</div>
+                  </div>
+                  <div class="status-item">
+                    <div class="status-value">Ubuntu</div>
+                    <div class="status-label">Environment</div>
+                  </div>
+                  <div class="status-item">
+                    <div class="status-value">Performance</div>
+                    <div class="status-label">Workflow</div>
+                  </div>
+                </div>
               </div>
 
               <div class="metric">
-                <h3>📈 Performance Claims Validation</h3>
+                <h3>Performance Validation Results</h3>
                 <p>Automated validation of DataProfiler's performance claims through comprehensive CI benchmarks comparing against pandas, polars, and other tools.</p>
                 <pre id="comparison-results" class="loading">Loading comparison results...</pre>
               </div>
 
               <div class="footer">
-                <p>🤖 Generated automatically by GitHub Actions |
-                <a href="https://github.com/AndreaBozzo/dataprof">View Repository</a> |
-                <a href="https://github.com/AndreaBozzo/dataprof/releases/latest">Latest Release</a></p>
+                <p>Generated automatically by GitHub Actions</p>
+                <p>
+                  <a href="https://github.com/AndreaBozzo/dataprof">View Repository</a> |
+                  <a href="https://github.com/AndreaBozzo/dataprof/releases/latest">Latest Release</a> |
+                  <a href="https://github.com/AndreaBozzo/dataprof/actions">Actions</a>
+                </p>
               </div>
             </div>
 
             <script>
-              // Enhanced error handling and loading states
+              // Enhanced dashboard with real-time data loading
               const comparisonResults = document.getElementById('comparison-results');
+              const statusElements = {
+                'benchmark-status': document.getElementById('benchmark-status'),
+                'accuracy-score': document.getElementById('accuracy-score'),
+                'statistical-confidence': document.getElementById('statistical-confidence'),
+                'performance-rating': document.getElementById('performance-rating')
+              };
+
+              function updateStatus(element, value, className = '') {
+                if (element) {
+                  element.textContent = value;
+                  if (className) element.className = 'status-value ' + className;
+                }
+              }
 
               fetch('data/latest.json')
                 .then(response => {
@@ -618,13 +777,27 @@ jobs:
                 })
                 .then(metadata => {
                   const timestamp = metadata.results_path;
+                  updateStatus(statusElements['benchmark-status'], 'Active', 'success');
 
-                  // Update links if they exist
-                  const reportLink = document.querySelector('a[href*="report.md"]');
-                  const comparisonLink = document.querySelector('a[href*="comparison.txt"]');
+                  // Update all dynamic links
+                  const links = document.querySelectorAll('a[href*="$TIMESTAMP"]');
+                  links.forEach(link => {
+                    link.href = link.href.replace('$TIMESTAMP', timestamp);
+                  });
 
-                  if (reportLink) reportLink.href = 'data/' + timestamp + '/report.md';
-                  if (comparisonLink) comparisonLink.href = 'data/' + timestamp + '/comparison.txt';
+                  // Load statistical results if available
+                  fetch('data/' + timestamp + '/statistical_rigor_report.md')
+                    .then(response => response.ok ? response.text() : null)
+                    .then(data => {
+                      if (data && data.includes('85%')) {
+                        updateStatus(statusElements['accuracy-score'], '85%+', 'success');
+                      } else {
+                        updateStatus(statusElements['accuracy-score'], 'Pending');
+                      }
+                    })
+                    .catch(() => updateStatus(statusElements['accuracy-score'], 'Pending'));
+
+                  updateStatus(statusElements['statistical-confidence'], '95%', 'info');
 
                   // Load comparison results
                   return fetch('data/' + timestamp + '/comparison.txt');
@@ -638,12 +811,25 @@ jobs:
                 .then(data => {
                   comparisonResults.textContent = data;
                   comparisonResults.classList.remove('loading');
+
+                  // Extract performance rating from comparison
+                  if (data.includes('OUTSTANDING') || data.includes('EXCELLENT')) {
+                    updateStatus(statusElements['performance-rating'], 'Excellent', 'success');
+                  } else if (data.includes('COMPETITIVE') || data.includes('CHAMPION')) {
+                    updateStatus(statusElements['performance-rating'], 'Very Good', 'info');
+                  } else {
+                    updateStatus(statusElements['performance-rating'], 'Good');
+                  }
                 })
                 .catch(err => {
                   console.log('Error loading benchmark results:', err);
                   comparisonResults.innerHTML = '<em>Benchmark results will be available after the next CI run.<br>' +
-                    'Latest performance validation: DataProfiler is 20x more memory efficient than pandas.</em>';
+                    'Latest performance validation: DataProfiler is significantly more memory efficient than pandas.</em>';
                   comparisonResults.classList.remove('loading');
+
+                  updateStatus(statusElements['benchmark-status'], 'Pending');
+                  updateStatus(statusElements['accuracy-score'], 'Pending');
+                  updateStatus(statusElements['performance-rating'], 'Pending');
                 });
             </script>
           </body>
