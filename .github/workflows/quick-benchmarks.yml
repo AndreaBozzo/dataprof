@@ -12,6 +12,7 @@ on:
       - 'src/**'
       - 'benches/**'
       - 'Cargo.toml'
+  workflow_dispatch:
 
 jobs:
   quick-benchmark:
