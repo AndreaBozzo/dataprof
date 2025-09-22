@@ -1,8 +1,6 @@
 /// Engine selection benchmarking framework for comprehensive testing
 use crate::core::stats::{StatisticalConfig, StatisticalSample, StatisticalSummary};
-use crate::engines::{
-    AdaptiveProfiler, EnginePerformance, EngineSelector, EngineType, ProcessingType,
-};
+use crate::engines::{AdaptiveProfiler, EnginePerformance, EngineType};
 use crate::testing::{DatasetInfo, MetricCollection, MetricMeasurement, MetricType};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -170,14 +168,12 @@ pub struct EngineComparisonResult {
 pub struct EngineBenchmarkFramework {
     config: EngineBenchmarkConfig,
     adaptive_profiler: AdaptiveProfiler,
-    engine_selector: EngineSelector,
 }
 
 impl EngineBenchmarkFramework {
     pub fn new(config: EngineBenchmarkConfig) -> Self {
         Self {
             adaptive_profiler: AdaptiveProfiler::new(),
-            engine_selector: EngineSelector::new(),
             config,
         }
     }
@@ -335,14 +331,8 @@ impl EngineBenchmarkFramework {
 
     /// Helper methods
     fn determine_selected_engine(&self, dataset_path: &Path) -> Result<EngineType> {
-        // Use the engine selector's logic
-        let characteristics = self
-            .engine_selector
-            .analyze_file_characteristics(dataset_path)?;
-        let recommendation = self
-            .engine_selector
-            .select_engine(&characteristics, ProcessingType::BatchAnalysis);
-        Ok(recommendation.primary_engine)
+        // Use the adaptive profiler to select the best engine without benchmarking
+        self.adaptive_profiler.select_engine(dataset_path)
     }
 
     fn benchmark_all_engines(&self, dataset_path: &Path) -> Result<Vec<EnginePerformance>> {
@@ -409,7 +399,9 @@ impl EngineBenchmarkFramework {
                 // Use Arrow profiler if available
                 use crate::engines::columnar::ArrowProfiler;
                 let profiler = ArrowProfiler::new();
-                profiler.analyze_csv_with_arrow(dataset_path)
+                profiler
+                    .analyze_csv_file(dataset_path)
+                    .map(|qr| qr.column_profiles)
             }
             #[cfg(not(feature = "arrow"))]
             EngineType::Arrow => {
@@ -704,7 +696,7 @@ impl EngineBenchmarkFramework {
         // Weighted average
         let weighted_score =
             (success_score * 0.5) + (performance_score * 0.3) + (memory_score * 0.2);
-        weighted_score.min(100.0).max(0.0)
+        weighted_score.clamp(0.0, 100.0)
     }
 }
 
