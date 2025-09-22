@@ -5,6 +5,300 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Comprehensive metric types for benchmarking
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum MetricType {
+    // Performance Metrics
+    ExecutionTime,
+    MemoryPeak,
+    MemoryAverage,
+    CpuUtilization,
+
+    // Quality Metrics
+    AccuracyScore,      // How accurate vs baseline
+    QualityIssuesFound, // Number of issues detected
+    FalsePositiveRate,  // Over-detection rate
+
+    // Engine-Specific Metrics
+    ChunkProcessingTime,    // For streaming engines
+    ColumnCompressionRatio, // For Arrow engine
+    SampleConvergenceRate,  // For sampling strategies
+
+    // Additional Engine Metrics
+    AdaptiveDecisionAccuracy, // How often AdaptiveProfiler chooses optimal engine
+    EngineSelectionTime,      // Time spent choosing engine
+    MemoryEfficiency,         // Memory usage per row processed
+    ThroughputMBps,           // MB/s processing speed
+
+    // Statistical Metrics
+    ConfidenceInterval,     // Statistical confidence range
+    CoefficientOfVariation, // Statistical variance measure
+    OutliersDetected,       // Number of outliers removed
+}
+
+impl MetricType {
+    /// Get display name for metric
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            MetricType::ExecutionTime => "Execution Time",
+            MetricType::MemoryPeak => "Peak Memory",
+            MetricType::MemoryAverage => "Average Memory",
+            MetricType::CpuUtilization => "CPU Utilization",
+            MetricType::AccuracyScore => "Accuracy Score",
+            MetricType::QualityIssuesFound => "Quality Issues Found",
+            MetricType::FalsePositiveRate => "False Positive Rate",
+            MetricType::ChunkProcessingTime => "Chunk Processing Time",
+            MetricType::ColumnCompressionRatio => "Column Compression Ratio",
+            MetricType::SampleConvergenceRate => "Sample Convergence Rate",
+            MetricType::AdaptiveDecisionAccuracy => "Adaptive Decision Accuracy",
+            MetricType::EngineSelectionTime => "Engine Selection Time",
+            MetricType::MemoryEfficiency => "Memory Efficiency",
+            MetricType::ThroughputMBps => "Throughput (MB/s)",
+            MetricType::ConfidenceInterval => "Confidence Interval",
+            MetricType::CoefficientOfVariation => "Coefficient of Variation",
+            MetricType::OutliersDetected => "Outliers Detected",
+        }
+    }
+
+    /// Get unit for metric
+    pub fn unit(&self) -> &'static str {
+        match self {
+            MetricType::ExecutionTime
+            | MetricType::ChunkProcessingTime
+            | MetricType::EngineSelectionTime => "seconds",
+            MetricType::MemoryPeak | MetricType::MemoryAverage => "MB",
+            MetricType::CpuUtilization => "%",
+            MetricType::AccuracyScore
+            | MetricType::FalsePositiveRate
+            | MetricType::AdaptiveDecisionAccuracy => "%",
+            MetricType::QualityIssuesFound | MetricType::OutliersDetected => "count",
+            MetricType::ColumnCompressionRatio | MetricType::SampleConvergenceRate => "ratio",
+            MetricType::MemoryEfficiency => "MB/row",
+            MetricType::ThroughputMBps => "MB/s",
+            MetricType::ConfidenceInterval => "±",
+            MetricType::CoefficientOfVariation => "%",
+        }
+    }
+
+    /// Check if higher values are better
+    pub fn higher_is_better(&self) -> bool {
+        match self {
+            MetricType::AccuracyScore
+            | MetricType::ColumnCompressionRatio
+            | MetricType::SampleConvergenceRate
+            | MetricType::AdaptiveDecisionAccuracy
+            | MetricType::ThroughputMBps => true,
+            MetricType::ExecutionTime
+            | MetricType::MemoryPeak
+            | MetricType::MemoryAverage
+            | MetricType::CpuUtilization
+            | MetricType::QualityIssuesFound
+            | MetricType::FalsePositiveRate
+            | MetricType::ChunkProcessingTime
+            | MetricType::EngineSelectionTime
+            | MetricType::MemoryEfficiency
+            | MetricType::CoefficientOfVariation
+            | MetricType::OutliersDetected => false,
+            MetricType::ConfidenceInterval => false, // Smaller confidence intervals are better
+        }
+    }
+}
+
+/// Individual metric measurement with statistical metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricMeasurement {
+    pub metric_type: MetricType,
+    pub value: f64,
+    pub unit: String,
+    pub confidence_interval: Option<(f64, f64)>,
+    pub sample_count: Option<usize>,
+    pub outliers_removed: Option<usize>,
+    pub statistical_significance: bool,
+    pub timestamp: f64,
+}
+
+impl MetricMeasurement {
+    pub fn new(metric_type: MetricType, value: f64) -> Self {
+        Self {
+            unit: metric_type.unit().to_string(),
+            metric_type,
+            value,
+            confidence_interval: None,
+            sample_count: None,
+            outliers_removed: None,
+            statistical_significance: false,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64(),
+        }
+    }
+
+    pub fn with_confidence_interval(mut self, ci: (f64, f64)) -> Self {
+        self.confidence_interval = Some(ci);
+        self
+    }
+
+    pub fn with_samples(mut self, count: usize) -> Self {
+        self.sample_count = Some(count);
+        self
+    }
+
+    pub fn with_outliers_removed(mut self, count: usize) -> Self {
+        self.outliers_removed = Some(count);
+        self
+    }
+
+    pub fn with_statistical_significance(mut self, significant: bool) -> Self {
+        self.statistical_significance = significant;
+        self
+    }
+
+    /// Format measurement for display
+    pub fn format_display(&self) -> String {
+        let mut parts = vec![format!("{:.3} {}", self.value, self.unit)];
+
+        if let Some((lower, upper)) = self.confidence_interval {
+            parts.push(format!("CI: [{:.3}, {:.3}]", lower, upper));
+        }
+
+        if let Some(count) = self.sample_count {
+            parts.push(format!("n={}", count));
+        }
+
+        if self.statistical_significance {
+            parts.push("✓".to_string());
+        }
+
+        parts.join(" ")
+    }
+}
+
+/// Collection of metrics for a single benchmark run
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricCollection {
+    pub benchmark_id: String,
+    pub engine_type: String,
+    pub dataset_info: DatasetInfo,
+    pub metrics: HashMap<MetricType, MetricMeasurement>,
+    pub execution_metadata: ExecutionMetadata,
+}
+
+/// Dataset information for metrics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatasetInfo {
+    pub pattern: String,
+    pub size_category: String,
+    pub file_size_mb: f64,
+    pub rows_count: u64,
+    pub columns_count: u32,
+}
+
+/// Execution metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionMetadata {
+    pub timestamp: f64,
+    pub environment: String,
+    pub rust_version: Option<String>,
+    pub system_info: SystemInfo,
+}
+
+/// System information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemInfo {
+    pub cpu_cores: usize,
+    pub total_memory_gb: f64,
+    pub os: String,
+}
+
+impl MetricCollection {
+    pub fn new(benchmark_id: String, engine_type: String, dataset_info: DatasetInfo) -> Self {
+        Self {
+            benchmark_id,
+            engine_type,
+            dataset_info,
+            metrics: HashMap::new(),
+            execution_metadata: ExecutionMetadata {
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64(),
+                environment: std::env::var("CI")
+                    .map(|_| "CI".to_string())
+                    .unwrap_or_else(|_| "Local".to_string()),
+                rust_version: option_env!("RUSTC_VERSION").map(String::from),
+                system_info: SystemInfo {
+                    cpu_cores: num_cpus::get(),
+                    total_memory_gb: 0.0, // Would need system query
+                    os: std::env::consts::OS.to_string(),
+                },
+            },
+        }
+    }
+
+    /// Add a metric measurement
+    pub fn add_metric(&mut self, measurement: MetricMeasurement) {
+        self.metrics
+            .insert(measurement.metric_type.clone(), measurement);
+    }
+
+    /// Get specific metric
+    pub fn get_metric(&self, metric_type: &MetricType) -> Option<&MetricMeasurement> {
+        self.metrics.get(metric_type)
+    }
+
+    /// Generate performance vs accuracy trade-off analysis
+    pub fn analyze_performance_accuracy_tradeoff(&self) -> Option<PerformanceAccuracyAnalysis> {
+        let execution_time = self.get_metric(&MetricType::ExecutionTime)?.value;
+        let accuracy_score = self.get_metric(&MetricType::AccuracyScore)?.value;
+        let memory_usage = self.get_metric(&MetricType::MemoryPeak)?.value;
+
+        Some(PerformanceAccuracyAnalysis {
+            execution_time,
+            accuracy_score,
+            memory_usage,
+            efficiency_score: accuracy_score / (execution_time * memory_usage),
+            trade_off_rating: self.calculate_tradeoff_rating(
+                execution_time,
+                accuracy_score,
+                memory_usage,
+            ),
+        })
+    }
+
+    fn calculate_tradeoff_rating(&self, time: f64, accuracy: f64, memory: f64) -> TradeoffRating {
+        let efficiency = accuracy / (time * memory);
+
+        if efficiency > 10.0 {
+            TradeoffRating::Excellent
+        } else if efficiency > 5.0 {
+            TradeoffRating::Good
+        } else if efficiency > 1.0 {
+            TradeoffRating::Acceptable
+        } else {
+            TradeoffRating::Poor
+        }
+    }
+}
+
+/// Performance vs accuracy analysis result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceAccuracyAnalysis {
+    pub execution_time: f64,
+    pub accuracy_score: f64,
+    pub memory_usage: f64,
+    pub efficiency_score: f64,
+    pub trade_off_rating: TradeoffRating,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TradeoffRating {
+    Excellent,
+    Good,
+    Acceptable,
+    Poor,
+}
+
 /// Parameters for adding a criterion benchmark result
 #[derive(Debug)]
 pub struct CriterionResultParams {
@@ -421,5 +715,173 @@ mod tests {
         assert!(report.contains("BASIC Dataset Results"));
         assert!(report.contains("DataProfiler"));
         assert!(report.contains("Throughput"));
+    }
+
+    #[test]
+    fn test_metric_type_properties() {
+        assert_eq!(MetricType::ExecutionTime.display_name(), "Execution Time");
+        assert_eq!(MetricType::ExecutionTime.unit(), "seconds");
+        assert!(!MetricType::ExecutionTime.higher_is_better());
+
+        assert_eq!(MetricType::AccuracyScore.display_name(), "Accuracy Score");
+        assert_eq!(MetricType::AccuracyScore.unit(), "%");
+        assert!(MetricType::AccuracyScore.higher_is_better());
+
+        assert_eq!(
+            MetricType::ThroughputMBps.display_name(),
+            "Throughput (MB/s)"
+        );
+        assert_eq!(MetricType::ThroughputMBps.unit(), "MB/s");
+        assert!(MetricType::ThroughputMBps.higher_is_better());
+    }
+
+    #[test]
+    fn test_metric_measurement_creation() {
+        let measurement = MetricMeasurement::new(MetricType::ExecutionTime, 1.234)
+            .with_confidence_interval((1.1, 1.4))
+            .with_samples(30)
+            .with_outliers_removed(2)
+            .with_statistical_significance(true);
+
+        assert_eq!(measurement.metric_type, MetricType::ExecutionTime);
+        assert_eq!(measurement.value, 1.234);
+        assert_eq!(measurement.unit, "seconds");
+        assert_eq!(measurement.confidence_interval, Some((1.1, 1.4)));
+        assert_eq!(measurement.sample_count, Some(30));
+        assert_eq!(measurement.outliers_removed, Some(2));
+        assert!(measurement.statistical_significance);
+    }
+
+    #[test]
+    fn test_metric_measurement_display() {
+        let measurement = MetricMeasurement::new(MetricType::ExecutionTime, 1.234)
+            .with_confidence_interval((1.1, 1.4))
+            .with_samples(30)
+            .with_statistical_significance(true);
+
+        let display = measurement.format_display();
+        assert!(display.contains("1.234 seconds"));
+        assert!(display.contains("CI: [1.100, 1.400]"));
+        assert!(display.contains("n=30"));
+        assert!(display.contains("✓"));
+    }
+
+    #[test]
+    fn test_metric_collection() {
+        let dataset_info = DatasetInfo {
+            pattern: "basic".to_string(),
+            size_category: "small".to_string(),
+            file_size_mb: 5.0,
+            rows_count: 50000,
+            columns_count: 4,
+        };
+
+        let mut collection = MetricCollection::new(
+            "test_benchmark".to_string(),
+            "adaptive".to_string(),
+            dataset_info,
+        );
+
+        let execution_measurement = MetricMeasurement::new(MetricType::ExecutionTime, 1.5);
+        let accuracy_measurement = MetricMeasurement::new(MetricType::AccuracyScore, 95.0);
+
+        collection.add_metric(execution_measurement);
+        collection.add_metric(accuracy_measurement);
+
+        assert_eq!(collection.metrics.len(), 2);
+        assert!(collection.get_metric(&MetricType::ExecutionTime).is_some());
+        assert!(collection.get_metric(&MetricType::AccuracyScore).is_some());
+        assert!(collection.get_metric(&MetricType::MemoryPeak).is_none());
+    }
+
+    #[test]
+    fn test_performance_accuracy_tradeoff() {
+        let dataset_info = DatasetInfo {
+            pattern: "basic".to_string(),
+            size_category: "small".to_string(),
+            file_size_mb: 5.0,
+            rows_count: 50000,
+            columns_count: 4,
+        };
+
+        let mut collection = MetricCollection::new(
+            "test_benchmark".to_string(),
+            "adaptive".to_string(),
+            dataset_info,
+        );
+
+        collection.add_metric(MetricMeasurement::new(MetricType::ExecutionTime, 1.0));
+        collection.add_metric(MetricMeasurement::new(MetricType::AccuracyScore, 90.0));
+        collection.add_metric(MetricMeasurement::new(MetricType::MemoryPeak, 100.0));
+
+        let analysis = collection.analyze_performance_accuracy_tradeoff().unwrap();
+        assert_eq!(analysis.execution_time, 1.0);
+        assert_eq!(analysis.accuracy_score, 90.0);
+        assert_eq!(analysis.memory_usage, 100.0);
+        assert_eq!(analysis.efficiency_score, 0.9); // 90 / (1.0 * 100.0)
+
+        // Test different tradeoff ratings
+        let mut poor_collection = collection.clone();
+        poor_collection.add_metric(MetricMeasurement::new(MetricType::ExecutionTime, 10.0));
+        poor_collection.add_metric(MetricMeasurement::new(MetricType::AccuracyScore, 50.0));
+        poor_collection.add_metric(MetricMeasurement::new(MetricType::MemoryPeak, 1000.0));
+
+        let poor_analysis = poor_collection
+            .analyze_performance_accuracy_tradeoff()
+            .unwrap();
+        assert!(matches!(
+            poor_analysis.trade_off_rating,
+            TradeoffRating::Poor
+        ));
+    }
+
+    #[test]
+    fn test_system_info_creation() {
+        let dataset_info = DatasetInfo {
+            pattern: "test".to_string(),
+            size_category: "micro".to_string(),
+            file_size_mb: 1.0,
+            rows_count: 1000,
+            columns_count: 3,
+        };
+
+        let collection =
+            MetricCollection::new("test".to_string(), "test_engine".to_string(), dataset_info);
+
+        assert!(collection.execution_metadata.system_info.cpu_cores > 0);
+        assert_eq!(
+            collection.execution_metadata.system_info.os,
+            std::env::consts::OS
+        );
+    }
+
+    #[test]
+    fn test_tradeoff_rating_calculation() {
+        let dataset_info = DatasetInfo {
+            pattern: "test".to_string(),
+            size_category: "micro".to_string(),
+            file_size_mb: 1.0,
+            rows_count: 1000,
+            columns_count: 3,
+        };
+
+        let collection =
+            MetricCollection::new("test".to_string(), "test_engine".to_string(), dataset_info);
+
+        // Test excellent rating (efficiency > 10.0)
+        let excellent = collection.calculate_tradeoff_rating(0.1, 95.0, 1.0); // 95/(0.1*1.0) = 950
+        assert!(matches!(excellent, TradeoffRating::Excellent));
+
+        // Test good rating (efficiency > 5.0)
+        let good = collection.calculate_tradeoff_rating(1.0, 80.0, 10.0); // 80/(1.0*10.0) = 8.0
+        assert!(matches!(good, TradeoffRating::Good));
+
+        // Test acceptable rating (efficiency > 1.0)
+        let acceptable = collection.calculate_tradeoff_rating(1.0, 70.0, 50.0); // 70/(1.0*50.0) = 1.4
+        assert!(matches!(acceptable, TradeoffRating::Acceptable));
+
+        // Test poor rating (efficiency <= 1.0)
+        let poor = collection.calculate_tradeoff_rating(10.0, 60.0, 100.0); // 60/(10.0*100.0) = 0.06
+        assert!(matches!(poor, TradeoffRating::Poor));
     }
 }

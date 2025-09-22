@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🏗️ Code Architecture & Maintainability Improvements
 
+#### Statistical Rigor Framework & Engine Selection Testing - Issue #60
+- **NEW:** 📊 **Statistical Rigor Framework** (`src/core/stats.rs`)
+  - 95% confidence intervals with t-distribution for small samples (<30)
+  - IQR-based outlier detection and removal for data quality
+  - Coefficient of variation measurement (target <5% for acceptable variance)
+  - Regression detection using confidence interval comparison
+  - Statistical significance validation for benchmark results
+- **NEW:** 🎯 **Engine Selection Benchmarking** (`src/testing/engine_benchmarks.rs`)
+  - Real integration with all profiling engines (Streaming, MemoryEfficient, TrueStreaming, Arrow)
+  - Cross-platform memory tracking via system APIs (Windows/Linux/macOS)
+  - AdaptiveProfiler accuracy testing with 85% target threshold
+  - Performance vs accuracy trade-off analysis with efficiency scoring
+  - Systematic engine comparison with statistical significance validation
+- **NEW:** 🔬 **Comprehensive Metrics System** (`src/testing/result_collection.rs`)
+  - 17 metric types: performance, quality, engine-specific, statistical
+  - MetricMeasurement with confidence intervals and sample metadata
+  - Performance vs accuracy analysis with automated trade-off rating
+  - TradeoffRating system (Excellent/Good/Acceptable/Poor)
+- **NEW:** 📈 **Statistical Benchmark Suite** (`benches/statistical_benchmark.rs`)
+  - Statistical rigor testing with controlled datasets
+  - Engine selection accuracy measurement and validation
+  - Performance-accuracy trade-off comprehensive analysis
+  - Automated quality criteria validation and reporting
+- **ENHANCED:** 🚀 **GitHub Pages Dashboard** (`.github/workflows/benchmarks.yml`)
+  - Professional design with statistical rigor metrics display
+  - Real-time data loading from benchmark results
+  - Statistical confidence indicators and engine accuracy tracking
+  - Mobile-responsive design with comprehensive status grid
+
 #### Consolidated & Modernized Benchmarking Infrastructure - Issue #59
 - **NEW:** 🏗️ **Unified benchmarking system** - Consolidated fragmented benchmark files into comprehensive suite
   - Replaced `simple_benchmarks.rs`, `memory_benchmarks.rs`, `large_scale_benchmarks.rs` with `unified_benchmarks.rs`
