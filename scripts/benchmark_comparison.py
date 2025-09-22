@@ -18,7 +18,7 @@ from typing import Dict, List, Tuple, Any
 import csv
 
 def generate_test_csv(filepath: Path, size_mb: int) -> Path:
-    """Generate test CSV matching the large_scale_benchmarks.rs format"""
+    """Generate test CSV for unified benchmark comparison"""
     print(f"Generating {size_mb}MB test CSV...")
 
     # Calculate approximate rows needed

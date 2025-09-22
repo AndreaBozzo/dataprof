@@ -1,7 +1,8 @@
-name: Performance Benchmarks
+name: Comprehensive Performance Benchmarks
 on:
+  # Only on main branch pushes for full benchmarks
   push:
-    branches: [main, master, staging]
+    branches: [main, master]
     paths:
       - 'src/**'
       - 'benches/**'
@@ -9,32 +10,25 @@ on:
       - '.github/workflows/benchmarks.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
-  pull_request:
-    branches: [main, master, staging]
-    paths:
-      - 'src/**'
-      - 'benches/**'
-      - 'scripts/benchmark_comparison.py'
-      - '.github/workflows/benchmarks.yml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-  # Allow manual triggering
+
+  # Scheduled full benchmark runs
+  schedule:
+    - cron: '0 2 * * 1,4'  # Monday and Thursday at 2 AM UTC
+
+  # Manual dispatch for on-demand full benchmarks
   workflow_dispatch:
     inputs:
       benchmark_type:
-        description: 'Benchmark type to run'
-        required: false
+        description: 'Type of benchmark to run'
+        required: true
         default: 'all'
         type: choice
         options:
-          - all
-          - unified
-          - domain
-          - statistical
-          - simple
-          - large-scale
-          - memory
-          - comparison
+        - all
+        - unified
+        - domain
+        - statistical
+        - comparison
 
 env:
   CARGO_TERM_COLOR: always
@@ -166,13 +160,6 @@ jobs:
           cargo bench --bench statistical_benchmark > benchmark-results/statistical.txt 2>&1
           echo "✅ Statistical benchmarks completed"
 
-      - name: Run legacy benchmarks (for comparison)
-        run: |
-          echo "📊 Running legacy benchmarks for comparison..."
-          cargo bench --bench simple_benchmarks > benchmark-results/legacy_simple.txt 2>&1
-          cargo bench --bench large_scale_benchmarks > benchmark-results/legacy_large.txt 2>&1
-          cargo bench --bench memory_benchmarks > benchmark-results/legacy_memory.txt 2>&1
-          echo "✅ Legacy benchmarks completed"
 
       - name: Run external comparison benchmarks
         run: |
@@ -408,15 +395,6 @@ jobs:
             "statistical")
               cargo bench --bench statistical_benchmark
               ;;
-            "simple")
-              cargo bench --bench simple_benchmarks
-              ;;
-            "large-scale")
-              cargo bench --bench large_scale_benchmarks -- --sample-size 10
-              ;;
-            "memory")
-              cargo bench --bench memory_benchmarks -- --sample-size 10
-              ;;
             "comparison")
               python scripts/benchmark_comparison.py 1 5 25
               ;;
@@ -424,7 +402,6 @@ jobs:
               cargo bench --bench unified_benchmarks -- --sample-size 10
               cargo bench --bench domain_benchmarks -- --sample-size 10
               cargo bench --bench statistical_benchmark -- --sample-size 10
-              cargo bench --bench simple_benchmarks -- --sample-size 10
               python scripts/benchmark_comparison.py 1 10
               ;;
           esac

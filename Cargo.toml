@@ -118,18 +118,6 @@ harness = false
 name = "domain_benchmarks"
 harness = false
 
-# Legacy benchmarks (deprecated - use unified_benchmarks instead)
-[[bench]]
-name = "simple_benchmarks"
-harness = false
-
-[[bench]]
-name = "large_scale_benchmarks"
-harness = false
-
-[[bench]]
-name = "memory_benchmarks"
-harness = false
 
 [[bench]]
 name = "statistical_benchmark"

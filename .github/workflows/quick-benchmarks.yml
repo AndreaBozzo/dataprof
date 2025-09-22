@@ -1,0 +1,51 @@
+name: Quick Performance Check
+on:
+  pull_request:
+    branches: [main, master, staging]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+  push:
+    branches: [main, master, staging]
+    paths:
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+
+jobs:
+  quick-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Quick Benchmark Sample
+        run: |
+          echo "🚀 Running quick performance check..."
+          # Run statistical benchmark with reduced sample size
+          cargo bench --bench statistical_benchmark -- --sample-size 5
+
+      - name: Performance Regression Check
+        run: |
+          echo "📊 Checking for major performance regressions..."
+          # Basic smoke test - should complete in <2 minutes
+          cargo bench --bench unified_benchmarks -- --sample-size 3
+
+      - name: Report Quick Results
+        run: |
+          echo "✅ Quick performance check completed"
+          echo "ℹ️  For full benchmark results, check the scheduled comprehensive run"
