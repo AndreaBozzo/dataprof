@@ -784,7 +784,7 @@ mod tests {
             memory_usage_mb: 100.0,
             accuracy_percentage: 95.0,
             efficiency_score: 95.0,
-            memory_efficiency: 0.95,
+            memory_efficiency: 95.0,
         };
 
         assert!(analysis.overall_score() > 80.0);

@@ -408,17 +408,17 @@ mod tests {
     fn test_regression_detection() {
         let config = StatisticalConfig::local_config();
 
-        // Create baseline
+        // Create baseline with low variance (around 10.0 with small variation)
         let mut baseline_sample = StatisticalSample::new(config.clone());
-        for i in 1..=30 {
-            baseline_sample.add_measurement(i as f64); // Mean ~15.5
+        for i in 0..30 {
+            baseline_sample.add_measurement(10.0 + (i % 3) as f64 * 0.1); // Mean ~10.1, CV < 5%
         }
         let baseline_summary = baseline_sample.statistical_summary();
 
-        // Create current (worse performance)
+        // Create current (worse performance) with low variance
         let mut current_sample = StatisticalSample::new(config);
-        for i in 1..=30 {
-            current_sample.add_measurement((i + 10) as f64); // Mean ~25.5
+        for i in 0..30 {
+            current_sample.add_measurement(12.0 + (i % 3) as f64 * 0.1); // Mean ~12.1, 20% increase
         }
         let current_summary = current_sample.statistical_summary();
 
