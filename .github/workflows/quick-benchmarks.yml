@@ -16,36 +16,66 @@ on:
 jobs:
   quick-benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Rust
+      - name: Setup Rust with retry
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+        env:
+          RUSTUP_MAX_RETRIES: 3
+          RUSTUP_UPDATE_ROOT: https://forge.rust-lang.org/infra/channel-update-procedure.html
 
-      - name: Cache Cargo
+      - name: Rust toolchain fallback (if needed)
+        if: failure()
+        run: |
+          echo "⚠️ Primary Rust installation failed, trying manual installation..."
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source ~/.cargo/env
+          rustup component add rustfmt clippy
+
+      - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-quick-${{ hashFiles('**/Cargo.lock') }}-v2
+          restore-keys: |
+            ${{ runner.os }}-cargo-quick-
+            ${{ runner.os }}-cargo-
 
-      - name: Quick Benchmark Sample
+      - name: Environment health check
         run: |
-          echo "🚀 Running quick performance check..."
-          # Run statistical benchmark with quick settings (reduced measurement time)
-          CRITERION_MEASUREMENT_TIME=5 cargo bench --bench statistical_benchmark
+          echo "🔍 Environment health check..."
+          rustc --version
+          cargo --version
+          echo "Available memory: $(free -h | grep '^Mem:' | awk '{print $7}')"
+          echo "CPU info: $(nproc) cores"
 
-      - name: Performance Regression Check
+      - name: Build benchmark binaries
         run: |
-          echo "📊 Checking for major performance regressions..."
-          # Basic smoke test with minimal measurement time
-          CRITERION_MEASUREMENT_TIME=5 cargo bench --bench unified_benchmarks
+          echo "🔨 Building benchmark binaries (no run)..."
+          timeout 300 cargo bench --no-run
+
+      - name: Quick Micro Dataset Test
+        run: |
+          echo "⚡ Running micro dataset performance test..."
+          # Test only smallest datasets with minimal measurement time
+          timeout 180 cargo bench --bench unified_benchmarks small_performance -- --sample-size 5 --measurement-time 3
+
+      - name: Quick Smoke Test
+        run: |
+          echo "💨 Running basic functionality smoke test..."
+          # Test core functionality with minimal overhead
+          timeout 120 cargo bench --bench domain_benchmarks micro_performance -- --sample-size 3 --measurement-time 2
 
       - name: Report Quick Results
         run: |
-          echo "✅ Quick performance check completed"
-          echo "ℹ️  For full benchmark results, check the scheduled comprehensive run"
+          echo "✅ Quick performance check completed in under 8 minutes"
+          echo "ℹ️  For comprehensive benchmarks, check the full benchmark workflow"
