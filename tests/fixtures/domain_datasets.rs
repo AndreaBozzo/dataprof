@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use crate::testing::{DatasetConfig, DatasetSize, DatasetPattern};
+use super::{DatasetConfig, DatasetSize, DatasetPattern};
 
 /// Domain-specific dataset types
 #[derive(Debug, Clone, Copy)]
@@ -108,20 +108,18 @@ impl DomainDatasetGenerator {
         let mut writer = BufWriter::new(file);
 
         // Generate streaming-optimized data with consistent schemas
-        // Use string matching to avoid any enum variant conflicts
-        let pattern_str = format!("{:?}", pattern);
-        match pattern_str.as_str() {
-            "Basic" => {
+        match pattern {
+            DatasetPattern::Basic => {
                 Self::generate_streaming_basic(&mut writer, config)?;
             }
-            "Numeric" => {
+            DatasetPattern::Numeric => {
                 Self::generate_streaming_numeric(&mut writer, config)?;
             }
-            "Mixed" => {
+            DatasetPattern::Mixed => {
                 Self::generate_streaming_mixed(&mut writer, config)?;
             }
             _ => {
-                return Err(format!("Pattern {} not supported for streaming domain (only Basic, Numeric, Mixed are supported)", pattern_str).into());
+                return Err(format!("Pattern {:?} not supported for streaming domain (only Basic, Numeric, Mixed are supported)", pattern).into());
             }
         }
 
