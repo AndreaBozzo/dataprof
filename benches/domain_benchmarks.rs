@@ -164,6 +164,25 @@ mod domain_datasets {
                         }
                     }
                 }
+                DatasetPattern::Basic => {
+                    writeln!(writer, "id,timestamp,sensor_value,status")?;
+
+                    let rows = config.default_rows();
+                    for i in 0..rows {
+                        writeln!(
+                            writer,
+                            "{},{},{:.3},{}",
+                            i,
+                            1640995200 + (i as i64 * 60), // Unix timestamp
+                            (i as f64 * 0.1).sin() * 100.0, // Predictable sine wave
+                            if i % 100 == 0 { "error" } else { "ok" }
+                        )?;
+
+                        if i % 1000 == 0 {
+                            writer.flush()?;
+                        }
+                    }
+                }
                 _ => {
                     return Err("Pattern not supported for streaming domain".into());
                 }
