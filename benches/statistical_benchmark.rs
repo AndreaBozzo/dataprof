@@ -294,7 +294,7 @@ fn bench_systematic_engine_comparison(c: &mut Criterion) {
 
         let mut group = c.benchmark_group(format!("systematic_comparison_{}", scenario_name));
         group.measurement_time(Duration::from_secs(90));
-        group.sample_size(5); // Fewer samples due to comprehensive nature
+        group.sample_size(10); // Minimum required by Criterion
 
         group.bench_function("complete_engine_comparison", |b| {
             b.iter(|| {

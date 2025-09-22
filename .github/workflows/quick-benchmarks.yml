@@ -36,14 +36,14 @@ jobs:
       - name: Quick Benchmark Sample
         run: |
           echo "🚀 Running quick performance check..."
-          # Run statistical benchmark with reduced sample size
-          cargo bench --bench statistical_benchmark -- --sample-size 5
+          # Run statistical benchmark with quick settings (reduced measurement time)
+          CRITERION_MEASUREMENT_TIME=5 cargo bench --bench statistical_benchmark
 
       - name: Performance Regression Check
         run: |
           echo "📊 Checking for major performance regressions..."
-          # Basic smoke test - should complete in <2 minutes
-          cargo bench --bench unified_benchmarks -- --sample-size 3
+          # Basic smoke test with minimal measurement time
+          CRITERION_MEASUREMENT_TIME=5 cargo bench --bench unified_benchmarks
 
       - name: Report Quick Results
         run: |
