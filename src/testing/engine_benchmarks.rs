@@ -383,7 +383,7 @@ impl EngineBenchmarkFramework {
 
         // Get file metadata for metrics calculation
         let file_metadata = fs::metadata(dataset_path)?;
-        let file_size_mb = file_metadata.len() as f64 / (1024.0 * 1024.0);
+        let _file_size_mb = file_metadata.len() as f64 / (1024.0 * 1024.0);
 
         let result = match engine_type {
             EngineType::Streaming => {
@@ -408,7 +408,7 @@ impl EngineBenchmarkFramework {
             EngineType::Arrow => {
                 // Use Arrow profiler if available
                 use crate::engines::columnar::ArrowProfiler;
-                let profiler = ArrowProfiler::new()?;
+                let profiler = ArrowProfiler::new();
                 profiler.analyze_csv_with_arrow(dataset_path)
             }
             #[cfg(not(feature = "arrow"))]
@@ -577,17 +577,24 @@ impl EngineBenchmarkFramework {
     }
 
     fn get_available_engines(&self) -> Vec<EngineType> {
-        let engines = vec![
-            EngineType::Streaming,
-            EngineType::MemoryEfficient,
-            EngineType::TrueStreaming,
-        ];
-
-        // Add Arrow if available
         #[cfg(feature = "arrow")]
-        engines.push(EngineType::Arrow);
+        {
+            vec![
+                EngineType::Streaming,
+                EngineType::MemoryEfficient,
+                EngineType::TrueStreaming,
+                EngineType::Arrow,
+            ]
+        }
 
-        engines
+        #[cfg(not(feature = "arrow"))]
+        {
+            vec![
+                EngineType::Streaming,
+                EngineType::MemoryEfficient,
+                EngineType::TrueStreaming,
+            ]
+        }
     }
 
     fn find_best_engine(&self, performances: &[EnginePerformance]) -> EngineType {
