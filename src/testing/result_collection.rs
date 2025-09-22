@@ -814,7 +814,9 @@ mod tests {
         collection.add_metric(MetricMeasurement::new(MetricType::AccuracyScore, 90.0));
         collection.add_metric(MetricMeasurement::new(MetricType::MemoryPeak, 100.0));
 
-        let analysis = collection.analyze_performance_accuracy_tradeoff().unwrap();
+        let analysis = collection
+            .analyze_performance_accuracy_tradeoff()
+            .expect("Failed to analyze performance accuracy tradeoff in test");
         assert_eq!(analysis.execution_time, 1.0);
         assert_eq!(analysis.accuracy_score, 90.0);
         assert_eq!(analysis.memory_usage, 100.0);
@@ -828,7 +830,7 @@ mod tests {
 
         let poor_analysis = poor_collection
             .analyze_performance_accuracy_tradeoff()
-            .unwrap();
+            .expect("Failed to analyze poor performance in test");
         assert!(matches!(
             poor_analysis.trade_off_rating,
             TradeoffRating::Poor

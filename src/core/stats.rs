@@ -114,7 +114,7 @@ impl StatisticalSample {
         }
 
         let mut sorted = self.values.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         let q1_idx = sorted.len() / 4;
         let q3_idx = 3 * sorted.len() / 4;

@@ -642,7 +642,7 @@ impl EngineBenchmarkFramework {
             })
             .collect();
 
-        rankings.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        rankings.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let winner = rankings
             .first()
