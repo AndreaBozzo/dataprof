@@ -12,6 +12,9 @@ pub mod stats;
 pub mod types;
 pub mod utils;
 
+// Testing utilities (for benchmarks and tests)
+pub mod testing;
+
 // Database connectors (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub mod database;

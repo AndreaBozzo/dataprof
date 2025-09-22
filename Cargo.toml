@@ -82,6 +82,8 @@ proptest = "1.5"
 
 # Performance benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }
+lazy_static = "1.4"
+serde_json = "1.0"
 
 # Memory profiling for benchmarks (Windows compatibility issue with pprof 0.13)
 # pprof = { version = "0.13", features = ["criterion", "protobuf-codec"] }
@@ -104,6 +106,15 @@ quickcheck_macros = "1.0"
 name = "dataprof-cli"
 path = "src/main.rs"
 
+[[bench]]
+name = "unified_benchmarks"
+harness = false
+
+[[bench]]
+name = "domain_benchmarks"
+harness = false
+
+# Legacy benchmarks (deprecated - use unified_benchmarks instead)
 [[bench]]
 name = "simple_benchmarks"
 harness = false
