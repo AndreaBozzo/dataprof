@@ -15,41 +15,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  quick-benchmark:
+  quick-performance-check:
+    name: Quick Performance Validation
     runs-on: ubuntu-latest
     timeout-minutes: 8
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup Rust with retry
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
-          components: rustfmt, clippy
-        env:
-          RUSTUP_MAX_RETRIES: 3
-          RUSTUP_UPDATE_ROOT: https://forge.rust-lang.org/infra/channel-update-procedure.html
-
-      - name: Rust toolchain fallback (if needed)
-        if: failure()
-        run: |
-          echo "⚠️ Primary Rust installation failed, trying manual installation..."
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source ~/.cargo/env
-          rustup component add rustfmt clippy
-
-      - name: Cache Cargo dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target/
-          key: ${{ runner.os }}-cargo-quick-${{ hashFiles('**/Cargo.lock') }}-v2
-          restore-keys: |
-            ${{ runner.os }}-cargo-quick-
-            ${{ runner.os }}-cargo-
+          cache-prefix: quick-benchmark
 
       - name: Environment health check
         run: |
@@ -57,26 +34,32 @@ jobs:
           rustc --version
           cargo --version
           echo "Available memory: $(free -h | grep '^Mem:' | awk '{print $7}')"
-          echo "CPU info: $(nproc) cores"
+          echo "CPU cores: $(nproc)"
 
       - name: Build benchmark binaries
         run: |
-          echo "🔨 Building benchmark binaries (no run)..."
+          echo "🔨 Building benchmark binaries..."
           timeout 300 cargo bench --no-run
 
-      - name: Quick Micro Dataset Test
-        run: |
-          echo "⚡ Running micro dataset performance test..."
-          # Test only smallest datasets with minimal measurement time
-          timeout 180 cargo bench --bench unified_benchmarks small_performance -- --sample-size 10 --measurement-time 3
+      - name: Run quick benchmarks
+        uses: ./.github/actions/benchmark-runner
+        with:
+          benchmark-type: unified
+          mode: quick
+          sample-size: 10
+          measurement-time: 3
+          timeout: 3
 
-      - name: Quick Smoke Test
-        run: |
-          echo "💨 Running basic functionality smoke test..."
-          # Test core functionality with minimal overhead
-          timeout 120 cargo bench --bench domain_benchmarks micro_performance -- --sample-size 10 --measurement-time 2
+      - name: Run smoke test
+        uses: ./.github/actions/benchmark-runner
+        with:
+          benchmark-type: domain
+          mode: quick
+          sample-size: 10
+          measurement-time: 2
+          timeout: 2
 
-      - name: Report Quick Results
+      - name: Report results
         run: |
           echo "✅ Quick performance check completed in under 8 minutes"
           echo "ℹ️  For comprehensive benchmarks, check the full benchmark workflow"

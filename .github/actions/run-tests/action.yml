@@ -1,0 +1,50 @@
+name: 'Run Tests'
+description: 'Execute DataProfiler test suite with configurable features'
+inputs:
+  test-type:
+    description: 'Type of tests to run (core, integration, all)'
+    required: false
+    default: 'core'
+  features:
+    description: 'Cargo features to enable'
+    required: false
+    default: ''
+  timeout:
+    description: 'Test timeout in minutes'
+    required: false
+    default: '15'
+
+runs:
+  using: composite
+  steps:
+    - name: Run core tests
+      if: inputs.test-type == 'core' || inputs.test-type == 'all'
+      run: |
+        echo "🧪 Running core tests..."
+        timeout ${{ inputs.timeout }}m cargo test --lib --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        echo "✅ Core tests completed"
+      shell: bash
+
+    - name: Run integration tests
+      if: inputs.test-type == 'integration' || inputs.test-type == 'all'
+      run: |
+        echo "🔧 Running integration tests..."
+        timeout ${{ inputs.timeout }}m cargo test --test '*' --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        echo "✅ Integration tests completed"
+      shell: bash
+
+    - name: Run doc tests
+      if: inputs.test-type == 'all'
+      run: |
+        echo "📚 Running documentation tests..."
+        timeout 5m cargo test --doc --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        echo "✅ Doc tests completed"
+      shell: bash
+
+    - name: Test report summary
+      run: |
+        echo "📊 Test Summary for ${{ inputs.test-type }} tests"
+        echo "Features: ${{ inputs.features || 'default' }}"
+        echo "Timeout: ${{ inputs.timeout }}m"
+        echo "✅ All tests passed successfully"
+      shell: bash
