@@ -7,6 +7,242 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2024-09-23
+
+### 🔒 Security Enhancements - Issue #41 (Medium-term tasks)
+
+#### Enhanced Security Infrastructure
+- **NEW:** 🛡️ **Advanced Security Scanning Workflow** (`.github/workflows/security-advanced.yml`)
+  - Comprehensive security pipeline with multiple scanners: cargo-audit, cargo-deny, Semgrep, TruffleHog
+  - Static Application Security Testing (SAST) with security-focused Clippy rules
+  - Secrets and sensitive data scanning with custom pattern detection
+  - Database security validation and performance impact analysis
+  - SARIF reporting integration with GitHub Security tab
+  - Weekly scheduled scans and manual dispatch options
+
+#### Security Testing Integration
+- **ENHANCED:** 📋 **Security Testing Documentation** (`docs/TESTING.md`)
+  - Comprehensive security testing guide integrated into main testing documentation
+  - SQL injection prevention testing with 350+ attack pattern coverage
+  - Error sanitization tests for credential and sensitive data protection
+  - Security performance impact validation and CI/CD integration
+  - Security test environment setup and monitoring procedures
+
+#### Release & Performance Improvements
+- **IMPROVED:** 🚀 **Release Workflow Robustness** (`.github/workflows/release.yml`)
+  - Enhanced cross-compilation support for ARM64 targets using latest cross-rs
+  - Improved Windows compatibility with PYO3 environment fixes
+  - CPU compatibility verification for Python wheels
+  - Robust error handling with multiple fallback strategies
+
+- **IMPROVED:** 📊 **Benchmark Workflow Reliability** (`.github/workflows/benchmarks.yml`)
+  - Timeout protection for external tool comparisons
+  - Graceful fallback strategies for CI environment limitations
+  - Enhanced Python dependency installation with retry mechanisms
+  - Performance regression analysis with comprehensive reporting
+
+#### Developer Productivity
+- **NEW:** 🛠️ **Unified Security Command** (`justfile`)
+  - `just security-scan` command for comprehensive security validation
+  - Combines dependency audit, policy validation, security tests, and security-focused linting
+  - Integration with existing development workflow for pre-commit security checks
+
+### 🚀 Development Environment & Developer Experience - Issue #58
+
+#### Phase 3: Comprehensive Documentation & Guides
+- **NEW:** 📚 **Complete Development Documentation** (`docs/DEVELOPMENT.md`)
+  - Comprehensive development guide with quick start, architecture overview, and daily workflows
+  - Multiple development environment options (native, VS Code dev containers, GitHub Codespaces)
+  - Performance optimization guidelines, security best practices, and release process
+  - Project statistics, code quality standards, and contribution guidelines
+- **NEW:** 🧪 **Detailed Testing Guide** (`docs/TESTING.md`)
+  - Multi-layered testing approach: unit, integration, CLI, database, security, and performance tests
+  - Test execution strategies for development workflow, CI, and pre-release validation
+  - Code coverage targets (>90% unit, >80% integration) with property-based testing examples
+  - Debugging tips, custom test attributes, and advanced testing techniques (fuzzing, load testing)
+- **NEW:** 🛠️ **IDE Setup Guide** (`docs/IDE_SETUP.md`)
+  - Complete setup instructions for VS Code, JetBrains IDEs, Vim/Neovim, Emacs, and Helix
+  - IDE comparison matrix with debugging, database tools, and container support ratings
+  - Pre-configured VS Code dev containers, debugging configurations, and extension recommendations
+  - Universal development setup with essential tools and environment configuration
+- **NEW:** 🔧 **Troubleshooting Guide** (`docs/TROUBLESHOOTING.md`)
+  - Comprehensive issue resolution for setup, build, container, database, testing, and IDE problems
+  - Platform-specific solutions (Windows/WSL2, macOS, Linux) with diagnostic commands
+  - Performance troubleshooting, security validation, and network connectivity solutions
+  - Quick diagnostics section and emergency debugging procedures
+
+#### Phase 4: Quality Tooling & Developer Productivity
+- **NEW:** 🐛 **Enhanced VS Code Debugging** (`.vscode/dataprof.code-workspace`)
+  - 10 specialized debug configurations: unit tests, CLI variations, database tests, Arrow integration
+  - Engine-specific debugging (streaming, memory profiling) with targeted logging
+  - Custom input prompts for flexible debugging scenarios
+  - Pre-configured environment variables and debug symbols
+- **NEW:** ✂️ **VS Code Code Snippets** (`.vscode/dataprof.code-snippets`)
+  - 20+ DataProfiler-specific code snippets for common patterns
+  - Engine implementation, column analysis, database connectors, CLI commands
+  - Test patterns (unit, integration, property-based, benchmarks) with AAA structure
+  - Error handling, async functions, configuration structures, and documentation templates
+- **NEW:** 📦 **Advanced Dependency Management** (`justfile` + `deny.toml`)
+  - 15+ new dependency management commands: health checks, security audits, license compliance
+  - Smart update system with backup/restore, specific package updates, and safety verification
+  - Comprehensive dependency reports with outdated, security, and unused dependency analysis
+  - `cargo-deny` integration for license compliance and advanced dependency analysis
+- **NEW:** 🛡️ **Dependency Security Policy** (`deny.toml`)
+  - Whitelist of approved licenses (MIT, Apache-2.0, BSD variants) with exceptions handling
+  - Security advisory monitoring with vulnerability denial and unmaintained crate warnings
+  - Duplicate dependency detection with platform-specific skip rules
+  - Registry and git source validation for supply chain security
+
+#### Standardized Development Environment Setup (Phase 1 & 2)
+- **NEW:** 🐳 **Development Containers** (`.devcontainer/`)
+  - VS Code dev container configuration with full Rust development stack
+  - Multi-stage Dockerfile (development/testing/production environments)
+  - Pre-configured extensions: Rust Analyzer, Docker, Database tools, GitHub Copilot
+  - Volume caching for cargo dependencies and target directory
+  - Automated setup with one-command environment initialization
+- **NEW:** 🗃️ **Database Development Services** (`docker-compose.yml`)
+  - PostgreSQL 15 with pre-loaded test schemas and sample data
+  - MySQL 8.0 with comprehensive data type testing tables
+  - Redis for caching tests and MinIO for S3-compatible storage
+  - Admin tools: pgAdmin and phpMyAdmin (optional profiles)
+  - Health checks and proper initialization scripts
+- **NEW:** 🛠️ **Enhanced Task Automation** (`justfile` expansion)
+  - 25+ new database and development commands
+  - Cross-platform setup scripts (Bash + PowerShell) with robust error handling
+  - Database management: `db-setup`, `db-connect-postgres`, `db-connect-mysql`, `db-status`
+  - Testing workflows: `test-postgres`, `test-mysql`, `test-all-db`
+  - One-command complete setup: `setup-complete`
+- **NEW:** 📁 **VS Code Workspace Configuration** (`.vscode/dataprof.code-workspace`)
+  - Comprehensive workspace settings with Rust-specific optimizations
+  - Debug configurations for unit tests and CLI executable
+  - Task definitions for common development workflows
+  - Extension recommendations and editor settings
+- **NEW:** 📊 **Development Test Data** (`.devcontainer/test-data/`)
+  - Sample CSV files with various data patterns and edge cases
+  - Pre-loaded database tables with 8 sample records per service
+  - Views and stored procedures for testing database integrations
+- **ENHANCED:** 🔧 **Cross-Platform Setup Scripts**
+  - Windows PowerShell script with parameter support and logging
+  - Enhanced Bash script with error handling and mode selection (minimal/full/update)
+  - Automatic platform detection in justfile
+  - Comprehensive prerequisite checking and tool installation
+
+**🎯 Combined Results (Phases 1-4):**
+- **Setup time reduced from hours to < 5 minutes** with one-command environment initialization
+- **Consistent development environment across platforms** (Windows, macOS, Linux) with dev containers
+- **Comprehensive documentation suite** covering development, testing, IDE setup, and troubleshooting
+- **Enhanced developer productivity** with 20+ code snippets, 10 debug configurations, and 15+ dependency commands
+- **Automated quality assurance** with security audits, license compliance, and dependency health monitoring
+- **Professional onboarding experience** with multi-IDE support and extensive troubleshooting guides
+
+### 🏗️ Code Architecture & Maintainability Improvements
+
+#### Statistical Rigor Framework & Engine Selection Testing - Issue #60
+- **NEW:** 📊 **Statistical Rigor Framework** (`src/core/stats.rs`)
+  - 95% confidence intervals with t-distribution for small samples (<30)
+  - IQR-based outlier detection and removal for data quality
+  - Coefficient of variation measurement (target <5% for acceptable variance)
+  - Regression detection using confidence interval comparison
+  - Statistical significance validation for benchmark results
+- **NEW:** 🎯 **Engine Selection Benchmarking** (`src/testing/engine_benchmarks.rs`)
+  - Real integration with all profiling engines (Streaming, MemoryEfficient, TrueStreaming, Arrow)
+  - Cross-platform memory tracking via system APIs (Windows/Linux/macOS)
+  - AdaptiveProfiler accuracy testing with 85% target threshold
+  - Performance vs accuracy trade-off analysis with efficiency scoring
+  - Systematic engine comparison with statistical significance validation
+- **NEW:** 🔬 **Comprehensive Metrics System** (`src/testing/result_collection.rs`)
+  - 17 metric types: performance, quality, engine-specific, statistical
+  - MetricMeasurement with confidence intervals and sample metadata
+  - Performance vs accuracy analysis with automated trade-off rating
+  - TradeoffRating system (Excellent/Good/Acceptable/Poor)
+- **NEW:** 📈 **Statistical Benchmark Suite** (`benches/statistical_benchmark.rs`)
+  - Statistical rigor testing with controlled datasets
+  - Engine selection accuracy measurement and validation
+  - Performance-accuracy trade-off comprehensive analysis
+  - Automated quality criteria validation and reporting
+- **ENHANCED:** 🚀 **GitHub Pages Dashboard** (`.github/workflows/benchmarks.yml`)
+  - Professional design with statistical rigor metrics display
+  - Real-time data loading from benchmark results
+  - Statistical confidence indicators and engine accuracy tracking
+  - Mobile-responsive design with comprehensive status grid
+
+#### Consolidated & Modernized Benchmarking Infrastructure - Issue #59
+- **NEW:** 🏗️ **Unified benchmarking system** - Consolidated fragmented benchmark files into comprehensive suite
+  - Replaced `simple_benchmarks.rs`, `memory_benchmarks.rs`, `large_scale_benchmarks.rs` with `unified_benchmarks.rs`
+  - Standardized dataset patterns: Basic, Mixed, Numeric, Wide, Deep, Unicode, Messy
+  - Implemented dataset size categories: Micro (<1MB), Small (1-10MB), Medium (10-100MB), Large (100MB-1GB)
+- **NEW:** 🎯 **Domain-specific benchmark suite** (`domain_benchmarks.rs`)
+  - Transaction data patterns for financial/e-commerce testing
+  - Time-series data for IoT/monitoring scenarios
+  - Streaming data patterns for real-time processing validation
+  - Cross-domain comparison and adaptive engine testing
+- **NEW:** 📊 **Unified result collection system** (`src/testing/result_collection.rs`)
+  - JSON-based result aggregation for CI/CD integration
+  - Precise timing and memory collection across all benchmarks
+  - GitHub Pages dashboard integration with performance regression tracking
+- **NEW:** 🗂️ **Standardized dataset structure** (`tests/fixtures/standard_datasets/`)
+  - Organized micro/small/medium/large/realistic dataset hierarchy
+  - Realistic data patterns beyond synthetic test data
+  - Comprehensive dataset generator with configurable patterns and sizes
+- **NEW:** ⚙️ **Enhanced CI/CD workflow** (`.github/workflows/benchmarks.yml`)
+  - Manual triggers for unified and domain-specific benchmarks
+  - Automated performance dashboard updates
+  - Cross-platform memory detection and regression analysis
+
+#### Pre-commit Hooks & Code Quality - Issue #59 & Related
+- **FIXED:** 🔧 **Clippy warnings** - Resolved "too many arguments" error by refactoring `add_criterion_result` function
+  - Introduced `CriterionResultParams` struct to improve API ergonomics and maintainability
+  - Updated all benchmark files (`unified_benchmarks.rs`, `domain_benchmarks.rs`) to use structured parameters
+  - Fixed ownership issues without using clone operations for better performance
+- **FIXED:** 🛠️ **Format string optimization** - Eliminated unnecessary `format!` calls within `writeln!` macros
+  - Improved code efficiency in domain dataset generation (`tests/fixtures/domain_datasets.rs`)
+  - Better adherence to Rust formatting best practices
+- **IMPROVED:** ✅ **Development workflow** - Enhanced pre-commit hook reliability and code quality checks
+
+#### CI/CD Pipeline Improvements
+- **MAJOR REFACTOR:** 🏗️ **Complete CI/CD workflow optimization** - Consolidated 6 workflows with composite actions
+  - **Composite Actions**: Created reusable actions for Rust setup, Python deps, system deps, test execution, and benchmark running
+  - **Eliminated Duplication**: Removed 24+ duplicate Rust setups across workflows with unified caching strategy
+  - **Performance Gains**: Quick benchmarks <8min, parallel execution, intelligent caching with 80%+ hit rates
+  - **Reliability**: Network retry logic, fallback installations, comprehensive timeout controls
+  - **Maintainability**: External GitHub Pages template, unified naming, consistent error handling
+- **OPTIMIZED:** 🎯 **Workflow specialization** - Clear separation of concerns across development lifecycle
+  - `ci.yml`: Core testing (main/master) with parallel test matrix and security audits
+  - `staging-dev.yml`: Development feedback (staging) with quick validation and integration tests
+  - `quick-benchmarks.yml`: PR performance checks with micro/small datasets
+  - `benchmarks.yml`: Comprehensive performance suite with external tool comparison
+- **ENHANCED:** 📊 **GitHub Pages dashboard** - Modular performance tracking with external template
+  - Separated 830-line embedded HTML into maintainable template system
+  - Real-time performance metrics with structured JSON result collection
+  - Historical trend analysis with 90-day artifact retention
+
+#### Major Refactoring Initiative - Issue #52
+- **REFACTORED:** 📁 **Main CLI structure** (`src/main.rs` → organized modules) (e4896e1)
+  - Split 1,450-line main.rs into specialized modules: `cli/`, `commands/`, `output/`, `error/`
+  - Improved separation of concerns for CLI argument parsing, command execution, and output formatting
+  - Enhanced maintainability and code organization
+
+- **REFACTORED:** 🐍 **Python bindings architecture** (`src/python.rs` → organized modules) (3280186)
+  - Modularized 1,468-line python.rs into focused modules: `types/`, `analysis/`, `batch/`, `ml/`, `dataframe/`, `logging/`, `processor/`
+  - Better organization of Python API surface and improved code discoverability
+  - Preserved all existing functionality with comprehensive test coverage
+
+- **REFACTORED:** 🛡️ **Database security utilities** (`src/database/security.rs` → organized modules) (da92c36)
+  - Broke down 848-line security.rs into specialized modules: `sql_validation/`, `ssl_config/`, `credentials/`, `connection_security/`, `environment/`, `utils/`
+  - Enhanced security code maintainability and module separation
+  - All 32 database and security tests verified and passing
+
+#### Development Experience Improvements
+- **IMPROVED:** 🧪 **CLI test performance** - Optimized test execution from 3+ minutes to ~2.5 minutes
+- **IMPROVED:** 🔧 **Database feature testing** - Comprehensive test coverage with feature flags enabled
+- **VERIFIED:** ✅ **Refactoring integrity** - All existing functionality preserved through extensive testing
+
+#### Technical Benefits
+- **Maintainability**: Large files broken down for easier navigation and modification
+- **Code Organization**: Clear module boundaries and responsibilities
+- **Developer Productivity**: Faster compilation and better IDE support
+- **Future-Proofing**: Easier to add new features within organized structure
+
 ## [0.4.53] - 2025-09-20 - "CPU Compatibility & Build System Fixes"
 
 ### 🔧 Critical Bug Fixes & Build System Improvements

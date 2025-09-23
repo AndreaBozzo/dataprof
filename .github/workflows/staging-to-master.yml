@@ -99,17 +99,17 @@ jobs:
 
         # Verify SQL injection protection is in place
         echo "Checking SQL injection protection..."
-        if ! grep -q "validate_sql_identifier" src/database/security.rs; then
+        if ! grep -r -q "validate_sql_identifier" src/database/security/; then
           echo "❌ SQL injection protection missing"
           exit 1
         fi
 
-        if ! grep -q "validate_base_query" src/database/security.rs; then
+        if ! grep -r -q "validate_base_query" src/database/security/; then
           echo "❌ Base query validation missing"
           exit 1
         fi
 
-        if ! grep -q "sanitize_error_message" src/database/security.rs; then
+        if ! grep -r -q "sanitize_error_message" src/database/security/; then
           echo "❌ Error sanitization missing"
           exit 1
         fi

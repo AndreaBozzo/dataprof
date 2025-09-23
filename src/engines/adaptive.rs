@@ -125,6 +125,15 @@ impl AdaptiveProfiler {
         self
     }
 
+    /// Select the best engine for a file without running benchmarks
+    pub fn select_engine(&self, file_path: &Path) -> Result<EngineType> {
+        let characteristics = self.selector.analyze_file_characteristics(file_path)?;
+        let recommendation = self
+            .selector
+            .select_engine(&characteristics, ProcessingType::BatchAnalysis);
+        Ok(recommendation.primary_engine)
+    }
+
     /// Analyze file with automatic engine selection and fallback
     pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport> {
         self.analyze_file_with_context(file_path, ProcessingType::BatchAnalysis)

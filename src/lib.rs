@@ -12,6 +12,9 @@ pub mod stats;
 pub mod types;
 pub mod utils;
 
+// Testing utilities (for benchmarks and tests)
+pub mod testing;
+
 // Database connectors (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub mod database;
@@ -44,7 +47,8 @@ pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 // Re-exports for backward compatibility
 pub use output::html::generate_html_report;
 pub use types::{
-    ColumnProfile, ColumnStats, DataType, FileInfo, Pattern, QualityIssue, QualityReport, ScanInfo,
+    ColumnProfile, ColumnStats, DataType, FileInfo, OutputFormat, Pattern, QualityIssue,
+    QualityReport, ScanInfo, Severity,
 };
 pub use utils::quality::QualityChecker;
 pub use utils::sampler::{SampleInfo, Sampler};

@@ -1,4 +1,5 @@
-use crate::types::{ColumnProfile, ColumnStats, QualityIssue, QualityReport};
+use crate::analysis::MlReadinessScore;
+use crate::types::{ColumnProfile, ColumnStats, OutputFormat, QualityIssue, QualityReport};
 use anyhow::Result;
 use serde::Serialize;
 
@@ -480,4 +481,39 @@ pub fn create_formatter(format: &str) -> Box<dyn OutputFormatter> {
         "plain" => Box::new(PlainFormatter),
         _ => Box::new(JsonFormatter), // Default fallback
     }
+}
+
+pub fn output_with_formatter(
+    report: &QualityReport,
+    format: &OutputFormat,
+    ml_score: Option<&MlReadinessScore>,
+) -> Result<()> {
+    let format_str = match format {
+        OutputFormat::Json => "json",
+        OutputFormat::Csv => "csv",
+        OutputFormat::Plain => "plain",
+        OutputFormat::Text => "text", // Fallback
+    };
+
+    let formatter = create_formatter(format_str);
+    let mut output = formatter.format_report(report)?;
+
+    // Add ML score to JSON output if available
+    if matches!(format, OutputFormat::Json) && ml_score.is_some() {
+        let mut json_value: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(summary) = json_value.get_mut("summary") {
+            if let Some(score) = ml_score {
+                summary["ml_readiness"] = serde_json::json!({
+                    "score": score.overall_score,
+                    "level": score.readiness_level,
+                    "recommendations": score.recommendations,
+                    "feature_analysis": score.feature_analysis
+                });
+            }
+        }
+        output = serde_json::to_string_pretty(&json_value)?;
+    }
+
+    println!("{}", output);
+    Ok(())
 }

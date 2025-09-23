@@ -162,3 +162,16 @@ pub enum Severity {
     Medium,
     High,
 }
+
+// Output format types for CLI and output formatting
+#[derive(Clone, Debug)]
+pub enum OutputFormat {
+    /// Human-readable text output
+    Text,
+    /// Machine-readable JSON output
+    Json,
+    /// CSV format for data processing
+    Csv,
+    /// Plain text without formatting for scripting
+    Plain,
+}

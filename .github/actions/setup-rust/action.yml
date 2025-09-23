@@ -1,0 +1,51 @@
+name: 'Setup Rust with Caching'
+description: 'Reliable Rust toolchain setup with caching and fallback'
+inputs:
+  cache-prefix:
+    description: 'Cache key prefix (e.g., "benchmark", "quick")'
+    required: false
+    default: 'rust'
+  components:
+    description: 'Additional rustup components'
+    required: false
+    default: 'rustfmt,clippy'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+      env:
+        RUSTUP_MAX_RETRIES: 3
+
+    - name: Rust toolchain fallback
+      if: failure()
+      shell: bash
+      run: |
+        echo "⚠️ Primary Rust installation failed, trying manual installation..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source ~/.cargo/env
+        rustup component add $(echo "${{ inputs.components }}" | tr ',' ' ')
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          target/
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-v3
+        restore-keys: |
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-
+          rust-${{ runner.os }}-
+
+    - name: Verify Rust installation
+      shell: bash
+      run: |
+        echo "🔍 Rust environment verification..."
+        rustc --version
+        cargo --version
+        echo "Components: $(rustup component list --installed)"

@@ -1,0 +1,34 @@
+name: 'Setup Python Dependencies'
+description: 'Install Python and benchmark dependencies with caching'
+inputs:
+  python-version:
+    description: 'Python version to install'
+    required: false
+    default: '3.11'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        echo "📦 Installing Python dependencies..."
+        pip install --upgrade pip
+        # Install with timeout and retry for CI reliability
+        timeout 300 pip install pandas numpy psutil polars || echo "⚠️ Some packages failed to install"
+        # Optional dependencies (not critical for benchmarks)
+        timeout 180 pip install great-expectations || echo "ℹ️ great-expectations install skipped"
+        echo "✅ Python dependencies installed (with fallbacks)"
+
+    - name: Verify Python environment
+      shell: bash
+      run: |
+        echo "🐍 Python environment verification..."
+        python --version
+        pip list | grep -E "(pandas|numpy|polars|great-expectations)"

@@ -554,7 +554,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "serde",
+ "wasm-bindgen",
  "windows-link 0.2.0",
 ]
 
@@ -880,12 +883,13 @@ dependencies = [
 
 [[package]]
 name = "dataprof"
-version = "0.4.53"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "arrow",
  "assert_matches",
  "async-trait",
+ "chrono",
  "clap",
  "colored",
  "criterion",
@@ -895,6 +899,7 @@ dependencies = [
  "glob",
  "glob-match",
  "indicatif",
+ "lazy_static",
  "log",
  "memmap2",
  "num_cpus",
@@ -904,6 +909,7 @@ dependencies = [
  "quickcheck_macros",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
+ "rand_distr",
  "rayon",
  "regex",
  "serde",
@@ -2319,6 +2325,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.3",
+]
+
+[[package]]
+name = "rand_distr"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
+dependencies = [
+ "num-traits",
+ "rand 0.8.5",
 ]
 
 [[package]]

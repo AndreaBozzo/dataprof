@@ -18,8 +18,8 @@ fn create_test_csv() -> Result<NamedTempFile> {
 
 /// Helper function to run CLI command and get output
 fn run_cli_command(args: &[&str]) -> Result<(bool, String, String)> {
-    // Use cargo run instead of building binary separately for more reliable testing
-    let mut cargo_args = vec!["run", "--release", "--bin", "dataprof-cli", "--"];
+    // Use debug build for faster test execution - release builds are slow for testing
+    let mut cargo_args = vec!["run", "--bin", "dataprof-cli", "--"];
     cargo_args.extend_from_slice(args);
 
     let output = Command::new("cargo").args(&cargo_args).output()?;

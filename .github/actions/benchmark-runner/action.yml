@@ -1,0 +1,103 @@
+name: 'Benchmark Runner'
+description: 'Execute DataProfiler benchmarks with configurable parameters'
+inputs:
+  benchmark-type:
+    description: 'Type of benchmark (unified, domain, statistical, all)'
+    required: true
+  mode:
+    description: 'Benchmark mode (quick, full)'
+    required: false
+    default: 'full'
+  sample-size:
+    description: 'Number of samples for quick mode'
+    required: false
+    default: '10'
+  measurement-time:
+    description: 'Measurement time for quick mode (seconds)'
+    required: false
+    default: '5'
+  output-dir:
+    description: 'Output directory for results'
+    required: false
+    default: 'benchmark-results'
+  timeout:
+    description: 'Benchmark timeout in minutes'
+    required: false
+    default: '30'
+
+runs:
+  using: composite
+  steps:
+    - name: Create output directory
+      shell: bash
+      run: mkdir -p ${{ inputs.output-dir }}
+
+    - name: Run unified benchmarks
+      if: inputs.benchmark-type == 'unified' || inputs.benchmark-type == 'all'
+      shell: bash
+      run: |
+        echo "🏃 Running unified benchmarks (${{ inputs.mode }} mode)..."
+
+        if [ "${{ inputs.mode }}" = "quick" ]; then
+          timeout ${{ inputs.timeout }}m cargo bench --bench unified_benchmarks small_performance -- \
+            --sample-size ${{ inputs.sample-size }} \
+            --measurement-time ${{ inputs.measurement-time }} \
+            > ${{ inputs.output-dir }}/unified.txt 2>&1
+        else
+          timeout ${{ inputs.timeout }}m cargo bench --bench unified_benchmarks \
+            > ${{ inputs.output-dir }}/unified.txt 2>&1
+        fi
+
+        echo "✅ Unified benchmarks completed"
+
+    - name: Run domain benchmarks
+      if: inputs.benchmark-type == 'domain' || inputs.benchmark-type == 'all'
+      shell: bash
+      run: |
+        echo "🏢 Running domain-specific benchmarks (${{ inputs.mode }} mode)..."
+
+        if [ "${{ inputs.mode }}" = "quick" ]; then
+          timeout ${{ inputs.timeout }}m cargo bench --bench domain_benchmarks micro_performance -- \
+            --sample-size ${{ inputs.sample-size }} \
+            --measurement-time ${{ inputs.measurement-time }} \
+            > ${{ inputs.output-dir }}/domain.txt 2>&1
+        else
+          timeout ${{ inputs.timeout }}m cargo bench --bench domain_benchmarks \
+            > ${{ inputs.output-dir }}/domain.txt 2>&1
+        fi
+
+        echo "✅ Domain benchmarks completed"
+
+    - name: Run statistical benchmarks
+      if: inputs.benchmark-type == 'statistical' || inputs.benchmark-type == 'all'
+      shell: bash
+      run: |
+        echo "📊 Running statistical rigor benchmarks (${{ inputs.mode }} mode)..."
+
+        if [ "${{ inputs.mode }}" = "quick" ]; then
+          timeout ${{ inputs.timeout }}m cargo bench --bench statistical_benchmark -- \
+            --sample-size ${{ inputs.sample-size }} \
+            --measurement-time ${{ inputs.measurement-time }} \
+            > ${{ inputs.output-dir }}/statistical.txt 2>&1
+        else
+          timeout ${{ inputs.timeout }}m cargo bench --bench statistical_benchmark \
+            > ${{ inputs.output-dir }}/statistical.txt 2>&1
+        fi
+
+        echo "✅ Statistical benchmarks completed"
+
+    - name: Benchmark summary
+      shell: bash
+      run: |
+        echo "📊 Benchmark Summary"
+        echo "=================="
+        echo "Type: ${{ inputs.benchmark-type }}"
+        echo "Mode: ${{ inputs.mode }}"
+        echo "Output: ${{ inputs.output-dir }}"
+
+        if [ -d "${{ inputs.output-dir }}" ]; then
+          echo "Results files:"
+          ls -la ${{ inputs.output-dir }}/ || echo "No result files found"
+        fi
+
+        echo "✅ Benchmark execution completed"
