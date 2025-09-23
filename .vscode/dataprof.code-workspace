@@ -1,0 +1,455 @@
+{
+    "folders": [
+        {
+            "name": "DataProfiler",
+            "path": ".."
+        }
+    ],
+    "settings": {
+        // Rust settings
+        "rust-analyzer.checkOnSave.command": "clippy",
+        "rust-analyzer.checkOnSave.extraArgs": [
+            "--all-targets",
+            "--all-features"
+        ],
+        "rust-analyzer.cargo.features": "all",
+        "rust-analyzer.procMacro.enable": true,
+        "rust-analyzer.cargo.loadOutDirsFromCheck": true,
+        "rust-analyzer.completion.addCallArgumentSnippets": true,
+        "rust-analyzer.completion.addCallParenthesis": true,
+        "rust-analyzer.inlayHints.bindingModeHints.enable": true,
+        "rust-analyzer.inlayHints.closingBraceHints.minLines": 10,
+        "rust-analyzer.inlayHints.lifetimeElisionHints.enable": "skip_trivial",
+        "rust-analyzer.inlayHints.parameterHints.enable": true,
+        "rust-analyzer.inlayHints.typeHints.enable": true,
+
+        // Editor settings
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.rust-analyzer": "explicit"
+        },
+        "editor.rulers": [100],
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+
+        // File associations
+        "files.associations": {
+            "*.toml": "toml",
+            "justfile": "makefile",
+            "Dockerfile*": "dockerfile"
+        },
+
+        // Exclude patterns
+        "files.watcherExclude": {
+            "**/target/**": true,
+            "**/.git/**": true,
+            "**/node_modules/**": true,
+            "**/.mypy_cache/**": true,
+            "**/.venv/**": true,
+            "**/venv-short/**": true
+        },
+        "search.exclude": {
+            "**/target": true,
+            "**/Cargo.lock": true,
+            "**/*.csv": true
+        },
+
+        // Terminal settings
+        "terminal.integrated.defaultProfile.windows": "Git Bash",
+        "terminal.integrated.profiles.windows": {
+            "PowerShell": {
+                "source": "PowerShell",
+                "icon": "terminal-powershell"
+            },
+            "Command Prompt": {
+                "path": [
+                    "${env:windir}\\Sysnative\\cmd.exe",
+                    "${env:windir}\\System32\\cmd.exe"
+                ],
+                "args": [],
+                "icon": "terminal-cmd"
+            },
+            "Git Bash": {
+                "source": "Git Bash"
+            }
+        },
+
+        // Python settings (for scripts)
+        "python.defaultInterpreterPath": ".venv/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": true,
+        "python.formatting.provider": "none",
+        "[python]": {
+            "editor.formatOnSave": true,
+            "editor.defaultFormatter": "ms-python.black-formatter"
+        },
+
+        // JSON/TOML formatting
+        "[json]": {
+            "editor.defaultFormatter": "vscode.json-language-features"
+        },
+        "[toml]": {
+            "editor.defaultFormatter": "tamasfe.even-better-toml"
+        },
+
+        // Git settings
+        "git.autofetch": true,
+        "git.confirmSync": false,
+        "git.enableCommitSigning": false,
+
+        // Performance
+        "typescript.preferences.includePackageJsonAutoImports": "off",
+        "extensions.ignoreRecommendations": false
+    },
+    "extensions": {
+        "recommendations": [
+            // Rust development
+            "rust-lang.rust-analyzer",
+            "vadimcn.vscode-lldb",
+            "serayuzgur.crates",
+
+            // Configuration files
+            "tamasfe.even-better-toml",
+            "ms-vscode.makefile-tools",
+
+            // Python (for scripts)
+            "ms-python.python",
+            "ms-python.flake8",
+            "ms-python.black-formatter",
+
+            // Git and collaboration
+            "eamodio.gitlens",
+            "github.copilot",
+            "github.copilot-chat",
+
+            // Documentation
+            "yzhang.markdown-all-in-one",
+            "shd101wyy.markdown-preview-enhanced",
+            "streetsidesoftware.code-spell-checker",
+
+            // Docker
+            "ms-vscode-remote.remote-containers",
+            "ms-azuretools.vscode-docker",
+
+            // Utilities
+            "ms-vscode.vscode-json",
+            "formulahendry.auto-rename-tag",
+            "bradlc.vscode-tailwindcss"
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "cargo check",
+                "type": "cargo",
+                "command": "check",
+                "problemMatcher": ["$rustc"],
+                "group": "build",
+                "presentation": {
+                    "reveal": "silent"
+                }
+            },
+            {
+                "label": "cargo test",
+                "type": "cargo",
+                "command": "test",
+                "args": ["--lib"],
+                "problemMatcher": ["$rustc"],
+                "group": "test"
+            },
+            {
+                "label": "cargo build (release)",
+                "type": "cargo",
+                "command": "build",
+                "args": ["--release"],
+                "problemMatcher": ["$rustc"],
+                "group": "build"
+            },
+            {
+                "label": "just setup",
+                "type": "shell",
+                "command": "just",
+                "args": ["setup"],
+                "group": "build",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "just quality",
+                "type": "shell",
+                "command": "just",
+                "args": ["quality"],
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            },
+            {
+                "label": "Database Setup",
+                "type": "shell",
+                "command": "just",
+                "args": ["db-setup"],
+                "group": "build"
+            }
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug unit tests",
+                "cargo": {
+                    "args": [
+                        "test",
+                        "--no-run",
+                        "--lib",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "dataprof",
+                        "kind": "lib"
+                    }
+                },
+                "args": [],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug CLI with sample data",
+                "cargo": {
+                    "args": [
+                        "build",
+                        "--bin=dataprof-cli",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "dataprof-cli",
+                        "kind": "bin"
+                    }
+                },
+                "args": [".devcontainer/test-data/sample.csv", "--quality"],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug CLI - Engine Selection",
+                "cargo": {
+                    "args": [
+                        "build",
+                        "--bin=dataprof-cli",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "dataprof-cli",
+                        "kind": "bin"
+                    }
+                },
+                "args": [".devcontainer/test-data/sample.csv", "--quality", "--verbose"],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "dataprof::engines=debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug CLI - Memory Profiling",
+                "cargo": {
+                    "args": [
+                        "build",
+                        "--bin=dataprof-cli",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "dataprof-cli",
+                        "kind": "bin"
+                    }
+                },
+                "args": [".devcontainer/test-data/sample.csv", "--quality"],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "dataprof::memory=debug",
+                    "RUST_BACKTRACE": "full"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug CLI - Custom Arguments",
+                "cargo": {
+                    "args": [
+                        "build",
+                        "--bin=dataprof-cli",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "dataprof-cli",
+                        "kind": "bin"
+                    }
+                },
+                "args": ["${input:csvFile}", "${input:cliOptions}"],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug Integration Tests",
+                "cargo": {
+                    "args": [
+                        "test",
+                        "--no-run",
+                        "--test=integration_tests",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "integration_tests",
+                        "kind": "test"
+                    }
+                },
+                "args": [],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug Database Tests",
+                "cargo": {
+                    "args": [
+                        "test",
+                        "--no-run",
+                        "--test=database_integration",
+                        "--features=database",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "database_integration",
+                        "kind": "test"
+                    }
+                },
+                "args": [],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "dataprof::connectors=debug",
+                    "RUST_BACKTRACE": "1",
+                    "DATABASE_URL": "postgresql://dataprof:dev_password_123@localhost:5432/dataprof_test"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug Arrow Integration",
+                "cargo": {
+                    "args": [
+                        "test",
+                        "--no-run",
+                        "--test=arrow_integration_test",
+                        "--features=arrow",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "arrow_integration_test",
+                        "kind": "test"
+                    }
+                },
+                "args": [],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "dataprof::arrow=debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug Performance Tests",
+                "cargo": {
+                    "args": [
+                        "test",
+                        "--no-run",
+                        "--test=arrow_performance_test",
+                        "--features=arrow",
+                        "--package=dataprof",
+                        "--release"
+                    ],
+                    "filter": {
+                        "name": "arrow_performance_test",
+                        "kind": "test"
+                    }
+                },
+                "args": [],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "info",
+                    "RUST_BACKTRACE": "1"
+                }
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "name": "Debug CLI - Streaming Engine",
+                "cargo": {
+                    "args": [
+                        "build",
+                        "--bin=dataprof-cli",
+                        "--package=dataprof"
+                    ],
+                    "filter": {
+                        "name": "dataprof-cli",
+                        "kind": "bin"
+                    }
+                },
+                "args": [".devcontainer/test-data/sample.csv", "--quality", "--engine", "streaming"],
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "RUST_LOG": "dataprof::engines::streaming=debug",
+                    "RUST_BACKTRACE": "1"
+                }
+            }
+        ],
+        "inputs": [
+            {
+                "id": "csvFile",
+                "description": "Path to CSV file for debugging",
+                "default": ".devcontainer/test-data/sample.csv",
+                "type": "promptString"
+            },
+            {
+                "id": "cliOptions",
+                "description": "CLI options for debugging",
+                "default": "--quality",
+                "type": "promptString"
+            }
+        ]
+    }
+}
