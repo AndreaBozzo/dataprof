@@ -490,15 +490,15 @@ jobs:
           sed -i "s/BRANCH_PLACEHOLDER/${{ github.ref_name }}/g" performance-site/index.html
           sed -i "s|WORKFLOW_URL_PLACEHOLDER|https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}|g" performance-site/index.html
 
-          # Replace metrics placeholders using simple sed (safer for YAML)
-          # Escape special characters and replace placeholders
-          UNIFIED_ESCAPED=$(echo "$UNIFIED_SUMMARY" | sed 's/[[\.*^$()+?{|]/\\&/g')
-          DOMAIN_ESCAPED=$(echo "$DOMAIN_SUMMARY" | sed 's/[[\.*^$()+?{|]/\\&/g')
-          STATISTICAL_ESCAPED=$(echo "$STATISTICAL_SUMMARY" | sed 's/[[\.*^$()+?{|]/\\&/g')
+          # Replace metrics placeholders using file-based approach (avoiding sed escaping issues)
+          echo "$UNIFIED_SUMMARY" > /tmp/unified_data.txt
+          echo "$DOMAIN_SUMMARY" > /tmp/domain_data.txt
+          echo "$STATISTICAL_SUMMARY" > /tmp/statistical_data.txt
 
-          sed -i "s/UNIFIED_METRICS_PLACEHOLDER/$UNIFIED_ESCAPED/g" performance-site/index.html
-          sed -i "s/DOMAIN_METRICS_PLACEHOLDER/$DOMAIN_ESCAPED/g" performance-site/index.html
-          sed -i "s/STATISTICAL_METRICS_PLACEHOLDER/$STATISTICAL_ESCAPED/g" performance-site/index.html
+          # Use perl for safer replacement (handles special characters better)
+          perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/unified_data.txt"); $u=<F>; close(F); chomp($u)} s/UNIFIED_METRICS_PLACEHOLDER/$u/g' performance-site/index.html
+          perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/domain_data.txt"); $d=<F>; close(F); chomp($d)} s/DOMAIN_METRICS_PLACEHOLDER/$d/g' performance-site/index.html
+          perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/statistical_data.txt"); $s=<F>; close(F); chomp($s)} s/STATISTICAL_METRICS_PLACEHOLDER/$s/g' performance-site/index.html
 
           echo "✅ Performance dashboard generated"
 
