@@ -490,31 +490,15 @@ jobs:
           sed -i "s/BRANCH_PLACEHOLDER/${{ github.ref_name }}/g" performance-site/index.html
           sed -i "s|WORKFLOW_URL_PLACEHOLDER|https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}|g" performance-site/index.html
 
-          # Replace metrics placeholders (escape special characters for sed)
-          echo "$UNIFIED_SUMMARY" > /tmp/unified_metrics.txt
-          echo "$DOMAIN_SUMMARY" > /tmp/domain_metrics.txt
-          echo "$STATISTICAL_SUMMARY" > /tmp/statistical_metrics.txt
+          # Replace metrics placeholders using simple sed (safer for YAML)
+          # Escape special characters and replace placeholders
+          UNIFIED_ESCAPED=$(echo "$UNIFIED_SUMMARY" | sed 's/[[\.*^$()+?{|]/\\&/g')
+          DOMAIN_ESCAPED=$(echo "$DOMAIN_SUMMARY" | sed 's/[[\.*^$()+?{|]/\\&/g')
+          STATISTICAL_ESCAPED=$(echo "$STATISTICAL_SUMMARY" | sed 's/[[\.*^$()+?{|]/\\&/g')
 
-          # Use a more robust method for multi-line replacement
-          python3 -c "
-import re
-with open('performance-site/index.html', 'r') as f:
-    content = f.read()
-
-with open('/tmp/unified_metrics.txt', 'r') as f:
-    unified = f.read().strip()
-with open('/tmp/domain_metrics.txt', 'r') as f:
-    domain = f.read().strip()
-with open('/tmp/statistical_metrics.txt', 'r') as f:
-    statistical = f.read().strip()
-
-content = content.replace('UNIFIED_METRICS_PLACEHOLDER', unified)
-content = content.replace('DOMAIN_METRICS_PLACEHOLDER', domain)
-content = content.replace('STATISTICAL_METRICS_PLACEHOLDER', statistical)
-
-with open('performance-site/index.html', 'w') as f:
-    f.write(content)
-          "
+          sed -i "s/UNIFIED_METRICS_PLACEHOLDER/$UNIFIED_ESCAPED/g" performance-site/index.html
+          sed -i "s/DOMAIN_METRICS_PLACEHOLDER/$DOMAIN_ESCAPED/g" performance-site/index.html
+          sed -i "s/STATISTICAL_METRICS_PLACEHOLDER/$STATISTICAL_ESCAPED/g" performance-site/index.html
 
           echo "✅ Performance dashboard generated"
 
