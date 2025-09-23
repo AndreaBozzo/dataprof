@@ -34,7 +34,7 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
         // Prevent nested quotes or dangerous characters
         let quote_char = identifier
             .chars()
-            .nth(0)
+            .next()
             .ok_or_else(|| anyhow::anyhow!("Invalid identifier format"))?;
         if inner.contains(quote_char)
             || inner.contains(';')

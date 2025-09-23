@@ -31,7 +31,7 @@ fn collect_benchmark_result(
     move |b, path| {
         let start_time = std::time::Instant::now();
 
-        let result = b.iter(|| {
+        b.iter(|| {
             let analysis_result = analyze_csv(black_box(path)).expect("CSV analysis failed");
             black_box(analysis_result)
         });

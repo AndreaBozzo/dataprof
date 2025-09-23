@@ -13,7 +13,7 @@ mod domain_datasets {
     use super::{DatasetConfig, DatasetPattern, DatasetSize};
     use std::fs::File;
     use std::io::{BufWriter, Write};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     /// Simplified domain datasets for benchmarks
     pub struct DomainDatasets;
@@ -269,12 +269,12 @@ fn save_domain_results() {
     }
 }
 
+// Type alias for complex function type
+type DatasetGenerator = Box<dyn Fn() -> Result<PathBuf, Box<dyn std::error::Error>>>;
+
 /// Benchmark database-style CSV data patterns
 fn bench_database_patterns(c: &mut Criterion) {
-    let patterns: Vec<(
-        &str,
-        Box<dyn Fn() -> Result<PathBuf, Box<dyn std::error::Error>>>,
-    )> = vec![
+    let patterns: Vec<(&str, DatasetGenerator)> = vec![
         (
             "transactions",
             Box::new(|| DomainDatasets::transactions(DatasetSize::Small)),
@@ -377,10 +377,7 @@ fn bench_streaming_patterns(c: &mut Criterion) {
 /// Benchmark real-world data complexity patterns
 fn bench_realworld_complexity(c: &mut Criterion) {
     // Test different complexity levels using our domain datasets
-    let complexity_tests: Vec<(
-        &str,
-        Box<dyn Fn() -> Result<PathBuf, Box<dyn std::error::Error>>>,
-    )> = vec![
+    let complexity_tests: Vec<(&str, DatasetGenerator)> = vec![
         (
             "simple_transactions",
             Box::new(|| DomainDatasets::transactions(DatasetSize::Micro)),
@@ -429,10 +426,7 @@ fn bench_realworld_complexity(c: &mut Criterion) {
 /// Cross-domain performance comparison
 fn bench_cross_domain_comparison(c: &mut Criterion) {
     // Generate datasets representing different data domains
-    let domains: Vec<(
-        &str,
-        Box<dyn Fn() -> Result<PathBuf, Box<dyn std::error::Error>>>,
-    )> = vec![
+    let domains: Vec<(&str, DatasetGenerator)> = vec![
         (
             "ecommerce",
             Box::new(|| DomainDatasets::transactions(DatasetSize::Small)),
@@ -535,10 +529,7 @@ fn bench_domain_scaling(c: &mut Criterion) {
 /// Engine selection effectiveness across domains
 fn bench_engine_selection_domains(c: &mut Criterion) {
     // Test how adaptive engine selection performs on different data domains
-    let domain_datasets: Vec<(
-        &str,
-        Box<dyn Fn() -> Result<PathBuf, Box<dyn std::error::Error>>>,
-    )> = vec![
+    let domain_datasets: Vec<(&str, DatasetGenerator)> = vec![
         (
             "wide_ecommerce",
             Box::new(|| DomainDatasets::transactions(DatasetSize::Small)),

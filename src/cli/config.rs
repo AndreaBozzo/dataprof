@@ -1,6 +1,5 @@
 use anyhow::Result;
 use dataprof::core::{exit_codes, DataprofConfig, InputValidator};
-use std::path::Path;
 
 use crate::cli::args::{Cli, CliOutputFormat};
 

@@ -338,9 +338,11 @@ mod enhanced_features_tests {
 
     #[test]
     fn test_ssl_config_apply_to_connection_string() {
-        let mut ssl_config = SslConfig::default();
-        ssl_config.require_ssl = true;
-        ssl_config.ssl_mode = Some("require".to_string());
+        let ssl_config = SslConfig {
+            require_ssl: true,
+            ssl_mode: Some("require".to_string()),
+            ..Default::default()
+        };
 
         let connection_string = "postgresql://user@localhost/db".to_string();
         let secure_string = ssl_config.apply_to_connection_string(connection_string, "postgresql");

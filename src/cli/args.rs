@@ -14,9 +14,9 @@ pub enum CliOutputFormat {
     Plain,
 }
 
-impl Into<dataprof::OutputFormat> for CliOutputFormat {
-    fn into(self) -> dataprof::OutputFormat {
-        match self {
+impl From<CliOutputFormat> for dataprof::OutputFormat {
+    fn from(val: CliOutputFormat) -> Self {
+        match val {
             CliOutputFormat::Text => dataprof::OutputFormat::Text,
             CliOutputFormat::Json => dataprof::OutputFormat::Json,
             CliOutputFormat::Csv => dataprof::OutputFormat::Csv,
@@ -40,6 +40,7 @@ pub enum EngineChoice {
 }
 
 #[derive(Serialize)]
+#[allow(dead_code)] // Used in different feature combinations
 pub struct BenchmarkOutput {
     pub rows: usize,
     pub columns: usize,

@@ -1,5 +1,5 @@
 /// Statistical rigor benchmark suite implementing comprehensive testing
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dataprof::core::stats::{StatisticalConfig, StatisticalSample, StatisticalSummary};
 use dataprof::testing::{
     DatasetInfo, DatasetPattern, DatasetSize, EngineBenchmarkConfig, EngineBenchmarkFramework,
@@ -371,7 +371,6 @@ fn bench_generate_final_report(c: &mut Criterion) {
 }
 
 /// Helper functions
-
 fn generate_controlled_measurements(count: usize, mean: f64, std_dev: f64) -> Vec<f64> {
     use rand_distr::{Distribution, Normal};
 

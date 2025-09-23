@@ -5,9 +5,9 @@ pub mod benchmark;
 #[cfg(feature = "database")]
 pub mod database;
 
-pub use analyze::{is_json_file, run_analysis};
-pub use batch::{create_batch_config, run_batch_directory, run_batch_glob};
-pub use benchmark::{run_benchmark_analysis, show_engine_info};
+pub use analyze::run_analysis;
+pub use benchmark::show_engine_info;
 
 #[cfg(feature = "database")]
+#[allow(unused_imports)] // Conditional compilation
 pub use database::run_database_analysis;

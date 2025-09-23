@@ -352,7 +352,7 @@ mod tests {
 
         // Should have removed the outliers
         assert!(final_count < initial_count);
-        assert!(sample.values.iter().all(|&x| x >= 1.0 && x <= 20.0));
+        assert!(sample.values.iter().all(|&x| (1.0..=20.0).contains(&x)));
     }
 
     #[test]

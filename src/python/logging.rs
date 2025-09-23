@@ -12,7 +12,7 @@ pub fn configure_logging(
     level: Option<String>,
     format: Option<String>,
 ) -> PyResult<()> {
-    let logging = py.import_bound("logging")?;
+    let logging = py.import("logging")?;
 
     // Set default level to INFO if not specified
     let log_level = match level.as_deref() {
@@ -41,7 +41,7 @@ pub fn configure_logging(
 #[pyfunction]
 #[pyo3(signature = (name = None))]
 pub fn get_logger(py: Python, name: Option<String>) -> PyResult<PyObject> {
-    let logging = py.import_bound("logging")?;
+    let logging = py.import("logging")?;
     let logger_name = name.unwrap_or_else(|| "dataprof".to_string());
     let logger = logging.call_method1("getLogger", (logger_name,))?;
     Ok(logger.into())
@@ -51,7 +51,7 @@ pub fn get_logger(py: Python, name: Option<String>) -> PyResult<PyObject> {
 #[pyfunction]
 #[pyo3(signature = (message, logger_name = None))]
 pub fn log_info(py: Python, message: String, logger_name: Option<String>) -> PyResult<()> {
-    let logging = py.import_bound("logging")?;
+    let logging = py.import("logging")?;
     let logger_name = logger_name.unwrap_or_else(|| "dataprof".to_string());
     let logger = logging.call_method1("getLogger", (logger_name,))?;
     logger.call_method1("info", (message,))?;
@@ -62,7 +62,7 @@ pub fn log_info(py: Python, message: String, logger_name: Option<String>) -> PyR
 #[pyfunction]
 #[pyo3(signature = (message, logger_name = None))]
 pub fn log_debug(py: Python, message: String, logger_name: Option<String>) -> PyResult<()> {
-    let logging = py.import_bound("logging")?;
+    let logging = py.import("logging")?;
     let logger_name = logger_name.unwrap_or_else(|| "dataprof".to_string());
     let logger = logging.call_method1("getLogger", (logger_name,))?;
     logger.call_method1("debug", (message,))?;
@@ -73,7 +73,7 @@ pub fn log_debug(py: Python, message: String, logger_name: Option<String>) -> Py
 #[pyfunction]
 #[pyo3(signature = (message, logger_name = None))]
 pub fn log_warning(py: Python, message: String, logger_name: Option<String>) -> PyResult<()> {
-    let logging = py.import_bound("logging")?;
+    let logging = py.import("logging")?;
     let logger_name = logger_name.unwrap_or_else(|| "dataprof".to_string());
     let logger = logging.call_method1("getLogger", (logger_name,))?;
     logger.call_method1("warning", (message,))?;
@@ -84,7 +84,7 @@ pub fn log_warning(py: Python, message: String, logger_name: Option<String>) -> 
 #[pyfunction]
 #[pyo3(signature = (message, logger_name = None))]
 pub fn log_error(py: Python, message: String, logger_name: Option<String>) -> PyResult<()> {
-    let logging = py.import_bound("logging")?;
+    let logging = py.import("logging")?;
     let logger_name = logger_name.unwrap_or_else(|| "dataprof".to_string());
     let logger = logging.call_method1("getLogger", (logger_name,))?;
     logger.call_method1("error", (message,))?;

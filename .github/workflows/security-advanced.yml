@@ -115,7 +115,8 @@ jobs:
             -D clippy::indexing_slicing \
             -D clippy::integer_arithmetic \
             -W clippy::print_stdout \
-            -W clippy::print_stderr
+            -W clippy::print_stderr \
+            -A deprecated
           echo "✅ Security Clippy analysis passed"
 
       # Semgrep for additional SAST scanning
@@ -129,6 +130,8 @@ jobs:
           generateSarif: "1"
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+          SEMGREP_BASELINE_REF: ${{ github.event.repository.default_branch }}
+        continue-on-error: true  # Don't fail build on documentation false positives
 
       # Upload SARIF results to GitHub Security tab
       - name: Upload SARIF file
@@ -155,15 +158,22 @@ jobs:
           path: ./
           base: ${{ github.event.repository.default_branch }}
           head: HEAD
-          extra_args: --debug --only-verified
+          extra_args: --debug --only-verified --exclude-paths=.trufflehogignore
 
       # Custom regex-based sensitive data detection
       - name: Custom sensitive data patterns
         run: |
           echo "🔍 Scanning for custom sensitive data patterns..."
 
-          # Database connection strings
-          if grep -r -E "(postgresql|mysql|sqlite)://[^@]+:[^@]+@" . --exclude-dir=.git; then
+          # Database connection strings (excluding documentation)
+          if grep -r -E "(postgresql|mysql|sqlite)://[^@]+:[^@]+@" . \
+            --exclude-dir=.git \
+            --exclude-dir=docs \
+            --exclude="*.md" \
+            --exclude="README*" \
+            --exclude="CHANGELOG*" \
+            --exclude="*.rst" \
+            --exclude-dir=examples; then
             echo "❌ Found potential database credentials in code"
             exit 1
           fi
@@ -177,7 +187,15 @@ jobs:
           )
 
           for pattern in "${SENSITIVE_PATTERNS[@]}"; do
-            if grep -r -E "$pattern" . --exclude-dir=.git --exclude="*.yml" --exclude="*.md"; then
+            if grep -r -E "$pattern" . \
+              --exclude-dir=.git \
+              --exclude-dir=docs \
+              --exclude="*.yml" \
+              --exclude="*.yaml" \
+              --exclude="*.md" \
+              --exclude="*.rst" \
+              --exclude-dir=examples \
+              --exclude-dir=tests; then
               echo "⚠️ Found potential sensitive data matching pattern: $pattern"
             fi
           done

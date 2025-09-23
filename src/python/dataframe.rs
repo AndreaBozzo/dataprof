@@ -15,7 +15,7 @@ pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
 
     // Try to import pandas
-    let pandas = match py.import_bound("pandas") {
+    let pandas = match py.import("pandas") {
         Ok(pd) => pd,
         Err(_) => {
             return Err(PyRuntimeError::new_err(
@@ -77,7 +77,7 @@ pub fn feature_analysis_dataframe(py: Python, path: &str) -> PyResult<PyObject> 
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to calculate ML score: {}", e)))?;
 
     // Try to import pandas
-    let pandas = match py.import_bound("pandas") {
+    let pandas = match py.import("pandas") {
         Ok(pd) => pd,
         Err(_) => {
             return Err(PyRuntimeError::new_err(

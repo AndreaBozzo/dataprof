@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser;
-use std::path::Path;
 
 // Local modules
 mod cli;
