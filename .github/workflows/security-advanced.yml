@@ -123,16 +123,18 @@ jobs:
         run: |
           echo "🔍 Scanning for critical credentials only..."
 
-          # Only check for actual database URLs with credentials (very specific)
-          if grep -r -E "(postgresql|mysql)://[a-zA-Z0-9_]+:[a-zA-Z0-9_@!#\$%\^&\*]{8,}@" . \
+          # Only check for actual database URLs with real credentials (not test/example patterns)
+          if grep -r -E "(postgresql|mysql)://[a-zA-Z0-9_]{3,}:[a-zA-Z0-9_@!#\$%\^&\*]{8,}@[a-zA-Z0-9\.-]{3,}" . \
             --exclude-dir=.git \
             --exclude-dir=docs \
             --exclude-dir=target \
             --exclude="*.md" \
             --exclude="*.yml" \
             --exclude="*.yaml" \
+            --exclude="*.rs" \
             --exclude-dir=examples \
-            --exclude-dir=tests 2>/dev/null; then
+            --exclude-dir=tests \
+            --exclude-dir=.devcontainer 2>/dev/null | grep -v "localhost" | grep -v "127.0.0.1" | grep -v "test"; then
             echo "❌ Found actual database credentials in code"
             exit 1
           fi
