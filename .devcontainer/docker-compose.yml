@@ -1,0 +1,166 @@
+# Development database services for DataProfiler
+# Use with: docker-compose up -d
+
+services:
+  # PostgreSQL for testing database features
+  postgres:
+    image: postgres:15-alpine
+    container_name: dataprof-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dataprof_test
+      POSTGRES_USER: dataprof
+      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dataprof -d dataprof_test"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - dataprof-dev
+
+  # MySQL for testing MySQL connector features
+  mysql:
+    image: mysql:8.0
+    container_name: dataprof-mysql-dev
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_123
+      MYSQL_DATABASE: dataprof_test
+      MYSQL_USER: dataprof
+      MYSQL_PASSWORD: dev_password_123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init-scripts/mysql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "dataprof", "-pdev_password_123"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - dataprof-dev
+
+  # DuckDB standalone service (for testing)
+  duckdb:
+    image: alpine:latest
+    container_name: dataprof-duckdb-dev
+    restart: unless-stopped
+    command: tail -f /dev/null  # Keep container running
+    volumes:
+      - duckdb_data:/data
+      - ./test-data:/test-data:ro
+    working_dir: /data
+    networks:
+      - dataprof-dev
+
+  # Redis for caching tests (if needed in the future)
+  redis:
+    image: redis:7-alpine
+    container_name: dataprof-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - dataprof-dev
+
+  # MinIO for S3-compatible testing (future feature)
+  minio:
+    image: minio/minio:latest
+    container_name: dataprof-minio-dev
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9090:9090"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - dataprof-dev
+
+  # pgAdmin for PostgreSQL management (optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: dataprof-pgadmin-dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@dataprof.dev
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - dataprof-dev
+    profiles:
+      - admin  # Only start with --profile admin
+
+  # phpMyAdmin for MySQL management (optional)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: dataprof-phpmyadmin-dev
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: dataprof
+      PMA_PASSWORD: dev_password_123
+      UPLOAD_LIMIT: 100M
+    ports:
+      - "8081:80"
+    depends_on:
+      - mysql
+    networks:
+      - dataprof-dev
+    profiles:
+      - admin  # Only start with --profile admin
+
+# Persistent volumes for development data
+volumes:
+  postgres_data:
+    driver: local
+  mysql_data:
+    driver: local
+  duckdb_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+# Development network
+networks:
+  dataprof-dev:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16

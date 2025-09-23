@@ -1,0 +1,9 @@
+id,name,email,age,salary,department,hire_date,active
+1,John Doe,john.doe@example.com,30,75000.50,Engineering,2020-01-15,true
+2,Jane Smith,jane.smith@example.com,28,68000.25,Engineering,2021-03-10,true
+3,Bob Johnson,bob.johnson@example.com,45,95000.00,Management,2015-07-22,true
+4,Alice Brown,alice.brown@example.com,32,72000.75,Design,2019-11-08,false
+5,Charlie Wilson,charlie.wilson@example.com,26,58000.00,Marketing,2022-02-14,true
+6,Diana Davis,,29,71000.25,Engineering,2020-09-30,true
+7,Eva Martinez,eva.martinez@invalid,-5,-1000.00,,1900-01-01,
+8,Frank Lee,frank.lee@example.com,150,999999.99,Engineering,2030-12-31,true

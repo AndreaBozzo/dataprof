@@ -9,11 +9,18 @@ __pycache__/
 dist/
 *.egg
 
-# IDE files
-.vscode/
+# IDE files - personal settings only
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/extensions.json
 .idea/
 *.swp
 *.swo
+
+# Allow project-specific VS Code workspace and snippets
+!.vscode/dataprof.code-workspace
+!.vscode/*.code-snippets
 
 # OS files
 .DS_Store
