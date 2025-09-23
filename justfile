@@ -7,9 +7,21 @@ default:
     @just --list
 
 # Complete development environment setup
-setup:
+setup mode="full":
     @echo "🔧 Setting up DataProfiler development environment..."
-    ./scripts/setup-dev.sh
+    #!/usr/bin/env bash
+    if command -v pwsh >/dev/null 2>&1; then
+        pwsh -ExecutionPolicy Bypass -File ./scripts/setup-dev.ps1 -Mode {{mode}}
+    elif [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "cygwin" ]]; then
+        powershell -ExecutionPolicy Bypass -File ./scripts/setup-dev.ps1 -Mode {{mode}}
+    else
+        ./scripts/setup-dev.sh {{mode}}
+    fi
+
+# Legacy setup script (basic version)
+setup-legacy:
+    @echo "🔧 Legacy DataProfiler development environment setup..."
+    ./scripts/setup-dev-legacy.sh
 
 # Format all code
 fmt:
@@ -144,12 +156,85 @@ profile-memory file="examples/sample_data.csv":
 # Database development setup (requires Docker)
 db-setup:
     @echo "🗃️ Setting up development databases..."
-    docker-compose -f docker/dev-compose.yml up -d
+    docker-compose -f .devcontainer/docker-compose.yml up -d postgres mysql redis
 
 # Database teardown
 db-teardown:
     @echo "🗃️ Tearing down development databases..."
-    docker-compose -f docker/dev-compose.yml down
+    docker-compose -f .devcontainer/docker-compose.yml down
+
+# Start all development services including admin tools
+db-setup-all:
+    @echo "🗃️ Setting up all development services..."
+    docker-compose -f .devcontainer/docker-compose.yml --profile admin up -d
+
+# Database status check
+db-status:
+    @echo "🔍 Checking database services status..."
+    docker-compose -f .devcontainer/docker-compose.yml ps
+
+# Database logs
+db-logs service="":
+    @echo "📋 Showing database logs for {{service}}..."
+    #!/usr/bin/env bash
+    if [ "{{service}}" = "" ]; then
+        docker-compose -f .devcontainer/docker-compose.yml logs -f
+    else
+        docker-compose -f .devcontainer/docker-compose.yml logs -f {{service}}
+    fi
+
+# Connect to PostgreSQL
+db-connect-postgres:
+    @echo "🐘 Connecting to PostgreSQL..."
+    docker exec -it dataprof-postgres-dev psql -U dataprof -d dataprof_test
+
+# Connect to MySQL
+db-connect-mysql:
+    @echo "🐬 Connecting to MySQL..."
+    docker exec -it dataprof-mysql-dev mysql -u dataprof -pdev_password_123 dataprof_test
+
+# Reset database data (careful!)
+db-reset:
+    @echo "⚠️ Resetting all database data..."
+    docker-compose -f .devcontainer/docker-compose.yml down -v
+    docker-compose -f .devcontainer/docker-compose.yml up -d postgres mysql redis
+
+# Test specific database features
+test-postgres:
+    @echo "🐘 Running PostgreSQL-specific tests..."
+    cargo test --features postgres --test postgres_integration
+
+test-mysql:
+    @echo "🐬 Running MySQL-specific tests..."
+    cargo test --features mysql --test mysql_integration
+
+test-sqlite:
+    @echo "💿 Running SQLite-specific tests..."
+    cargo test --features sqlite --test sqlite_integration
+
+test-duckdb:
+    @echo "🦆 Running DuckDB-specific tests..."
+    cargo test --features duckdb --test duckdb_integration
+
+# Test all database features with databases running
+test-all-db:
+    @echo "🗃️ Running all database tests..."
+    just db-setup
+    sleep 10  # Wait for databases to be ready
+    cargo test --features all-db
+    just db-teardown
+
+# Complete development environment setup with databases
+setup-complete:
+    @echo "🚀 Complete development environment setup..."
+    just setup full
+    @echo "🗃️ Setting up databases..."
+    just db-setup
+    @echo "🧪 Running verification tests..."
+    sleep 15  # Wait for databases to be fully ready
+    just quality
+    @echo "✅ Complete development environment setup finished!"
+    @echo "💡 Use 'just --list' to see all available commands"
 
 # Install development tools
 install-tools:
