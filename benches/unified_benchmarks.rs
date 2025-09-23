@@ -50,8 +50,6 @@ fn collect_benchmark_result(
                 columns_processed,
             });
         }
-
-        result
     }
 }
 

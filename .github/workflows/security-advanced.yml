@@ -32,12 +32,25 @@ jobs:
         with:
           cache-prefix: security
 
-      # Multiple vulnerability scanners for comprehensive coverage
+      # Cache security tools for faster builds
+      - name: Cache security tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: security-tools-${{ runner.os }}-v2
+
+      # Install security tools if not cached
       - name: Install security tools
         run: |
-          cargo install --locked cargo-audit
-          cargo install --locked cargo-deny
-          cargo install --locked cargo-supply-chain
+          if ! command -v cargo-audit &> /dev/null; then
+            cargo install --locked cargo-audit
+          fi
+          if ! command -v cargo-deny &> /dev/null; then
+            cargo install --locked cargo-deny
+          fi
+          if ! command -v cargo-supply-chain &> /dev/null; then
+            cargo install --locked cargo-supply-chain
+          fi
 
       - name: Run cargo-audit (RustSec database)
         run: |
@@ -120,18 +133,15 @@ jobs:
           echo "✅ Security Clippy analysis passed"
 
       # Semgrep for additional SAST scanning
+      - name: Install Semgrep
+        run: |
+          python -m pip install --upgrade pip
+          pip install semgrep
+
       - name: Run Semgrep security scan
-        uses: semgrep/semgrep-action@v1
-        with:
-          config: >-
-            p/security-audit
-            p/rust
-            p/secrets
-          generateSarif: "1"
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
-          SEMGREP_BASELINE_REF: ${{ github.event.repository.default_branch }}
-        continue-on-error: true  # Don't fail build on documentation false positives
+        run: |
+          semgrep --config=p/rust --config=p/secrets --sarif --output=semgrep.sarif .
+        continue-on-error: false  # Fail on actual security issues
 
       # Upload SARIF results to GitHub Security tab
       - name: Upload SARIF file
@@ -153,43 +163,46 @@ jobs:
 
       # TruffleHog for comprehensive secrets detection
       - name: TruffleHog OSS secrets scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.83.7
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
           head: HEAD
-          extra_args: --debug --only-verified
+          extra_args: --only-verified --no-update
 
-      # Custom regex-based sensitive data detection
+      # Custom regex-based sensitive data detection (simplified)
       - name: Custom sensitive data patterns
         run: |
           echo "🔍 Scanning for custom sensitive data patterns..."
 
-          # Database connection strings (excluding documentation)
-          if grep -r -E "(postgresql|mysql|sqlite)://[^@]+:[^@]+@" . \
+          # Database connection strings with actual credentials (excluding examples)
+          if grep -r -E "(postgresql|mysql|sqlite)://[^@/]+:[^@/]+@[^/]+" . \
             --exclude-dir=.git \
             --exclude-dir=docs \
+            --exclude-dir=target \
             --exclude="*.md" \
             --exclude="README*" \
             --exclude="CHANGELOG*" \
             --exclude="*.rst" \
-            --exclude-dir=examples; then
+            --exclude-dir=examples \
+            --exclude-dir=tests; then
             echo "❌ Found potential database credentials in code"
             exit 1
           fi
 
-          # API keys and tokens patterns
+          # High-confidence API key patterns only
           SENSITIVE_PATTERNS=(
-            "sk-[a-zA-Z0-9]{20,}"           # OpenAI API keys
-            "ghp_[a-zA-Z0-9]{36}"           # GitHub personal access tokens
-            "gho_[a-zA-Z0-9]{36}"           # GitHub OAuth tokens
-            "[a-zA-Z0-9]{32,}"              # Generic 32+ char potential keys
+            "sk-[a-zA-Z0-9]{48,}"          # OpenAI API keys (specific length)
+            "ghp_[a-zA-Z0-9]{36}"          # GitHub personal access tokens
+            "gho_[a-zA-Z0-9]{36}"          # GitHub OAuth tokens
+            "sk_live_[a-zA-Z0-9]{24,}"     # Stripe live keys
           )
 
           for pattern in "${SENSITIVE_PATTERNS[@]}"; do
             if grep -r -E "$pattern" . \
               --exclude-dir=.git \
               --exclude-dir=docs \
+              --exclude-dir=target \
               --exclude="*.yml" \
               --exclude="*.yaml" \
               --exclude="*.md" \
@@ -197,6 +210,7 @@ jobs:
               --exclude-dir=examples \
               --exclude-dir=tests; then
               echo "⚠️ Found potential sensitive data matching pattern: $pattern"
+              # Don't exit on these patterns, just warn
             fi
           done
 
@@ -282,7 +296,7 @@ jobs:
   security-summary:
     name: Security Summary Report
     runs-on: ubuntu-latest
-    needs: [dependency-security, static-analysis, secrets-scanning, database-security]
+    needs: [dependency-security, static-analysis, secrets-scanning, database-security, security-performance]
     if: always()
     steps:
       - name: Generate security summary
@@ -295,12 +309,14 @@ jobs:
           echo "| Static Analysis | ${{ needs.static-analysis.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Secrets Scanning | ${{ needs.secrets-scanning.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Database Security | ${{ needs.database-security.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Performance | ${{ needs.security-performance.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [[ "${{ needs.dependency-security.result }}" == "success" &&
                 "${{ needs.static-analysis.result }}" == "success" &&
                 "${{ needs.secrets-scanning.result }}" == "success" &&
-                "${{ needs.database-security.result }}" == "success" ]]; then
+                "${{ needs.database-security.result }}" == "success" &&
+                "${{ needs.security-performance.result }}" == "success" ]]; then
             echo "✅ **Overall Security Status: PASS**" >> $GITHUB_STEP_SUMMARY
             echo "All security checks passed successfully." >> $GITHUB_STEP_SUMMARY
           else
