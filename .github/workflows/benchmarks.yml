@@ -215,56 +215,127 @@ jobs:
           echo "✅ Basic analysis completed"
         continue-on-error: true
 
-      - name: Generate comprehensive report
+      - name: Process benchmark results and generate real reports
         run: |
-          echo "📈 Generating benchmark report..."
+          echo "📈 Processing benchmark results into usable data..."
 
-          cat > benchmark-results/report.md << 'EOF'
+          # Extract key metrics from benchmark outputs
+          UNIFIED_METRICS=""
+          DOMAIN_METRICS=""
+          STATISTICAL_METRICS=""
+
+          # Process unified benchmark results
+          if [[ -f "benchmark-results/unified.txt" ]]; then
+            UNIFIED_METRICS=$(grep -E "(time:|thrpt:|time \[)" benchmark-results/unified.txt | head -10 || echo "Processing...")
+
+            cat > benchmark-results/unified_benchmark_report.md << EOF
+          # Unified Performance Report
+
+          **Generated:** $(date -u)
+          **Commit:** ${{ github.sha }}
+
+          ## Core Performance Metrics
+
+          \`\`\`
+          $UNIFIED_METRICS
+          \`\`\`
+
+          ## Raw Output
+          \`\`\`
+          $(head -50 benchmark-results/unified.txt)
+          \`\`\`
+          EOF
+          fi
+
+          # Process domain benchmark results
+          if [[ -f "benchmark-results/domain.txt" ]]; then
+            DOMAIN_METRICS=$(grep -E "(time:|thrpt:|time \[)" benchmark-results/domain.txt | head -10 || echo "Processing...")
+
+            cat > benchmark-results/domain_benchmark_report.md << EOF
+          # Domain-Specific Performance Report
+
+          **Generated:** $(date -u)
+          **Commit:** ${{ github.sha }}
+
+          ## Domain Performance Metrics
+
+          \`\`\`
+          $DOMAIN_METRICS
+          \`\`\`
+
+          ## Raw Output
+          \`\`\`
+          $(head -50 benchmark-results/domain.txt)
+          \`\`\`
+          EOF
+          fi
+
+          # Process statistical benchmark results
+          if [[ -f "benchmark-results/statistical.txt" ]]; then
+            STATISTICAL_METRICS=$(grep -E "(time:|thrpt:|time \[)" benchmark-results/statistical.txt | head -10 || echo "Processing...")
+
+            cat > benchmark-results/statistical_rigor_report.md << EOF
+          # Statistical Rigor Performance Report
+
+          **Generated:** $(date -u)
+          **Commit:** ${{ github.sha }}
+
+          ## Statistical Performance Metrics
+
+          \`\`\`
+          $STATISTICAL_METRICS
+          \`\`\`
+
+          ## Raw Output
+          \`\`\`
+          $(head -50 benchmark-results/statistical.txt)
+          \`\`\`
+          EOF
+          fi
+
+          # Generate comprehensive report with real data
+          cat > benchmark-results/report.md << EOF
           # DataProfiler Performance Benchmark Report
 
-          **Branch:** `${{ github.ref_name }}`
-          **Commit:** `${{ github.sha }}`
+          **Branch:** \`${{ github.ref_name }}\`
+          **Commit:** \`${{ github.sha }}\`
           **Date:** $(date -u)
+          **Run ID:** ${{ github.run_id }}
 
-          ## 🚀 Benchmark Results
+          ## 🚀 Performance Summary
+
+          ### Key Metrics
+          - **Unified Performance:** $(echo "$UNIFIED_METRICS" | head -3 | tr '\n' ' ' || echo "Data processing...")
+          - **Domain Performance:** $(echo "$DOMAIN_METRICS" | head -3 | tr '\n' ' ' || echo "Data processing...")
+          - **Statistical Analysis:** $(echo "$STATISTICAL_METRICS" | head -3 | tr '\n' ' ' || echo "Data processing...")
+
+          ## 📊 Detailed Results
 
           ### Unified Performance Suite
-          ```
-          $(head -30 benchmark-results/unified.txt 2>/dev/null || echo "Unified benchmarks data not available")
-          ```
+          \`\`\`
+          $UNIFIED_METRICS
+          \`\`\`
 
           ### Domain-Specific Performance
-          ```
-          $(head -30 benchmark-results/domain.txt 2>/dev/null || echo "Domain benchmarks data not available")
-          ```
+          \`\`\`
+          $DOMAIN_METRICS
+          \`\`\`
 
           ### Statistical Rigor Framework
-          ```
-          $(head -30 benchmark-results/statistical.txt 2>/dev/null || echo "Statistical benchmarks data not available")
-          ```
+          \`\`\`
+          $STATISTICAL_METRICS
+          \`\`\`
 
           ### External Tool Comparison
-          ```
-          $(cat benchmark-results/comparison.txt 2>/dev/null || echo "Comparison benchmarks data not available")
-          ```
-
-          ## 📊 Regression Analysis
-
-          ### Unified Benchmarks
-          ```
-          $(cat benchmark-results/unified_regression_analysis.txt 2>/dev/null || echo "Analysis not available")
-          ```
-
-          ### Domain Benchmarks
-          ```
-          $(cat benchmark-results/domain_regression_analysis.txt 2>/dev/null || echo "Analysis not available")
-          ```
+          \`\`\`
+          $(cat benchmark-results/comparison.txt 2>/dev/null || echo "External comparison data not available")
+          \`\`\`
 
           ---
-          🤖 Generated automatically by GitHub Actions | Run ID: ${{ github.run_id }}
+          🤖 Generated automatically by GitHub Actions | [Workflow Run](https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }})
           EOF
 
-          echo "✅ Report generated"
+          echo "✅ Real benchmark reports generated with extracted metrics"
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -396,11 +467,54 @@ jobs:
           # Generate dashboard from template
           cp .github/templates/dashboard.html performance-site/index.html
 
-          # Replace placeholders
+          # Extract metrics for dashboard
+          UNIFIED_SUMMARY="No data available"
+          DOMAIN_SUMMARY="No data available"
+          STATISTICAL_SUMMARY="No data available"
+
+          if [[ -f "benchmark-results/unified.txt" ]]; then
+            UNIFIED_SUMMARY=$(grep -E "(time:|thrpt:)" benchmark-results/unified.txt | head -5 | sed 's/^/  /' || echo "  Processing...")
+          fi
+
+          if [[ -f "benchmark-results/domain.txt" ]]; then
+            DOMAIN_SUMMARY=$(grep -E "(time:|thrpt:)" benchmark-results/domain.txt | head -5 | sed 's/^/  /' || echo "  Processing...")
+          fi
+
+          if [[ -f "benchmark-results/statistical.txt" ]]; then
+            STATISTICAL_SUMMARY=$(grep -E "(time:|thrpt:)" benchmark-results/statistical.txt | head -5 | sed 's/^/  /' || echo "  Processing...")
+          fi
+
+          # Replace placeholders with real data
           sed -i "s/TIMESTAMP_PLACEHOLDER/$TIMESTAMP/g" performance-site/index.html
           sed -i "s/COMMIT_PLACEHOLDER/${{ github.sha }}/g" performance-site/index.html
           sed -i "s/BRANCH_PLACEHOLDER/${{ github.ref_name }}/g" performance-site/index.html
           sed -i "s|WORKFLOW_URL_PLACEHOLDER|https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}|g" performance-site/index.html
+
+          # Replace metrics placeholders (escape special characters for sed)
+          echo "$UNIFIED_SUMMARY" > /tmp/unified_metrics.txt
+          echo "$DOMAIN_SUMMARY" > /tmp/domain_metrics.txt
+          echo "$STATISTICAL_SUMMARY" > /tmp/statistical_metrics.txt
+
+          # Use a more robust method for multi-line replacement
+          python3 -c "
+import re
+with open('performance-site/index.html', 'r') as f:
+    content = f.read()
+
+with open('/tmp/unified_metrics.txt', 'r') as f:
+    unified = f.read().strip()
+with open('/tmp/domain_metrics.txt', 'r') as f:
+    domain = f.read().strip()
+with open('/tmp/statistical_metrics.txt', 'r') as f:
+    statistical = f.read().strip()
+
+content = content.replace('UNIFIED_METRICS_PLACEHOLDER', unified)
+content = content.replace('DOMAIN_METRICS_PLACEHOLDER', domain)
+content = content.replace('STATISTICAL_METRICS_PLACEHOLDER', statistical)
+
+with open('performance-site/index.html', 'w') as f:
+    f.write(content)
+          "
 
           echo "✅ Performance dashboard generated"
 
