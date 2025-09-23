@@ -1,27 +1,27 @@
 # TruffleHog ignore patterns for DataProfiler
 # Documentation and example files with fake credentials
 
-# Documentation directories
-docs/
-examples/
-*.md
-README*
-CHANGELOG*
-*.rst
+# Documentation directories (regex patterns)
+docs/.*
+examples/.*
+.*\.md$
+README.*
+CHANGELOG.*
+.*\.rst$
 
 # Test files with fake test data
-tests/fixtures/
-tests/security_tests.rs
+tests/fixtures/.*
+tests/security_tests\.rs
 
 # Development files
-.devcontainer/
-.vscode/
+\.devcontainer/.*
+\.vscode/.*
 
 # Example connection strings (not real credentials)
-postgresql://user:pass@
-mysql://user:pass@
-mysql://root:password@
-postgresql://username:password@
+postgresql://user:pass@.*
+mysql://user:pass@.*
+mysql://root:password@.*
+postgresql://username:password@.*
 
 # Common documentation patterns
 user:pass@host
