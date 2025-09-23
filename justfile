@@ -58,6 +58,23 @@ test-security:
     @echo "🛡️ Running security tests..."
     cargo test --features database --test security_tests
 
+# Comprehensive security scanning (all security tools)
+security-scan:
+    @echo "🔒 Running comprehensive security scan..."
+    @echo "1️⃣  Dependency vulnerability scan..."
+    cargo audit
+    @echo "2️⃣  Security policy validation..."
+    cargo deny check
+    @echo "3️⃣  Security tests..."
+    cargo test --test security_tests --features database
+    @echo "4️⃣  Security-focused clippy..."
+    cargo clippy --all-targets --all-features -- \
+        -D clippy::suspicious \
+        -D clippy::unwrap_used \
+        -D clippy::panic \
+        -D clippy::expect_used
+    @echo "✅ Comprehensive security scan completed"
+
 # Run CLI tests (slow)
 test-cli:
     @echo "⚡ Running CLI tests..."

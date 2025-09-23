@@ -1,0 +1,294 @@
+name: Advanced Security Scanning
+
+on:
+  push:
+    branches: [main, master, staging]
+  pull_request:
+    branches: [main, master, staging]
+  schedule:
+    # Run weekly security scans on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  # Comprehensive dependency vulnerability scanning
+  dependency-security:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: security
+
+      # Multiple vulnerability scanners for comprehensive coverage
+      - name: Install security tools
+        run: |
+          cargo install --locked cargo-audit
+          cargo install --locked cargo-deny
+          cargo install --locked cargo-supply-chain
+
+      - name: Run cargo-audit (RustSec database)
+        run: |
+          echo "🔍 Running cargo-audit..."
+          cargo audit
+          echo "✅ cargo-audit passed"
+
+      - name: Run cargo-deny (License and vulnerability checks)
+        run: |
+          echo "🔍 Running cargo-deny..."
+          # Create deny.toml if it doesn't exist
+          if [ ! -f "deny.toml" ]; then
+            cat > deny.toml << 'EOF'
+          [licenses]
+          confidence-threshold = 0.8
+          allow = [
+              "Apache-2.0",
+              "MIT",
+              "BSD-3-Clause",
+              "ISC",
+              "Unicode-DFS-2016",
+          ]
+
+          [bans]
+          multiple-versions = "warn"
+          wildcards = "warn"
+
+          [advisories]
+          vulnerability = "deny"
+          unmaintained = "warn"
+          unsound = "warn"
+          yanked = "warn"
+          ignore = []
+
+          [sources]
+          unknown-registry = "warn"
+          unknown-git = "warn"
+          EOF
+          fi
+          cargo deny check
+          echo "✅ cargo-deny passed"
+
+      - name: Supply chain security analysis
+        run: |
+          echo "🔍 Analyzing supply chain security..."
+          cargo supply-chain analyze
+          echo "✅ Supply chain analysis completed"
+
+  # Static Application Security Testing (SAST)
+  static-analysis:
+    name: Static Security Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: security
+
+      # Enhanced clippy with security-focused lints
+      - name: Security-focused Clippy analysis
+        run: |
+          echo "📎 Running security-focused Clippy analysis..."
+          cargo clippy --all-targets --all-features -- \
+            -D clippy::suspicious \
+            -D clippy::complexity \
+            -D clippy::perf \
+            -D clippy::cargo \
+            -D clippy::unwrap_used \
+            -D clippy::panic \
+            -D clippy::expect_used \
+            -D clippy::indexing_slicing \
+            -D clippy::integer_arithmetic \
+            -W clippy::print_stdout \
+            -W clippy::print_stderr
+          echo "✅ Security Clippy analysis passed"
+
+      # Semgrep for additional SAST scanning
+      - name: Run Semgrep security scan
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/rust
+            p/secrets
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      # Upload SARIF results to GitHub Security tab
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+  # Advanced secrets and sensitive data scanning
+  secrets-scanning:
+    name: Secrets & Sensitive Data Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # TruffleHog for comprehensive secrets detection
+      - name: TruffleHog OSS secrets scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+      # Custom regex-based sensitive data detection
+      - name: Custom sensitive data patterns
+        run: |
+          echo "🔍 Scanning for custom sensitive data patterns..."
+
+          # Database connection strings
+          if grep -r -E "(postgresql|mysql|sqlite)://[^@]+:[^@]+@" . --exclude-dir=.git; then
+            echo "❌ Found potential database credentials in code"
+            exit 1
+          fi
+
+          # API keys and tokens patterns
+          SENSITIVE_PATTERNS=(
+            "sk-[a-zA-Z0-9]{20,}"           # OpenAI API keys
+            "ghp_[a-zA-Z0-9]{36}"           # GitHub personal access tokens
+            "gho_[a-zA-Z0-9]{36}"           # GitHub OAuth tokens
+            "[a-zA-Z0-9]{32,}"              # Generic 32+ char potential keys
+          )
+
+          for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+            if grep -r -E "$pattern" . --exclude-dir=.git --exclude="*.yml" --exclude="*.md"; then
+              echo "⚠️ Found potential sensitive data matching pattern: $pattern"
+            fi
+          done
+
+          echo "✅ Custom sensitive data scan completed"
+
+  # Database security validation
+  database-security:
+    name: Database Security Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: security
+
+      - name: Enhanced database security tests
+        run: |
+          echo "🔒 Running enhanced database security tests..."
+
+          # Run all security tests
+          cargo test --test security_tests --features database --verbose
+
+          # Verify security functions are properly exported
+          if ! cargo doc --features database --document-private-items | grep -q "validate_sql_identifier"; then
+            echo "❌ Security functions not properly documented"
+            exit 1
+          fi
+
+          # Check for unsafe code in database modules
+          if grep -r "unsafe" src/database/ --include="*.rs"; then
+            echo "⚠️ Found unsafe code in database modules - manual review required"
+          fi
+
+          # Verify all database connectors use security functions
+          SECURITY_FUNCS=("validate_sql_identifier" "validate_base_query" "sanitize_error_message")
+          CONNECTORS=$(find src/database/connectors -name "*.rs" -not -name "mod.rs")
+
+          for connector in $CONNECTORS; do
+            echo "Checking security usage in: $connector"
+            for func in "${SECURITY_FUNCS[@]}"; do
+              if ! grep -q "$func" "$connector"; then
+                echo "⚠️ Security function '$func' not used in $connector"
+              fi
+            done
+          done
+
+          echo "✅ Database security validation completed"
+
+  # Performance impact analysis for security features
+  security-performance:
+    name: Security Performance Impact
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: security
+
+      - name: Build with security features
+        run: |
+          echo "🏗️ Building with security features enabled..."
+          cargo build --release --features database
+          echo "✅ Security build completed"
+
+      - name: Basic performance validation
+        run: |
+          echo "⚡ Running basic performance validation..."
+
+          # Test CLI help performance (should be fast)
+          time timeout 5s ./target/release/dataprof-cli --help
+
+          echo "✅ Performance validation completed"
+
+  # Security reporting and summary
+  security-summary:
+    name: Security Summary Report
+    runs-on: ubuntu-latest
+    needs: [dependency-security, static-analysis, secrets-scanning, database-security]
+    if: always()
+    steps:
+      - name: Generate security summary
+        run: |
+          echo "## 🔒 Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Dependency Security | ${{ needs.dependency-security.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Static Analysis | ${{ needs.static-analysis.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secrets Scanning | ${{ needs.secrets-scanning.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Database Security | ${{ needs.database-security.result == 'success' && '✅ PASS' || '❌ FAIL' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.dependency-security.result }}" == "success" &&
+                "${{ needs.static-analysis.result }}" == "success" &&
+                "${{ needs.secrets-scanning.result }}" == "success" &&
+                "${{ needs.database-security.result }}" == "success" ]]; then
+            echo "✅ **Overall Security Status: PASS**" >> $GITHUB_STEP_SUMMARY
+            echo "All security checks passed successfully." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Overall Security Status: ATTENTION REQUIRED**" >> $GITHUB_STEP_SUMMARY
+            echo "Some security checks failed. Please review the failed jobs above." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🤖 Generated with [Claude Code](https://claude.ai/code)" >> $GITHUB_STEP_SUMMARY

@@ -516,6 +516,207 @@ export DATABASE_URL=postgresql://real_server/test_db
 cargo test --features postgres test_real_database_integration
 ```
 
+## 🔒 Security Testing
+
+### Overview
+DataProfiler implements comprehensive security testing to prevent SQL injection, credential exposure, and other vulnerabilities. Security tests are automatically run in CI/CD and should be executed before any database-related changes.
+
+### Security Test Categories
+
+#### SQL Injection Prevention
+```bash
+# Run all security tests
+cargo test --test security_tests --features database
+
+# Run specific security categories
+cargo test sql_injection_tests
+cargo test error_sanitization_tests
+cargo test integration_security_tests
+```
+
+**Test Coverage Areas:**
+- Union-based injection attacks
+- Boolean-based blind attacks
+- Time-based blind attacks
+- Error-based attacks
+- Stacked queries
+- Comment injection
+
+#### Error Sanitization Tests
+```rust
+#[test]
+fn test_credential_sanitization() {
+    let error_with_creds = "Connection failed: postgresql://user:secret@host/db";
+    let sanitized = sanitize_error_message(error_with_creds);
+
+    assert!(!sanitized.contains("secret"));
+    assert!(sanitized.contains("[REDACTED]"));
+}
+```
+
+#### Input Validation Tests
+```rust
+#[test]
+fn test_sql_identifier_validation() {
+    // Valid identifiers
+    assert!(validate_sql_identifier("users").is_ok());
+    assert!(validate_sql_identifier("\"quoted table\"").is_ok());
+
+    // Malicious attempts
+    assert!(validate_sql_identifier("users; DROP TABLE").is_err());
+    assert!(validate_sql_identifier("users' OR 1=1--").is_err());
+}
+```
+
+### Security Testing Best Practices
+
+#### 1. Comprehensive Attack Vectors
+Test against realistic attack patterns:
+```rust
+let attack_patterns = vec![
+    "users'; DROP TABLE users; --",
+    "products' UNION SELECT password FROM admin",
+    "orders' AND (SELECT SLEEP(5))",
+    "customers'; EXEC xp_cmdshell('rm -rf /')",
+];
+
+for pattern in attack_patterns {
+    assert!(validate_sql_identifier(pattern).is_err());
+}
+```
+
+#### 2. Environment Security Validation
+```bash
+# Test credential loading from environment
+export POSTGRES_USER=testuser
+export POSTGRES_PASSWORD=testpass
+cargo test test_env_credential_loading
+```
+
+#### 3. SSL/TLS Configuration Testing
+```rust
+#[test]
+fn test_ssl_enforcement() {
+    let config = SslConfig::production();
+    assert!(config.require_ssl);
+    assert!(config.verify_server_cert);
+}
+```
+
+### Security Test Data
+
+#### Safe Test Credentials
+```rust
+// Use non-sensitive test credentials
+const TEST_USER: &str = "dataprof_test";
+const TEST_PASS: &str = "test_password_123";
+const TEST_DB: &str = "dataprof_test_db";
+```
+
+#### Malicious Input Patterns
+```rust
+const INJECTION_PATTERNS: &[&str] = &[
+    "'; DROP TABLE users; --",
+    "' UNION SELECT * FROM passwords --",
+    "'; WAITFOR DELAY '00:00:05'; --",
+    "' AND 1=1 --",
+    "'; EXEC sp_configure; --",
+];
+```
+
+### Security Test Environment
+
+#### Isolated Test Database
+```bash
+# Setup isolated test environment
+docker run -d --name dataprof-security-test \
+  -e POSTGRES_DB=security_test \
+  -e POSTGRES_USER=test_user \
+  -e POSTGRES_PASSWORD=test_pass \
+  -p 5433:5432 postgres:15
+
+# Run security tests against isolated instance
+export TEST_DATABASE_URL=postgresql://test_user:test_pass@localhost:5433/security_test
+cargo test --test security_tests
+```
+
+#### CI/CD Security Integration
+Security tests are automatically run in multiple CI workflows:
+- **Basic CI**: `cargo audit` for dependency vulnerabilities
+- **Advanced Security**: Comprehensive scanning with multiple tools
+- **Production Pipeline**: Enhanced validation before deployment
+
+### Security Monitoring Tests
+
+#### Audit Trail Validation
+```rust
+#[test]
+fn test_security_audit_logging() {
+    let result = profile_database(config, "sensitive_table").await?;
+
+    // Verify security warnings are captured
+    assert!(result.security_warnings.len() > 0);
+
+    // Verify no sensitive data in logs
+    for warning in &result.security_warnings {
+        assert!(!warning.contains("password"));
+        assert!(!warning.contains("secret"));
+    }
+}
+```
+
+#### Connection Security Tests
+```rust
+#[test]
+fn test_connection_security_validation() {
+    let warnings = validate_connection_security(
+        "postgresql://user:pass@localhost:5432/db",
+        &SslConfig::default(),
+        "postgresql"
+    ).unwrap();
+
+    assert!(warnings.iter().any(|w| w.contains("Password embedded")));
+    assert!(warnings.iter().any(|w| w.contains("localhost")));
+}
+```
+
+### Performance Impact Testing
+
+Security features should not significantly impact performance:
+
+```rust
+#[test]
+fn test_validation_performance() {
+    let start = Instant::now();
+
+    for _ in 0..1000 {
+        validate_sql_identifier("test_table").unwrap();
+    }
+
+    let duration = start.elapsed();
+    assert!(duration.as_millis() < 100); // Should be very fast
+}
+```
+
+### Security Test Reporting
+
+#### Coverage Requirements
+- **Security functions**: 100% test coverage required
+- **SQL validation**: All injection patterns tested
+- **Error sanitization**: All sensitive patterns covered
+- **SSL configuration**: All modes validated
+
+#### Automated Security Scanning
+```bash
+# Run comprehensive security scan
+just security-scan
+
+# Individual security tools
+cargo audit                    # Dependency vulnerabilities
+cargo deny check              # License and security policy
+semgrep --config=p/security   # Static analysis
+```
+
 ## 📚 Further Reading
 
 - [Rust Testing Documentation](https://doc.rust-lang.org/book/ch11-00-testing.html)

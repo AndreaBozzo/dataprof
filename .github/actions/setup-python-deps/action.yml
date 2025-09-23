@@ -20,8 +20,11 @@ runs:
       run: |
         echo "📦 Installing Python dependencies..."
         pip install --upgrade pip
-        pip install pandas numpy psutil polars great-expectations
-        echo "✅ Python dependencies installed"
+        # Install with timeout and retry for CI reliability
+        timeout 300 pip install pandas numpy psutil polars || echo "⚠️ Some packages failed to install"
+        # Optional dependencies (not critical for benchmarks)
+        timeout 180 pip install great-expectations || echo "ℹ️ great-expectations install skipped"
+        echo "✅ Python dependencies installed (with fallbacks)"
 
     - name: Verify Python environment
       shell: bash

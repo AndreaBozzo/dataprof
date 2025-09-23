@@ -200,7 +200,10 @@ jobs:
 
     - name: Install cross-compilation tools
       if: matrix.cross
-      run: cargo install cross
+      run: |
+        echo "🔧 Installing cross-compilation tools..."
+        cargo install cross --git https://github.com/cross-rs/cross
+        echo "✅ Cross-compilation tools installed"
 
     - name: Build binary
       run: |
@@ -356,6 +359,8 @@ jobs:
         # Disable any CPU-specific optimizations in dependencies
         CFLAGS: "-march=x86-64"
         CXXFLAGS: "-march=x86-64"
+        # Windows compatibility
+        PYO3_CROSS_LIB_DIR: ""
 
     - name: Verify wheel compatibility (baseline only)
       if: matrix.cpu_profile == 'baseline'

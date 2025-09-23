@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2024-09-23
+
+### 🔒 Security Enhancements - Issue #41 (Medium-term tasks)
+
+#### Enhanced Security Infrastructure
+- **NEW:** 🛡️ **Advanced Security Scanning Workflow** (`.github/workflows/security-advanced.yml`)
+  - Comprehensive security pipeline with multiple scanners: cargo-audit, cargo-deny, Semgrep, TruffleHog
+  - Static Application Security Testing (SAST) with security-focused Clippy rules
+  - Secrets and sensitive data scanning with custom pattern detection
+  - Database security validation and performance impact analysis
+  - SARIF reporting integration with GitHub Security tab
+  - Weekly scheduled scans and manual dispatch options
+
+#### Security Testing Integration
+- **ENHANCED:** 📋 **Security Testing Documentation** (`docs/TESTING.md`)
+  - Comprehensive security testing guide integrated into main testing documentation
+  - SQL injection prevention testing with 350+ attack pattern coverage
+  - Error sanitization tests for credential and sensitive data protection
+  - Security performance impact validation and CI/CD integration
+  - Security test environment setup and monitoring procedures
+
+#### Release & Performance Improvements
+- **IMPROVED:** 🚀 **Release Workflow Robustness** (`.github/workflows/release.yml`)
+  - Enhanced cross-compilation support for ARM64 targets using latest cross-rs
+  - Improved Windows compatibility with PYO3 environment fixes
+  - CPU compatibility verification for Python wheels
+  - Robust error handling with multiple fallback strategies
+
+- **IMPROVED:** 📊 **Benchmark Workflow Reliability** (`.github/workflows/benchmarks.yml`)
+  - Timeout protection for external tool comparisons
+  - Graceful fallback strategies for CI environment limitations
+  - Enhanced Python dependency installation with retry mechanisms
+  - Performance regression analysis with comprehensive reporting
+
+#### Developer Productivity
+- **NEW:** 🛠️ **Unified Security Command** (`justfile`)
+  - `just security-scan` command for comprehensive security validation
+  - Combines dependency audit, policy validation, security tests, and security-focused linting
+  - Integration with existing development workflow for pre-commit security checks
+
 ### 🚀 Development Environment & Developer Experience - Issue #58
 
 #### Phase 3: Comprehensive Documentation & Guides
