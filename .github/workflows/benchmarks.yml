@@ -495,10 +495,35 @@ jobs:
           echo "$DOMAIN_SUMMARY" > /tmp/domain_data.txt
           echo "$STATISTICAL_SUMMARY" > /tmp/statistical_data.txt
 
-          # Use perl for safer replacement (handles special characters better)
-          perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/unified_data.txt"); $u=<F>; close(F); chomp($u)} s/UNIFIED_METRICS_PLACEHOLDER/$u/g' performance-site/index.html
-          perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/domain_data.txt"); $d=<F>; close(F); chomp($d)} s/DOMAIN_METRICS_PLACEHOLDER/$d/g' performance-site/index.html
-          perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/statistical_data.txt"); $s=<F>; close(F); chomp($s)} s/STATISTICAL_METRICS_PLACEHOLDER/$s/g' performance-site/index.html
+          # Replace only real benchmark data if available
+          if [[ -f "benchmark-results/unified.txt" && -s "benchmark-results/unified.txt" ]]; then
+            echo "$UNIFIED_SUMMARY" > /tmp/unified_data.txt
+            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/unified_data.txt"); $u=<F>; close(F); chomp($u)} s/UNIFIED_METRICS_PLACEHOLDER/$u/g' performance-site/index.html
+          else
+            sed -i 's/UNIFIED_METRICS_PLACEHOLDER/Benchmark data will be available after next CI run/g' performance-site/index.html
+          fi
+
+          if [[ -f "benchmark-results/domain.txt" && -s "benchmark-results/domain.txt" ]]; then
+            echo "$DOMAIN_SUMMARY" > /tmp/domain_data.txt
+            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/domain_data.txt"); $d=<F>; close(F); chomp($d)} s/DOMAIN_METRICS_PLACEHOLDER/$d/g' performance-site/index.html
+          else
+            sed -i 's/DOMAIN_METRICS_PLACEHOLDER/Benchmark data will be available after next CI run/g' performance-site/index.html
+          fi
+
+          if [[ -f "benchmark-results/statistical.txt" && -s "benchmark-results/statistical.txt" ]]; then
+            echo "$STATISTICAL_SUMMARY" > /tmp/statistical_data.txt
+            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/statistical_data.txt"); $s=<F>; close(F); chomp($s)} s/STATISTICAL_METRICS_PLACEHOLDER/$s/g' performance-site/index.html
+          else
+            sed -i 's/STATISTICAL_METRICS_PLACEHOLDER/Benchmark data will be available after next CI run/g' performance-site/index.html
+          fi
+
+          if [[ -f "benchmark-results/comparison.txt" && -s "benchmark-results/comparison.txt" ]]; then
+            COMPARISON_SUMMARY=$(head -10 benchmark-results/comparison.txt | grep -v "^$" | head -5 || echo "External comparison completed")
+            echo "$COMPARISON_SUMMARY" > /tmp/comparison_data.txt
+            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/comparison_data.txt"); $c=<F>; close(F); chomp($c)} s/COMPARISON_RESULTS_PLACEHOLDER/$c/g' performance-site/index.html
+          else
+            sed -i 's/COMPARISON_RESULTS_PLACEHOLDER/External comparison will be available after next CI run/g' performance-site/index.html
+          fi
 
           echo "✅ Performance dashboard generated"
 
