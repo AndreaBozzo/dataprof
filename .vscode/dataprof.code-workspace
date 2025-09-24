@@ -7,11 +7,7 @@
     ],
     "settings": {
         // Rust settings
-        "rust-analyzer.checkOnSave.command": "clippy",
-        "rust-analyzer.checkOnSave.extraArgs": [
-            "--all-targets",
-            "--all-features"
-        ],
+        "rust-analyzer.checkOnSave": true,
         "rust-analyzer.cargo.features": "all",
         "rust-analyzer.procMacro.enable": true,
         "rust-analyzer.cargo.loadOutDirsFromCheck": true,
@@ -22,23 +18,22 @@
         "rust-analyzer.inlayHints.lifetimeElisionHints.enable": "skip_trivial",
         "rust-analyzer.inlayHints.parameterHints.enable": true,
         "rust-analyzer.inlayHints.typeHints.enable": true,
-
         // Editor settings
         "editor.formatOnSave": true,
         "editor.formatOnType": true,
         "editor.codeActionsOnSave": {
             "source.fixAll.rust-analyzer": "explicit"
         },
-        "editor.rulers": [100],
+        "editor.rulers": [
+            100
+        ],
         "editor.tabSize": 4,
         "editor.insertSpaces": true,
-
         // File associations
         "files.associations": {
             "*.toml": "toml",
             "Dockerfile*": "dockerfile"
         },
-
         // Exclude patterns
         "files.watcherExclude": {
             "**/target/**": true,
@@ -53,7 +48,6 @@
             "**/Cargo.lock": true,
             "**/*.csv": true
         },
-
         // Terminal settings
         "terminal.integrated.defaultProfile.windows": "Git Bash",
         "terminal.integrated.profiles.windows": {
@@ -73,7 +67,6 @@
                 "source": "Git Bash"
             }
         },
-
         // Python settings (for scripts)
         "python.defaultInterpreterPath": ".venv/bin/python",
         "python.linting.enabled": true,
@@ -84,7 +77,6 @@
             "editor.formatOnSave": true,
             "editor.defaultFormatter": "ms-python.black-formatter"
         },
-
         // JSON/TOML formatting
         "[json]": {
             "editor.defaultFormatter": "vscode.json-language-features"
@@ -92,12 +84,10 @@
         "[toml]": {
             "editor.defaultFormatter": "tamasfe.even-better-toml"
         },
-
         // Git settings
         "git.autofetch": true,
         "git.confirmSync": false,
         "git.enableCommitSigning": false,
-
         // Performance
         "typescript.preferences.includePackageJsonAutoImports": "off",
         "extensions.ignoreRecommendations": false
@@ -108,30 +98,24 @@
             "rust-lang.rust-analyzer",
             "vadimcn.vscode-lldb",
             "serayuzgur.crates",
-
             // Configuration files
             "tamasfe.even-better-toml",
             "ms-vscode.makefile-tools",
-
             // Python (for scripts)
             "ms-python.python",
             "ms-python.flake8",
             "ms-python.black-formatter",
-
             // Git and collaboration
             "eamodio.gitlens",
             "github.copilot",
             "github.copilot-chat",
-
             // Documentation
             "yzhang.markdown-all-in-one",
             "shd101wyy.markdown-preview-enhanced",
             "streetsidesoftware.code-spell-checker",
-
             // Docker
             "ms-vscode-remote.remote-containers",
             "ms-azuretools.vscode-docker",
-
             // Utilities
             "ms-vscode.vscode-json",
             "formulahendry.auto-rename-tag",
@@ -145,7 +129,9 @@
                 "label": "cargo check",
                 "type": "cargo",
                 "command": "check",
-                "problemMatcher": ["$rustc"],
+                "problemMatcher": [
+                    "$rustc"
+                ],
                 "group": "build",
                 "presentation": {
                     "reveal": "silent"
@@ -155,23 +141,33 @@
                 "label": "cargo test",
                 "type": "cargo",
                 "command": "test",
-                "args": ["--lib"],
-                "problemMatcher": ["$rustc"],
+                "args": [
+                    "--lib"
+                ],
+                "problemMatcher": [
+                    "$rustc"
+                ],
                 "group": "test"
             },
             {
                 "label": "cargo build (release)",
                 "type": "cargo",
                 "command": "build",
-                "args": ["--release"],
-                "problemMatcher": ["$rustc"],
+                "args": [
+                    "--release"
+                ],
+                "problemMatcher": [
+                    "$rustc"
+                ],
                 "group": "build"
             },
             {
                 "label": "cargo format",
                 "type": "shell",
                 "command": "cargo",
-                "args": ["fmt"],
+                "args": [
+                    "fmt"
+                ],
                 "group": "build",
                 "presentation": {
                     "echo": true,
@@ -184,7 +180,12 @@
                 "label": "cargo quality check",
                 "type": "shell",
                 "command": "cargo",
-                "args": ["clippy", "--", "-D", "warnings"],
+                "args": [
+                    "clippy",
+                    "--",
+                    "-D",
+                    "warnings"
+                ],
                 "group": "test",
                 "presentation": {
                     "echo": true,
@@ -192,13 +193,6 @@
                     "focus": false,
                     "panel": "shared"
                 }
-            },
-            {
-                "label": "Database Setup",
-                "type": "shell",
-                "command": "just",
-                "args": ["db-setup"],
-                "group": "build"
             }
         ]
     },
@@ -243,7 +237,10 @@
                         "kind": "bin"
                     }
                 },
-                "args": [".devcontainer/test-data/sample.csv", "--quality"],
+                "args": [
+                    ".devcontainer/test-data/sample.csv",
+                    "--quality"
+                ],
                 "cwd": "${workspaceFolder}",
                 "env": {
                     "RUST_LOG": "debug",
@@ -265,7 +262,11 @@
                         "kind": "bin"
                     }
                 },
-                "args": [".devcontainer/test-data/sample.csv", "--quality", "--verbose"],
+                "args": [
+                    ".devcontainer/test-data/sample.csv",
+                    "--quality",
+                    "--verbose"
+                ],
                 "cwd": "${workspaceFolder}",
                 "env": {
                     "RUST_LOG": "dataprof::engines=debug",
@@ -287,7 +288,10 @@
                         "kind": "bin"
                     }
                 },
-                "args": [".devcontainer/test-data/sample.csv", "--quality"],
+                "args": [
+                    ".devcontainer/test-data/sample.csv",
+                    "--quality"
+                ],
                 "cwd": "${workspaceFolder}",
                 "env": {
                     "RUST_LOG": "dataprof::memory=debug",
@@ -309,7 +313,10 @@
                         "kind": "bin"
                     }
                 },
-                "args": ["${input:csvFile}", "${input:cliOptions}"],
+                "args": [
+                    "${input:csvFile}",
+                    "${input:cliOptions}"
+                ],
                 "cwd": "${workspaceFolder}",
                 "env": {
                     "RUST_LOG": "debug",
@@ -428,7 +435,12 @@
                         "kind": "bin"
                     }
                 },
-                "args": [".devcontainer/test-data/sample.csv", "--quality", "--engine", "streaming"],
+                "args": [
+                    ".devcontainer/test-data/sample.csv",
+                    "--quality",
+                    "--engine",
+                    "streaming"
+                ],
                 "cwd": "${workspaceFolder}",
                 "env": {
                     "RUST_LOG": "dataprof::engines::streaming=debug",
