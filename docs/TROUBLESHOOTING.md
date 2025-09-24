@@ -11,13 +11,13 @@ When encountering issues, start with these diagnostic commands:
 cargo run -- --engine-info
 
 # Verify development setup
-just setup
+cargo build
 
 # Run comprehensive health check
-just quality
+cargo fmt && cargo clippy && cargo test
 
 # Check database connectivity
-just db-status
+docker-compose -f .devcontainer/docker-compose.ymlstatus
 ```
 
 ## 🏗️ Setup and Installation Issues
@@ -321,18 +321,18 @@ error: connection refused at localhost:5432
 **Solutions**:
 ```bash
 # Check if databases are running
-just db-status
+docker-compose -f .devcontainer/docker-compose.ymlstatus
 docker ps
 
 # Start databases
-just db-setup
+docker-compose -f .devcontainer/docker-compose.ymlsetup
 
 # Check database logs
-just db-logs postgres
-just db-logs mysql
+docker-compose -f .devcontainer/docker-compose.ymllogs postgres
+docker-compose -f .devcontainer/docker-compose.ymllogs mysql
 
 # Reset database containers
-just db-reset
+docker-compose -f .devcontainer/docker-compose.ymlreset
 ```
 
 #### Issue: Database authentication failed
@@ -346,8 +346,8 @@ error: authentication failed for user "dataprof"
 cat .devcontainer/docker-compose.yml
 
 # Reset database with fresh credentials
-just db-teardown
-just db-setup
+docker-compose -f .devcontainer/docker-compose.ymlteardown
+docker-compose -f .devcontainer/docker-compose.ymlsetup
 
 # Manual connection test
 docker exec -it dataprof-postgres-dev psql -U dataprof -d dataprof_test
@@ -407,17 +407,17 @@ error: connection to server at "localhost" (127.0.0.1), port 5432 failed
 **Solutions**:
 ```bash
 # Ensure databases are running for tests
-just db-setup
+docker-compose -f .devcontainer/docker-compose.ymlsetup
 sleep 10  # Wait for startup
 
 # Run database tests specifically
-just test-db
+cargo test-db
 
 # Run all tests with database setup
-just test-all-db
+cargo test-all-db
 
 # Check database connectivity
-just db-connect-postgres
+docker-compose -f .devcontainer/docker-compose.ymlconnect-postgres
 \q  # Exit if successful
 ```
 
@@ -460,7 +460,7 @@ export RUST_MIN_STACK=8388608  # 8MB stack
 cargo test --exclude slow_tests
 
 # Run specific test suites
-just test  # Unit tests only
+cargo test  # Unit tests only
 cargo test --lib  # Library tests only
 ```
 
@@ -532,7 +532,7 @@ docker system prune -f
 cat .devcontainer/devcontainer.json
 
 # Use fallback setup
-just setup  # Native development setup
+cargo build  # Native development setup
 ```
 
 #### Issue: Debugging not working
@@ -805,7 +805,7 @@ time ./target/release/dataprof-cli file.csv
 1. **Check the logs**: Most issues have helpful error messages
 2. **Search existing issues**: [GitHub Issues](https://github.com/user/dataprof/issues)
 3. **Read documentation**: Start with [Development Guide](./DEVELOPMENT.md)
-4. **Run diagnostics**: Use `just quality` for comprehensive checks
+4. **Run diagnostics**: Use `cargo fmt && cargo clippy && cargo test` for comprehensive checks
 
 ### Reporting Issues
 
@@ -851,7 +851,7 @@ cd ..
 rm -rf dataprof/
 git clone <repo-url>
 cd dataprof/
-just setup-complete
+cargo build-complete
 ```
 
 ## 📚 Additional Resources

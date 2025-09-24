@@ -99,7 +99,7 @@ function Get-ToolVersion {
             "docker" { return (docker --version).Split(" ")[2].TrimEnd(",") }
             "docker-compose" { return (docker-compose --version).Split(" ")[2].TrimEnd(",") }
             "rust" { return (rustc --version).Split(" ")[1] }
-            "just" { return (just --version).Split(" ")[1] }
+            # "just" { return "removed" }
             default { return "unknown" }
         }
     } catch {
@@ -355,19 +355,17 @@ function Show-Summary {
     Write-LogSuccess "🎉 Development environment setup complete!"
     Write-Host ""
     Write-LogInfo "📋 Available commands:"
-    Write-Host "   just --list                  # Show all available commands"
-    Write-Host "   just setup-complete          # Complete environment setup with databases"
-    Write-Host "   just dev                     # Quick development cycle (fmt, build, test)"
-    Write-Host "   just quality                 # Full quality check pipeline"
-    Write-Host "   just db-setup                # Start development databases"
-    Write-Host "   just test-all                # Run comprehensive tests"
+    Write-Host "   cargo build                  # Build project"
+    Write-Host "   cargo test                   # Run tests"
+    Write-Host "   cargo fmt                    # Format code"
+    Write-Host "   cargo clippy                 # Lint code"
+    Write-Host "   docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases"
     Write-Host ""
     Write-LogInfo "🗃️ Database commands:"
-    Write-Host "   just db-setup                # Start PostgreSQL, MySQL, Redis"
-    Write-Host "   just db-setup-all            # Start all services including admin tools"
-    Write-Host "   just db-connect-postgres     # Connect to PostgreSQL"
-    Write-Host "   just db-connect-mysql        # Connect to MySQL"
-    Write-Host "   just db-status               # Check database service status"
+    Write-Host "   docker-compose -f .devcontainer/docker-compose.yml up -d     # Start databases"
+    Write-Host "   docker-compose -f .devcontainer/docker-compose.yml ps        # Check status"
+    Write-Host "   docker exec -it dataprof-postgres-dev psql -U dataprof -d dataprof_test  # Connect PostgreSQL"
+    Write-Host "   docker exec -it dataprof-mysql-dev mysql -u dataprof -pdev_password_123  # Connect MySQL"
     Write-Host ""
     Write-LogInfo "💡 Tips:"
     Write-Host "   - Pre-commit hooks run automatically on commits"
@@ -378,8 +376,8 @@ function Show-Summary {
 
     if (($Mode -ne "minimal") -and (Test-CommandExists "docker")) {
         Write-LogInfo "🚀 Next steps:"
-        Write-Host "   1. Run 'just db-setup' to start development databases"
-        Write-Host "   2. Run 'just test-all-db' to verify database integration"
+        Write-Host "   1. Run 'docker-compose -f .devcontainer/docker-compose.yml up -d' to start development databases"
+        Write-Host "   2. Run 'cargo test --features all-db' to verify database integration"
         Write-Host "   3. Open the project in VS Code with the Dev Containers extension"
     }
 }

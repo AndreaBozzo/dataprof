@@ -73,7 +73,7 @@ get_version() {
             rustc --version | cut -d' ' -f2
             ;;
         "just")
-            just --version | cut -d' ' -f2
+            # just removed
             ;;
         *)
             echo "unknown"
@@ -341,19 +341,17 @@ display_summary() {
     log_success "🎉 Development environment setup complete!"
     echo ""
     log_info "📋 Available commands:"
-    echo "   just --list                  # Show all available commands"
-    echo "   just setup-complete          # Complete environment setup with databases"
-    echo "   just dev                     # Quick development cycle (fmt, build, test)"
-    echo "   just quality                 # Full quality check pipeline"
-    echo "   just db-setup                # Start development databases"
-    echo "   just test-all                # Run comprehensive tests"
+    echo "   cargo build                  # Build project"
+    echo "   cargo test                   # Run tests"
+    echo "   cargo fmt                    # Format code"
+    echo "   cargo clippy                 # Lint code"
+    echo "   docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases"
     echo ""
     log_info "🗃️ Database commands:"
-    echo "   just db-setup                # Start PostgreSQL, MySQL, Redis"
-    echo "   just db-setup-all            # Start all services including admin tools"
-    echo "   just db-connect-postgres     # Connect to PostgreSQL"
-    echo "   just db-connect-mysql        # Connect to MySQL"
-    echo "   just db-status               # Check database service status"
+    echo "   docker-compose -f .devcontainer/docker-compose.yml up -d     # Start databases"
+    echo "   docker-compose -f .devcontainer/docker-compose.yml ps        # Check status"
+    echo "   docker exec -it dataprof-postgres-dev psql -U dataprof -d dataprof_test  # Connect PostgreSQL"
+    echo "   docker exec -it dataprof-mysql-dev mysql -u dataprof -pdev_password_123  # Connect MySQL"
     echo ""
     log_info "💡 Tips:"
     echo "   - Pre-commit hooks run automatically on commits"
@@ -364,8 +362,8 @@ display_summary() {
 
     if [[ "$SETUP_MODE" != "minimal" ]] && command_exists docker; then
         log_info "🚀 Next steps:"
-        echo "   1. Run 'just db-setup' to start development databases"
-        echo "   2. Run 'just test-all-db' to verify database integration"
+        echo "   1. Run 'docker-compose -f .devcontainer/docker-compose.yml up -d' to start development databases"
+        echo "   2. Run 'cargo test --features all-db' to verify database integration"
         echo "   3. Open the project in VS Code with the Dev Containers extension"
     fi
 }

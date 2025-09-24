@@ -14,16 +14,16 @@ code .
 ### Option 2: Manual Setup
 ```bash
 # Enhanced setup script with error handling
-just setup full
+cargo build full
 
 # Or use legacy script
-just setup-legacy
+cargo build-legacy
 
 # Start databases
-just db-setup
+docker-compose -f .devcontainer/docker-compose.ymlsetup
 
 # Complete setup with databases and tests
-just setup-complete
+cargo build-complete
 ```
 
 ## 📁 Directory Structure
@@ -65,7 +65,7 @@ just setup-complete
 ### Admin Tools (Optional)
 ```bash
 # Start with admin tools
-just db-setup-all
+docker-compose -f .devcontainer/docker-compose.ymlsetup-all
 
 # Access web interfaces
 # pgAdmin: http://localhost:8080 (admin@dataprof.dev / admin123)
@@ -77,39 +77,39 @@ just db-setup-all
 
 ```bash
 # Start core databases
-just db-setup
+docker-compose -f .devcontainer/docker-compose.ymlsetup
 
 # Start all services including admin tools
-just db-setup-all
+docker-compose -f .devcontainer/docker-compose.ymlsetup-all
 
 # Check database status
-just db-status
+docker-compose -f .devcontainer/docker-compose.ymlstatus
 
 # View logs
-just db-logs postgres  # or mysql, redis, etc.
+docker-compose -f .devcontainer/docker-compose.ymllogs postgres  # or mysql, redis, etc.
 
 # Connect to databases
-just db-connect-postgres
-just db-connect-mysql
+docker-compose -f .devcontainer/docker-compose.ymlconnect-postgres
+docker-compose -f .devcontainer/docker-compose.ymlconnect-mysql
 
 # Reset all data (⚠️ destructive)
-just db-reset
+docker-compose -f .devcontainer/docker-compose.ymlreset
 ```
 
 ## 🧪 Testing Commands
 
 ```bash
 # Test specific databases
-just test-postgres
-just test-mysql
-just test-sqlite
-just test-duckdb
+cargo test --featurespostgres
+cargo test --featuresmysql
+cargo test --featuressqlite
+cargo test --featuresduckdb
 
 # Test all databases with services running
-just test-all-db
+cargo test --featuresall-db
 
 # Full quality check
-just quality
+cargo fmt && cargo clippy && cargo test
 ```
 
 ## 📊 Sample Data
@@ -162,9 +162,9 @@ SELECT name, salary FROM sample_data WHERE salary > 70000;
 - Pre-loaded schemas and test data
 
 ✅ **Task Automation**
-- Enhanced `justfile` with database commands
+- Standard cargo commands for all development tasks
 - Cross-platform setup scripts (Bash + PowerShell)
-- One-command environment setup
+- Direct command usage without additional tools
 
 ✅ **Cross-Platform Support**
 - Linux, macOS, Windows (WSL2/Git Bash)
@@ -185,11 +185,11 @@ docker ps  # Should work without errors
 **Database initialization failed**
 ```bash
 # Check logs
-just db-logs mysql
-just db-logs postgres
+docker-compose -f .devcontainer/docker-compose.ymllogs mysql
+docker-compose -f .devcontainer/docker-compose.ymllogs postgres
 
 # Reset if needed
-just db-reset
+docker-compose -f .devcontainer/docker-compose.ymlreset
 ```
 
 **Permission errors on Windows**
@@ -221,7 +221,7 @@ docker-compose -f .devcontainer/docker-compose.yml build --no-cache
 ## 📚 Related Documentation
 
 - [DEVELOPMENT.md](../DEVELOPMENT.md) - Complete development workflow
-- [justfile](../justfile) - All available commands
+- Use standard `cargo` commands directly
 - [Docker Compose](docker-compose.yml) - Service configuration
 - [Issue #58](https://github.com/AndreaBozzo/dataprof/issues/58) - Original requirements
 
@@ -238,9 +238,9 @@ Planned for future implementation:
 
 **Quick Commands Reference:**
 ```bash
-just setup              # Setup development environment
-just db-setup           # Start databases
-just test-all-db        # Test with databases
-just quality            # Full quality checks
-just --list             # Show all commands
+cargo build             # Build project
+cargo test              # Run tests
+cargo fmt               # Format code
+cargo clippy            # Lint code
+docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases
 ```

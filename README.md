@@ -55,21 +55,21 @@ let report = profiler.analyze_csv_file("large_dataset.csv")?;
 ### Prerequisites
 - Rust (latest stable via [rustup](https://rustup.rs/))
 - Docker (for database testing)
-- just task runner: `cargo install just`
 
 ### Setup
 ```bash
 git clone https://github.com/AndreaBozzo/dataprof.git
 cd dataprof
-just setup-complete  # Complete development environment with databases
+cargo build --release  # Build project
+docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases
 ```
 
 ### Common Tasks
 ```bash
-just test           # Run all tests
-just bench          # Performance benchmarks
-just dev            # Start development containers
-just lint           # Code quality checks
+cargo test          # Run all tests
+cargo bench         # Performance benchmarks
+cargo fmt           # Format code
+cargo clippy        # Code quality checks
 ```
 
 ## Documentation

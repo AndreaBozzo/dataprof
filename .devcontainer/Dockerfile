@@ -70,7 +70,7 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 # Install Rust development tools
 RUN rustup component add rustfmt clippy \
     && rustup target add x86_64-unknown-linux-musl \
-    && cargo install cargo-tarpaulin cargo-machete just cargo-audit cargo-outdated
+    && cargo install cargo-tarpaulin cargo-machete cargo-audit cargo-outdated
 
 # Set up cargo configuration for faster builds
 RUN mkdir -p ~/.cargo \
@@ -86,7 +86,7 @@ WORKDIR /workspace
 
 # Copy configuration files for caching
 COPY --chown=vscode:vscode Cargo.toml Cargo.lock ./
-COPY --chown=vscode:vscode justfile ./
+# COPY --chown=vscode:vscode justfile ./
 
 # Pre-build dependencies for faster development cycles
 RUN mkdir -p src && echo "fn main() {}" > src/main.rs \

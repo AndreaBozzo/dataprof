@@ -36,7 +36,6 @@
         // File associations
         "files.associations": {
             "*.toml": "toml",
-            "justfile": "makefile",
             "Dockerfile*": "dockerfile"
         },
 
@@ -169,10 +168,10 @@
                 "group": "build"
             },
             {
-                "label": "just setup",
+                "label": "cargo format",
                 "type": "shell",
-                "command": "just",
-                "args": ["setup"],
+                "command": "cargo",
+                "args": ["fmt"],
                 "group": "build",
                 "presentation": {
                     "echo": true,
@@ -182,10 +181,10 @@
                 }
             },
             {
-                "label": "just quality",
+                "label": "cargo quality check",
                 "type": "shell",
-                "command": "just",
-                "args": ["quality"],
+                "command": "cargo",
+                "args": ["clippy", "--", "-D", "warnings"],
                 "group": "test",
                 "presentation": {
                     "echo": true,

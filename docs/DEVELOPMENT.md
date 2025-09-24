@@ -8,7 +8,8 @@ A comprehensive guide for setting up and developing with DataProfiler.
 # Clone and setup in one command
 git clone https://github.com/username/dataprof.git
 cd dataprof
-just setup-complete  # Sets up everything including databases
+cargo build --release  # Build project
+docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases
 ```
 
 ## 📋 Prerequisites
@@ -17,7 +18,6 @@ just setup-complete  # Sets up everything including databases
 - **Rust** (latest stable) - Install via [rustup](https://rustup.rs/)
 - **Docker** - For database testing and development containers
 - **Git** - Version control
-- **just** - Task runner: `cargo install just`
 
 ### Optional but Recommended
 - **VS Code** - Pre-configured workspace available
@@ -50,7 +50,7 @@ source ~/.cargo/env
 
 # Install components
 rustup component add rustfmt clippy
-cargo install just cargo-tarpaulin cargo-machete
+cargo install cargo-tarpaulin cargo-machete
 
 # Setup development tools
 pip install pre-commit
@@ -91,8 +91,8 @@ git checkout staging && git pull origin staging
 git checkout -b feature/my-feature
 
 # Development cycle
-just dev          # format + build + test
-just quality      # comprehensive checks
+cargo fmt && cargo build && cargo test  # format + build + test
+cargo fmt && cargo clippy && cargo test  # comprehensive checks
 
 # Commit and push
 git add .
@@ -103,48 +103,48 @@ git push origin feature/my-feature
 ### Code Quality Checks
 ```bash
 # Quick checks
-just fmt          # Format code
-just lint         # Run clippy
-just test         # Run unit tests
+cargo fmt         # Format code
+cargo clippy      # Run clippy
+cargo test        # Run unit tests
 
 # Comprehensive checks
-just quality      # All quality checks
-just test-all     # All tests including integration
-just precommit    # Pre-commit hooks
+cargo fmt && cargo clippy && cargo test  # All quality checks
+cargo test        # All tests including integration
+pre-commit run --all-files  # Pre-commit hooks
 ```
 
 ### Database Development
 ```bash
 # Start databases
-just db-setup                    # PostgreSQL, MySQL, Redis
-just db-setup-all               # + admin tools (pgAdmin, phpMyAdmin)
+docker-compose -f .devcontainer/docker-compose.yml up -d postgres mysql redis  # PostgreSQL, MySQL, Redis
+docker-compose -f .devcontainer/docker-compose.yml --profile admin up -d       # + admin tools
 
 # Test specific databases
-just test-postgres               # PostgreSQL tests
-just test-mysql                  # MySQL tests
-just test-sqlite                 # SQLite tests
-just test-duckdb                 # DuckDB tests
+cargo test --features postgres  # PostgreSQL tests
+cargo test --features mysql     # MySQL tests
+cargo test --features sqlite    # SQLite tests
+cargo test --features duckdb    # DuckDB tests
 
 # Connect to databases
-just db-connect-postgres         # psql console
-just db-connect-mysql           # mysql console
+docker exec -it dataprof-postgres-dev psql -U dataprof -d dataprof_test  # psql console
+docker exec -it dataprof-mysql-dev mysql -u dataprof -pdev_password_123  # mysql console
 
 # Cleanup
-just db-teardown                # Stop all databases
-just db-reset                   # Reset all data
+docker-compose -f .devcontainer/docker-compose.yml down        # Stop all databases
+docker-compose -f .devcontainer/docker-compose.yml down -v     # Reset all data
 ```
 
 ### Performance Analysis
 ```bash
 # Benchmarks
-just bench                      # Run cargo bench
+cargo bench                     # Run cargo bench
 cargo run -- large_file.csv --benchmark
 
 # Memory profiling (Linux)
-just profile-memory examples/large.csv
+cargo build --release && valgrind --tool=massif ./target/release/dataprof-cli examples/large.csv
 
 # Code coverage
-just coverage                   # Generate HTML report
+cargo tarpaulin --out Html --output-dir coverage  # Generate HTML report
 open coverage/tarpaulin-report.html
 ```
 
@@ -153,22 +153,22 @@ open coverage/tarpaulin-report.html
 ### Test Categories
 1. **Unit Tests** (`cargo test --lib`) - Fast, isolated component tests
 2. **Integration Tests** (`cargo test`) - Feature integration tests
-3. **CLI Tests** (`just test-cli`) - End-to-end CLI testing
-4. **Database Tests** (`just test-db`) - Database connector tests
-5. **Performance Tests** (`just bench`) - Performance regression tests
+3. **CLI Tests** (`cargo test-cli`) - End-to-end CLI testing
+4. **Database Tests** (`cargo test-db`) - Database connector tests
+5. **Performance Tests** (`cargo bench`) - Performance regression tests
 
 ### Running Tests
 ```bash
 # Quick feedback loop
-just test                       # Unit tests only
+cargo test                       # Unit tests only
 
 # Comprehensive testing
-just test-all                   # All tests
-just test-all-db               # All tests + database setup
+cargo test-all                   # All tests
+cargo test-all-db               # All tests + database setup
 
 # Specific test suites
-just test-arrow                # Apache Arrow integration
-just test-security             # Security-focused tests
+cargo test-arrow                # Apache Arrow integration
+cargo test-security             # Security-focused tests
 cargo test engine_selection    # Specific test case
 cargo test --features postgres # Feature-specific tests
 ```
@@ -274,7 +274,7 @@ ms_print massif.out.* > memory_profile.txt
 ```bash
 # Security audit
 cargo audit                     # Check for vulnerabilities
-just test-security             # Security-focused tests
+cargo test-security             # Security-focused tests
 
 # Safe code patterns
 grep -r "unsafe" src/          # Minimize unsafe blocks
@@ -292,8 +292,8 @@ grep -r "unwrap()" src/        # Use proper error handling
 ### Code Documentation
 ```bash
 # Generate docs
-just docs                      # Generate documentation
-just docs-open                # Open in browser
+cargo doc --all-features --no-deps                      # Generate documentation
+cargo doc --all-features --no-deps-open                # Open in browser
 
 # Documentation tests
 cargo test --doc              # Test code examples in docs
@@ -317,7 +317,7 @@ cargo tree                    # Dependency tree
 
 ### Before Submitting PR
 1. `just quality` - All checks pass
-2. `just test-all` - All tests pass
+2. `cargo test-all` - All tests pass
 3. Update documentation if needed
 4. Follow commit message conventions
 5. Ensure no `unwrap()` calls in new code

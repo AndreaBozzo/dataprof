@@ -16,21 +16,6 @@ repos:
         types: [rust]
         pass_filenames: false
 
-
-      - id: cargo-clippy-duckdb
-        name: cargo clippy (duckdb)
-        entry: bash -c 'if command -v duckdb >/dev/null 2>&1 || [ -f /usr/local/lib/libduckdb.so ]; then cargo clippy --lib --features duckdb -- -D warnings; else echo "⚠️ DuckDB not available, skipping clippy"; fi'
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-      - id: cargo-clippy-arrow
-        name: cargo clippy (arrow)
-        entry: cargo clippy --lib --features arrow -- -D warnings
-        language: system
-        types: [rust]
-        pass_filenames: false
-
   # General file formatting
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0

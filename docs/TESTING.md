@@ -40,7 +40,7 @@ src/
 
 ```bash
 # Run unit tests only
-just test                       # Fast unit tests
+cargo test                      # Fast unit tests
 cargo test --lib               # Library unit tests only
 cargo test --bin dataprof-cli  # CLI unit tests only
 
@@ -73,7 +73,7 @@ mod tests {
 
 ```bash
 # Run all integration tests
-just test-all                  # All tests including integration
+cargo test                     # All tests including integration
 cargo test                     # All tests
 
 # Run specific integration test files
@@ -95,17 +95,17 @@ cargo test --test error_handling_simple
 
 ```bash
 # Setup databases first
-just db-setup                  # Start PostgreSQL, MySQL, Redis
+docker-compose -f .devcontainer/docker-compose.yml up -d                  # Start PostgreSQL, MySQL, Redis
 
 # Run database tests
-just test-db                   # All database tests
-just test-postgres             # PostgreSQL-specific tests
-just test-mysql                # MySQL-specific tests
-just test-sqlite               # SQLite tests
-just test-duckdb               # DuckDB tests
+cargo test --featuresdb                   # All database tests
+cargo test --featurespostgres             # PostgreSQL-specific tests
+cargo test --featuresmysql                # MySQL-specific tests
+cargo test --featuressqlite               # SQLite tests
+cargo test --featuresduckdb               # DuckDB tests
 
 # Run all database tests with setup
-just test-all-db               # Setup + test + teardown
+cargo test --featuresall-db               # Setup + test + teardown
 ```
 
 **Database Test Requirements**:
@@ -120,7 +120,7 @@ just test-all-db               # Setup + test + teardown
 
 ```bash
 # Run CLI tests (slower)
-just test-cli                  # CLI integration tests
+cargo test --featurescli                  # CLI integration tests
 cargo test --test cli_basic_tests
 
 # Debug CLI behavior
@@ -141,7 +141,7 @@ cargo run -- --help           # Test help output
 
 ```bash
 # Run security tests
-just test-security             # Security-focused tests
+cargo test --featuressecurity             # Security-focused tests
 cargo audit                    # Dependency vulnerability scan
 
 # Memory safety tests
@@ -174,7 +174,7 @@ cargo test --test arrow_performance_test
 
 ```bash
 # Apache Arrow integration
-just test-arrow                # Arrow feature tests
+cargo test --featuresarrow                # Arrow feature tests
 cargo test --features arrow --test arrow_integration_test
 
 # Feature flag combinations
@@ -188,7 +188,7 @@ cargo test --no-default-features
 ### Running Benchmarks
 ```bash
 # Run all benchmarks
-just bench                     # cargo bench
+cargo bench                     # cargo bench
 cargo bench                   # Direct cargo command
 
 # Run specific benchmarks
@@ -276,7 +276,7 @@ just test                      # Unit tests only
 just quality                   # Format + lint + test
 
 # Full validation (< 10 minutes)
-just test-all                  # All tests including integration
+cargo test                     # All tests including integration
 ```
 
 ### Continuous Integration
@@ -290,10 +290,10 @@ cargo test --features database    # Database features only
 ### Pre-Release Testing
 ```bash
 # Comprehensive validation
-just test-all-db              # All tests with databases
-just bench                    # Performance validation
+cargo test --featuresall-db              # All tests with databases
+cargo bench                    # Performance validation
 cargo audit                   # Security audit
-just coverage                 # Code coverage report
+cargo tarpaulin --out Html --output-dir coverage                 # Code coverage report
 ```
 
 ## 📈 Code Coverage
@@ -304,7 +304,7 @@ just coverage                 # Code coverage report
 cargo install cargo-tarpaulin
 
 # Generate HTML coverage report
-just coverage                  # Uses tarpaulin
+cargo tarpaulin --out Html --output-dir coverage                  # Uses tarpaulin
 open coverage/tarpaulin-report.html
 
 # Generate different format reports

@@ -77,7 +77,7 @@ code dataprof.code-workspace
 
 3. Install development tools:
 ```bash
-just install-tools  # Installs cargo tools and components
+cargo install cargo-tarpaulin cargo-machete  # Install cargo tools
 ```
 
 ### VS Code Extensions Explained
@@ -89,7 +89,6 @@ just install-tools  # Installs cargo tools and components
 
 **Configuration Extensions**:
 - **tamasfe.even-better-toml**: Enhanced TOML editing for Cargo.toml and config files
-- **ms-vscode.makefile-tools**: Support for justfile syntax highlighting
 
 **Development Extensions**:
 - **ms-python.python**: Python support for development scripts
@@ -121,8 +120,8 @@ The workspace is pre-configured with optimal settings in `.vscode/dataprof.code-
 - `Ctrl+Shift+P` → "Tasks: Run Task"
   - `cargo check` - Quick syntax check
   - `cargo test` - Run unit tests
-  - `just quality` - Full quality pipeline
-  - `just setup` - Environment setup
+  - `cargo fmt && cargo clippy && cargo test` - Full quality pipeline
+  - `cargo build` - Environment setup
   - `Database Setup` - Start database services
 
 ## 🦀 JetBrains IDEs (CLion/RustRover)
@@ -141,7 +140,7 @@ rustup default stable
 rustup component add rustfmt clippy rust-src
 
 # Install development tools
-cargo install just cargo-tarpaulin cargo-machete
+cargo install cargo-tarpaulin cargo-machete
 ```
 
 **Key Features**:
@@ -252,8 +251,8 @@ vim.api.nvim_set_keymap('n', '<leader>rn', '<cmd>lua vim.lsp.buf.rename()<CR>', 
 ```bash
 # Key bindings for DataProfiler development
 :lua vim.lsp.buf.format()           # Format code
-:!just test                         # Run tests
-:!just quality                      # Quality checks
+:!cargo test                         # Run tests
+:!cargo fmt && cargo clippy && cargo test                      # Quality checks
 :!cargo run -- file.csv --quality  # Run CLI
 
 # Telescope fuzzy finder
@@ -325,9 +324,9 @@ docker             ; Container management
 ;; DataProfiler specific bindings
 (map! :leader
       (:prefix-map ("d" . "dataprof")
-       :desc "Run tests" "t" (cmd! (compile "just test"))
-       :desc "Quality check" "q" (cmd! (compile "just quality"))
-       :desc "Setup environment" "s" (cmd! (compile "just setup"))))
+       :desc "Run tests" "t" (cmd! (compile "cargo test"))
+       :desc "Quality check" "q" (cmd! (compile "cargo fmt && cargo clippy && cargo test"))
+       :desc "Setup environment" "s" (cmd! (compile "cargo build"))))
 ```
 
 ### Spacemacs Configuration
@@ -394,8 +393,8 @@ hidden = false
 
 [keys.normal]
 # DataProfiler specific bindings
-"<leader>t" = ":sh just test"
-"<leader>q" = ":sh just quality"
+"<leader>t" = ":sh cargo test"
+"<leader>q" = ":sh cargo fmt && cargo clippy && cargo test"
 "<leader>r" = ":sh cargo run"
 ```
 
@@ -423,7 +422,7 @@ source ~/.cargo/env
 rustup component add rustfmt clippy rust-src rust-analyzer
 
 # Install development tools
-cargo install just cargo-tarpaulin cargo-machete cargo-outdated
+cargo install cargo-tarpaulin cargo-machete cargo-outdated
 
 # Install database clients (optional)
 # PostgreSQL client
@@ -444,10 +443,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export RUST_BACKTRACE=1
 
 # DataProfiler development aliases
-alias dp-test='just test'
-alias dp-quality='just quality'
-alias dp-setup='just setup'
-alias dp-db='just db-setup'
+alias dp-test='cargo test'
+alias dp-quality='cargo fmt && cargo clippy && cargo test'
+alias dp-setup='cargo build'
+alias dp-db='docker-compose -f .devcontainer/docker-compose.yml up -d'
 
 # Useful environment variables
 export RUST_LOG=debug
@@ -461,9 +460,9 @@ set -gx PATH $HOME/.cargo/bin $PATH
 set -gx RUST_BACKTRACE 1
 
 # DataProfiler aliases
-alias dp-test='just test'
-alias dp-quality='just quality'
-alias dp-setup='just setup'
+alias dp-test='cargo test'
+alias dp-quality='cargo fmt && cargo clippy && cargo test'
+alias dp-setup='cargo build'
 ```
 
 ## 🐳 Container Development
