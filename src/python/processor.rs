@@ -77,7 +77,7 @@ impl PyCsvProcessor {
         let header = lines[0];
         let data_lines = &lines[1..];
 
-        let mut chunk_results = Vec::new();
+        let mut chunk_results: Vec<Py<PyAny>> = Vec::new();
         let mut chunk_number = 0;
 
         for chunk in data_lines.chunks(self.chunk_size) {
@@ -94,29 +94,36 @@ impl PyCsvProcessor {
 
             // Analyze the chunk
             let chunk_result = analyze_csv_file(&temp_path)?;
-            chunk_results.push(chunk_result.into_py(py));
+            chunk_results.push(chunk_result.into_pyobject(py)?.into());
 
             self.processed_rows += chunk.len();
         }
 
-        Ok(chunk_results.into_py(py))
+        Ok(chunk_results.into_pyobject(py)?.into())
     }
 
     /// Get processing statistics
     fn get_processing_info(&self, py: Python) -> PyResult<PyObject> {
-        let mut info = std::collections::HashMap::new();
+        let mut info: std::collections::HashMap<&str, Py<PyAny>> = std::collections::HashMap::new();
         info.insert(
             "file_path",
             self.file_handle
                 .as_ref()
                 .unwrap_or(&"None".to_string())
                 .clone()
-                .into_py(py),
+                .into_pyobject(py)?
+                .into(),
         );
-        info.insert("chunk_size", self.chunk_size.into_py(py));
-        info.insert("processed_rows", self.processed_rows.into_py(py));
-        info.insert("temp_files_created", self.temp_files.len().into_py(py));
+        info.insert("chunk_size", self.chunk_size.into_pyobject(py)?.into());
+        info.insert(
+            "processed_rows",
+            self.processed_rows.into_pyobject(py)?.into(),
+        );
+        info.insert(
+            "temp_files_created",
+            self.temp_files.len().into_pyobject(py)?.into(),
+        );
 
-        Ok(info.into_py(py))
+        Ok(info.into_pyobject(py)?.into())
     }
 }

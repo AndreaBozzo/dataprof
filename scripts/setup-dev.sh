@@ -101,7 +101,7 @@ check_prerequisites() {
     esac
 
     # Check essential commands
-    local essential_commands=("git" "curl" "wget")
+    local essential_commands=("git" "curl")
     for cmd in "${essential_commands[@]}"; do
         if command_exists "$cmd"; then
             log_success "✅ $cmd: available"
@@ -169,7 +169,7 @@ install_rust() {
     rustup component add rustfmt clippy
 
     # Install development tools
-    local rust_tools=("cargo-tarpaulin" "cargo-machete" "just")
+    local rust_tools=("cargo-machete")
     for tool in "${rust_tools[@]}"; do
         if [[ "$FORCE_REINSTALL" == "true" ]] || ! command_exists "$tool"; then
             log_info "📦 Installing $tool..."
@@ -318,22 +318,27 @@ EOF
         log_success "✅ VS Code settings created"
     fi
 
-    # Create cargo config for faster builds
-    mkdir -p .cargo
-    cat > .cargo/config.toml << 'EOF'
+    # Create cargo config for faster builds (only if it doesn't exist)
+    if [[ ! -f .cargo/config.toml ]]; then
+        mkdir -p .cargo
+        log_info "📦 Creating .cargo/config.toml for optimized builds..."
+        cat > .cargo/config.toml << 'EOF'
 [build]
-target-dir = "target"
 jobs = 0
 
 [profile.dev]
 opt-level = 0
 debug = true
 incremental = true
-codegen-units = 256
+codegen-units = 16
 
 [profile.dev.package."*"]
 opt-level = 1
 EOF
+        log_success "✅ Cargo configuration created"
+    else
+        log_info "📦 .cargo/config.toml already exists, skipping creation"
+    fi
     log_success "✅ Cargo configuration created"
 }
 

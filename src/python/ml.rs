@@ -84,12 +84,12 @@ impl PyMlAnalyzer {
 
     /// Get processing statistics
     fn get_stats(&self, py: Python) -> PyResult<PyObject> {
-        Ok(self.processing_stats.clone().into_py(py))
+        Ok(self.processing_stats.clone().into_pyobject(py)?.into())
     }
 
     /// Get all ML results
     fn get_ml_results(&self, py: Python) -> PyResult<PyObject> {
-        Ok(self.ml_results.clone().into_py(py))
+        Ok(self.ml_results.clone().into_pyobject(py)?.into())
     }
 
     /// Get summary statistics
@@ -115,17 +115,26 @@ impl PyMlAnalyzer {
             0.0
         };
 
-        let mut summary = std::collections::HashMap::new();
-        summary.insert("total_files", total_files.into_py(py));
-        summary.insert("average_score", avg_score.into_py(py));
-        summary.insert("ready_files", ready_files.into_py(py));
+        let mut summary: std::collections::HashMap<&str, Py<PyAny>> =
+            std::collections::HashMap::new();
+        summary.insert("total_files", total_files.into_pyobject(py)?.into());
+        summary.insert("average_score", avg_score.into_pyobject(py)?.into());
+        summary.insert("ready_files", ready_files.into_pyobject(py)?.into());
         summary.insert(
             "ready_percentage",
-            ((ready_files as f64 / total_files as f64) * 100.0).into_py(py),
+            ((ready_files as f64 / total_files as f64) * 100.0)
+                .into_pyobject(py)?
+                .into(),
         );
-        summary.insert("total_processing_time", total_time.into_py(py));
-        summary.insert("average_processing_time", avg_time.into_py(py));
+        summary.insert(
+            "total_processing_time",
+            total_time.into_pyobject(py)?.into(),
+        );
+        summary.insert(
+            "average_processing_time",
+            avg_time.into_pyobject(py)?.into(),
+        );
 
-        Ok(summary.into_py(py))
+        Ok(summary.into_pyobject(py)?.into())
     }
 }

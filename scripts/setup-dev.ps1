@@ -183,7 +183,7 @@ function Install-Rust {
     rustup component add rustfmt clippy
 
     # Install development tools
-    $RustTools = @("cargo-tarpaulin", "cargo-machete", "just")
+    $RustTools = @("cargo-machete")
     foreach ($tool in $RustTools) {
         if ($ForceReinstall -or (-not (Test-CommandExists $tool))) {
             Write-LogInfo "📦 Installing $tool..."
@@ -331,24 +331,28 @@ function New-DevConfig {
         Write-LogSuccess "✅ VS Code settings created"
     }
 
-    # Create cargo config for faster builds
-    New-Item -ItemType Directory -Path ".cargo" -Force | Out-Null
-    $CargoConfig = @'
+    # Create cargo config for faster builds (only if it doesn't exist)
+    if (-not (Test-Path ".cargo\config.toml")) {
+        New-Item -ItemType Directory -Path ".cargo" -Force | Out-Null
+        Write-LogInfo "📦 Creating .cargo/config.toml for optimized builds..."
+        $CargoConfig = @'
 [build]
-target-dir = "target"
 jobs = 0
 
 [profile.dev]
 opt-level = 0
 debug = true
 incremental = true
-codegen-units = 256
+codegen-units = 16
 
 [profile.dev.package."*"]
 opt-level = 1
 '@
-    Set-Content -Path ".cargo\config.toml" -Value $CargoConfig
-    Write-LogSuccess "✅ Cargo configuration created"
+        Set-Content -Path ".cargo\config.toml" -Value $CargoConfig
+        Write-LogSuccess "✅ Cargo configuration created"
+    } else {
+        Write-LogInfo "📦 .cargo/config.toml already exists, skipping creation"
+    }
 }
 
 function Show-Summary {
