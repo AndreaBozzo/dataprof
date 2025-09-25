@@ -67,8 +67,8 @@ EXAMPLES:
   # Basic file analysis
   dataprof data.csv
 
-  # Generate HTML report with ML scoring
-  dataprof data.csv --html report.html --ml-score
+  # Generate HTML report with ML scoring and code snippets
+  dataprof data.csv --html report.html --ml-score --ml-code
 
   # Batch process directory with progress
   dataprof /data/folder --progress --recursive
@@ -84,6 +84,9 @@ EXAMPLES:
 
   # Quality-focused analysis with detailed output
   dataprof data.csv --quality --format csv --verbosity 2
+
+  # Generate ML preprocessing script
+  dataprof data.csv --ml-score --ml-code --output-script preprocess.py
 
 For more information, visit: https://github.com/AndreaBozzo/dataprof"#
 )]
@@ -219,6 +222,22 @@ pub struct Cli {
     /// • Preprocessing suggestions  • Blocking issue detection
     #[arg(long)]
     pub ml_score: bool,
+
+    /// Generate actionable code snippets for ML preprocessing
+    ///
+    /// Provides ready-to-use Python code snippets for each ML recommendation:
+    /// • Pandas and scikit-learn implementations
+    /// • Context-aware parameter substitution
+    /// • Required import statements
+    #[arg(long)]
+    pub ml_code: bool,
+
+    /// Output path for generated preprocessing script
+    ///
+    /// Creates a complete Python script with all preprocessing steps
+    /// based on ML recommendations. Example: --output-script preprocess.py
+    #[arg(long)]
+    pub output_script: Option<PathBuf>,
 
     /// Configuration file path (.toml format)
     ///

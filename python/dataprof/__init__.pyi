@@ -86,12 +86,17 @@ class PyFeatureAnalysis:
         ...
 
 class PyMlRecommendation:
-    """Python wrapper for ML recommendation."""
+    """Python wrapper for ML recommendation with code snippet generation."""
 
     category: str
     priority: str
-    message: str
-    affected_columns: List[str]
+    description: str
+    expected_impact: str
+    implementation_effort: str
+    code_snippet: Optional[str]
+    framework: Optional[str]
+    imports: List[str]
+    variables: Dict[str, str]
 
     def __new__(cls) -> Self: ...
     def to_dict(self) -> Dict[str, Any]:

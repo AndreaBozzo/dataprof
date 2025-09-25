@@ -18,6 +18,7 @@ use super::batch::{run_batch_directory, run_batch_glob};
 use super::benchmark::run_benchmark_analysis;
 #[cfg(feature = "database")]
 use super::database::run_database_analysis;
+use super::script_generator::generate_preprocessing_script;
 
 pub fn is_json_file(path: &Path) -> bool {
     if let Some(extension) = path.extension() {
@@ -178,6 +179,33 @@ fn run_quality_analysis(
         }
     }
 
+    // Generate preprocessing script if requested
+    if let Some(script_path) = &cli.output_script {
+        if let Some(ref ml_score_data) = ml_score {
+            match generate_preprocessing_script(
+                ml_score_data,
+                script_path,
+                &cli.file.to_string_lossy(),
+            ) {
+                Ok(_) => {
+                    if matches!(cli.format, CliOutputFormat::Text) {
+                        println!(
+                            "🐍 Preprocessing script saved to: {}",
+                            script_path.display().to_string().bright_green()
+                        );
+                        println!("   Ready to use with: python {}", script_path.display());
+                        println!();
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to generate preprocessing script: {}", e);
+                }
+            }
+        } else {
+            eprintln!("⚠️  Script generation requires ML scoring. Use --ml-score flag.");
+        }
+    }
+
     // Handle enhanced output formatting
     if !matches!(cli.format, CliOutputFormat::Text) {
         let format: OutputFormat = cli.format.clone().into();
@@ -248,7 +276,11 @@ fn display_analysis_results(
 
     // Show ML score if available
     if let Some(score) = ml_score {
-        display_ml_score(score);
+        if cli.ml_code {
+            display_ml_score_with_code(score);
+        } else {
+            display_ml_score(score);
+        }
     }
 
     // Show quality issues first
@@ -258,6 +290,92 @@ fn display_analysis_results(
     for profile in &report.column_profiles {
         display_profile(profile);
         println!();
+    }
+}
+
+/// Display ML score with code snippets for recommendations
+fn display_ml_score_with_code(ml_score: &dataprof::analysis::MlReadinessScore) {
+    use colored::*;
+
+    // First display the standard ML score
+    display_ml_score(ml_score);
+
+    // Then show code snippets for recommendations
+    if !ml_score.recommendations.is_empty() {
+        println!(
+            "🐍 {} {}:",
+            "Code Snippets".bright_blue().bold(),
+            format!("({} recommendations)", ml_score.recommendations.len()).dimmed()
+        );
+        println!();
+
+        for (i, rec) in ml_score.recommendations.iter().enumerate() {
+            if let Some(code) = &rec.code_snippet {
+                let priority_color = match rec.priority {
+                    dataprof::analysis::RecommendationPriority::Critical => "red",
+                    dataprof::analysis::RecommendationPriority::High => "yellow",
+                    dataprof::analysis::RecommendationPriority::Medium => "blue",
+                    dataprof::analysis::RecommendationPriority::Low => "green",
+                };
+
+                println!(
+                    "{}. {} {} - {}",
+                    (i + 1).to_string().bright_white(),
+                    rec.category.color(priority_color).bold(),
+                    format!("[{}]", priority_to_string(&rec.priority)).color(priority_color),
+                    rec.description.dimmed()
+                );
+
+                if let Some(framework) = &rec.framework {
+                    println!("   📦 Framework: {}", framework.bright_cyan());
+                }
+
+                if !rec.imports.is_empty() {
+                    println!("   📥 Imports: {}", rec.imports.join(", ").bright_green());
+                }
+
+                println!("   💻 Code:");
+                // Display code with proper indentation and syntax highlighting
+                for line in code.lines() {
+                    if line.trim().starts_with('#') {
+                        println!("   {}", line.bright_black());
+                    } else {
+                        println!("   {}", line);
+                    }
+                }
+                println!();
+            }
+        }
+    }
+
+    // Show summary of actionable items
+    let code_snippets_count = ml_score
+        .recommendations
+        .iter()
+        .filter(|r| r.code_snippet.is_some())
+        .count();
+
+    if code_snippets_count > 0 {
+        println!(
+            "💡 {} Ready to implement {} actionable code snippets!",
+            "Tip:".bright_yellow().bold(),
+            code_snippets_count.to_string().bright_white().bold()
+        );
+        println!(
+            "   Use {} to generate a complete preprocessing script.",
+            "--output-script preprocess.py".bright_cyan()
+        );
+        println!();
+    }
+}
+
+/// Convert RecommendationPriority enum to string
+fn priority_to_string(priority: &dataprof::analysis::RecommendationPriority) -> String {
+    match priority {
+        dataprof::analysis::RecommendationPriority::Critical => "critical".to_string(),
+        dataprof::analysis::RecommendationPriority::High => "high".to_string(),
+        dataprof::analysis::RecommendationPriority::Medium => "medium".to_string(),
+        dataprof::analysis::RecommendationPriority::Low => "low".to_string(),
     }
 }
 

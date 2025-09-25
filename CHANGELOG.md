@@ -9,6 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.6.Unreleased]
 
+### 🤖 Enhanced ML Recommendations with Actionable Code Snippets - Issue #71
+
+- **NEW:** 🐍 **Actionable Code Generation for ML Preprocessing**
+  - Ready-to-use Python code snippets for every ML recommendation
+  - Framework-specific implementations (pandas, scikit-learn)
+  - Context-aware code generation based on actual data characteristics
+  - Required imports automatically included with each recommendation
+  - Variable substitution for column names, thresholds, and strategies
+
+- **NEW:** 🔧 **Comprehensive Preprocessing Code Templates**
+  - **Missing Values**: `df['col'].fillna(strategy)`, `SimpleImputer` patterns
+  - **Categorical Encoding**: `pd.get_dummies()`, `LabelEncoder()`, `OneHotEncoder()`
+  - **Feature Scaling**: `StandardScaler()`, `MinMaxScaler()`, `RobustScaler()`
+  - **Date Engineering**: Extract year, month, day, weekday, quarter features
+  - **Outlier Handling**: IQR-based capping, z-score filtering, `IsolationForest`
+  - **Text Preprocessing**: TF-IDF vectorization, tokenization patterns
+  - **Mixed Types**: Data type standardization and cleaning
+
+- **NEW:** 🖥️ **Enhanced CLI with Script Generation**
+  - `--ml-code` flag: Display actionable code snippets in terminal output
+  - `--output-script <path>` flag: Generate complete preprocessing Python scripts
+  - Script includes all preprocessing steps, imports, error handling, and progress indicators
+  - Generated scripts are immediately executable and production-ready
+
+- **NEW:** 📊 **Extended MlRecommendation Data Structure**
+  - `code_snippet: Option<String>` - Ready-to-use Python code
+  - `framework: Option<String>` - Framework used (pandas, scikit-learn, etc.)
+  - `imports: Vec<String>` - Required import statements
+  - `variables: HashMap<String, String>` - Variables for customization
+
+- **NEW:** 🐍 **Enhanced Python Bindings (PyMlRecommendation)**
+  - All new fields exposed to Python API with proper type annotations
+  - Backward compatible with existing code
+  - New properties: `code_snippet`, `framework`, `imports`, `variables`
+
+- **NEW:** 💻 **Interactive Code Display**
+  - Syntax-highlighted code display in CLI output
+  - Priority-based color coding for recommendations
+  - Framework and import information clearly displayed
+  - Code snippets properly formatted with indentation
+
+- **NEW:** 📝 **Complete Script Generation Engine**
+  - Generates full preprocessing pipelines with proper Python structure
+  - Groups recommendations by priority (Critical → High → Medium)
+  - Includes data loading, preprocessing steps, and result saving
+  - Error handling and progress indicators included
+  - Modular design allows easy customization
+
+- **UPDATED:** 📚 **Documentation and Examples**
+  - Enhanced ML_FEATURES.md with comprehensive code snippet documentation
+  - Updated API_REFERENCE.md with new PyMlRecommendation properties
+  - Added `code_snippets_showcase_example()` in Python examples
+  - Updated README.md with new CLI usage examples and feature highlights
+  - Complete usage examples for all new functionalities
+
 ### 🔧 Python Binding Improvements
 
 - **FIXED:** 🐍 **PyO3 Migration to IntoPyObject** - Issue #70

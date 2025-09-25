@@ -13,7 +13,7 @@ Report them appropriately by opening an issue or by mailing the maintainer for s
 
 Thanks for your time here!
 
-High-performance data quality and ML readiness assessment library built in Rust. Delivers 20x better memory efficiency than pandas with unlimited file streaming, 30+ automated quality checks, and comprehensive ML readiness assessment. Full Python bindings and production database connectivity included.
+High-performance data quality and ML readiness assessment library built in Rust. Delivers 20x better memory efficiency than pandas with unlimited file streaming, 30+ automated quality checks, and comprehensive ML readiness assessment. **NEW in v0.4.6: Generates ready-to-use Python code snippets** for each ML recommendation. Full Python bindings and production database connectivity included.
 
 ## Quick Start
 
@@ -25,9 +25,15 @@ pip install dataprof
 ```python
 import dataprof
 
-# ML readiness assessment
+# ML readiness assessment with actionable code snippets
 ml_score = dataprof.ml_readiness_score("data.csv")
 print(f"ML Readiness: {ml_score.readiness_level} ({ml_score.overall_score:.1f}%)")
+
+# NEW: Get ready-to-use preprocessing code
+for rec in ml_score.recommendations:
+    if rec.code_snippet:
+        print(f"📦 {rec.framework} code for {rec.category}")
+        print(rec.code_snippet)
 
 # Quality analysis with detailed reporting
 report = dataprof.analyze_csv_with_quality("data.csv")
@@ -48,6 +54,15 @@ use dataprof::*;
 // High-performance Arrow processing
 let profiler = DataProfiler::columnar();
 let report = profiler.analyze_csv_file("large_dataset.csv")?;
+```
+
+### CLI with Code Generation
+```bash
+# Generate ML readiness report with actionable code snippets
+dataprof data.csv --ml-score --ml-code
+
+# Generate complete Python preprocessing script
+dataprof data.csv --ml-score --output-script preprocess.py
 ```
 
 ## Development
