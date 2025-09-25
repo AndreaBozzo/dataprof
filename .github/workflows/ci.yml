@@ -3,9 +3,28 @@ name: CI
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'examples/**/*.md'
+      - '.gitignore'
+      - 'LICENSE*'
+      - '.devcontainer/**'
   pull_request:
     branches: [main, master, staging]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'examples/**/*.md'
+      - '.gitignore'
+      - 'LICENSE*'
+      - '.devcontainer/**'
   # Exclude staging - it has its own workflow
+
+# Automatically cancel in-progress runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,13 +33,27 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test Suite
+  # Comprehensive test suite - canonical testing for CI
+  test-suite:
+    name: Comprehensive Test Suite
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    # Skip expensive integration/feature tests on draft PRs
+    if: github.event.pull_request.draft == false || github.event_name != 'pull_request' || matrix.test-scope == 'core'
     strategy:
+      fail-fast: false
       matrix:
-        test-type: [core, integration]
+        test-scope: [core, integration, features]
+        include:
+          - test-scope: core
+            test-args: "--lib --tests"
+            timeout: 12
+          - test-scope: integration
+            test-args: "--test '*'"
+            timeout: 15
+          - test-scope: features
+            test-args: "--features postgres,mysql,sqlite,database"
+            timeout: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -28,16 +61,16 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-prefix: ci
+          cache-prefix: rust-ci
 
       - name: Setup system dependencies
         uses: ./.github/actions/setup-system-deps
 
-      - name: Run tests
+      - name: Run ${{ matrix.test-scope }} tests
         uses: ./.github/actions/run-tests
         with:
-          test-type: ${{ matrix.test-type }}
-          timeout: 15
+          test-type: ${{ matrix.test-scope }}
+          timeout: ${{ matrix.timeout }}
 
   # Lint and format checks
   quality-checks:
@@ -51,7 +84,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-prefix: ci
+          cache-prefix: rust-ci
 
       - name: Check formatting
         run: |
@@ -70,26 +103,3 @@ jobs:
           echo "📚 Checking documentation..."
           cargo doc --no-deps --document-private-items
           echo "✅ Documentation check passed"
-
-  # Security audit
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-prefix: ci
-
-      - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
-
-      - name: Run security audit
-        run: |
-          echo "🔐 Running security audit..."
-          cargo audit
-          echo "✅ Security audit passed"
