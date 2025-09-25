@@ -33,11 +33,118 @@ The ML readiness score consists of four key components:
 - **🟡 needs_work** (60-79%): Requires moderate preprocessing
 - **🔴 poor** (0-59%): Significant work needed before ML use
 
+## 🐍 Enhanced ML Recommendations with Code Snippets (v0.4.6+)
+
+DataProf now generates **actionable code snippets** for each ML recommendation, making it easier to immediately implement preprocessing steps.
+
+### New Features
+
+- **Ready-to-use Python code** for each recommendation
+- **Framework-specific implementations** (pandas, scikit-learn)
+- **Required imports** automatically included
+- **Context-aware code generation** based on your data
+- **Complete preprocessing script generation**
+
+### Code Snippet Example
+
+```python
+ml_score = dataprof.ml_readiness_score("data.csv")
+
+for rec in ml_score.recommendations:
+    print(f"📋 {rec.category}: {rec.description}")
+
+    # NEW: Access code snippets
+    if rec.code_snippet:
+        print(f"📦 Framework: {rec.framework}")
+        print(f"📥 Imports: {', '.join(rec.imports)}")
+        print(f"💻 Code:\n{rec.code_snippet}")
+```
+
+### CLI Integration
+
+Generate complete preprocessing scripts directly from the command line:
+
+```bash
+# Show code snippets in terminal
+dataprof data.csv --ml-score --ml-code
+
+# Generate complete preprocessing script
+dataprof data.csv --ml-score --output-script preprocess.py
+```
+
+The generated script includes:
+- All required imports
+- Step-by-step preprocessing pipeline
+- Progress indicators
+- Error handling
+- Data validation
+
+### Supported Preprocessing Patterns
+
+| Issue Type | Framework | Code Generated |
+|------------|-----------|----------------|
+| Missing Values | pandas | `df['col'].fillna(strategy)` |
+| Categorical Encoding | pandas/sklearn | `pd.get_dummies()`, `LabelEncoder()` |
+| Feature Scaling | sklearn | `StandardScaler()`, `MinMaxScaler()` |
+| Date Engineering | pandas | Extract year, month, day, etc. |
+| Outlier Handling | scipy/pandas | IQR capping, z-score filtering |
+| Text Processing | sklearn | TF-IDF, tokenization |
+| Mixed Types | pandas | Data type standardization |
+
+### Enhanced PyMlRecommendation Properties
+
+The `PyMlRecommendation` object now includes these **new properties**:
+
+```python
+class PyMlRecommendation:
+    # Existing properties
+    category: str              # "Missing Data", "Feature Encoding", etc.
+    priority: str             # "critical", "high", "medium", "low"
+    description: str          # Human-readable description
+    expected_impact: str      # Expected ML improvement
+    implementation_effort: str # "trivial", "easy", "moderate", etc.
+
+    # NEW: Code snippet properties
+    code_snippet: Optional[str]        # Ready-to-use Python code
+    framework: Optional[str]           # "pandas", "scikit-learn", etc.
+    imports: List[str]                # Required import statements
+    variables: Dict[str, str]         # Variables used in code (column names, etc.)
+```
+
+**Example usage:**
+
+```python
+ml_score = dataprof.ml_readiness_score("data.csv")
+
+for rec in ml_score.recommendations:
+    if rec.code_snippet:
+        # Display recommendation info
+        print(f"🔧 {rec.category} [{rec.priority}]")
+        print(f"📝 {rec.description}")
+        print(f"🎯 Impact: {rec.expected_impact}")
+
+        # Display code snippet info
+        print(f"📦 Framework: {rec.framework}")
+        print(f"📥 Required imports:")
+        for imp in rec.imports:
+            print(f"   {imp}")
+
+        # Show variables used in the code
+        if rec.variables:
+            print(f"🔧 Variables:")
+            for key, value in rec.variables.items():
+                print(f"   {key}: {value}")
+
+        # Display the actual code
+        print(f"💻 Code:")
+        print(rec.code_snippet.replace('\\n', '\n'))
+```
+
 ## 📊 ML Functions
 
 ### `ml_readiness_score(file_path: str) -> PyMlReadinessScore`
 
-Calculate comprehensive ML readiness assessment.
+Calculate comprehensive ML readiness assessment with actionable code snippets.
 
 **Example:**
 ```python

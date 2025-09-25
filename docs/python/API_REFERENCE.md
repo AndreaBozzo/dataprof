@@ -112,6 +112,51 @@ Analyze CSV with integrated Python logging.
 #### `ml_readiness_score_with_logging(file_path: str, log_level: Optional[str] = None) -> PyMlReadinessScore`
 Calculate ML readiness with logging integration.
 
+## Enhanced ML Recommendations (v0.4.6+)
+
+The `PyMlReadinessScore` object now includes enhanced recommendations with **actionable code snippets**.
+
+### Enhanced PyMlRecommendation Properties
+
+Each recommendation in `ml_score.recommendations` now includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `category` | `str` | Category of the recommendation |
+| `priority` | `str` | Priority level: "critical", "high", "medium", "low" |
+| `description` | `str` | Human-readable description |
+| `expected_impact` | `str` | Expected improvement description |
+| `implementation_effort` | `str` | Implementation difficulty |
+| **`code_snippet`** | `Optional[str]` | **Ready-to-use Python code** |
+| **`framework`** | `Optional[str]` | **Framework used (pandas, sklearn, etc.)** |
+| **`imports`** | `List[str]` | **Required import statements** |
+| **`variables`** | `Dict[str, str]` | **Variables used in code** |
+
+### Code Snippet Usage Example
+
+```python
+import dataprof
+
+ml_score = dataprof.ml_readiness_score("data.csv")
+
+for rec in ml_score.recommendations:
+    # Check if code snippet is available
+    if rec.code_snippet:
+        print(f"Recommendation: {rec.description}")
+        print(f"Framework: {rec.framework}")
+        print(f"Imports needed: {rec.imports}")
+        print(f"Code:\n{rec.code_snippet.replace('\\\\n', '\\n')}")
+```
+
+### CLI Script Generation
+
+Use the CLI to generate complete preprocessing scripts:
+
+```bash
+# Generate script with all code snippets
+dataprof data.csv --ml-score --output-script preprocess.py
+```
+
 ## Pandas Integration
 
 When pandas is installed, additional DataFrame-returning functions are available:

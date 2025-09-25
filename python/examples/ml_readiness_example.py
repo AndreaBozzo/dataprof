@@ -62,7 +62,7 @@ def ml_readiness_basic_example():
             print("✅ No blocking issues found!")
         print()
 
-        # High priority recommendations
+        # High priority recommendations with code snippets
         high_priority = ml_score.recommendations_by_priority("high")
         if high_priority:
             print("🔥 High Priority Recommendations:")
@@ -70,7 +70,19 @@ def ml_readiness_basic_example():
                 print(f"  • {rec.category}: {rec.description}")
                 print(f"    Impact: {rec.expected_impact}")
                 print(f"    Effort: {rec.implementation_effort}")
-        print()
+
+                # Show code snippet if available
+                if hasattr(rec, 'code_snippet') and rec.code_snippet:
+                    print(f"    📦 Framework: {rec.framework}")
+                    print(f"    📥 Imports: {', '.join(rec.imports) if rec.imports else 'None'}")
+                    print(f"    💻 Code snippet:")
+                    # Display code with proper formatting
+                    code_lines = rec.code_snippet.replace('\\n', '\n').split('\n')
+                    for line in code_lines[:3]:  # Show first 3 lines
+                        print(f"      {line}")
+                    if len(code_lines) > 3:
+                        print(f"      ... ({len(code_lines) - 3} more lines)")
+                print()
 
         # Feature analysis
         print("🔍 Feature Analysis:")
@@ -152,6 +164,100 @@ def comprehensive_ml_analysis_example():
         except:
             pass
 
+def code_snippets_showcase_example():
+    """Showcase the new code snippets functionality"""
+    print("\n🐍 Code Snippets Showcase Example")
+    print("=" * 50)
+
+    csv_file = create_sample_ml_dataset()
+
+    try:
+        # Get ML recommendations with code snippets
+        ml_score = dataprof.ml_readiness_score(csv_file)
+
+        print(f"📊 Found {len(ml_score.recommendations)} recommendations with actionable code")
+        print()
+
+        # Show all recommendations with their code snippets
+        for i, rec in enumerate(ml_score.recommendations, 1):
+            priority_emoji = {
+                "critical": "🚨",
+                "high": "🔥",
+                "medium": "🟡",
+                "low": "🟢"
+            }.get(rec.priority, "📋")
+
+            print(f"{priority_emoji} Recommendation #{i}: {rec.category} [{rec.priority.upper()}]")
+            print(f"   📝 Description: {rec.description}")
+            print(f"   🎯 Expected Impact: {rec.expected_impact}")
+
+            if hasattr(rec, 'code_snippet') and rec.code_snippet:
+                print(f"   📦 Framework: {rec.framework}")
+                print(f"   📥 Required Imports:")
+                for imp in rec.imports:
+                    print(f"      {imp}")
+
+                if hasattr(rec, 'variables') and rec.variables:
+                    print(f"   🔧 Variables used:")
+                    for key, value in list(rec.variables.items())[:3]:
+                        print(f"      {key}: {value}")
+
+                print(f"   💻 Ready-to-use Code:")
+                print("   " + "-" * 40)
+                # Format and display the code snippet
+                code_formatted = rec.code_snippet.replace('\\n', '\n')
+                for line in code_formatted.split('\n'):
+                    print(f"   {line}")
+                print("   " + "-" * 40)
+
+            print()
+
+        # Generate preprocessing script example
+        print("🔄 Complete Preprocessing Workflow:")
+        print("With these code snippets, you can create a complete ML preprocessing pipeline:")
+        print()
+        print("```python")
+        print("import pandas as pd")
+
+        # Collect all unique imports
+        all_imports = set()
+        for rec in ml_score.recommendations:
+            if hasattr(rec, 'imports'):
+                all_imports.update(rec.imports)
+
+        for imp in sorted(all_imports):
+            if not imp.startswith('import pandas'):
+                print(imp)
+
+        print()
+        print("# Load your data")
+        print("df = pd.read_csv('your_data.csv')")
+        print()
+
+        # Show workflow steps
+        for i, rec in enumerate(ml_score.recommendations, 1):
+            if hasattr(rec, 'code_snippet') and rec.code_snippet:
+                print(f"# Step {i}: {rec.category}")
+                code_lines = rec.code_snippet.replace('\\n', '\n').split('\n')
+                # Show first few lines as example
+                for line in code_lines[:2]:
+                    if not line.strip().startswith('#'):
+                        print(line)
+                print()
+
+        print("# Save preprocessed data")
+        print("df.to_csv('preprocessed_data.csv', index=False)")
+        print("```")
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+
+    finally:
+        try:
+            os.unlink(csv_file)
+        except:
+            pass
+
 def ml_workflow_integration_example():
     """Example showing how to integrate ML readiness in a typical workflow"""
     print("\n🔄 ML Workflow Integration Example")
@@ -221,6 +327,7 @@ if __name__ == "__main__":
     try:
         ml_readiness_basic_example()
         comprehensive_ml_analysis_example()
+        code_snippets_showcase_example()
         ml_workflow_integration_example()
 
         print("\n🎉 All examples completed successfully!")

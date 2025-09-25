@@ -546,6 +546,18 @@ pub struct PyMlRecommendation {
     pub expected_impact: String,
     #[pyo3(get)]
     pub implementation_effort: String,
+    /// Ready-to-use code snippet for implementing the recommendation
+    #[pyo3(get)]
+    pub code_snippet: Option<String>,
+    /// Framework used in the code snippet (pandas, scikit-learn, etc.)
+    #[pyo3(get)]
+    pub framework: Option<String>,
+    /// Required imports for the code snippet
+    #[pyo3(get)]
+    pub imports: Vec<String>,
+    /// Variables used in code snippet for customization
+    #[pyo3(get)]
+    pub variables: std::collections::HashMap<String, String>,
 }
 
 impl From<&MlRecommendation> for PyMlRecommendation {
@@ -567,6 +579,10 @@ impl From<&MlRecommendation> for PyMlRecommendation {
                 ImplementationEffort::Significant => "significant".to_string(),
                 ImplementationEffort::Complex => "complex".to_string(),
             },
+            code_snippet: rec.code_snippet.clone(),
+            framework: rec.framework.clone(),
+            imports: rec.imports.clone(),
+            variables: rec.variables.clone(),
         }
     }
 }
