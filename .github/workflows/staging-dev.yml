@@ -91,8 +91,8 @@ jobs:
       - name: Quick integration validation
         run: |
           echo "🔗 Running essential integration validation..."
-          # Run only the most critical integration tests, not full suite
-          timeout 600 cargo test --test "*" --quiet -- --test-threads=1 basic_integration
+          # Run a subset of integration tests (not the full suite)
+          timeout 300 cargo test --test integration_tests --quiet -- --test-threads=1
           echo "✅ Essential integration validation passed"
           echo "ℹ️  Comprehensive testing handled by CI workflow"
 
