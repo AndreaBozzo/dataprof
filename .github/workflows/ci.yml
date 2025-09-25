@@ -38,8 +38,6 @@ jobs:
     name: Comprehensive Test Suite
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # Skip expensive integration/feature tests on draft PRs
-    if: github.event.pull_request.draft == false || github.event_name != 'pull_request' || matrix.test-scope == 'core'
     strategy:
       fail-fast: false
       matrix:
@@ -48,12 +46,15 @@ jobs:
           - test-scope: core
             test-args: "--lib --tests"
             timeout: 12
+            skip-on-draft: false
           - test-scope: integration
             test-args: "--test '*'"
             timeout: 15
+            skip-on-draft: true
           - test-scope: features
             test-args: "--features postgres,mysql,sqlite,database"
             timeout: 10
+            skip-on-draft: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -67,6 +68,7 @@ jobs:
         uses: ./.github/actions/setup-system-deps
 
       - name: Run ${{ matrix.test-scope }} tests
+        if: matrix.skip-on-draft == false || github.event.pull_request.draft == false || github.event_name != 'pull_request'
         uses: ./.github/actions/run-tests
         with:
           test-type: ${{ matrix.test-scope }}
