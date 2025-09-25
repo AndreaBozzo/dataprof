@@ -40,6 +40,10 @@ runs:
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-v3
         restore-keys: |
           ${{ inputs.cache-prefix }}-${{ runner.os }}-
+          rust-ci-${{ runner.os }}-
+          rust-dev-${{ runner.os }}-
+          rust-bench-${{ runner.os }}-
+          rust-security-${{ runner.os }}-
           rust-${{ runner.os }}-
 
     - name: Verify Rust installation
