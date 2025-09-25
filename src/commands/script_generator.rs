@@ -49,7 +49,7 @@ Generated {} recommendations with actionable code snippets
     for import in &imports {
         script.push_str(&format!("{}\n", import));
     }
-    script.push_str("\n");
+    script.push('\n');
 
     // Add main function
     script.push_str(&format!(
