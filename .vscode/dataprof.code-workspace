@@ -97,7 +97,7 @@
             // Rust development
             "rust-lang.rust-analyzer",
             "vadimcn.vscode-lldb",
-            "serayuzgur.crates",
+            "fill-labs.dependi",
             // Configuration files
             "tamasfe.even-better-toml",
             "ms-vscode.makefile-tools",
