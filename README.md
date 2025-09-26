@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
-[![ML Ready](https://csv-mlready-3hvb2ny6j-andrea-bozzos-projects.vercel.app/api/badge?score=93&label=Try%20Online)](https://csv-mlready-3hvb2ny6j-andrea-bozzos-projects.vercel.app)
+[![ML Ready](https://csv-mlready-api.vercel.app/api/badge?score=93&label=Try%20Online)](https://csv-mlready-api.vercel.app)
 
 **DISCLAIMER FOR HUMAN READERS**
 
@@ -20,7 +20,7 @@ High-performance data quality and ML readiness assessment library built in Rust.
 
 **No installation required!** Test dataprof instantly with our web interface:
 
-**[📊 CSV ML Readiness API →](https://csv-mlready-3hvb2ny6j-andrea-bozzos-projects.vercel.app)**
+**[📊 CSV ML Readiness API →](https://csv-mlready-api.vercel.app)**
 
 - Drag & drop your CSV (up to 50MB)
 - Get ML readiness score in ~10 seconds
