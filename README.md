@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
+[![ML Ready](https://csv-mlready-3hvb2ny6j-andrea-bozzos-projects.vercel.app/api/badge?score=93&label=Try%20Online)](https://csv-mlready-3hvb2ny6j-andrea-bozzos-projects.vercel.app)
 
 **DISCLAIMER FOR HUMAN READERS**
 
@@ -14,6 +15,17 @@ Report them appropriately by opening an issue or by mailing the maintainer for s
 Thanks for your time here!
 
 High-performance data quality and ML readiness assessment library built in Rust. Delivers 20x better memory efficiency than pandas with unlimited file streaming, 30+ automated quality checks, and comprehensive ML readiness assessment. **NEW in v0.4.6: Generates ready-to-use Python code snippets** for each ML recommendation. Full Python bindings and production database connectivity included.
+
+## 🌐 Try Online
+
+**No installation required!** Test dataprof instantly with our web interface:
+
+**[📊 CSV ML Readiness API →](https://csv-mlready-3hvb2ny6j-andrea-bozzos-projects.vercel.app)**
+
+- Drag & drop your CSV (up to 50MB)
+- Get ML readiness score in ~10 seconds
+- Powered by dataprof v0.4.6 core engine
+- Embeddable badges for your README
 
 ## Quick Start
 
