@@ -1,3 +1,4 @@
+use super::code_generator::CodeGenerator;
 use crate::types::{ColumnProfile, ColumnStats, DataType, QualityIssue, QualityReport};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -8,6 +9,8 @@ use std::collections::HashMap;
 pub struct MlReadinessEngine {
     /// Configuration for ML scoring
     pub config: MlScoringConfig,
+    /// Code generator for creating actionable snippets
+    pub code_generator: CodeGenerator,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +80,14 @@ pub struct MlRecommendation {
     pub description: String,
     pub expected_impact: String,
     pub implementation_effort: ImplementationEffort,
+    /// Ready-to-use code snippet for implementing the recommendation
+    pub code_snippet: Option<String>,
+    /// Framework used in the code snippet (pandas, scikit-learn, etc.)
+    pub framework: Option<String>,
+    /// Required imports for the code snippet
+    pub imports: Vec<String>,
+    /// Variables used in code snippet for customization
+    pub variables: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,11 +179,22 @@ impl MlReadinessEngine {
     pub fn new() -> Self {
         Self {
             config: MlScoringConfig::default(),
+            code_generator: CodeGenerator::new(),
         }
     }
 
     pub fn with_config(config: MlScoringConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            code_generator: CodeGenerator::new(),
+        }
+    }
+
+    pub fn with_framework(framework: String) -> Self {
+        Self {
+            config: MlScoringConfig::default(),
+            code_generator: CodeGenerator::with_framework(framework),
+        }
     }
 
     /// Calculate comprehensive ML readiness score
@@ -384,6 +406,12 @@ impl MlReadinessEngine {
         for profile in profiles {
             let null_percentage = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
             if null_percentage > 20.0 {
+                let code_snippet = self.code_generator.generate_missing_value_code(
+                    &profile.name,
+                    &profile.data_type,
+                    null_percentage,
+                );
+
                 recommendations.push(MlRecommendation {
                     category: "Missing Data".to_string(),
                     priority: if null_percentage > 50.0 {
@@ -397,6 +425,10 @@ impl MlReadinessEngine {
                     ),
                     expected_impact: "Improves model training stability and accuracy".to_string(),
                     implementation_effort: ImplementationEffort::Easy,
+                    code_snippet: Some(code_snippet.code),
+                    framework: Some(code_snippet.framework),
+                    imports: code_snippet.imports,
+                    variables: code_snippet.variables,
                 });
             }
         }
@@ -404,6 +436,10 @@ impl MlReadinessEngine {
         // Mixed types recommendation
         for issue in issues {
             if let QualityIssue::MixedTypes { column, .. } = issue {
+                let code_snippet = self
+                    .code_generator
+                    .generate_mixed_type_cleaning_code(column);
+
                 recommendations.push(MlRecommendation {
                     category: "Data Types".to_string(),
                     priority: RecommendationPriority::Critical,
@@ -414,6 +450,10 @@ impl MlReadinessEngine {
                     expected_impact: "Prevents model training errors and improves feature quality"
                         .to_string(),
                     implementation_effort: ImplementationEffort::Moderate,
+                    code_snippet: Some(code_snippet.code),
+                    framework: Some(code_snippet.framework),
+                    imports: code_snippet.imports,
+                    variables: code_snippet.variables,
                 });
             }
         }
@@ -423,6 +463,10 @@ impl MlReadinessEngine {
             if matches!(profile.data_type, DataType::String) {
                 let unique_ratio = self.estimate_unique_ratio(profile);
                 if unique_ratio < 0.1 {
+                    let code_snippet = self
+                        .code_generator
+                        .generate_categorical_encoding_code(&profile.name, unique_ratio);
+
                     recommendations.push(MlRecommendation {
                         category: "Feature Encoding".to_string(),
                         priority: RecommendationPriority::High,
@@ -434,14 +478,26 @@ impl MlReadinessEngine {
                             "Enables ML algorithms to process categorical data effectively"
                                 .to_string(),
                         implementation_effort: ImplementationEffort::Easy,
+                        code_snippet: Some(code_snippet.code),
+                        framework: Some(code_snippet.framework),
+                        imports: code_snippet.imports,
+                        variables: code_snippet.variables,
                     });
                 } else if unique_ratio > 0.8 {
+                    let code_snippet = self
+                        .code_generator
+                        .generate_text_preprocessing_code(&profile.name);
+
                     recommendations.push(MlRecommendation {
                         category: "Text Processing".to_string(),
                         priority: RecommendationPriority::Medium,
                         description: format!("Column '{}' appears to be free text. Consider NLP preprocessing (tokenization, vectorization).", profile.name),
                         expected_impact: "Converts text to numerical features for ML algorithms".to_string(),
                         implementation_effort: ImplementationEffort::Significant,
+                        code_snippet: Some(code_snippet.code),
+                        framework: Some(code_snippet.framework),
+                        imports: code_snippet.imports,
+                        variables: code_snippet.variables,
                     });
                 }
             }
@@ -450,12 +506,20 @@ impl MlReadinessEngine {
         // Date feature engineering recommendation
         for profile in profiles {
             if matches!(profile.data_type, DataType::Date) {
+                let code_snippet = self
+                    .code_generator
+                    .generate_date_engineering_code(&profile.name);
+
                 recommendations.push(MlRecommendation {
                     category: "Feature Engineering".to_string(),
                     priority: RecommendationPriority::Medium,
                     description: format!("Column '{}' is a date. Extract features like year, month, day, day_of_week for better ML performance.", profile.name),
                     expected_impact: "Creates multiple useful features from temporal data".to_string(),
                     implementation_effort: ImplementationEffort::Easy,
+                    code_snippet: Some(code_snippet.code),
+                    framework: Some(code_snippet.framework),
+                    imports: code_snippet.imports,
+                    variables: code_snippet.variables,
                 });
             }
         }
@@ -467,12 +531,23 @@ impl MlReadinessEngine {
             .collect();
 
         if numeric_profiles.len() > 1 {
+            let numeric_column_names: Vec<String> =
+                numeric_profiles.iter().map(|p| p.name.clone()).collect();
+
+            let code_snippet = self
+                .code_generator
+                .generate_scaling_code(&numeric_column_names);
+
             recommendations.push(MlRecommendation {
                 category: "Feature Scaling".to_string(),
                 priority: RecommendationPriority::Medium,
                 description: "Multiple numeric columns detected. Consider standardization or normalization for algorithms sensitive to scale.".to_string(),
                 expected_impact: "Improves convergence and performance of gradient-based algorithms".to_string(),
                 implementation_effort: ImplementationEffort::Easy,
+                code_snippet: Some(code_snippet.code),
+                framework: Some(code_snippet.framework),
+                imports: code_snippet.imports,
+                variables: code_snippet.variables,
             });
         }
 

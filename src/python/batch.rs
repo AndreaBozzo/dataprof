@@ -96,7 +96,7 @@ impl PyBatchAnalyzer {
     /// Add a file to analysis queue
     fn add_file(&mut self, py: Python, path: &str) -> PyResult<()> {
         let result = analyze_csv_file(path)?;
-        self.results.push(result.into_py(py));
+        self.results.push(result.into_pyobject(py)?.into());
         Ok(())
     }
 
@@ -108,17 +108,17 @@ impl PyBatchAnalyzer {
     /// Get all analysis results
     fn get_results(&self, py: Python) -> PyResult<PyObject> {
         let results_ref: Vec<&PyObject> = self.results.iter().collect();
-        Ok(results_ref.into_py(py))
+        Ok(results_ref.into_pyobject(py)?.into())
     }
 
     /// Analyze multiple files in batch
     fn analyze_batch(&mut self, py: Python, paths: Vec<String>) -> PyResult<PyObject> {
-        let mut batch_results = Vec::new();
+        let mut batch_results: Vec<Py<PyAny>> = Vec::new();
 
         for path in paths {
             match analyze_csv_file(&path) {
                 Ok(result) => {
-                    batch_results.push(result.into_py(py));
+                    batch_results.push(result.into_pyobject(py)?.into());
                 }
                 Err(e) => {
                     return Err(PyRuntimeError::new_err(format!(
@@ -132,6 +132,6 @@ impl PyBatchAnalyzer {
         for result in &batch_results {
             self.results.push(result.clone_ref(py));
         }
-        Ok(batch_results.into_py(py))
+        Ok(batch_results.into_pyobject(py)?.into())
     }
 }
