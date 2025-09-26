@@ -92,7 +92,11 @@ cargo clippy        # Code quality checks
 - [Development Guide](docs/DEVELOPMENT.md) - Complete setup and contribution guide
 - [Python API Reference](docs/python/API_REFERENCE.md) - Full Python API documentation
 - [ML Features](docs/python/ML_FEATURES.md) - Machine learning readiness assessment
-- [Database Integration](docs/python/INTEGRATIONS.md) - Production database connectivity
+- [Python Integrations](docs/python/INTEGRATIONS.md) - Pandas, scikit-learn, Jupyter, Airflow, dbt
+- [Database Connectors](docs/guides/database-connectors.md) - Production database connectivity
+- [Performance Guide](docs/guides/performance-guide.md) - Optimization and benchmarking
+- [Apache Arrow Integration](docs/guides/apache-arrow-integration.md) - Columnar processing guide
+- [CLI Usage Guide](docs/guides/CLI_USAGE_GUIDE.md) - Complete CLI reference
 - [Performance Benchmarks](docs/project/benchmarking.md) - Benchmark results and methodology
 
 ## License
