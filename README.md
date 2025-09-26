@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
-[![ML Ready](https://csv-mlready-api.vercel.app/api/badge?score=93&label=Try%20Online)](https://csv-mlready-api.vercel.app)
+[![Try Online](https://img.shields.io/badge/Try%20Online-CSV%20ML%20Readiness-blue?style=flat&logo=vercel)](https://csv-mlready-api.vercel.app)
 
 **DISCLAIMER FOR HUMAN READERS**
 
