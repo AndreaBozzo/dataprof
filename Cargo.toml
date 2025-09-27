@@ -1,8 +1,8 @@
 [package]
 name = "dataprof"
-version = "0.4.6"
+version = "0.4.61"
 edition = "2021"
-license = "GPL-3.0"
+license = "MIT"
 authors = ["Andrea Bozzo"]
 description = "A fast, lightweight CLI tool for CSV data profiling and analysis"
 repository = "https://github.com/AndreaBozzo/dataprof"

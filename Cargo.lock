@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof"
-version = "0.4.6"
+version = "0.4.61"
 dependencies = [
  "anyhow",
  "arrow",

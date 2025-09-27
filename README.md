@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
+[![Try Online](https://img.shields.io/badge/Try%20Online-CSV%20ML%20Readiness-blue?style=flat&logo=vercel)](https://csv-mlready-api.vercel.app)
 
 **DISCLAIMER FOR HUMAN READERS**
 
@@ -13,7 +14,42 @@ Report them appropriately by opening an issue or by mailing the maintainer for s
 
 Thanks for your time here!
 
-High-performance data quality and ML readiness assessment library built in Rust. Delivers 20x better memory efficiency than pandas with unlimited file streaming, 30+ automated quality checks, and comprehensive ML readiness assessment. **NEW in v0.4.6: Generates ready-to-use Python code snippets** for each ML recommendation. Full Python bindings and production database connectivity included.
+A fast, reliable data quality and ML readiness assessment tool built in Rust. Analyze datasets with 20x better memory efficiency than pandas, unlimited file streaming, and 30+ automated quality checks. **NEW in v0.4.61: Generate ready-to-use Python code snippets** for each ML recommendation. Full Python bindings and production database connectivity included.
+
+Perfect for data scientists, ML engineers, and anyone working with data who needs quick, reliable quality insights.
+
+## Try Online
+
+**No installation required!** Test dataprof instantly with our web interface:
+
+**[CSV ML Readiness API →](https://csv-mlready-api.vercel.app)**
+
+- Drag & drop your CSV (up to 50MB)
+- Get ML readiness score in ~10 seconds
+- Powered by dataprof v0.4.61 core engine
+- Embeddable badges for your README
+
+## CI/CD Integration
+
+Automate data quality checks in your workflows with our GitHub Action:
+
+```yaml
+- name: DataProf ML Readiness Check
+  uses: AndreaBozzo/dataprof-actions@v1
+  with:
+    file: 'data/dataset.csv'
+    ml-threshold: 80
+    fail-on-issues: true
+```
+
+**[Get the Action →](https://github.com/AndreaBozzo/dataprof-actions)**
+
+- **Zero setup** - works out of the box
+- **Smart analysis** - ML readiness scoring with actionable insights
+- **Flexible** - customizable thresholds and output formats
+- **Fast** - typically completes in under 2 minutes
+
+Perfect for validating datasets before training, ensuring data quality in pipelines, or generating automated quality reports.
 
 ## Quick Start
 
@@ -45,7 +81,7 @@ profiles = dataprof.analyze_database("postgresql://user:pass@host/db", "users")
 
 ### Rust
 ```bash
-cargo add dataprof --features arrow
+cargo add dataprof
 ```
 
 ```rust
@@ -56,30 +92,37 @@ let profiler = DataProfiler::columnar();
 let report = profiler.analyze_csv_file("large_dataset.csv")?;
 ```
 
-### CLI with Code Generation
+### CLI Usage
 ```bash
 # Generate ML readiness report with actionable code snippets
-dataprof data.csv --ml-score --ml-code
+dataprof data.csv --quality --ml-score --ml-code
 
 # Generate complete Python preprocessing script
-dataprof data.csv --ml-score --output-script preprocess.py
+dataprof data.csv --quality --ml-score --output-script preprocess.py
+
+# Quick analysis with streaming for large files
+dataprof large_dataset.csv --streaming --sample 10000
 ```
 
+**Note**: On Windows, the binary is named `dataprof-cli.exe`. Use `cargo build --release` to build from source.
+
 ## Development
+
+Want to contribute or build from source? Here's what you need:
 
 ### Prerequisites
 - Rust (latest stable via [rustup](https://rustup.rs/))
 - Docker (for database testing)
 
-### Setup
+### Quick Setup
 ```bash
 git clone https://github.com/AndreaBozzo/dataprof.git
 cd dataprof
-cargo build --release  # Build project
-docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases
+cargo build --release  # Build the project
+docker-compose -f .devcontainer/docker-compose.yml up -d  # Start test databases
 ```
 
-### Common Tasks
+### Common Development Tasks
 ```bash
 cargo test          # Run all tests
 cargo bench         # Performance benchmarks
@@ -101,4 +144,4 @@ cargo clippy        # Code quality checks
 
 ## License
 
-Licensed under GPL-3.0. See [LICENSE](LICENSE) for details.
+Licensed under the MIT License. See [LICENSE](LICENSE) for details.
