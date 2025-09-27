@@ -14,7 +14,7 @@ Report them appropriately by opening an issue or by mailing the maintainer for s
 
 Thanks for your time here!
 
-A fast, reliable data quality and ML readiness assessment tool built in Rust. Analyze datasets with 20x better memory efficiency than pandas, unlimited file streaming, and 30+ automated quality checks. **NEW in v0.4.6: Generate ready-to-use Python code snippets** for each ML recommendation. Full Python bindings and production database connectivity included.
+A fast, reliable data quality and ML readiness assessment tool built in Rust. Analyze datasets with 20x better memory efficiency than pandas, unlimited file streaming, and 30+ automated quality checks. **NEW in v0.4.61: Generate ready-to-use Python code snippets** for each ML recommendation. Full Python bindings and production database connectivity included.
 
 Perfect for data scientists, ML engineers, and anyone working with data who needs quick, reliable quality insights.
 
@@ -26,7 +26,7 @@ Perfect for data scientists, ML engineers, and anyone working with data who need
 
 - Drag & drop your CSV (up to 50MB)
 - Get ML readiness score in ~10 seconds
-- Powered by dataprof v0.4.6 core engine
+- Powered by dataprof v0.4.61 core engine
 - Embeddable badges for your README
 
 ## CI/CD Integration
