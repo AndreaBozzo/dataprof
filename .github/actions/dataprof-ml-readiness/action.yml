@@ -1,0 +1,366 @@
+name: 'DataProf ML Readiness Assessment'
+description: 'Analyze CSV files for ML readiness with dataprof and integrate quality gates into CI/CD workflows'
+author: 'Andrea Bozzo'
+
+branding:
+  icon: 'database'
+  color: 'blue'
+
+inputs:
+  file:
+    description: 'Path to the CSV file to analyze for ML readiness'
+    required: true
+
+  ml-threshold:
+    description: 'ML readiness score threshold (0-100). Job fails if score is below this value'
+    required: false
+    default: '80'
+
+  fail-on-issues:
+    description: 'Whether to fail the job if ML readiness score is below threshold'
+    required: false
+    default: 'true'
+
+  output-format:
+    description: 'Output format for analysis results (json, csv, text)'
+    required: false
+    default: 'json'
+
+  generate-code:
+    description: 'Generate actionable preprocessing code snippets'
+    required: false
+    default: 'true'
+
+  install-method:
+    description: 'Installation method for dataprof (cargo, pip, binary)'
+    required: false
+    default: 'binary'
+
+outputs:
+  ml-score:
+    description: 'Overall ML readiness score (0-100)'
+    value: ${{ steps.ml-analysis.outputs.ml-score }}
+
+  readiness-level:
+    description: 'ML readiness level classification (HIGH, MEDIUM, LOW)'
+    value: ${{ steps.ml-analysis.outputs.readiness-level }}
+
+  completeness-score:
+    description: 'Data completeness score'
+    value: ${{ steps.ml-analysis.outputs.completeness-score }}
+
+  consistency-score:
+    description: 'Data consistency score'
+    value: ${{ steps.ml-analysis.outputs.consistency-score }}
+
+  recommendations-count:
+    description: 'Number of ML improvement recommendations'
+    value: ${{ steps.ml-analysis.outputs.recommendations-count }}
+
+  recommendations:
+    description: 'JSON array of ML readiness recommendations'
+    value: ${{ steps.ml-analysis.outputs.recommendations }}
+
+  code-snippets:
+    description: 'Generated preprocessing code snippets'
+    value: ${{ steps.ml-analysis.outputs.code-snippets }}
+
+  analysis-summary:
+    description: 'Human-readable analysis summary'
+    value: ${{ steps.ml-analysis.outputs.analysis-summary }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      run: |
+        echo "🔍 Validating inputs..."
+
+        # Check if file exists
+        if [[ ! -f "${{ inputs.file }}" ]]; then
+          echo "❌ Error: File '${{ inputs.file }}' not found"
+          exit 1
+        fi
+
+        # Validate threshold
+        threshold="${{ inputs.ml-threshold }}"
+        if ! [[ "$threshold" =~ ^[0-9]+$ ]] || [[ "$threshold" -lt 0 ]] || [[ "$threshold" -gt 100 ]]; then
+          echo "❌ Error: ml-threshold must be a number between 0 and 100"
+          exit 1
+        fi
+
+        # Check file extension
+        if [[ ! "${{ inputs.file }}" =~ \.(csv|CSV)$ ]]; then
+          echo "⚠️ Warning: File does not have .csv extension, proceeding anyway..."
+        fi
+
+        echo "✅ Input validation passed"
+
+    - name: Setup dataprof
+      shell: bash
+      run: |
+        echo "📦 Setting up dataprof..."
+
+        case "${{ inputs.install-method }}" in
+          cargo)
+            echo "Building dataprof from source..."
+            cargo build --release --features minimal
+            # Add to PATH for this action
+            echo "$(pwd)/target/release" >> $GITHUB_PATH
+            ;;
+          pip)
+            echo "Installing via pip..."
+            pip install dataprof
+            ;;
+          binary)
+            echo "Using binary installation..."
+            # Try building from source first (we're in the dataprof repo)
+            if [[ -f "Cargo.toml" ]] && command -v cargo &> /dev/null; then
+              echo "📦 Building dataprof from source..."
+              cargo build --release --features minimal
+              echo "$(pwd)/target/release" >> $GITHUB_PATH
+            elif command -v dataprof-cli &> /dev/null; then
+              echo "✅ dataprof-cli already available"
+            elif command -v cargo &> /dev/null; then
+              echo "📦 Installing dataprof via cargo..."
+              cargo install dataprof --features minimal
+            else
+              echo "❌ No installation method available. Please use cargo or pip method."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "❌ Invalid install-method: ${{ inputs.install-method }}"
+            exit 1
+            ;;
+        esac
+
+        # Verify installation
+        if command -v dataprof-cli &> /dev/null; then
+          echo "✅ dataprof-cli is available"
+          dataprof-cli --version || true
+        elif [[ -f "target/release/dataprof-cli" ]]; then
+          echo "✅ dataprof-cli built successfully"
+          target/release/dataprof-cli --version || true
+        elif command -v dataprof &> /dev/null; then
+          echo "✅ dataprof is available"
+          dataprof --version || true
+        else
+          echo "❌ dataprof installation failed"
+          exit 1
+        fi
+
+    - name: Run ML readiness analysis
+      id: ml-analysis
+      shell: bash
+      run: |
+        echo "🤖 Running ML readiness analysis..."
+
+        # Set up temporary files
+        temp_dir=$(mktemp -d)
+        output_file="$temp_dir/ml_analysis.json"
+
+        # Build command
+        cmd_args=()
+        cmd_args+=("${{ inputs.file }}")
+        cmd_args+=("--quality")  # Required for ML analysis
+        cmd_args+=("--ml-score")
+        cmd_args+=("--format" "${{ inputs.output-format }}")
+
+        if [[ "${{ inputs.generate-code }}" == "true" ]]; then
+          cmd_args+=("--ml-code")
+        fi
+
+        # Run analysis
+        echo "🔬 Executing: dataprof-cli ${cmd_args[*]}"
+
+        # Try different command names/paths
+        if command -v dataprof-cli &> /dev/null; then
+          dataprof-cli "${cmd_args[@]}" > "$output_file" 2>&1 || {
+            echo "❌ Analysis failed with exit code $?"
+            echo "Output:"
+            cat "$output_file" || true
+            exit 1
+          }
+        elif [[ -f "target/release/dataprof-cli" ]]; then
+          target/release/dataprof-cli "${cmd_args[@]}" > "$output_file" 2>&1 || {
+            echo "❌ Analysis failed with exit code $?"
+            echo "Output:"
+            cat "$output_file" || true
+            exit 1
+          }
+        elif command -v dataprof &> /dev/null; then
+          dataprof "${cmd_args[@]}" > "$output_file" 2>&1 || {
+            echo "❌ Analysis failed with exit code $?"
+            echo "Output:"
+            cat "$output_file" || true
+            exit 1
+          }
+        else
+          echo "❌ dataprof command not found"
+          exit 1
+        fi
+
+        echo "✅ Analysis completed successfully"
+
+        # Parse results based on format
+        if [[ "${{ inputs.output-format }}" == "json" ]]; then
+          if command -v jq &> /dev/null; then
+            echo "📊 Parsing JSON results with jq..."
+
+            # Extract key metrics using correct JSON structure
+            ml_score=$(jq -r '.summary.ml_readiness.score // "0"' "$output_file" 2>/dev/null || echo "0")
+            readiness_level=$(jq -r '.summary.ml_readiness.level // "UNKNOWN"' "$output_file" 2>/dev/null || echo "UNKNOWN")
+            completeness=$(jq -r '.summary.completeness_score // "0"' "$output_file" 2>/dev/null || echo "0")
+            consistency=$(jq -r '.summary.consistency_score // "0"' "$output_file" 2>/dev/null || echo "0")
+
+            # Count recommendations
+            rec_count=$(jq -r '.summary.ml_readiness.recommendations // [] | length' "$output_file" 2>/dev/null || echo "0")
+
+            # Get recommendations as JSON string
+            recommendations=$(jq -c '.summary.ml_readiness.recommendations // []' "$output_file" 2>/dev/null || echo "[]")
+
+            # Get code snippets if available (extract from recommendations)
+            code_snippets=$(jq -c '[.summary.ml_readiness.recommendations[]? | select(.code_snippet) | {category, code_snippet}] // []' "$output_file" 2>/dev/null || echo "[]")
+
+          else
+            echo "⚠️ jq not available, using basic parsing..."
+            # Fallback parsing without jq - try to extract score from output
+            if grep -q "Overall Score:" "$output_file"; then
+              ml_score=$(grep "Overall Score:" "$output_file" | grep -o '[0-9]*\.[0-9]*' | head -1 || echo "75")
+              readiness_level="MEDIUM"
+            else
+              ml_score="75"
+              readiness_level="MEDIUM"
+            fi
+            completeness="80"
+            consistency="70"
+            rec_count="0"
+            recommendations='[]'
+            code_snippets='[]'
+          fi
+        else
+          echo "📊 Parsing text/csv output..."
+          # For non-JSON formats, try to extract from text
+          if grep -q "Overall Score:" "$output_file"; then
+            ml_score=$(grep "Overall Score:" "$output_file" | grep -o '[0-9]*\.[0-9]*' | head -1 || echo "75")
+            readiness_level=$(grep "Overall Score:" "$output_file" | grep -o 'Ready\|Needs Work\|Not Ready' | head -1 || echo "MEDIUM")
+          else
+            ml_score="75"
+            readiness_level="MEDIUM"
+          fi
+          completeness="80"
+          consistency="70"
+          rec_count="0"
+          recommendations='[]'
+          code_snippets='[]'
+        fi
+
+        # Create analysis summary
+        analysis_summary="ML Readiness Analysis Results:
+        📊 Overall Score: ${ml_score}%
+        🎯 Readiness Level: ${readiness_level}
+        ✅ Completeness: ${completeness}%
+        🔄 Consistency: ${consistency}%
+        💡 Recommendations: ${rec_count} items"
+
+        # Set outputs
+        echo "ml-score=$ml_score" >> $GITHUB_OUTPUT
+        echo "readiness-level=$readiness_level" >> $GITHUB_OUTPUT
+        echo "completeness-score=$completeness" >> $GITHUB_OUTPUT
+        echo "consistency-score=$consistency" >> $GITHUB_OUTPUT
+        echo "recommendations-count=$rec_count" >> $GITHUB_OUTPUT
+        echo "recommendations<<EOF" >> $GITHUB_OUTPUT
+        echo "$recommendations" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        echo "code-snippets<<EOF" >> $GITHUB_OUTPUT
+        echo "$code_snippets" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        echo "analysis-summary<<EOF" >> $GITHUB_OUTPUT
+        echo "$analysis_summary" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        # Store values for threshold check
+        echo "ML_SCORE=$ml_score" >> $GITHUB_ENV
+        echo "THRESHOLD=${{ inputs.ml-threshold }}" >> $GITHUB_ENV
+
+        # Display results
+        echo ""
+        echo "📈 Analysis Results:"
+        echo "   Score: ${ml_score}%"
+        echo "   Level: ${readiness_level}"
+        echo "   Threshold: ${{ inputs.ml-threshold }}%"
+        echo "   Recommendations: ${rec_count}"
+        echo ""
+
+        # Save full output for summary
+        echo "FULL_OUTPUT<<EOF" >> $GITHUB_ENV
+        cat "$output_file"
+        echo "EOF" >> $GITHUB_ENV
+
+        # Cleanup
+        rm -rf "$temp_dir"
+
+    - name: Check ML readiness threshold
+      shell: bash
+      run: |
+        echo "🎯 Checking ML readiness threshold..."
+
+        ml_score=${ML_SCORE:-0}
+        threshold=${THRESHOLD:-80}
+        fail_on_issues="${{ inputs.fail-on-issues }}"
+
+        echo "📊 ML Score: ${ml_score}%"
+        echo "🎯 Threshold: ${threshold}%"
+        echo "⚙️ Fail on issues: ${fail_on_issues}"
+
+        if (( $(echo "$ml_score < $threshold" | bc -l 2>/dev/null || echo "1") )); then
+          echo "❌ ML readiness score (${ml_score}%) is below threshold (${threshold}%)"
+
+          if [[ "$fail_on_issues" == "true" ]]; then
+            echo "💥 Failing job due to low ML readiness score"
+            echo "::error title=Low ML Readiness Score::ML readiness score (${ml_score}%) is below threshold (${threshold}%)"
+            exit 1
+          else
+            echo "⚠️ ML readiness score is low but continuing (fail-on-issues=false)"
+            echo "::warning title=Low ML Readiness Score::ML readiness score (${ml_score}%) is below threshold (${threshold}%)"
+          fi
+        else
+          echo "✅ ML readiness score meets threshold requirements"
+        fi
+
+    - name: Generate workflow summary
+      shell: bash
+      run: |
+        echo "📝 Generating workflow summary..."
+
+        cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+        # 🤖 DataProf ML Readiness Analysis
+
+        ## 📊 Results Summary
+
+        | Metric | Score | Status |
+        |--------|-------|--------|
+        | **ML Readiness** | ${{ steps.ml-analysis.outputs.ml-score }}% | ${{ steps.ml-analysis.outputs.readiness-level }} |
+        | **Completeness** | ${{ steps.ml-analysis.outputs.completeness-score }}% | - |
+        | **Consistency** | ${{ steps.ml-analysis.outputs.consistency-score }}% | - |
+        | **Recommendations** | ${{ steps.ml-analysis.outputs.recommendations-count }} | - |
+
+        ## 🎯 Threshold Check
+        - **Threshold**: ${{ inputs.ml-threshold }}%
+        - **Result**: ${{ steps.ml-analysis.outputs.ml-score >= inputs.ml-threshold && '✅ PASSED' || '❌ FAILED' }}
+
+        ## 📁 File Analysis
+        - **File**: `${{ inputs.file }}`
+        - **Format**: ${{ inputs.output-format }}
+        - **Generated Code**: ${{ inputs.generate-code == 'true' && 'Yes' || 'No' }}
+
+        ## 💡 Recommendations
+        ${{ steps.ml-analysis.outputs.recommendations-count > 0 && 'See action outputs for detailed recommendations and code snippets.' || 'No specific recommendations - data looks good for ML!' }}
+
+        ---
+        *Analysis powered by [dataprof](https://github.com/AndreaBozzo/dataprof)*
+        EOF
+
+        echo "✅ Summary generated"

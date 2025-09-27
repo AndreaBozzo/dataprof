@@ -1,0 +1,155 @@
+name: Test DataProf Action
+
+on:
+  push:
+    branches: [ feature/github-action-ml-readiness ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  test-action:
+    name: Test DataProf ML Readiness Action
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust for dataprof
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: action-test
+
+      - name: Test DataProf Action - Pass Case
+        id: test-pass
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/sample_data.csv'
+          ml-threshold: 70
+          fail-on-issues: true
+          generate-code: true
+
+      - name: Display action outputs
+        run: |
+          echo "ML Score: ${{ steps.test-pass.outputs.ml-score }}"
+          echo "Readiness Level: ${{ steps.test-pass.outputs.readiness-level }}"
+          echo "Completeness: ${{ steps.test-pass.outputs.completeness-score }}"
+          echo "Consistency: ${{ steps.test-pass.outputs.consistency-score }}"
+          echo "Recommendations Count: ${{ steps.test-pass.outputs.recommendations-count }}"
+
+          echo "Analysis Summary:"
+          echo "${{ steps.test-pass.outputs.analysis-summary }}"
+
+      - name: Test DataProf Action - Fail Case (with continue-on-error)
+        id: test-fail
+        continue-on-error: true
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/sales_data_problematic.csv'
+          ml-threshold: 95
+          fail-on-issues: true
+
+      - name: Test DataProf Action - No Fail on Issues
+        id: test-no-fail
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/edge_cases_nightmare.csv'
+          ml-threshold: 95
+          fail-on-issues: false
+
+      - name: Create comprehensive test summary
+        run: |
+          echo "## 🧪 Action Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Pass Case (threshold: 70%)" >> $GITHUB_STEP_SUMMARY
+          echo "- Score: ${{ steps.test-pass.outputs.ml-score }}%" >> $GITHUB_STEP_SUMMARY
+          echo "- Level: ${{ steps.test-pass.outputs.readiness-level }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Recommendations: ${{ steps.test-pass.outputs.recommendations-count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ Fail Case (threshold: 95%)" >> $GITHUB_STEP_SUMMARY
+          echo "- Should have failed with high threshold" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚠️ No Fail Case (threshold: 95%, fail-on-issues: false)" >> $GITHUB_STEP_SUMMARY
+          echo "- Score: ${{ steps.test-no-fail.outputs.ml-score }}%" >> $GITHUB_STEP_SUMMARY
+          echo "- Should continue despite low score" >> $GITHUB_STEP_SUMMARY
+
+  test-action-edge-cases:
+    name: Test Edge Cases
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust for edge cases
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: edge-test
+
+      - name: Test with non-existent file
+        id: test-missing-file
+        continue-on-error: true
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'non-existent.csv'
+          ml-threshold: 80
+
+      - name: Test with invalid threshold
+        id: test-invalid-threshold
+        continue-on-error: true
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/sample_data.csv'
+          ml-threshold: 150
+
+      - name: Edge case results
+        run: |
+          echo "Missing file test result: ${{ steps.test-missing-file.outcome }}"
+          echo "Invalid threshold test result: ${{ steps.test-invalid-threshold.outcome }}"
+
+          if [[ "${{ steps.test-missing-file.outcome }}" == "failure" ]]; then
+            echo "✅ Missing file test correctly failed"
+          else
+            echo "❌ Missing file test should have failed"
+          fi
+
+          if [[ "${{ steps.test-invalid-threshold.outcome }}" == "failure" ]]; then
+            echo "✅ Invalid threshold test correctly failed"
+          else
+            echo "❌ Invalid threshold test should have failed"
+          fi
+
+  test-different-formats:
+    name: Test Different Output Formats
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust for format tests
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: format-test
+
+      - name: Test JSON format
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/customer_data_clean.csv'
+          output-format: 'json'
+          ml-threshold: 75
+
+      - name: Test CSV format
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/customer_data_clean.csv'
+          output-format: 'csv'
+          ml-threshold: 75
+
+      - name: Test text format
+        uses: ./.github/actions/dataprof-ml-readiness
+        with:
+          file: 'examples/customer_data_clean.csv'
+          output-format: 'text'
+          ml-threshold: 75
