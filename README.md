@@ -1,7 +1,7 @@
 # dataprof
 
 [![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
-[![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
 [![Try Online](https://img.shields.io/badge/Try%20Online-CSV%20ML%20Readiness-blue?style=flat&logo=vercel)](https://csv-mlready-api.vercel.app)
@@ -144,4 +144,9 @@ cargo clippy        # Code quality checks
 
 ## License
 
-Licensed under GPL-3.0. See [LICENSE](LICENSE) for details.
+Licensed under your choice of either:
+
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+- Apache License 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+See [LICENSE](LICENSE) for details.
