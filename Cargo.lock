@@ -899,6 +899,7 @@ dependencies = [
  "glob",
  "glob-match",
  "indicatif",
+ "is-terminal",
  "lazy_static",
  "log",
  "memmap2",

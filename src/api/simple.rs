@@ -83,7 +83,23 @@ impl DataProfiler {
         self
     }
 
-    pub fn analyze_file<P: AsRef<Path>>(&self, file_path: P) -> Result<QualityReport> {
+    /// Enable enhanced progress tracking with memory monitoring
+    pub fn with_enhanced_progress(mut self, leak_threshold_mb: usize) -> Self {
+        self.inner = self.inner.with_enhanced_progress(leak_threshold_mb);
+        self
+    }
+
+    /// Enable enhanced progress with smart defaults based on terminal context
+    pub fn with_smart_progress(mut self) -> Self {
+        use crate::output::supports_enhanced_output;
+
+        if supports_enhanced_output() {
+            self.inner = self.inner.with_enhanced_progress(100); // 100MB threshold
+        }
+        self
+    }
+
+    pub fn analyze_file<P: AsRef<Path>>(&mut self, file_path: P) -> Result<QualityReport> {
         self.inner.analyze_file(file_path.as_ref())
     }
 }

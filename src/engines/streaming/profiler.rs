@@ -3,8 +3,11 @@ use csv::ReaderBuilder;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::core::memory_tracker::MemoryTracker;
+use crate::core::performance::PerformanceIntelligence;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::progress::{ProgressCallback, ProgressTracker};
+use crate::output::progress::{generate_performance_hints, EnhancedProgressBar};
 use crate::types::{FileInfo, QualityReport, ScanInfo};
 use crate::{analysis::analyze_column, QualityChecker};
 
@@ -12,6 +15,9 @@ pub struct StreamingProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
+    memory_tracker: Option<MemoryTracker>,
+    enable_enhanced_progress: bool,
+    performance_intelligence: Option<PerformanceIntelligence>,
 }
 
 impl StreamingProfiler {
@@ -20,7 +26,24 @@ impl StreamingProfiler {
             chunk_size: ChunkSize::default(),
             sampling_strategy: SamplingStrategy::None,
             progress_callback: None,
+            memory_tracker: None,
+            enable_enhanced_progress: false,
+            performance_intelligence: None,
         }
+    }
+
+    /// Enable enhanced progress tracking with memory monitoring
+    pub fn with_enhanced_progress(mut self, leak_threshold_mb: usize) -> Self {
+        self.memory_tracker = Some(MemoryTracker::new(leak_threshold_mb));
+        self.enable_enhanced_progress = true;
+        self.performance_intelligence = Some(PerformanceIntelligence::new());
+        self
+    }
+
+    /// Enable performance intelligence without enhanced progress
+    pub fn with_performance_intelligence(mut self) -> Self {
+        self.performance_intelligence = Some(PerformanceIntelligence::new());
+        self
     }
 
     pub fn chunk_size(mut self, chunk_size: ChunkSize) -> Self {
@@ -41,7 +64,7 @@ impl StreamingProfiler {
         self
     }
 
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport> {
+    pub fn analyze_file(&mut self, file_path: &Path) -> Result<QualityReport> {
         let metadata = std::fs::metadata(file_path)?;
         let file_size_bytes = metadata.len();
         let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
@@ -54,14 +77,39 @@ impl StreamingProfiler {
         // Calculate optimal chunk size
         let chunk_size = self.chunk_size.calculate(file_size_bytes);
 
-        // Set up progress tracking
+        // Set up enhanced or standard progress tracking
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
+        let mut enhanced_progress: Option<EnhancedProgressBar> = None;
+
+        // Initialize enhanced progress if enabled
+        if self.enable_enhanced_progress {
+            use indicatif::{ProgressBar, ProgressStyle};
+
+            let pb = ProgressBar::new(file_size_bytes);
+            if let Ok(style) = ProgressStyle::with_template(
+                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}) | {msg}"
+            ) {
+                pb.set_style(style.progress_chars("🔄🔵⚪"));
+            }
+            pb.set_message("Streaming analysis...");
+            enhanced_progress = Some(EnhancedProgressBar::new(pb, self.memory_tracker.clone()));
+        }
 
         // Initialize aggregated data storage
         let mut all_column_data: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         let mut total_rows_processed = 0;
         let mut chunk_count = 0;
+        let mut bytes_processed = 0u64;
+
+        // Track main data structure allocation
+        if let Some(ref tracker) = self.memory_tracker {
+            tracker.track_allocation(
+                "main_column_data".to_string(),
+                std::mem::size_of_val(&all_column_data),
+                "hashmap",
+            );
+        }
 
         // Create CSV reader
         let mut reader = ReaderBuilder::new()
@@ -112,7 +160,47 @@ impl StreamingProfiler {
                 self.process_chunk(&mut all_column_data, &current_chunk_data);
 
                 chunk_count += 1;
-                progress_tracker.update(total_rows_processed, estimated_total_rows, chunk_count);
+                bytes_processed += (rows_in_current_chunk * headers.len() * 50) as u64; // Rough estimate
+
+                // Update enhanced progress and performance intelligence if available
+                if let Some(ref mut enhanced_pb) = enhanced_progress {
+                    // Use performance intelligence for advanced hints if available
+                    let hints: Vec<String> =
+                        if let Some(ref mut perf_intel) = self.performance_intelligence {
+                            let _metrics = perf_intel.analyze_performance(
+                                file_size_mb,
+                                total_rows_processed as u64,
+                                headers.len() as u64,
+                                self.memory_tracker.as_ref(),
+                            );
+                            perf_intel.get_performance_hints()
+                        } else {
+                            // Fallback to legacy hint generation
+                            let memory_mb =
+                                self.memory_tracker.as_ref().map(|t| t.get_memory_stats().2);
+                            generate_performance_hints(
+                                file_size_mb,
+                                total_rows_processed as u64,
+                                total_rows_processed as f64 / start.elapsed().as_secs_f64(),
+                                memory_mb,
+                            )
+                        };
+
+                    let hint_strs: Vec<&str> = hints.iter().map(|s| s.as_str()).collect();
+                    enhanced_pb.update_with_hints(
+                        bytes_processed,
+                        total_rows_processed as u64,
+                        headers.len() as u64,
+                        hint_strs,
+                    );
+                } else {
+                    // Standard progress update
+                    progress_tracker.update(
+                        total_rows_processed,
+                        estimated_total_rows,
+                        chunk_count,
+                    );
+                }
 
                 // Clear current chunk
                 for values in current_chunk_data.values_mut() {
@@ -126,10 +214,39 @@ impl StreamingProfiler {
         if rows_in_current_chunk > 0 {
             self.process_chunk(&mut all_column_data, &current_chunk_data);
             chunk_count += 1;
-            progress_tracker.update(total_rows_processed, estimated_total_rows, chunk_count);
+            bytes_processed += (rows_in_current_chunk * headers.len() * 50) as u64;
+
+            if let Some(ref mut enhanced_pb) = enhanced_progress {
+                enhanced_pb.update(
+                    bytes_processed,
+                    total_rows_processed as u64,
+                    headers.len() as u64,
+                    Some("Final processing..."),
+                );
+            } else {
+                progress_tracker.update(total_rows_processed, estimated_total_rows, chunk_count);
+            }
         }
 
-        progress_tracker.finish(total_rows_processed);
+        // Finish progress tracking
+        if let Some(ref enhanced_pb) = enhanced_progress {
+            enhanced_pb.finish_with_summary();
+
+            // Check for memory leaks and report if any
+            if let Some(leak_report) = enhanced_pb.check_memory_leaks() {
+                if !leak_report.contains("No memory leaks") {
+                    eprintln!("⚠️ Memory leak detection report:");
+                    eprintln!("{}", leak_report);
+                }
+            }
+        } else {
+            progress_tracker.finish(total_rows_processed);
+        }
+
+        // Clean up tracked allocations
+        if let Some(ref tracker) = self.memory_tracker {
+            tracker.track_deallocation("main_column_data");
+        }
 
         // Analyze aggregated data
         let mut column_profiles = Vec::new();
