@@ -105,8 +105,8 @@ jobs:
     name: Build Benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Skip expensive benchmark builds on draft PRs and PRs (quick-performance-check handles PRs)
-    if: github.event_name != 'pull_request'
+    # Only run on main/master pushes, schedule, or manual dispatch
+    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -128,8 +128,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-check
     timeout-minutes: 20
-    # Skip on PRs (quick-performance-check handles PRs)
-    if: github.event_name != 'pull_request'
+    # Only run on main/master pushes, schedule, or manual dispatch
+    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -160,8 +160,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-check
     timeout-minutes: 15
-    # Skip on PRs (quick-performance-check handles PRs)
-    if: github.event_name != 'pull_request'
+    # Only run on main/master pushes, schedule, or manual dispatch
+    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -192,8 +192,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-check
     timeout-minutes: 12
-    # Skip on PRs (quick-performance-check handles PRs)
-    if: github.event_name != 'pull_request'
+    # Only run on main/master pushes, schedule, or manual dispatch
+    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -224,8 +224,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-check
     timeout-minutes: 10
-    # Skip on PRs (quick-performance-check handles PRs)
-    if: github.event_name != 'pull_request'
+    # Only run on main/master pushes, schedule, or manual dispatch
+    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
