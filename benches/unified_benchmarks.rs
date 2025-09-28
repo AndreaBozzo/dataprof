@@ -553,6 +553,7 @@ fn get_memory_usage() -> usize {
                 }
             }
         }
+        0
     }
 
     #[cfg(target_os = "macos")]
