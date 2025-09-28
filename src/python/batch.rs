@@ -9,6 +9,7 @@ use super::types::PyBatchResult;
 /// Batch process multiple files using glob pattern
 #[pyfunction]
 #[pyo3(signature = (pattern, parallel=None, max_concurrent=None, ml_score=None, ml_code=None, html_output=None, output_script=None))]
+#[allow(clippy::too_many_arguments)]
 pub fn batch_analyze_glob(
     pattern: &str,
     parallel: Option<bool>,
@@ -41,6 +42,7 @@ pub fn batch_analyze_glob(
 /// Batch process all files in a directory
 #[pyfunction]
 #[pyo3(signature = (directory, recursive=None, parallel=None, max_concurrent=None, ml_score=None, ml_code=None, html_output=None, output_script=None))]
+#[allow(clippy::too_many_arguments)]
 pub fn batch_analyze_directory(
     directory: &str,
     recursive: Option<bool>,
