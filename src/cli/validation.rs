@@ -4,9 +4,22 @@ use dataprof::core::{exit_codes, InputValidator, ValidationError};
 use crate::cli::args::Cli;
 
 pub fn validate_cli_inputs(cli: &Cli) -> Result<(), ValidationError> {
-    // Validate file input (unless it's engine info or benchmark mode)
+    // Validate file input (unless it's engine info, benchmark mode, or batch processing)
     if !cli.engine_info && !cli.benchmark {
-        InputValidator::validate_file_input(&cli.file)?;
+        // Allow directories for batch processing (recursive or glob mode)
+        if cli.file.is_dir() && (cli.recursive || cli.glob.is_some()) {
+            // For batch processing, just validate directory exists and is readable
+            if !cli.file.exists() {
+                return Err(ValidationError {
+                    message: format!("Directory not found: {}", cli.file.display()),
+                    suggestion: "Check the directory path and permissions".to_string(),
+                    error_code: 2,
+                });
+            }
+        } else {
+            // Standard file validation for single file processing
+            InputValidator::validate_file_input(&cli.file)?;
+        }
     }
 
     // Validate HTML output path if specified

@@ -1,9 +1,9 @@
 //! PostgreSQL database connector with connection pooling
 
 use crate::database::connection::ConnectionInfo;
-use crate::database::security::{validate_base_query, validate_sql_identifier};
 #[cfg(feature = "postgres")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
+use crate::database::{validate_base_query, validate_sql_identifier};
 use crate::database::{DatabaseConfig, DatabaseConnector};
 use anyhow::Result;
 use async_trait::async_trait;

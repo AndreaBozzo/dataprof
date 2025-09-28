@@ -553,7 +553,7 @@ fn get_memory_usage() -> usize {
                 }
             }
         }
-        return 0;
+        0
     }
 
     #[cfg(target_os = "macos")]
@@ -579,11 +579,13 @@ fn get_memory_usage() -> usize {
     #[cfg(target_os = "windows")]
     {
         // Windows memory detection simplified for benchmarking
-        return 0;
+        0
     }
-
-    // Fallback for other platforms
-    0
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        // Fallback for other platforms
+        0
+    }
 }
 
 // Organize benchmarks into logical groups

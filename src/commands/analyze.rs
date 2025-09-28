@@ -6,7 +6,8 @@ use crate::cli::args::{Cli, CliOutputFormat};
 use dataprof::core::DataprofConfig;
 use dataprof::output::progress::{display_startup_banner, ProgressManager};
 use dataprof::output::{
-    display_ml_score, display_profile, display_quality_issues, output_with_formatter,
+    display_ml_score, display_profile, display_quality_issues, output_with_adaptive_formatter,
+    output_with_formatter, supports_enhanced_output, OutputContext,
 };
 use dataprof::OutputFormat;
 use dataprof::{
@@ -29,15 +30,24 @@ pub fn is_json_file(path: &Path) -> bool {
 }
 
 pub fn run_analysis(cli: &Cli, config: &DataprofConfig) -> Result<()> {
-    // Create progress manager
-    let progress = ProgressManager::new(
-        config.output.show_progress && cli.progress,
-        config.output.verbosity.max(cli.verbosity),
-    );
+    // Create progress manager with memory tracking for enhanced insights
+    let progress = if supports_enhanced_output() {
+        ProgressManager::with_memory_tracking(
+            config.output.show_progress && cli.progress,
+            config.output.verbosity.max(cli.verbosity),
+            100, // 100MB memory leak threshold
+        )
+    } else {
+        ProgressManager::new(
+            config.output.show_progress && cli.progress,
+            config.output.verbosity.max(cli.verbosity),
+        )
+    };
 
-    // Display startup banner for non-JSON output
+    // Display startup banner for non-JSON output with adaptive formatting
     if !matches!(cli.format, CliOutputFormat::Json) && config.output.verbosity > 0 {
-        display_startup_banner("0.4.1", config.output.colored);
+        let context = OutputContext::detect();
+        display_startup_banner("0.4.1", context.supports_color);
     }
 
     // Handle benchmark request
@@ -105,8 +115,13 @@ fn run_quality_analysis(
 
     // Use advanced analysis with quality checking
     let report = if cli.streaming && !is_json_file(&cli.file) {
-        // v0.3.0 Streaming API
+        // v0.3.0 Streaming API with enhanced progress when available
         let mut profiler = DataProfiler::streaming();
+
+        // Enable enhanced progress if we have memory tracking enabled
+        if progress.memory_tracker.is_some() {
+            profiler = profiler.with_smart_progress();
+        }
 
         // Configure chunk size
         let chunk_size = if let Some(size) = cli.chunk_size {
@@ -140,15 +155,15 @@ fn run_quality_analysis(
         if is_json_file(&cli.file) {
             analyze_json_with_quality(&cli.file)?
         } else {
-            // Try sampling first, fallback to robust parsing
-            match analyze_csv_with_sampling(&cli.file) {
+            // Use robust parsing with delimiter detection first, fallback to sampling for large files
+            match analyze_csv_robust(&cli.file) {
                 Ok(report) => report,
                 Err(e) => {
                     eprintln!(
-                        "⚠️ Standard analysis failed: {}. Using robust parsing...",
+                        "⚠️ Robust analysis failed: {}. Trying sampling approach...",
                         e
                     );
-                    analyze_csv_robust(&cli.file)?
+                    analyze_csv_with_sampling(&cli.file)?
                 }
             }
         }
@@ -206,10 +221,16 @@ fn run_quality_analysis(
         }
     }
 
-    // Handle enhanced output formatting
+    // Handle enhanced output formatting with adaptive selection
     if !matches!(cli.format, CliOutputFormat::Text) {
         let format: OutputFormat = cli.format.clone().into();
-        return output_with_formatter(&report, &format, ml_score.as_ref());
+
+        // Use adaptive formatting if format supports it, otherwise use standard formatter
+        if matches!(format, OutputFormat::Text) {
+            return output_with_adaptive_formatter(&report, ml_score.as_ref(), None);
+        } else {
+            return output_with_formatter(&report, &format, ml_score.as_ref());
+        }
     }
 
     // Display results
@@ -257,20 +278,40 @@ fn display_analysis_results(
     report: &dataprof::QualityReport,
     ml_score: Option<&dataprof::analysis::MlReadinessScore>,
 ) {
-    // Show basic file info
-    println!(
-        "📁 {} | {:.1} MB | {} columns",
-        cli.file.display(),
-        report.file_info.file_size_mb,
-        report.file_info.total_columns
-    );
+    let context = OutputContext::detect();
+
+    // Show basic file info with adaptive formatting
+    if context.supports_unicode && context.supports_color {
+        use colored::*;
+        println!(
+            "📁 {} | {:.1} MB | {} columns",
+            cli.file.display().to_string().bright_white().bold(),
+            report.file_info.file_size_mb,
+            report.file_info.total_columns
+        );
+    } else {
+        println!(
+            "File: {} | {:.1} MB | {} columns",
+            cli.file.display(),
+            report.file_info.file_size_mb,
+            report.file_info.total_columns
+        );
+    }
 
     if report.scan_info.sampling_ratio < 1.0 {
-        println!(
-            "📊 Sampled {} rows ({:.1}%)",
-            report.scan_info.rows_scanned,
-            report.scan_info.sampling_ratio * 100.0
-        );
+        if context.supports_unicode {
+            println!(
+                "📊 Sampled {} rows ({:.1}%)",
+                report.scan_info.rows_scanned,
+                report.scan_info.sampling_ratio * 100.0
+            );
+        } else {
+            println!(
+                "Sampled {} rows ({:.1}%)",
+                report.scan_info.rows_scanned,
+                report.scan_info.sampling_ratio * 100.0
+            );
+        }
     }
     println!();
 
@@ -389,12 +430,13 @@ fn run_simple_analysis(cli: &Cli, _config: &DataprofConfig) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Simple analysis without quality checking
+    // Simple analysis without quality checking - use robust parsing with delimiter detection
     let profiles = if is_json_file(&cli.file) {
         dataprof::analyze_json(&cli.file)?
     } else {
-        // Fast analysis for CSV
-        dataprof::analyze_csv_fast(&cli.file)?
+        // Use robust analysis with delimiter detection for CSV
+        let quality_report = dataprof::analyze_csv_robust(&cli.file)?;
+        quality_report.column_profiles
     };
 
     // Handle output formatting

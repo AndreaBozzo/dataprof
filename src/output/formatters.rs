@@ -1,7 +1,9 @@
 use crate::analysis::MlReadinessScore;
 use crate::types::{ColumnProfile, ColumnStats, OutputFormat, QualityIssue, QualityReport};
 use anyhow::Result;
+use is_terminal::IsTerminal;
 use serde::Serialize;
+use std::io::{stderr, stdout};
 
 /// Trait for output formatting - enables modular output systems
 pub trait OutputFormatter {
@@ -18,6 +20,113 @@ pub struct CsvFormatter;
 
 /// Plain text formatter for scripting (no colors/formatting)
 pub struct PlainFormatter;
+
+/// Adaptive formatter that selects appropriate format based on terminal context
+pub struct AdaptiveFormatter {
+    pub is_interactive: bool,
+    pub force_format: Option<OutputFormat>,
+}
+
+/// Context information for adaptive formatting
+#[derive(Debug, Clone)]
+pub struct OutputContext {
+    pub is_terminal: bool,
+    pub is_interactive: bool,
+    pub is_ci_environment: bool,
+    pub supports_color: bool,
+    pub supports_unicode: bool,
+}
+
+impl OutputContext {
+    /// Detect the current output context
+    pub fn detect() -> Self {
+        let is_terminal = stdout().is_terminal() && stderr().is_terminal();
+        let is_ci_environment = std::env::var("CI").is_ok()
+            || std::env::var("GITHUB_ACTIONS").is_ok()
+            || std::env::var("JENKINS_URL").is_ok()
+            || std::env::var("GITLAB_CI").is_ok();
+
+        let supports_color = is_terminal
+            && !is_ci_environment
+            && std::env::var("NO_COLOR").is_err()
+            && std::env::var("TERM").map_or(true, |term| term != "dumb");
+
+        let supports_unicode = is_terminal
+            && std::env::var("LC_ALL").unwrap_or_default().contains("UTF")
+            || std::env::var("LANG").unwrap_or_default().contains("UTF");
+
+        Self {
+            is_terminal,
+            is_interactive: is_terminal && !is_ci_environment,
+            is_ci_environment,
+            supports_color,
+            supports_unicode,
+        }
+    }
+
+    /// Determine the best output format for this context
+    pub fn preferred_format(&self) -> OutputFormat {
+        if self.is_ci_environment {
+            OutputFormat::Json // Machine-readable for CI/CD
+        } else if self.is_interactive {
+            OutputFormat::Text // Rich text for interactive terminals
+        } else {
+            OutputFormat::Plain // Simple text for pipes/redirects
+        }
+    }
+}
+
+impl Default for AdaptiveFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdaptiveFormatter {
+    pub fn new() -> Self {
+        Self {
+            is_interactive: OutputContext::detect().is_interactive,
+            force_format: None,
+        }
+    }
+
+    pub fn with_forced_format(format: OutputFormat) -> Self {
+        Self {
+            is_interactive: OutputContext::detect().is_interactive,
+            force_format: Some(format),
+        }
+    }
+
+    /// Get the appropriate formatter based on context
+    fn get_formatter(&self, context: &OutputContext) -> Box<dyn OutputFormatter> {
+        let default_format = context.preferred_format();
+        let format = self.force_format.as_ref().unwrap_or(&default_format);
+
+        match format {
+            OutputFormat::Json => Box::new(JsonFormatter),
+            OutputFormat::Csv => Box::new(CsvFormatter),
+            OutputFormat::Plain => Box::new(PlainFormatter),
+            OutputFormat::Text => {
+                if context.is_interactive {
+                    Box::new(InteractiveFormatter::new(context.clone()))
+                } else {
+                    Box::new(PlainFormatter)
+                }
+            }
+        }
+    }
+}
+
+/// Enhanced interactive formatter with colors and emojis
+pub struct InteractiveFormatter {
+    pub context: OutputContext,
+}
+
+impl InteractiveFormatter {
+    pub fn new(context: OutputContext) -> Self {
+        Self { context }
+    }
+}
 
 /// Enhanced JSON structure for reports
 #[derive(Serialize)]
@@ -473,14 +582,231 @@ impl OutputFormatter for PlainFormatter {
     }
 }
 
+impl OutputFormatter for InteractiveFormatter {
+    fn format_report(&self, report: &QualityReport) -> Result<String> {
+        use colored::*;
+        let mut output = String::new();
+
+        // Enhanced file info section with colors and emojis
+        if self.context.supports_unicode {
+            output.push_str(&format!(
+                "📁 {} {}\n",
+                "File:".bright_blue().bold(),
+                report.file_info.path
+            ));
+            output.push_str(&format!(
+                "📏 {} {:.1} MB\n",
+                "Size:".bright_blue().bold(),
+                report.file_info.file_size_mb
+            ));
+            output.push_str(&format!(
+                "📊 {} {}\n",
+                "Columns:".bright_blue().bold(),
+                report.file_info.total_columns
+            ));
+        } else {
+            output.push_str(&format!("File: {}\n", report.file_info.path));
+            output.push_str(&format!("Size: {:.1} MB\n", report.file_info.file_size_mb));
+            output.push_str(&format!("Columns: {}\n", report.file_info.total_columns));
+        }
+
+        if let Some(rows) = report.file_info.total_rows {
+            if self.context.supports_unicode {
+                output.push_str(&format!("📈 {} {}\n", "Rows:".bright_blue().bold(), rows));
+            } else {
+                output.push_str(&format!("Rows: {}\n", rows));
+            }
+        }
+
+        // Performance info
+        if self.context.supports_unicode {
+            output.push_str(&format!(
+                "⏱️  {} {} ms\n\n",
+                "Scan time:".bright_blue().bold(),
+                report.scan_info.scan_time_ms
+            ));
+        } else {
+            output.push_str(&format!(
+                "Scan time: {} ms\n\n",
+                report.scan_info.scan_time_ms
+            ));
+        }
+
+        // Quality issues with enhanced formatting
+        if !report.issues.is_empty() {
+            if self.context.supports_unicode {
+                output.push_str(&format!(
+                    "⚠️  {} ({})\n",
+                    "Quality Issues".bright_yellow().bold(),
+                    report.issues.len()
+                ));
+            } else {
+                output.push_str(&format!("Quality Issues ({})\n", report.issues.len()));
+            }
+
+            for (i, issue) in report.issues.iter().enumerate() {
+                let severity_indicator = if self.context.supports_unicode {
+                    match issue {
+                        QualityIssue::MixedDateFormats { .. } | QualityIssue::MixedTypes { .. } => {
+                            "🚨"
+                        }
+                        QualityIssue::NullValues { .. } | QualityIssue::Outliers { .. } => "⚠️ ",
+                        QualityIssue::Duplicates { .. } => "ℹ️ ",
+                    }
+                } else {
+                    ""
+                };
+
+                output.push_str(&format!("{}{}. ", severity_indicator, i + 1));
+
+                match issue {
+                    QualityIssue::NullValues {
+                        column,
+                        count,
+                        percentage,
+                    } => {
+                        output.push_str(&format!(
+                            "[{}] {} null values ({:.1}%)\n",
+                            column.bright_cyan(),
+                            count,
+                            percentage
+                        ));
+                    }
+                    QualityIssue::MixedDateFormats { column, .. } => {
+                        output
+                            .push_str(&format!("[{}] Mixed date formats\n", column.bright_cyan()));
+                    }
+                    QualityIssue::Duplicates { column, count } => {
+                        output.push_str(&format!(
+                            "[{}] {} duplicates\n",
+                            column.bright_cyan(),
+                            count
+                        ));
+                    }
+                    QualityIssue::Outliers {
+                        column,
+                        values,
+                        threshold,
+                    } => {
+                        output.push_str(&format!(
+                            "[{}] {} outliers (>{}σ)\n",
+                            column.bright_cyan(),
+                            values.len(),
+                            threshold
+                        ));
+                    }
+                    QualityIssue::MixedTypes { column, .. } => {
+                        output.push_str(&format!("[{}] Mixed data types\n", column.bright_cyan()));
+                    }
+                }
+            }
+            output.push('\n');
+        }
+
+        // Column profiles with enhanced formatting
+        if self.context.supports_unicode {
+            output.push_str(&format!("📋 {}\n", "Column Profiles".bright_green().bold()));
+        } else {
+            output.push_str("Column Profiles\n");
+        }
+
+        for profile in &report.column_profiles {
+            output.push_str(&format!("Column: {}\n", profile.name.bright_white().bold()));
+            output.push_str(&format!("  Type: {:?}\n", profile.data_type));
+            output.push_str(&format!("  Records: {}\n", profile.total_count));
+
+            let null_percentage = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
+            if null_percentage > 0.0 {
+                output.push_str(&format!(
+                    "  Nulls: {} ({:.1}%)\n",
+                    profile.null_count, null_percentage
+                ));
+            } else {
+                output.push_str(&format!("  Nulls: {}\n", profile.null_count));
+            }
+
+            match &profile.stats {
+                ColumnStats::Numeric { min, max, mean } => {
+                    output.push_str(&format!("  Min: {:.2}\n", min));
+                    output.push_str(&format!("  Max: {:.2}\n", max));
+                    output.push_str(&format!("  Mean: {:.2}\n", mean));
+                }
+                ColumnStats::Text {
+                    min_length,
+                    max_length,
+                    avg_length,
+                } => {
+                    output.push_str(&format!("  Min Length: {}\n", min_length));
+                    output.push_str(&format!("  Max Length: {}\n", max_length));
+                    output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                }
+            }
+            output.push('\n');
+        }
+
+        Ok(output)
+    }
+
+    fn format_profiles(&self, profiles: &[ColumnProfile]) -> Result<String> {
+        use colored::*;
+        let mut output = String::new();
+
+        for profile in profiles {
+            output.push_str(&format!("Column: {}\n", profile.name.bright_white().bold()));
+            output.push_str(&format!("  Type: {:?}\n", profile.data_type));
+            output.push_str(&format!("  Records: {}\n", profile.total_count));
+            output.push_str(&format!("  Nulls: {}\n", profile.null_count));
+            output.push('\n');
+        }
+
+        Ok(output)
+    }
+
+    fn format_simple_summary(&self, profiles: &[ColumnProfile]) -> Result<String> {
+        self.format_profiles(profiles)
+    }
+}
+
+impl OutputFormatter for AdaptiveFormatter {
+    fn format_report(&self, report: &QualityReport) -> Result<String> {
+        let context = OutputContext::detect();
+        let formatter = self.get_formatter(&context);
+        formatter.format_report(report)
+    }
+
+    fn format_profiles(&self, profiles: &[ColumnProfile]) -> Result<String> {
+        let context = OutputContext::detect();
+        let formatter = self.get_formatter(&context);
+        formatter.format_profiles(profiles)
+    }
+
+    fn format_simple_summary(&self, profiles: &[ColumnProfile]) -> Result<String> {
+        let context = OutputContext::detect();
+        let formatter = self.get_formatter(&context);
+        formatter.format_simple_summary(profiles)
+    }
+}
+
 /// Factory function to create formatters
 pub fn create_formatter(format: &str) -> Box<dyn OutputFormatter> {
     match format.to_lowercase().as_str() {
         "json" => Box::new(JsonFormatter),
         "csv" => Box::new(CsvFormatter),
         "plain" => Box::new(PlainFormatter),
+        "adaptive" => Box::new(AdaptiveFormatter::new()),
+        "interactive" => Box::new(InteractiveFormatter::new(OutputContext::detect())),
         _ => Box::new(JsonFormatter), // Default fallback
     }
+}
+
+/// Create adaptive formatter that auto-selects based on context
+pub fn create_adaptive_formatter() -> Box<dyn OutputFormatter> {
+    Box::new(AdaptiveFormatter::new())
+}
+
+/// Create adaptive formatter with forced format
+pub fn create_adaptive_formatter_with_format(format: OutputFormat) -> Box<dyn OutputFormatter> {
+    Box::new(AdaptiveFormatter::with_forced_format(format))
 }
 
 pub fn output_with_formatter(
@@ -516,4 +842,58 @@ pub fn output_with_formatter(
 
     println!("{}", output);
     Ok(())
+}
+
+/// Adaptive output that automatically selects best format based on terminal context
+pub fn output_with_adaptive_formatter(
+    report: &QualityReport,
+    ml_score: Option<&MlReadinessScore>,
+    force_format: Option<OutputFormat>,
+) -> Result<()> {
+    let effective_format = force_format
+        .clone()
+        .unwrap_or_else(|| OutputContext::detect().preferred_format());
+
+    let formatter = if let Some(format) = force_format {
+        create_adaptive_formatter_with_format(format)
+    } else {
+        create_adaptive_formatter()
+    };
+
+    let mut output = formatter.format_report(report)?;
+
+    if matches!(effective_format, OutputFormat::Json) && ml_score.is_some() {
+        let mut json_value: serde_json::Value = serde_json::from_str(&output)?;
+        if let Some(summary) = json_value.get_mut("summary") {
+            if let Some(score) = ml_score {
+                summary["ml_readiness"] = serde_json::json!({
+                    "score": score.overall_score,
+                    "level": score.readiness_level,
+                    "recommendations": score.recommendations,
+                    "feature_analysis": score.feature_analysis
+                });
+            }
+        }
+        output = serde_json::to_string_pretty(&json_value)?;
+    }
+
+    println!("{}", output);
+    Ok(())
+}
+
+/// Check if current environment supports enhanced terminal features
+pub fn supports_enhanced_output() -> bool {
+    let context = OutputContext::detect();
+    context.is_interactive && context.supports_color && context.supports_unicode
+}
+
+/// Get a hint about the best output format for current context
+pub fn suggest_output_format() -> String {
+    let context = OutputContext::detect();
+    match context.preferred_format() {
+        OutputFormat::Json => "JSON (machine-readable for CI/automated processing)".to_string(),
+        OutputFormat::Text => "Interactive text (rich formatting for terminals)".to_string(),
+        OutputFormat::Plain => "Plain text (simple format for pipes/scripts)".to_string(),
+        OutputFormat::Csv => "CSV (tabular data format)".to_string(),
+    }
 }

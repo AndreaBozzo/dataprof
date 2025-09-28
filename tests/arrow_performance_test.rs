@@ -57,7 +57,7 @@ fn test_arrow_vs_streaming_performance() -> Result<(), Box<dyn std::error::Error
     // Test streaming profiler
     println!("Testing streaming profiler...");
     let start = Instant::now();
-    let streaming_profiler = DataProfiler::streaming();
+    let mut streaming_profiler = DataProfiler::streaming();
     let streaming_report = streaming_profiler.analyze_file(temp_file.path())?;
     let streaming_time = start.elapsed();
 

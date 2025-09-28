@@ -321,7 +321,7 @@ impl MemoryEfficientProfiler {
             .chunk_size(self.chunk_size.clone())
             .sampling(self.sampling_strategy.clone());
 
-        let profiler = if let Some(callback) = &self.progress_callback {
+        let mut profiler = if let Some(callback) = &self.progress_callback {
             let cb = callback.clone();
             profiler.progress_callback(move |info| cb(info))
         } else {
