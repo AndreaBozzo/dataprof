@@ -25,7 +25,7 @@ impl Default for RobustCsvParser {
         Self {
             flexible: true,
             quote_char: Some(b'"'),
-            delimiter: Some(b','),
+            delimiter: None, // Enable auto-detection by default
             allow_variable_columns: true,
             trim_whitespace: true,
             auto_recovery: true,
@@ -203,11 +203,18 @@ impl RobustCsvParser {
         let delimiters = [b',', b';', b'\t', b'|'];
         let mut best_delimiter = b',';
         let mut max_consistency = 0;
+        let mut max_field_count = 0;
 
         for &delimiter in &delimiters {
             let consistency = self.measure_delimiter_consistency(&lines, delimiter);
-            if consistency > max_consistency {
+            let avg_field_count = self.average_field_count(&lines, delimiter);
+
+            // Prefer delimiter with higher consistency, or higher field count if consistency is equal
+            if consistency > max_consistency
+                || (consistency == max_consistency && avg_field_count > max_field_count)
+            {
                 max_consistency = consistency;
+                max_field_count = avg_field_count;
                 best_delimiter = delimiter;
             }
         }
@@ -233,6 +240,20 @@ impl RobustCsvParser {
         }
 
         counts.values().max().copied().unwrap_or(0)
+    }
+
+    fn average_field_count(&self, lines: &[String], delimiter: u8) -> usize {
+        if lines.is_empty() {
+            return 0;
+        }
+
+        let delimiter_char = delimiter as char;
+        let total_fields: usize = lines
+            .iter()
+            .map(|line| self.count_fields_simple(line, delimiter_char))
+            .sum();
+
+        total_fields / lines.len()
     }
 
     fn count_fields_simple(&self, line: &str, delimiter: char) -> usize {

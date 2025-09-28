@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔧 **CRITICAL FIX: Smart Auto-Recovery System - Delimiter Detection**
+
+- **FIXED:** **🛠️ Automatic Delimiter Detection Now Fully Functional**
+  - Resolved critical bug where delimiter detection was disabled by default
+  - Enhanced algorithm to prefer delimiters with higher field counts
+  - CLI now uses robust parsing by default for intelligent CSV handling
+  - **Supported delimiters:** Comma (`,`), Semicolon (`;`), Pipe (`|`), Tab (`\t`)
+  - **Test Results:** All delimiters now correctly detect 4 columns vs 1
+  - Backward compatibility maintained for existing workflows
+
 ### 🎯 Enhanced User Experience & Terminal Intelligence - Issue #79
 
 - **NEW:** **🖥️ Intelligent Terminal Detection & Adaptive Output**

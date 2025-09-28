@@ -62,6 +62,12 @@ dataprof data.csv --quality --html report.html
 # Enable ML readiness scoring
 dataprof data.csv --quality --ml-score
 
+# ML scoring with actionable code snippets (NEW v0.4.61)
+dataprof data.csv --quality --ml-score --ml-code
+
+# Generate complete preprocessing script (NEW v0.4.61)
+dataprof data.csv --quality --ml-score --output-script preprocess.py
+
 # Streaming mode for large files (>100MB)
 dataprof large_file.csv --streaming
 
@@ -107,6 +113,79 @@ dataprof data.csv --quality --html report.html
 ```
 
 ## Advanced Features
+
+### 🔧 Smart Auto-Recovery System (NEW in v0.4.61)
+
+#### Automatic Delimiter Detection
+DataProfiler now automatically detects CSV delimiters with enhanced intelligence:
+
+```bash
+# Automatic delimiter detection for any CSV format
+dataprof data_semicolon.csv     # Detects ';' delimiter
+dataprof data_pipe.csv          # Detects '|' delimiter
+dataprof data_tab.csv           # Detects tab delimiter
+dataprof data_comma.csv         # Detects ',' delimiter (default)
+```
+
+**Supported Delimiters:**
+- `,` Comma (default)
+- `;` Semicolon
+- `|` Pipe
+- `\t` Tab
+
+**How it works:**
+- Analyzes first 5 lines of your file
+- Compares field count consistency across delimiters
+- Chooses delimiter that produces the most fields consistently
+- Falls back gracefully if detection fails
+
+#### Enhanced Error Recovery
+```bash
+# Robust parsing handles malformed CSV files automatically
+dataprof problematic.csv        # Auto-recovers from inconsistent field counts
+dataprof mixed_formats.csv      # Handles variable column counts gracefully
+```
+
+### 🚀 Performance Intelligence & Benchmarking
+
+#### Engine Benchmarking (NEW)
+```bash
+# Run comprehensive performance benchmarks
+dataprof data.csv --benchmark
+
+# Output example:
+# 🏁 DataProfiler Engine Benchmark
+# ✅ Streaming: 1.7s, 5912 rows/sec, 0.0MB memory
+# 🎯 Best: Use Streaming for optimal performance
+```
+
+#### Memory-Aware Processing
+```bash
+# Enable enhanced progress with memory tracking
+dataprof large_file.csv --streaming --progress
+
+# Output shows real-time metrics:
+# 🔄 Processing: 45.2% (4,520 rows, 1,250 rows/sec)
+```
+
+### 🖥️ Intelligent Terminal Detection (NEW)
+
+#### Adaptive Output Formatting
+DataProfiler automatically adapts output based on context:
+
+```bash
+# Interactive terminal: Rich output with colors and emojis
+dataprof data.csv
+
+# Piped output: Clean, machine-readable format
+dataprof data.csv | head -20
+
+# Redirected: Optimized for file output
+dataprof data.csv > analysis.txt
+
+# Force plain text in any context
+dataprof data.csv --no-color
+```
 
 ### Sampling for Large Files
 ```bash
@@ -384,7 +463,82 @@ dataprof data.csv --benchmark --verbosity 2
 
 ## Examples
 
-### 1. Quick Data Assessment
+### 1. NEW: Multi-Delimiter CSV Processing
+
+#### Working with Different CSV Formats
+```bash
+# European CSV (semicolon-separated)
+dataprof european_data.csv
+# 📁 european_data.csv | 4 columns
+# Column: name, age, salary, city
+
+# Unix/Database export (pipe-separated)
+dataprof database_export.csv
+# 📁 database_export.csv | 4 columns
+# Column: id, product, price, category
+
+# Tab-separated values
+dataprof spreadsheet_export.tsv
+# 📁 spreadsheet_export.tsv | 4 columns
+# Column: date, value, source, notes
+```
+
+#### Real-world Example: Mixed Data Sources
+```bash
+# Analyze multiple files with different formats automatically
+dataprof sales_europe.csv      # Semicolon-separated
+dataprof sales_usa.csv         # Comma-separated
+dataprof sales_asia.csv        # Pipe-separated
+
+# All detected automatically without manual configuration!
+```
+
+### 2. Performance Optimization Workflow
+
+#### Step 1: Benchmark Your Data
+```bash
+# First, understand your data's performance characteristics
+dataprof large_dataset.csv --benchmark
+
+# Example output:
+# 🏁 DataProfiler Engine Benchmark
+# File: large_dataset.csv
+# ✅ Streaming: 2.1s, 4,762 rows/sec, 0.0MB memory
+# 🎯 Best: Recommendation: Use Streaming for optimal performance
+```
+
+#### Step 2: Apply Recommendations
+```bash
+# Use the recommended engine for production
+dataprof large_dataset.csv --engine streaming --progress
+
+# Monitor real-time performance:
+# 🔄 Processing: 67.3% (67,300 rows, 4,850 rows/sec)
+```
+
+#### Step 3: Quality Analysis with Performance Tracking
+```bash
+# Full analysis with memory intelligence
+dataprof large_dataset.csv --quality --streaming --progress --html report.html
+
+# Generates comprehensive report with performance metrics
+```
+
+### 3. Enhanced Error Handling Examples
+
+#### Problematic Files (Auto-Recovery)
+```bash
+# File with inconsistent field counts
+dataprof messy_data.csv
+# ⚠️ Strict CSV parsing failed: found record with 4 fields, previous has 3 fields. Trying flexible parsing...
+# 📁 messy_data.csv | 3 columns (recovered)
+
+# Mixed line endings or encoding issues
+dataprof international_data.csv
+# Automatically handles UTF-8, Latin-1, CP1252 encoding detection
+```
+
+### 4. Quick Data Assessment
 ```bash
 # Basic file overview
 dataprof sales_data.csv
@@ -420,9 +574,43 @@ dataprof huge_dataset.csv --streaming --progress --sample 100000
 # 🔄 Processing: 45.2% (45,200 rows, 2,341 rows/sec)
 ```
 
-### 4. ML Pipeline Integration
+### 4. ML Pipeline Integration & Code Generation (NEW in v0.4.61)
+
+#### ML Readiness Assessment
 ```bash
-# ML readiness assessment for feature engineering
+# Basic ML readiness scoring
+dataprof features.csv --quality --ml-score
+
+# ML score with actionable code snippets
+dataprof features.csv --quality --ml-score --ml-code
+
+# Generate complete preprocessing script
+dataprof features.csv --quality --ml-score --output-script preprocess.py
+```
+
+#### Code Generation Features
+```bash
+# Interactive ML recommendations with Python code
+dataprof data.csv --ml-score --ml-code
+
+# Example output with code snippets:
+# 🐍 Code Snippets (3 recommendations):
+# 1. MISSING_VALUES [high] - Handle missing values in salary column
+#    📦 Framework: pandas
+#    📥 Imports: pandas, sklearn.impute
+#    💻 Code:
+#    # Fill missing values with median
+#    df['salary'] = df['salary'].fillna(df['salary'].median())
+
+# Complete pipeline generation
+dataprof large_dataset.csv --ml-score --ml-code --output-script pipeline.py
+# 🐍 Preprocessing script saved to: pipeline.py
+#    Ready to use with: python pipeline.py
+```
+
+#### JSON Output for Integration
+```bash
+# Machine-readable ML assessment
 dataprof features.csv --quality --ml-score --format json
 
 # Example output structure:
@@ -491,11 +679,18 @@ dataprof data.csv --config production.toml
 
 ## Version Information
 
-This guide covers DataProfiler CLI v0.4.1+ with comprehensive testing and validation features.
+This guide covers DataProfiler CLI v0.4.61+ with the complete Enhancement #79 feature set.
 
 For the latest updates and documentation, visit: https://github.com/AndreaBozzo/dataprof
 
 ### Key Features by Version
+- **v0.4.61**: 🎯 **Enhancement #79** - Complete UX & Intelligence Overhaul
+  - Intelligent Terminal Detection & Adaptive Output Formatting
+  - Smart Auto-Recovery System with Enhanced Delimiter Detection
+  - Real-time Performance Intelligence & Memory-Aware Processing
+  - Enhanced Progress Indicators with Memory Tracking
+  - Comprehensive Engine Benchmarking System
+  - API Improvements & Backward Compatibility
 - **v0.4.1**: Enhanced CLI, progress indicators, comprehensive testing
 - **v0.4.0**: Intelligent engine selection, performance benchmarking
 - **v0.3.6**: Apache Arrow integration, columnar processing

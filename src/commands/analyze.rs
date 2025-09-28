@@ -155,15 +155,15 @@ fn run_quality_analysis(
         if is_json_file(&cli.file) {
             analyze_json_with_quality(&cli.file)?
         } else {
-            // Try sampling first, fallback to robust parsing
-            match analyze_csv_with_sampling(&cli.file) {
+            // Use robust parsing with delimiter detection first, fallback to sampling for large files
+            match analyze_csv_robust(&cli.file) {
                 Ok(report) => report,
                 Err(e) => {
                     eprintln!(
-                        "⚠️ Standard analysis failed: {}. Using robust parsing...",
+                        "⚠️ Robust analysis failed: {}. Trying sampling approach...",
                         e
                     );
-                    analyze_csv_robust(&cli.file)?
+                    analyze_csv_with_sampling(&cli.file)?
                 }
             }
         }
@@ -430,12 +430,13 @@ fn run_simple_analysis(cli: &Cli, _config: &DataprofConfig) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Simple analysis without quality checking
+    // Simple analysis without quality checking - use robust parsing with delimiter detection
     let profiles = if is_json_file(&cli.file) {
         dataprof::analyze_json(&cli.file)?
     } else {
-        // Fast analysis for CSV
-        dataprof::analyze_csv_fast(&cli.file)?
+        // Use robust analysis with delimiter detection for CSV
+        let quality_report = dataprof::analyze_csv_robust(&cli.file)?;
+        quality_report.column_profiles
     };
 
     // Handle output formatting
