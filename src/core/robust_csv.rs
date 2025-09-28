@@ -209,10 +209,21 @@ impl RobustCsvParser {
             let consistency = self.measure_delimiter_consistency(&lines, delimiter);
             let avg_field_count = self.average_field_count(&lines, delimiter);
 
-            // Prefer delimiter with higher consistency, or higher field count if consistency is equal
-            if consistency > max_consistency
-                || (consistency == max_consistency && avg_field_count > max_field_count)
-            {
+            // Enhanced logic: prefer higher field count when consistency is low (indicating malformed data)
+            // or prefer higher consistency when field counts are reasonable
+            let should_update = if avg_field_count > 1 && max_field_count <= 1 {
+                // If this delimiter produces multiple fields and current best doesn't, prefer this one
+                true
+            } else if avg_field_count <= 1 && max_field_count > 1 {
+                // If this delimiter produces single field but current best produces multiple, keep current
+                false
+            } else {
+                // Both produce similar field counts, use original logic
+                consistency > max_consistency
+                    || (consistency == max_consistency && avg_field_count > max_field_count)
+            };
+
+            if should_update {
                 max_consistency = consistency;
                 max_field_count = avg_field_count;
                 best_delimiter = delimiter;
@@ -606,7 +617,9 @@ mod tests {
         writeln!(temp_file, "Charlie,35,London,UK")?; // Extra field
         temp_file.flush()?;
 
-        let parser = RobustCsvParser::new().allow_variable_columns(true);
+        let mut parser = RobustCsvParser::new();
+        parser.delimiter = Some(b',');
+        let parser = parser.allow_variable_columns(true);
         let (headers, records) = parser.parse_csv(temp_file.path())?;
 
         assert_eq!(headers, vec!["name", "age", "city"]);

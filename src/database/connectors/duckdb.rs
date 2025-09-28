@@ -1,8 +1,7 @@
 //! DuckDB analytical database connector
 
 use crate::database::connection::ConnectionInfo;
-// Security validation will be implemented when needed
-// use crate::database::security::validate_sql_identifier;
+use crate::database::security::{validate_base_query, validate_sql_identifier};
 #[cfg(feature = "duckdb")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
 use crate::database::{DatabaseConfig, DatabaseConnector};

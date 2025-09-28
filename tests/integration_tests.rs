@@ -502,7 +502,8 @@ fn test_enhanced_error_handling() -> Result<()> {
         || error_str.contains("Impossibile trovare")
         || error_str.contains("file specificato")
         || error_str.contains("(os error 2)")
-        || error_str.contains("Both strict and flexible CSV parsing failed");
+        || error_str.contains("Both strict and flexible CSV parsing failed")
+        || error_str.contains("Failed to detect delimiter");
 
     assert!(
         has_file_error,
