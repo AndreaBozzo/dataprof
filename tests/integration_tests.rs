@@ -358,7 +358,7 @@ fn test_v030_streaming_profiler_basic() -> Result<()> {
     writeln!(temp_file, "2,test2,200")?;
     writeln!(temp_file, "3,test3,300")?;
 
-    let profiler = DataProfiler::streaming();
+    let mut profiler = DataProfiler::streaming();
     let report = profiler.analyze_file(temp_file.path())?;
 
     assert_eq!(report.column_profiles.len(), 3);
@@ -573,7 +573,7 @@ fn test_streaming_mode_vs_standard_mode() -> Result<()> {
     let standard_report = analyze_csv_with_sampling(temp_file.path())?;
 
     // Test streaming mode
-    let streaming_profiler = DataProfiler::streaming();
+    let mut streaming_profiler = DataProfiler::streaming();
     let streaming_report = streaming_profiler.analyze_file(temp_file.path())?;
 
     // Both should detect same number of columns
