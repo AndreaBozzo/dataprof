@@ -103,18 +103,18 @@ fn bench_micro_performance(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let _row_count = if !sample_result.is_empty() {
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
-        let _row_count = if !sample_result.is_empty() {
+        let col_count = sample_result.len() as u32;
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
+        let col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new("micro_analysis", name),
@@ -153,18 +153,18 @@ fn bench_small_performance(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let _row_count = if !sample_result.is_empty() {
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
-        let _row_count = if !sample_result.is_empty() {
+        let col_count = sample_result.len() as u32;
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
+        let col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new("small_analysis", name),
@@ -200,12 +200,12 @@ fn bench_memory_patterns(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let _row_count = if !sample_result.is_empty() {
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
+        let col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new("memory_analysis", description),
@@ -284,12 +284,12 @@ fn bench_large_scale_performance(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let _row_count = if !sample_result.is_empty() {
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
+        let col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new(
@@ -331,12 +331,12 @@ fn bench_simd_performance(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let _row_count = if !sample_result.is_empty() {
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
+        let col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new(
@@ -369,12 +369,12 @@ fn bench_memory_efficiency(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let _row_count = if !sample_result.is_empty() {
+        let row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let _col_count = sample_result.len() as u32;
+        let col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new("streaming_mode", format!("{:?}", size)),
@@ -578,11 +578,13 @@ fn get_memory_usage() -> usize {
     #[cfg(target_os = "windows")]
     {
         // Windows memory detection simplified for benchmarking
-        return 0;
+        0
     }
-
-    // Fallback for other platforms
-    0
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        // Fallback for other platforms
+        0
+    }
 }
 
 // Organize benchmarks into logical groups
