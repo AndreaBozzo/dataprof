@@ -243,14 +243,30 @@ impl MlReadinessEngine {
             return 1.0;
         }
 
-        let total_cells: usize = profiles.iter().map(|p| p.total_count).sum();
-        let missing_cells: usize = profiles.iter().map(|p| p.null_count).sum();
+        // Calculate per-column completeness and apply severe penalties for high missing rates
+        let mut total_score = 0.0;
 
-        if total_cells == 0 {
-            1.0
-        } else {
-            1.0 - (missing_cells as f64 / total_cells as f64)
+        for profile in profiles {
+            let missing_rate = if profile.total_count == 0 {
+                0.0
+            } else {
+                profile.null_count as f64 / profile.total_count as f64
+            };
+
+            // Apply severe penalties for high missing rates - critical for ML
+            let column_score = match missing_rate {
+                r if r >= 0.5 => 0.1,   // ≥50% missing = very poor (0.1)
+                r if r >= 0.3 => 0.3,   // ≥30% missing = poor (0.3)
+                r if r >= 0.2 => 0.5,   // ≥20% missing = fair (0.5)
+                r if r >= 0.1 => 0.7,   // ≥10% missing = good (0.7)
+                r if r >= 0.05 => 0.85, // ≥5% missing = very good (0.85)
+                _ => 1.0,               // <5% missing = excellent (1.0)
+            };
+
+            total_score += column_score;
         }
+
+        total_score / profiles.len() as f64
     }
 
     fn calculate_consistency_score(&self, issues: &[QualityIssue]) -> f64 {

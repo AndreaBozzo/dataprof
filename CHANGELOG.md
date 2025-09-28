@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced progress reporting with per-file and batch-level metrics
   - Smart resource management for concurrent ML scoring operations
 
+- **IMPROVED:** **🎯 More Realistic ML Readiness Scoring Algorithm**
+  - **CRITICAL FIX**: Completeness scoring now properly penalizes high per-column missing rates
+  - Enhanced penalties for datasets with ≥50% missing values (0.1 score vs previous lenient calculation)
+  - Progressive penalty system: ≥30% (0.3), ≥20% (0.5), ≥10% (0.7), ≥5% (0.85), <5% (1.0)
+  - More accurate ML readiness classifications (problematic datasets now correctly rated as "Good" vs "Ready")
+  - Improved credibility of ML scoring system for production use cases
+
 ### 🔧 **CRITICAL FIX: Smart Auto-Recovery System - Delimiter Detection**
 
 - **FIXED:** **🛠️ Automatic Delimiter Detection Now Fully Functional**
