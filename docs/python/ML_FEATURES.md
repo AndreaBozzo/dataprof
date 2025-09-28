@@ -140,6 +140,78 @@ for rec in ml_score.recommendations:
         print(rec.code_snippet.replace('\\n', '\n'))
 ```
 
+## 🔄 Batch ML Processing (v0.4.61+)
+
+DataProf now supports comprehensive batch processing for ML analysis across multiple files with enhanced dashboard and script generation capabilities.
+
+### Batch ML Analysis
+
+```bash
+# Batch ML analysis across multiple files
+dataprof /data/folder --ml-score --recursive
+
+# Generate interactive HTML dashboard
+dataprof /data/folder --quality --ml-score --html batch_dashboard.html --recursive
+
+# Complete batch pipeline with script generation
+dataprof /data/folder --quality --ml-score --ml-code --output-script batch_pipeline.py --recursive
+```
+
+### Key Batch Features
+
+- **Multi-file ML Analysis**: Unified ML readiness assessment across file collections
+- **Aggregated Recommendations**: Smart consolidation of common ML patterns and suggestions
+- **Interactive HTML Dashboard**: Comprehensive batch analysis with per-file drill-down
+- **Automated Script Generation**: Production-ready Python preprocessing scripts
+- **Parallel Processing**: Configurable concurrency for improved performance
+
+### Batch HTML Dashboard
+
+The enhanced HTML dashboard provides:
+
+- **Batch Summary**: Overall statistics, success rates, and processing performance
+- **ML Readiness Overview**: Aggregated ML scores with distribution analysis
+- **File Details Table**: Per-file quality and ML scores with interactive expansion
+- **Aggregated Issues**: Common quality issues across all files
+- **Performance Metrics**: Processing speed and resource utilization
+
+### Batch Script Generation
+
+Generated Python scripts include:
+
+- **Aggregated Recommendations**: Consolidated preprocessing steps from all files
+- **Parallel Processing Template**: ThreadPoolExecutor-based batch processing
+- **Error Handling**: Robust error recovery and logging
+- **Configuration Management**: Flexible batch processing parameters
+
+```python
+# Example of generated batch script structure
+def process_file_batch(file_paths: List[str], output_dir: str):
+    """
+    Process multiple files with aggregated ML recommendations
+    """
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = []
+        for file_path in file_paths:
+            future = executor.submit(preprocess_single_file, file_path, output_dir)
+            futures.append(future)
+
+        # Collect results with error handling
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+                logger.info(f"Processed: {result}")
+            except Exception as e:
+                logger.error(f"Processing failed: {e}")
+```
+
+### Performance Considerations
+
+- **Parallel Execution**: Use `--parallel` flag for multi-core processing
+- **Memory Management**: Automatic resource optimization for large batch operations
+- **Progress Tracking**: Real-time progress with `--progress` flag
+- **Configurable Concurrency**: Tune performance with `--max-concurrent N`
+
 ## 📊 ML Functions
 
 ### `ml_readiness_score(file_path: str) -> PyMlReadinessScore`

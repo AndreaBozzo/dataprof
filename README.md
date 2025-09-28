@@ -100,6 +100,12 @@ dataprof data.csv --quality --ml-score --ml-code
 # Generate complete Python preprocessing script
 dataprof data.csv --quality --ml-score --output-script preprocess.py
 
+# Batch processing with ML analysis and HTML dashboard
+dataprof /data/folder --quality --ml-score --html batch_report.html --recursive
+
+# Complete batch pipeline with parallel processing
+dataprof /data/folder --quality --ml-score --ml-code --html dashboard.html --output-script pipeline.py --parallel --recursive
+
 # Quick analysis with streaming for large files
 dataprof large_dataset.csv --streaming --sample 10000
 ```
