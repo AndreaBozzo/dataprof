@@ -20,6 +20,10 @@ pub fn batch_analyze_glob(
         recursive: false, // Not applicable for glob patterns
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+        ml_score: false,
+        ml_code: false,
+        html_output: None,
+        output_script: None,
     };
 
     let processor = BatchProcessor::with_config(config);
@@ -45,6 +49,10 @@ pub fn batch_analyze_directory(
         recursive: recursive.unwrap_or(false),
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+        ml_score: false,
+        ml_code: false,
+        html_output: None,
+        output_script: None,
     };
 
     let processor = BatchProcessor::with_config(config);
