@@ -3,8 +3,9 @@
 use pyo3::prelude::*;
 
 use crate::analysis::ml_readiness::{
-    FeatureImportancePotential, ImplementationEffort, MlBlockingIssue, MlFeatureType,
-    MlReadinessLevel, MlRecommendation, RecommendationPriority,
+    FeatureImportancePotential, FeatureInteractionWarning, ImplementationEffort,
+    InteractionWarningType, MlBlockingIssue, MlFeatureType, MlReadinessLevel, MlRecommendation,
+    RecommendationPriority,
 };
 use crate::analysis::{FeatureAnalysis, MlReadinessScore, PreprocessingSuggestion};
 use crate::core::batch::BatchResult;
@@ -601,6 +602,10 @@ pub struct PyMlReadinessScore {
     pub feature_analysis: Vec<PyFeatureAnalysis>,
     #[pyo3(get)]
     pub preprocessing_suggestions: Vec<PyPreprocessingSuggestion>,
+    #[pyo3(get)]
+    pub feature_warnings: Vec<PyFeatureInteractionWarning>,
+    #[pyo3(get)]
+    pub quality_integration_score: Option<f64>,
 }
 
 impl From<&MlReadinessScore> for PyMlReadinessScore {
@@ -637,6 +642,12 @@ impl From<&MlReadinessScore> for PyMlReadinessScore {
                 .iter()
                 .map(PyPreprocessingSuggestion::from)
                 .collect(),
+            feature_warnings: score
+                .feature_warnings
+                .iter()
+                .map(PyFeatureInteractionWarning::from)
+                .collect(),
+            quality_integration_score: score.quality_integration_score,
         }
     }
 }
@@ -999,6 +1010,48 @@ impl From<&PreprocessingSuggestion> for PyPreprocessingSuggestion {
                 RecommendationPriority::Low => "low".to_string(),
             },
             tools_frameworks: suggestion.tools_frameworks.clone(),
+        }
+    }
+}
+
+/// Python wrapper for FeatureInteractionWarning
+#[pyclass]
+#[derive(Clone)]
+pub struct PyFeatureInteractionWarning {
+    #[pyo3(get)]
+    pub warning_type: String,
+    #[pyo3(get)]
+    pub features: Vec<String>,
+    #[pyo3(get)]
+    pub description: String,
+    #[pyo3(get)]
+    pub severity: String,
+    #[pyo3(get)]
+    pub recommendation: String,
+}
+
+impl From<&FeatureInteractionWarning> for PyFeatureInteractionWarning {
+    fn from(warning: &FeatureInteractionWarning) -> Self {
+        Self {
+            warning_type: match warning.warning_type {
+                InteractionWarningType::PossibleLeakage => "possible_leakage".to_string(),
+                InteractionWarningType::HighCardinality => "high_cardinality".to_string(),
+                InteractionWarningType::AllCategorical => "all_categorical".to_string(),
+                InteractionWarningType::AllNumeric => "all_numeric".to_string(),
+                InteractionWarningType::InsufficientFeatures => "insufficient_features".to_string(),
+                InteractionWarningType::CurseOfDimensionality => {
+                    "curse_of_dimensionality".to_string()
+                }
+            },
+            features: warning.features.clone(),
+            description: warning.description.clone(),
+            severity: match warning.severity {
+                RecommendationPriority::Critical => "critical".to_string(),
+                RecommendationPriority::High => "high".to_string(),
+                RecommendationPriority::Medium => "medium".to_string(),
+                RecommendationPriority::Low => "low".to_string(),
+            },
+            recommendation: warning.recommendation.clone(),
         }
     }
 }

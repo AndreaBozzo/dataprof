@@ -22,9 +22,9 @@ pub use logging::{
 pub use ml::{ml_readiness_score, PyMlAnalyzer};
 pub use processor::PyCsvProcessor;
 pub use types::{
-    PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyFeatureAnalysis, PyMlBlockingIssue,
-    PyMlReadinessScore, PyMlRecommendation, PyPreprocessingSuggestion, PyQualityIssue,
-    PyQualityReport,
+    PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyFeatureAnalysis,
+    PyFeatureInteractionWarning, PyMlBlockingIssue, PyMlReadinessScore, PyMlRecommendation,
+    PyPreprocessingSuggestion, PyQualityIssue, PyQualityReport,
 };
 
 use pyo3::prelude::*;
@@ -50,6 +50,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMlBlockingIssue>()?;
     m.add_class::<PyFeatureAnalysis>()?;
     m.add_class::<PyPreprocessingSuggestion>()?;
+    m.add_class::<PyFeatureInteractionWarning>()?;
 
     // Context manager classes
     m.add_class::<PyBatchAnalyzer>()?;
