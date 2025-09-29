@@ -4,9 +4,10 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::analysis::MlReadinessScore;
 use crate::output::progress::ProgressManager;
 use crate::types::QualityReport;
-use crate::{analyze_csv_robust, analyze_json_with_quality};
+use crate::{analyze_csv_robust, analyze_json_with_quality, MlReadinessEngine};
 
 /// Configuration for batch processing operations
 #[derive(Debug, Clone)]
@@ -21,6 +22,14 @@ pub struct BatchConfig {
     pub extensions: Vec<String>,
     /// Files to exclude (supports glob patterns)
     pub exclude_patterns: Vec<String>,
+    /// Enable ML readiness scoring
+    pub ml_score: bool,
+    /// Generate ML code snippets
+    pub ml_code: bool,
+    /// HTML output file path for batch report
+    pub html_output: Option<std::path::PathBuf>,
+    /// Output script path for batch preprocessing script
+    pub output_script: Option<std::path::PathBuf>,
 }
 
 impl Default for BatchConfig {
@@ -31,6 +40,10 @@ impl Default for BatchConfig {
             recursive: false,
             extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
             exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+            ml_score: false,
+            ml_code: false,
+            html_output: None,
+            output_script: None,
         }
     }
 }
@@ -50,6 +63,12 @@ pub struct BatchResult {
     pub errors: HashMap<PathBuf, String>,
     /// Summary statistics
     pub summary: BatchSummary,
+    /// ML readiness scores per file (optional)
+    pub ml_scores: HashMap<PathBuf, MlReadinessScore>,
+    /// Generated HTML report path (optional)
+    pub html_report_path: Option<PathBuf>,
+    /// Generated preprocessing script path (optional)
+    pub script_path: Option<PathBuf>,
 }
 
 /// Summary statistics for batch processing
@@ -235,6 +254,9 @@ impl BatchProcessor {
                     average_quality_score: 0.0,
                     processing_time_seconds: 0.0,
                 },
+                ml_scores: HashMap::new(),
+                html_report_path: None,
+                script_path: None,
             });
         }
 
@@ -254,7 +276,12 @@ impl BatchProcessor {
         }
 
         // Process files
-        let results: Vec<(PathBuf, Result<QualityReport, String>)> = if self.config.parallel {
+        // Type alias to simplify complex type
+        type ProcessResult = (
+            PathBuf,
+            Result<(QualityReport, Option<MlReadinessScore>), String>,
+        );
+        let results: Vec<ProcessResult> = if self.config.parallel {
             // For parallel processing, we use a mutex to synchronize progress updates
             let progress_mutex = std::sync::Mutex::new(&progress_bar);
 
@@ -302,13 +329,14 @@ impl BatchProcessor {
         // Collect results
         let mut reports = HashMap::new();
         let mut errors = HashMap::new();
+        let mut ml_scores = HashMap::new();
         let mut total_records = 0;
         let mut total_issues = 0;
         let mut quality_scores = Vec::new();
 
         for (path, result) in results {
             match result {
-                Ok(report) => {
+                Ok((report, ml_score_opt)) => {
                     total_records += report
                         .column_profiles
                         .iter()
@@ -319,6 +347,11 @@ impl BatchProcessor {
 
                     if let Ok(score) = report.quality_score() {
                         quality_scores.push(score);
+                    }
+
+                    // Store ML score if available
+                    if let Some(ml_score) = ml_score_opt {
+                        ml_scores.insert(path.clone(), ml_score);
                     }
 
                     reports.insert(path, report);
@@ -361,24 +394,56 @@ impl BatchProcessor {
             reports,
             errors,
             summary,
+            ml_scores,
+            html_report_path: self.config.html_output.clone(),
+            script_path: self.config.output_script.clone(),
         })
     }
 
-    /// Process a single file
-    fn process_single_file(&self, path: &Path) -> Result<QualityReport, String> {
-        // Determine file type and process
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    /// Process a single file with optional ML scoring
+    fn process_single_file(
+        &self,
+        path: &Path,
+    ) -> Result<(QualityReport, Option<MlReadinessScore>), String> {
+        // First get the quality report
+        let report = if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
                 "csv" => {
-                    analyze_csv_robust(path).map_err(|e| format!("CSV processing failed: {}", e))
+                    analyze_csv_robust(path).map_err(|e| format!("CSV processing failed: {}", e))?
                 }
                 "json" | "jsonl" => analyze_json_with_quality(path)
-                    .map_err(|e| format!("JSON processing failed: {}", e)),
-                _ => Err(format!("Unsupported file type: {}", ext)),
+                    .map_err(|e| format!("JSON processing failed: {}", e))?,
+                _ => return Err(format!("Unsupported file type: {}", ext)),
             }
         } else {
-            Err("File has no extension".to_string())
-        }
+            return Err("File has no extension".to_string());
+        };
+
+        // Calculate ML score if enabled
+        let ml_score = if self.config.ml_score {
+            match self.calculate_ml_score_for_file(&report) {
+                Ok(score) => Some(score),
+                Err(e) => {
+                    eprintln!("⚠️ ML scoring failed for {}: {}", path.display(), e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        Ok((report, ml_score))
+    }
+
+    /// Calculate ML readiness score for a single file's quality report
+    fn calculate_ml_score_for_file(
+        &self,
+        report: &QualityReport,
+    ) -> Result<MlReadinessScore, String> {
+        let ml_engine = MlReadinessEngine::new();
+        ml_engine
+            .calculate_ml_score(report)
+            .map_err(|e| format!("ML scoring failed: {}", e))
     }
 
     /// Print processing summary
@@ -464,6 +529,10 @@ mod tests {
             recursive: false,
             extensions: vec!["csv".to_string()],
             exclude_patterns: vec![], // No exclusions for test
+            ml_score: false,
+            ml_code: false,
+            html_output: None,
+            output_script: None,
         };
         let processor = BatchProcessor::with_config(config);
         let files = vec![test_file1, test_file2];

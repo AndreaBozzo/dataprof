@@ -341,6 +341,24 @@ dataprof /data --recursive --parallel --max-concurrent 4
 dataprof /data --recursive --progress --quality
 ```
 
+### Batch ML Processing
+```bash
+# Batch ML readiness analysis
+dataprof /data/folder --ml-score --recursive
+
+# Generate batch HTML dashboard with ML insights
+dataprof /data/folder --quality --ml-score --html batch_report.html --recursive
+
+# Complete batch ML pipeline with script generation
+dataprof /data/folder --quality --ml-score --ml-code --output-script batch_pipeline.py --recursive
+
+# Parallel batch processing with all ML features
+dataprof /data/folder --quality --ml-score --ml-code --html dashboard.html --output-script pipeline.py --parallel --recursive
+
+# Glob pattern with ML analysis
+dataprof --glob "data/**/*.csv" --ml-score --html ml_report.html
+```
+
 ## Configuration
 
 ### Configuration Files

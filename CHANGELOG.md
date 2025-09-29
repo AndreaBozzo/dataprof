@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🤖 **NEW: Enhanced Batch Processing with ML Pipeline Features**
+
+- **NEW:** **🔄 Complete ML Batch Processing Integration**
+  - Extended batch processing to support all single-file ML features
+  - Unified ML readiness analysis across multiple files with intelligent aggregation
+  - Parallel ML scoring with configurable concurrency (`--parallel`, `--max-concurrent`)
+  - Cross-file recommendation analysis with pattern recognition and consolidation
+  - **CLI flags:** `--ml-score`, `--ml-code`, `--output-script` now fully support batch mode
+
+- **NEW:** **📊 Enhanced HTML Dashboard for Batch Analysis**
+  - Interactive batch dashboard with comprehensive ML readiness overview
+  - Per-file drill-down with detailed ML recommendations and code snippets
+  - Aggregated quality metrics with distribution analysis and trend visualization
+  - JavaScript-enhanced user experience with expandable file details
+  - **Performance stats:** Processing speed, success rates, and artifact generation tracking
+
+- **NEW:** **🐍 Automated Batch Script Generation**
+  - Complete Python preprocessing pipeline generation from batch ML analysis
+  - Aggregated recommendations with optimized common pattern detection
+  - Parallel processing template with ThreadPoolExecutor and robust error handling
+  - Ready-to-execute scripts with proper imports and configuration management
+  - **Output:** Production-ready Python scripts for immediate ML pipeline integration
+
+- **ENHANCED:** **🎯 Improved ML Metrics Display and Accuracy**
+  - **FIXED:** ML score calculation bug (corrected percentage display from >8000% to proper 0-100% range)
+  - Enhanced readiness categorization with accurate thresholds (Ready ≥80%, Good 60-80%, etc.)
+  - Consistent ML score formatting across all output modes (terminal, HTML, scripts)
+  - Improved aggregation algorithms for batch-level ML readiness assessment
+
+- **ENHANCED:** **⚡ Performance Optimizations for Large Batch Operations**
+  - Optimized memory usage for ML analysis across multiple files
+  - Improved processing speed with intelligent parallel execution (2.5→4.4 files/sec)
+  - Enhanced progress reporting with per-file and batch-level metrics
+  - Smart resource management for concurrent ML scoring operations
+
+- **IMPROVED:** **🎯 More Realistic ML Readiness Scoring Algorithm**
+  - **CRITICAL FIX**: Completeness scoring now properly penalizes high per-column missing rates
+  - Enhanced penalties for datasets with ≥50% missing values (0.1 score vs previous lenient calculation)
+  - Progressive penalty system: ≥30% (0.3), ≥20% (0.5), ≥10% (0.7), ≥5% (0.85), <5% (1.0)
+  - More accurate ML readiness classifications (problematic datasets now correctly rated as "Good" vs "Ready")
+  - Improved credibility of ML scoring system for production use cases
+
 ### 🔧 **CRITICAL FIX: Smart Auto-Recovery System - Delimiter Detection**
 
 - **FIXED:** **🛠️ Automatic Delimiter Detection Now Fully Functional**

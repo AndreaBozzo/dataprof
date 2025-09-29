@@ -8,11 +8,16 @@ use super::types::PyBatchResult;
 
 /// Batch process multiple files using glob pattern
 #[pyfunction]
-#[pyo3(signature = (pattern, parallel=None, max_concurrent=None))]
+#[pyo3(signature = (pattern, parallel=None, max_concurrent=None, ml_score=None, ml_code=None, html_output=None, output_script=None))]
+#[allow(clippy::too_many_arguments)]
 pub fn batch_analyze_glob(
     pattern: &str,
     parallel: Option<bool>,
     max_concurrent: Option<usize>,
+    ml_score: Option<bool>,
+    ml_code: Option<bool>,
+    html_output: Option<String>,
+    output_script: Option<String>,
 ) -> PyResult<PyBatchResult> {
     let config = BatchConfig {
         parallel: parallel.unwrap_or(true),
@@ -20,6 +25,10 @@ pub fn batch_analyze_glob(
         recursive: false, // Not applicable for glob patterns
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+        ml_score: ml_score.unwrap_or(false),
+        ml_code: ml_code.unwrap_or(false),
+        html_output: html_output.map(std::path::PathBuf::from),
+        output_script: output_script.map(std::path::PathBuf::from),
     };
 
     let processor = BatchProcessor::with_config(config);
@@ -32,12 +41,17 @@ pub fn batch_analyze_glob(
 
 /// Batch process all files in a directory
 #[pyfunction]
-#[pyo3(signature = (directory, recursive=None, parallel=None, max_concurrent=None))]
+#[pyo3(signature = (directory, recursive=None, parallel=None, max_concurrent=None, ml_score=None, ml_code=None, html_output=None, output_script=None))]
+#[allow(clippy::too_many_arguments)]
 pub fn batch_analyze_directory(
     directory: &str,
     recursive: Option<bool>,
     parallel: Option<bool>,
     max_concurrent: Option<usize>,
+    ml_score: Option<bool>,
+    ml_code: Option<bool>,
+    html_output: Option<String>,
+    output_script: Option<String>,
 ) -> PyResult<PyBatchResult> {
     let config = BatchConfig {
         parallel: parallel.unwrap_or(true),
@@ -45,6 +59,10 @@ pub fn batch_analyze_directory(
         recursive: recursive.unwrap_or(false),
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+        ml_score: ml_score.unwrap_or(false),
+        ml_code: ml_code.unwrap_or(false),
+        html_output: html_output.map(std::path::PathBuf::from),
+        output_script: output_script.map(std::path::PathBuf::from),
     };
 
     let processor = BatchProcessor::with_config(config);
