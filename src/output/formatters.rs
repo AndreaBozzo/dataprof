@@ -603,6 +603,47 @@ impl OutputFormatter for PlainFormatter {
             output.push('\n');
         }
 
+        // Data Quality Metrics
+        if let Some(ref metrics) = report.data_quality_metrics {
+            output.push_str("Data Quality Metrics\n");
+            output.push_str(&format!(
+                "  Completeness: {:.1}% missing, {:.1}% complete\n",
+                metrics.missing_values_ratio, metrics.complete_records_ratio
+            ));
+            output.push_str(&format!(
+                "  Consistency: {:.1}% type consistency\n",
+                metrics.data_type_consistency
+            ));
+            output.push_str(&format!(
+                "  Uniqueness: {:.1}% key uniqueness\n",
+                metrics.key_uniqueness
+            ));
+            output.push_str(&format!(
+                "  Accuracy: {:.1}% outlier ratio\n",
+                metrics.outlier_ratio
+            ));
+
+            if metrics.duplicate_rows > 0 {
+                output.push_str(&format!("  Duplicate Rows: {}\n", metrics.duplicate_rows));
+            }
+            if metrics.format_violations > 0 {
+                output.push_str(&format!(
+                    "  Format Violations: {}\n",
+                    metrics.format_violations
+                ));
+            }
+            if metrics.encoding_issues > 0 {
+                output.push_str(&format!("  Encoding Issues: {}\n", metrics.encoding_issues));
+            }
+            if !metrics.null_columns.is_empty() {
+                output.push_str(&format!(
+                    "  Null Columns: {}\n",
+                    metrics.null_columns.join(", ")
+                ));
+            }
+            output.push('\n');
+        }
+
         // Column profiles
         output.push_str("Column Profiles\n");
         for profile in &report.column_profiles {
