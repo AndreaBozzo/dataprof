@@ -38,7 +38,7 @@ indicatif = "0.17"
 # clap_complete = "4.4"  # Temporarily disabled for Windows compatibility
 
 # System info for adaptive chunking
-sysinfo = "0.30"
+sysinfo = "0.37"
 
 # Rayon for parallel processing
 rayon = "1.8"
