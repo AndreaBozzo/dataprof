@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::analysis::MlReadinessEngine;
 use crate::{analyze_csv, analyze_csv_robust, analyze_json};
 
-use super::types::{PyColumnProfile, PyMlReadinessScore, PyQualityReport};
+use super::types::{PyColumnProfile, PyDataQualityMetrics, PyMlReadinessScore, PyQualityReport};
 
 /// Analyze a single CSV file
 #[pyfunction]
@@ -54,4 +54,16 @@ pub fn analyze_csv_for_ml(path: &str) -> PyResult<(PyQualityReport, PyMlReadines
         PyQualityReport::from(&quality_report),
         PyMlReadinessScore::from(&ml_score),
     ))
+}
+
+/// Calculate data quality metrics for a CSV file
+#[pyfunction]
+pub fn calculate_data_quality_metrics(path: &str) -> PyResult<Option<PyDataQualityMetrics>> {
+    let quality_report = analyze_csv_robust(Path::new(path))
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
+
+    match quality_report.data_quality_metrics {
+        Some(metrics) => Ok(Some(PyDataQualityMetrics::from(&metrics))),
+        None => Ok(None),
+    }
 }

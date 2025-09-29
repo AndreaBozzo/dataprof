@@ -81,6 +81,8 @@ pub struct BatchSummary {
     pub total_issues: usize,
     pub average_quality_score: f64,
     pub processing_time_seconds: f64,
+    /// Aggregated data quality metrics across all processed files
+    pub aggregated_data_quality_metrics: Option<crate::types::DataQualityMetrics>,
 }
 
 impl BatchProcessor {
@@ -253,6 +255,7 @@ impl BatchProcessor {
                     total_issues: 0,
                     average_quality_score: 0.0,
                     processing_time_seconds: 0.0,
+                    aggregated_data_quality_metrics: None,
                 },
                 ml_scores: HashMap::new(),
                 html_report_path: None,
@@ -369,6 +372,9 @@ impl BatchProcessor {
             0.0
         };
 
+        // Calculate aggregated data quality metrics across all files
+        let aggregated_data_quality_metrics = Self::calculate_aggregated_metrics(&reports);
+
         let summary = BatchSummary {
             total_files: paths.len(),
             successful: reports.len(),
@@ -377,6 +383,7 @@ impl BatchProcessor {
             total_issues,
             average_quality_score,
             processing_time_seconds: processing_time,
+            aggregated_data_quality_metrics,
         };
 
         // Finish progress bar
@@ -469,6 +476,92 @@ impl BatchProcessor {
                 summary.failed
             );
         }
+    }
+
+    /// Calculate aggregated data quality metrics across all processed files
+    fn calculate_aggregated_metrics(
+        reports: &HashMap<PathBuf, QualityReport>,
+    ) -> Option<crate::types::DataQualityMetrics> {
+        if reports.is_empty() {
+            return None;
+        }
+
+        let mut all_metrics = Vec::new();
+        for report in reports.values() {
+            if let Some(metrics) = &report.data_quality_metrics {
+                all_metrics.push(metrics);
+            }
+        }
+
+        if all_metrics.is_empty() {
+            return None;
+        }
+
+        // Aggregate completeness metrics
+        let avg_missing_values_ratio: f64 = all_metrics
+            .iter()
+            .map(|m| m.missing_values_ratio)
+            .sum::<f64>()
+            / all_metrics.len() as f64;
+        let avg_complete_records_ratio: f64 = all_metrics
+            .iter()
+            .map(|m| m.complete_records_ratio)
+            .sum::<f64>()
+            / all_metrics.len() as f64;
+
+        let mut all_null_columns = std::collections::HashSet::new();
+        for metrics in &all_metrics {
+            for col in &metrics.null_columns {
+                all_null_columns.insert(col.clone());
+            }
+        }
+        let null_columns: Vec<String> = all_null_columns.into_iter().collect();
+
+        // Aggregate consistency metrics
+        let avg_data_type_consistency: f64 = all_metrics
+            .iter()
+            .map(|m| m.data_type_consistency)
+            .sum::<f64>()
+            / all_metrics.len() as f64;
+        let total_format_violations: usize = all_metrics.iter().map(|m| m.format_violations).sum();
+        let total_encoding_issues: usize = all_metrics.iter().map(|m| m.encoding_issues).sum();
+
+        // Aggregate uniqueness metrics
+        let total_duplicate_rows: usize = all_metrics.iter().map(|m| m.duplicate_rows).sum();
+        let avg_key_uniqueness: f64 =
+            all_metrics.iter().map(|m| m.key_uniqueness).sum::<f64>() / all_metrics.len() as f64;
+        let high_cardinality_warning: bool = all_metrics.iter().any(|m| m.high_cardinality_warning);
+
+        // Aggregate accuracy metrics
+        let avg_outlier_ratio: f64 =
+            all_metrics.iter().map(|m| m.outlier_ratio).sum::<f64>() / all_metrics.len() as f64;
+        let total_range_violations: usize = all_metrics.iter().map(|m| m.range_violations).sum();
+        let total_negative_values_in_positive: usize = all_metrics
+            .iter()
+            .map(|m| m.negative_values_in_positive)
+            .sum();
+
+        Some(crate::types::DataQualityMetrics {
+            // Completeness
+            missing_values_ratio: avg_missing_values_ratio,
+            complete_records_ratio: avg_complete_records_ratio,
+            null_columns,
+
+            // Consistency
+            data_type_consistency: avg_data_type_consistency,
+            format_violations: total_format_violations,
+            encoding_issues: total_encoding_issues,
+
+            // Uniqueness
+            duplicate_rows: total_duplicate_rows,
+            key_uniqueness: avg_key_uniqueness,
+            high_cardinality_warning,
+
+            // Accuracy
+            outlier_ratio: avg_outlier_ratio,
+            range_violations: total_range_violations,
+            negative_values_in_positive: total_negative_values_in_positive,
+        })
     }
 }
 

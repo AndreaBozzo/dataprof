@@ -11,6 +11,7 @@ pub mod types;
 // Re-export all public types and functions
 pub use analysis::{
     analyze_csv_file, analyze_csv_for_ml, analyze_csv_with_quality, analyze_json_file,
+    calculate_data_quality_metrics,
 };
 pub use batch::{batch_analyze_directory, batch_analyze_glob, PyBatchAnalyzer};
 pub use dataframe::{analyze_csv_dataframe, feature_analysis_dataframe};
@@ -21,8 +22,9 @@ pub use logging::{
 pub use ml::{ml_readiness_score, PyMlAnalyzer};
 pub use processor::PyCsvProcessor;
 pub use types::{
-    PyBatchResult, PyColumnProfile, PyFeatureAnalysis, PyMlBlockingIssue, PyMlReadinessScore,
-    PyMlRecommendation, PyPreprocessingSuggestion, PyQualityIssue, PyQualityReport,
+    PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyFeatureAnalysis, PyMlBlockingIssue,
+    PyMlReadinessScore, PyMlRecommendation, PyPreprocessingSuggestion, PyQualityIssue,
+    PyQualityReport,
 };
 
 use pyo3::prelude::*;
@@ -39,6 +41,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyColumnProfile>()?;
     m.add_class::<PyQualityReport>()?;
     m.add_class::<PyQualityIssue>()?;
+    m.add_class::<PyDataQualityMetrics>()?;
     m.add_class::<PyBatchResult>()?;
 
     // ML readiness classes
@@ -57,6 +60,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_csv_file, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_csv_with_quality, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_json_file, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_data_quality_metrics, m)?)?;
 
     // ML readiness analysis
     m.add_function(wrap_pyfunction!(ml_readiness_score, m)?)?;
