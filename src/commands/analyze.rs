@@ -6,8 +6,8 @@ use crate::cli::args::{Cli, CliOutputFormat};
 use dataprof::core::DataprofConfig;
 use dataprof::output::progress::{display_startup_banner, ProgressManager};
 use dataprof::output::{
-    display_ml_score, display_profile, display_quality_issues, output_with_adaptive_formatter,
-    output_with_formatter, supports_enhanced_output, OutputContext,
+    display_data_quality_metrics, display_ml_score, display_profile, display_quality_issues,
+    output_with_adaptive_formatter, output_with_formatter, supports_enhanced_output, OutputContext,
 };
 use dataprof::OutputFormat;
 use dataprof::{
@@ -326,6 +326,11 @@ fn display_analysis_results(
 
     // Show quality issues first
     display_quality_issues(&report.issues);
+
+    // Show comprehensive data quality metrics if available
+    if let Some(ref metrics) = report.data_quality_metrics {
+        display_data_quality_metrics(metrics);
+    }
 
     // Then show column profiles
     for profile in &report.column_profiles {

@@ -1,10 +1,43 @@
+use crate::analysis::MetricsCalculator;
 use crate::types::*;
+use anyhow::Result;
 use regex::Regex;
 use std::collections::HashMap;
 
 pub struct QualityChecker;
 
 impl QualityChecker {
+    /// Enhanced quality analysis that returns both traditional issues and comprehensive metrics
+    ///
+    /// This method provides a complete quality assessment combining the existing issue-based
+    /// approach with the new structured metrics following industry standards.
+    ///
+    /// # Arguments
+    /// * `column_profiles` - Vector of analyzed column profiles
+    /// * `data` - HashMap containing column names and their values
+    ///
+    /// # Returns
+    /// * `Result<(Vec<QualityIssue>, DataQualityMetrics)>` - Issues and comprehensive metrics
+    ///
+    /// # Errors
+    /// Returns error if metrics calculation fails
+    pub fn enhanced_quality_analysis(
+        column_profiles: &[ColumnProfile],
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<(Vec<QualityIssue>, DataQualityMetrics)> {
+        // Calculate traditional quality issues (existing functionality)
+        let issues = Self::check_columns(column_profiles, data);
+
+        // Calculate comprehensive metrics using the new system
+        let metrics = MetricsCalculator::calculate_comprehensive_metrics(data, column_profiles)?;
+
+        Ok((issues, metrics))
+    }
+
+    /// Traditional quality issue detection (backward compatibility)
+    ///
+    /// This method maintains the existing API for issue-based quality checking
+    /// while the enhanced_quality_analysis method provides comprehensive metrics.
     pub fn check_columns(
         column_profiles: &[ColumnProfile],
         data: &HashMap<String, Vec<String>>,

@@ -101,6 +101,7 @@ impl SimpleColumnarProfiler {
                 sampling_ratio: 1.0,
                 scan_time_ms,
             },
+            data_quality_metrics: None,
         })
     }
 

@@ -93,7 +93,10 @@ impl ArrowProfiler {
         // Create sample data for quality checking
         // Since we're using columnar processing, we'll create minimal samples
         let sample_columns = self.create_quality_check_samples(&column_profiles);
-        let issues = QualityChecker::check_columns(&column_profiles, &sample_columns);
+        let (issues, data_quality_metrics) =
+            QualityChecker::enhanced_quality_analysis(&column_profiles, &sample_columns).map_err(
+                |e| anyhow::anyhow!("Enhanced quality analysis failed for Arrow data: {}", e),
+            )?;
 
         let scan_time_ms = start.elapsed().as_millis();
 
@@ -111,6 +114,7 @@ impl ArrowProfiler {
                 sampling_ratio: 1.0, // Arrow processes all data efficiently
                 scan_time_ms,
             },
+            data_quality_metrics: Some(data_quality_metrics),
         })
     }
 

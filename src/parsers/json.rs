@@ -104,6 +104,7 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
                 sampling_ratio: 1.0,
                 scan_time_ms: start.elapsed().as_millis(),
             },
+            data_quality_metrics: None,
         });
     }
 
@@ -161,5 +162,6 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
             sampling_ratio: 1.0,
             scan_time_ms,
         },
+        data_quality_metrics: None,
     })
 }

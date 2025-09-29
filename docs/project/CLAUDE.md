@@ -8,6 +8,11 @@ Fast data profiling and quality checking library and CLI tool for large datasets
 
 Start simple, then iterate.
 Best practices, always.
+TDD, write tests before implementation
+Clean code, code must be readable and maintainable by humans
+SOLID principles, guarantee modular scalable architectures
+Proven solutions to recurring problems
+Security is non negotable, OWASP
 
 ## Essential Commands
 

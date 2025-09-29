@@ -47,8 +47,8 @@ pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 // Re-exports for backward compatibility
 pub use output::html::generate_html_report;
 pub use types::{
-    ColumnProfile, ColumnStats, DataType, FileInfo, OutputFormat, Pattern, QualityIssue,
-    QualityReport, ScanInfo, Severity,
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, OutputFormat, Pattern,
+    QualityIssue, QualityReport, ScanInfo, Severity,
 };
 pub use utils::quality::QualityChecker;
 pub use utils::sampler::{SampleInfo, Sampler};
@@ -60,7 +60,9 @@ pub use parsers::csv::{
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
 // Re-export moved analysis functions for API compatibility
-pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MlReadinessScore};
+pub use analysis::{
+    analyze_column_fast, detect_patterns, infer_type, MetricsCalculator, MlReadinessScore,
+};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (default: postgres, mysql, sqlite)

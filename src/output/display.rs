@@ -1,5 +1,7 @@
 use crate::analysis::{MlReadinessLevel, MlReadinessScore, RecommendationPriority};
-use crate::types::{ColumnProfile, ColumnStats, DataType, QualityIssue, Severity};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, QualityIssue, Severity,
+};
 use anyhow::Result;
 use colored::*;
 use serde::Serialize;
@@ -302,4 +304,164 @@ pub fn display_ml_score(score: &MlReadinessScore) {
         }
         println!();
     }
+}
+
+/// Display comprehensive data quality metrics in a user-friendly format
+pub fn display_data_quality_metrics(metrics: &DataQualityMetrics) {
+    println!(
+        "📊 {} Data Quality Metrics",
+        "COMPREHENSIVE".bright_blue().bold()
+    );
+    println!();
+
+    // Completeness Section
+    println!("🔍 {}", "Completeness".bright_green().bold());
+    println!(
+        "  Missing Values Ratio: {:.1}% {}",
+        metrics.missing_values_ratio,
+        if metrics.missing_values_ratio <= 5.0 {
+            "✅ Excellent".green()
+        } else if metrics.missing_values_ratio <= 15.0 {
+            "⚠️ Good".yellow()
+        } else {
+            "❌ Needs Attention".red()
+        }
+    );
+    println!("  Complete Records: {:.1}%", metrics.complete_records_ratio);
+    if !metrics.null_columns.is_empty() {
+        println!(
+            "  Columns with nulls: {}",
+            metrics.null_columns.join(", ").yellow()
+        );
+    }
+    println!();
+
+    // Consistency Section
+    println!("⚡ {}", "Consistency".bright_cyan().bold());
+    println!(
+        "  Data Type Consistency: {:.1}% {}",
+        metrics.data_type_consistency,
+        if metrics.data_type_consistency >= 95.0 {
+            "✅ Excellent".green()
+        } else if metrics.data_type_consistency >= 80.0 {
+            "⚠️ Good".yellow()
+        } else {
+            "❌ Needs Work".red()
+        }
+    );
+    if metrics.format_violations > 0 {
+        println!(
+            "  Format Violations: {} issues found",
+            metrics.format_violations.to_string().yellow()
+        );
+    }
+    if metrics.encoding_issues > 0 {
+        println!(
+            "  Encoding Issues: {} problems detected",
+            metrics.encoding_issues.to_string().red()
+        );
+    }
+    println!();
+
+    // Uniqueness Section
+    println!("🔑 {}", "Uniqueness".bright_magenta().bold());
+    if metrics.duplicate_rows > 0 {
+        println!(
+            "  Duplicate Rows: {} found",
+            metrics.duplicate_rows.to_string().yellow()
+        );
+    } else {
+        println!("  Duplicate Rows: {} No duplicates", "✅".green());
+    }
+    println!(
+        "  Key Uniqueness: {:.1}% {}",
+        metrics.key_uniqueness,
+        if metrics.key_uniqueness >= 95.0 {
+            "✅ Excellent".green()
+        } else if metrics.key_uniqueness >= 80.0 {
+            "⚠️ Good".yellow()
+        } else {
+            "❌ Low uniqueness".red()
+        }
+    );
+    if metrics.high_cardinality_warning {
+        println!(
+            "  {} High cardinality detected - may impact performance",
+            "⚠️".yellow()
+        );
+    }
+    println!();
+
+    // Accuracy Section
+    println!("🎯 {}", "Accuracy".bright_red().bold());
+    println!(
+        "  Outlier Ratio: {:.1}% {}",
+        metrics.outlier_ratio,
+        if metrics.outlier_ratio <= 2.0 {
+            "✅ Excellent".green()
+        } else if metrics.outlier_ratio <= 5.0 {
+            "⚠️ Acceptable".yellow()
+        } else {
+            "❌ High outlier rate".red()
+        }
+    );
+    if metrics.range_violations > 0 {
+        println!(
+            "  Range Violations: {} values out of expected range",
+            metrics.range_violations.to_string().yellow()
+        );
+    }
+    if metrics.negative_values_in_positive > 0 {
+        println!(
+            "  Invalid Negative Values: {} negative values in positive columns",
+            metrics.negative_values_in_positive.to_string().red()
+        );
+    }
+    println!();
+
+    // Overall Assessment
+    let overall_score = calculate_overall_data_quality_score(metrics);
+    let assessment = if overall_score >= 85.0 {
+        ("🚀 EXCELLENT", "green")
+    } else if overall_score >= 70.0 {
+        ("✅ GOOD", "green")
+    } else if overall_score >= 50.0 {
+        ("⚠️ FAIR", "yellow")
+    } else {
+        ("❌ POOR", "red")
+    };
+
+    println!(
+        "📈 {} Overall Data Quality: {:.1}% - {}",
+        "SUMMARY".bright_white().bold(),
+        overall_score,
+        match assessment.1 {
+            "green" => assessment.0.green().bold(),
+            "yellow" => assessment.0.yellow().bold(),
+            "red" => assessment.0.red().bold(),
+            _ => assessment.0.white().bold(),
+        }
+    );
+    println!();
+}
+
+/// Calculate an overall data quality score from the metrics
+fn calculate_overall_data_quality_score(metrics: &DataQualityMetrics) -> f64 {
+    // Weighted average of the four dimensions
+    let completeness_weight = 0.3;
+    let consistency_weight = 0.3;
+    let uniqueness_weight = 0.2;
+    let accuracy_weight = 0.2;
+
+    let completeness_score = 100.0 - metrics.missing_values_ratio;
+    let consistency_score = metrics.data_type_consistency;
+    let uniqueness_score = metrics.key_uniqueness;
+    let accuracy_score = 100.0 - (metrics.outlier_ratio * 10.0); // Scale outlier ratio
+
+    let overall = (completeness_score * completeness_weight)
+        + (consistency_score * consistency_weight)
+        + (uniqueness_score * uniqueness_weight)
+        + (accuracy_score.clamp(0.0, 100.0) * accuracy_weight);
+
+    overall.clamp(0.0, 100.0)
 }
