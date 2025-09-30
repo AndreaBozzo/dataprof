@@ -892,10 +892,10 @@ DATABASE_CONFIG = {{
                     if !line.trim().is_empty() {
                         script.push_str(&format!("    {}\n", line));
                     } else {
-                        script.push_str("\n");
+                        script.push('\n');
                     }
                 }
-                script.push_str("\n");
+                script.push('\n');
             } else {
                 script.push_str("    # TODO: Implement this preprocessing step\n");
                 script.push_str("    pass\n\n");
@@ -988,26 +988,4 @@ if __name__ == "__main__":
     );
 
     Ok(script)
-}
-
-/// Indent database-specific code properly for Python functions
-fn indent_database_code(code: &str) -> String {
-    let indent = "    "; // 4 spaces for database code
-    code.replace("\\n", "\n")
-        .lines()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                // For database code, we might need special handling
-                let trimmed = line.trim();
-                if trimmed.starts_with("#") || trimmed.starts_with("//") {
-                    format!("{}{}", indent, trimmed)
-                } else {
-                    format!("{}{}", indent, trimmed)
-                }
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
