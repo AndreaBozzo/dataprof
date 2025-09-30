@@ -24,6 +24,11 @@ fn test_data_quality_metrics_creation() -> Result<()> {
         outlier_ratio: 2.3,
         range_violations: 12,
         negative_values_in_positive: 3,
+
+        // Timeliness (ISO 8000-8)
+        future_dates_count: 2,
+        stale_data_ratio: 5.5,
+        temporal_violations: 1,
     };
 
     // Validate completeness metrics
@@ -45,6 +50,11 @@ fn test_data_quality_metrics_creation() -> Result<()> {
     assert!(metrics.outlier_ratio >= 0.0 && metrics.outlier_ratio <= 100.0);
     assert_eq!(metrics.range_violations, 12);
     assert_eq!(metrics.negative_values_in_positive, 3);
+
+    // Validate timeliness metrics
+    assert_eq!(metrics.future_dates_count, 2);
+    assert!(metrics.stale_data_ratio >= 0.0 && metrics.stale_data_ratio <= 100.0);
+    assert_eq!(metrics.temporal_violations, 1);
 
     Ok(())
 }
@@ -145,6 +155,10 @@ fn test_perfect_dataset() -> Result<()> {
     assert_eq!(metrics.duplicate_rows, 0);
     assert_eq!(metrics.range_violations, 0);
     assert_eq!(metrics.negative_values_in_positive, 0);
+    // Timeliness should also be perfect
+    assert_eq!(metrics.future_dates_count, 0);
+    assert_eq!(metrics.stale_data_ratio, 0.0);
+    assert_eq!(metrics.temporal_violations, 0);
 
     Ok(())
 }
