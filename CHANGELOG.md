@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🏆 **NEW: ISO 8000/25012 Compliance & Configurable Quality Thresholds**
+
+- **NEW:** **📊 ISO-Compliant Quality Metrics System (5 Dimensions)**
+  - `IsoQualityThresholds` configuration struct for industry-specific standards
+  - Three preset profiles: Default (general), Strict (finance/healthcare), Lenient (exploratory/marketing)
+  - Configurable thresholds for all 5 quality dimensions
+  - Full compliance with ISO 8000-8, ISO 8000-61, ISO 8000-110, ISO 25012 standards
+
+- **NEW:** **⏰ Timeliness Metrics (ISO 8000-8)**
+  - Future dates detection (dates beyond current date)
+  - Stale data ratio calculation (configurable age threshold: 2/5/10 years for strict/default/lenient)
+  - Temporal ordering violations (e.g., end_date < start_date, updated_at < created_at)
+  - Supports multiple date formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
+  - Industry-specific freshness requirements
+
+- **IMPROVED:** **🔬 Unified Outlier Detection (IQR Method)**
+  - Replaced 3-sigma rule with ISO 25012 compliant IQR (Interquartile Range) method
+  - More robust: not affected by extreme outliers like 3-sigma
+  - Configurable IQR multiplier: 1.5 (default), 1.0 (strict), 2.0 (lenient)
+  - Configurable minimum sample size for detection
+  - Deprecated legacy `check_outliers()` 3-sigma method in `QualityChecker`
+
+- **ADDED:** **⚙️ Configurable Quality Thresholds**
+  - `max_null_percentage`: Threshold for reporting columns with excessive nulls (default: 50%)
+  - `high_cardinality_threshold`: Threshold for detecting ID-like columns (default: 95%)
+  - `outlier_iqr_multiplier`: IQR sensitivity for outlier detection (default: 1.5)
+  - `duplicate_report_threshold`: Threshold for reporting duplicate issues (default: 5%)
+  - `min_type_consistency`: Minimum acceptable type consistency percentage (default: 95%)
+
+- **REFACTORED:** **🔧 MetricsCalculator Architecture**
+  - Now instance-based instead of static methods for configuration support
+  - Constructor methods: `new()`, `strict()`, `lenient()`, `with_thresholds()`
+  - Backward compatibility maintained with deprecated static method
+  - All quality metrics now respect configurable ISO thresholds
+
+- **UPDATED:** **📖 Enhanced Documentation**
+  - Updated `WHAT_DATAPROF_DOES.md` with ISO compliance details
+  - Added comparison table for Default/Strict/Lenient thresholds
+  - Documented IQR method advantages over 3-sigma
+  - Added example: `examples/iso_compliance.rs` demonstrating all threshold profiles
+
+- **ADDED:** **🧪 Comprehensive ISO Compliance Test Suite**
+  - 14 comprehensive tests covering all 5 ISO dimensions
+  - Tests for configurable thresholds across all profiles (default/strict/lenient)
+  - Validation of IQR outlier detection vs deprecated 3-sigma
+  - Timeliness metrics verification (future dates, stale data, temporal violations)
+  - ISO reproducibility and audit trail tests
+  - Test file: `tests/iso_compliance_test.rs`
+
+### 🎯 **Benefits for ISO Certification**
+  - ✅ Auditable threshold configuration per ISO 8000/25012
+  - ✅ Industry-standard outlier detection (IQR vs deprecated 3-sigma)
+  - ✅ Reproducible quality metrics with clear rationale
+  - ✅ Support for regulatory compliance (finance, healthcare)
+  - ✅ Clear separation: Quality Metrics (ISO) → ML Insights (domain-specific)
+  - ✅ **5 dimensions tracked**: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
+
+---
+
 ### ⚡ **BREAKING: Unified Database ML Implementation**
 
 - **BREAKING CHANGE:** Database mode now uses full `MlReadinessEngine` instead of simplified `MLReadinessScore`

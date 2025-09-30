@@ -313,28 +313,39 @@ Column "date" has mixed formats:
 
 ---
 
-#### 3.1.4 Outlier Detection
+#### 3.1.4 Outlier Detection (ISO 25012 Compliant)
 
-**Method:** `check_outliers()`
+**Method:** `detect_outliers_in_column()` in MetricsCalculator
 
-**Algorithm:** 3-sigma rule (standard deviations)
+**Algorithm:** IQR (Interquartile Range) method - ISO 25012 standard
 
 **Detection:**
-1. Calculate mean and standard deviation
-2. Mark values > 3σ from mean as outliers
-3. Requires ≥ 3 numeric values to operate
+1. Calculate Q1 (25th percentile) and Q3 (75th percentile)
+2. Calculate IQR = Q3 - Q1
+3. Values outside [Q1 - k×IQR, Q3 + k×IQR] are outliers
+4. Default k = 1.5 (ISO 25012 standard)
+5. Requires ≥ 4 numeric values to operate (configurable)
+
+**Configurable Thresholds:**
+- **IQR multiplier (k)**: 1.5 (default), 1.0 (strict), 2.0 (lenient)
+- **Minimum samples**: 4 (default), 10 (strict), 4 (lenient)
 
 **Reports:**
-- First **10 outlier values** (for brevity)
+- First **10 outlier values** (for privacy)
 - Row numbers where outliers found
 
 **Example:**
 ```
-Column "age": 3 outliers detected
-  - Row 42: 250 (mean=35, σ=12)
+Column "age": 3 outliers detected (IQR method, k=1.5)
+  - Row 42: 250 (Q1=30, Q3=40, IQR=10)
   - Row 128: -5
   - Row 201: 180
 ```
+
+**Why IQR instead of 3-sigma:**
+- **More robust**: Not affected by extreme outliers
+- **ISO 25012 compliant**: International standard for data quality
+- **Configurable**: Industry-specific thresholds (finance: k=1.0, marketing: k=2.0)
 
 ---
 
@@ -348,12 +359,26 @@ Column "age": 3 outliers detected
 
 ---
 
-### 3.2 Comprehensive Quality Metrics
+### 3.2 Comprehensive Quality Metrics (ISO 8000/25012 Compliant)
 
 **Source:** [src/analysis/metrics.rs](../src/analysis/metrics.rs)
 **Class:** `MetricsCalculator`
 
-**Four Quality Dimensions per ISO 8000 standard:**
+**Configuration:** [src/core/config.rs](../src/core/config.rs) - `IsoQualityThresholds`
+
+**Four Quality Dimensions per ISO 8000/25012 standards:**
+
+**Available Threshold Profiles:**
+- **Default**: Balanced thresholds for general use
+- **Strict**: High-compliance industries (finance, healthcare)
+- **Lenient**: Exploratory/marketing data analysis
+
+| Threshold | Default | Strict | Lenient | ISO Standard |
+|-----------|---------|--------|---------|--------------|
+| Max null % | 50% | 30% | 70% | ISO 8000-8 |
+| IQR multiplier | 1.5 | 1.5 | 2.0 | ISO 25012 |
+| High cardinality | 95% | 98% | 90% | ISO 8000-110 |
+| Type consistency | 95% | 98% | 90% | ISO 8000-61 |
 
 #### 3.2.1 Completeness Metrics
 

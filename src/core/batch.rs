@@ -561,6 +561,12 @@ impl BatchProcessor {
             outlier_ratio: avg_outlier_ratio,
             range_violations: total_range_violations,
             negative_values_in_positive: total_negative_values_in_positive,
+
+            // Timeliness (aggregate from all files)
+            future_dates_count: all_metrics.iter().map(|m| m.future_dates_count).sum(),
+            stale_data_ratio: all_metrics.iter().map(|m| m.stale_data_ratio).sum::<f64>()
+                / all_metrics.len() as f64,
+            temporal_violations: all_metrics.iter().map(|m| m.temporal_violations).sum(),
         })
     }
 }

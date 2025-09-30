@@ -28,8 +28,9 @@ impl QualityChecker {
         // Calculate traditional quality issues (existing functionality)
         let issues = Self::check_columns(column_profiles, data);
 
-        // Calculate comprehensive metrics using the new system
-        let metrics = MetricsCalculator::calculate_comprehensive_metrics(data, column_profiles)?;
+        // Calculate comprehensive metrics using the new ISO-compliant system
+        let calculator = MetricsCalculator::new();
+        let metrics = calculator.calculate_comprehensive_metrics(data, column_profiles)?;
 
         Ok((issues, metrics))
     }
@@ -73,6 +74,7 @@ impl QualityChecker {
                 }
 
                 // Check outliers per colonne numeriche
+                #[allow(deprecated)]
                 if matches!(profile.data_type, DataType::Integer | DataType::Float) {
                     if let Some(issue) = Self::check_outliers(&profile.name, column_data) {
                         issues.push(issue);
@@ -143,6 +145,11 @@ impl QualityChecker {
         None
     }
 
+    /// DEPRECATED: Use MetricsCalculator::detect_outliers_in_column() for ISO 25012 compliant IQR method
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use MetricsCalculator with ISO IQR method instead of 3-sigma"
+    )]
     fn check_outliers(column_name: &str, data: &[String]) -> Option<QualityIssue> {
         // Cerca di convertire i valori in numeri
         let numeric_values: Vec<f64> = data

@@ -395,7 +395,7 @@ pub fn display_data_quality_metrics(metrics: &DataQualityMetrics) {
     // Accuracy Section
     println!("🎯 {}", "Accuracy".bright_red().bold());
     println!(
-        "  Outlier Ratio: {:.1}% {}",
+        "  Outlier Ratio: {:.1}% {} (ISO 25012 IQR method)",
         metrics.outlier_ratio,
         if metrics.outlier_ratio <= 2.0 {
             "✅ Excellent".green()
@@ -416,6 +416,37 @@ pub fn display_data_quality_metrics(metrics: &DataQualityMetrics) {
             "  Invalid Negative Values: {} negative values in positive columns",
             metrics.negative_values_in_positive.to_string().red()
         );
+    }
+    println!();
+
+    // Timeliness Section (ISO 8000-8)
+    println!("⏰ {}", "Timeliness".bright_yellow().bold());
+    if metrics.future_dates_count > 0 {
+        println!(
+            "  Future Dates: {} dates beyond current date",
+            metrics.future_dates_count.to_string().yellow()
+        );
+    } else {
+        println!("  Future Dates: {} None detected", "✅".green());
+    }
+    println!(
+        "  Stale Data Ratio: {:.1}% {}",
+        metrics.stale_data_ratio,
+        if metrics.stale_data_ratio <= 10.0 {
+            "✅ Fresh data".green()
+        } else if metrics.stale_data_ratio <= 30.0 {
+            "⚠️ Some stale data".yellow()
+        } else {
+            "❌ High staleness".red()
+        }
+    );
+    if metrics.temporal_violations > 0 {
+        println!(
+            "  Temporal Violations: {} ordering issues (e.g., end_date < start_date)",
+            metrics.temporal_violations.to_string().red()
+        );
+    } else {
+        println!("  Temporal Ordering: {} Consistent", "✅".green());
     }
     println!();
 
@@ -446,22 +477,31 @@ pub fn display_data_quality_metrics(metrics: &DataQualityMetrics) {
 }
 
 /// Calculate an overall data quality score from the metrics
+/// Now includes all 5 ISO dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
 fn calculate_overall_data_quality_score(metrics: &DataQualityMetrics) -> f64 {
-    // Weighted average of the four dimensions
-    let completeness_weight = 0.3;
-    let consistency_weight = 0.3;
-    let uniqueness_weight = 0.2;
-    let accuracy_weight = 0.2;
+    // Weighted average of the five ISO 8000/25012 dimensions
+    let completeness_weight = 0.25;
+    let consistency_weight = 0.25;
+    let uniqueness_weight = 0.15;
+    let accuracy_weight = 0.20;
+    let timeliness_weight = 0.15;
 
     let completeness_score = 100.0 - metrics.missing_values_ratio;
     let consistency_score = metrics.data_type_consistency;
     let uniqueness_score = metrics.key_uniqueness;
     let accuracy_score = 100.0 - (metrics.outlier_ratio * 10.0); // Scale outlier ratio
 
+    // Timeliness score: penalize future dates and stale data
+    let future_penalty = (metrics.future_dates_count as f64).min(10.0) * 2.0;
+    let temporal_penalty = (metrics.temporal_violations as f64).min(10.0) * 3.0;
+    let timeliness_score =
+        (100.0 - metrics.stale_data_ratio - future_penalty - temporal_penalty).max(0.0);
+
     let overall = (completeness_score * completeness_weight)
         + (consistency_score * consistency_weight)
         + (uniqueness_score * uniqueness_weight)
-        + (accuracy_score.clamp(0.0, 100.0) * accuracy_weight);
+        + (accuracy_score.clamp(0.0, 100.0) * accuracy_weight)
+        + (timeliness_score * timeliness_weight);
 
     overall.clamp(0.0, 100.0)
 }

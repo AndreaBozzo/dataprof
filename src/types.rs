@@ -2,10 +2,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 /// Comprehensive data quality metrics following industry standards
-/// Provides structured assessment across four key dimensions
+/// Provides structured assessment across five key dimensions (ISO 8000/25012)
 #[derive(Debug, Clone)]
 pub struct DataQualityMetrics {
-    // Completeness
+    // Completeness (ISO 8000-8)
     /// Percentage of missing values across all cells
     pub missing_values_ratio: f64,
     /// Percentage of rows with no null values
@@ -13,7 +13,7 @@ pub struct DataQualityMetrics {
     /// Columns with more than 50% null values
     pub null_columns: Vec<String>,
 
-    // Consistency
+    // Consistency (ISO 8000-61)
     /// Percentage of values conforming to expected data type
     pub data_type_consistency: f64,
     /// Number of format violations (e.g., malformed dates)
@@ -21,7 +21,7 @@ pub struct DataQualityMetrics {
     /// Number of UTF-8 encoding issues detected
     pub encoding_issues: usize,
 
-    // Uniqueness
+    // Uniqueness (ISO 8000-110)
     /// Number of exact duplicate rows
     pub duplicate_rows: usize,
     /// Percentage of unique values in key columns (if applicable)
@@ -29,19 +29,28 @@ pub struct DataQualityMetrics {
     /// Warning flag for columns with excessive unique values
     pub high_cardinality_warning: bool,
 
-    // Accuracy
+    // Accuracy (ISO 25012)
     /// Percentage of statistically anomalous values (outliers)
     pub outlier_ratio: f64,
     /// Number of values outside expected ranges
     pub range_violations: usize,
     /// Number of negative values in positive-only fields (e.g., age)
     pub negative_values_in_positive: usize,
+
+    // Timeliness (ISO 8000-8) - NEW
+    /// Number of future dates detected (dates beyond current date)
+    pub future_dates_count: usize,
+    /// Percentage of dates older than staleness threshold (e.g., >5 years)
+    pub stale_data_ratio: f64,
+    /// Temporal ordering violations (e.g., end_date < start_date)
+    pub temporal_violations: usize,
 }
 
 impl DataQualityMetrics {
     /// Calculate comprehensive data quality metrics from column data
     ///
-    /// Delegates to the specialized MetricsCalculator for proper separation of concerns
+    /// Delegates to the specialized MetricsCalculator for proper separation of concerns.
+    /// Uses default ISO 8000/25012 thresholds.
     ///
     /// # Arguments
     /// * `data` - HashMap containing column names and their values
@@ -56,9 +65,10 @@ impl DataQualityMetrics {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
     ) -> Result<Self> {
-        // Delegate to the specialized metrics calculator module
+        // Delegate to the specialized metrics calculator module with default ISO thresholds
         // This follows the Single Responsibility Principle
-        crate::analysis::MetricsCalculator::calculate_comprehensive_metrics(data, column_profiles)
+        let calculator = crate::analysis::MetricsCalculator::new();
+        calculator.calculate_comprehensive_metrics(data, column_profiles)
     }
 }
 

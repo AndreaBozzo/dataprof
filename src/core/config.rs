@@ -79,7 +79,9 @@ pub struct QualityConfig {
     /// Threshold for null value warnings (percentage)
     pub null_threshold: f64,
 
-    /// Outlier detection sensitivity (standard deviations)
+    /// Outlier detection sensitivity (standard deviations) - DEPRECATED
+    /// Use iso_thresholds.outlier_iqr_multiplier instead
+    #[deprecated(since = "0.5.0", note = "Use iso_thresholds.outlier_iqr_multiplier")]
     pub outlier_threshold: f64,
 
     /// Enable duplicate detection
@@ -90,6 +92,104 @@ pub struct QualityConfig {
 
     /// Enable date format consistency checking
     pub check_date_formats: bool,
+
+    /// ISO 8000/25012 compliant thresholds
+    pub iso_thresholds: IsoQualityThresholds,
+}
+
+/// ISO 8000/25012 compliant quality thresholds
+/// These thresholds are configurable for industry-specific requirements
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsoQualityThresholds {
+    // Completeness thresholds (ISO 8000-8)
+    /// Maximum acceptable null percentage for a column (default: 50%)
+    pub max_null_percentage: f64,
+
+    /// Threshold for reporting null value issues (default: 10%)
+    pub null_report_threshold: f64,
+
+    // Consistency thresholds (ISO 8000-61)
+    /// Minimum acceptable type consistency percentage (default: 95%)
+    pub min_type_consistency: f64,
+
+    // Uniqueness thresholds (ISO 8000-110)
+    /// Threshold for reporting duplicate rows (default: 5%)
+    pub duplicate_report_threshold: f64,
+
+    /// High cardinality warning threshold (uniqueness ratio, default: 95%)
+    pub high_cardinality_threshold: f64,
+
+    // Accuracy thresholds (ISO 25012)
+    /// IQR multiplier for outlier detection (default: 1.5, ISO standard)
+    /// Values outside [Q1 - k*IQR, Q3 + k*IQR] are considered outliers
+    pub outlier_iqr_multiplier: f64,
+
+    /// Minimum samples required for outlier detection (default: 4)
+    pub outlier_min_samples: usize,
+
+    // Timeliness thresholds (ISO 8000-8)
+    /// Maximum age in years for data to be considered fresh (default: 5 years)
+    pub max_data_age_years: f64,
+
+    /// Percentage threshold for reporting stale data (default: 20%)
+    pub stale_data_threshold: f64,
+}
+
+impl Default for IsoQualityThresholds {
+    fn default() -> Self {
+        Self {
+            // ISO 8000-8 Completeness
+            max_null_percentage: 50.0,
+            null_report_threshold: 10.0,
+
+            // ISO 8000-61 Consistency
+            min_type_consistency: 95.0,
+
+            // ISO 8000-110 Uniqueness
+            duplicate_report_threshold: 5.0,
+            high_cardinality_threshold: 95.0,
+
+            // ISO 25012 Accuracy
+            outlier_iqr_multiplier: 1.5, // ISO standard
+            outlier_min_samples: 4,
+
+            // ISO 8000-8 Timeliness
+            max_data_age_years: 5.0,
+            stale_data_threshold: 20.0,
+        }
+    }
+}
+
+impl IsoQualityThresholds {
+    /// Create strict thresholds for high-compliance industries (finance, healthcare)
+    pub fn strict() -> Self {
+        Self {
+            max_null_percentage: 30.0,
+            null_report_threshold: 5.0,
+            min_type_consistency: 98.0,
+            duplicate_report_threshold: 1.0,
+            high_cardinality_threshold: 98.0,
+            outlier_iqr_multiplier: 1.5,
+            outlier_min_samples: 10,
+            max_data_age_years: 2.0, // Financial data must be recent
+            stale_data_threshold: 10.0,
+        }
+    }
+
+    /// Create lenient thresholds for exploratory/marketing data
+    pub fn lenient() -> Self {
+        Self {
+            max_null_percentage: 70.0,
+            null_report_threshold: 20.0,
+            min_type_consistency: 90.0,
+            duplicate_report_threshold: 10.0,
+            high_cardinality_threshold: 90.0,
+            outlier_iqr_multiplier: 2.0,
+            outlier_min_samples: 4,
+            max_data_age_years: 10.0, // Historical analysis tolerates older data
+            stale_data_threshold: 30.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,10 +293,12 @@ impl Default for QualityConfig {
         Self {
             enabled: true,
             null_threshold: 10.0,
-            outlier_threshold: 3.0,
+            #[allow(deprecated)]
+            outlier_threshold: 3.0, // Kept for backward compatibility
             detect_duplicates: true,
             detect_mixed_types: true,
             check_date_formats: true,
+            iso_thresholds: IsoQualityThresholds::default(),
         }
     }
 }
@@ -399,10 +501,27 @@ impl DataprofConfig {
             ));
         }
 
-        if self.quality.outlier_threshold <= 0.0 {
+        // Validate ISO thresholds
+        let iso = &self.quality.iso_thresholds;
+
+        if iso.outlier_iqr_multiplier <= 0.0 {
             return Err(anyhow::anyhow!(
-                "Outlier threshold must be positive, got {}",
-                self.quality.outlier_threshold
+                "IQR multiplier must be positive, got {}",
+                iso.outlier_iqr_multiplier
+            ));
+        }
+
+        if iso.max_null_percentage < 0.0 || iso.max_null_percentage > 100.0 {
+            return Err(anyhow::anyhow!(
+                "Max null percentage must be between 0 and 100, got {}",
+                iso.max_null_percentage
+            ));
+        }
+
+        if iso.high_cardinality_threshold < 0.0 || iso.high_cardinality_threshold > 100.0 {
+            return Err(anyhow::anyhow!(
+                "High cardinality threshold must be between 0 and 100, got {}",
+                iso.high_cardinality_threshold
             ));
         }
 
