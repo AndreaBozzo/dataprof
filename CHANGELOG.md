@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚡ **BREAKING: Unified Database ML Implementation**
+
+- **BREAKING CHANGE:** Database mode now uses full `MlReadinessEngine` instead of simplified `MLReadinessScore`
+  - Complete feature parity with single file and batch modes
+  - Access to advanced feature analysis, preprocessing suggestions, and interaction warnings
+  - Structured recommendations with category, priority, and implementation effort
+  - Code snippets automatically generated from ML recommendations
+
+- **IMPROVED:** Database preprocessing script generation
+  - Scripts now contain actual code from `MlRecommendation` structures
+  - Framework-specific imports and variable documentation included
+  - Priority-based preprocessing steps with implementation guidance
+
+- **IMPROVED:** Database command display logic
+  - Removed 100+ lines of hardcoded code snippets
+  - Reuses `display_ml_score_with_code()` helper for consistency
+  - Unified display logic across all modes (single file, batch, database)
+
+- **ADDED:** Comprehensive database ML integration test
+  - New `test_sqlite_ml_readiness_full_score()` validates full ML score structure
+  - Verifies component scores (completeness, consistency, type_suitability, feature_quality)
+  - Tests feature analysis presence and recommendation structure
+
 ### 🤖 **NEW: Enhanced ML Readiness Analysis & Feature Intelligence**
 
 - **NEW:** **🎯 Advanced ML Feature Analysis**
