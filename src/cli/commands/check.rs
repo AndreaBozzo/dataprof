@@ -30,4 +30,8 @@ pub struct CheckArgs {
     /// ISO quality threshold profile (default, strict, lenient)
     #[arg(long, default_value = "default")]
     pub threshold_profile: String,
+
+    /// Common analysis options (progress, chunk-size, config)
+    #[command(flatten)]
+    pub common: super::CommonAnalysisOptions,
 }

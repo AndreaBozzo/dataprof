@@ -13,7 +13,16 @@ pub mod ml_impl;
 pub mod report_impl;
 
 use clap::Subcommand;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Helper to detect JSON files
+pub fn is_json_file(path: &Path) -> bool {
+    if let Some(extension) = path.extension() {
+        matches!(extension.to_str(), Some("json") | Some("jsonl"))
+    } else {
+        false
+    }
+}
 
 /// DataProf subcommands
 #[derive(Debug, Subcommand)]
@@ -66,7 +75,24 @@ pub enum Command {
     Batch(batch::BatchArgs),
 }
 
-/// Common options shared across commands
+/// Common analysis options inherited by all commands
+/// These ensure all commands get the same improvements (progress, config, etc.)
+#[derive(Debug, clap::Args)]
+pub struct CommonAnalysisOptions {
+    /// Show real-time progress bars during analysis
+    #[arg(long)]
+    pub progress: bool,
+
+    /// Custom chunk size for streaming (e.g., 10000)
+    #[arg(long)]
+    pub chunk_size: Option<usize>,
+
+    /// Load settings from TOML config file
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+}
+
+/// Common output options shared across commands
 #[derive(Debug, clap::Args)]
 pub struct CommonOptions {
     /// Output format (text, json, csv, plain)

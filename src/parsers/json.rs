@@ -146,6 +146,10 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
     // Check quality issues
     let issues = QualityChecker::check_columns(&column_profiles, &columns);
 
+    // Calculate comprehensive ISO 8000/25012 quality metrics
+    let quality_metrics =
+        crate::types::DataQualityMetrics::calculate_from_data(&columns, &column_profiles).ok();
+
     let scan_time_ms = start.elapsed().as_millis();
 
     Ok(QualityReport {
@@ -162,6 +166,6 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
             sampling_ratio: 1.0,
             scan_time_ms,
         },
-        data_quality_metrics: None,
+        data_quality_metrics: quality_metrics,
     })
 }

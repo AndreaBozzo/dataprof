@@ -75,6 +75,11 @@ impl DataProfiler {
         self
     }
 
+    pub fn sampling(mut self, strategy: SamplingStrategy) -> Self {
+        self.inner = self.inner.sampling(strategy);
+        self
+    }
+
     pub fn progress_callback<F>(mut self, callback: F) -> Self
     where
         F: Fn(ProgressInfo) + Send + Sync + 'static,

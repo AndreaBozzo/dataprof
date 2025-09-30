@@ -34,4 +34,8 @@ pub struct AnalyzeArgs {
     /// Sample size for large files
     #[arg(long)]
     pub sample: Option<usize>,
+
+    /// Common analysis options (progress, chunk-size, config)
+    #[command(flatten)]
+    pub common: super::CommonAnalysisOptions,
 }

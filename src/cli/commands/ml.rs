@@ -34,4 +34,8 @@ pub struct MlArgs {
     /// Use streaming for large files
     #[arg(long)]
     pub streaming: bool,
+
+    /// Common analysis options (progress, chunk-size, config)
+    #[command(flatten)]
+    pub common: super::CommonAnalysisOptions,
 }

@@ -1,19 +1,26 @@
 use super::check::CheckArgs;
 use anyhow::Result;
-use dataprof::DataProfiler;
 use std::fs;
+
+use crate::cli::{analyze_file_with_options, AnalysisOptions};
 
 /// Execute the check command - quick quality check with smart defaults
 pub fn execute(args: &CheckArgs) -> Result<()> {
     // Smart defaults: auto-enable streaming for large files
     let file_size_mb = get_file_size_mb(&args.file)?;
-    let _use_streaming = args.streaming || file_size_mb > 100.0;
+    let auto_streaming = args.streaming || file_size_mb > 100.0;
 
-    // Create profiler (always use streaming as there's no new() method)
-    let mut profiler = DataProfiler::streaming();
+    // Build analysis options from command arguments
+    let options = AnalysisOptions {
+        progress: args.common.progress,
+        chunk_size: args.common.chunk_size,
+        config: args.common.config.clone(),
+        streaming: auto_streaming,
+        sample: None,
+    };
 
-    // Run analysis
-    let report = profiler.analyze_file(&args.file)?;
+    // Use shared core logic that handles all improvements
+    let report = analyze_file_with_options(&args.file, options)?;
 
     // Output results
     if args.json {

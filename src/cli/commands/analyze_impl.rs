@@ -1,12 +1,23 @@
 use super::analyze::AnalyzeArgs;
 use anyhow::Result;
-use dataprof::{DataProfiler, MlReadinessEngine};
+use dataprof::MlReadinessEngine;
 use std::fs;
+
+use crate::cli::{analyze_file_with_options, AnalysisOptions};
 
 /// Execute the analyze command - comprehensive ISO 8000/25012 analysis
 pub fn execute(args: &AnalyzeArgs) -> Result<()> {
-    let mut profiler = DataProfiler::streaming();
-    let report = profiler.analyze_file(&args.file)?;
+    // Build analysis options from command arguments
+    let options = AnalysisOptions {
+        progress: args.common.progress,
+        chunk_size: args.common.chunk_size,
+        config: args.common.config.clone(),
+        streaming: args.streaming,
+        sample: args.sample,
+    };
+
+    // Use shared core logic that handles all improvements
+    let report = analyze_file_with_options(&args.file, options)?;
 
     // Calculate ML score if requested
     let ml_score = if args.ml {

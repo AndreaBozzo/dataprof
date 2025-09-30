@@ -1,11 +1,22 @@
 use super::ml::MlArgs;
 use anyhow::Result;
-use dataprof::{DataProfiler, MlReadinessEngine};
+use dataprof::MlReadinessEngine;
 use std::fs;
 
+use crate::cli::{analyze_file_with_options, AnalysisOptions};
+
 pub fn execute(args: &MlArgs) -> Result<()> {
-    let mut profiler = DataProfiler::streaming();
-    let report = profiler.analyze_file(&args.file)?;
+    // Build analysis options from command arguments
+    let options = AnalysisOptions {
+        progress: args.common.progress,
+        chunk_size: args.common.chunk_size,
+        config: args.common.config.clone(),
+        streaming: args.streaming,
+        sample: None,
+    };
+
+    // Use shared core logic that handles all improvements
+    let report = analyze_file_with_options(&args.file, options)?;
 
     let ml_engine = MlReadinessEngine::new();
     let ml_score = ml_engine.calculate_ml_score(&report)?;
