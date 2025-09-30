@@ -44,7 +44,7 @@ pub use analysis::MlReadinessEngine;
 pub use engines::streaming::ProgressInfo;
 pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
-// Re-exports for backward compatibility
+// Public API exports - Core types and functionality
 pub use output::html::generate_html_report;
 pub use types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, OutputFormat, Pattern,
@@ -53,13 +53,13 @@ pub use types::{
 pub use utils::quality::QualityChecker;
 pub use utils::sampler::{SampleInfo, Sampler};
 
-// Re-export moved parsing functions for API compatibility
+// Parser API - CSV and JSON analysis functions
 pub use parsers::csv::{
     analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
 };
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
-// Re-export moved analysis functions for API compatibility
+// Analysis utilities - Column-level and statistical functions
 pub use analysis::{
     analyze_column_fast, detect_patterns, infer_type, MetricsCalculator, MlReadinessScore,
 };

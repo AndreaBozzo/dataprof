@@ -97,7 +97,7 @@ jobs:
       - name: Run clippy
         run: |
           echo "📎 Running clippy analysis..."
-          cargo clippy --lib --tests --all-features -- -D warnings -A deprecated
+          cargo clippy --lib --tests --all-features -- -D warnings
           echo "✅ Clippy analysis passed"
 
       - name: Check documentation

@@ -10,7 +10,7 @@
 /// - memory_benchmarks.rs (memory patterns)
 /// - large_scale_benchmarks.rs (performance claims)
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use dataprof::engines::local::analyze_csv;
+use dataprof::analyze_csv;
 use dataprof::testing::{
     CriterionResultParams, DatasetPattern, DatasetSize, ResultCollector, StandardDatasets,
 };

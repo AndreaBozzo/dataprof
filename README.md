@@ -18,6 +18,19 @@ A fast, reliable data quality and ML readiness assessment tool built in Rust. An
 
 Perfect for data scientists, ML engineers, and anyone working with data who needs quick, reliable quality insights.
 
+## 🔒 Privacy & Transparency
+
+DataProf processes **all data locally** on your machine. Zero telemetry, zero external data transmission.
+
+**[📖 Read exactly what DataProf analyzes →](docs/WHAT_DATAPROF_DOES.md)**
+
+- ✅ 100% local processing - your data never leaves your machine
+- ✅ No telemetry or tracking
+- ✅ Open source & fully auditable
+- ✅ Read-only database access (when using DB features)
+
+**Complete transparency:** Every metric, calculation, and data point is documented with source code references for independent verification.
+
 ## Try Online
 
 **No installation required!** Test dataprof instantly with our web interface:
@@ -87,9 +100,16 @@ cargo add dataprof
 ```rust
 use dataprof::*;
 
-// High-performance Arrow processing
+// High-performance Arrow processing for large files (>100MB)
+// Requires compilation with: cargo build --features arrow
+#[cfg(feature = "arrow")]
 let profiler = DataProfiler::columnar();
+#[cfg(feature = "arrow")]
 let report = profiler.analyze_csv_file("large_dataset.csv")?;
+
+// Standard adaptive profiling (recommended for most use cases)
+let profiler = DataProfiler::auto();
+let report = profiler.analyze_file("dataset.csv")?;
 ```
 
 ### CLI Usage
@@ -128,6 +148,31 @@ cargo build --release  # Build the project
 docker-compose -f .devcontainer/docker-compose.yml up -d  # Start test databases
 ```
 
+### Feature Flags
+
+dataprof uses optional features to keep compile times fast and binaries lean:
+
+```bash
+# Minimal build (CSV/JSON only, ~60s compile)
+cargo build --release
+
+# With Apache Arrow (columnar processing, ~90s compile)
+cargo build --release --features arrow
+
+# With database connectors
+cargo build --release --features postgres,mysql,sqlite
+
+# All features (full functionality, ~120s compile)
+cargo build --release --all-features
+```
+
+**When to use Arrow?**
+- ✅ Files > 100MB with many columns (>20)
+- ✅ Columnar data with uniform types
+- ✅ Need maximum throughput (up to 13x faster)
+- ❌ Small files (<10MB) - standard engine is faster
+- ❌ Mixed/messy data - streaming engine handles better
+
 ### Common Development Tasks
 ```bash
 cargo test          # Run all tests
@@ -138,14 +183,20 @@ cargo clippy        # Code quality checks
 
 ## Documentation
 
-- [Development Guide](docs/DEVELOPMENT.md) - Complete setup and contribution guide
+### Privacy & Transparency
+- [What DataProf Does](docs/WHAT_DATAPROF_DOES.md) - **Complete transparency guide with source code verification**
+
+### User Guides
 - [Python API Reference](docs/python/API_REFERENCE.md) - Full Python API documentation
 - [ML Features](docs/python/ML_FEATURES.md) - Machine learning readiness assessment
 - [Python Integrations](docs/python/INTEGRATIONS.md) - Pandas, scikit-learn, Jupyter, Airflow, dbt
 - [Database Connectors](docs/guides/database-connectors.md) - Production database connectivity
-- [Performance Guide](docs/guides/performance-guide.md) - Optimization and benchmarking
 - [Apache Arrow Integration](docs/guides/apache-arrow-integration.md) - Columnar processing guide
 - [CLI Usage Guide](docs/guides/CLI_USAGE_GUIDE.md) - Complete CLI reference
+
+### Developer Guides
+- [Development Guide](docs/DEVELOPMENT.md) - Complete setup and contribution guide
+- [Performance Guide](docs/guides/performance-guide.md) - Optimization and benchmarking
 - [Performance Benchmarks](docs/project/benchmarking.md) - Benchmark results and methodology
 
 ## License

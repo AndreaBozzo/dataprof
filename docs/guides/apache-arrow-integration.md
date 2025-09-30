@@ -11,6 +11,30 @@ Apache Arrow provides:
 - **Batch processing** for large datasets
 - **Memory efficiency** through columnar organization
 
+### ⚠️ Important: Feature Flag Required
+
+The Arrow integration is an **optional feature** that must be enabled at compile time:
+
+```bash
+# Enable Arrow support
+cargo build --release --features arrow
+
+# Or install with arrow support
+cargo install dataprof --features arrow
+```
+
+**When to enable Arrow:**
+- Processing files > 100MB regularly
+- Working with wide datasets (>20 columns)
+- Need maximum throughput for production pipelines
+- Data has uniform columnar structure
+
+**When to skip Arrow:**
+- Only working with small files (<10MB)
+- Primarily analyzing messy/mixed data
+- Want faster compilation times (~30% faster without Arrow)
+- Limited build environment (CI/CD optimization)
+
 ### 🚀 New in v0.4.0: Smart Engine Selection
 
 - **🎯 Intelligent Selection**: Automatic engine choice based on file characteristics, system resources, and processing context
