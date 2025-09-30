@@ -740,11 +740,9 @@ fn indent_batch_code(code: &str, spaces: usize) -> String {
         .join("\n")
 }
 
-use dataprof::database::MLReadinessScore;
-
 /// Generates a database preprocessing Python script from ML recommendations
 pub fn generate_database_preprocessing_script(
-    ml_score: &MLReadinessScore,
+    ml_score: &MlReadinessScore,
     output_path: &Path,
     connection_string: &str,
     query: &str,
@@ -757,7 +755,7 @@ pub fn generate_database_preprocessing_script(
 
 /// Creates the content of a database preprocessing Python script
 fn create_database_preprocessing_script_content(
-    ml_score: &MLReadinessScore,
+    ml_score: &MlReadinessScore,
     connection_string: &str,
     query: &str,
 ) -> Result<String> {
@@ -866,12 +864,42 @@ DATABASE_CONFIG = {{
 
     // Add preprocessing steps from recommendations
     if !ml_score.recommendations.is_empty() {
-        script.push_str("    # ========== RECOMMENDATIONS ==========\n");
+        script.push_str("    # ========== ML READINESS RECOMMENDATIONS ==========\n");
         for (i, rec) in ml_score.recommendations.iter().enumerate() {
-            script.push_str(&format!("    # Step {}: {}\n", i + 1, rec));
-            script.push_str(&format!("    print(f\"🔧 Step {}: {}\")\n", i + 1, rec));
-            script.push_str("    # Add your preprocessing code here\n");
-            script.push_str("    pass\n\n");
+            script.push_str(&format!(
+                "    # Step {}: {} [{}]\n",
+                i + 1,
+                rec.category,
+                match rec.priority {
+                    dataprof::analysis::RecommendationPriority::Critical => "CRITICAL",
+                    dataprof::analysis::RecommendationPriority::High => "HIGH",
+                    dataprof::analysis::RecommendationPriority::Medium => "MEDIUM",
+                    dataprof::analysis::RecommendationPriority::Low => "LOW",
+                }
+            ));
+            script.push_str(&format!("    # {}\n", rec.description));
+            script.push_str(&format!(
+                "    print(f\"🔧 Step {}: {}\")\n",
+                i + 1,
+                rec.description
+            ));
+
+            // Add actual code if available
+            if let Some(code) = &rec.code_snippet {
+                script.push_str("    \n");
+                // Indent the code properly
+                for line in code.lines() {
+                    if !line.trim().is_empty() {
+                        script.push_str(&format!("    {}\n", line));
+                    } else {
+                        script.push_str("\n");
+                    }
+                }
+                script.push_str("\n");
+            } else {
+                script.push_str("    # TODO: Implement this preprocessing step\n");
+                script.push_str("    pass\n\n");
+            }
         }
     }
 

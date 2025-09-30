@@ -10,13 +10,13 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
+use crate::analysis::{MlReadinessEngine, MlReadinessScore};
 use crate::types::{FileInfo, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 
 pub mod connection;
 pub mod connectors;
-pub mod ml_readiness_simple;
 pub mod retry;
 pub mod sampling;
 pub mod security;
@@ -24,7 +24,6 @@ pub mod streaming;
 
 pub use connection::*;
 pub use connectors::*;
-pub use ml_readiness_simple::*;
 pub use retry::*;
 pub use sampling::*;
 pub use security::*;
@@ -259,13 +258,6 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
         )
         .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed for database: {}", e))?;
 
-    // Perform ML readiness assessment if enabled
-    let _ml_readiness = if config.enable_ml_readiness {
-        Some(assess_ml_readiness(&column_profiles, effective_total_rows)?)
-    } else {
-        None
-    };
-
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
 
@@ -301,15 +293,12 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
 pub async fn profile_database_with_ml(
     config: DatabaseConfig,
     query: &str,
-) -> Result<(QualityReport, Option<MLReadinessScore>)> {
+) -> Result<(QualityReport, Option<MlReadinessScore>)> {
     let quality_report = profile_database(config.clone(), query).await?;
 
     let ml_readiness = if config.enable_ml_readiness {
-        let total_rows = quality_report.file_info.total_rows.unwrap_or(0);
-        Some(assess_ml_readiness(
-            &quality_report.column_profiles,
-            total_rows as u64,
-        )?)
+        let ml_engine = MlReadinessEngine::new();
+        Some(ml_engine.calculate_ml_score(&quality_report)?)
     } else {
         None
     };

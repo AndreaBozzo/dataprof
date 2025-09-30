@@ -68,10 +68,10 @@ pub use stats::{calculate_numeric_stats, calculate_text_stats};
 // Database connectors re-exports (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub use database::{
-    assess_ml_readiness, create_connector, profile_database, profile_database_with_ml,
-    DatabaseConfig, DatabaseConnector, DatabaseCredentials, DuckDbConnector, MLReadinessScore,
-    MySqlConnector, PostgresConnector, RetryConfig, SamplingConfig,
-    SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
+    create_connector, profile_database, profile_database_with_ml, DatabaseConfig,
+    DatabaseConnector, DatabaseCredentials, DuckDbConnector, MySqlConnector, PostgresConnector,
+    RetryConfig, SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector,
+    SslConfig,
 };
 
 /// Global memory leak detection utility

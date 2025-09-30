@@ -7,7 +7,91 @@ use dataprof::output::{
     display_data_quality_metrics, display_ml_score, display_profile, display_quality_issues,
 };
 use dataprof::{generate_html_report, profile_database_with_ml, DatabaseConfig};
-use std::fs;
+
+// Helper function to display ML score with code snippets (reused from analyze.rs)
+fn display_ml_score_with_code(ml_score: &dataprof::analysis::MlReadinessScore) {
+    use colored::*;
+
+    // First display the standard ML score
+    display_ml_score(ml_score);
+
+    // Then show code snippets for recommendations
+    if !ml_score.recommendations.is_empty() {
+        println!(
+            "🐍 {} {}:",
+            "Code Snippets".bright_blue().bold(),
+            format!("({} recommendations)", ml_score.recommendations.len()).dimmed()
+        );
+        println!();
+
+        for (i, rec) in ml_score.recommendations.iter().enumerate() {
+            if let Some(code) = &rec.code_snippet {
+                let priority_color = match rec.priority {
+                    dataprof::analysis::RecommendationPriority::Critical => "red",
+                    dataprof::analysis::RecommendationPriority::High => "yellow",
+                    dataprof::analysis::RecommendationPriority::Medium => "blue",
+                    dataprof::analysis::RecommendationPriority::Low => "green",
+                };
+
+                println!(
+                    "{}. {} {} - {}",
+                    (i + 1).to_string().bright_white(),
+                    rec.category.color(priority_color).bold(),
+                    format!(
+                        "[{}]",
+                        match rec.priority {
+                            dataprof::analysis::RecommendationPriority::Critical => "critical",
+                            dataprof::analysis::RecommendationPriority::High => "high",
+                            dataprof::analysis::RecommendationPriority::Medium => "medium",
+                            dataprof::analysis::RecommendationPriority::Low => "low",
+                        }
+                    )
+                    .color(priority_color),
+                    rec.description.dimmed()
+                );
+
+                if let Some(framework) = &rec.framework {
+                    println!("   📦 Framework: {}", framework.bright_cyan());
+                }
+
+                if !rec.imports.is_empty() {
+                    println!("   📥 Imports: {}", rec.imports.join(", ").bright_green());
+                }
+
+                println!("   💻 Code:");
+                // Display code with proper indentation and syntax highlighting
+                for line in code.lines() {
+                    if line.trim().starts_with('#') {
+                        println!("   {}", line.bright_black());
+                    } else {
+                        println!("   {}", line);
+                    }
+                }
+                println!();
+            }
+        }
+    }
+
+    // Show summary of actionable items
+    let code_snippets_count = ml_score
+        .recommendations
+        .iter()
+        .filter(|r| r.code_snippet.is_some())
+        .count();
+
+    if code_snippets_count > 0 {
+        println!(
+            "💡 {} Ready to implement {} actionable code snippets!",
+            "Tip:".bright_yellow().bold(),
+            code_snippets_count.to_string().bright_white().bold()
+        );
+        println!(
+            "   Use {} to generate a complete preprocessing script.",
+            "--output-script preprocess.py".bright_cyan()
+        );
+        println!();
+    }
+}
 
 #[cfg(feature = "database")]
 pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
@@ -82,109 +166,13 @@ pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
         }
     }
 
-    // Show ML readiness score if requested (simplified display for database)
+    // Show ML readiness score if requested
     if cli.ml_score {
         if let Some(ml_readiness_score) = &ml_score {
-            println!("\n🤖 ML READINESS SCORE Machine Learning Readiness");
-            let assessment = if ml_readiness_score.overall_score >= 80.0 {
-                "✅ Excellent"
-            } else if ml_readiness_score.overall_score >= 60.0 {
-                "✅ Good"
-            } else if ml_readiness_score.overall_score >= 40.0 {
-                "⚠️ Fair"
+            if cli.ml_code {
+                display_ml_score_with_code(ml_readiness_score);
             } else {
-                "❌ Poor"
-            };
-            println!(
-                "  {} Overall Score: {:.1}% {}",
-                if ml_readiness_score.overall_score >= 60.0 {
-                    "✅"
-                } else {
-                    "⚠️"
-                },
-                ml_readiness_score.overall_score,
-                assessment
-            );
-
-            if !ml_readiness_score.issues.is_empty() {
-                println!("\n🚫 Blocking Issues:");
-                for issue in &ml_readiness_score.issues {
-                    println!("  • {}", issue);
-                }
-            }
-
-            if !ml_readiness_score.recommendations.is_empty() {
-                println!("\n💡 Recommendations:");
-                for rec in &ml_readiness_score.recommendations {
-                    println!("  🟠 {}", rec);
-                }
-            }
-
-            // Show code snippets if --ml-code is enabled
-            if cli.ml_code && !ml_readiness_score.recommendations.is_empty() {
-                println!(
-                    "🐍 {} ({} recommendations):",
-                    "Code Snippets".bright_blue().bold(),
-                    ml_readiness_score.recommendations.len()
-                );
-                println!();
-
-                for (i, rec) in ml_readiness_score.recommendations.iter().enumerate() {
-                    println!(
-                        "{}. {} [{}] - {}",
-                        i + 1,
-                        "Database Preprocessing".bright_yellow(),
-                        "high".color("red"),
-                        rec
-                    );
-
-                    // Generate appropriate code snippet based on recommendation
-                    let code_snippet = if rec.contains("dimensionality reduction") {
-                        r#"   📦 Framework: pandas + scikit-learn
-   📥 Imports: from sklearn.decomposition import PCA
-   💻 Code:
-   # Apply PCA for dimensionality reduction
-   from sklearn.decomposition import PCA
-   pca = PCA(n_components=min(n_samples//2, 50))
-   X_reduced = pca.fit_transform(X_scaled)
-   print(f"Reduced from {X.shape[1]} to {X_reduced.shape[1]} features")"#
-                    } else if rec.contains("small dataset") {
-                        r#"   📦 Framework: pandas
-   📥 Imports: import pandas as pd
-   💻 Code:
-   # Handle small dataset - use cross-validation and simpler models
-   from sklearn.model_selection import cross_val_score, LeaveOneOut
-   from sklearn.linear_model import LogisticRegression
-
-   # Use Leave-One-Out CV for small datasets
-   loo = LeaveOneOut()
-   model = LogisticRegression(penalty='l2', C=1.0)
-   scores = cross_val_score(model, X, y, cv=loo)
-   print(f"Mean CV Score: {scores.mean():.3f} (+/- {scores.std() * 2:.3f})")"#
-                    } else {
-                        r#"   📦 Framework: pandas
-   📥 Imports: import pandas as pd
-   💻 Code:
-   # General database preprocessing
-   df = pd.read_sql_query("""
-       SELECT * FROM your_table
-       WHERE your_conditions
-   """, connection)
-
-   # Basic preprocessing steps
-   df = df.dropna()  # Handle missing values
-   df = df.drop_duplicates()  # Remove duplicates"#
-                    };
-
-                    println!("{}", code_snippet);
-                    println!();
-                }
-
-                println!(
-                    "💡 Tip: Ready to implement {} actionable code snippets!",
-                    ml_readiness_score.recommendations.len()
-                );
-                println!();
+                display_ml_score(ml_readiness_score);
             }
 
             // Generate preprocessing script if requested
