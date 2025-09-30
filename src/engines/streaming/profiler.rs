@@ -258,6 +258,13 @@ impl StreamingProfiler {
         // Check quality issues
         let issues = QualityChecker::check_columns(&column_profiles, &all_column_data);
 
+        // Calculate comprehensive ISO 8000/25012 quality metrics
+        let quality_metrics = crate::types::DataQualityMetrics::calculate_from_data(
+            &all_column_data,
+            &column_profiles,
+        )
+        .ok(); // Convert Result to Option, ignore errors for now
+
         let scan_time_ms = start.elapsed().as_millis();
         let sampling_ratio = if let Some(total) = estimated_total_rows {
             total_rows_processed as f64 / total as f64
@@ -268,7 +275,7 @@ impl StreamingProfiler {
         Ok(QualityReport {
             file_info: FileInfo {
                 path: file_path.display().to_string(),
-                total_rows: estimated_total_rows,
+                total_rows: Some(total_rows_processed),
                 total_columns: column_profiles.len(),
                 file_size_mb,
             },
@@ -279,7 +286,7 @@ impl StreamingProfiler {
                 sampling_ratio,
                 scan_time_ms,
             },
-            data_quality_metrics: None,
+            data_quality_metrics: quality_metrics,
         })
     }
 
