@@ -37,6 +37,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
                 sampling_ratio: 1.0,
                 scan_time_ms: start.elapsed().as_millis(),
             },
+            data_quality_metrics: None,
         });
     }
 
@@ -65,8 +66,10 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
         column_profiles.push(profile);
     }
 
-    // Check quality issues
-    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+    // Enhanced quality analysis: get both issues and comprehensive metrics
+    let (issues, data_quality_metrics) =
+        QualityChecker::enhanced_quality_analysis(&column_profiles, &columns)
+            .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed: {}", e))?;
     let scan_time_ms = start.elapsed().as_millis();
 
     Ok(QualityReport {
@@ -83,6 +86,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
             sampling_ratio: 1.0,
             scan_time_ms,
         },
+        data_quality_metrics: Some(data_quality_metrics),
     })
 }
 
@@ -131,8 +135,10 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
         column_profiles.push(profile);
     }
 
-    // Check quality issues
-    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+    // Enhanced quality analysis: get both issues and comprehensive metrics
+    let (issues, data_quality_metrics) =
+        QualityChecker::enhanced_quality_analysis(&column_profiles, &columns)
+            .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
 
@@ -150,6 +156,7 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
             sampling_ratio: sample_info.sampling_ratio,
             scan_time_ms,
         },
+        data_quality_metrics: Some(data_quality_metrics),
     })
 }
 

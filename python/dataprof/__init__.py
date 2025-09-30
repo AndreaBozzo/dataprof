@@ -10,6 +10,7 @@ __all__ = [
     "analyze_csv_file",
     "analyze_csv_with_quality",
     "analyze_json_file",
+    "calculate_data_quality_metrics",
     "batch_analyze_glob",
     "batch_analyze_directory",
 
@@ -35,6 +36,7 @@ __all__ = [
     "PyColumnProfile",
     "PyQualityReport",
     "PyQualityIssue",
+    "PyDataQualityMetrics",
     "PyBatchResult",
 
     # ML readiness classes

@@ -1,6 +1,8 @@
 use crate::analysis::MlReadinessScore;
 use crate::core::batch::{BatchResult, BatchSummary};
-use crate::types::{ColumnProfile, ColumnStats, DataType, QualityIssue, QualityReport, Severity};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, QualityIssue, QualityReport, Severity,
+};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
@@ -54,6 +56,8 @@ fn build_html(report: &QualityReport) -> String {
 
         {}
 
+        {}
+
         <section class="columns">
             <h2>📈 Column Analysis</h2>
             <div class="columns-grid">
@@ -81,8 +85,9 @@ fn build_html(report: &QualityReport) -> String {
         report.file_info.total_columns,
         report.scan_info.scan_time_ms,
         build_sampling_info(&report.scan_info),
-        build_quality_section(&report.issues),
-        build_columns_section(&report.column_profiles)
+        build_data_quality_metrics_section(&report.data_quality_metrics),
+        build_columns_section(&report.column_profiles),
+        build_legacy_issues_section(&report.issues, &report.data_quality_metrics)
     )
 }
 
@@ -100,7 +105,15 @@ fn build_sampling_info(scan_info: &crate::types::ScanInfo) -> String {
     }
 }
 
-fn build_quality_section(issues: &[QualityIssue]) -> String {
+fn build_legacy_issues_section(
+    issues: &[QualityIssue],
+    metrics: &Option<DataQualityMetrics>,
+) -> String {
+    // If we have comprehensive metrics, skip legacy issues (avoid redundancy)
+    if metrics.is_some() {
+        return String::new();
+    }
+
     if issues.is_empty() {
         return r#"<section class="quality">
             <h2>✨ Data Quality</h2>
@@ -265,6 +278,237 @@ fn build_quality_summary(critical: usize, warning: usize, info: usize) -> String
         </div>"#,
         summary_parts.join(" ")
     )
+}
+
+fn build_data_quality_metrics_section(metrics: &Option<DataQualityMetrics>) -> String {
+    match metrics {
+        Some(metrics) => {
+            // Calculate overall score using the same logic as CLI display
+            let overall_score = calculate_overall_data_quality_score(metrics);
+            let assessment_class = if overall_score >= 85.0 {
+                "excellent"
+            } else if overall_score >= 70.0 {
+                "good"
+            } else if overall_score >= 50.0 {
+                "fair"
+            } else {
+                "poor"
+            };
+
+            format!(
+                r#"<section class="data-quality-metrics">
+                    <h2>📊 Comprehensive Data Quality Metrics</h2>
+
+                    <div class="overall-score">
+                        <div class="score-circle {assessment_class}">
+                            <span class="score-value">{overall_score:.1}%</span>
+                            <span class="score-label">Overall Quality</span>
+                        </div>
+                    </div>
+
+                    <div class="metrics-grid">
+                        <div class="metric-card completeness">
+                            <div class="metric-header">
+                                <span class="metric-icon">🔍</span>
+                                <h3>Completeness</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Missing Values</span>
+                                    <span class="stat-value {missing_class}">{missing_ratio:.1}%</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Complete Records</span>
+                                    <span class="stat-value">{complete_ratio:.1}%</span>
+                                </div>
+                                {null_columns_html}
+                            </div>
+                        </div>
+
+                        <div class="metric-card consistency">
+                            <div class="metric-header">
+                                <span class="metric-icon">⚡</span>
+                                <h3>Consistency</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Type Consistency</span>
+                                    <span class="stat-value {type_class}">{type_consistency:.1}%</span>
+                                </div>
+                                {format_violations_html}
+                                {encoding_issues_html}
+                            </div>
+                        </div>
+
+                        <div class="metric-card uniqueness">
+                            <div class="metric-header">
+                                <span class="metric-icon">🔑</span>
+                                <h3>Uniqueness</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Key Uniqueness</span>
+                                    <span class="stat-value {uniqueness_class}">{key_uniqueness:.1}%</span>
+                                </div>
+                                {duplicates_html}
+                                {cardinality_html}
+                            </div>
+                        </div>
+
+                        <div class="metric-card accuracy">
+                            <div class="metric-header">
+                                <span class="metric-icon">🎯</span>
+                                <h3>Accuracy</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Outlier Ratio</span>
+                                    <span class="stat-value {outlier_class}">{outlier_ratio:.1}%</span>
+                                </div>
+                                {range_violations_html}
+                                {negative_values_html}
+                            </div>
+                        </div>
+                    </div>
+                </section>"#,
+                assessment_class = assessment_class,
+                overall_score = overall_score,
+                missing_ratio = metrics.missing_values_ratio,
+                missing_class = if metrics.missing_values_ratio <= 5.0 {
+                    "excellent"
+                } else if metrics.missing_values_ratio <= 15.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                complete_ratio = metrics.complete_records_ratio,
+                null_columns_html = if !metrics.null_columns.is_empty() {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Columns with nulls</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        metrics.null_columns.join(", ")
+                    )
+                } else {
+                    String::new()
+                },
+                type_consistency = metrics.data_type_consistency,
+                type_class = if metrics.data_type_consistency >= 95.0 {
+                    "excellent"
+                } else if metrics.data_type_consistency >= 80.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                format_violations_html = if metrics.format_violations > 0 {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Format Violations</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        metrics.format_violations
+                    )
+                } else {
+                    String::new()
+                },
+                encoding_issues_html = if metrics.encoding_issues > 0 {
+                    format!(
+                        r#"<div class="stat-item error">
+                        <span class="stat-label">Encoding Issues</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        metrics.encoding_issues
+                    )
+                } else {
+                    String::new()
+                },
+                key_uniqueness = metrics.key_uniqueness,
+                uniqueness_class = if metrics.key_uniqueness >= 95.0 {
+                    "excellent"
+                } else if metrics.key_uniqueness >= 80.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                duplicates_html = if metrics.duplicate_rows > 0 {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Duplicate Rows</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        metrics.duplicate_rows
+                    )
+                } else {
+                    r#"<div class="stat-item excellent">
+                        <span class="stat-label">Duplicate Rows</span>
+                        <span class="stat-value">None</span>
+                    </div>"#
+                        .to_string()
+                },
+                cardinality_html = if metrics.high_cardinality_warning {
+                    r#"<div class="stat-item warning">
+                        <span class="stat-label">High Cardinality</span>
+                        <span class="stat-value">Warning</span>
+                    </div>"#
+                        .to_string()
+                } else {
+                    String::new()
+                },
+                outlier_ratio = metrics.outlier_ratio,
+                outlier_class = if metrics.outlier_ratio <= 2.0 {
+                    "excellent"
+                } else if metrics.outlier_ratio <= 5.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                range_violations_html = if metrics.range_violations > 0 {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Range Violations</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        metrics.range_violations
+                    )
+                } else {
+                    String::new()
+                },
+                negative_values_html = if metrics.negative_values_in_positive > 0 {
+                    format!(
+                        r#"<div class="stat-item error">
+                        <span class="stat-label">Invalid Negatives</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        metrics.negative_values_in_positive
+                    )
+                } else {
+                    String::new()
+                }
+            )
+        }
+        None => String::new(), // No metrics available
+    }
+}
+
+/// Calculate overall data quality score (same logic as CLI display)
+fn calculate_overall_data_quality_score(metrics: &DataQualityMetrics) -> f64 {
+    let completeness_weight = 0.3;
+    let consistency_weight = 0.3;
+    let uniqueness_weight = 0.2;
+    let accuracy_weight = 0.2;
+
+    let completeness_score = 100.0 - metrics.missing_values_ratio;
+    let consistency_score = metrics.data_type_consistency;
+    let uniqueness_score = metrics.key_uniqueness;
+    let accuracy_score = 100.0 - (metrics.outlier_ratio * 10.0);
+
+    let overall = (completeness_score * completeness_weight)
+        + (consistency_score * consistency_weight)
+        + (uniqueness_score * uniqueness_weight)
+        + (accuracy_score.clamp(0.0, 100.0) * accuracy_weight);
+
+    overall.clamp(0.0, 100.0)
 }
 
 fn build_columns_section(columns: &[ColumnProfile]) -> String {
@@ -687,12 +931,163 @@ fn get_css() -> &'static str {
             font-size: 0.9rem;
         }
 
+        /* Data Quality Metrics Styles */
+        .data-quality-metrics {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .overall-score {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .score-circle {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            border: 6px solid;
+            background: white;
+            margin: 0 auto;
+        }
+
+        .score-circle.excellent {
+            border-color: #10b981;
+            color: #10b981;
+        }
+
+        .score-circle.good {
+            border-color: #3b82f6;
+            color: #3b82f6;
+        }
+
+        .score-circle.fair {
+            border-color: #f59e0b;
+            color: #f59e0b;
+        }
+
+        .score-circle.poor {
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+
+        .score-value {
+            font-size: 24px;
+            font-weight: bold;
+            line-height: 1;
+        }
+
+        .score-label {
+            font-size: 12px;
+            margin-top: 4px;
+            opacity: 0.8;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .metric-card {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 20px;
+            border-left: 4px solid;
+        }
+
+        .metric-card.completeness {
+            border-left-color: #10b981;
+        }
+
+        .metric-card.consistency {
+            border-left-color: #3b82f6;
+        }
+
+        .metric-card.uniqueness {
+            border-left-color: #8b5cf6;
+        }
+
+        .metric-card.accuracy {
+            border-left-color: #ef4444;
+        }
+
+        .metric-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .metric-icon {
+            font-size: 20px;
+            margin-right: 8px;
+        }
+
+        .metric-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #374151;
+        }
+
+        .metric-stats {
+            space-y: 10px;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .stat-value.excellent {
+            color: #10b981;
+        }
+
+        .stat-value.good {
+            color: #3b82f6;
+        }
+
+        .stat-value.warning {
+            color: #f59e0b;
+        }
+
+        .stat-value.error,
+        .stat-value.poor {
+            color: #ef4444;
+        }
+
         @media (max-width: 768px) {
             .container { padding: 10px; }
             header, section { padding: 20px; }
             h1 { font-size: 2rem; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
             .columns-grid { grid-template-columns: 1fr; }
+            .metrics-grid { grid-template-columns: 1fr; }
+            .score-circle { width: 100px; height: 100px; }
+            .score-value { font-size: 20px; }
         }
     "#
 }
@@ -731,6 +1126,8 @@ fn build_batch_html(batch_result: &BatchResult) -> String {
 
         {}
 
+        {}
+
         <footer>
             <p>Generated by <strong>DataProfiler CLI</strong> v0.4.1 - Batch Processing Mode</p>
         </footer>
@@ -744,6 +1141,9 @@ fn build_batch_html(batch_result: &BatchResult) -> String {
         get_css(),
         get_batch_dashboard_css(),
         build_batch_summary_section(&batch_result.summary),
+        build_batch_aggregated_data_quality_section(
+            &batch_result.summary.aggregated_data_quality_metrics
+        ),
         build_batch_ml_overview(&batch_result.ml_scores),
         build_files_overview(
             &batch_result.reports,
@@ -834,6 +1234,231 @@ fn build_batch_summary_section(summary: &BatchSummary) -> String {
         summary.total_records,
         summary.total_issues
     )
+}
+
+/// Build aggregated data quality metrics section for batch dashboard
+fn build_batch_aggregated_data_quality_section(
+    aggregated_metrics: &Option<crate::types::DataQualityMetrics>,
+) -> String {
+    match aggregated_metrics {
+        Some(metrics) => {
+            // Calculate overall score using the same logic as single file reports
+            let overall_score = calculate_overall_data_quality_score(metrics);
+            let assessment_class = if overall_score >= 85.0 {
+                "excellent"
+            } else if overall_score >= 70.0 {
+                "good"
+            } else if overall_score >= 50.0 {
+                "fair"
+            } else {
+                "poor"
+            };
+
+            format!(
+                r#"<section class="batch-aggregated-quality-metrics">
+                    <h2>🏆 Aggregated Data Quality Metrics</h2>
+                    <div class="aggregated-intro">
+                        <p>Cross-file aggregated metrics representing the overall data quality across all processed files</p>
+                    </div>
+
+                    <div class="overall-score">
+                        <div class="score-circle {assessment_class}">
+                            <span class="score-value">{overall_score:.1}%</span>
+                            <span class="score-label">Overall Dataset Quality</span>
+                        </div>
+                    </div>
+
+                    <div class="metrics-grid">
+                        <div class="metric-card completeness">
+                            <div class="metric-header">
+                                <span class="metric-icon">🔍</span>
+                                <h3>Completeness</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Missing Values</span>
+                                    <span class="stat-value {missing_class}">{missing_ratio:.1}%</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Complete Records</span>
+                                    <span class="stat-value">{complete_ratio:.1}%</span>
+                                </div>
+                                {null_columns_html}
+                            </div>
+                        </div>
+
+                        <div class="metric-card consistency">
+                            <div class="metric-header">
+                                <span class="metric-icon">⚡</span>
+                                <h3>Consistency</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Type Consistency</span>
+                                    <span class="stat-value {type_class}">{type_consistency:.1}%</span>
+                                </div>
+                                {format_violations_html}
+                                {encoding_issues_html}
+                            </div>
+                        </div>
+
+                        <div class="metric-card uniqueness">
+                            <div class="metric-header">
+                                <span class="metric-icon">🔑</span>
+                                <h3>Uniqueness</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Key Uniqueness</span>
+                                    <span class="stat-value {uniqueness_class}">{key_uniqueness:.1}%</span>
+                                </div>
+                                {duplicates_html}
+                                {cardinality_html}
+                            </div>
+                        </div>
+
+                        <div class="metric-card accuracy">
+                            <div class="metric-header">
+                                <span class="metric-icon">🎯</span>
+                                <h3>Accuracy</h3>
+                            </div>
+                            <div class="metric-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Outlier Ratio</span>
+                                    <span class="stat-value {outlier_class}">{outlier_ratio:.1}%</span>
+                                </div>
+                                {range_violations_html}
+                                {negative_values_html}
+                            </div>
+                        </div>
+                    </div>
+                </section>"#,
+                assessment_class = assessment_class,
+                overall_score = overall_score,
+                missing_ratio = metrics.missing_values_ratio,
+                missing_class = if metrics.missing_values_ratio <= 5.0 {
+                    "excellent"
+                } else if metrics.missing_values_ratio <= 15.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                complete_ratio = metrics.complete_records_ratio,
+                null_columns_html = if !metrics.null_columns.is_empty() {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Columns with nulls</span>
+                        <span class="stat-value">{}</span>
+                    </div>"#,
+                        if metrics.null_columns.len() > 5 {
+                            format!(
+                                "{} columns ({}...)",
+                                metrics.null_columns.len(),
+                                metrics.null_columns[..3].join(", ")
+                            )
+                        } else {
+                            metrics.null_columns.join(", ")
+                        }
+                    )
+                } else {
+                    String::new()
+                },
+                type_consistency = metrics.data_type_consistency,
+                type_class = if metrics.data_type_consistency >= 95.0 {
+                    "excellent"
+                } else if metrics.data_type_consistency >= 80.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                format_violations_html = if metrics.format_violations > 0 {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Format Violations</span>
+                        <span class="stat-value">{} total</span>
+                    </div>"#,
+                        metrics.format_violations
+                    )
+                } else {
+                    String::new()
+                },
+                encoding_issues_html = if metrics.encoding_issues > 0 {
+                    format!(
+                        r#"<div class="stat-item error">
+                        <span class="stat-label">Encoding Issues</span>
+                        <span class="stat-value">{} total</span>
+                    </div>"#,
+                        metrics.encoding_issues
+                    )
+                } else {
+                    String::new()
+                },
+                key_uniqueness = metrics.key_uniqueness,
+                uniqueness_class = if metrics.key_uniqueness >= 95.0 {
+                    "excellent"
+                } else if metrics.key_uniqueness >= 80.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                duplicates_html = if metrics.duplicate_rows > 0 {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Duplicate Rows</span>
+                        <span class="stat-value">{} total</span>
+                    </div>"#,
+                        metrics.duplicate_rows
+                    )
+                } else {
+                    r#"<div class="stat-item excellent">
+                        <span class="stat-label">Duplicate Rows</span>
+                        <span class="stat-value">None</span>
+                    </div>"#
+                        .to_string()
+                },
+                cardinality_html = if metrics.high_cardinality_warning {
+                    r#"<div class="stat-item warning">
+                        <span class="stat-label">High Cardinality</span>
+                        <span class="stat-value">Warning</span>
+                    </div>"#
+                        .to_string()
+                } else {
+                    String::new()
+                },
+                outlier_ratio = metrics.outlier_ratio,
+                outlier_class = if metrics.outlier_ratio <= 2.0 {
+                    "excellent"
+                } else if metrics.outlier_ratio <= 5.0 {
+                    "good"
+                } else {
+                    "poor"
+                },
+                range_violations_html = if metrics.range_violations > 0 {
+                    format!(
+                        r#"<div class="stat-item warning">
+                        <span class="stat-label">Range Violations</span>
+                        <span class="stat-value">{} total</span>
+                    </div>"#,
+                        metrics.range_violations
+                    )
+                } else {
+                    String::new()
+                },
+                negative_values_html = if metrics.negative_values_in_positive > 0 {
+                    format!(
+                        r#"<div class="stat-item error">
+                        <span class="stat-label">Invalid Negatives</span>
+                        <span class="stat-value">{} total</span>
+                    </div>"#,
+                        metrics.negative_values_in_positive
+                    )
+                } else {
+                    String::new()
+                }
+            )
+        }
+        None => String::new(), // No aggregated metrics available
+    }
 }
 
 /// Build ML readiness overview section
@@ -1253,6 +1878,21 @@ fn get_batch_dashboard_css() -> &'static str {
     r#"
         .batch-summary {
             margin-bottom: 30px;
+        }
+
+        .batch-aggregated-quality-metrics {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .aggregated-intro {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #64748b;
+            font-size: 1rem;
         }
 
         .summary-grid {

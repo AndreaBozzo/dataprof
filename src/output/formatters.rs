@@ -1,5 +1,7 @@
 use crate::analysis::MlReadinessScore;
-use crate::types::{ColumnProfile, ColumnStats, OutputFormat, QualityIssue, QualityReport};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, OutputFormat, QualityIssue, QualityReport,
+};
 use anyhow::Result;
 use is_terminal::IsTerminal;
 use serde::Serialize;
@@ -135,6 +137,44 @@ pub struct JsonReport {
     pub quality: JsonQuality,
     pub columns: Vec<JsonColumn>,
     pub summary: JsonSummary,
+    pub data_quality_metrics: Option<JsonDataQualityMetrics>,
+}
+
+/// Comprehensive data quality metrics following industry standards
+#[derive(Serialize)]
+pub struct JsonDataQualityMetrics {
+    pub completeness: JsonCompletenessMetrics,
+    pub consistency: JsonConsistencyMetrics,
+    pub uniqueness: JsonUniquenessMetrics,
+    pub accuracy: JsonAccuracyMetrics,
+}
+
+#[derive(Serialize)]
+pub struct JsonCompletenessMetrics {
+    pub missing_values_ratio: f64,
+    pub complete_records_ratio: f64,
+    pub null_columns: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct JsonConsistencyMetrics {
+    pub data_type_consistency: f64,
+    pub format_violations: usize,
+    pub encoding_issues: usize,
+}
+
+#[derive(Serialize)]
+pub struct JsonUniquenessMetrics {
+    pub duplicate_rows: usize,
+    pub key_uniqueness: f64,
+    pub high_cardinality_warning: bool,
+}
+
+#[derive(Serialize)]
+pub struct JsonAccuracyMetrics {
+    pub outlier_ratio: f64,
+    pub range_violations: usize,
+    pub negative_values_in_positive: usize,
 }
 
 #[derive(Serialize)]
@@ -242,6 +282,10 @@ impl OutputFormatter for JsonFormatter {
                 consistency_score: self.calculate_consistency_score(&report.issues),
                 ml_readiness: None, // Will be populated by ML engine
             },
+            data_quality_metrics: report
+                .data_quality_metrics
+                .as_ref()
+                .map(|metrics| self.format_data_quality_metrics(metrics)),
         };
 
         Ok(serde_json::to_string_pretty(&json_report)?)
@@ -408,6 +452,32 @@ impl JsonFormatter {
             std::cmp::max(0, 100 - (critical_issues * 20)) as f64
         }
     }
+
+    /// Format comprehensive data quality metrics for JSON output
+    fn format_data_quality_metrics(&self, metrics: &DataQualityMetrics) -> JsonDataQualityMetrics {
+        JsonDataQualityMetrics {
+            completeness: JsonCompletenessMetrics {
+                missing_values_ratio: metrics.missing_values_ratio,
+                complete_records_ratio: metrics.complete_records_ratio,
+                null_columns: metrics.null_columns.clone(),
+            },
+            consistency: JsonConsistencyMetrics {
+                data_type_consistency: metrics.data_type_consistency,
+                format_violations: metrics.format_violations,
+                encoding_issues: metrics.encoding_issues,
+            },
+            uniqueness: JsonUniquenessMetrics {
+                duplicate_rows: metrics.duplicate_rows,
+                key_uniqueness: metrics.key_uniqueness,
+                high_cardinality_warning: metrics.high_cardinality_warning,
+            },
+            accuracy: JsonAccuracyMetrics {
+                outlier_ratio: metrics.outlier_ratio,
+                range_violations: metrics.range_violations,
+                negative_values_in_positive: metrics.negative_values_in_positive,
+            },
+        }
+    }
 }
 
 impl OutputFormatter for CsvFormatter {
@@ -529,6 +599,47 @@ impl OutputFormatter for PlainFormatter {
                         output.push_str(&format!("[{}] Mixed data types\n", column));
                     }
                 }
+            }
+            output.push('\n');
+        }
+
+        // Data Quality Metrics
+        if let Some(ref metrics) = report.data_quality_metrics {
+            output.push_str("Data Quality Metrics\n");
+            output.push_str(&format!(
+                "  Completeness: {:.1}% missing, {:.1}% complete\n",
+                metrics.missing_values_ratio, metrics.complete_records_ratio
+            ));
+            output.push_str(&format!(
+                "  Consistency: {:.1}% type consistency\n",
+                metrics.data_type_consistency
+            ));
+            output.push_str(&format!(
+                "  Uniqueness: {:.1}% key uniqueness\n",
+                metrics.key_uniqueness
+            ));
+            output.push_str(&format!(
+                "  Accuracy: {:.1}% outlier ratio\n",
+                metrics.outlier_ratio
+            ));
+
+            if metrics.duplicate_rows > 0 {
+                output.push_str(&format!("  Duplicate Rows: {}\n", metrics.duplicate_rows));
+            }
+            if metrics.format_violations > 0 {
+                output.push_str(&format!(
+                    "  Format Violations: {}\n",
+                    metrics.format_violations
+                ));
+            }
+            if metrics.encoding_issues > 0 {
+                output.push_str(&format!("  Encoding Issues: {}\n", metrics.encoding_issues));
+            }
+            if !metrics.null_columns.is_empty() {
+                output.push_str(&format!(
+                    "  Null Columns: {}\n",
+                    metrics.null_columns.join(", ")
+                ));
             }
             output.push('\n');
         }

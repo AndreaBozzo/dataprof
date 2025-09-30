@@ -129,6 +129,68 @@ def test_batch_analysis():
             pass
         return False
 
+def test_data_quality_metrics():
+    """Test data quality metrics functionality"""
+    print("\n🧪 Testing DataQualityMetrics...")
+
+    # Use test files from tests/data directory
+    test_file = os.path.join("..", "..", "tests", "data", "customer_data_clean.csv")
+    if not os.path.exists(test_file):
+        test_file = os.path.join("tests", "data", "customer_data_clean.csv")
+
+    if not os.path.exists(test_file):
+        print("❌ Test file not found")
+        return False
+
+    try:
+        # Test dedicated data quality metrics function
+        metrics = dataprof.calculate_data_quality_metrics(test_file)
+
+        if metrics is None:
+            print("❌ No data quality metrics returned")
+            return False
+
+        print(f"✅ Data Quality Metrics calculated")
+        print(f"📊 Overall quality score: {metrics.overall_quality_score():.1f}%")
+        print(f"📋 Completeness: {metrics.completeness_summary()}")
+        print(f"🔧 Consistency: {metrics.consistency_summary()}")
+        print(f"🔑 Uniqueness: {metrics.uniqueness_summary()}")
+        print(f"🎯 Accuracy: {metrics.accuracy_summary()}")
+
+        # Test that metrics are included in quality report
+        quality_report = dataprof.analyze_csv_with_quality(test_file)
+        if quality_report.data_quality_metrics is not None:
+            report_metrics = quality_report.data_quality_metrics
+            print(f"✅ Quality report includes metrics")
+            print(f"📈 Report metrics score: {report_metrics.overall_quality_score():.1f}%")
+
+            # Verify consistency between standalone metrics and report metrics
+            standalone_score = metrics.overall_quality_score()
+            report_score = report_metrics.overall_quality_score()
+
+            if abs(standalone_score - report_score) < 0.1:
+                print("✅ Metrics consistency verified")
+            else:
+                print(f"⚠️ Metrics inconsistency: standalone={standalone_score:.1f}%, report={report_score:.1f}%")
+        else:
+            print("⚠️ Quality report missing data_quality_metrics")
+
+        # Test string representation
+        metrics_str = str(metrics)
+        print(f"✅ String representation: {metrics_str}")
+
+        # Test summary dict
+        summary = metrics.summary_dict()
+        print(f"✅ Summary dict has {len(summary)} entries")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 def main():
     """Main test runner"""
     print("🚀 DataProfiler Python Bindings Test Suite")
@@ -137,7 +199,8 @@ def main():
     tests = [
         test_csv_analysis,
         test_json_analysis,
-        test_batch_analysis
+        test_batch_analysis,
+        test_data_quality_metrics
     ]
 
     passed = 0

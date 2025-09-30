@@ -155,6 +155,7 @@ impl TrueStreamingProfiler {
                 sampling_ratio,
                 scan_time_ms,
             },
+            data_quality_metrics: None,
         })
     }
 

@@ -1,5 +1,10 @@
 /// Unified benchmarking suite using standardized datasets
 ///
+/// IMPORTANT: Benchmark functions use closures with criterion which can cause
+/// confusion with `let result = b.iter_custom(...)` patterns.
+/// The return value from iter_custom() is the timing Duration, not the benchmark result.
+/// Variables like `result` should be removed when they're only used for timing.
+///
 /// This consolidates the previously fragmented benchmark files:
 /// - simple_benchmarks.rs (basic functionality)
 /// - memory_benchmarks.rs (memory patterns)
@@ -213,7 +218,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
             |b, path| {
                 let start_overall = std::time::Instant::now();
 
-                let result = b.iter_custom(|iters| {
+                b.iter_custom(|iters| {
                     let start_memory = get_memory_usage();
                     let start_time = std::time::Instant::now();
 
@@ -253,8 +258,6 @@ fn bench_memory_patterns(c: &mut Criterion) {
                         columns_processed: Some(col_count),
                     });
                 }
-
-                result
             },
         );
 
@@ -382,7 +385,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
             |b, path| {
                 let start_overall = std::time::Instant::now();
 
-                let result = b.iter_custom(|iters| {
+                b.iter_custom(|iters| {
                     let start = std::time::Instant::now();
                     for _i in 0..iters {
                         let result = analyze_csv(black_box(path));
@@ -407,8 +410,6 @@ fn bench_memory_efficiency(c: &mut Criterion) {
                         columns_processed: Some(col_count),
                     });
                 }
-
-                result
             },
         );
 
@@ -436,7 +437,7 @@ fn bench_memory_leak_detection(c: &mut Criterion) {
     group.bench_function("repeated_analysis", |b| {
         let start_overall = std::time::Instant::now();
 
-        let result = b.iter_custom(|iters| {
+        b.iter_custom(|iters| {
             let initial_memory = get_memory_usage();
             let start_time = std::time::Instant::now();
 
@@ -482,8 +483,6 @@ fn bench_memory_leak_detection(c: &mut Criterion) {
                 columns_processed: Some(col_count),
             });
         }
-
-        result
     });
 
     group.finish();
@@ -509,7 +508,7 @@ fn bench_regression_baseline(c: &mut Criterion) {
     group.bench_function("standard_mixed_baseline", |b| {
         let start_overall = std::time::Instant::now();
 
-        let result = b.iter(|| {
+        b.iter(|| {
             let result = analyze_csv(black_box(&file_path));
             assert!(result.is_ok());
             result.expect("Operation failed")
@@ -530,8 +529,6 @@ fn bench_regression_baseline(c: &mut Criterion) {
                 columns_processed: Some(col_count),
             });
         }
-
-        result
     });
 
     group.finish();

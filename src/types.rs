@@ -1,6 +1,67 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
+/// Comprehensive data quality metrics following industry standards
+/// Provides structured assessment across four key dimensions
+#[derive(Debug, Clone)]
+pub struct DataQualityMetrics {
+    // Completeness
+    /// Percentage of missing values across all cells
+    pub missing_values_ratio: f64,
+    /// Percentage of rows with no null values
+    pub complete_records_ratio: f64,
+    /// Columns with more than 50% null values
+    pub null_columns: Vec<String>,
+
+    // Consistency
+    /// Percentage of values conforming to expected data type
+    pub data_type_consistency: f64,
+    /// Number of format violations (e.g., malformed dates)
+    pub format_violations: usize,
+    /// Number of UTF-8 encoding issues detected
+    pub encoding_issues: usize,
+
+    // Uniqueness
+    /// Number of exact duplicate rows
+    pub duplicate_rows: usize,
+    /// Percentage of unique values in key columns (if applicable)
+    pub key_uniqueness: f64,
+    /// Warning flag for columns with excessive unique values
+    pub high_cardinality_warning: bool,
+
+    // Accuracy
+    /// Percentage of statistically anomalous values (outliers)
+    pub outlier_ratio: f64,
+    /// Number of values outside expected ranges
+    pub range_violations: usize,
+    /// Number of negative values in positive-only fields (e.g., age)
+    pub negative_values_in_positive: usize,
+}
+
+impl DataQualityMetrics {
+    /// Calculate comprehensive data quality metrics from column data
+    ///
+    /// Delegates to the specialized MetricsCalculator for proper separation of concerns
+    ///
+    /// # Arguments
+    /// * `data` - HashMap containing column names and their values
+    /// * `column_profiles` - Vector of analyzed column profiles
+    ///
+    /// # Returns
+    /// * `Result<DataQualityMetrics>` - Comprehensive quality metrics or error
+    ///
+    /// # Errors
+    /// Returns error if data is malformed or calculation fails
+    pub fn calculate_from_data(
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+    ) -> Result<Self> {
+        // Delegate to the specialized metrics calculator module
+        // This follows the Single Responsibility Principle
+        crate::analysis::MetricsCalculator::calculate_comprehensive_metrics(data, column_profiles)
+    }
+}
+
 // Main report structure
 #[derive(Debug, Clone)]
 pub struct QualityReport {
@@ -8,6 +69,8 @@ pub struct QualityReport {
     pub column_profiles: Vec<ColumnProfile>,
     pub issues: Vec<QualityIssue>,
     pub scan_info: ScanInfo,
+    /// Enhanced data quality metrics following industry standards
+    pub data_quality_metrics: Option<DataQualityMetrics>,
 }
 
 impl QualityReport {

@@ -10,13 +10,13 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
+use crate::analysis::{MlReadinessEngine, MlReadinessScore};
 use crate::types::{FileInfo, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 
 pub mod connection;
 pub mod connectors;
-pub mod ml_readiness_simple;
 pub mod retry;
 pub mod sampling;
 pub mod security;
@@ -24,7 +24,6 @@ pub mod streaming;
 
 pub use connection::*;
 pub use connectors::*;
-pub use ml_readiness_simple::*;
 pub use retry::*;
 pub use sampling::*;
 pub use security::*;
@@ -233,6 +232,7 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 sampling_ratio: sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
                 scan_time_ms: start.elapsed().as_millis(),
             },
+            data_quality_metrics: None,
         });
     }
 
@@ -250,67 +250,13 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
         column_profiles.push(profile);
     }
 
-    // Check quality issues using existing quality checker
-    let issues = crate::utils::quality::QualityChecker::check_columns(&column_profiles, &columns);
-
-    // Convert to Vec<String> for compatibility with existing QualityIssue system
-    let mut string_issues: Vec<String> = issues
-        .into_iter()
-        .map(|issue| match issue {
-            crate::types::QualityIssue::NullValues {
-                column,
-                count,
-                percentage,
-            } => {
-                format!(
-                    "NULL VALUES in '{}': {} ({:.1}%)",
-                    column, count, percentage
-                )
-            }
-            crate::types::QualityIssue::MixedDateFormats { column, formats } => {
-                format!("MIXED DATE FORMATS in '{}': {:?}", column, formats)
-            }
-            crate::types::QualityIssue::Duplicates { column, count } => {
-                format!("DUPLICATES in '{}': {} duplicates", column, count)
-            }
-            crate::types::QualityIssue::Outliers {
-                column,
-                values,
-                threshold,
-            } => {
-                format!(
-                    "OUTLIERS in '{}': {} values beyond threshold {}",
-                    column,
-                    values.len(),
-                    threshold
-                )
-            }
-            crate::types::QualityIssue::MixedTypes { column, types } => {
-                format!("MIXED TYPES in '{}': {:?}", column, types)
-            }
-        })
-        .collect();
-
-    // Add sampling-related warnings if applicable
-    if let Some(ref sample_info) = sample_info {
-        if let Some(warning) = sample_info.get_warning() {
-            string_issues.push(format!("SAMPLING WARNING: {}", warning));
-        }
-    }
-
-    // Perform ML readiness assessment if enabled
-    let ml_readiness = if config.enable_ml_readiness {
-        Some(assess_ml_readiness(&column_profiles, effective_total_rows)?)
-    } else {
-        None
-    };
-
-    // Add ML readiness issues to the general issues list
-    if let Some(ref ml_assessment) = ml_readiness {
-        for ml_issue in &ml_assessment.issues {
-            string_issues.push(format!("ML READINESS: {}", ml_issue));
-        }
-    }
+    // Enhanced quality analysis: get both issues and comprehensive metrics
+    let (issues, data_quality_metrics) =
+        crate::utils::quality::QualityChecker::enhanced_quality_analysis(
+            &column_profiles,
+            &columns,
+        )
+        .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed for database: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
@@ -331,12 +277,13 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
             file_size_mb: 0.0, // Not applicable for database queries
         },
         column_profiles,
-        issues: vec![], // Convert string issues back to QualityIssue enum if needed
+        issues, // Use the structured QualityIssue enum directly
         scan_info: ScanInfo {
             rows_scanned: actual_rows_processed,
             sampling_ratio,
             scan_time_ms,
         },
+        data_quality_metrics: Some(data_quality_metrics),
     };
 
     Ok(report)
@@ -346,15 +293,12 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
 pub async fn profile_database_with_ml(
     config: DatabaseConfig,
     query: &str,
-) -> Result<(QualityReport, Option<MLReadinessScore>)> {
+) -> Result<(QualityReport, Option<MlReadinessScore>)> {
     let quality_report = profile_database(config.clone(), query).await?;
 
     let ml_readiness = if config.enable_ml_readiness {
-        let total_rows = quality_report.file_info.total_rows.unwrap_or(0);
-        Some(assess_ml_readiness(
-            &quality_report.column_profiles,
-            total_rows as u64,
-        )?)
+        let ml_engine = MlReadinessEngine::new();
+        Some(ml_engine.calculate_ml_score(&quality_report)?)
     } else {
         None
     };

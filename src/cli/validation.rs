@@ -4,21 +4,29 @@ use dataprof::core::{exit_codes, InputValidator, ValidationError};
 use crate::cli::args::Cli;
 
 pub fn validate_cli_inputs(cli: &Cli) -> Result<(), ValidationError> {
-    // Validate file input (unless it's engine info, benchmark mode, or batch processing)
+    // Validate file input (unless it's engine info, benchmark mode, database mode, or batch processing)
     if !cli.engine_info && !cli.benchmark {
-        // Allow directories for batch processing (recursive or glob mode)
-        if cli.file.is_dir() && (cli.recursive || cli.glob.is_some()) {
-            // For batch processing, just validate directory exists and is readable
-            if !cli.file.exists() {
-                return Err(ValidationError {
-                    message: format!("Directory not found: {}", cli.file.display()),
-                    suggestion: "Check the directory path and permissions".to_string(),
-                    error_code: 2,
-                });
+        // Skip file validation for database mode
+        #[cfg(feature = "database")]
+        let is_database_mode = cli.database.is_some();
+        #[cfg(not(feature = "database"))]
+        let is_database_mode = false;
+
+        if !is_database_mode {
+            // Allow directories for batch processing (recursive or glob mode)
+            if cli.file.is_dir() && (cli.recursive || cli.glob.is_some()) {
+                // For batch processing, just validate directory exists and is readable
+                if !cli.file.exists() {
+                    return Err(ValidationError {
+                        message: format!("Directory not found: {}", cli.file.display()),
+                        suggestion: "Check the directory path and permissions".to_string(),
+                        error_code: 2,
+                    });
+                }
+            } else {
+                // Standard file validation for single file processing
+                InputValidator::validate_file_input(&cli.file)?;
             }
-        } else {
-            // Standard file validation for single file processing
-            InputValidator::validate_file_input(&cli.file)?;
         }
     }
 

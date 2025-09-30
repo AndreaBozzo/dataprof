@@ -4,6 +4,32 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Feature interaction warnings for ML
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureInteractionWarning {
+    pub warning_type: InteractionWarningType,
+    pub features: Vec<String>,
+    pub description: String,
+    pub severity: RecommendationPriority,
+    pub recommendation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InteractionWarningType {
+    /// Possible data leakage (e.g., ID-like features)
+    PossibleLeakage,
+    /// Multiple high cardinality features detected
+    HighCardinality,
+    /// All features are categorical (no numeric diversity)
+    AllCategorical,
+    /// All features are numeric (no categorical context)
+    AllNumeric,
+    /// Too few features for dataset size
+    InsufficientFeatures,
+    /// Too many features relative to samples (curse of dimensionality)
+    CurseOfDimensionality,
+}
+
 /// ML Readiness Score engine - calculates how suitable data is for ML workflows
 #[derive(Debug, Clone)]
 pub struct MlReadinessEngine {
@@ -59,6 +85,12 @@ pub struct MlReadinessScore {
 
     /// Preprocessing suggestions
     pub preprocessing_suggestions: Vec<PreprocessingSuggestion>,
+
+    /// Feature interaction warnings
+    pub feature_warnings: Vec<FeatureInteractionWarning>,
+
+    /// Data quality integration score (when DataQualityMetrics available)
+    pub quality_integration_score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -207,11 +239,21 @@ impl MlReadinessEngine {
             self.calculate_feature_quality_score(&report.column_profiles, &report.issues);
 
         // Calculate weighted overall score
-        let overall_score = (completeness_score * self.config.completeness_weight
+        let mut overall_score = (completeness_score * self.config.completeness_weight
             + consistency_score * self.config.consistency_weight
             + type_suitability_score * self.config.type_suitability_weight
             + feature_quality_score * self.config.feature_quality_weight)
             * 100.0;
+
+        // Integrate with DataQualityMetrics if available
+        let quality_integration_score = if let Some(ref metrics) = report.data_quality_metrics {
+            let integration_score = self.integrate_quality_metrics(metrics);
+            // Adjust overall score based on data quality
+            overall_score = (overall_score * 0.7) + (integration_score * 0.3);
+            Some(integration_score)
+        } else {
+            None
+        };
 
         // Determine readiness level
         let readiness_level = self.determine_readiness_level(overall_score);
@@ -224,6 +266,10 @@ impl MlReadinessEngine {
         let preprocessing_suggestions =
             self.generate_preprocessing_suggestions(&report.column_profiles, &report.issues);
 
+        // Generate feature interaction warnings
+        let feature_warnings =
+            self.analyze_feature_interactions(&report.column_profiles, report.file_info.total_rows);
+
         Ok(MlReadinessScore {
             overall_score,
             completeness_score: completeness_score * 100.0,
@@ -235,6 +281,8 @@ impl MlReadinessEngine {
             blocking_issues,
             feature_analysis,
             preprocessing_suggestions,
+            feature_warnings,
+            quality_integration_score,
         })
     }
 
@@ -646,13 +694,37 @@ impl MlReadinessEngine {
             DataType::Integer | DataType::Float => {
                 encoding_suggestions.push("Consider standardization or normalization".to_string());
 
-                // Check for variance
-                if let ColumnStats::Numeric { min, max, .. } = &profile.stats {
+                // Enhanced: Use actual statistics for better assessment
+                if let ColumnStats::Numeric { min, max, mean } = &profile.stats {
                     if (max - min).abs() < f64::EPSILON {
                         potential_issues.push("Constant or near-constant values".to_string());
                         (MlFeatureType::LowVariance, 0.1)
                     } else {
-                        (MlFeatureType::NumericReady, 0.9)
+                        // Check for extreme ranges that need scaling
+                        let range = max - min;
+                        let scale_magnitude = range.abs().log10();
+
+                        if scale_magnitude > 3.0 {
+                            potential_issues.push(format!(
+                                "Large value range ({:.2} to {:.2}), scaling strongly recommended",
+                                min, max
+                            ));
+                            encoding_suggestions.insert(
+                                0,
+                                "StandardScaler or RobustScaler recommended due to wide range"
+                                    .to_string(),
+                            );
+                            (MlFeatureType::NumericNeedsScaling, 0.75)
+                        } else if mean.abs() > 1000.0 || range > 1000.0 {
+                            encoding_suggestions.insert(
+                                0,
+                                "MinMaxScaler or StandardScaler recommended".to_string(),
+                            );
+                            (MlFeatureType::NumericNeedsScaling, 0.85)
+                        } else {
+                            // Well-behaved numeric feature
+                            (MlFeatureType::NumericReady, 0.95)
+                        }
                     }
                 } else {
                     (MlFeatureType::NumericNeedsScaling, 0.8)
@@ -661,28 +733,64 @@ impl MlReadinessEngine {
             DataType::String => {
                 let unique_ratio = self.estimate_unique_ratio(profile);
 
-                if unique_ratio < 0.05 {
+                // Enhanced: Use actual unique count when available
+                let unique_count = profile
+                    .unique_count
+                    .unwrap_or((profile.total_count as f64 * unique_ratio) as usize);
+
+                if unique_count == profile.total_count || unique_ratio > 0.95 {
+                    potential_issues.push("Likely ID column (unique values)".to_string());
+                    encoding_suggestions
+                        .push("Consider removing if not meaningful for prediction".to_string());
+                    (MlFeatureType::HighCardinalityRisky, 0.2)
+                } else if unique_ratio < 0.05 || unique_count <= 10 {
                     encoding_suggestions.push("One-hot encoding (low cardinality)".to_string());
-                    (MlFeatureType::CategoricalNeedsEncoding, 0.8)
-                } else if unique_ratio < 0.3 {
+                    encoding_suggestions.push(format!("~{} unique values detected", unique_count));
+                    (MlFeatureType::CategoricalNeedsEncoding, 0.85)
+                } else if unique_ratio < 0.3 || unique_count <= 50 {
                     encoding_suggestions.push("Label encoding or target encoding".to_string());
-                    (MlFeatureType::CategoricalNeedsEncoding, 0.7)
+                    encoding_suggestions.push(format!(
+                        "~{} unique values, moderate cardinality",
+                        unique_count
+                    ));
+                    (MlFeatureType::CategoricalNeedsEncoding, 0.75)
                 } else if unique_ratio > 0.8 {
-                    encoding_suggestions.push("TF-IDF or word embeddings".to_string());
+                    // Check text length stats if available
+                    if let ColumnStats::Text { avg_length, .. } = &profile.stats {
+                        if *avg_length > 50.0 {
+                            encoding_suggestions
+                                .push("TF-IDF or word embeddings for long text".to_string());
+                            potential_issues.push(format!(
+                                "Long text detected (avg {} chars)",
+                                *avg_length as usize
+                            ));
+                        } else {
+                            encoding_suggestions
+                                .push("Hash encoding or embedding for short text".to_string());
+                        }
+                    } else {
+                        encoding_suggestions.push("TF-IDF or word embeddings".to_string());
+                    }
                     encoding_suggestions
                         .push("Consider text preprocessing (tokenization, stemming)".to_string());
                     (MlFeatureType::TextNeedsProcessing, 0.4)
                 } else {
-                    potential_issues.push("High cardinality categorical feature".to_string());
-                    encoding_suggestions
-                        .push("Consider dimensionality reduction or feature hashing".to_string());
-                    (MlFeatureType::HighCardinalityRisky, 0.5)
+                    potential_issues.push(format!(
+                        "High cardinality (~{} unique values)",
+                        unique_count
+                    ));
+                    encoding_suggestions.push(
+                        "Target encoding, frequency encoding, or feature hashing".to_string(),
+                    );
+                    (MlFeatureType::HighCardinalityRisky, 0.55)
                 }
             }
             DataType::Date => {
                 encoding_suggestions.push("Extract year, month, day, day_of_week".to_string());
                 encoding_suggestions
                     .push("Calculate time since epoch or reference date".to_string());
+                encoding_suggestions
+                    .push("Consider cyclical encoding for periodic features (sin/cos)".to_string());
                 (MlFeatureType::TemporalNeedsEngineering, 0.7)
             }
         };
@@ -691,6 +799,9 @@ impl MlReadinessEngine {
         let adjusted_suitability = if null_percentage > 20.0 {
             potential_issues.push(format!("High missing value rate ({:.1}%)", null_percentage));
             base_suitability * (1.0 - null_percentage / 200.0).max(0.3)
+        } else if null_percentage > 5.0 {
+            potential_issues.push(format!("Moderate missing values ({:.1}%)", null_percentage));
+            base_suitability * 0.9
         } else {
             base_suitability
         };
@@ -838,6 +949,171 @@ impl MlReadinessEngine {
         }
 
         suggestions
+    }
+
+    /// Integrate DataQualityMetrics into ML scoring
+    fn integrate_quality_metrics(&self, metrics: &crate::types::DataQualityMetrics) -> f64 {
+        let mut quality_score = 100.0;
+
+        // Completeness impact
+        quality_score -= metrics.missing_values_ratio * 0.5;
+        if metrics.complete_records_ratio < 90.0 {
+            quality_score -= (90.0 - metrics.complete_records_ratio) * 0.3;
+        }
+
+        // Consistency impact (critical for ML)
+        if metrics.data_type_consistency < 100.0 {
+            quality_score -= (100.0 - metrics.data_type_consistency) * 1.0; // Higher penalty
+        }
+        quality_score -= (metrics.format_violations as f64) * 0.2;
+        quality_score -= (metrics.encoding_issues as f64) * 0.3;
+
+        // Uniqueness impact
+        quality_score -= (metrics.duplicate_rows as f64) * 0.1;
+        if metrics.high_cardinality_warning {
+            quality_score -= 5.0;
+        }
+
+        // Accuracy impact
+        quality_score -= metrics.outlier_ratio * 0.2;
+        quality_score -= (metrics.range_violations as f64) * 0.15;
+
+        quality_score.clamp(0.0, 100.0)
+    }
+
+    /// Analyze feature interactions and potential issues
+    fn analyze_feature_interactions(
+        &self,
+        profiles: &[ColumnProfile],
+        total_rows: Option<usize>,
+    ) -> Vec<FeatureInteractionWarning> {
+        let mut warnings = Vec::new();
+
+        if profiles.is_empty() {
+            return warnings;
+        }
+
+        let total_rows = total_rows.unwrap_or(0);
+
+        // Check for curse of dimensionality
+        if total_rows > 0 && profiles.len() > total_rows / 10 {
+            warnings.push(FeatureInteractionWarning {
+                warning_type: InteractionWarningType::CurseOfDimensionality,
+                features: vec![],
+                description: format!(
+                    "{} features with only {} samples. High risk of overfitting.",
+                    profiles.len(),
+                    total_rows
+                ),
+                severity: RecommendationPriority::Critical,
+                recommendation: "Consider feature selection, dimensionality reduction (PCA), or collecting more data".to_string(),
+            });
+        }
+
+        // Check for insufficient features
+        if profiles.len() < 3 && total_rows > 100 {
+            warnings.push(FeatureInteractionWarning {
+                warning_type: InteractionWarningType::InsufficientFeatures,
+                features: vec![],
+                description: format!(
+                    "Only {} features detected. Limited predictive power.",
+                    profiles.len()
+                ),
+                severity: RecommendationPriority::Medium,
+                recommendation:
+                    "Consider feature engineering to create additional meaningful features"
+                        .to_string(),
+            });
+        }
+
+        // Detect ID-like columns (potential leakage)
+        let id_candidates: Vec<String> = profiles
+            .iter()
+            .filter(|p| {
+                if let Some(unique_count) = p.unique_count {
+                    let uniqueness_ratio = unique_count as f64 / p.total_count as f64;
+                    uniqueness_ratio > 0.95 && p.total_count > 100
+                } else {
+                    false
+                }
+            })
+            .map(|p| p.name.clone())
+            .collect();
+
+        if !id_candidates.is_empty() {
+            warnings.push(FeatureInteractionWarning {
+                warning_type: InteractionWarningType::PossibleLeakage,
+                features: id_candidates.clone(),
+                description: format!(
+                    "{} potential ID columns detected: {}",
+                    id_candidates.len(),
+                    id_candidates.join(", ")
+                ),
+                severity: RecommendationPriority::High,
+                recommendation: "Review if these columns should be excluded from training to prevent data leakage".to_string(),
+            });
+        }
+
+        // Check for high cardinality feature overload
+        let high_cardinality_features: Vec<String> = profiles
+            .iter()
+            .filter(|p| {
+                if let Some(unique_count) = p.unique_count {
+                    unique_count > 100 && unique_count < p.total_count
+                } else {
+                    false
+                }
+            })
+            .map(|p| p.name.clone())
+            .collect();
+
+        if high_cardinality_features.len() > 5 {
+            warnings.push(FeatureInteractionWarning {
+                warning_type: InteractionWarningType::HighCardinality,
+                features: high_cardinality_features.clone(),
+                description: format!(
+                    "{} high-cardinality features detected",
+                    high_cardinality_features.len()
+                ),
+                severity: RecommendationPriority::Medium,
+                recommendation:
+                    "Consider target encoding, frequency encoding, or grouping rare categories"
+                        .to_string(),
+            });
+        }
+
+        // Check for lack of diversity in feature types
+        let numeric_count = profiles
+            .iter()
+            .filter(|p| matches!(p.data_type, DataType::Integer | DataType::Float))
+            .count();
+        let categorical_count = profiles
+            .iter()
+            .filter(|p| matches!(p.data_type, DataType::String))
+            .count();
+
+        if numeric_count == 0 && profiles.len() > 2 {
+            warnings.push(FeatureInteractionWarning {
+                warning_type: InteractionWarningType::AllCategorical,
+                features: vec![],
+                description: "All features are categorical. No numeric features detected."
+                    .to_string(),
+                severity: RecommendationPriority::Medium,
+                recommendation:
+                    "Consider creating numeric features through encoding or aggregations"
+                        .to_string(),
+            });
+        } else if categorical_count == 0 && profiles.len() > 2 {
+            warnings.push(FeatureInteractionWarning {
+                warning_type: InteractionWarningType::AllNumeric,
+                features: vec![],
+                description: "All features are numeric. No categorical features detected.".to_string(),
+                severity: RecommendationPriority::Low,
+                recommendation: "Verify if any numeric features should be treated as categorical (e.g., zip codes)".to_string(),
+            });
+        }
+
+        warnings
     }
 }
 

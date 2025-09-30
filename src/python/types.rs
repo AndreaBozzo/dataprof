@@ -3,12 +3,13 @@
 use pyo3::prelude::*;
 
 use crate::analysis::ml_readiness::{
-    FeatureImportancePotential, ImplementationEffort, MlBlockingIssue, MlFeatureType,
-    MlReadinessLevel, MlRecommendation, RecommendationPriority,
+    FeatureImportancePotential, FeatureInteractionWarning, ImplementationEffort,
+    InteractionWarningType, MlBlockingIssue, MlFeatureType, MlReadinessLevel, MlRecommendation,
+    RecommendationPriority,
 };
 use crate::analysis::{FeatureAnalysis, MlReadinessScore, PreprocessingSuggestion};
 use crate::core::batch::BatchResult;
-use crate::types::{ColumnProfile, DataType, QualityIssue, QualityReport};
+use crate::types::{ColumnProfile, DataQualityMetrics, DataType, QualityIssue, QualityReport};
 
 /// Python wrapper for ColumnProfile
 #[pyclass]
@@ -167,6 +168,8 @@ pub struct PyQualityReport {
     pub sampling_ratio: f64,
     #[pyo3(get)]
     pub scan_time_ms: u128,
+    #[pyo3(get)]
+    pub data_quality_metrics: Option<PyDataQualityMetrics>,
 }
 
 impl From<&QualityReport> for PyQualityReport {
@@ -184,6 +187,10 @@ impl From<&QualityReport> for PyQualityReport {
             rows_scanned: report.scan_info.rows_scanned,
             sampling_ratio: report.scan_info.sampling_ratio,
             scan_time_ms: report.scan_info.scan_time_ms,
+            data_quality_metrics: report
+                .data_quality_metrics
+                .as_ref()
+                .map(PyDataQualityMetrics::from),
         }
     }
 }
@@ -233,6 +240,313 @@ impl PyQualityReport {
             .filter(|issue| issue.severity == severity)
             .cloned()
             .collect()
+    }
+}
+
+/// Python wrapper for DataQualityMetrics
+#[pyclass]
+#[derive(Clone)]
+pub struct PyDataQualityMetrics {
+    // Completeness
+    #[pyo3(get)]
+    pub missing_values_ratio: f64,
+    #[pyo3(get)]
+    pub complete_records_ratio: f64,
+    #[pyo3(get)]
+    pub null_columns: Vec<String>,
+
+    // Consistency
+    #[pyo3(get)]
+    pub data_type_consistency: f64,
+    #[pyo3(get)]
+    pub format_violations: usize,
+    #[pyo3(get)]
+    pub encoding_issues: usize,
+
+    // Uniqueness
+    #[pyo3(get)]
+    pub duplicate_rows: usize,
+    #[pyo3(get)]
+    pub key_uniqueness: f64,
+    #[pyo3(get)]
+    pub high_cardinality_warning: bool,
+
+    // Accuracy
+    #[pyo3(get)]
+    pub outlier_ratio: f64,
+    #[pyo3(get)]
+    pub range_violations: usize,
+    #[pyo3(get)]
+    pub negative_values_in_positive: usize,
+}
+
+impl From<&DataQualityMetrics> for PyDataQualityMetrics {
+    fn from(metrics: &DataQualityMetrics) -> Self {
+        Self {
+            missing_values_ratio: metrics.missing_values_ratio,
+            complete_records_ratio: metrics.complete_records_ratio,
+            null_columns: metrics.null_columns.clone(),
+            data_type_consistency: metrics.data_type_consistency,
+            format_violations: metrics.format_violations,
+            encoding_issues: metrics.encoding_issues,
+            duplicate_rows: metrics.duplicate_rows,
+            key_uniqueness: metrics.key_uniqueness,
+            high_cardinality_warning: metrics.high_cardinality_warning,
+            outlier_ratio: metrics.outlier_ratio,
+            range_violations: metrics.range_violations,
+            negative_values_in_positive: metrics.negative_values_in_positive,
+        }
+    }
+}
+
+#[pymethods]
+impl PyDataQualityMetrics {
+    /// Calculate overall data quality score (0-100)
+    fn overall_quality_score(&self) -> PyResult<f64> {
+        let mut score = 100.0;
+
+        // Completeness penalty
+        score -= self.missing_values_ratio * 0.5; // 0.5 point per % missing values
+        if self.complete_records_ratio < 90.0 {
+            score -= (90.0 - self.complete_records_ratio) * 0.3;
+        }
+
+        // Consistency penalty
+        if self.data_type_consistency < 100.0 {
+            score -= (100.0 - self.data_type_consistency) * 0.8;
+        }
+        score -= (self.format_violations as f64) * 0.1;
+        score -= (self.encoding_issues as f64) * 0.2;
+
+        // Uniqueness penalty
+        score -= (self.duplicate_rows as f64) * 0.05;
+        if self.key_uniqueness < 95.0 {
+            score -= (95.0 - self.key_uniqueness) * 0.5;
+        }
+        if self.high_cardinality_warning {
+            score -= 5.0;
+        }
+
+        // Accuracy penalty
+        score -= self.outlier_ratio * 0.3;
+        score -= (self.range_violations as f64) * 0.15;
+        score -= (self.negative_values_in_positive as f64) * 0.2;
+
+        Ok(score.max(0.0))
+    }
+
+    /// Get completeness summary
+    fn completeness_summary(&self) -> String {
+        format!(
+            "Missing values: {:.1}% | Complete records: {:.1}% | Null columns: {}",
+            self.missing_values_ratio,
+            self.complete_records_ratio,
+            self.null_columns.len()
+        )
+    }
+
+    /// Get consistency summary
+    fn consistency_summary(&self) -> String {
+        format!(
+            "Type consistency: {:.1}% | Format violations: {} | Encoding issues: {}",
+            self.data_type_consistency, self.format_violations, self.encoding_issues
+        )
+    }
+
+    /// Get uniqueness summary
+    fn uniqueness_summary(&self) -> String {
+        format!(
+            "Duplicate rows: {} | Key uniqueness: {:.1}% | High cardinality warning: {}",
+            self.duplicate_rows, self.key_uniqueness, self.high_cardinality_warning
+        )
+    }
+
+    /// Get accuracy summary
+    fn accuracy_summary(&self) -> String {
+        format!(
+            "Outlier ratio: {:.1}% | Range violations: {} | Negative values in positive fields: {}",
+            self.outlier_ratio, self.range_violations, self.negative_values_in_positive
+        )
+    }
+
+    /// Get detailed report as string summary (simplified due to PyO3 type constraints)
+    fn summary_dict(&self) -> std::collections::HashMap<String, String> {
+        let mut dict = std::collections::HashMap::new();
+
+        // Completeness
+        dict.insert(
+            "missing_values_ratio".to_string(),
+            format!("{:.2}", self.missing_values_ratio),
+        );
+        dict.insert(
+            "complete_records_ratio".to_string(),
+            format!("{:.2}", self.complete_records_ratio),
+        );
+        dict.insert(
+            "null_columns_count".to_string(),
+            self.null_columns.len().to_string(),
+        );
+
+        // Consistency
+        dict.insert(
+            "data_type_consistency".to_string(),
+            format!("{:.2}", self.data_type_consistency),
+        );
+        dict.insert(
+            "format_violations".to_string(),
+            self.format_violations.to_string(),
+        );
+        dict.insert(
+            "encoding_issues".to_string(),
+            self.encoding_issues.to_string(),
+        );
+
+        // Uniqueness
+        dict.insert(
+            "duplicate_rows".to_string(),
+            self.duplicate_rows.to_string(),
+        );
+        dict.insert(
+            "key_uniqueness".to_string(),
+            format!("{:.2}", self.key_uniqueness),
+        );
+        dict.insert(
+            "high_cardinality_warning".to_string(),
+            self.high_cardinality_warning.to_string(),
+        );
+
+        // Accuracy
+        dict.insert(
+            "outlier_ratio".to_string(),
+            format!("{:.2}", self.outlier_ratio),
+        );
+        dict.insert(
+            "range_violations".to_string(),
+            self.range_violations.to_string(),
+        );
+        dict.insert(
+            "negative_values_in_positive".to_string(),
+            self.negative_values_in_positive.to_string(),
+        );
+
+        dict
+    }
+
+    /// Rich HTML representation for Jupyter notebooks
+    fn _repr_html_(&self) -> String {
+        let overall_score = self.overall_quality_score().unwrap_or(0.0);
+        let score_color = if overall_score >= 80.0 {
+            "#4CAF50"
+        } else if overall_score >= 60.0 {
+            "#FF9800"
+        } else {
+            "#F44336"
+        };
+
+        format!(
+            r#"
+<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 8px 0;">
+    <h3 style="margin: 0 0 16px 0; color: #333;">
+        📊 Data Quality Metrics
+        <span style="background-color: {}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.9em; margin-left: 8px;">
+            {:.1}%
+        </span>
+    </h3>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
+
+        <!-- Completeness -->
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
+            <h4 style="margin: 0 0 8px 0; color: #4CAF50;">📋 Completeness</h4>
+            <div style="margin-bottom: 8px;">
+                <strong>Missing Values:</strong> {:.1}%
+                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
+                    <div style="background-color: #F44336; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
+                </div>
+            </div>
+            <div style="margin-bottom: 8px;">
+                <strong>Complete Records:</strong> {:.1}%
+                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
+                    <div style="background-color: #4CAF50; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
+                </div>
+            </div>
+            <div><strong>Null Columns:</strong> {}</div>
+        </div>
+
+        <!-- Consistency -->
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
+            <h4 style="margin: 0 0 8px 0; color: #2196F3;">🔧 Consistency</h4>
+            <div style="margin-bottom: 8px;">
+                <strong>Type Consistency:</strong> {:.1}%
+                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
+                    <div style="background-color: #2196F3; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
+                </div>
+            </div>
+            <div style="margin-bottom: 4px;"><strong>Format Violations:</strong> {}</div>
+            <div><strong>Encoding Issues:</strong> {}</div>
+        </div>
+
+        <!-- Uniqueness -->
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
+            <h4 style="margin: 0 0 8px 0; color: #FF9800;">🔑 Uniqueness</h4>
+            <div style="margin-bottom: 8px;">
+                <strong>Key Uniqueness:</strong> {:.1}%
+                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
+                    <div style="background-color: #FF9800; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
+                </div>
+            </div>
+            <div style="margin-bottom: 4px;"><strong>Duplicate Rows:</strong> {}</div>
+            <div><strong>High Cardinality Warning:</strong> {}</div>
+        </div>
+
+        <!-- Accuracy -->
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
+            <h4 style="margin: 0 0 8px 0; color: #9C27B0;">🎯 Accuracy</h4>
+            <div style="margin-bottom: 8px;">
+                <strong>Outlier Ratio:</strong> {:.1}%
+                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
+                    <div style="background-color: #9C27B0; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
+                </div>
+            </div>
+            <div style="margin-bottom: 4px;"><strong>Range Violations:</strong> {}</div>
+            <div><strong>Negative in Positive:</strong> {}</div>
+        </div>
+
+    </div>
+</div>
+"#,
+            score_color,
+            overall_score,
+            self.missing_values_ratio,
+            self.missing_values_ratio.min(100.0),
+            self.complete_records_ratio,
+            self.complete_records_ratio.min(100.0),
+            self.null_columns.len(),
+            self.data_type_consistency,
+            self.data_type_consistency.min(100.0),
+            self.format_violations,
+            self.encoding_issues,
+            self.key_uniqueness,
+            self.key_uniqueness.min(100.0),
+            self.duplicate_rows,
+            self.high_cardinality_warning,
+            self.outlier_ratio,
+            self.outlier_ratio.min(100.0),
+            self.range_violations,
+            self.negative_values_in_positive
+        )
+    }
+
+    /// Summary string representation
+    fn __str__(&self) -> String {
+        format!(
+            "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, key_uniqueness={:.1}%, outlier_ratio={:.1}%)",
+            self.overall_quality_score().unwrap_or(0.0),
+            self.complete_records_ratio,
+            self.data_type_consistency,
+            self.key_uniqueness,
+            self.outlier_ratio
+        )
     }
 }
 
@@ -288,6 +602,10 @@ pub struct PyMlReadinessScore {
     pub feature_analysis: Vec<PyFeatureAnalysis>,
     #[pyo3(get)]
     pub preprocessing_suggestions: Vec<PyPreprocessingSuggestion>,
+    #[pyo3(get)]
+    pub feature_warnings: Vec<PyFeatureInteractionWarning>,
+    #[pyo3(get)]
+    pub quality_integration_score: Option<f64>,
 }
 
 impl From<&MlReadinessScore> for PyMlReadinessScore {
@@ -324,6 +642,12 @@ impl From<&MlReadinessScore> for PyMlReadinessScore {
                 .iter()
                 .map(PyPreprocessingSuggestion::from)
                 .collect(),
+            feature_warnings: score
+                .feature_warnings
+                .iter()
+                .map(PyFeatureInteractionWarning::from)
+                .collect(),
+            quality_integration_score: score.quality_integration_score,
         }
     }
 }
@@ -686,6 +1010,48 @@ impl From<&PreprocessingSuggestion> for PyPreprocessingSuggestion {
                 RecommendationPriority::Low => "low".to_string(),
             },
             tools_frameworks: suggestion.tools_frameworks.clone(),
+        }
+    }
+}
+
+/// Python wrapper for FeatureInteractionWarning
+#[pyclass]
+#[derive(Clone)]
+pub struct PyFeatureInteractionWarning {
+    #[pyo3(get)]
+    pub warning_type: String,
+    #[pyo3(get)]
+    pub features: Vec<String>,
+    #[pyo3(get)]
+    pub description: String,
+    #[pyo3(get)]
+    pub severity: String,
+    #[pyo3(get)]
+    pub recommendation: String,
+}
+
+impl From<&FeatureInteractionWarning> for PyFeatureInteractionWarning {
+    fn from(warning: &FeatureInteractionWarning) -> Self {
+        Self {
+            warning_type: match warning.warning_type {
+                InteractionWarningType::PossibleLeakage => "possible_leakage".to_string(),
+                InteractionWarningType::HighCardinality => "high_cardinality".to_string(),
+                InteractionWarningType::AllCategorical => "all_categorical".to_string(),
+                InteractionWarningType::AllNumeric => "all_numeric".to_string(),
+                InteractionWarningType::InsufficientFeatures => "insufficient_features".to_string(),
+                InteractionWarningType::CurseOfDimensionality => {
+                    "curse_of_dimensionality".to_string()
+                }
+            },
+            features: warning.features.clone(),
+            description: warning.description.clone(),
+            severity: match warning.severity {
+                RecommendationPriority::Critical => "critical".to_string(),
+                RecommendationPriority::High => "high".to_string(),
+                RecommendationPriority::Medium => "medium".to_string(),
+                RecommendationPriority::Low => "low".to_string(),
+            },
+            recommendation: warning.recommendation.clone(),
         }
     }
 }

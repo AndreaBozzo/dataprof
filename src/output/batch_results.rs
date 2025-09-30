@@ -265,6 +265,24 @@ fn display_detailed_file_analysis(
             }
         }
 
+        // Show comprehensive data quality metrics summary if available
+        if let Some(ref metrics) = report.data_quality_metrics {
+            println!("   📊 Data Quality Metrics:");
+            println!(
+                "      ├─ Completeness: {:.1}% (Missing: {:.1}%)",
+                metrics.complete_records_ratio, metrics.missing_values_ratio
+            );
+            println!(
+                "      ├─ Consistency: {:.1}%",
+                metrics.data_type_consistency
+            );
+            println!(
+                "      ├─ Uniqueness: {:.1}% (Duplicates: {})",
+                metrics.key_uniqueness, metrics.duplicate_rows
+            );
+            println!("      └─ Accuracy: {:.1}% outliers", metrics.outlier_ratio);
+        }
+
         // Show ML recommendations and code if enabled
         if let Some(ml_score) = ml_score_opt {
             if !ml_score.recommendations.is_empty() {
