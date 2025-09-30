@@ -53,7 +53,7 @@ pub struct BenchmarkOutput {
 #[derive(Parser)]
 #[command(name = "dataprof")]
 #[command(
-    about = "Fast CSV data profiler with quality checking - v0.4.1 Enhanced CLI Edition",
+    about = "Fast CSV data profiler with quality checking - v0.5.0 Subcommands Edition",
     long_about = r#"DataProfiler CLI - Fast CSV data profiling with ML readiness scoring
 
 A powerful command-line tool for analyzing CSV, JSON, and JSONL files with:
