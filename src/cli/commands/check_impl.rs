@@ -7,14 +7,10 @@ use std::fs;
 pub fn execute(args: &CheckArgs) -> Result<()> {
     // Smart defaults: auto-enable streaming for large files
     let file_size_mb = get_file_size_mb(&args.file)?;
-    let use_streaming = args.streaming || file_size_mb > 100.0;
+    let _use_streaming = args.streaming || file_size_mb > 100.0;
 
-    // Create profiler
-    let profiler = if use_streaming {
-        DataProfiler::streaming()
-    } else {
-        DataProfiler::new()
-    };
+    // Create profiler (always use streaming as there's no new() method)
+    let mut profiler = DataProfiler::streaming();
 
     // Run analysis
     let report = profiler.analyze_file(&args.file)?;
@@ -46,13 +42,14 @@ fn get_file_size_mb(path: &std::path::Path) -> Result<f64> {
     Ok(metadata.len() as f64 / 1_048_576.0)
 }
 
-fn print_quick_summary(report: &dataprof::types::DataReport, detailed: bool, show_iso: bool) {
+fn print_quick_summary(report: &dataprof::types::QualityReport, detailed: bool, show_iso: bool) {
     println!("\n📊 Quick Quality Check\n");
 
     // Basic info
     println!(
         "📄 File: {} rows, {} columns",
-        report.basic_stats.total_rows, report.basic_stats.total_columns
+        report.file_info.total_rows.unwrap_or(0),
+        report.file_info.total_columns
     );
 
     // Quality metrics if available
@@ -88,8 +85,8 @@ fn print_quick_summary(report: &dataprof::types::DataReport, detailed: bool, sho
 
 fn calculate_overall_quality(metrics: &dataprof::types::DataQualityMetrics) -> f64 {
     let completeness = 100.0 - metrics.missing_values_ratio;
-    let consistency = 100.0 - metrics.mixed_type_ratio;
-    let uniqueness = 100.0 - metrics.duplicate_ratio;
+    let consistency = metrics.data_type_consistency;
+    let uniqueness = metrics.key_uniqueness;
     let accuracy = 100.0 - metrics.outlier_ratio;
     let timeliness = 100.0 - metrics.stale_data_ratio;
 
@@ -130,16 +127,13 @@ fn collect_issues(metrics: &dataprof::types::DataQualityMetrics) -> Vec<String> 
         ));
     }
 
-    if metrics.future_dates_count > 0 || !metrics.temporal_violations.is_empty() {
-        let temporal = metrics.future_dates_count + metrics.temporal_violations.len();
+    if metrics.future_dates_count > 0 || metrics.temporal_violations > 0 {
+        let temporal = metrics.future_dates_count + metrics.temporal_violations;
         issues.push(format!("Timeliness: {} temporal issues", temporal));
     }
 
-    if !metrics.high_cardinality_columns.is_empty() {
-        issues.push(format!(
-            "High cardinality: {} columns",
-            metrics.high_cardinality_columns.len()
-        ));
+    if metrics.high_cardinality_warning {
+        issues.push("High cardinality warning".to_string());
     }
 
     issues
@@ -151,8 +145,8 @@ fn print_iso_metrics(metrics: &dataprof::types::DataQualityMetrics) {
         "  🔍 Completeness: {:.1}%",
         100.0 - metrics.missing_values_ratio
     );
-    println!("  ⚡ Consistency: {:.1}%", 100.0 - metrics.mixed_type_ratio);
-    println!("  🔑 Uniqueness: {:.1}%", 100.0 - metrics.duplicate_ratio);
+    println!("  ⚡ Consistency: {:.1}%", metrics.data_type_consistency);
+    println!("  🔑 Uniqueness: {:.1}%", metrics.key_uniqueness);
     println!("  🎯 Accuracy: {:.1}%", 100.0 - metrics.outlier_ratio);
     println!("  ⏰ Timeliness: {:.1}%", 100.0 - metrics.stale_data_ratio);
 }
@@ -162,19 +156,13 @@ fn print_detailed_metrics(metrics: &dataprof::types::DataQualityMetrics) {
     println!("  Missing values: {:.2}%", metrics.missing_values_ratio);
     println!("  Duplicate rows: {}", metrics.duplicate_rows);
     println!("  Outliers: {:.2}%", metrics.outlier_ratio);
-    println!("  Mixed types: {:.2}%", metrics.mixed_type_ratio);
-    println!(
-        "  High cardinality columns: {}",
-        metrics.high_cardinality_columns.len()
-    );
+    println!("  Data type consistency: {:.2}%", metrics.data_type_consistency);
+    println!("  High cardinality warning: {}", metrics.high_cardinality_warning);
 
     if metrics.future_dates_count > 0 {
         println!("  Future dates: {}", metrics.future_dates_count);
     }
-    if !metrics.temporal_violations.is_empty() {
-        println!(
-            "  Temporal violations: {}",
-            metrics.temporal_violations.len()
-        );
+    if metrics.temporal_violations > 0 {
+        println!("  Temporal violations: {}", metrics.temporal_violations);
     }
 }

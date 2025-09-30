@@ -64,6 +64,7 @@ rand_chacha = "0.3"
 glob = "0.3"
 glob-match = "0.2"
 num_cpus = "1.16"
+walkdir = "2.5"
 
 # Python bindings
 pyo3 = { version = "0.24.1", features = ["extension-module"], optional = true }

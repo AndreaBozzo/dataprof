@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 /// Comprehensive data quality metrics following industry standards
 /// Provides structured assessment across five key dimensions (ISO 8000/25012)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DataQualityMetrics {
     // Completeness (ISO 8000-8)
     /// Percentage of missing values across all cells
@@ -73,7 +73,7 @@ impl DataQualityMetrics {
 }
 
 // Main report structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct QualityReport {
     pub file_info: FileInfo,
     pub column_profiles: Vec<ColumnProfile>,
@@ -125,7 +125,7 @@ impl QualityReport {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FileInfo {
     pub path: String,
     pub total_rows: Option<usize>,
@@ -133,7 +133,7 @@ pub struct FileInfo {
     pub file_size_mb: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ScanInfo {
     pub rows_scanned: usize,
     pub sampling_ratio: f64,
@@ -141,7 +141,7 @@ pub struct ScanInfo {
 }
 
 // MVP: CSV profiling with pattern detection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ColumnProfile {
     pub name: String,
     pub data_type: DataType,
@@ -152,7 +152,7 @@ pub struct ColumnProfile {
     pub patterns: Vec<Pattern>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum DataType {
     String,
     Integer,
@@ -160,7 +160,7 @@ pub enum DataType {
     Date,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum ColumnStats {
     Numeric {
         min: f64,
@@ -174,7 +174,7 @@ pub enum ColumnStats {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Pattern {
     pub name: String,
     pub regex: String,
@@ -183,7 +183,7 @@ pub struct Pattern {
 }
 
 // Quality Issues
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum QualityIssue {
     MixedDateFormats {
         column: String,
