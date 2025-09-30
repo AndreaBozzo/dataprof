@@ -6,11 +6,11 @@ pub mod ml;
 pub mod report;
 
 // Command implementations
-pub mod check_impl;
 pub mod analyze_impl;
+pub mod batch_impl;
+pub mod check_impl;
 pub mod ml_impl;
 pub mod report_impl;
-pub mod batch_impl;
 
 use clap::Subcommand;
 use std::path::PathBuf;

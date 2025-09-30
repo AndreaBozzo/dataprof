@@ -156,8 +156,14 @@ fn print_detailed_metrics(metrics: &dataprof::types::DataQualityMetrics) {
     println!("  Missing values: {:.2}%", metrics.missing_values_ratio);
     println!("  Duplicate rows: {}", metrics.duplicate_rows);
     println!("  Outliers: {:.2}%", metrics.outlier_ratio);
-    println!("  Data type consistency: {:.2}%", metrics.data_type_consistency);
-    println!("  High cardinality warning: {}", metrics.high_cardinality_warning);
+    println!(
+        "  Data type consistency: {:.2}%",
+        metrics.data_type_consistency
+    );
+    println!(
+        "  High cardinality warning: {}",
+        metrics.high_cardinality_warning
+    );
 
     if metrics.future_dates_count > 0 {
         println!("  Future dates: {}", metrics.future_dates_count);

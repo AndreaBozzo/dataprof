@@ -1,6 +1,6 @@
 use super::batch::BatchArgs;
-use dataprof::DataProfiler;
 use anyhow::Result;
+use dataprof::DataProfiler;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -88,7 +88,12 @@ fn process_files_sequential(files: &[PathBuf], args: &BatchArgs) -> Result<Vec<B
 
     for (i, file) in files.iter().enumerate() {
         if args.progress {
-            print!("\r📊 Processing: {}/{} ({:.0}%)", i + 1, total, ((i + 1) as f64 / total as f64) * 100.0);
+            print!(
+                "\r📊 Processing: {}/{} ({:.0}%)",
+                i + 1,
+                total,
+                ((i + 1) as f64 / total as f64) * 100.0
+            );
             let _ = std::io::Write::flush(&mut std::io::stdout());
         }
 
@@ -153,9 +158,16 @@ fn process_single_file(file: &Path, args: &BatchArgs) -> BatchResult {
     }
 }
 
-fn save_individual_report(output_dir: &Path, file: &Path, report: &dataprof::types::QualityReport) -> Result<()> {
+fn save_individual_report(
+    output_dir: &Path,
+    file: &Path,
+    report: &dataprof::types::QualityReport,
+) -> Result<()> {
     fs::create_dir_all(output_dir)?;
-    let file_stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("report");
+    let file_stem = file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("report");
     let output_path = output_dir.join(format!("{}_report.json", file_stem));
     let json = serde_json::to_string_pretty(report)?;
     fs::write(output_path, json)?;
@@ -166,15 +178,22 @@ fn print_summary(results: &[BatchResult], elapsed: std::time::Duration) {
     let success_count = results.iter().filter(|r| r.success).count();
     let total = results.len();
 
-    println!("\n✅ Batch Complete: {} files in {:.1}s", total, elapsed.as_secs_f64());
+    println!(
+        "\n✅ Batch Complete: {} files in {:.1}s",
+        total,
+        elapsed.as_secs_f64()
+    );
     println!("\n📈 Summary:");
-    println!("  Success Rate: {:.0}% ({}/{})", (success_count as f64 / total as f64) * 100.0, success_count, total);
+    println!(
+        "  Success Rate: {:.0}% ({}/{})",
+        (success_count as f64 / total as f64) * 100.0,
+        success_count,
+        total
+    );
 
     if success_count > 0 {
-        let avg_quality: f64 = results
-            .iter()
-            .filter_map(|r| r.quality_score)
-            .sum::<f64>() / success_count as f64;
+        let avg_quality: f64 =
+            results.iter().filter_map(|r| r.quality_score).sum::<f64>() / success_count as f64;
 
         println!("  Avg Quality: {:.1}%", avg_quality);
 
@@ -186,20 +205,37 @@ fn print_summary(results: &[BatchResult], elapsed: std::time::Duration) {
     if !failures.is_empty() {
         println!("\n❌ Failed Files ({}):", failures.len());
         for result in failures.iter().take(5) {
-            println!("  • {}: {}", result.file.display(), result.error.as_deref().unwrap_or("Unknown error"));
+            println!(
+                "  • {}: {}",
+                result.file.display(),
+                result.error.as_deref().unwrap_or("Unknown error")
+            );
         }
     }
 }
 
 fn save_summary(path: &Path, results: &[BatchResult], elapsed: std::time::Duration) -> Result<()> {
     let success_count = results.iter().filter(|r| r.success).count();
-    let mut summary = format!("# Batch Processing Summary\n\nTotal: {}\nSuccess: {}\nDuration: {:.1}s\n\n", results.len(), success_count, elapsed.as_secs_f64());
-    
+    let mut summary = format!(
+        "# Batch Processing Summary\n\nTotal: {}\nSuccess: {}\nDuration: {:.1}s\n\n",
+        results.len(),
+        success_count,
+        elapsed.as_secs_f64()
+    );
+
     summary.push_str("| File | Status | Quality |\n|------|--------|---------|\n");
     for result in results {
         let status = if result.success { "✅" } else { "❌" };
-        let quality = result.quality_score.map(|s| format!("{:.1}%", s)).unwrap_or_else(|| "N/A".to_string());
-        summary.push_str(&format!("| {} | {} | {} |\n", result.file.display(), status, quality));
+        let quality = result
+            .quality_score
+            .map(|s| format!("{:.1}%", s))
+            .unwrap_or_else(|| "N/A".to_string());
+        summary.push_str(&format!(
+            "| {} | {} | {} |\n",
+            result.file.display(),
+            status,
+            quality
+        ));
     }
 
     fs::write(path, summary)?;

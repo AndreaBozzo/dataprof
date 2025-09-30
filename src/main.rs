@@ -6,7 +6,7 @@ mod cli;
 mod commands;
 mod error;
 
-use cli::{load_config, validate_cli_inputs, Cli};
+use cli::{load_config, route_command, validate_cli_inputs, Cli, Command};
 use commands::{run_analysis, show_engine_info};
 use dataprof::core::{exit_codes, InputValidator};
 use error::{determine_exit_code, handle_error};
@@ -18,6 +18,20 @@ fn main() -> Result<()> {
         return show_engine_info();
     }
 
+    // Detect if using subcommand mode
+    let has_subcommand = args.iter().skip(1).any(|arg| {
+        matches!(
+            arg.as_str(),
+            "check" | "analyze" | "ml" | "report" | "batch"
+        )
+    });
+
+    if has_subcommand {
+        // New subcommand mode
+        return run_subcommand_mode();
+    }
+
+    // Legacy mode (backward compatibility)
     let cli = Cli::parse();
 
     // Input validation with helpful error messages
@@ -36,6 +50,28 @@ fn main() -> Result<()> {
             let exit_code = determine_exit_code(&e);
             handle_error(&e, &cli.file);
             std::process::exit(exit_code);
+        }
+    }
+}
+
+/// Run in new subcommand mode
+fn run_subcommand_mode() -> Result<()> {
+    #[derive(Parser)]
+    #[command(name = "dataprof")]
+    #[command(version, about = "Fast CSV data profiler with quality checking")]
+    struct SubcommandCli {
+        #[command(subcommand)]
+        command: Command,
+    }
+
+    let cli = SubcommandCli::parse();
+
+    // Route to appropriate command handler
+    match route_command(cli.command) {
+        Ok(_) => std::process::exit(exit_codes::SUCCESS),
+        Err(e) => {
+            eprintln!("❌ Error: {}", e);
+            std::process::exit(exit_codes::GENERAL_ERROR);
         }
     }
 }

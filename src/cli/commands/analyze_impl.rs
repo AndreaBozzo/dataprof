@@ -1,6 +1,6 @@
 use super::analyze::AnalyzeArgs;
-use dataprof::{DataProfiler, MlReadinessEngine};
 use anyhow::Result;
+use dataprof::{DataProfiler, MlReadinessEngine};
 use std::fs;
 
 /// Execute the analyze command - comprehensive ISO 8000/25012 analysis
@@ -60,7 +60,10 @@ fn print_text_output(
 
         if detailed {
             println!("\n  📋 Details:");
-            println!("    Missing: {:.2}%, Duplicates: {}", m.missing_values_ratio, m.duplicate_rows);
+            println!(
+                "    Missing: {:.2}%, Duplicates: {}",
+                m.missing_values_ratio, m.duplicate_rows
+            );
         }
     }
 
@@ -95,7 +98,11 @@ fn print_csv_output(report: &dataprof::types::QualityReport) -> Result<()> {
     Ok(())
 }
 
-fn save_output(path: &std::path::Path, report: &dataprof::types::QualityReport, format: &str) -> Result<()> {
+fn save_output(
+    path: &std::path::Path,
+    report: &dataprof::types::QualityReport,
+    format: &str,
+) -> Result<()> {
     let content = if format == "json" {
         serde_json::to_string_pretty(report)?
     } else {

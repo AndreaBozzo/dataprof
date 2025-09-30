@@ -1,6 +1,6 @@
 use super::ml::MlArgs;
-use dataprof::{DataProfiler, MlReadinessEngine};
 use anyhow::Result;
+use dataprof::{DataProfiler, MlReadinessEngine};
 use std::fs;
 
 pub fn execute(args: &MlArgs) -> Result<()> {
@@ -26,7 +26,11 @@ pub fn execute(args: &MlArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_text_output(ml_score: &dataprof::analysis::MlReadinessScore, _detailed: bool, show_code: bool) -> Result<()> {
+fn print_text_output(
+    ml_score: &dataprof::analysis::MlReadinessScore,
+    _detailed: bool,
+    show_code: bool,
+) -> Result<()> {
     println!("\n🤖 ML Readiness Score: {:.0}%\n", ml_score.overall_score);
 
     if !ml_score.blocking_issues.is_empty() {
@@ -47,7 +51,12 @@ fn print_text_output(ml_score: &dataprof::analysis::MlReadinessScore, _detailed:
         println!("\n💻 Code Snippets:");
         for (i, rec) in ml_score.recommendations.iter().take(3).enumerate() {
             if let Some(code) = &rec.code_snippet {
-                println!("\n{}. {}:\n```python\n{}\n```", i + 1, rec.description, code);
+                println!(
+                    "\n{}. {}:\n```python\n{}\n```",
+                    i + 1,
+                    rec.description,
+                    code
+                );
             }
         }
     }
@@ -60,9 +69,13 @@ fn print_json_output(ml_score: &dataprof::analysis::MlReadinessScore) -> Result<
     Ok(())
 }
 
-fn generate_script(ml_score: &dataprof::analysis::MlReadinessScore, path: &std::path::Path, framework: &str) -> Result<()> {
+fn generate_script(
+    ml_score: &dataprof::analysis::MlReadinessScore,
+    path: &std::path::Path,
+    framework: &str,
+) -> Result<()> {
     let mut script = format!("# ML Preprocessing Script\n# Framework: {}\n\nimport pandas as pd\n\ndef preprocess_data(df):\n", framework);
-    
+
     for rec in &ml_score.recommendations {
         if let Some(code) = &rec.code_snippet {
             script.push_str(&format!("    # {}\n", rec.description));
@@ -71,15 +84,19 @@ fn generate_script(ml_score: &dataprof::analysis::MlReadinessScore, path: &std::
             }
         }
     }
-    
+
     script.push_str("    return df\n");
-    
+
     fs::write(path, script)?;
     println!("✅ Script saved: {}", path.display());
     Ok(())
 }
 
-fn save_output(path: &std::path::Path, ml_score: &dataprof::analysis::MlReadinessScore, format: &str) -> Result<()> {
+fn save_output(
+    path: &std::path::Path,
+    ml_score: &dataprof::analysis::MlReadinessScore,
+    format: &str,
+) -> Result<()> {
     let content = if format == "json" {
         serde_json::to_string_pretty(ml_score)?
     } else {
