@@ -1,13 +1,83 @@
 use anyhow::Result;
+use clap::Args;
 use colored::*;
+use std::path::PathBuf;
 
-use crate::commands::script_generator::generate_database_preprocessing_script;
-use dataprof::output::{
-    display_data_quality_metrics, display_ml_score, display_profile, display_quality_issues,
-};
-use dataprof::{generate_html_report, profile_database_with_ml, DatabaseConfig};
+use super::script_generator::generate_database_preprocessing_script;
+// TODO: Refactor this command to use output_with_adaptive_formatter instead
+#[allow(deprecated)]
+use dataprof::output::{display_data_quality_metrics, display_ml_score, display_quality_issues};
+use dataprof::{generate_html_report, profile_database_with_ml, ColumnProfile, DatabaseConfig};
+
+/// Database analysis arguments
+#[derive(Debug, Args)]
+pub struct DatabaseArgs {
+    /// Database connection string (postgres://, mysql://, sqlite://)
+    pub connection_string: String,
+
+    /// SQL query to execute (or table name)
+    #[arg(long)]
+    pub query: Option<String>,
+
+    /// Table name to analyze (alternative to query)
+    pub table: Option<String>,
+
+    /// Batch size for streaming
+    #[arg(long, default_value = "10000")]
+    pub batch_size: usize,
+
+    /// Show quality metrics
+    #[arg(long)]
+    pub quality: bool,
+
+    /// Generate ML readiness score
+    #[arg(long)]
+    pub ml_score: bool,
+
+    /// Show ML code snippets
+    #[arg(long)]
+    pub ml_code: bool,
+
+    /// Generate preprocessing script
+    #[arg(long)]
+    pub output_script: Option<PathBuf>,
+
+    /// Generate HTML report
+    #[arg(long)]
+    pub html: Option<PathBuf>,
+}
+
+/// Execute the database analysis command
+#[allow(deprecated)]
+pub fn execute(args: &DatabaseArgs) -> Result<()> {
+    run_database_analysis(args, &args.connection_string)
+}
+
+/// Display a single column profile
+fn display_column_profile(profile: &ColumnProfile) {
+    println!(
+        "📊 {} ({})",
+        profile.name.bright_cyan().bold(),
+        format!("{:?}", profile.data_type).yellow()
+    );
+    println!(
+        "   Total: {} | Nulls: {} ({:.1}%)",
+        profile.total_count,
+        profile.null_count,
+        (profile.null_count as f64 / profile.total_count as f64) * 100.0
+    );
+
+    if let Some(unique_count) = profile.unique_count {
+        println!(
+            "   Distinct: {} | Unique ratio: {:.1}%",
+            unique_count,
+            (unique_count as f64 / profile.total_count as f64) * 100.0
+        );
+    }
+}
 
 // Helper function to display ML score with code snippets (reused from analyze.rs)
+#[allow(deprecated)]
 fn display_ml_score_with_code(ml_score: &dataprof::analysis::MlReadinessScore) {
     use colored::*;
 
@@ -92,8 +162,8 @@ fn display_ml_score_with_code(ml_score: &dataprof::analysis::MlReadinessScore) {
     }
 }
 
-#[cfg(feature = "database")]
-pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
+#[allow(deprecated)]
+fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result<()> {
     use tokio;
 
     println!(
@@ -104,26 +174,26 @@ pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
     );
     println!();
 
-    // Default query or table (use file parameter as table name if no query provided)
-    let query = if let Some(sql_query) = cli.query.as_ref() {
+    // Determine query: use --query flag, --table flag, or the positional table argument
+    let query = if let Some(sql_query) = &args.query {
         sql_query.to_string()
-    } else {
-        let table_name = cli.file.display().to_string();
-        if table_name.is_empty() || table_name == "." {
-            return Err(anyhow::anyhow!("Please specify either --query 'SELECT * FROM table' or provide table name as file argument"));
-        }
+    } else if let Some(table_name) = &args.table {
         format!("SELECT * FROM {}", table_name)
+    } else {
+        return Err(anyhow::anyhow!(
+            "Please specify either --query 'SELECT * FROM table' or provide table name as argument"
+        ));
     };
 
     // Create database configuration
     let config = DatabaseConfig {
         connection_string: connection_string.to_string(),
-        batch_size: cli.batch_size,
+        batch_size: args.batch_size,
         max_connections: Some(10),
         connection_timeout: Some(std::time::Duration::from_secs(30)),
         retry_config: Some(dataprof::database::RetryConfig::default()),
         sampling_config: None,
-        enable_ml_readiness: true,
+        enable_ml_readiness: args.ml_score,
         ssl_config: Some(dataprof::database::SslConfig::default()),
         load_credentials_from_env: true,
     };
@@ -155,7 +225,7 @@ pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
     }
     println!();
 
-    if cli.quality {
+    if args.quality {
         // Show quality issues
         display_quality_issues(&report.issues);
 
@@ -166,16 +236,16 @@ pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
     }
 
     // Show ML readiness score if requested
-    if cli.ml_score {
+    if args.ml_score {
         if let Some(ml_readiness_score) = &ml_score {
-            if cli.ml_code {
+            if args.ml_code {
                 display_ml_score_with_code(ml_readiness_score);
             } else {
                 display_ml_score(ml_readiness_score);
             }
 
             // Generate preprocessing script if requested
-            if let Some(script_path) = &cli.output_script {
+            if let Some(script_path) = &args.output_script {
                 match generate_database_preprocessing_script(
                     ml_readiness_score,
                     script_path,
@@ -200,9 +270,9 @@ pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
         }
     }
 
-    if cli.quality {
+    if args.quality {
         // Generate HTML report if requested
-        if let Some(html_path) = &cli.html {
+        if let Some(html_path) = &args.html {
             match generate_html_report(&report, html_path) {
                 Ok(_) => {
                     println!(
@@ -220,7 +290,7 @@ pub fn run_database_analysis(cli: &Cli, connection_string: &str) -> Result<()> {
 
     // Show column profiles
     for profile in &report.column_profiles {
-        display_profile(profile);
+        display_column_profile(profile);
         println!();
     }
 

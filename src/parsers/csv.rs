@@ -5,9 +5,9 @@ use std::path::Path;
 
 use crate::analysis::{analyze_column, analyze_column_fast};
 use crate::core::robust_csv::RobustCsvParser;
+use crate::core::sampling::SamplingStrategy;
 use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
 use crate::utils::quality::QualityChecker;
-use crate::utils::sampler::Sampler;
 
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
@@ -90,34 +90,62 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     })
 }
 
-// Enhanced function that uses robust parsing with sampling for large files
+/// Enhanced function that uses robust parsing with adaptive sampling for large files
+///
+/// This function now uses the modern sampling system from `core::sampling`
+/// instead of the legacy `utils::sampler` module.
 pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
     let file_size_mb = metadata.len() as f64 / 1_048_576.0;
-
-    let sampler = Sampler::new(file_size_mb);
     let start = std::time::Instant::now();
 
-    let (records, sample_info) = sampler.sample_csv(file_path)?;
+    // Use modern adaptive sampling strategy
+    let mut reader = ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(file_path)?;
+    let headers = reader.headers()?;
+    let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
 
-    // Converti i records in formato compatibile
+    // Estimate total rows for adaptive sampling
+    let file_size_bytes = metadata.len();
+    let estimated_rows = if file_size_bytes > 1_000_000 {
+        // Quick estimation: assume ~100 bytes per row
+        Some((file_size_bytes / 100) as usize)
+    } else {
+        None
+    };
+
+    // Determine sampling strategy
+    let sampling_strategy = SamplingStrategy::adaptive(estimated_rows, file_size_mb);
+
+    // Calculate how many rows to sample based on strategy
+    let (sample_size, should_sample) = match sampling_strategy {
+        SamplingStrategy::None => (usize::MAX, false),
+        SamplingStrategy::Random { size } => (size, true),
+        SamplingStrategy::Progressive { initial_size, .. } => (initial_size, true),
+        _ => (100_000, true), // Default fallback
+    };
+
+    // Initialize columns
     let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    for header_name in &header_names {
+        columns.insert(header_name.to_string(), Vec::new());
+    }
 
-    if !records.is_empty() {
-        // Usa gli header dal primo record (assumendo che ci siano)
-        let mut reader = ReaderBuilder::new()
-            .has_headers(true)
-            .from_path(file_path)?;
-        let headers = reader.headers()?;
+    // Read and sample data
+    let mut rows_read = 0;
+    let mut total_rows = 0;
 
-        // Inizializza colonne usando iteratore direttamente senza clone
-        let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
-        for header_name in header_names.iter() {
-            columns.insert(header_name.to_string(), Vec::new());
+    for result in reader.records() {
+        total_rows += 1;
+
+        // Apply sampling if needed
+        if should_sample && rows_read >= sample_size {
+            break;
         }
 
-        // Aggiungi i dati campionati
-        for record in records {
+        if let Ok(record) = result {
+            rows_read += 1;
             for (i, field) in record.iter().enumerate() {
                 if let Some(header_name) = header_names.get(i) {
                     if let Some(column_data) = columns.get_mut(header_name) {
@@ -135,25 +163,30 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
         column_profiles.push(profile);
     }
 
-    // Enhanced quality analysis: get both issues and comprehensive metrics
+    // Enhanced quality analysis
     let (issues, data_quality_metrics) =
         QualityChecker::enhanced_quality_analysis(&column_profiles, &columns)
             .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
+    let sampling_ratio = if total_rows > 0 {
+        rows_read as f64 / total_rows as f64
+    } else {
+        1.0
+    };
 
     Ok(QualityReport {
         file_info: FileInfo {
             path: file_path.display().to_string(),
-            total_rows: sample_info.total_rows,
+            total_rows: Some(total_rows),
             total_columns: column_profiles.len(),
             file_size_mb,
         },
         column_profiles,
         issues,
         scan_info: ScanInfo {
-            rows_scanned: sample_info.sampled_rows,
-            sampling_ratio: sample_info.sampling_ratio,
+            rows_scanned: rows_read,
+            sampling_ratio,
             scan_time_ms,
         },
         data_quality_metrics: Some(data_quality_metrics),

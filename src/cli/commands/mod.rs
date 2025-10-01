@@ -6,6 +6,8 @@ pub mod report;
 
 // Utility modules
 pub mod benchmark;
+
+#[cfg(feature = "database")]
 pub mod script_generator;
 
 #[cfg(feature = "database")]
@@ -63,6 +65,25 @@ pub enum Command {
     ///   dataprof batch examples/
     ///   dataprof batch examples/ --recursive --parallel
     Batch(batch::BatchArgs),
+
+    /// Analyze database tables or queries
+    ///
+    /// Profile data directly from databases (PostgreSQL, MySQL, SQLite, DuckDB).
+    ///
+    /// Examples:
+    ///   dataprof database postgres://user:pass@host/db --table users --quality
+    ///   dataprof database sqlite://data.db --query "SELECT * FROM users" --ml-score
+    #[cfg(feature = "database")]
+    Database(database::DatabaseArgs),
+
+    /// Benchmark different engines on your data
+    ///
+    /// Compare streaming, memory-efficient, and Arrow engines.
+    ///
+    /// Examples:
+    ///   dataprof benchmark data.csv
+    ///   dataprof benchmark large_file.csv
+    Benchmark(benchmark::BenchmarkArgs),
 }
 
 /// Common analysis options inherited by all commands

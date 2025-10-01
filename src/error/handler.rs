@@ -1,9 +1,10 @@
 use anyhow::Error;
-use colored::*;
+use colored::Colorize;
 use dataprof::core::{exit_codes, ValidationError};
 use dataprof::{DataProfilerError, ErrorSeverity};
 use std::path::Path;
 
+#[allow(dead_code)]
 pub fn handle_error(error: &Error, file_path: &Path) {
     // Check if it's our custom error type
     if let Some(dp_error) = error.downcast_ref::<DataProfilerError>() {
@@ -68,6 +69,7 @@ pub fn handle_error(error: &Error, file_path: &Path) {
     }
 }
 
+#[allow(dead_code)]
 pub fn determine_exit_code(error: &Error) -> i32 {
     // Check if it's our custom error type first
     if let Some(dp_error) = error.downcast_ref::<DataProfilerError>() {

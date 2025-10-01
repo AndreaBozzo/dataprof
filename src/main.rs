@@ -130,7 +130,8 @@ fn show_engine_info() -> Result<()> {
     Ok(())
 }
 
-/// Run in new subcommand mode
+/// Run in new subcommand mode (legacy, currently unused)
+#[allow(dead_code)]
 fn run_subcommand_mode() -> Result<()> {
     #[derive(Parser)]
     #[command(name = "dataprof")]

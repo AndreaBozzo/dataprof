@@ -16,6 +16,7 @@ use dataprof::{
 };
 
 /// Common options that all analysis commands should support
+#[derive(Default)]
 pub struct AnalysisOptions {
     /// Show real-time progress bars
     pub progress: bool,
@@ -23,27 +24,17 @@ pub struct AnalysisOptions {
     pub chunk_size: Option<usize>,
     /// Config file path
     pub config: Option<std::path::PathBuf>,
-    /// Force streaming mode
+    /// Force streaming mode (currently unused, reserved for future use)
+    #[allow(dead_code)]
     pub streaming: bool,
     /// Sample size for large files
     pub sample: Option<usize>,
 }
 
-impl Default for AnalysisOptions {
-    fn default() -> Self {
-        Self {
-            progress: false,
-            chunk_size: None,
-            config: None,
-            streaming: false,
-            sample: None,
-        }
-    }
-}
-
 /// Builder for creating a properly configured profiler with all improvements
 pub struct ProfilerBuilder {
     options: AnalysisOptions,
+    #[allow(dead_code)]
     config: DataprofConfig,
 }
 
@@ -54,7 +45,7 @@ impl ProfilerBuilder {
     }
 
     /// Build a configured streaming profiler with all enhancements
-    pub fn build_streaming(&self, file_path: &Path) -> Result<DataProfiler> {
+    pub fn build_streaming(&self, _file_path: &Path) -> Result<DataProfiler> {
         let mut profiler = DataProfiler::streaming();
 
         // Configure chunk size (from CLI arg or config)

@@ -41,7 +41,7 @@ pub struct AnalyzeArgs {
 }
 
 use anyhow::Result;
-use dataprof::MlReadinessEngine;
+use dataprof::{MlReadinessEngine, OutputFormat};
 use std::fs;
 
 use crate::cli::{analyze_file_with_options, AnalysisOptions};
@@ -68,98 +68,61 @@ pub fn execute(args: &AnalyzeArgs) -> Result<()> {
         None
     };
 
-    match args.format.as_str() {
-        "json" => print_json_output(&report)?,
-        "csv" => print_csv_output(&report)?,
-        _ => print_text_output(&report, ml_score.as_ref(), args.detailed)?,
-    }
+    // Convert string format to OutputFormat enum
+    let output_format = match args.format.as_str() {
+        "json" => Some(OutputFormat::Json),
+        "csv" => Some(OutputFormat::Csv),
+        "plain" => Some(OutputFormat::Plain),
+        "text" => Some(OutputFormat::Text),
+        _ => None, // Let adaptive formatter decide
+    };
 
+    // Use unified formatter system
+    dataprof::output::output_with_adaptive_formatter(&report, ml_score.as_ref(), output_format)?;
+
+    // Save to file if requested
     if let Some(output_path) = &args.output {
-        save_output(output_path, &report, &args.format)?;
+        save_output_to_file(output_path, &report, ml_score.as_ref(), &args.format)?;
     }
 
     Ok(())
 }
 
-fn print_text_output(
-    report: &dataprof::types::QualityReport,
-    ml_score: Option<&dataprof::analysis::MlReadinessScore>,
-    detailed: bool,
-) -> Result<()> {
-    println!("\n📊 COMPREHENSIVE ISO 8000/25012 Analysis\n");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-    println!("\n📄 Dataset Overview:");
-    println!("  Rows: {}", report.file_info.total_rows.unwrap_or(0));
-    println!("  Columns: {}", report.file_info.total_columns);
-
-    if let Some(m) = &report.data_quality_metrics {
-        println!("\n📊 ISO 8000/25012 Quality Dimensions:\n");
-        let completeness = 100.0 - m.missing_values_ratio;
-        let consistency = m.data_type_consistency;
-        let uniqueness = m.key_uniqueness;
-        let accuracy = 100.0 - m.outlier_ratio;
-        let timeliness = 100.0 - m.stale_data_ratio;
-
-        println!("  🔍 Completeness: {:>6.1}%", completeness);
-        println!("  ⚡ Consistency:  {:>6.1}%", consistency);
-        println!("  🔑 Uniqueness:   {:>6.1}%", uniqueness);
-        println!("  🎯 Accuracy:     {:>6.1}%", accuracy);
-        println!("  ⏰ Timeliness:   {:>6.1}%", timeliness);
-
-        let overall = (completeness + consistency + uniqueness + accuracy + timeliness) / 5.0;
-        println!("\n  📈 Overall Quality: {:.1}%", overall);
-
-        if detailed {
-            println!("\n  📋 Details:");
-            println!(
-                "    Missing: {:.2}%, Duplicates: {}",
-                m.missing_values_ratio, m.duplicate_rows
-            );
-        }
-    }
-
-    // Show ML readiness if calculated
-    if let Some(ml) = ml_score {
-        println!("\n🤖 ML Readiness Analysis:\n");
-        println!("  Score: {:.0}%", ml.overall_score);
-
-        if !ml.blocking_issues.is_empty() {
-            println!("\n  ❌ Blocking Issues: {}", ml.blocking_issues.len());
-        }
-
-        if !ml.recommendations.is_empty() {
-            println!("  💡 Recommendations: {}", ml.recommendations.len());
-            println!("\n💡 Run 'dataprof ml <file>' for detailed ML analysis and code generation");
-        }
-    }
-
-    println!("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
-    Ok(())
-}
-
-fn print_json_output(report: &dataprof::types::QualityReport) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(report)?);
-    Ok(())
-}
-
-fn print_csv_output(report: &dataprof::types::QualityReport) -> Result<()> {
-    println!("metric,value");
-    println!("total_rows,{}", report.file_info.total_rows.unwrap_or(0));
-    println!("total_columns,{}", report.file_info.total_columns);
-    Ok(())
-}
-
-fn save_output(
+/// Save formatted output to a file
+fn save_output_to_file(
     path: &std::path::Path,
     report: &dataprof::types::QualityReport,
+    ml_score: Option<&dataprof::analysis::MlReadinessScore>,
     format: &str,
 ) -> Result<()> {
-    let content = if format == "json" {
-        serde_json::to_string_pretty(report)?
-    } else {
-        format!("{:#?}", report)
+    // Convert format string to OutputFormat
+    let output_format = match format {
+        "json" => OutputFormat::Json,
+        "csv" => OutputFormat::Csv,
+        "plain" => OutputFormat::Plain,
+        _ => OutputFormat::Text,
     };
+
+    // Use the same formatter to generate content
+    let formatter = dataprof::output::create_adaptive_formatter_with_format(output_format);
+    let mut content = formatter.format_report(report)?;
+
+    // Add ML score to JSON output if available
+    if format == "json" && ml_score.is_some() {
+        let mut json_value: serde_json::Value = serde_json::from_str(&content)?;
+        if let Some(summary) = json_value.get_mut("summary") {
+            if let Some(score) = ml_score {
+                summary["ml_readiness"] = serde_json::json!({
+                    "score": score.overall_score,
+                    "level": score.readiness_level,
+                    "recommendations": score.recommendations,
+                    "feature_analysis": score.feature_analysis
+                });
+            }
+        }
+        content = serde_json::to_string_pretty(&json_value)?;
+    }
+
     fs::write(path, content)?;
     println!("✅ Results saved to: {}", path.display());
     Ok(())

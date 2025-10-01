@@ -49,7 +49,7 @@ fn create_test_data_with_dates() -> (HashMap<String, Vec<String>>, Vec<ColumnPro
     // Mix of old dates, recent dates, and future dates
     data.insert(
         "created_at".to_string(),
-        vec![
+        [
             "2015-01-01", // Old (stale)
             "2023-06-15", // Recent
             "2024-12-01", // Recent
@@ -66,7 +66,7 @@ fn create_test_data_with_dates() -> (HashMap<String, Vec<String>>, Vec<ColumnPro
 
     data.insert(
         "start_date".to_string(),
-        vec!["2024-01-01", "2024-02-01", "2024-03-15", "", "", "", "", ""]
+        ["2024-01-01", "2024-02-01", "2024-03-15", "", "", "", "", ""]
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -74,7 +74,7 @@ fn create_test_data_with_dates() -> (HashMap<String, Vec<String>>, Vec<ColumnPro
 
     data.insert(
         "end_date".to_string(),
-        vec![
+        [
             "2024-06-30",
             "2024-01-15", // Violation: end < start
             "2024-12-31",
@@ -159,7 +159,7 @@ fn test_completeness_configurable_thresholds() {
     let mut data = HashMap::new();
     data.insert(
         "high_null_column".to_string(),
-        vec!["", "", "", "", "value", ""]
+        ["", "", "", "", "value", ""]
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -428,9 +428,11 @@ fn test_all_dimensions_integrated() {
         metrics.data_type_consistency >= 0.0,
         "Consistency calculated"
     );
-    assert!(metrics.duplicate_rows >= 0, "Uniqueness calculated");
+    // Uniqueness calculated (duplicate_rows is usize, always >= 0)
+    let _ = metrics.duplicate_rows;
     assert!(metrics.outlier_ratio >= 0.0, "Accuracy calculated");
-    assert!(metrics.future_dates_count >= 0, "Timeliness calculated");
+    // Timeliness calculated (future_dates_count is usize, always >= 0)
+    let _ = metrics.future_dates_count;
 }
 
 #[test]

@@ -51,7 +51,7 @@ pub use types::{
     QualityIssue, QualityReport, ScanInfo, Severity,
 };
 pub use utils::quality::QualityChecker;
-pub use utils::sampler::{SampleInfo, Sampler};
+// Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
 // Parser API - CSV and JSON analysis functions
 pub use parsers::csv::{

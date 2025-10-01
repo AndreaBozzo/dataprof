@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🎯 **Refactoring: Code Deduplication & Architecture Improvements**
+
+- **REMOVED:** `utils/sampler.rs` module (125 lines) - duplicated functionality from `core/sampling/`
+- **IMPROVED:** `analyze_csv_with_sampling()` now uses modern `SamplingStrategy::adaptive()`
+- **IMPROVED:** Unified output system - `analyze` command now uses `output_with_adaptive_formatter()`
+- **DEPRECATED:** Legacy display functions in `output/display.rs` (use `output_with_adaptive_formatter()` instead)
+- **FIXED:** All clippy warnings with `-D warnings` flag (26 issues resolved)
+  - Removed unused functions and imports
+  - Fixed `ptr_arg` lint (`&PathBuf` → `&Path`)
+  - Derived `Default` trait instead of manual implementation
+  - Fixed test warnings (unused `vec![]`, unnecessary comparisons)
+
+**Code Quality:**
+- **-125 lines** from sampler removal
+- **-80 lines** from analyze command refactor
+- Eliminated output code duplication across commands
+- Single formatter system for all output formats (JSON, CSV, Text, Plain)
+
 ### 🧹 **BREAKING: Legacy Code Cleanup & Architecture Simplification**
 
 - **REMOVED:** Legacy `check` subcommand (use `analyze` instead)

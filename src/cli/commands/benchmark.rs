@@ -1,8 +1,34 @@
 use anyhow::Result;
+use clap::Args;
 use colored::*;
+use std::path::{Path, PathBuf};
 use sysinfo::System;
 
 use dataprof::AdaptiveProfiler;
+
+/// Benchmark arguments
+#[derive(Debug, Args)]
+pub struct BenchmarkArgs {
+    /// Input file to benchmark (optional when using --info)
+    pub file: Option<PathBuf>,
+
+    /// Show detailed engine information
+    #[arg(long)]
+    pub info: bool,
+}
+
+/// Execute the benchmark command
+pub fn execute(args: &BenchmarkArgs) -> Result<()> {
+    if args.info {
+        show_engine_info()
+    } else if let Some(ref file) = args.file {
+        run_benchmark_analysis(file)
+    } else {
+        Err(anyhow::anyhow!(
+            "Please provide a file path to benchmark, or use --info to see engine information"
+        ))
+    }
+}
 
 pub fn show_engine_info() -> Result<()> {
     println!(
@@ -95,21 +121,20 @@ pub fn show_engine_info() -> Result<()> {
     Ok(())
 }
 
-// TODO: Port to new CLI architecture or remove
-/*
-pub fn run_benchmark_analysis(cli: &Cli) -> Result<()> {
+/// Run benchmark analysis on a file
+pub fn run_benchmark_analysis(file: &Path) -> Result<()> {
     println!(
         "{}",
         "🏁 DataProfiler Engine Benchmark".bright_blue().bold()
     );
-    println!("File: {}", cli.file.display());
+    println!("File: {}", file.display());
     println!();
 
     let profiler = AdaptiveProfiler::new()
         .with_logging(true)
         .with_performance_logging(true);
 
-    let performances = profiler.benchmark_engines(&cli.file)?;
+    let performances = profiler.benchmark_engines(file)?;
 
     println!("\n📊 Benchmark Results:");
     println!("{}", "=".repeat(60));
@@ -167,4 +192,3 @@ pub fn run_benchmark_analysis(cli: &Cli) -> Result<()> {
 
     Ok(())
 }
-*/

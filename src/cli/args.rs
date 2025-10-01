@@ -1,6 +1,5 @@
-use clap::{Parser, ValueEnum};
+use clap::ValueEnum;
 use serde::Serialize;
-use std::path::PathBuf;
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum CliOutputFormat {

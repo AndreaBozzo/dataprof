@@ -1,3 +1,10 @@
+//! Script generation for ML preprocessing pipelines
+//!
+//! This module is used by the database command to generate preprocessing scripts.
+//! Functions may appear unused when testing without the database feature enabled.
+
+#![allow(dead_code)]
+
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::fs;

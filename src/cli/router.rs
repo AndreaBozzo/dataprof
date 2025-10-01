@@ -8,5 +8,8 @@ pub fn route_command(command: Command) -> Result<()> {
         Command::Ml(args) => crate::cli::commands::ml::execute(&args),
         Command::Report(args) => crate::cli::commands::report::execute(&args),
         Command::Batch(args) => crate::cli::commands::batch::execute(&args),
+        #[cfg(feature = "database")]
+        Command::Database(args) => crate::cli::commands::database::execute(&args),
+        Command::Benchmark(args) => crate::cli::commands::benchmark::execute(&args),
     }
 }

@@ -1,3 +1,10 @@
+//! Legacy display functions
+//!
+//! These functions are kept for backward compatibility with the database command.
+//! New code should use the unified formatter system in `formatters.rs` instead.
+//!
+//! See: `output::output_with_adaptive_formatter` for the modern approach.
+
 use crate::analysis::{MlReadinessLevel, MlReadinessScore, RecommendationPriority};
 use crate::types::{ColumnProfile, DataQualityMetrics, QualityIssue, Severity};
 use anyhow::Result;
@@ -13,6 +20,14 @@ pub struct BenchmarkOutput {
     pub scan_time_ms: u128,
 }
 
+/// Display column profiles in formatted JSON
+///
+/// # Deprecated
+/// Use `output_with_adaptive_formatter` instead for consistent formatting across all commands.
+#[deprecated(
+    since = "0.4.62",
+    note = "Use output_with_adaptive_formatter from formatters module instead"
+)]
 pub fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
     let output = BenchmarkOutput {
         rows: profiles.first().map_or(0, |p| p.total_count),
@@ -25,6 +40,14 @@ pub fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
     Ok(())
 }
 
+/// Display quality issues with formatting
+///
+/// # Deprecated
+/// Use `output_with_adaptive_formatter` instead for consistent formatting across all commands.
+#[deprecated(
+    since = "0.4.62",
+    note = "Use output_with_adaptive_formatter from formatters module instead"
+)]
 pub fn display_quality_issues(issues: &[QualityIssue]) {
     if issues.is_empty() {
         println!("✨ {}", "No quality issues found!".green().bold());
@@ -143,6 +166,14 @@ fn format_quality_issue(issue: &QualityIssue) -> (String, String, String) {
     }
 }
 
+/// Display ML readiness score with formatting
+///
+/// # Deprecated
+/// Use `output_with_adaptive_formatter` instead for consistent formatting across all commands.
+#[deprecated(
+    since = "0.4.62",
+    note = "Use output_with_adaptive_formatter from formatters module instead"
+)]
 pub fn display_ml_score(score: &MlReadinessScore) {
     let (level_icon, _level_color) = match score.readiness_level {
         MlReadinessLevel::Ready => ("🚀", "green"),
@@ -244,6 +275,13 @@ pub fn display_ml_score(score: &MlReadinessScore) {
 }
 
 /// Display comprehensive data quality metrics in a user-friendly format
+///
+/// # Deprecated
+/// Use `output_with_adaptive_formatter` instead for consistent formatting across all commands.
+#[deprecated(
+    since = "0.4.62",
+    note = "Use output_with_adaptive_formatter from formatters module instead"
+)]
 pub fn display_data_quality_metrics(metrics: &DataQualityMetrics) {
     println!(
         "📊 {} Data Quality Metrics",
