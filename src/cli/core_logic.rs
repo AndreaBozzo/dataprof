@@ -111,17 +111,38 @@ pub fn analyze_file_with_options(
         // JSON files: use specialized JSON parser
         dataprof::analyze_json_with_quality(file_path)
     } else {
-        // CSV files: use streaming profiler with all enhancements
+        // CSV files: try streaming profiler, fallback to robust parser
         let builder = ProfilerBuilder::new(options, config);
-        let mut profiler = builder.build_streaming(file_path)?;
 
-        let report = profiler.analyze_file(file_path)?;
-
-        // Clear progress line if it was shown
-        if builder.options.progress {
-            println!();
+        // Try streaming profiler first
+        match builder.build_streaming(file_path) {
+            Ok(mut profiler) => {
+                match profiler.analyze_file(file_path) {
+                    Ok(report) => {
+                        // Clear progress line if it was shown
+                        if builder.options.progress {
+                            println!();
+                        }
+                        Ok(report)
+                    }
+                    Err(e) => {
+                        // Streaming failed, try robust CSV parser with flexible mode
+                        eprintln!(
+                            "⚠️  Streaming analysis failed: {}. Trying robust parser...",
+                            e
+                        );
+                        dataprof::analyze_csv_robust(file_path)
+                    }
+                }
+            }
+            Err(e) => {
+                // Build failed, try robust CSV parser
+                eprintln!(
+                    "⚠️  Profiler initialization failed: {}. Trying robust parser...",
+                    e
+                );
+                dataprof::analyze_csv_robust(file_path)
+            }
         }
-
-        Ok(report)
     }
 }

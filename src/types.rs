@@ -74,26 +74,23 @@ impl DataQualityMetrics {
     /// Calculate overall quality score (0-100) based on ISO 8000/25012 dimensions
     ///
     /// Weighted formula:
-    /// - Completeness: 30% (complete_records_ratio)
-    /// - Consistency: 25% (data_type_consistency)
-    /// - Uniqueness: 20% (1.0 - duplicate_ratio)
-    /// - Accuracy: 15% (1.0 - outlier_ratio)
-    /// - Timeliness: 10% (1.0 - stale_data_ratio)
+    /// - Completeness: 30% (complete_records_ratio - already percentage 0-100)
+    /// - Consistency: 25% (data_type_consistency - already percentage 0-100)
+    /// - Uniqueness: 20% (key_uniqueness - already percentage 0-100)
+    /// - Accuracy: 15% (100 - outlier_ratio*100)
+    /// - Timeliness: 10% (100 - stale_data_ratio*100)
+    ///
+    /// NOTE: Most metrics are already percentages (0-100), not ratios (0-1)
     pub fn overall_score(&self) -> f64 {
         let completeness = self.complete_records_ratio * 0.3;
         let consistency = self.data_type_consistency * 0.25;
+        let uniqueness = self.key_uniqueness * 0.2;
 
-        // Uniqueness: assume no duplicates if high_cardinality_warning is false
-        let uniqueness = if self.duplicate_rows > 0 {
-            (1.0 - (self.duplicate_rows as f64 / 1000.0).min(1.0)) * 0.2
-        } else {
-            0.2
-        };
+        // outlier_ratio and stale_data_ratio are ratios (0-1), convert to percentage
+        let accuracy = (100.0 - self.outlier_ratio * 100.0) * 0.15;
+        let timeliness = (100.0 - self.stale_data_ratio * 100.0) * 0.1;
 
-        let accuracy = (1.0 - self.outlier_ratio) * 0.15;
-        let timeliness = (1.0 - self.stale_data_ratio) * 0.1;
-
-        (completeness + consistency + uniqueness + accuracy + timeliness) * 100.0
+        completeness + consistency + uniqueness + accuracy + timeliness
     }
 }
 

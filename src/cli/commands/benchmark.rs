@@ -2,7 +2,6 @@ use anyhow::Result;
 use colored::*;
 use sysinfo::System;
 
-use crate::cli::args::Cli;
 use dataprof::AdaptiveProfiler;
 
 pub fn show_engine_info() -> Result<()> {
@@ -96,6 +95,8 @@ pub fn show_engine_info() -> Result<()> {
     Ok(())
 }
 
+// TODO: Port to new CLI architecture or remove
+/*
 pub fn run_benchmark_analysis(cli: &Cli) -> Result<()> {
     println!(
         "{}",
@@ -166,3 +167,4 @@ pub fn run_benchmark_analysis(cli: &Cli) -> Result<()> {
 
     Ok(())
 }
+*/

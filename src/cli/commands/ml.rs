@@ -39,7 +39,6 @@ pub struct MlArgs {
     #[command(flatten)]
     pub common: super::CommonAnalysisOptions,
 }
-use super::ml::MlArgs;
 use anyhow::Result;
 use dataprof::MlReadinessEngine;
 use std::fs;

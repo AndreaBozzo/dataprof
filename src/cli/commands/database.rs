@@ -1,7 +1,6 @@
 use anyhow::Result;
 use colored::*;
 
-use crate::cli::args::Cli;
 use crate::commands::script_generator::generate_database_preprocessing_script;
 use dataprof::output::{
     display_data_quality_metrics, display_ml_score, display_profile, display_quality_issues,
