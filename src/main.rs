@@ -3,55 +3,131 @@ use clap::Parser;
 
 // Local modules
 mod cli;
-mod commands;
 mod error;
 
-use cli::{load_config, route_command, validate_cli_inputs, Cli, Command};
-use commands::{run_analysis, show_engine_info};
-use dataprof::core::{exit_codes, InputValidator};
-use error::{determine_exit_code, handle_error};
+use cli::{route_command, Command};
+use dataprof::core::exit_codes;
 
 fn main() -> Result<()> {
-    // Custom parsing to handle engine-info without file argument
+    // Custom parsing to handle engine-info flag
     let args: Vec<String> = std::env::args().collect();
     if args.contains(&"--engine-info".to_string()) {
         return show_engine_info();
     }
 
-    // Detect if using subcommand mode
-    let has_subcommand = args.iter().skip(1).any(|arg| {
-        matches!(
-            arg.as_str(),
-            "check" | "analyze" | "ml" | "report" | "batch"
-        )
-    });
-
-    if has_subcommand {
-        // New subcommand mode
-        return run_subcommand_mode();
+    // Parse subcommand CLI
+    #[derive(Parser)]
+    #[command(name = "dataprof")]
+    #[command(
+        version,
+        about = "Fast data profiler with ISO 8000/25012 quality metrics"
+    )]
+    struct SubcommandCli {
+        #[command(subcommand)]
+        command: Command,
     }
 
-    // Legacy mode (backward compatibility)
-    let cli = Cli::parse();
+    let cli = SubcommandCli::parse();
 
-    // Input validation with helpful error messages
-    if let Err(e) = validate_cli_inputs(&cli) {
-        eprintln!("❌ {}", e);
-        std::process::exit(InputValidator::get_exit_code(&e));
-    }
-
-    // Load configuration with CLI integration
-    let config = load_config(&cli)?;
-
-    // Enhanced error handling wrapper with proper exit codes
-    match run_analysis(&cli, &config) {
+    // Route to appropriate command handler
+    match route_command(cli.command) {
         Ok(_) => std::process::exit(exit_codes::SUCCESS),
         Err(e) => {
-            let exit_code = determine_exit_code(&e);
-            handle_error(&e, &cli.file);
-            std::process::exit(exit_code);
+            eprintln!("❌ Error: {}", e);
+            std::process::exit(exit_codes::GENERAL_ERROR);
         }
     }
+}
+
+/// Show engine information
+fn show_engine_info() -> Result<()> {
+    use colored::*;
+    use sysinfo::System;
+
+    println!(
+        "{}",
+        "🔧 DataProfiler Engine Information".bright_blue().bold()
+    );
+    println!();
+
+    // System information
+    println!("{}", "System Resources:".bright_yellow());
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let total_memory_gb = sys.total_memory() as f64 / 1_073_741_824.0;
+    let available_memory_gb = sys.available_memory() as f64 / 1_073_741_824.0;
+    let cpu_cores = num_cpus::get();
+
+    println!("  CPU Cores: {}", cpu_cores);
+    println!("  Total Memory: {:.1} GB", total_memory_gb);
+    println!("  Available Memory: {:.1} GB", available_memory_gb);
+    println!(
+        "  Memory Usage: {:.1}%",
+        ((total_memory_gb - available_memory_gb) / total_memory_gb) * 100.0
+    );
+    println!();
+
+    // Engine availability
+    println!("{}", "Available Engines:".bright_yellow());
+
+    println!(
+        "  ✅ {} - Basic streaming for small files (<100MB)",
+        "Streaming".green()
+    );
+    println!(
+        "  ✅ {} - Memory-efficient for medium files (50-200MB)",
+        "MemoryEfficient".green()
+    );
+    println!(
+        "  ✅ {} - True streaming for large files (>200MB)",
+        "TrueStreaming".green()
+    );
+
+    #[cfg(feature = "arrow")]
+    {
+        println!(
+            "  ✅ {} - High-performance columnar processing (>500MB)",
+            "Arrow".green()
+        );
+    }
+    #[cfg(not(feature = "arrow"))]
+    {
+        println!(
+            "  ❌ {} - Not available (compile with --features arrow)",
+            "Arrow".red()
+        );
+    }
+
+    println!(
+        "  🚀 {} - Intelligent automatic selection",
+        "Auto".bright_green().bold()
+    );
+    println!();
+
+    // Recommendations
+    println!("{}", "Recommendations:".bright_yellow());
+    println!(
+        "  • Use {} for best performance",
+        "--engine auto".bright_green()
+    );
+
+    #[cfg(not(feature = "arrow"))]
+    {
+        println!(
+            "  • Compile with {} for better large file performance",
+            "--features arrow".bright_yellow()
+        );
+    }
+
+    if available_memory_gb < 2.0 {
+        println!(
+            "  ⚠️ {} Low memory detected - streaming engines recommended",
+            "Warning:".yellow()
+        );
+    }
+
+    Ok(())
 }
 
 /// Run in new subcommand mode

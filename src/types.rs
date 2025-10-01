@@ -70,6 +70,31 @@ impl DataQualityMetrics {
         let calculator = crate::analysis::MetricsCalculator::new();
         calculator.calculate_comprehensive_metrics(data, column_profiles)
     }
+
+    /// Calculate overall quality score (0-100) based on ISO 8000/25012 dimensions
+    ///
+    /// Weighted formula:
+    /// - Completeness: 30% (complete_records_ratio)
+    /// - Consistency: 25% (data_type_consistency)
+    /// - Uniqueness: 20% (1.0 - duplicate_ratio)
+    /// - Accuracy: 15% (1.0 - outlier_ratio)
+    /// - Timeliness: 10% (1.0 - stale_data_ratio)
+    pub fn overall_score(&self) -> f64 {
+        let completeness = self.complete_records_ratio * 0.3;
+        let consistency = self.data_type_consistency * 0.25;
+
+        // Uniqueness: assume no duplicates if high_cardinality_warning is false
+        let uniqueness = if self.duplicate_rows > 0 {
+            (1.0 - (self.duplicate_rows as f64 / 1000.0).min(1.0)) * 0.2
+        } else {
+            0.2
+        };
+
+        let accuracy = (1.0 - self.outlier_ratio) * 0.15;
+        let timeliness = (1.0 - self.stale_data_ratio) * 0.1;
+
+        (completeness + consistency + uniqueness + accuracy + timeliness) * 100.0
+    }
 }
 
 // Main report structure
@@ -84,44 +109,14 @@ pub struct QualityReport {
 }
 
 impl QualityReport {
-    /// Calculate overall quality score based on issues severity
-    pub fn quality_score(&self) -> Result<f64> {
-        if self.issues.is_empty() {
-            return Ok(100.0);
-        }
-
-        let total_columns = self.column_profiles.len() as f64;
-        if total_columns == 0.0 {
-            return Ok(100.0);
-        }
-
-        // Calculate penalty based on issue severity
-        let mut total_penalty = 0.0;
-        for issue in &self.issues {
-            let penalty = match issue {
-                QualityIssue::MixedDateFormats { .. } => 20.0, // Critical
-                QualityIssue::NullValues { percentage, .. } => {
-                    if *percentage > 50.0 {
-                        20.0
-                    } else if *percentage > 20.0 {
-                        15.0
-                    } else {
-                        10.0
-                    }
-                }
-                QualityIssue::MixedTypes { .. } => 20.0, // Critical
-                QualityIssue::Outliers { .. } => 10.0,   // Medium
-                QualityIssue::Duplicates { .. } => 5.0,  // Warning
-            };
-            total_penalty += penalty;
-        }
-
-        // Normalize penalty relative to number of columns
-        let normalized_penalty = total_penalty / total_columns;
-
-        // Quality score: 100 - penalty, but never below 0
-        let score = (100.0 - normalized_penalty).max(0.0);
-        Ok(score)
+    /// Calculate overall quality score using ISO 8000/25012 metrics
+    ///
+    /// Returns the score from DataQualityMetrics if available,
+    /// otherwise returns None (metrics should always be present in modern analysis)
+    pub fn quality_score(&self) -> Option<f64> {
+        self.data_quality_metrics
+            .as_ref()
+            .map(|metrics| metrics.overall_score())
     }
 }
 

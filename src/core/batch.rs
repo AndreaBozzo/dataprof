@@ -348,7 +348,7 @@ impl BatchProcessor {
                         .unwrap_or(0);
                     total_issues += report.issues.len();
 
-                    if let Ok(score) = report.quality_score() {
+                    if let Some(score) = report.quality_score() {
                         quality_scores.push(score);
                     }
 

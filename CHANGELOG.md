@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🧹 **BREAKING: Legacy Code Cleanup & Architecture Simplification**
+
+- **REMOVED:** Legacy `check` subcommand (use `analyze` instead)
+- **REMOVED:** Old `src/commands/` directory (replaced by `src/cli/commands/`)
+- **REMOVED:** Legacy single-file CLI mode (now subcommands-only: `analyze`, `ml`, `report`, `batch`)
+- **REMOVED:** `QualityReport::quality_score()` penalty-based scoring (now uses ISO 8000/25012 via `DataQualityMetrics`)
+- **REMOVED:** Unused CLI files (`cli_parser.rs`, `validation.rs`, `smart_defaults.rs`, `args_v2.rs`)
+- **REMOVED:** `display_profile()` function (use `display_data_quality_metrics()` instead)
+
+- **IMPROVED:** **Simplified Architecture**
+  - Unified command files: merged `*_impl.rs` into main command modules
+  - Single quality scoring system based on ISO 8000/25012 standards
+  - Cleaner separation: 4 subcommands + utilities
+  - **~2400 lines of code removed** (reduced maintenance burden)
+
+- **IMPROVED:** **DataQualityMetrics Integration**
+  - `QualityReport::quality_score()` now returns `Option<f64>` using `DataQualityMetrics::overall_score()`
+  - Weighted ISO formula: Completeness (30%), Consistency (25%), Uniqueness (20%), Accuracy (15%), Timeliness (10%)
+  - All CLI commands use consistent DataQualityMetrics as base analysis layer
+  - ML analysis remains optional layer on top of base quality metrics
+
+- **CLI USAGE:**
+  ```bash
+  # New subcommand-only CLI
+  dataprof analyze data.csv              # Base analysis
+  dataprof analyze data.csv --detailed   # Detailed metrics
+  dataprof analyze data.csv --ml         # With ML layer
+  dataprof ml data.csv --script prep.py  # ML focus
+  dataprof report data.csv               # HTML report
+  dataprof batch examples/ --parallel    # Batch processing
+  ```
+
 ### 🏆 **NEW: ISO 8000/25012 Compliance & Configurable Quality Thresholds**
 
 - **NEW:** **📊 ISO-Compliant Quality Metrics System (5 Dimensions)**

@@ -1,7 +1,5 @@
 use crate::analysis::{MlReadinessLevel, MlReadinessScore, RecommendationPriority};
-use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, QualityIssue, Severity,
-};
+use crate::types::{ColumnProfile, DataQualityMetrics, QualityIssue, Severity};
 use anyhow::Result;
 use colored::*;
 use serde::Serialize;
@@ -13,8 +11,6 @@ pub struct BenchmarkOutput {
     pub columns: usize,
     pub file_size_mb: f64,
     pub scan_time_ms: u128,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quality_score: Option<f64>,
 }
 
 pub fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
@@ -23,69 +19,10 @@ pub fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
         columns: profiles.len(),
         file_size_mb: 0.0,
         scan_time_ms: 0,
-        quality_score: None,
     };
 
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
-}
-
-pub fn display_profile(profile: &ColumnProfile) {
-    println!(
-        "{} {}",
-        "Column:".bright_yellow(),
-        profile.name.bright_white().bold()
-    );
-
-    let type_str = match profile.data_type {
-        DataType::String => "String".green(),
-        DataType::Integer => "Integer".blue(),
-        DataType::Float => "Float".cyan(),
-        DataType::Date => "Date".magenta(),
-    };
-    println!("  Type: {}", type_str);
-
-    println!("  Records: {}", profile.total_count);
-
-    if profile.null_count > 0 {
-        let pct = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
-        println!(
-            "  Nulls: {} ({:.1}%)",
-            profile.null_count.to_string().red(),
-            pct
-        );
-    } else {
-        println!("  Nulls: {}", "0".green());
-    }
-
-    match &profile.stats {
-        ColumnStats::Numeric { min, max, mean } => {
-            println!("  Min: {:.2}", min);
-            println!("  Max: {:.2}", max);
-            println!("  Mean: {:.2}", mean);
-        }
-        ColumnStats::Text {
-            min_length,
-            max_length,
-            avg_length,
-        } => {
-            println!("  Min Length: {}", min_length);
-            println!("  Max Length: {}", max_length);
-            println!("  Avg Length: {:.1}", avg_length);
-        }
-    }
-
-    if !profile.patterns.is_empty() {
-        println!("  {}", "Patterns:".bright_cyan());
-        for pattern in &profile.patterns {
-            println!(
-                "    {} - {} matches ({:.1}%)",
-                pattern.name.bright_white(),
-                pattern.match_count,
-                pattern.match_percentage
-            );
-        }
-    }
 }
 
 pub fn display_quality_issues(issues: &[QualityIssue]) {

@@ -270,14 +270,14 @@ impl OutputFormatter for JsonFormatter {
                     None
                 },
             },
-            quality: self.format_quality_section(&report.issues, report.quality_score().ok()),
+            quality: self.format_quality_section(&report.issues, report.quality_score()),
             columns: report
                 .column_profiles
                 .iter()
                 .map(|p| self.format_column(p))
                 .collect(),
             summary: JsonSummary {
-                data_quality_score: report.quality_score().ok(),
+                data_quality_score: report.quality_score(),
                 completeness_score: self.calculate_completeness_score(&report.column_profiles),
                 consistency_score: self.calculate_consistency_score(&report.issues),
                 ml_readiness: None, // Will be populated by ML engine

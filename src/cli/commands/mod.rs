@@ -1,16 +1,15 @@
-// Command modules
+// Command modules (args + implementation)
 pub mod analyze;
 pub mod batch;
-pub mod check;
 pub mod ml;
 pub mod report;
 
-// Command implementations
-pub mod analyze_impl;
-pub mod batch_impl;
-pub mod check_impl;
-pub mod ml_impl;
-pub mod report_impl;
+// Utility modules
+pub mod benchmark;
+pub mod script_generator;
+
+#[cfg(feature = "database")]
+pub mod database;
 
 use clap::Subcommand;
 use std::path::{Path, PathBuf};
@@ -27,16 +26,6 @@ pub fn is_json_file(path: &Path) -> bool {
 /// DataProf subcommands
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Quick quality check (90% use cases)
-    ///
-    /// Performs fast analysis with focus on critical issues.
-    /// Shows only problems, not all metrics.
-    ///
-    /// Examples:
-    ///   dataprof check data.csv
-    ///   dataprof check data.csv --detailed
-    Check(check::CheckArgs),
-
     /// Full analysis with ISO 8000/25012 metrics
     ///
     /// Comprehensive analysis with all 5 quality dimensions:
@@ -45,6 +34,7 @@ pub enum Command {
     /// Examples:
     ///   dataprof analyze data.csv
     ///   dataprof analyze data.csv --ml
+    ///   dataprof analyze data.csv --detailed
     Analyze(analyze::AnalyzeArgs),
 
     /// ML readiness analysis and code generation
