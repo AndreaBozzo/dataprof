@@ -69,9 +69,8 @@ pub use stats::{calculate_numeric_stats, calculate_text_stats};
 #[cfg(feature = "database")]
 pub use database::{
     create_connector, profile_database, profile_database_with_ml, DatabaseConfig,
-    DatabaseConnector, DatabaseCredentials, DuckDbConnector, MySqlConnector, PostgresConnector,
-    RetryConfig, SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector,
-    SslConfig,
+    DatabaseConnector, DatabaseCredentials, MySqlConnector, PostgresConnector, RetryConfig,
+    SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
 };
 
 /// Global memory leak detection utility

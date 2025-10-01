@@ -9,6 +9,75 @@ use crate::core::sampling::SamplingStrategy;
 use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
 use crate::utils::quality::QualityChecker;
 
+// ============================================================================
+// HELPER FUNCTIONS - Reusable components to eliminate duplication
+// ============================================================================
+
+/// Initialize empty column vectors from headers
+#[inline]
+fn initialize_columns(headers: &[String]) -> HashMap<String, Vec<String>> {
+    let mut columns = HashMap::new();
+    for header in headers {
+        columns.insert(header.to_string(), Vec::new());
+    }
+    columns
+}
+
+/// Process records into column-oriented format
+#[inline]
+fn process_records_to_columns(
+    records: &[Vec<String>],
+    headers: &[String],
+    columns: &mut HashMap<String, Vec<String>>,
+) {
+    for record in records {
+        for (i, header) in headers.iter().enumerate() {
+            let value = record.get(i).map_or("", |v| v.as_str());
+            if let Some(column_data) = columns.get_mut(header) {
+                column_data.push(value.to_string());
+            }
+        }
+    }
+}
+
+/// Analyze columns and return profiles
+#[inline]
+fn analyze_columns(columns: &HashMap<String, Vec<String>>) -> Vec<ColumnProfile> {
+    let mut profiles = Vec::new();
+    for (name, data) in columns {
+        let profile = analyze_column(name, data);
+        profiles.push(profile);
+    }
+    profiles
+}
+
+/// Analyze columns in fast mode (skips pattern detection)
+#[inline]
+fn analyze_columns_fast(columns: HashMap<String, Vec<String>>) -> Vec<ColumnProfile> {
+    let mut profiles = Vec::new();
+    for (name, data) in columns {
+        let profile = analyze_column_fast(&name, &data);
+        profiles.push(profile);
+    }
+    profiles
+}
+
+/// Process CSV records from a reader into columns (for streaming/sampling scenarios)
+#[inline]
+fn process_csv_record(
+    record: &csv::StringRecord,
+    header_names: &[String],
+    columns: &mut HashMap<String, Vec<String>>,
+) {
+    for (i, field) in record.iter().enumerate() {
+        if let Some(header_name) = header_names.get(i) {
+            if let Some(column_data) = columns.get_mut(header_name) {
+                column_data.push(field.to_string());
+            }
+        }
+    }
+}
+
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
@@ -41,30 +110,12 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
         });
     }
 
-    // Convert records to column format for analysis
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    // Convert records to column format using helper functions
+    let mut columns = initialize_columns(&headers);
+    process_records_to_columns(&records, &headers, &mut columns);
 
-    // Initialize columns
-    for header in &headers {
-        columns.insert(header.to_string(), Vec::new());
-    }
-
-    // Add data from records
-    for record in &records {
-        for (i, header) in headers.iter().enumerate() {
-            let value = record.get(i).map_or("", |v| v);
-            if let Some(column_data) = columns.get_mut(header) {
-                column_data.push(value.to_string());
-            }
-        }
-    }
-
-    // Analyze columns
-    let mut column_profiles = Vec::new();
-    for (name, data) in &columns {
-        let profile = analyze_column(name, data);
-        column_profiles.push(profile);
-    }
+    // Analyze columns using helper function
+    let column_profiles = analyze_columns(&columns);
 
     // Enhanced quality analysis: get both issues and comprehensive metrics
     let (issues, data_quality_metrics) =
@@ -126,11 +177,8 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
         _ => (100_000, true), // Default fallback
     };
 
-    // Initialize columns
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
-    for header_name in &header_names {
-        columns.insert(header_name.to_string(), Vec::new());
-    }
+    // Initialize columns using helper function
+    let mut columns = initialize_columns(&header_names);
 
     // Read and sample data
     let mut rows_read = 0;
@@ -146,22 +194,12 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
 
         if let Ok(record) = result {
             rows_read += 1;
-            for (i, field) in record.iter().enumerate() {
-                if let Some(header_name) = header_names.get(i) {
-                    if let Some(column_data) = columns.get_mut(header_name) {
-                        column_data.push(field.to_string());
-                    }
-                }
-            }
+            process_csv_record(&record, &header_names, &mut columns);
         }
     }
 
-    // Analizza le colonne
-    let mut column_profiles = Vec::new();
-    for (name, data) in &columns {
-        let profile = analyze_column(name, data);
-        column_profiles.push(profile);
-    }
+    // Analyze columns using helper function
+    let column_profiles = analyze_columns(&columns);
 
     // Enhanced quality analysis
     let (issues, data_quality_metrics) =
@@ -213,32 +251,12 @@ pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 
     let (headers, records) = parser.parse_csv(file_path)?;
 
-    // Convert records to column format
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    // Convert records to column format using helper functions
+    let mut columns = initialize_columns(&headers);
+    process_records_to_columns(&records, &headers, &mut columns);
 
-    // Initialize columns
-    for header in &headers {
-        columns.insert(header.to_string(), Vec::new());
-    }
-
-    // Add data from records
-    for record in &records {
-        for (i, header) in headers.iter().enumerate() {
-            let value = record.get(i).map_or("", |v| v);
-            if let Some(column_data) = columns.get_mut(header) {
-                column_data.push(value.to_string());
-            }
-        }
-    }
-
-    // Analyze each column
-    let mut profiles = Vec::new();
-    for (name, data) in columns {
-        let profile = analyze_column(&name, &data);
-        profiles.push(profile);
-    }
-
-    Ok(profiles)
+    // Analyze columns using helper function
+    Ok(analyze_columns(&columns))
 }
 
 // Fast version optimized for benchmarks - skips pattern detection and unique counts
@@ -254,32 +272,12 @@ pub fn analyze_csv_fast(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 
             let (headers, records) = parser.parse_csv(file_path)?;
 
-            // Convert records to column format
-            let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+            // Convert records to column format using helper functions
+            let mut columns = initialize_columns(&headers);
+            process_records_to_columns(&records, &headers, &mut columns);
 
-            // Initialize columns
-            for header in &headers {
-                columns.insert(header.to_string(), Vec::new());
-            }
-
-            // Add data from records
-            for record in &records {
-                for (i, header) in headers.iter().enumerate() {
-                    let value = record.get(i).map_or("", |v| v);
-                    if let Some(column_data) = columns.get_mut(header) {
-                        column_data.push(value.to_string());
-                    }
-                }
-            }
-
-            // Analyze each column in fast mode
-            let mut profiles = Vec::new();
-            for (name, data) in columns {
-                let profile = analyze_column_fast(&name, &data);
-                profiles.push(profile);
-            }
-
-            Ok(profiles)
+            // Analyze in fast mode using helper function
+            Ok(analyze_columns_fast(columns))
         }
     }
 }
@@ -291,36 +289,18 @@ pub fn try_strict_csv_parsing(file_path: &Path) -> Result<Vec<ColumnProfile>> {
         .flexible(false) // Strict parsing
         .from_path(file_path)?;
 
-    // Get headers without clone
     let headers = reader.headers()?;
     let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut columns = initialize_columns(&header_names);
 
-    // Initialize columns
-    for header_name in header_names.iter() {
-        columns.insert(header_name.to_string(), Vec::new());
-    }
-
-    // Read records
+    // Read records using helper function
     for result in reader.records() {
         let record = result?;
-        for (i, field) in record.iter().enumerate() {
-            if let Some(header_name) = header_names.get(i) {
-                if let Some(column_data) = columns.get_mut(header_name) {
-                    column_data.push(field.to_string());
-                }
-            }
-        }
+        process_csv_record(&record, &header_names, &mut columns);
     }
 
-    // Analyze each column
-    let mut profiles = Vec::new();
-    for (name, data) in columns {
-        let profile = analyze_column(&name, &data);
-        profiles.push(profile);
-    }
-
-    Ok(profiles)
+    // Analyze using helper function
+    Ok(analyze_columns(&columns))
 }
 
 // Fast version of strict CSV parsing for benchmarks
@@ -330,34 +310,16 @@ pub fn try_strict_csv_parsing_fast(file_path: &Path) -> Result<Vec<ColumnProfile
         .flexible(false) // Strict parsing
         .from_path(file_path)?;
 
-    // Get headers without clone
     let headers = reader.headers()?;
     let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
+    let mut columns = initialize_columns(&header_names);
 
-    // Initialize columns
-    for header_name in header_names.iter() {
-        columns.insert(header_name.to_string(), Vec::new());
-    }
-
-    // Read records
+    // Read records using helper function
     for result in reader.records() {
         let record = result?;
-        for (i, field) in record.iter().enumerate() {
-            if let Some(header_name) = header_names.get(i) {
-                if let Some(column_data) = columns.get_mut(header_name) {
-                    column_data.push(field.to_string());
-                }
-            }
-        }
+        process_csv_record(&record, &header_names, &mut columns);
     }
 
-    // Analyze each column in fast mode
-    let mut profiles = Vec::new();
-    for (name, data) in columns {
-        let profile = analyze_column_fast(&name, &data);
-        profiles.push(profile);
-    }
-
-    Ok(profiles)
+    // Analyze in fast mode using helper function
+    Ok(analyze_columns_fast(columns))
 }

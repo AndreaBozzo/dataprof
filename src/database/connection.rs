@@ -19,7 +19,7 @@ pub struct ConnectionInfo {
 impl ConnectionInfo {
     /// Parse a connection string into its components
     pub fn parse(connection_string: &str) -> Result<Self> {
-        // Handle file paths (for SQLite/DuckDB)
+        // Handle file paths (for SQLite)
         if !connection_string.contains("://") {
             return Ok(ConnectionInfo {
                 scheme: "file".to_string(),
@@ -70,18 +70,7 @@ impl ConnectionInfo {
         match self.scheme.as_str() {
             "postgresql" | "postgres" => "postgresql",
             "mysql" => "mysql",
-            "sqlite" => "sqlite",
-            "file" => {
-                if let Some(path) = &self.path {
-                    if path.ends_with(".duckdb") {
-                        "duckdb"
-                    } else {
-                        "sqlite"
-                    }
-                } else {
-                    "sqlite"
-                }
-            }
+            "sqlite" | "file" => "sqlite",
             _ => "unknown",
         }
     }
@@ -234,15 +223,5 @@ mod tests {
         assert_eq!(info.scheme, "file");
         assert_eq!(info.path, Some("/path/to/database.db".to_string()));
         assert_eq!(info.database_type(), "sqlite");
-    }
-
-    #[test]
-    fn test_parse_duckdb_file() {
-        let conn_str = "/path/to/data.duckdb";
-        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
-
-        assert_eq!(info.scheme, "file");
-        assert_eq!(info.path, Some("/path/to/data.duckdb".to_string()));
-        assert_eq!(info.database_type(), "duckdb");
     }
 }

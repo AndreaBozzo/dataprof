@@ -4,7 +4,6 @@
 //! - PostgreSQL (with connection pooling)
 //! - MySQL/MariaDB
 //! - SQLite
-//! - DuckDB
 //!
 //! Supports streaming/chunked processing for large datasets and maintains
 //! the same data profiling features as file-based sources.
@@ -108,11 +107,9 @@ pub fn create_connector(mut config: DatabaseConfig) -> Result<Box<dyn DatabaseCo
         || connection_str == ":memory:"
     {
         Ok(Box::new(connectors::sqlite::SqliteConnector::new(config)?))
-    } else if connection_str.ends_with(".duckdb") || connection_str.contains("duckdb") {
-        Ok(Box::new(connectors::duckdb::DuckDbConnector::new(config)?))
     } else {
         Err(anyhow::anyhow!(
-            "Unsupported database connection string: {}",
+            "Unsupported database connection string: {}. Supported: postgresql://, mysql://, sqlite://",
             connection_str
         ))
     }

@@ -4,14 +4,12 @@
 //! - PostgreSQL with connection pooling
 //! - MySQL/MariaDB
 //! - SQLite (embedded)
-//! - DuckDB (analytical database)
 
-pub mod duckdb;
+mod common;
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
 
-pub use duckdb::DuckDbConnector;
 pub use mysql::MySqlConnector;
 pub use postgres::PostgresConnector;
 pub use sqlite::SqliteConnector;
