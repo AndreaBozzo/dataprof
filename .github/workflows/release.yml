@@ -440,7 +440,7 @@ jobs:
       id-token: write
     steps:
     - name: Download baseline wheels only
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v5
       with:
         pattern: wheels-*-baseline
         merge-multiple: true
