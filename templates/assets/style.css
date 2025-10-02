@@ -414,6 +414,10 @@ footer {
     border-left: 3px solid #ef4444;
 }
 
+.metric-card.timeliness {
+    border-left: 3px solid #f59e0b;
+}
+
 .metric-header {
     display: flex;
     align-items: center;

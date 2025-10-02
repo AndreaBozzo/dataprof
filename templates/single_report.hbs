@@ -152,6 +152,31 @@
                         {{/if}}
                     </div>
                 </div>
+
+                <div class="metric-card timeliness">
+                    <div class="metric-header">
+                        <span class="metric-icon">⏰</span>
+                        <h3>Timeliness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Data Freshness</span>
+                            <span class="stat-value {{data_quality_metrics.timeliness.freshness_class}}">{{data_quality_metrics.timeliness.freshness}}%</span>
+                        </div>
+                        {{#if data_quality_metrics.timeliness.future_dates}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Future Dates</span>
+                            <span class="stat-value">{{data_quality_metrics.timeliness.future_dates}}</span>
+                        </div>
+                        {{/if}}
+                        {{#if data_quality_metrics.timeliness.temporal_violations}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Temporal Violations</span>
+                            <span class="stat-value">{{data_quality_metrics.timeliness.temporal_violations}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
             </div>
         </section>
         {{/if}}

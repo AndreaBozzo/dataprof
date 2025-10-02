@@ -72,34 +72,35 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
 
 /// Build context for data quality metrics
 fn build_data_quality_metrics_context(metrics: &DataQualityMetrics) -> serde_json::Value {
-    let overall_score = calculate_overall_data_quality_score(metrics);
+    // Use the official ISO 8000/25012 weighted calculation from types.rs
+    let overall_score = metrics.overall_score();
     let assessment_class = get_assessment_class(overall_score);
 
     json!({
         "overall_score": format!("{:.1}", overall_score),
         "assessment_class": assessment_class,
         "completeness": {
-            "missing_ratio": format!("{:.2}", metrics.missing_values_ratio * 100.0),
-            "complete_ratio": format!("{:.2}", (1.0 - metrics.missing_values_ratio) * 100.0),
-            "missing_class": get_stat_class(metrics.missing_values_ratio, true),
+            "missing_ratio": format!("{:.2}", metrics.missing_values_ratio),
+            "complete_ratio": format!("{:.2}", metrics.complete_records_ratio),
+            "missing_class": get_stat_class(metrics.missing_values_ratio / 100.0, true),
             "null_columns": if !metrics.null_columns.is_empty() { Some(metrics.null_columns.len()) } else { None }
         },
         "consistency": {
-            "type_consistency": format!("{:.1}", metrics.data_type_consistency * 100.0),
-            "type_class": get_stat_class(1.0 - metrics.data_type_consistency, true),
+            "type_consistency": format!("{:.1}", metrics.data_type_consistency),
+            "type_class": get_stat_class((100.0 - metrics.data_type_consistency) / 100.0, true),
             "format_violations": if metrics.format_violations > 0 { Some(metrics.format_violations) } else { None },
             "encoding_issues": if metrics.encoding_issues > 0 { Some(metrics.encoding_issues) } else { None }
         },
         "uniqueness": {
-            "key_uniqueness": format!("{:.1}", metrics.key_uniqueness * 100.0),
-            "uniqueness_class": get_stat_class(1.0 - metrics.key_uniqueness, true),
+            "key_uniqueness": format!("{:.1}", metrics.key_uniqueness),
+            "uniqueness_class": get_stat_class((100.0 - metrics.key_uniqueness) / 100.0, true),
             "has_duplicates": metrics.duplicate_rows > 0,
             "duplicate_rows": if metrics.duplicate_rows > 0 { Some(metrics.duplicate_rows) } else { None },
             "high_cardinality_warning": if metrics.high_cardinality_warning { Some(1) } else { None }
         },
         "accuracy": {
-            "outlier_ratio": format!("{:.2}", metrics.outlier_ratio * 100.0),
-            "outlier_class": get_stat_class(metrics.outlier_ratio, true),
+            "outlier_ratio": format!("{:.2}", metrics.outlier_ratio),
+            "outlier_class": get_stat_class(metrics.outlier_ratio / 100.0, true),
             "range_violations": if metrics.range_violations > 0 { Some(metrics.range_violations) } else { None },
             "negative_values": if metrics.negative_values_in_positive > 0 { Some(metrics.negative_values_in_positive) } else { None }
         },
@@ -276,18 +277,17 @@ fn build_batch_aggregated_metrics_context(
     let avg_outlier_ratio = total_outlier_ratio / count as f64;
     let avg_stale_data_ratio = total_stale_data_ratio / count as f64;
 
-    // Calculate overall score (including timeliness)
-    let completeness_score = (1.0 - avg_missing_ratio) * 100.0;
-    let consistency_score = avg_type_consistency * 100.0;
-    let uniqueness_score = avg_key_uniqueness * 100.0;
-    let accuracy_score = (1.0 - avg_outlier_ratio) * 100.0;
-    let timeliness_score = 100.0 - avg_stale_data_ratio;
-    let overall_score = (completeness_score
+    // Calculate weighted overall score using ISO 8000/25012 weights
+    let completeness_score = (100.0 - avg_missing_ratio) * 0.3;
+    let consistency_score = avg_type_consistency * 0.25;
+    let uniqueness_score = avg_key_uniqueness * 0.2;
+    let accuracy_score = (100.0 - avg_outlier_ratio) * 0.15;
+    let timeliness_score = (100.0 - avg_stale_data_ratio) * 0.1;
+    let overall_score = completeness_score
         + consistency_score
         + uniqueness_score
         + accuracy_score
-        + timeliness_score)
-        / 5.0;
+        + timeliness_score;
 
     let assessment_class = get_assessment_class(overall_score);
 
@@ -295,27 +295,27 @@ fn build_batch_aggregated_metrics_context(
         "overall_score": format!("{:.1}", overall_score),
         "assessment_class": assessment_class,
         "completeness": {
-            "missing_ratio": format!("{:.2}", avg_missing_ratio * 100.0),
-            "complete_ratio": format!("{:.2}", (1.0 - avg_missing_ratio) * 100.0),
-            "missing_class": get_stat_class(avg_missing_ratio, true),
+            "missing_ratio": format!("{:.2}", avg_missing_ratio),
+            "complete_ratio": format!("{:.2}", 100.0 - avg_missing_ratio),
+            "missing_class": get_stat_class(avg_missing_ratio / 100.0, true),
             "null_columns": if total_null_columns > 0 { Some(total_null_columns) } else { None }
         },
         "consistency": {
-            "type_consistency": format!("{:.1}", avg_type_consistency * 100.0),
-            "type_class": get_stat_class(1.0 - avg_type_consistency, true),
+            "type_consistency": format!("{:.1}", avg_type_consistency),
+            "type_class": get_stat_class((100.0 - avg_type_consistency) / 100.0, true),
             "format_violations": if total_format_violations > 0 { Some(total_format_violations) } else { None },
             "encoding_issues": if total_encoding_issues > 0 { Some(total_encoding_issues) } else { None }
         },
         "uniqueness": {
-            "key_uniqueness": format!("{:.1}", avg_key_uniqueness * 100.0),
-            "uniqueness_class": get_stat_class(1.0 - avg_key_uniqueness, true),
+            "key_uniqueness": format!("{:.1}", avg_key_uniqueness),
+            "uniqueness_class": get_stat_class((100.0 - avg_key_uniqueness) / 100.0, true),
             "has_duplicates": total_duplicate_rows > 0,
             "duplicate_rows": if total_duplicate_rows > 0 { Some(total_duplicate_rows) } else { None },
             "high_cardinality_warning": if total_high_cardinality > 0 { Some(total_high_cardinality) } else { None }
         },
         "accuracy": {
-            "outlier_ratio": format!("{:.2}", avg_outlier_ratio * 100.0),
-            "outlier_class": get_stat_class(avg_outlier_ratio, true),
+            "outlier_ratio": format!("{:.2}", avg_outlier_ratio),
+            "outlier_class": get_stat_class(avg_outlier_ratio / 100.0, true),
             "range_violations": if total_range_violations > 0 { Some(total_range_violations) } else { None },
             "negative_values": if total_negative_values > 0 { Some(total_negative_values) } else { None }
         },
@@ -336,7 +336,7 @@ fn build_files_context(
     let mut files: Vec<serde_json::Value> = reports
         .iter()
         .map(|(path, report)| {
-            let quality_score = calculate_overall_data_quality_score(&report.data_quality_metrics);
+            let quality_score = report.data_quality_metrics.overall_score();
 
             let quality_class = if quality_score >= 80.0 {
                 "success"
@@ -353,7 +353,8 @@ fn build_files_context(
                 "quality_class": quality_class,
                 "columns": report.file_info.total_columns,
                 "rows": report.file_info.total_rows.map_or("Unknown".to_string(), |r| r.to_string()),
-                "is_error": false
+                "is_error": false,
+                "metrics": build_data_quality_metrics_context(&report.data_quality_metrics)
             })
         })
         .collect();
@@ -377,16 +378,6 @@ fn build_files_context(
 }
 
 // Helper functions
-
-fn calculate_overall_data_quality_score(metrics: &DataQualityMetrics) -> f64 {
-    let completeness_score = (1.0 - metrics.missing_values_ratio) * 100.0;
-    let consistency_score = metrics.data_type_consistency * 100.0;
-    let uniqueness_score = metrics.key_uniqueness * 100.0;
-    let accuracy_score = (1.0 - metrics.outlier_ratio) * 100.0;
-    let timeliness_score = 100.0 - metrics.stale_data_ratio;
-    (completeness_score + consistency_score + uniqueness_score + accuracy_score + timeliness_score)
-        / 5.0
-}
 
 fn get_assessment_class(score: f64) -> &'static str {
     if score >= 90.0 {

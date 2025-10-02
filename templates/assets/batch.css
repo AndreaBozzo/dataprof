@@ -450,3 +450,59 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* File Details Breakdown */
+.toggle-details {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background 0.2s;
+}
+
+.toggle-details:hover {
+    background: #2563eb;
+}
+
+.details-row {
+    background: #f9fafb;
+}
+
+.file-metrics-breakdown {
+    padding: 20px;
+}
+
+.file-metrics-breakdown h4 {
+    margin: 0 0 16px 0;
+    color: #111827;
+    font-size: 1.125rem;
+}
+
+.breakdown-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.breakdown-card {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.breakdown-card h5 {
+    margin: 0 0 8px 0;
+    font-size: 0.875rem;
+    color: #6b7280;
+    font-weight: 600;
+}
+
+.breakdown-stat {
+    font-size: 0.875rem;
+    color: #374151;
+    margin: 4px 0;
+}

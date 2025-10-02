@@ -174,6 +174,31 @@
                         {{/if}}
                     </div>
                 </div>
+
+                <div class="metric-card timeliness">
+                    <div class="metric-header">
+                        <span class="metric-icon">⏰</span>
+                        <h3>Timeliness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Data Freshness</span>
+                            <span class="stat-value {{aggregated_metrics.timeliness.freshness_class}}">{{aggregated_metrics.timeliness.freshness}}%</span>
+                        </div>
+                        {{#if aggregated_metrics.timeliness.future_dates}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Future Dates</span>
+                            <span class="stat-value">{{aggregated_metrics.timeliness.future_dates}} total</span>
+                        </div>
+                        {{/if}}
+                        {{#if aggregated_metrics.timeliness.temporal_violations}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Temporal Violations</span>
+                            <span class="stat-value">{{aggregated_metrics.timeliness.temporal_violations}} total</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
             </div>
         </section>
         {{/if}}
@@ -190,6 +215,7 @@
                             <th>Columns</th>
                             <th>Rows</th>
                             <th>Status</th>
+                            <th>Details</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -215,7 +241,44 @@
                                 ✓ Success
                                 {{/if}}
                             </td>
+                            <td>
+                                {{#unless this.is_error}}
+                                <button class="toggle-details" onclick="toggleFileDetails('{{@index}}')">📊 View Metrics</button>
+                                {{/unless}}
+                            </td>
                         </tr>
+                        {{#unless this.is_error}}
+                        <tr id="details-{{@index}}" class="details-row" style="display: none;">
+                            <td colspan="6">
+                                <div class="file-metrics-breakdown">
+                                    <h4>Quality Metrics Breakdown</h4>
+                                    <div class="breakdown-grid">
+                                        <div class="breakdown-card">
+                                            <h5>🔍 Completeness</h5>
+                                            <div class="breakdown-stat">Missing: {{this.metrics.completeness.missing_ratio}}%</div>
+                                            <div class="breakdown-stat">Complete: {{this.metrics.completeness.complete_ratio}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>⚡ Consistency</h5>
+                                            <div class="breakdown-stat">Type Consistency: {{this.metrics.consistency.type_consistency}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>🔑 Uniqueness</h5>
+                                            <div class="breakdown-stat">Key Uniqueness: {{this.metrics.uniqueness.key_uniqueness}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>🎯 Accuracy</h5>
+                                            <div class="breakdown-stat">Outlier Ratio: {{this.metrics.accuracy.outlier_ratio}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>⏰ Timeliness</h5>
+                                            <div class="breakdown-stat">Freshness: {{this.metrics.timeliness.freshness}}%</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {{/unless}}
                         {{/each}}
                     </tbody>
                 </table>
