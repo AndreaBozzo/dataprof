@@ -27,15 +27,20 @@ fn init_handlebars() -> Result<Handlebars<'static>> {
 /// Generate HTML report for a single file
 pub fn generate_html_report(report: &QualityReport, output_path: &Path) -> Result<()> {
     let handlebars = init_handlebars()?;
-    let context = build_report_context(report);
+    let mut context = build_report_context(report);
+
+    // Add CSS content to context for inline embedding
+    if let Some(obj) = context.as_object_mut() {
+        obj.insert(
+            "style_css".to_string(),
+            serde_json::Value::String(STYLE_CSS.to_string()),
+        );
+    }
+
     let html_content = handlebars.render("single_report", &context)?;
 
-    // Write HTML file
+    // Write single self-contained HTML file
     fs::write(output_path, html_content)?;
-
-    // Write CSS files in the same directory
-    let output_dir = output_path.parent().unwrap_or(Path::new("."));
-    fs::write(output_dir.join("style.css"), STYLE_CSS)?;
 
     Ok(())
 }
@@ -155,17 +160,28 @@ fn build_column_profiles_context(columns: &[ColumnProfile]) -> Vec<serde_json::V
 /// Generate an aggregated HTML report for batch processing results
 pub fn generate_batch_html_report(batch_result: &BatchResult, output_path: &Path) -> Result<()> {
     let handlebars = init_handlebars()?;
-    let context = build_batch_context(batch_result);
+    let mut context = build_batch_context(batch_result);
+
+    // Add CSS and JS content to context for inline embedding
+    if let Some(obj) = context.as_object_mut() {
+        obj.insert(
+            "style_css".to_string(),
+            serde_json::Value::String(STYLE_CSS.to_string()),
+        );
+        obj.insert(
+            "batch_css".to_string(),
+            serde_json::Value::String(BATCH_CSS.to_string()),
+        );
+        obj.insert(
+            "dashboard_js".to_string(),
+            serde_json::Value::String(DASHBOARD_JS.to_string()),
+        );
+    }
+
     let html_content = handlebars.render("batch_dashboard", &context)?;
 
-    // Write HTML file
+    // Write single self-contained HTML file
     fs::write(output_path, html_content)?;
-
-    // Write CSS and JS files in the same directory
-    let output_dir = output_path.parent().unwrap_or(Path::new("."));
-    fs::write(output_dir.join("style.css"), STYLE_CSS)?;
-    fs::write(output_dir.join("batch.css"), BATCH_CSS)?;
-    fs::write(output_dir.join("dashboard.js"), DASHBOARD_JS)?;
 
     Ok(())
 }
@@ -271,14 +287,21 @@ fn build_batch_aggregated_metrics_context(
         return None;
     }
 
-    let avg_missing_ratio = total_missing_ratio / count as f64;
+    // Calculate average of each metric (all are already 0-100 percentages)
+    let avg_complete_records = reports
+        .values()
+        .map(|r| r.data_quality_metrics.complete_records_ratio)
+        .sum::<f64>()
+        / count as f64;
     let avg_type_consistency = total_type_consistency / count as f64;
     let avg_key_uniqueness = total_key_uniqueness / count as f64;
     let avg_outlier_ratio = total_outlier_ratio / count as f64;
     let avg_stale_data_ratio = total_stale_data_ratio / count as f64;
+    let avg_missing_ratio = total_missing_ratio / count as f64;
 
     // Calculate weighted overall score using ISO 8000/25012 weights
-    let completeness_score = (100.0 - avg_missing_ratio) * 0.3;
+    // All metrics are already percentages (0-100), so we apply weights directly
+    let completeness_score = avg_complete_records * 0.3;
     let consistency_score = avg_type_consistency * 0.25;
     let uniqueness_score = avg_key_uniqueness * 0.2;
     let accuracy_score = (100.0 - avg_outlier_ratio) * 0.15;

@@ -14,6 +14,7 @@
 use crate::core::config::IsoQualityThresholds;
 use crate::types::{ColumnProfile, DataQualityMetrics, DataType};
 use anyhow::Result;
+use chrono::Datelike;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
@@ -59,6 +60,35 @@ impl MetricsCalculator {
 }
 
 impl MetricsCalculator {
+    /// Validate statistical requirements for metric calculation
+    ///
+    /// Checks if the dataset has sufficient sample size for reliable metrics.
+    /// Based on central limit theorem and statistical best practices.
+    ///
+    /// # Arguments
+    /// * `sample_size` - Actual number of observations
+    /// * `metric_type` - Type of metric being calculated
+    ///
+    /// # Returns
+    /// StatisticalValidation with sufficiency status and recommendations
+    pub fn validate_sample_size(sample_size: usize, metric_type: &str) -> StatisticalValidation {
+        // Minimum sample sizes based on statistical theory
+        let min_sample = match metric_type {
+            "outlier_detection" => 30, // Central Limit Theorem threshold
+            "distribution_analysis" => 100,
+            "pattern_detection" => 50,
+            "general" => 10,
+            _ => 10,
+        };
+
+        StatisticalValidation {
+            sufficient_sample: sample_size >= min_sample,
+            min_sample_size: min_sample,
+            actual_sample_size: sample_size,
+            confidence_level: if sample_size >= min_sample { 0.95 } else { 0.0 },
+        }
+    }
+
     /// Calculate comprehensive data quality metrics from column data
     ///
     /// # Arguments
@@ -80,6 +110,15 @@ impl MetricsCalculator {
         }
 
         let total_rows = Self::calculate_total_rows(data)?;
+
+        // Validate sample size for statistical reliability
+        let validation = Self::validate_sample_size(total_rows, "general");
+        if !validation.sufficient_sample {
+            eprintln!(
+                "Warning: Sample size ({}) is below recommended minimum ({}) for reliable statistics",
+                validation.actual_sample_size, validation.min_sample_size
+            );
+        }
 
         // Completeness dimension
         let completeness =
@@ -189,6 +228,19 @@ struct AccuracyMetrics {
     outlier_ratio: f64,
     range_violations: usize,
     negative_values_in_positive: usize,
+}
+
+/// Statistical validation result
+#[derive(Debug)]
+pub struct StatisticalValidation {
+    /// Whether the sample size is sufficient for the metric
+    pub sufficient_sample: bool,
+    /// Minimum recommended sample size
+    pub min_sample_size: usize,
+    /// Actual sample size
+    pub actual_sample_size: usize,
+    /// Confidence level (e.g., 0.95 for 95%)
+    pub confidence_level: f64,
 }
 
 /// Timeliness metrics container (ISO 8000-8)
@@ -423,8 +475,9 @@ impl MetricsCalculator {
 
     /// Count other format violations (e.g., inconsistent number formats)
     fn count_other_format_violations(values: &[String]) -> usize {
-        // For now, focus on number format inconsistencies
-        let mut decimal_formats = HashSet::new();
+        // Track number format inconsistencies accurately
+        let mut dot_decimal_count = 0;
+        let mut comma_decimal_count = 0;
         let mut violations = 0;
 
         for value in values {
@@ -432,20 +485,32 @@ impl MetricsCalculator {
                 continue;
             }
 
-            // Check for different decimal separators
+            // Check for mixed decimal separators in same value (immediate violation)
             if value.contains('.') && value.contains(',') {
                 violations += 1;
-            } else if value.contains('.') {
-                decimal_formats.insert("dot");
-            } else if value.contains(',') && value.chars().filter(|&c| c == ',').count() == 1 {
-                // Single comma might be decimal separator
-                decimal_formats.insert("comma");
+                continue;
+            }
+
+            // Count decimal separator usage patterns
+            if value.contains('.') {
+                // Check if it's likely a decimal separator (not thousands)
+                let dot_count = value.chars().filter(|&c| c == '.').count();
+                if dot_count == 1 {
+                    dot_decimal_count += 1;
+                }
+            } else if value.contains(',') {
+                // Single comma might be decimal separator (European format)
+                let comma_count = value.chars().filter(|&c| c == ',').count();
+                if comma_count == 1 {
+                    comma_decimal_count += 1;
+                }
             }
         }
 
-        // If multiple decimal formats detected, count as violations
-        if decimal_formats.len() > 1 {
-            violations += values.len() / 10; // Estimate violations
+        // If both formats are used significantly, count the minority as violations
+        if dot_decimal_count > 0 && comma_decimal_count > 0 {
+            // Count the less common format as violations (indicates inconsistency)
+            violations += dot_decimal_count.min(comma_decimal_count);
         }
 
         violations
@@ -610,12 +675,21 @@ impl MetricsCalculator {
             }
 
             if let Some(column_data) = data.get(&profile.name) {
-                let outliers = self.detect_outliers_in_column(column_data);
-                total_outliers += outliers.len();
-                total_numeric_values += column_data
+                let numeric_count = column_data
                     .iter()
                     .filter(|v| !v.is_empty() && v.parse::<f64>().is_ok())
                     .count();
+
+                // Validate sample size before outlier detection
+                let validation = Self::validate_sample_size(numeric_count, "outlier_detection");
+                if !validation.sufficient_sample {
+                    // Skip outlier detection for insufficient sample size
+                    continue;
+                }
+
+                let outliers = self.detect_outliers_in_column(column_data);
+                total_outliers += outliers.len();
+                total_numeric_values += numeric_count;
             }
         }
 
@@ -630,6 +704,9 @@ impl MetricsCalculator {
     ///
     /// Uses configurable IQR multiplier (default: 1.5) from ISO thresholds.
     /// Values outside [Q1 - k*IQR, Q3 + k*IQR] are considered outliers.
+    ///
+    /// Uses proper percentile calculation with linear interpolation (Type 7 - Excel/R default)
+    /// as per NIST Engineering Statistics Handbook.
     ///
     /// # Arguments
     /// * `values` - Column values as strings
@@ -656,10 +733,9 @@ impl MetricsCalculator {
         let mut sorted = numeric_values.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        let q1_idx = sorted.len() / 4;
-        let q3_idx = (sorted.len() * 3) / 4;
-        let q1 = sorted[q1_idx];
-        let q3 = sorted[q3_idx];
+        // Calculate Q1 and Q3 using linear interpolation (percentile method Type 7)
+        let q1 = Self::calculate_percentile(&sorted, 25.0);
+        let q3 = Self::calculate_percentile(&sorted, 75.0);
         let iqr = q3 - q1;
 
         // Use configurable IQR multiplier (ISO 25012: default 1.5)
@@ -671,6 +747,47 @@ impl MetricsCalculator {
             .into_iter()
             .filter(|&value| value < lower_bound || value > upper_bound)
             .collect()
+    }
+
+    /// Calculate percentile using linear interpolation (Type 7 - R/Excel default)
+    ///
+    /// This is the scientifically correct method as per:
+    /// - NIST Engineering Statistics Handbook
+    /// - R default quantile method (type=7)
+    /// - Excel PERCENTILE function
+    ///
+    /// # Arguments
+    /// * `sorted_values` - Values sorted in ascending order
+    /// * `percentile` - Percentile to calculate (0-100)
+    ///
+    /// # Returns
+    /// Calculated percentile value
+    fn calculate_percentile(sorted_values: &[f64], percentile: f64) -> f64 {
+        let n = sorted_values.len();
+
+        if n == 0 {
+            return 0.0;
+        }
+        if n == 1 {
+            return sorted_values[0];
+        }
+
+        // Type 7 formula: h = (N-1) * p/100 + 1
+        let h = (n - 1) as f64 * (percentile / 100.0);
+        let h_floor = h.floor() as usize;
+        let h_ceil = h.ceil() as usize;
+
+        // Handle edge cases
+        if h_floor >= n - 1 {
+            return sorted_values[n - 1];
+        }
+
+        // Linear interpolation between the two nearest values
+        let lower = sorted_values[h_floor];
+        let upper = sorted_values[h_ceil];
+        let fraction = h - h_floor as f64;
+
+        lower + fraction * (upper - lower)
     }
 
     /// Count values outside expected ranges
@@ -771,8 +888,8 @@ impl MetricsCalculator {
     ) -> Result<usize> {
         let mut future_count = 0;
 
-        // Get current year (simplified - no chrono dependency)
-        let current_year = 2025; // TODO: Get from system time when chrono added
+        // Get current year from system time
+        let current_year = chrono::Utc::now().year();
 
         for profile in column_profiles {
             if !matches!(profile.data_type, DataType::Date) {
@@ -807,7 +924,8 @@ impl MetricsCalculator {
         let mut total_dates = 0;
         let mut stale_dates = 0;
 
-        let current_year = 2025; // TODO: Get from system time
+        // Get current year from system time
+        let current_year = chrono::Utc::now().year();
         let threshold_year = current_year - self.thresholds.max_data_age_years as i32;
 
         for profile in column_profiles {
