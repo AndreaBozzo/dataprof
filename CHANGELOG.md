@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.70] - 2025-10-02 - "Quality-First Pivot: ISO 8000/25012 Focus Edition"
+
 ### ⚠️ **BREAKING: ML Features and Script Generation Removed (~7200 lines)**
 
 **Strategic Pivot**: DataProfiler now focuses **exclusively** on ISO 8000/25012 data quality assessment.
@@ -446,7 +448,60 @@ If you were using ML features:
 - **⚡ Optimized Performance**: Real-time guidance for better processing efficiency and resource utilization
 - **🛡️ Professional Quality**: Comprehensive error recovery with intelligent fallback strategies
 
-## [0.4.61]
+### 📚 **Documentation Overhaul**
+
+#### Comprehensive Documentation Updates
+- **UPDATED:** `README.md` - Complete rewrite focusing on ISO 8000/25012 quality assessment
+  - Removed all ML readiness references
+  - Updated CLI examples with new subcommand structure (`analyze`, `report`, `batch`, `database`, `benchmark`)
+  - Added both HTML report GIFs (HTML.gif and HTMLbatch.gif)
+  - Updated CI/CD section with batch processing support
+  - Clear binary path note for Windows users (`target/release/dataprof-cli.exe`)
+
+- **UPDATED:** `docs/WHAT_DATAPROF_DOES.md` - Complete accuracy audit
+  - Fixed dimension count: 5 dimensions (was incorrectly stating 4)
+  - Removed references to deleted `src/utils/quality.rs` file
+  - Removed redundant section 3.2 (moved to configuration reference only)
+  - All source file references verified and updated
+  - Version and audit dates updated to 2025-10-02
+
+- **UPDATED:** `docs/python/API_REFERENCE.md`
+  - Removed ML recommendation and code generation sections
+  - Added comprehensive `PyDataQualityMetrics` documentation
+  - Updated all 5 quality dimensions with ISO standards
+  - Removed `feature_analysis_dataframe()` references
+
+- **UPDATED:** `docs/python/INTEGRATIONS.md`
+  - Removed ML readiness and feature analysis functions
+  - Updated scikit-learn integration to use quality-based preprocessing
+  - Focus on data type and quality metrics instead of ML features
+
+- **UPDATED:** `docs/guides/CLI_USAGE_GUIDE.md`
+  - Updated command syntax to subcommand structure
+  - Documented all 5 commands: analyze, report, batch, database, benchmark
+  - Removed all `--ml*` flag references
+  - Updated examples to match actual CLI implementation
+
+- **FIXED:** `src/analysis/metrics.rs` module comment
+  - Updated from 4 to 5 quality dimensions
+  - Added Timeliness to ISO standard references
+
+### 🎯 **Summary of v0.4.70 Release**
+
+This release represents a **strategic pivot** from ML-focused tooling to **pure ISO 8000/25012 data quality assessment**:
+
+- **~7200 lines removed**: Eliminated ML readiness scoring, feature analysis, and code generation
+- **~730 lines cleaned**: Removed tech debt, duplicated code, and legacy modules
+- **5 ISO dimensions**: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
+- **Complete documentation**: All docs updated, verified, and accurate
+- **Modern CLI**: Clean subcommand structure with batch processing support
+- **Enhanced HTML reports**: Beautiful dashboards with comprehensive quality metrics
+
+**Migration Path**: Remove `--ml*` flags from CLI commands, use ISO quality metrics for data assessment.
+
+---
+
+## [0.4.61] - 2025-09-26
 
 - **MIGRATION:** From GNU 3.0 license to MIT.
 

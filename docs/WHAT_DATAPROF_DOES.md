@@ -1,6 +1,6 @@
 # What DataProf Does: Complete Transparency Guide
 
-> **Last Updated:** 2025-09-30 | **Version:** 0.4.61
+> **Last Updated:** 2025-10-02 | **Version:** 0.4.70
 
 ## 🔒 TL;DR - Privacy First
 
@@ -18,14 +18,13 @@
 
 1. [Overview](#overview)
 2. [Column-Level Analysis](#1-column-level-analysis)
-3. [ML Readiness Scoring](#2-ml-readiness-scoring)
+3. [Data Quality Scoring](#2-data-quality-scoring-iso-800025012-compliant)
 4. [Quality Checks](#3-quality-checks)
 5. [Pattern Detection](#4-pattern-detection)
 6. [Data Type Inference](#5-data-type-inference)
 7. [External Connections](#6-external-connections)
 8. [Data Storage & Memory](#7-data-storage--memory)
-9. [Code Generation](#8-code-generation)
-10. [Privacy Guarantees](#9-privacy-guarantees)
+9. [Privacy Guarantees](#8-privacy-guarantees)
 
 ---
 
@@ -33,7 +32,7 @@
 
 This document provides **complete transparency** about what DataProf analyzes when you process your data files. Every metric, calculation, and data point is documented here with source code references for independent verification.
 
-**Audit Status:** ✅ Complete codebase audit performed on 2025-09-30
+**Audit Status:** ✅ Complete codebase audit performed on 2025-10-02
 
 ---
 
@@ -105,59 +104,66 @@ This document provides **complete transparency** about what DataProf analyzes wh
 
 ---
 
-## 2. ML Readiness Scoring
+## 2. Data Quality Scoring (ISO 8000/25012 Compliant)
 
-### 2.1 Overall Score Calculation
+### 2.1 Overall Quality Score Calculation
 
-**Source:** [src/analysis/ml_readiness.rs](../src/analysis/ml_readiness.rs)
-**Class:** `MlReadinessEngine`
+**Source:** [src/types.rs](../src/types.rs)
+**Class:** `DataQualityMetrics`
 
 **Formula:**
 ```
 Overall Score = (
     Completeness × 30% +
     Consistency × 25% +
-    Type Suitability × 25% +
-    Feature Quality × 20%
-) × 100
+    Uniqueness × 20% +
+    Accuracy × 15% +
+    Timeliness × 10%
+)
 ```
 
-**With Quality Integration:**
-```
-Final Score = (Base Score × 70%) + (Quality Integration × 30%)
-```
+**All components are percentages (0-100), following ISO 8000/25012 international standards for data quality.**
 
 ---
 
-### 2.2 Component Scores (0-100)
+### 2.2 Quality Dimensions (ISO 8000/25012)
 
-#### 2.2.1 Completeness Score
+#### 2.2.1 Completeness (ISO 8000-8) - Weight: 30%
 
-**Measures:** Data completeness (missing values)
+**Measures:** Presence of all required data
 
-**Scoring Thresholds:**
+**Metrics Calculated:**
 
-| Missing % | Score | Rating       |
-| --------- | ----- | ------------ |
-| < 5%      | 100   | Excellent ✅  |
-| 5-10%     | 85    | Very Good    |
-| 10-20%    | 70    | Good         |
-| 20-30%    | 50    | Fair ⚠️       |
-| 30-50%    | 30    | Poor ❌       |
-| ≥ 50%     | 10    | Very Poor ❌❌ |
+| Metric                   | Description                 | Calculation                        |
+| ------------------------ | --------------------------- | ---------------------------------- |
+| `missing_values_ratio`   | % of null cells             | (null_cells / total_cells) × 100   |
+| `complete_records_ratio` | % of rows with no nulls     | (complete_rows / total_rows) × 100 |
+| `null_columns`           | List of mostly-null columns | Columns with > 50% nulls           |
 
-**Calculation:** Per-column null rate averaged across all features
+**Quality Thresholds:**
+
+| Missing % | Rating       |
+| --------- | ------------ |
+| < 5%      | Excellent ✅  |
+| 5-10%     | Very Good    |
+| 10-20%    | Good         |
+| 20-30%    | Fair ⚠️       |
+| 30-50%    | Poor ❌       |
+| ≥ 50%     | Very Poor ❌❌ |
 
 ---
 
-#### 2.2.2 Consistency Score
+#### 2.2.2 Consistency (ISO 8000-61) - Weight: 25%
 
-**Measures:** Data type and format consistency
+**Measures:** Data type and format uniformity
 
-**Penalties Applied:**
-- **Mixed types** in same column: -20 points per occurrence
-- **Mixed date formats**: -20 points per occurrence
-- **Encoding issues**: -10 points per issue
+**Metrics Calculated:**
+
+| Metric                  | Description                     | Detection Method          |
+| ----------------------- | ------------------------------- | ------------------------- |
+| `data_type_consistency` | % values matching inferred type | Type validation per value |
+| `format_violations`     | Count of format issues          | Mixed date/number formats |
+| `encoding_issues`       | UTF-8 problems                  | Looks for � and artifacts |
 
 **Example Issues:**
 - Column has both integers and strings
@@ -166,89 +172,70 @@ Final Score = (Base Score × 70%) + (Quality Integration × 30%)
 
 ---
 
-#### 2.2.3 Type Suitability Score
+#### 2.2.3 Uniqueness (ISO 8000-110) - Weight: 20%
 
-**Measures:** How suitable each column's data type is for ML
+**Measures:** Appropriate level of value uniqueness
 
-**Type Scoring:**
+**Metrics Calculated:**
 
-| Data Type     | Unique Ratio | Score | Reason                      |
-| ------------- | ------------ | ----- | --------------------------- |
-| Integer/Float | Any          | 100   | Perfect for ML ✅            |
-| String        | < 10%        | 80    | Good categorical variable   |
-| String        | 10-90%       | 60    | Medium cardinality          |
-| String        | > 90%        | 30    | Free text (needs NLP)       |
-| Date          | Any          | 70    | Needs feature engineering ⏰ |
+| Metric                     | Description                   | Method                     |
+| -------------------------- | ----------------------------- | -------------------------- |
+| `duplicate_rows`           | Count of exact row duplicates | Hash-based detection       |
+| `key_uniqueness`           | % unique in ID columns        | Unique count / total count |
+| `high_cardinality_warning` | Flag for > 95% unique         | Boolean flag               |
 
----
-
-#### 2.2.4 Feature Quality Score
-
-**Measures:** Overall feature usability
-
-**Quality Factors:**
-- **Null percentage** (same thresholds as completeness)
-- **Mixed types:** 0.2 multiplier penalty
-- **Mixed date formats:** 0.4 multiplier penalty
-- **Outliers present:** 0.9 multiplier (minor penalty)
-- **Constant features:** 0.1 multiplier (near-zero variance)
+**Quality Thresholds:**
+- **Duplicate rows:** Reports if > 5% duplicate values
+- **High cardinality:** Warns if > 95% unique values (possible ID column)
 
 ---
 
-### 2.3 Feature Classification
+#### 2.2.4 Accuracy (ISO 25012) - Weight: 15%
 
-**Per-column analysis classifies each feature:**
+**Measures:** Correctness and validity of data values
 
-| Feature Type               | Description               | ML Action                            |
-| -------------------------- | ------------------------- | ------------------------------------ |
-| `NumericReady`             | Clean numeric data        | Ready to use ✅                       |
-| `NumericNeedsScaling`      | Needs normalization       | Apply StandardScaler                 |
-| `CategoricalNeedsEncoding` | Categorical strings       | One-hot or label encoding            |
-| `TextNeedsProcessing`      | Free text                 | NLP/TF-IDF required                  |
-| `TemporalNeedsEngineering` | Date/time data            | Extract features (year, month, etc.) |
-| `HighCardinalityRisky`     | Too many unique values    | Feature engineering needed ⚠️         |
-| `TooManyMissing`           | > 50% null values         | Drop or impute heavily ❌             |
-| `LowVariance`              | Constant or near-constant | Consider dropping ❌                  |
+**Metrics Calculated:**
 
----
+| Metric                        | Description                             | Method                |
+| ----------------------------- | --------------------------------------- | --------------------- |
+| `outlier_ratio`               | % of outlier values                     | IQR method (k=1.5)    |
+| `range_violations`            | Count of out-of-range values            | Domain-specific rules |
+| `negative_values_in_positive` | Negative values in positive-only fields | Domain knowledge      |
 
-### 2.4 Feature Interaction Warnings
+**Outlier Detection:** IQR (Interquartile Range) method - ISO 25012 standard
+- Calculate Q1 (25th percentile) and Q3 (75th percentile)
+- Calculate IQR = Q3 - Q1
+- Values outside [Q1 - 1.5×IQR, Q3 + 1.5×IQR] are outliers
 
-**Source:** `analyze_feature_interactions()`
+**Domain-Specific Range Rules:**
 
-**Detected Issues:**
-
-| Warning                       | Condition                          | Impact                     |
-| ----------------------------- | ---------------------------------- | -------------------------- |
-| **Curse of Dimensionality**   | features > rows/10                 | Overfitting risk ⚠️         |
-| **Insufficient Features**     | < 3 features with >100 rows        | Limited modeling capacity  |
-| **Possible Data Leakage**     | Column >95% unique                 | May be an ID column 🔴      |
-| **High Cardinality Overload** | >5 columns with >100 unique values | Memory/performance issues  |
-| **All Categorical**           | No numeric features                | Limited model options      |
-| **All Numeric**               | No categorical context             | May miss important factors |
-
-**Example:** If you have 50 features but only 200 rows → "Curse of Dimensionality" warning
+| Field Type        | Valid Range | Examples                |
+| ----------------- | ----------- | ----------------------- |
+| `age`             | 0 - 150     | Age in years            |
+| `percent`, `rate` | 0 - 100     | Percentages             |
+| `count`           | ≥ 0         | Counts must be positive |
+| `year`            | 1900 - 2100 | Reasonable year range   |
 
 ---
 
-### 2.5 Quality Integration
+#### 2.2.5 Timeliness (ISO 8000-8) - Weight: 10%
 
-**Source:** `integrate_quality_metrics()`
+**Measures:** Freshness and temporal validity of data
 
-**Integrates DataQualityMetrics into ML score:**
+**Metrics Calculated:**
 
-| Quality Dimension | Penalty Formula         | Impact     |
-| ----------------- | ----------------------- | ---------- |
-| Completeness      | -0.5 per % missing      | High       |
-| Type Consistency  | -1.0 per % inconsistent | Very High  |
-| Format Violations | -0.2 per violation      | Medium     |
-| Encoding Issues   | -0.3 per issue          | Medium     |
-| Duplicate Rows    | -0.1 per duplicate      | Low        |
-| High Cardinality  | -5.0 flat penalty       | High       |
-| Outliers          | -0.2 per % outliers     | Low-Medium |
-| Range Violations  | -0.15 per violation     | Low-Medium |
+| Metric                | Description                               | Calculation                    |
+| --------------------- | ----------------------------------------- | ------------------------------ |
+| `future_dates_count`  | Number of dates beyond current date       | Date > today                   |
+| `stale_data_ratio`    | % of dates older than staleness threshold | (stale_dates / total) × 100    |
+| `temporal_violations` | Temporal ordering violations              | end_date < start_date detected |
 
-**Final score clamped to:** 0.0 - 100.0
+**Staleness Threshold:** Dates older than 5 years from current date (configurable)
+
+**Example Issues:**
+- Future dates in historical data
+- Records from before expected collection period
+- End dates before start dates
 
 ---
 
@@ -256,8 +243,8 @@ Final Score = (Base Score × 70%) + (Quality Integration × 30%)
 
 ### 3.1 Individual Quality Checks
 
-**Source:** [src/utils/quality.rs](../src/utils/quality.rs)
-**Class:** `QualityChecker`
+**Source:** [src/analysis/metrics.rs](../src/analysis/metrics.rs)
+**Class:** `MetricsCalculator`
 
 #### 3.1.1 Null Values Detection
 
@@ -359,82 +346,23 @@ Column "age": 3 outliers detected (IQR method, k=1.5)
 
 ---
 
-### 3.2 Comprehensive Quality Metrics (ISO 8000/25012 Compliant)
+### 3.2 Configuration & Thresholds
 
-**Source:** [src/analysis/metrics.rs](../src/analysis/metrics.rs)
-**Class:** `MetricsCalculator`
-
-**Configuration:** [src/core/config.rs](../src/core/config.rs) - `IsoQualityThresholds`
-
-**Four Quality Dimensions per ISO 8000/25012 standards:**
+**Source:** [src/core/config.rs](../src/core/config.rs) - `IsoQualityThresholds`
 
 **Available Threshold Profiles:**
 - **Default**: Balanced thresholds for general use
 - **Strict**: High-compliance industries (finance, healthcare)
 - **Lenient**: Exploratory/marketing data analysis
 
-| Threshold | Default | Strict | Lenient | ISO Standard |
-|-----------|---------|--------|---------|--------------|
-| Max null % | 50% | 30% | 70% | ISO 8000-8 |
-| IQR multiplier | 1.5 | 1.5 | 2.0 | ISO 25012 |
-| High cardinality | 95% | 98% | 90% | ISO 8000-110 |
-| Type consistency | 95% | 98% | 90% | ISO 8000-61 |
+| Threshold        | Default | Strict | Lenient | ISO Standard |
+| ---------------- | ------- | ------ | ------- | ------------ |
+| Max null %       | 50%     | 30%    | 70%     | ISO 8000-8   |
+| IQR multiplier   | 1.5     | 1.5    | 2.0     | ISO 25012    |
+| High cardinality | 95%     | 98%    | 90%     | ISO 8000-110 |
+| Type consistency | 95%     | 98%    | 90%     | ISO 8000-61  |
 
-#### 3.2.1 Completeness Metrics
-
-| Metric                   | Description                 | Calculation                        |
-| ------------------------ | --------------------------- | ---------------------------------- |
-| `missing_values_ratio`   | % of null cells             | (null_cells / total_cells) × 100   |
-| `complete_records_ratio` | % of rows with no nulls     | (complete_rows / total_rows) × 100 |
-| `null_columns`           | List of mostly-null columns | Columns with > 50% nulls           |
-
----
-
-#### 3.2.2 Consistency Metrics
-
-| Metric                  | Description                     | Detection Method          |
-| ----------------------- | ------------------------------- | ------------------------- |
-| `data_type_consistency` | % values matching inferred type | Type validation per value |
-| `format_violations`     | Count of format issues          | Mixed date/number formats |
-| `encoding_issues`       | UTF-8 problems                  | Looks for � and artifacts |
-
-**Encoding Artifacts Detected:**
-- Replacement character: `�`
-- Common UTF-8 issues: `Ã¡`, `Ã©`, `Ã­`, `Ã³`, `Ãº`, `Ã±`, `Ã§`
-
----
-
-#### 3.2.3 Uniqueness Metrics
-
-| Metric                     | Description                   | Method                     |
-| -------------------------- | ----------------------------- | -------------------------- |
-| `duplicate_rows`           | Count of exact row duplicates | Hash-based detection       |
-| `key_uniqueness`           | % unique in ID columns        | Unique count / total count |
-| `high_cardinality_warning` | Flag for > 95% unique         | Boolean flag               |
-
----
-
-#### 3.2.4 Accuracy Metrics
-
-| Metric                        | Description                             | Method                |
-| ----------------------------- | --------------------------------------- | --------------------- |
-| `outlier_ratio`               | % of outlier values                     | IQR method            |
-| `range_violations`            | Count of out-of-range values            | Domain-specific rules |
-| `negative_values_in_positive` | Negative values in positive-only fields | Domain knowledge      |
-
-**Domain-Specific Range Rules:**
-
-| Field Type        | Valid Range | Examples                |
-| ----------------- | ----------- | ----------------------- |
-| `age`             | 0 - 150     | Age in years            |
-| `percent`, `rate` | 0 - 100     | Percentages             |
-| `count`           | ≥ 0         | Counts must be positive |
-| `year`            | 1900 - 2100 | Reasonable year range   |
-
-**Positive-Only Fields (auto-detected):**
-- age, price, cost, amount, count, quantity
-- salary, revenue, profit, distance, weight
-- height, length, width, area, volume
+**Note:** All dimension metrics and calculations are detailed in Section 2.
 
 ---
 
@@ -541,7 +469,7 @@ $ grep -i "telemetry\|analytics\|tracking" Cargo.toml src/
 
 ### 6.2 Database Connections (Optional)
 
-**Feature Flags:** `postgres`, `mysql`, `sqlite`, `duckdb`
+**Feature Flags:** `postgres`, `mysql`, `sqlite`
 
 **Purpose:** Read data FROM user's databases for local analysis
 
@@ -629,52 +557,7 @@ User's Database → DataProf (local analysis) → Results (local memory/files)
 
 ---
 
-## 8. Code Generation
-
-**Source:** [src/analysis/code_generator.rs](../src/analysis/code_generator.rs)
-**Class:** `CodeGenerator`
-
-### What It Generates
-
-**Python/pandas preprocessing code snippets** based on detected issues.
-
-### Code Templates
-
-| Issue Type           | Generated Code                       | Framework    |
-| -------------------- | ------------------------------------ | ------------ |
-| Missing values       | `df['col'].fillna(df['col'].mean())` | pandas       |
-| Categorical encoding | `pd.get_dummies(df['col'])`          | pandas       |
-| Text preprocessing   | `TfidfVectorizer()`                  | scikit-learn |
-| Date features        | `df['year'] = df['date'].dt.year`    | pandas       |
-| Feature scaling      | `StandardScaler()`                   | scikit-learn |
-| Type conversion      | `df['col'] = df['col'].astype(int)`  | pandas       |
-
-### Privacy Preservation
-
-**What is included in generated code:**
-- ✅ Column names (from CSV headers)
-- ✅ Code templates with placeholders
-- ✅ Recommended approaches
-
-**What is NOT included:**
-- ❌ Actual data values
-- ❌ Specific constants from your data
-- ❌ Sample data
-
-**Example Generated Code:**
-```python
-# Handle missing values in 'age' column
-df['age'].fillna(df['age'].median(), inplace=True)
-
-# Encode categorical column 'category'
-df = pd.get_dummies(df, columns=['category'], drop_first=True)
-```
-
-Note: Uses column names but no actual values from your dataset.
-
----
-
-## 9. Privacy Guarantees
+## 8. Privacy Guarantees
 
 ### ✅ What We Guarantee
 
@@ -813,7 +696,7 @@ grep -r "http://\|https://" src/ --include="*.rs"
 
 ### Audit Information
 
-**Audit Date:** 2025-09-30
+**Audit Date:** 2025-10-02
 **Version Audited:** 0.4.61
 **Repository:** https://github.com/AndreaBozzo/dataprof
 **License:** MIT
@@ -823,7 +706,7 @@ grep -r "http://\|https://" src/ --include="*.rs"
 - `src/lib.rs` - Module structure review ✅
 - `src/analysis/` - All analysis code ✅
 - `src/stats/` - Statistical calculations ✅
-- `src/utils/quality.rs` - Quality checks ✅
+- `src/analysis/metrics.rs` - Comprehensive quality metrics ✅
 - `src/database/` - Database connectors (read-only) ✅
 
 **Methodology:**
@@ -864,4 +747,4 @@ DataProf is designed with **privacy first** principles:
 
 ---
 
-**Last Updated:** 2025-09-30 | **Version:** 0.4.61 | [View on GitHub](https://github.com/AndreaBozzo/dataprof)
+**Last Updated:** 2025-10-02 | **Version:** 0.4.61 | [View on GitHub](https://github.com/AndreaBozzo/dataprof)

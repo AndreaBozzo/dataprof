@@ -1,6 +1,6 @@
 # DataProfiler CLI Usage Guide
 
-A comprehensive guide to using the DataProfiler command-line interface for data analysis, quality assessment, and ML readiness scoring.
+A comprehensive guide to using the DataProfiler command-line interface for data analysis and ISO 8000/25012 quality assessment.
 
 ## Table of Contents
 - [Quick Start](#quick-start)
@@ -27,52 +27,53 @@ cargo install dataprof
 
 ### Basic Analysis
 ```bash
-# Simple file analysis
-dataprof data.csv
+# Comprehensive quality analysis
+dataprof analyze data.csv --detailed
 
-# Quality assessment with HTML report
-dataprof data.csv --quality --html report.html
+# Generate HTML report
+dataprof report data.csv -o report.html
 
-# ML readiness scoring
-dataprof data.csv --quality --ml-score
+# Batch processing
+dataprof batch /data/folder --recursive --parallel
 ```
 
 ## Basic Usage
 
 ### Command Syntax
 ```bash
-dataprof [FILE|DIRECTORY|PATTERN] [OPTIONS]
+dataprof <COMMAND> [OPTIONS]
 ```
 
-### Essential Options
+### Available Commands
 
-#### File Input
-- `FILE` - Single CSV, JSON, or JSONL file
-- `DIRECTORY` - Directory path (use with `--recursive`)
-- `PATTERN` - Glob pattern (use with `--glob`)
+- `analyze` - Full analysis with ISO 8000/25012 metrics
+- `report` - Generate comprehensive HTML/PDF reports
+- `batch` - Process multiple files in batch
+- `database` - Analyze database tables or queries
+- `benchmark` - Benchmark different engines
 
-#### Core Functionality
+### Core Functionality
 ```bash
-# Quality assessment (detailed analysis)
-dataprof data.csv --quality
+# Comprehensive quality analysis
+dataprof analyze data.csv --detailed
 
-# Generate HTML report
-dataprof data.csv --quality --html report.html
+# Generate HTML report with visualizations
+dataprof report data.csv -o report.html
 
-# Enable ML readiness scoring
-dataprof data.csv --quality --ml-score
+# Batch processing with parallel execution
+dataprof batch /data/folder --recursive --parallel
 
-# ML scoring with actionable code snippets (NEW v0.4.61)
-dataprof data.csv --quality --ml-score --ml-code
+# Generate HTML batch dashboard
+dataprof batch /data/folder --html batch_report.html
 
-# Generate complete preprocessing script (NEW v0.4.61)
-dataprof data.csv --quality --ml-score --output-script preprocess.py
+# Database table profiling
+dataprof database postgres://user:pass@host/db --table users
 
 # Streaming mode for large files (>100MB)
-dataprof large_file.csv --streaming
+dataprof analyze large_file.csv --streaming --sample 10000
 
-# Progress indicators for long operations
-dataprof data.csv --progress --streaming
+# Custom ISO threshold profile
+dataprof analyze data.csv --threshold-profile strict
 ```
 
 ## Output Formats

@@ -1,12 +1,12 @@
 //! Data Quality Metrics Calculation Module
 //!
 //! This module implements comprehensive data quality metric calculations following industry standards.
-//! It provides structured assessment across four key dimensions: Completeness, Consistency, Uniqueness, and Accuracy.
+//! It provides structured assessment across five key dimensions: Completeness, Consistency, Uniqueness, Accuracy, and Timeliness.
 //!
 //! ## ISO Compliance
 //!
 //! This module follows:
-//! - **ISO 8000-8**: Data Quality (Completeness)
+//! - **ISO 8000-8**: Data Quality (Completeness, Timeliness)
 //! - **ISO 8000-61**: Master Data Quality (Consistency)
 //! - **ISO 8000-110**: Duplicate Detection (Uniqueness)
 //! - **ISO 25012**: Data Quality Model (Accuracy)
