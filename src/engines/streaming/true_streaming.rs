@@ -5,8 +5,9 @@ use std::sync::Arc;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
-use crate::types::{ColumnProfile, ColumnStats, DataType, FileInfo, QualityReport, ScanInfo};
-use crate::QualityChecker;
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, QualityReport, ScanInfo,
+};
 
 /// True streaming profiler that processes data without loading everything into memory
 /// Uses incremental statistics and memory mapping for maximum efficiency
@@ -133,10 +134,11 @@ impl TrueStreamingProfiler {
         // Convert streaming statistics to column profiles
         let column_profiles = self.convert_to_profiles(&column_stats);
 
-        // For quality checking, we need some sample data
-        // Create minimal samples from the streaming stats
+        // Calculate quality metrics from sample data
         let sample_columns = self.create_quality_check_samples(&column_stats);
-        let issues = QualityChecker::check_columns(&column_profiles, &sample_columns);
+        let data_quality_metrics =
+            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
+                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
         let sampling_ratio = processed_rows as f64 / estimated_total_rows as f64;
@@ -149,13 +151,12 @@ impl TrueStreamingProfiler {
                 file_size_mb,
             },
             column_profiles,
-            issues,
             scan_info: ScanInfo {
                 rows_scanned: processed_rows,
                 sampling_ratio,
                 scan_time_ms,
             },
-            data_quality_metrics: None,
+            data_quality_metrics,
         })
     }
 

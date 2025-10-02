@@ -94,7 +94,7 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
     if args.detailed {
         println!("\n📋 Detailed Results:");
         for (path, report) in &batch_result.reports {
-            let score = report.quality_score().unwrap_or(0.0);
+            let score = report.quality_score();
             println!("  {} - Quality: {:.1}%", path.display(), score);
         }
     }

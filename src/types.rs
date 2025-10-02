@@ -47,6 +47,36 @@ pub struct DataQualityMetrics {
 }
 
 impl DataQualityMetrics {
+    /// Create metrics for an empty dataset (perfect quality, no data)
+    pub fn empty() -> Self {
+        Self {
+            // Completeness: No data = no missing values
+            missing_values_ratio: 0.0,
+            complete_records_ratio: 100.0,
+            null_columns: vec![],
+
+            // Consistency: No data = perfect consistency
+            data_type_consistency: 100.0,
+            format_violations: 0,
+            encoding_issues: 0,
+
+            // Uniqueness: No data = perfect uniqueness
+            duplicate_rows: 0,
+            key_uniqueness: 100.0,
+            high_cardinality_warning: false,
+
+            // Accuracy: No data = no outliers
+            outlier_ratio: 0.0,
+            range_violations: 0,
+            negative_values_in_positive: 0,
+
+            // Timeliness: No data = no staleness
+            future_dates_count: 0,
+            stale_data_ratio: 0.0,
+            temporal_violations: 0,
+        }
+    }
+
     /// Calculate comprehensive data quality metrics from column data
     ///
     /// Delegates to the specialized MetricsCalculator for proper separation of concerns.

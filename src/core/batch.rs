@@ -49,7 +49,6 @@ type AggregatedResults = (
     HashMap<PathBuf, String>,
     Vec<f64>,
     usize,
-    usize,
 );
 
 /// Batch processor for multiple files and directories
@@ -78,7 +77,6 @@ pub struct BatchSummary {
     pub successful: usize,
     pub failed: usize,
     pub total_records: usize,
-    pub total_issues: usize,
     pub average_quality_score: f64,
     pub processing_time_seconds: f64,
     /// Aggregated data quality metrics across all processed files
@@ -270,8 +268,7 @@ impl BatchProcessor {
         };
 
         // Aggregate results
-        let (reports, errors, quality_scores, total_records, total_issues) =
-            self.aggregate_results(results);
+        let (reports, errors, quality_scores, total_records) = self.aggregate_results(results);
 
         // Calculate summary
         let processing_time = start_time.elapsed().as_secs_f64();
@@ -288,7 +285,6 @@ impl BatchProcessor {
             successful: reports.len(),
             failed: errors.len(),
             total_records,
-            total_issues,
             average_quality_score,
             processing_time_seconds: processing_time,
             aggregated_data_quality_metrics,
@@ -392,7 +388,6 @@ impl BatchProcessor {
         let mut errors = HashMap::new();
         let mut quality_scores = Vec::new();
         let mut total_records = 0;
-        let mut total_issues = 0;
 
         for (path, result) in results {
             match result {
@@ -403,11 +398,9 @@ impl BatchProcessor {
                         .map(|profile| profile.total_count)
                         .max()
                         .unwrap_or(0);
-                    total_issues += report.issues.len();
 
-                    if let Some(score) = report.quality_score() {
-                        quality_scores.push(score);
-                    }
+                    let score = report.quality_score();
+                    quality_scores.push(score);
 
                     reports.insert(path, report);
                 }
@@ -417,7 +410,7 @@ impl BatchProcessor {
             }
         }
 
-        (reports, errors, quality_scores, total_records, total_issues)
+        (reports, errors, quality_scores, total_records)
     }
 
     /// Print processing summary
@@ -427,7 +420,6 @@ impl BatchProcessor {
         println!("├─ Successful: {} ✅", summary.successful);
         println!("├─ Failed: {} ❌", summary.failed);
         println!("├─ Total Records: {}", summary.total_records);
-        println!("├─ Total Issues: {}", summary.total_issues);
         println!(
             "├─ Average Quality Score: {:.1}%",
             summary.average_quality_score
@@ -455,7 +447,6 @@ impl BatchProcessor {
                 successful: 0,
                 failed: 0,
                 total_records: 0,
-                total_issues: 0,
                 average_quality_score: 0.0,
                 processing_time_seconds: 0.0,
                 aggregated_data_quality_metrics: None,
@@ -474,7 +465,7 @@ impl BatchProcessor {
 
         let all_metrics: Vec<&DataQualityMetrics> = reports
             .values()
-            .filter_map(|report| report.data_quality_metrics.as_ref())
+            .map(|report| &report.data_quality_metrics)
             .collect();
 
         if all_metrics.is_empty() {

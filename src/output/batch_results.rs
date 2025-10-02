@@ -68,14 +68,6 @@ fn display_batch_summary(summary: &crate::core::batch::BatchSummary) {
         summary.total_records.to_string().bright_white()
     );
     println!(
-        "├─ Total Quality Issues: {}",
-        if summary.total_issues > 0 {
-            summary.total_issues.to_string().yellow().bold()
-        } else {
-            summary.total_issues.to_string().green().bold()
-        }
-    );
-    println!(
         "└─ Processing Time: {:.2}s ({:.1} files/sec)",
         summary.processing_time_seconds,
         if summary.processing_time_seconds > 0.0 {

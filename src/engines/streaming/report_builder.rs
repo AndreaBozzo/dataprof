@@ -9,8 +9,7 @@ use std::time::Instant;
 
 use crate::analysis::analyze_column;
 use crate::engines::streaming::chunk_processor::ProcessingStats;
-use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
-use crate::QualityChecker;
+use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
 /// Builds quality reports from processed data
 pub struct ReportBuilder {
@@ -39,13 +38,10 @@ impl ReportBuilder {
         // Analyze columns
         let column_profiles = self.analyze_columns(&column_data);
 
-        // Check quality issues
-        let issues = QualityChecker::check_columns(&column_profiles, &column_data);
-
         // Calculate comprehensive ISO 8000/25012 quality metrics
-        let quality_metrics =
-            crate::types::DataQualityMetrics::calculate_from_data(&column_data, &column_profiles)
-                .ok(); // Convert Result to Option, ignore errors for now
+        let data_quality_metrics =
+            DataQualityMetrics::calculate_from_data(&column_data, &column_profiles)
+                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         // Calculate metrics
         let scan_time_ms = self.start_time.elapsed().as_millis();
@@ -59,13 +55,12 @@ impl ReportBuilder {
                 file_size_mb: self.file_size_mb,
             },
             column_profiles,
-            issues,
             scan_info: ScanInfo {
                 rows_scanned: stats.total_rows_processed,
                 sampling_ratio,
                 scan_time_ms,
             },
-            data_quality_metrics: quality_metrics,
+            data_quality_metrics,
         })
     }
 

@@ -1,6 +1,4 @@
-use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, OutputFormat, QualityIssue, QualityReport,
-};
+use crate::types::{ColumnProfile, ColumnStats, DataQualityMetrics, OutputFormat, QualityReport};
 use anyhow::Result;
 use is_terminal::IsTerminal;
 use serde::Serialize;
@@ -195,26 +193,7 @@ pub struct JsonSampling {
 
 #[derive(Serialize)]
 pub struct JsonQuality {
-    pub quality_score: Option<f64>,
-    pub issues: Vec<JsonIssue>,
-    pub issue_summary: JsonIssueSummary,
-}
-
-#[derive(Serialize)]
-pub struct JsonIssue {
-    pub severity: String,
-    pub category: String,
-    pub column: Option<String>,
-    pub description: String,
-    pub details: Option<serde_json::Value>,
-}
-
-#[derive(Serialize)]
-pub struct JsonIssueSummary {
-    pub total: usize,
-    pub critical: usize,
-    pub warning: usize,
-    pub info: usize,
+    pub quality_score: f64,
 }
 
 #[derive(Serialize)]
@@ -237,9 +216,8 @@ pub struct JsonPattern {
 
 #[derive(Serialize)]
 pub struct JsonSummary {
-    pub data_quality_score: Option<f64>,
+    pub data_quality_score: f64,
     pub completeness_score: f64,
-    pub consistency_score: f64,
 }
 
 impl OutputFormatter for JsonFormatter {
@@ -261,7 +239,9 @@ impl OutputFormatter for JsonFormatter {
                     None
                 },
             },
-            quality: self.format_quality_section(&report.issues, report.quality_score()),
+            quality: JsonQuality {
+                quality_score: report.quality_score(),
+            },
             columns: report
                 .column_profiles
                 .iter()
@@ -270,12 +250,10 @@ impl OutputFormatter for JsonFormatter {
             summary: JsonSummary {
                 data_quality_score: report.quality_score(),
                 completeness_score: self.calculate_completeness_score(&report.column_profiles),
-                consistency_score: self.calculate_consistency_score(&report.issues),
             },
-            data_quality_metrics: report
-                .data_quality_metrics
-                .as_ref()
-                .map(|metrics| self.format_data_quality_metrics(metrics)),
+            data_quality_metrics: Some(
+                self.format_data_quality_metrics(&report.data_quality_metrics),
+            ),
         };
 
         Ok(serde_json::to_string_pretty(&json_report)?)
@@ -303,70 +281,6 @@ impl OutputFormatter for JsonFormatter {
 }
 
 impl JsonFormatter {
-    fn format_quality_section(
-        &self,
-        issues: &[QualityIssue],
-        quality_score: Option<f64>,
-    ) -> JsonQuality {
-        let mut critical = 0;
-        let mut warning = 0;
-        let mut info = 0;
-
-        let json_issues: Vec<JsonIssue> = issues.iter().map(|issue| {
-            let (severity, category, column, description, details) = match issue {
-                QualityIssue::NullValues { column, count, percentage } => {
-                    warning += 1;
-                    ("warning", "completeness", Some(column.clone()),
-                     format!("Null values detected: {} ({:.1}%)", count, percentage),
-                     Some(serde_json::json!({"count": count, "percentage": percentage})))
-                },
-                QualityIssue::MixedDateFormats { column, formats } => {
-                    critical += 1;
-                    ("critical", "consistency", Some(column.clone()),
-                     "Mixed date formats detected".to_string(),
-                     Some(serde_json::json!({"formats": formats})))
-                },
-                QualityIssue::Duplicates { column, count } => {
-                    info += 1;
-                    ("info", "uniqueness", Some(column.clone()),
-                     format!("Duplicate values: {}", count),
-                     Some(serde_json::json!({"count": count})))
-                },
-                QualityIssue::Outliers { column, values, threshold } => {
-                    warning += 1;
-                    ("warning", "validity", Some(column.clone()),
-                     format!("Outliers detected: {} values (>{}σ)", values.len(), threshold),
-                     Some(serde_json::json!({"count": values.len(), "threshold": threshold, "sample_values": values.iter().take(5).collect::<Vec<_>>()})))
-                },
-                QualityIssue::MixedTypes { column, types } => {
-                    critical += 1;
-                    ("critical", "consistency", Some(column.clone()),
-                     "Mixed data types detected".to_string(),
-                     Some(serde_json::json!({"types": types})))
-                },
-            };
-
-            JsonIssue {
-                severity: severity.to_string(),
-                category: category.to_string(),
-                column,
-                description,
-                details,
-            }
-        }).collect();
-
-        JsonQuality {
-            quality_score,
-            issues: json_issues,
-            issue_summary: JsonIssueSummary {
-                total: issues.len(),
-                critical,
-                warning,
-                info,
-            },
-        }
-    }
-
     fn format_column(&self, profile: &ColumnProfile) -> JsonColumn {
         let stats_json = match &profile.stats {
             ColumnStats::Numeric { min, max, mean } => {
@@ -425,24 +339,6 @@ impl JsonFormatter {
         }
     }
 
-    fn calculate_consistency_score(&self, issues: &[QualityIssue]) -> f64 {
-        let critical_issues = issues
-            .iter()
-            .filter(|issue| {
-                matches!(
-                    issue,
-                    QualityIssue::MixedDateFormats { .. } | QualityIssue::MixedTypes { .. }
-                )
-            })
-            .count();
-
-        if critical_issues == 0 {
-            100.0
-        } else {
-            std::cmp::max(0, 100 - (critical_issues * 20)) as f64
-        }
-    }
-
     /// Format comprehensive data quality metrics for JSON output
     fn format_data_quality_metrics(&self, metrics: &DataQualityMetrics) -> JsonDataQualityMetrics {
         JsonDataQualityMetrics {
@@ -475,36 +371,19 @@ impl OutputFormatter for CsvFormatter {
         let mut output = String::new();
 
         // Header
-        output.push_str(
-            "column_name,data_type,total_count,null_count,null_percentage,has_quality_issues\n",
-        );
-
-        // Create issue map for quick lookup
-        let issue_columns: std::collections::HashSet<String> = report
-            .issues
-            .iter()
-            .map(|issue| match issue {
-                QualityIssue::NullValues { column, .. }
-                | QualityIssue::MixedDateFormats { column, .. }
-                | QualityIssue::Duplicates { column, .. }
-                | QualityIssue::Outliers { column, .. }
-                | QualityIssue::MixedTypes { column, .. } => column.clone(),
-            })
-            .collect();
+        output.push_str("column_name,data_type,total_count,null_count,null_percentage\n");
 
         // Data rows
         for profile in &report.column_profiles {
             let null_percentage = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
-            let has_issues = issue_columns.contains(&profile.name);
 
             output.push_str(&format!(
-                "{},{:?},{},{},{:.2},{}\n",
+                "{},{:?},{},{},{:.2}\n",
                 profile.name,
                 profile.data_type,
                 profile.total_count,
                 profile.null_count,
-                null_percentage,
-                has_issues
+                null_percentage
             ));
         }
 
@@ -551,50 +430,9 @@ impl OutputFormatter for PlainFormatter {
             report.scan_info.scan_time_ms
         ));
 
-        // Quality issues
-        if !report.issues.is_empty() {
-            output.push_str(&format!("Quality Issues ({})\n", report.issues.len()));
-            for (i, issue) in report.issues.iter().enumerate() {
-                output.push_str(&format!("{}. ", i + 1));
-                match issue {
-                    QualityIssue::NullValues {
-                        column,
-                        count,
-                        percentage,
-                    } => {
-                        output.push_str(&format!(
-                            "[{}] {} null values ({:.1}%)\n",
-                            column, count, percentage
-                        ));
-                    }
-                    QualityIssue::MixedDateFormats { column, .. } => {
-                        output.push_str(&format!("[{}] Mixed date formats\n", column));
-                    }
-                    QualityIssue::Duplicates { column, count } => {
-                        output.push_str(&format!("[{}] {} duplicates\n", column, count));
-                    }
-                    QualityIssue::Outliers {
-                        column,
-                        values,
-                        threshold,
-                    } => {
-                        output.push_str(&format!(
-                            "[{}] {} outliers (>{}σ)\n",
-                            column,
-                            values.len(),
-                            threshold
-                        ));
-                    }
-                    QualityIssue::MixedTypes { column, .. } => {
-                        output.push_str(&format!("[{}] Mixed data types\n", column));
-                    }
-                }
-            }
-            output.push('\n');
-        }
-
-        // Data Quality Metrics
-        if let Some(ref metrics) = report.data_quality_metrics {
+        // Data Quality Metrics (ISO 8000/25012)
+        let metrics = &report.data_quality_metrics;
+        {
             output.push_str("Data Quality Metrics\n");
             output.push_str(&format!(
                 "  Completeness: {:.1}% missing, {:.1}% complete\n",
@@ -731,77 +569,6 @@ impl OutputFormatter for InteractiveFormatter {
                 "Scan time: {} ms\n\n",
                 report.scan_info.scan_time_ms
             ));
-        }
-
-        // Quality issues with enhanced formatting
-        if !report.issues.is_empty() {
-            if self.context.supports_unicode {
-                output.push_str(&format!(
-                    "⚠️  {} ({})\n",
-                    "Quality Issues".bright_yellow().bold(),
-                    report.issues.len()
-                ));
-            } else {
-                output.push_str(&format!("Quality Issues ({})\n", report.issues.len()));
-            }
-
-            for (i, issue) in report.issues.iter().enumerate() {
-                let severity_indicator = if self.context.supports_unicode {
-                    match issue {
-                        QualityIssue::MixedDateFormats { .. } | QualityIssue::MixedTypes { .. } => {
-                            "🚨"
-                        }
-                        QualityIssue::NullValues { .. } | QualityIssue::Outliers { .. } => "⚠️ ",
-                        QualityIssue::Duplicates { .. } => "ℹ️ ",
-                    }
-                } else {
-                    ""
-                };
-
-                output.push_str(&format!("{}{}. ", severity_indicator, i + 1));
-
-                match issue {
-                    QualityIssue::NullValues {
-                        column,
-                        count,
-                        percentage,
-                    } => {
-                        output.push_str(&format!(
-                            "[{}] {} null values ({:.1}%)\n",
-                            column.bright_cyan(),
-                            count,
-                            percentage
-                        ));
-                    }
-                    QualityIssue::MixedDateFormats { column, .. } => {
-                        output
-                            .push_str(&format!("[{}] Mixed date formats\n", column.bright_cyan()));
-                    }
-                    QualityIssue::Duplicates { column, count } => {
-                        output.push_str(&format!(
-                            "[{}] {} duplicates\n",
-                            column.bright_cyan(),
-                            count
-                        ));
-                    }
-                    QualityIssue::Outliers {
-                        column,
-                        values,
-                        threshold,
-                    } => {
-                        output.push_str(&format!(
-                            "[{}] {} outliers (>{}σ)\n",
-                            column.bright_cyan(),
-                            values.len(),
-                            threshold
-                        ));
-                    }
-                    QualityIssue::MixedTypes { column, .. } => {
-                        output.push_str(&format!("[{}] Mixed data types\n", column.bright_cyan()));
-                    }
-                }
-            }
-            output.push('\n');
         }
 
         // Column profiles with enhanced formatting

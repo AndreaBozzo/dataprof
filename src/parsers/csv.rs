@@ -6,8 +6,7 @@ use std::path::Path;
 use crate::analysis::{analyze_column, analyze_column_fast};
 use crate::core::robust_csv::RobustCsvParser;
 use crate::core::sampling::SamplingStrategy;
-use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
-use crate::utils::quality::QualityChecker;
+use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
 // ============================================================================
 // HELPER FUNCTIONS - Reusable components to eliminate duplication
@@ -100,13 +99,12 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
                 file_size_mb,
             },
             column_profiles: vec![],
-            issues: vec![],
             scan_info: ScanInfo {
                 rows_scanned: 0,
                 sampling_ratio: 1.0,
                 scan_time_ms: start.elapsed().as_millis(),
             },
-            data_quality_metrics: None,
+            data_quality_metrics: DataQualityMetrics::empty(),
         });
     }
 
@@ -117,10 +115,9 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     // Analyze columns using helper function
     let column_profiles = analyze_columns(&columns);
 
-    // Enhanced quality analysis: get both issues and comprehensive metrics
-    let (issues, data_quality_metrics) =
-        QualityChecker::enhanced_quality_analysis(&column_profiles, &columns)
-            .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed: {}", e))?;
+    // Calculate comprehensive quality metrics using ISO 8000/25012 standards
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
+        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
     let scan_time_ms = start.elapsed().as_millis();
 
     Ok(QualityReport {
@@ -131,13 +128,12 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
             file_size_mb,
         },
         column_profiles,
-        issues,
         scan_info: ScanInfo {
             rows_scanned: records.len(),
             sampling_ratio: 1.0,
             scan_time_ms,
         },
-        data_quality_metrics: Some(data_quality_metrics),
+        data_quality_metrics,
     })
 }
 
@@ -201,10 +197,9 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
     // Analyze columns using helper function
     let column_profiles = analyze_columns(&columns);
 
-    // Enhanced quality analysis
-    let (issues, data_quality_metrics) =
-        QualityChecker::enhanced_quality_analysis(&column_profiles, &columns)
-            .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed: {}", e))?;
+    // Calculate comprehensive quality metrics using ISO 8000/25012 standards
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
+        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = if total_rows > 0 {
@@ -221,13 +216,12 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
             file_size_mb,
         },
         column_profiles,
-        issues,
         scan_info: ScanInfo {
             rows_scanned: rows_read,
             sampling_ratio,
             scan_time_ms,
         },
-        data_quality_metrics: Some(data_quality_metrics),
+        data_quality_metrics,
     })
 }
 

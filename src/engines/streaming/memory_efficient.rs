@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
-use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
-use crate::QualityChecker;
+use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
 /// Streaming statistics for incremental computation
 #[derive(Debug, Clone)]
@@ -290,10 +289,11 @@ impl MemoryEfficientProfiler {
             column_profiles.push(profile);
         }
 
-        // For quality checking, we need to provide sample data
-        // Since we don't keep all data in memory, use sample values
+        // Calculate quality metrics from sample data
         let sample_columns = self.create_sample_columns_for_quality_check(&column_profiles);
-        let issues = QualityChecker::check_columns(&column_profiles, &sample_columns);
+        let data_quality_metrics =
+            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
+                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
         let sampling_ratio = processed_rows as f64 / estimated_total_rows as f64;
@@ -306,13 +306,12 @@ impl MemoryEfficientProfiler {
                 file_size_mb,
             },
             column_profiles,
-            issues,
             scan_info: ScanInfo {
                 rows_scanned: processed_rows,
                 sampling_ratio,
                 scan_time_ms,
             },
-            data_quality_metrics: None,
+            data_quality_metrics,
         })
     }
 

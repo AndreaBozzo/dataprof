@@ -242,7 +242,8 @@ fn build_batch_aggregated_metrics_context(
     let mut total_temporal_violations = 0;
 
     for report in reports.values() {
-        if let Some(metrics) = &report.data_quality_metrics {
+        let metrics = &report.data_quality_metrics;
+        {
             total_missing_ratio += metrics.missing_values_ratio;
             total_type_consistency += metrics.data_type_consistency;
             total_key_uniqueness += metrics.key_uniqueness;
