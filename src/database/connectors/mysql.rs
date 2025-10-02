@@ -1,8 +1,6 @@
 //! MySQL/MariaDB database connector
 
-use super::common::{build_batch_query, build_count_query};
 use crate::database::connection::ConnectionInfo;
-use crate::database::security::validate_sql_identifier;
 #[cfg(feature = "mysql")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
 use crate::database::{DatabaseConfig, DatabaseConnector};

@@ -9,7 +9,7 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::types::{FileInfo, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -220,13 +220,12 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 file_size_mb: 0.0,
             },
             column_profiles: vec![],
-            issues: vec![],
             scan_info: ScanInfo {
                 rows_scanned: 0,
                 sampling_ratio: sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
                 scan_time_ms: start.elapsed().as_millis(),
             },
-            data_quality_metrics: None,
+            data_quality_metrics: DataQualityMetrics::default(),
         });
     }
 

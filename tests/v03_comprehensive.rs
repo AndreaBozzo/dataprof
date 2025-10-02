@@ -224,8 +224,8 @@ fn test_full_integration() -> Result<()> {
 
         println!("  ✓ All profilers processed successfully");
         println!(
-            "  ✓ Quality issues detected: {}",
-            streaming_report.issues.len()
+            "  ✓ Quality score: {:.2}",
+            streaming_report.calculate_overall_quality_score()
         );
     }
 
