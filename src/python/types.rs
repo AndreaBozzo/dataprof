@@ -312,16 +312,16 @@ impl PyDataQualityMetrics {
     /// - Completeness: 30% (complete_records_ratio - already percentage 0-100)
     /// - Consistency: 25% (data_type_consistency - already percentage 0-100)
     /// - Uniqueness: 20% (key_uniqueness - already percentage 0-100)
-    /// - Accuracy: 15% (100 - outlier_ratio*100)
-    /// - Timeliness: 10% (100 - stale_data_ratio*100)
+    /// - Accuracy: 15% (100 - outlier_ratio) - outlier_ratio is already percentage 0-100
+    /// - Timeliness: 10% (100 - stale_data_ratio) - stale_data_ratio is already percentage 0-100
     fn overall_quality_score(&self) -> PyResult<f64> {
         let completeness = self.complete_records_ratio * 0.3;
         let consistency = self.data_type_consistency * 0.25;
         let uniqueness = self.key_uniqueness * 0.2;
 
-        // outlier_ratio and stale_data_ratio are ratios (0-1), convert to percentage
-        let accuracy = (100.0 - self.outlier_ratio * 100.0) * 0.15;
-        let timeliness = (100.0 - self.stale_data_ratio * 100.0) * 0.1;
+        // Both outlier_ratio and stale_data_ratio are ALREADY percentages (0-100)
+        let accuracy = (100.0 - self.outlier_ratio) * 0.15;
+        let timeliness = (100.0 - self.stale_data_ratio) * 0.1;
 
         Ok(completeness + consistency + uniqueness + accuracy + timeliness)
     }
@@ -364,9 +364,7 @@ impl PyDataQualityMetrics {
     fn timeliness_summary(&self) -> String {
         format!(
             "Future dates: {} | Stale data: {:.1}% | Temporal violations: {}",
-            self.future_dates_count,
-            self.stale_data_ratio * 100.0,
-            self.temporal_violations
+            self.future_dates_count, self.stale_data_ratio, self.temporal_violations
         )
     }
 
@@ -562,8 +560,8 @@ impl PyDataQualityMetrics {
             self.outlier_ratio.min(100.0),
             self.range_violations,
             self.negative_values_in_positive,
-            self.stale_data_ratio * 100.0,
-            (self.stale_data_ratio * 100.0).min(100.0),
+            self.stale_data_ratio,
+            self.stale_data_ratio.min(100.0),
             self.future_dates_count,
             self.temporal_violations
         )
@@ -577,8 +575,8 @@ impl PyDataQualityMetrics {
             self.complete_records_ratio,
             self.data_type_consistency,
             self.key_uniqueness,
-            100.0 - self.outlier_ratio * 100.0,
-            100.0 - self.stale_data_ratio * 100.0
+            100.0 - self.outlier_ratio,
+            100.0 - self.stale_data_ratio
         )
     }
 }
