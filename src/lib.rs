@@ -10,7 +10,6 @@ pub mod parsers;
 pub mod output;
 pub mod stats;
 pub mod types;
-pub mod utils;
 
 // Testing utilities (for benchmarks and tests)
 pub mod testing;
@@ -47,9 +46,8 @@ pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 pub use output::html::generate_html_report;
 pub use types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, OutputFormat, Pattern,
-    QualityIssue, QualityReport, ScanInfo, Severity,
+    QualityReport, ScanInfo,
 };
-pub use utils::quality::QualityChecker;
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
 // Parser API - CSV and JSON analysis functions

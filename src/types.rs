@@ -199,60 +199,6 @@ pub struct Pattern {
     pub match_percentage: f64,
 }
 
-// Quality Issues
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum QualityIssue {
-    MixedDateFormats {
-        column: String,
-        formats: HashMap<String, usize>,
-    },
-    NullValues {
-        column: String,
-        count: usize,
-        percentage: f64,
-    },
-    Duplicates {
-        column: String,
-        count: usize,
-    },
-    Outliers {
-        column: String,
-        values: Vec<String>,
-        threshold: f64,
-    },
-    MixedTypes {
-        column: String,
-        types: HashMap<String, usize>,
-    },
-}
-
-impl QualityIssue {
-    pub fn severity(&self) -> Severity {
-        match self {
-            QualityIssue::MixedDateFormats { .. } => Severity::High,
-            QualityIssue::NullValues { percentage, .. } => {
-                if *percentage > 10.0 {
-                    Severity::High
-                } else if *percentage > 1.0 {
-                    Severity::Medium
-                } else {
-                    Severity::Low
-                }
-            }
-            QualityIssue::Duplicates { .. } => Severity::Medium,
-            QualityIssue::Outliers { .. } => Severity::Low,
-            QualityIssue::MixedTypes { .. } => Severity::High,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Severity {
-    Low,
-    Medium,
-    High,
-}
-
 // Output format types for CLI and output formatting
 #[derive(Clone, Debug)]
 pub enum OutputFormat {

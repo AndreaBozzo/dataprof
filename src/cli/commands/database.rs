@@ -3,10 +3,10 @@ use clap::Args;
 use colored::*;
 use std::path::PathBuf;
 
-// TODO: Refactor this command to use output_with_adaptive_formatter instead
-#[allow(deprecated)]
-use dataprof::output::{display_data_quality_metrics, display_quality_issues};
-use dataprof::{generate_html_report, profile_database, ColumnProfile, DatabaseConfig};
+use dataprof::output::output_with_adaptive_formatter;
+use dataprof::{
+    generate_html_report, profile_database, ColumnProfile, DatabaseConfig, OutputFormat,
+};
 
 /// Database analysis arguments
 #[derive(Debug, Args)]
@@ -124,13 +124,8 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     println!();
 
     if args.quality {
-        // Show quality issues
-        display_quality_issues(&report.issues);
-
-        // Show comprehensive data quality metrics
-        if let Some(metrics) = &report.data_quality_metrics {
-            display_data_quality_metrics(metrics);
-        }
+        // Use modern adaptive formatter for quality output
+        output_with_adaptive_formatter(&report, &OutputFormat::Text)?;
     }
 
     if args.quality {

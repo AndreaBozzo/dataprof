@@ -244,13 +244,9 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
         column_profiles.push(profile);
     }
 
-    // Enhanced quality analysis: get both issues and comprehensive metrics
-    let (issues, data_quality_metrics) =
-        crate::utils::quality::QualityChecker::enhanced_quality_analysis(
-            &column_profiles,
-            &columns,
-        )
-        .map_err(|e| anyhow::anyhow!("Enhanced quality analysis failed for database: {}", e))?;
+    // Calculate data quality metrics using ISO 8000/25012 standards
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
+        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed for database: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
@@ -271,13 +267,12 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
             file_size_mb: 0.0, // Not applicable for database queries
         },
         column_profiles,
-        issues, // Use the structured QualityIssue enum directly
         scan_info: ScanInfo {
             rows_scanned: actual_rows_processed,
             sampling_ratio,
             scan_time_ms,
         },
-        data_quality_metrics: Some(data_quality_metrics),
+        data_quality_metrics,
     };
 
     Ok(report)
