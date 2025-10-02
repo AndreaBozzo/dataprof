@@ -1,4 +1,3 @@
-use crate::analysis::MlReadinessScore;
 use crate::types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, OutputFormat, QualityIssue, QualityReport,
 };
@@ -241,14 +240,6 @@ pub struct JsonSummary {
     pub data_quality_score: Option<f64>,
     pub completeness_score: f64,
     pub consistency_score: f64,
-    pub ml_readiness: Option<JsonMlReadiness>,
-}
-
-#[derive(Serialize)]
-pub struct JsonMlReadiness {
-    pub score: f64,
-    pub recommendations: Vec<String>,
-    pub blocking_issues: Vec<String>,
 }
 
 impl OutputFormatter for JsonFormatter {
@@ -280,7 +271,6 @@ impl OutputFormatter for JsonFormatter {
                 data_quality_score: report.quality_score(),
                 completeness_score: self.calculate_completeness_score(&report.column_profiles),
                 consistency_score: self.calculate_consistency_score(&report.issues),
-                ml_readiness: None, // Will be populated by ML engine
             },
             data_quality_metrics: report
                 .data_quality_metrics
@@ -920,37 +910,17 @@ pub fn create_adaptive_formatter_with_format(format: OutputFormat) -> Box<dyn Ou
     Box::new(AdaptiveFormatter::with_forced_format(format))
 }
 
-pub fn output_with_formatter(
-    report: &QualityReport,
-    format: &OutputFormat,
-    ml_score: Option<&MlReadinessScore>,
-) -> Result<()> {
+/// Output report with specified formatter
+pub fn output_with_formatter(report: &QualityReport, format: &OutputFormat) -> Result<()> {
     let format_str = match format {
         OutputFormat::Json => "json",
         OutputFormat::Csv => "csv",
         OutputFormat::Plain => "plain",
-        OutputFormat::Text => "text", // Fallback
+        OutputFormat::Text => "text",
     };
 
     let formatter = create_formatter(format_str);
-    let mut output = formatter.format_report(report)?;
-
-    // Add ML score to JSON output if available
-    if matches!(format, OutputFormat::Json) && ml_score.is_some() {
-        let mut json_value: serde_json::Value = serde_json::from_str(&output)?;
-        if let Some(summary) = json_value.get_mut("summary") {
-            if let Some(score) = ml_score {
-                summary["ml_readiness"] = serde_json::json!({
-                    "score": score.overall_score,
-                    "level": score.readiness_level,
-                    "recommendations": score.recommendations,
-                    "feature_analysis": score.feature_analysis
-                });
-            }
-        }
-        output = serde_json::to_string_pretty(&json_value)?;
-    }
-
+    let output = formatter.format_report(report)?;
     println!("{}", output);
     Ok(())
 }
@@ -958,36 +928,15 @@ pub fn output_with_formatter(
 /// Adaptive output that automatically selects best format based on terminal context
 pub fn output_with_adaptive_formatter(
     report: &QualityReport,
-    ml_score: Option<&MlReadinessScore>,
     force_format: Option<OutputFormat>,
 ) -> Result<()> {
-    let effective_format = force_format
-        .clone()
-        .unwrap_or_else(|| OutputContext::detect().preferred_format());
-
     let formatter = if let Some(format) = force_format {
         create_adaptive_formatter_with_format(format)
     } else {
         create_adaptive_formatter()
     };
 
-    let mut output = formatter.format_report(report)?;
-
-    if matches!(effective_format, OutputFormat::Json) && ml_score.is_some() {
-        let mut json_value: serde_json::Value = serde_json::from_str(&output)?;
-        if let Some(summary) = json_value.get_mut("summary") {
-            if let Some(score) = ml_score {
-                summary["ml_readiness"] = serde_json::json!({
-                    "score": score.overall_score,
-                    "level": score.readiness_level,
-                    "recommendations": score.recommendations,
-                    "feature_analysis": score.feature_analysis
-                });
-            }
-        }
-        output = serde_json::to_string_pretty(&json_value)?;
-    }
-
+    let output = formatter.format_report(report)?;
     println!("{}", output);
     Ok(())
 }

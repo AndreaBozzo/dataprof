@@ -9,7 +9,6 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::analysis::{MlReadinessEngine, MlReadinessScore};
 use crate::types::{FileInfo, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -36,7 +35,6 @@ pub struct DatabaseConfig {
     pub connection_timeout: Option<std::time::Duration>,
     pub retry_config: Option<RetryConfig>,
     pub sampling_config: Option<SamplingConfig>,
-    pub enable_ml_readiness: bool,
     pub ssl_config: Option<SslConfig>,
     pub load_credentials_from_env: bool,
 }
@@ -49,8 +47,7 @@ impl Default for DatabaseConfig {
             max_connections: Some(10),
             connection_timeout: Some(std::time::Duration::from_secs(30)),
             retry_config: Some(RetryConfig::default()),
-            sampling_config: None,     // No sampling by default
-            enable_ml_readiness: true, // Enable ML readiness assessment by default
+            sampling_config: None, // No sampling by default
             ssl_config: Some(SslConfig::default()),
             load_credentials_from_env: true, // Load credentials from environment by default
         }
@@ -284,21 +281,4 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
     };
 
     Ok(report)
-}
-
-/// Enhanced database profiling with ML readiness assessment
-pub async fn profile_database_with_ml(
-    config: DatabaseConfig,
-    query: &str,
-) -> Result<(QualityReport, Option<MlReadinessScore>)> {
-    let quality_report = profile_database(config.clone(), query).await?;
-
-    let ml_readiness = if config.enable_ml_readiness {
-        let ml_engine = MlReadinessEngine::new();
-        Some(ml_engine.calculate_ml_score(&quality_report)?)
-    } else {
-        None
-    };
-
-    Ok((quality_report, ml_readiness))
 }

@@ -4,27 +4,22 @@ pub mod analysis;
 pub mod batch;
 pub mod dataframe;
 pub mod logging;
-pub mod ml;
 pub mod processor;
 pub mod types;
 
 // Re-export all public types and functions
 pub use analysis::{
-    analyze_csv_file, analyze_csv_for_ml, analyze_csv_with_quality, analyze_json_file,
-    calculate_data_quality_metrics,
+    analyze_csv_file, analyze_csv_with_quality, analyze_json_file, calculate_data_quality_metrics,
 };
 pub use batch::{batch_analyze_directory, batch_analyze_glob, PyBatchAnalyzer};
-pub use dataframe::{analyze_csv_dataframe, feature_analysis_dataframe};
+pub use dataframe::analyze_csv_dataframe;
 pub use logging::{
     analyze_csv_with_logging, configure_logging, get_logger, log_debug, log_error, log_info,
-    log_warning, ml_readiness_score_with_logging,
+    log_warning,
 };
-pub use ml::{ml_readiness_score, PyMlAnalyzer};
 pub use processor::PyCsvProcessor;
 pub use types::{
-    PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyFeatureAnalysis,
-    PyFeatureInteractionWarning, PyMlBlockingIssue, PyMlReadinessScore, PyMlRecommendation,
-    PyPreprocessingSuggestion, PyQualityIssue, PyQualityReport,
+    PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyQualityIssue, PyQualityReport,
 };
 
 use pyo3::prelude::*;
@@ -44,17 +39,8 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDataQualityMetrics>()?;
     m.add_class::<PyBatchResult>()?;
 
-    // ML readiness classes
-    m.add_class::<PyMlReadinessScore>()?;
-    m.add_class::<PyMlRecommendation>()?;
-    m.add_class::<PyMlBlockingIssue>()?;
-    m.add_class::<PyFeatureAnalysis>()?;
-    m.add_class::<PyPreprocessingSuggestion>()?;
-    m.add_class::<PyFeatureInteractionWarning>()?;
-
     // Context manager classes
     m.add_class::<PyBatchAnalyzer>()?;
-    m.add_class::<PyMlAnalyzer>()?;
     m.add_class::<PyCsvProcessor>()?;
 
     // Single file analysis
@@ -63,13 +49,8 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_json_file, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_data_quality_metrics, m)?)?;
 
-    // ML readiness analysis
-    m.add_function(wrap_pyfunction!(ml_readiness_score, m)?)?;
-    m.add_function(wrap_pyfunction!(analyze_csv_for_ml, m)?)?;
-
     // Pandas integration (optional)
     m.add_function(wrap_pyfunction!(analyze_csv_dataframe, m)?)?;
-    m.add_function(wrap_pyfunction!(feature_analysis_dataframe, m)?)?;
 
     // Batch processing
     m.add_function(wrap_pyfunction!(batch_analyze_glob, m)?)?;
@@ -85,7 +66,6 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Enhanced analysis functions with logging
     m.add_function(wrap_pyfunction!(analyze_csv_with_logging, m)?)?;
-    m.add_function(wrap_pyfunction!(ml_readiness_score_with_logging, m)?)?;
 
     // Note: Async functions temporarily disabled due to compatibility issues
 

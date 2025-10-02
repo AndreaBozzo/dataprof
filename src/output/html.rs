@@ -1,4 +1,3 @@
-use crate::analysis::MlReadinessScore;
 use crate::core::batch::{BatchResult, BatchSummary};
 use crate::types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, DataType, QualityIssue, QualityReport, Severity,
@@ -1144,12 +1143,8 @@ fn build_batch_html(batch_result: &BatchResult) -> String {
         build_batch_aggregated_data_quality_section(
             &batch_result.summary.aggregated_data_quality_metrics
         ),
-        build_batch_ml_overview(&batch_result.ml_scores),
-        build_files_overview(
-            &batch_result.reports,
-            &batch_result.ml_scores,
-            &batch_result.errors
-        ),
+        "", // ML overview removed
+        build_files_overview_simple(&batch_result.reports, &batch_result.errors),
         build_aggregated_issues(&batch_result.reports),
         get_dashboard_javascript()
     )
@@ -1458,418 +1453,6 @@ fn build_batch_aggregated_data_quality_section(
             )
         }
         None => String::new(), // No aggregated metrics available
-    }
-}
-
-/// Build ML readiness overview section
-fn build_batch_ml_overview(ml_scores: &HashMap<PathBuf, MlReadinessScore>) -> String {
-    if ml_scores.is_empty() {
-        return String::new();
-    }
-
-    let total_score: f32 = ml_scores
-        .values()
-        .map(|score| score.overall_score as f32)
-        .sum();
-    let avg_ml_score = total_score / ml_scores.len() as f32;
-
-    let readiness_counts = ml_scores.values().fold([0; 4], |mut acc, score| {
-        match score.overall_score {
-            s if s >= 80.0 => acc[0] += 1, // Ready
-            s if s >= 60.0 => acc[1] += 1, // Good
-            s if s >= 40.0 => acc[2] += 1, // Needs Work
-            _ => acc[3] += 1,              // Not Ready
-        }
-        acc
-    });
-
-    format!(
-        r#"<section class="ml-overview">
-            <h2>🤖 ML Readiness Overview</h2>
-            <div class="ml-summary-grid">
-                <div class="ml-card">
-                    <h3>Average ML Score</h3>
-                    <div class="ml-score-large">{:.1}%</div>
-                    <div class="ml-files-count">{} files analyzed</div>
-                </div>
-                <div class="ml-distribution">
-                    <h3>Readiness Distribution</h3>
-                    <div class="readiness-bars">
-                        <div class="readiness-bar">
-                            <span class="bar-label">Ready (≥80%)</span>
-                            <div class="bar">
-                                <div class="bar-fill ready" style="width: {}%"></div>
-                            </div>
-                            <span class="bar-count">{}</span>
-                        </div>
-                        <div class="readiness-bar">
-                            <span class="bar-label">Good (60-80%)</span>
-                            <div class="bar">
-                                <div class="bar-fill good" style="width: {}%"></div>
-                            </div>
-                            <span class="bar-count">{}</span>
-                        </div>
-                        <div class="readiness-bar">
-                            <span class="bar-label">Needs Work (40-60%)</span>
-                            <div class="bar">
-                                <div class="bar-fill warning" style="width: {}%"></div>
-                            </div>
-                            <span class="bar-count">{}</span>
-                        </div>
-                        <div class="readiness-bar">
-                            <span class="bar-label">Not Ready (<40%)</span>
-                            <div class="bar">
-                                <div class="bar-fill critical" style="width: {}%"></div>
-                            </div>
-                            <span class="bar-count">{}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>"#,
-        avg_ml_score,
-        ml_scores.len(),
-        if !ml_scores.is_empty() {
-            readiness_counts[0] as f32 / ml_scores.len() as f32 * 100.0
-        } else {
-            0.0
-        },
-        readiness_counts[0],
-        if !ml_scores.is_empty() {
-            readiness_counts[1] as f32 / ml_scores.len() as f32 * 100.0
-        } else {
-            0.0
-        },
-        readiness_counts[1],
-        if !ml_scores.is_empty() {
-            readiness_counts[2] as f32 / ml_scores.len() as f32 * 100.0
-        } else {
-            0.0
-        },
-        readiness_counts[2],
-        if !ml_scores.is_empty() {
-            readiness_counts[3] as f32 / ml_scores.len() as f32 * 100.0
-        } else {
-            0.0
-        },
-        readiness_counts[3]
-    )
-}
-
-/// Build files overview table with quality and ML scores
-fn build_files_overview(
-    reports: &HashMap<PathBuf, QualityReport>,
-    ml_scores: &HashMap<PathBuf, MlReadinessScore>,
-    errors: &HashMap<PathBuf, String>,
-) -> String {
-    let mut files_html = String::new();
-
-    // Collect and sort all files by quality score
-    let mut file_data: Vec<_> = reports
-        .iter()
-        .map(|(path, report)| {
-            let quality_score = report.quality_score().unwrap_or(0.0);
-            let ml_score = ml_scores.get(path).map(|s| s.overall_score);
-            (path, report, quality_score, ml_score)
-        })
-        .collect();
-
-    file_data.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-
-    for (path, report, quality_score, ml_score_opt) in file_data {
-        let filename = path
-            .file_name()
-            .map_or("unknown", |name| name.to_str().unwrap_or("unknown"));
-
-        let quality_class = if quality_score >= 80.0 {
-            "success"
-        } else if quality_score >= 60.0 {
-            "warning"
-        } else {
-            "critical"
-        };
-
-        let ml_score_display = if let Some(ml_score) = ml_score_opt {
-            format!("{:.1}%", ml_score)
-        } else {
-            "N/A".to_string()
-        };
-
-        files_html.push_str(&format!(
-            r#"<tr class="file-row" onclick="toggleFileDetails('{}')">
-                <td>
-                    <div class="file-name">{}</div>
-                    <div class="file-path">{}</div>
-                </td>
-                <td class="score-cell">
-                    <span class="score-badge {}">{:.1}%</span>
-                </td>
-                <td class="score-cell">
-                    <span class="ml-score">{}</span>
-                </td>
-                <td>{}</td>
-                <td>{}</td>
-                <td>{}</td>
-                <td>
-                    <button class="details-btn">View Details</button>
-                </td>
-            </tr>
-            <tr class="file-details" id="details-{}" style="display: none;">
-                <td colspan="7">
-                    <div class="details-content">
-                        {}
-                    </div>
-                </td>
-            </tr>"#,
-            filename,
-            filename,
-            path.display(),
-            quality_class,
-            quality_score,
-            ml_score_display,
-            report.file_info.total_columns,
-            report
-                .file_info
-                .total_rows
-                .map_or("Unknown".to_string(), |r| r.to_string()),
-            report.issues.len(),
-            filename,
-            build_file_details(report, ml_scores.get(path))
-        ));
-    }
-
-    // Add error files
-    for (path, error) in errors {
-        let filename = path
-            .file_name()
-            .map_or("unknown", |name| name.to_str().unwrap_or("unknown"));
-
-        files_html.push_str(&format!(
-            r#"<tr class="file-row error">
-                <td>
-                    <div class="file-name">{}</div>
-                    <div class="file-path">{}</div>
-                </td>
-                <td class="score-cell">
-                    <span class="score-badge critical">ERROR</span>
-                </td>
-                <td>N/A</td>
-                <td>N/A</td>
-                <td>N/A</td>
-                <td>N/A</td>
-                <td>
-                    <span class="error-message" title="{}">{}</span>
-                </td>
-            </tr>"#,
-            filename,
-            path.display(),
-            error,
-            if error.len() > 50 {
-                format!("{}...", &error[..50])
-            } else {
-                error.clone()
-            }
-        ));
-    }
-
-    format!(
-        r#"<section class="files-overview">
-            <h2>📁 Files Overview</h2>
-            <div class="table-container">
-                <table class="files-table">
-                    <thead>
-                        <tr>
-                            <th>File</th>
-                            <th>Quality Score</th>
-                            <th>ML Score</th>
-                            <th>Columns</th>
-                            <th>Rows</th>
-                            <th>Issues</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {}
-                    </tbody>
-                </table>
-            </div>
-        </section>"#,
-        files_html
-    )
-}
-
-/// Build detailed view for a specific file
-fn build_file_details(report: &QualityReport, ml_score: Option<&MlReadinessScore>) -> String {
-    let mut details = String::new();
-
-    // Basic file info
-    details.push_str(&format!(
-        r#"<div class="file-detail-section">
-            <h4>📊 File Information</h4>
-            <div class="detail-grid">
-                <div><strong>File Size:</strong> {:.1} MB</div>
-                <div><strong>Columns:</strong> {}</div>
-                <div><strong>Rows:</strong> {}</div>
-                <div><strong>Scan Time:</strong> {} ms</div>
-            </div>
-        </div>"#,
-        report.file_info.file_size_mb,
-        report.file_info.total_columns,
-        report
-            .file_info
-            .total_rows
-            .map_or("Unknown".to_string(), |r| r.to_string()),
-        report.scan_info.scan_time_ms
-    ));
-
-    // ML Score details if available
-    if let Some(ml) = ml_score {
-        details.push_str(&format!(
-            r#"<div class="file-detail-section">
-                <h4>🤖 ML Readiness</h4>
-                <div class="ml-detail-grid">
-                    <div class="ml-score-display">
-                        <span class="ml-score-big">{:.1}%</span>
-                        <span class="ml-level">{}</span>
-                    </div>
-                    <div class="ml-recommendations">
-                        <h5>Top Recommendations:</h5>
-                        <ul>
-                            {}
-                        </ul>
-                    </div>
-                </div>
-            </div>"#,
-            ml.overall_score,
-            format_ml_readiness_level(&ml.readiness_level),
-            ml.recommendations
-                .iter()
-                .take(3)
-                .map(|rec| format!("<li>{}</li>", rec.description))
-                .collect::<Vec<_>>()
-                .join("")
-        ));
-    }
-
-    // Quality issues
-    if !report.issues.is_empty() {
-        details.push_str(&format!(
-            r#"<div class="file-detail-section">
-                <h4>⚠️ Quality Issues ({})</h4>
-                <div class="issues-list">
-                    {}
-                </div>
-            </div>"#,
-            report.issues.len(),
-            report
-                .issues
-                .iter()
-                .take(5)
-                .map(|issue| format!(
-                    r#"<div class="issue-item">{}</div>"#,
-                    format_issue_description(issue)
-                ))
-                .collect::<Vec<_>>()
-                .join("")
-        ));
-    }
-
-    details
-}
-
-/// Build aggregated quality issues section
-fn build_aggregated_issues(reports: &HashMap<PathBuf, QualityReport>) -> String {
-    let mut all_issues = Vec::new();
-
-    for (path, report) in reports {
-        for issue in &report.issues {
-            all_issues.push((path, issue));
-        }
-    }
-
-    if all_issues.is_empty() {
-        return r#"<section class="aggregated-issues">
-                <h2>✨ Quality Issues Summary</h2>
-                <div class="no-issues">
-                    <span class="success-icon">✅</span>
-                    <span>No quality issues found across all files!</span>
-                </div>
-            </section>"#
-            .to_string();
-    }
-
-    // Group issues by type and severity
-    let mut issue_counts = std::collections::HashMap::new();
-    for (_, issue) in &all_issues {
-        let issue_type = get_issue_type_name(issue);
-        let count = issue_counts.entry(issue_type).or_insert(0);
-        *count += 1;
-    }
-
-    let mut issue_summary: Vec<_> = issue_counts.into_iter().collect();
-    issue_summary.sort_by(|a, b| b.1.cmp(&a.1));
-
-    let issues_html: String = issue_summary
-        .iter()
-        .take(10)
-        .map(|(issue_type, count)| {
-            format!(
-                r#"<div class="issue-summary-item">
-                <div class="issue-type">{}</div>
-                <div class="issue-count">{} occurrences</div>
-            </div>"#,
-                issue_type, count
-            )
-        })
-        .collect();
-
-    format!(
-        r#"<section class="aggregated-issues">
-            <h2>⚠️ Quality Issues Summary</h2>
-            <div class="issues-summary">
-                <div class="summary-stats">
-                    <div class="stat">
-                        <span class="stat-number">{}</span>
-                        <span class="stat-label">Total Issues</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-number">{}</span>
-                        <span class="stat-label">Affected Files</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-number">{}</span>
-                        <span class="stat-label">Issue Types</span>
-                    </div>
-                </div>
-                <div class="issues-breakdown">
-                    <h3>Most Common Issues</h3>
-                    {}
-                </div>
-            </div>
-        </section>"#,
-        all_issues.len(),
-        reports.values().filter(|r| !r.issues.is_empty()).count(),
-        issue_summary.len(),
-        issues_html
-    )
-}
-
-fn get_issue_type_name(issue: &QualityIssue) -> String {
-    match issue {
-        QualityIssue::NullValues { .. } => "Null Values".to_string(),
-        QualityIssue::MixedDateFormats { .. } => "Mixed Date Formats".to_string(),
-        QualityIssue::Duplicates { .. } => "Duplicate Values".to_string(),
-        QualityIssue::Outliers { .. } => "Outliers".to_string(),
-        QualityIssue::MixedTypes { .. } => "Mixed Data Types".to_string(),
-    }
-}
-
-fn format_ml_readiness_level(level: &crate::analysis::MlReadinessLevel) -> String {
-    match level {
-        crate::analysis::MlReadinessLevel::Ready => "Ready".to_string(),
-        crate::analysis::MlReadinessLevel::Good => "Good".to_string(),
-        crate::analysis::MlReadinessLevel::NeedsWork => "Needs Work".to_string(),
-        crate::analysis::MlReadinessLevel::NotReady => "Not Ready".to_string(),
     }
 }
 
@@ -2340,4 +1923,203 @@ fn get_dashboard_javascript() -> &'static str {
             });
         });
     "#
+}
+
+/// Build files overview table simplified (ML removed)
+fn build_files_overview_simple(
+    reports: &HashMap<PathBuf, QualityReport>,
+    errors: &HashMap<PathBuf, String>,
+) -> String {
+    let mut files_html = String::new();
+
+    // Collect and sort all files by quality score
+    let mut file_data: Vec<_> = reports
+        .iter()
+        .map(|(path, report)| {
+            let quality_score = report.quality_score().unwrap_or(0.0);
+            (path, report, quality_score)
+        })
+        .collect();
+
+    file_data.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    for (path, report, quality_score) in file_data {
+        let filename = path
+            .file_name()
+            .map_or("unknown", |name| name.to_str().unwrap_or("unknown"));
+
+        let quality_class = if quality_score >= 80.0 {
+            "success"
+        } else if quality_score >= 60.0 {
+            "warning"
+        } else {
+            "critical"
+        };
+
+        files_html.push_str(&format!(
+            r#"<tr class="file-row">
+                <td>
+                    <div class="file-name">{}</div>
+                    <div class="file-path">{}</div>
+                </td>
+                <td class="score-cell">
+                    <span class="score-badge {}">{:.1}%</span>
+                </td>
+                <td>{}</td>
+                <td>{}</td>
+                <td>{}</td>
+            </tr>"#,
+            filename,
+            path.display(),
+            quality_class,
+            quality_score,
+            report.file_info.total_columns,
+            report
+                .file_info
+                .total_rows
+                .map_or("Unknown".to_string(), |r| r.to_string()),
+            report.issues.len()
+        ));
+    }
+
+    // Add error files
+    for (path, error) in errors {
+        let filename = path
+            .file_name()
+            .map_or("unknown", |name| name.to_str().unwrap_or("unknown"));
+
+        files_html.push_str(&format!(
+            r#"<tr class="file-row error">
+                <td>
+                    <div class="file-name">{}</div>
+                    <div class="file-path">{}</div>
+                </td>
+                <td class="score-cell">
+                    <span class="score-badge critical">ERROR</span>
+                </td>
+                <td>N/A</td>
+                <td>N/A</td>
+                <td>
+                    <span class="error-message" title="{}">{}</span>
+                </td>
+            </tr>"#,
+            filename,
+            path.display(),
+            error,
+            if error.len() > 50 {
+                format!("{}...", &error[..50])
+            } else {
+                error.clone()
+            }
+        ));
+    }
+
+    format!(
+        r#"<section class="files-overview">
+            <h2>📁 Files Overview</h2>
+            <div class="table-container">
+                <table class="files-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Quality Score</th>
+                            <th>Columns</th>
+                            <th>Rows</th>
+                            <th>Issues</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {}
+                    </tbody>
+                </table>
+            </div>
+        </section>"#,
+        files_html
+    )
+}
+
+fn get_issue_type_name(issue: &QualityIssue) -> String {
+    match issue {
+        QualityIssue::NullValues { .. } => "Null Values".to_string(),
+        QualityIssue::MixedDateFormats { .. } => "Mixed Date Formats".to_string(),
+        QualityIssue::Duplicates { .. } => "Duplicate Values".to_string(),
+        QualityIssue::Outliers { .. } => "Outliers".to_string(),
+        QualityIssue::MixedTypes { .. } => "Mixed Data Types".to_string(),
+    }
+}
+
+fn build_aggregated_issues(reports: &HashMap<PathBuf, QualityReport>) -> String {
+    let mut all_issues = Vec::new();
+
+    for (path, report) in reports {
+        for issue in &report.issues {
+            all_issues.push((path, issue));
+        }
+    }
+
+    if all_issues.is_empty() {
+        return r#"<section class="aggregated-issues">
+                <h2>✨ Quality Issues Summary</h2>
+                <div class="no-issues">
+                    <span class="success-icon">✅</span>
+                    <span>No quality issues found across all files!</span>
+                </div>
+            </section>"#
+            .to_string();
+    }
+
+    // Group issues by type and severity
+    let mut issue_counts = std::collections::HashMap::new();
+    for (_, issue) in &all_issues {
+        let issue_type = get_issue_type_name(issue);
+        let count = issue_counts.entry(issue_type).or_insert(0);
+        *count += 1;
+    }
+
+    let mut issue_summary: Vec<_> = issue_counts.into_iter().collect();
+    issue_summary.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let issues_html: String = issue_summary
+        .iter()
+        .take(10)
+        .map(|(issue_type, count)| {
+            format!(
+                r#"<div class="issue-summary-item">
+                <div class="issue-type">{}</div>
+                <div class="issue-count">{} occurrences</div>
+            </div>"#,
+                issue_type, count
+            )
+        })
+        .collect();
+
+    format!(
+        r#"<section class="aggregated-issues">
+            <h2>⚠️ Quality Issues Summary</h2>
+            <div class="issues-summary">
+                <div class="summary-stats">
+                    <div class="stat">
+                        <span class="stat-number">{}</span>
+                        <span class="stat-label">Total Issues</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-number">{}</span>
+                        <span class="stat-label">Affected Files</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-number">{}</span>
+                        <span class="stat-label">Issue Types</span>
+                    </div>
+                </div>
+                <div class="issues-breakdown">
+                    <h3>Most Common Issues</h3>
+                    {}
+                </div>
+            </div>
+        </section>"#,
+        all_issues.len(),
+        reports.values().filter(|r| !r.issues.is_empty()).count(),
+        issue_summary.len(),
+        issues_html
+    )
 }

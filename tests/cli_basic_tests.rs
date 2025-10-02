@@ -60,10 +60,6 @@ fn test_cli_help_command() -> Result<()> {
         stdout.contains("--quality"),
         "Should mention quality option"
     );
-    assert!(
-        stdout.contains("--ml-score"),
-        "Should mention ML score option"
-    );
 
     Ok(())
 }
@@ -163,22 +159,6 @@ fn test_cli_quality_assessment() -> Result<()> {
     assert!(
         stdout.to_lowercase().contains("quality"),
         "Should mention quality"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn test_cli_ml_score_analysis() -> Result<()> {
-    let test_file = create_test_csv()?;
-    let file_path = test_file.path().to_str().unwrap();
-
-    let (success, stdout, _stderr) = run_cli_command(&[file_path, "--ml-score"])?;
-
-    assert!(success, "ML score analysis should succeed");
-    assert!(
-        stdout.contains("Column:") || stdout.contains("Type:"),
-        "Should contain column analysis output"
     );
 
     Ok(())
@@ -407,7 +387,6 @@ fn test_cli_comprehensive_analysis() -> Result<()> {
     let (success, stdout, _stderr) = run_cli_command(&[
         file_path,
         "--quality",
-        "--ml-score",
         "--html",
         html_path_str,
         "--format",

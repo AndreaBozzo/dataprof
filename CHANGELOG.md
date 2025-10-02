@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ⚠️ **BREAKING: ML Features and Script Generation Removed (~7200 lines)**
+
+**Strategic Pivot**: DataProfiler now focuses **exclusively** on ISO 8000/25012 data quality assessment.
+
+#### **Removed Features**:
+- ❌ ML readiness scoring and assessment engine
+- ❌ ML feature analysis and recommendations
+- ❌ Python/pandas preprocessing script generation
+- ❌ Code snippet generation for data preprocessing
+- ❌ `dataprof ml` CLI command
+- ❌ `--ml`, `--ml-score`, `--ml-code`, `--output-script` flags
+
+#### **Removed Modules** (~5000 lines):
+- `src/analysis/ml_readiness.rs` (ML scoring engine)
+- `src/analysis/code_generator.rs` (script generation)
+- `src/cli/commands/ml.rs` (ML CLI command)
+- `src/cli/commands/script_generator.rs` (script generation CLI)
+- `src/database/ml_readiness_simple.rs` (database ML support)
+- ML sections from `output/display.rs`, `output/html.rs`, `output/batch_results.rs`
+
+#### **Removed Python Bindings** (~1500 lines):
+- `src/python/ml.rs` (entire ML module)
+- All `PyMl*`, `PyFeature*`, `PyPreprocessing*` classes
+- Functions: `ml_readiness_score()`, `analyze_csv_for_ml()`, `feature_analysis_dataframe()`
+- `ml_readiness_score_with_logging()`
+
+#### **Removed Documentation & Tests** (~700 lines):
+- `docs/python/ML_FEATURES.md`
+- `python/examples/ml_readiness_example.py`
+- `python/examples/sklearn_integration_example.py`
+- `python/tests/test_ml_readiness.py`
+- ML-related tests in `tests/cli_basic_tests.rs`, `tests/database_integration.rs`
+
+#### **API Compatibility**:
+- Deprecated fields in `BatchConfig` and `BatchResult` kept with `#[deprecated]` attribute
+- Functions accepting ML parameters now accept `Option<&()>` placeholders
+- Existing data quality features remain **100% functional**
+
+#### **Migration Guide**:
+If you were using ML features:
+1. **CLI**: Remove `--ml*` flags from commands
+2. **Python**: Remove calls to `ml_readiness_score()` and related functions
+3. **Focus**: Use ISO 8000/25012 data quality metrics for data assessment
+
+**Rationale**: Simplify codebase, eliminate maintenance burden, focus on core competency (data quality).
+
+---
+
 ### 🏗️ **Major Architecture Refactoring: Eliminated Tech Debt (~730 lines removed)**
 
 #### **Database Connectors** (~650 lines eliminated)

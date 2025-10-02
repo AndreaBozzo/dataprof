@@ -5,7 +5,6 @@ use anyhow::Result;
 pub fn route_command(command: Command) -> Result<()> {
     match command {
         Command::Analyze(args) => crate::cli::commands::analyze::execute(&args),
-        Command::Ml(args) => crate::cli::commands::ml::execute(&args),
         Command::Report(args) => crate::cli::commands::report::execute(&args),
         Command::Batch(args) => crate::cli::commands::batch::execute(&args),
         #[cfg(feature = "database")]

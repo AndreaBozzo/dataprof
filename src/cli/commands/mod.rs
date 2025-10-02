@@ -1,14 +1,10 @@
 // Command modules (args + implementation)
 pub mod analyze;
 pub mod batch;
-pub mod ml;
 pub mod report;
 
 // Utility modules
 pub mod benchmark;
-
-#[cfg(feature = "database")]
-pub mod script_generator;
 
 #[cfg(feature = "database")]
 pub mod database;
@@ -35,18 +31,8 @@ pub enum Command {
     ///
     /// Examples:
     ///   dataprof analyze data.csv
-    ///   dataprof analyze data.csv --ml
     ///   dataprof analyze data.csv --detailed
     Analyze(analyze::AnalyzeArgs),
-
-    /// ML readiness analysis and code generation
-    ///
-    /// Analyzes data suitability for ML and generates preprocessing code.
-    ///
-    /// Examples:
-    ///   dataprof ml data.csv
-    ///   dataprof ml data.csv --script preprocess.py
-    Ml(ml::MlArgs),
 
     /// Generate comprehensive HTML/PDF reports
     ///
@@ -72,7 +58,7 @@ pub enum Command {
     ///
     /// Examples:
     ///   dataprof database postgres://user:pass@host/db --table users --quality
-    ///   dataprof database sqlite://data.db --query "SELECT * FROM users" --ml-score
+    ///   dataprof database sqlite://data.db --query "SELECT * FROM users"
     #[cfg(feature = "database")]
     Database(database::DatabaseArgs),
 

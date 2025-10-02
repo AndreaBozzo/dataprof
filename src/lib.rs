@@ -39,8 +39,7 @@ pub use core::config::DataprofConfig;
 pub use core::exit_codes;
 pub use core::validation::{InputValidator, ValidationError};
 
-// ML Analysis exports
-pub use analysis::MlReadinessEngine;
+// Engine exports
 pub use engines::streaming::ProgressInfo;
 pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
@@ -60,17 +59,15 @@ pub use parsers::csv::{
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
 // Analysis utilities - Column-level and statistical functions
-pub use analysis::{
-    analyze_column_fast, detect_patterns, infer_type, MetricsCalculator, MlReadinessScore,
-};
+pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MetricsCalculator};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub use database::{
-    create_connector, profile_database, profile_database_with_ml, DatabaseConfig,
-    DatabaseConnector, DatabaseCredentials, MySqlConnector, PostgresConnector, RetryConfig,
-    SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
+    create_connector, profile_database, DatabaseConfig, DatabaseConnector, DatabaseCredentials,
+    MySqlConnector, PostgresConnector, RetryConfig, SamplingConfig,
+    SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
 };
 
 /// Global memory leak detection utility

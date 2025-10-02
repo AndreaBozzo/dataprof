@@ -22,7 +22,6 @@ mod sqlite_tests {
             connection_timeout: Some(std::time::Duration::from_secs(5)),
             retry_config: Some(dataprof::database::RetryConfig::default()),
             sampling_config: None,
-            enable_ml_readiness: false,
             ssl_config: Some(dataprof::database::SslConfig::default()),
             load_credentials_from_env: false,
         };
@@ -48,7 +47,6 @@ mod sqlite_tests {
             connection_timeout: Some(std::time::Duration::from_secs(5)),
             retry_config: Some(dataprof::database::RetryConfig::default()),
             sampling_config: None,
-            enable_ml_readiness: false,
             ssl_config: Some(dataprof::database::SslConfig::default()),
             load_credentials_from_env: false,
         };
@@ -87,7 +85,6 @@ mod sqlite_tests {
             connection_timeout: Some(std::time::Duration::from_secs(5)),
             retry_config: Some(dataprof::database::RetryConfig::default()),
             sampling_config: None,
-            enable_ml_readiness: true, // Enable to test metrics calculation
             ssl_config: Some(dataprof::database::SslConfig::default()),
             load_credentials_from_env: false,
         };
@@ -139,132 +136,101 @@ mod sqlite_tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sqlite_ml_readiness_full_score() -> Result<()> {
-        use dataprof::profile_database_with_ml;
-
-        // Test that the full MlReadinessScore (not simplified version) is returned
-        let config = DatabaseConfig {
-            connection_string: ":memory:".to_string(),
-            batch_size: 1000,
-            max_connections: Some(1),
-            connection_timeout: Some(std::time::Duration::from_secs(5)),
-            retry_config: Some(dataprof::database::RetryConfig::default()),
-            sampling_config: None,
-            enable_ml_readiness: true,
-            ssl_config: Some(dataprof::database::SslConfig::default()),
-            load_credentials_from_env: false,
-        };
-
-        let result =
-            profile_database_with_ml(config, "SELECT 1 as id, 'test' as name, 100.5 as value")
-                .await;
-
-        match result {
-            Ok((report, ml_score_opt)) => {
-                // Verify ML score is present
-                if let Some(ml_score) = ml_score_opt {
-                    // Check that we have the full MlReadinessScore structure
-                    assert!(
-                        ml_score.overall_score >= 0.0 && ml_score.overall_score <= 100.0,
-                        "Overall ML score should be between 0-100"
-                    );
-
-                    // Verify component scores exist
-                    assert!(
-                        ml_score.completeness_score >= 0.0 && ml_score.completeness_score <= 100.0
-                    );
-                    assert!(
-                        ml_score.consistency_score >= 0.0 && ml_score.consistency_score <= 100.0
-                    );
-                    assert!(
-                        ml_score.type_suitability_score >= 0.0
-                            && ml_score.type_suitability_score <= 100.0
-                    );
-                    assert!(
-                        ml_score.feature_quality_score >= 0.0
-                            && ml_score.feature_quality_score <= 100.0
-                    );
-
-                    // Verify recommendations structure (should have code snippets if applicable)
-                    for rec in &ml_score.recommendations {
-                        // Check that recommendations have the full structure
-                        assert!(!rec.category.is_empty(), "Category should not be empty");
-                        assert!(
-                            !rec.description.is_empty(),
-                            "Description should not be empty"
-                        );
-                        // Code snippet may or may not be present depending on the recommendation
-                    }
-
-                    // Verify feature analysis is present (new full ML score feature)
-                    assert!(
-                        !ml_score.feature_analysis.is_empty(),
-                        "Feature analysis should be present in full ML score"
-                    );
-
-                    println!("✅ Database full ML readiness score test passed!");
-                    println!("   Overall Score: {:.1}%", ml_score.overall_score);
-                    println!("   Completeness: {:.1}%", ml_score.completeness_score);
-                    println!("   Consistency: {:.1}%", ml_score.consistency_score);
-                    println!(
-                        "   Type Suitability: {:.1}%",
-                        ml_score.type_suitability_score
-                    );
-                    println!("   Feature Quality: {:.1}%", ml_score.feature_quality_score);
-                    println!("   Recommendations: {}", ml_score.recommendations.len());
-                    println!("   Feature Analyses: {}", ml_score.feature_analysis.len());
-                } else {
-                    println!("⚠️ ML readiness scoring was not enabled or returned None");
-                }
-
-                // Also verify DataQualityMetrics integration
-                assert!(
-                    report.data_quality_metrics.is_some(),
-                    "DataQualityMetrics should be present"
-                );
-            }
-            Err(e) => {
-                println!(
-                    "⚠️ Database ML test failed (expected for in-memory setup): {}",
-                    e
-                );
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(all(test, feature = "database", feature = "duckdb"))]
-mod duckdb_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_duckdb_memory_connection() -> Result<()> {
-        let config = DatabaseConfig {
-            connection_string: ":memory:".to_string(),
-            batch_size: 1000,
-            max_connections: Some(1),
-            connection_timeout: Some(std::time::Duration::from_secs(5)),
-            retry_config: Some(dataprof::database::RetryConfig::default()),
-            sampling_config: None,
-            enable_ml_readiness: false,
-            ssl_config: Some(dataprof::database::SslConfig::default()),
-            load_credentials_from_env: false,
-        };
-
-        let mut connector = create_connector(config)?;
-
-        // Test connection
-        connector.connect().await?;
-        let is_connected = connector.test_connection().await?;
-        assert!(is_connected);
-
-        connector.disconnect().await?;
-
-        Ok(())
-    }
+    //     #[tokio::test]
+    //     async fn test_sqlite_ml_readiness_full_score() -> Result<()> {
+    //         use dataprof::profile_database_with_ml;
+    //
+    //         // Test that the full MlReadinessScore (not simplified version) is returned
+    //         let config = DatabaseConfig {
+    //             connection_string: ":memory:".to_string(),
+    //             batch_size: 1000,
+    //             max_connections: Some(1),
+    //             connection_timeout: Some(std::time::Duration::from_secs(5)),
+    //             retry_config: Some(dataprof::database::RetryConfig::default()),
+    //             sampling_config: None,
+    //             enable_ml_readiness: true,
+    //             ssl_config: Some(dataprof::database::SslConfig::default()),
+    //             load_credentials_from_env: false,
+    //         };
+    //
+    //         let result =
+    //             profile_database_with_ml(config, "SELECT 1 as id, 'test' as name, 100.5 as value")
+    //                 .await;
+    //
+    //         match result {
+    //             Ok((report, ml_score_opt)) => {
+    //                 // Verify ML score is present
+    //                 if let Some(ml_score) = ml_score_opt {
+    //                     // Check that we have the full MlReadinessScore structure
+    //                     assert!(
+    //                         ml_score.overall_score >= 0.0 && ml_score.overall_score <= 100.0,
+    //                         "Overall ML score should be between 0-100"
+    //                     );
+    //
+    //                     // Verify component scores exist
+    //                     assert!(
+    //                         ml_score.completeness_score >= 0.0 && ml_score.completeness_score <= 100.0
+    //                     );
+    //                     assert!(
+    //                         ml_score.consistency_score >= 0.0 && ml_score.consistency_score <= 100.0
+    //                     );
+    //                     assert!(
+    //                         ml_score.type_suitability_score >= 0.0
+    //                             && ml_score.type_suitability_score <= 100.0
+    //                     );
+    //                     assert!(
+    //                         ml_score.feature_quality_score >= 0.0
+    //                             && ml_score.feature_quality_score <= 100.0
+    //                     );
+    //
+    //                     // Verify recommendations structure (should have code snippets if applicable)
+    //                     for rec in &ml_score.recommendations {
+    //                         // Check that recommendations have the full structure
+    //                         assert!(!rec.category.is_empty(), "Category should not be empty");
+    //                         assert!(
+    //                             !rec.description.is_empty(),
+    //                             "Description should not be empty"
+    //                         );
+    //                         // Code snippet may or may not be present depending on the recommendation
+    //                     }
+    //
+    //                     // Verify feature analysis is present (new full ML score feature)
+    //                     assert!(
+    //                         !ml_score.feature_analysis.is_empty(),
+    //                         "Feature analysis should be present in full ML score"
+    //                     );
+    //
+    //                     println!("✅ Database full ML readiness score test passed!");
+    //                     println!("   Overall Score: {:.1}%", ml_score.overall_score);
+    //                     println!("   Completeness: {:.1}%", ml_score.completeness_score);
+    //                     println!("   Consistency: {:.1}%", ml_score.consistency_score);
+    //                     println!(
+    //                         "   Type Suitability: {:.1}%",
+    //                         ml_score.type_suitability_score
+    //                     );
+    //                     println!("   Feature Quality: {:.1}%", ml_score.feature_quality_score);
+    //                     println!("   Recommendations: {}", ml_score.recommendations.len());
+    //                     println!("   Feature Analyses: {}", ml_score.feature_analysis.len());
+    //                 } else {
+    //                     println!("⚠️ ML readiness scoring was not enabled or returned None");
+    //                 }
+    //
+    //                 // Also verify DataQualityMetrics integration
+    //                 assert!(
+    //                     report.data_quality_metrics.is_some(),
+    //                     "DataQualityMetrics should be present"
+    //                 );
+    //             }
+    //             Err(e) => {
+    //                 println!(
+    //                     "⚠️ Database ML test failed (expected for in-memory setup): {}",
+    //                     e
+    //                 );
+    //             }
+    //         }
+    //
+    //         Ok(())
+    //     }
 }
 
 #[cfg(all(test, feature = "database"))]
@@ -305,15 +271,6 @@ mod connection_tests {
 
         assert_eq!(info.database_type(), "sqlite");
         assert_eq!(info.path, Some("/path/to/database.db".to_string()));
-    }
-
-    #[test]
-    fn test_parse_duckdb_path() {
-        let conn_str = "/path/to/data.duckdb";
-        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
-
-        assert_eq!(info.database_type(), "duckdb");
-        assert_eq!(info.path, Some("/path/to/data.duckdb".to_string()));
     }
 
     #[test]
@@ -433,7 +390,6 @@ mod enhanced_features_tests {
     fn test_database_config_defaults() {
         let config = DatabaseConfig::default();
 
-        assert!(config.enable_ml_readiness);
         assert!(config.load_credentials_from_env);
         assert!(config.retry_config.is_some());
         assert!(config.ssl_config.is_some());

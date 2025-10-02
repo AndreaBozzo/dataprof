@@ -13,6 +13,7 @@ Clean code, code must be readable and maintainable by humans
 SOLID principles, guarantee modular scalable architectures
 Proven solutions to recurring problems
 Security is non negotable, OWASP
+DRY codebase mandatory
 
 ## Essential Commands
 

@@ -1,8 +1,8 @@
 use pyo3::prelude::*;
 
 use super::analysis::analyze_csv_file;
-use super::ml::ml_readiness_score;
-use super::types::{PyColumnProfile, PyMlReadinessScore};
+// ML features removed
+use super::types::PyColumnProfile;
 
 /// Configure Python logging for DataProf
 #[pyfunction]
@@ -132,55 +132,6 @@ pub fn analyze_csv_with_logging(
             log_error(
                 py,
                 format!("CSV analysis failed for {}: {}", file_path, e),
-                None,
-            )?;
-            Err(e)
-        }
-    }
-}
-
-/// Enhanced ML readiness analysis with logging
-#[pyfunction]
-#[pyo3(signature = (file_path, log_level = None))]
-pub fn ml_readiness_score_with_logging(
-    py: Python,
-    file_path: String,
-    log_level: Option<String>,
-) -> PyResult<PyMlReadinessScore> {
-    // Configure logging if level is provided
-    if let Some(level) = log_level {
-        configure_logging(py, Some(level), None)?;
-    }
-
-    log_info(
-        py,
-        format!("Starting ML readiness analysis for: {}", file_path),
-        None,
-    )?;
-
-    // Perform the actual analysis
-    let start_time = std::time::Instant::now();
-    let result = ml_readiness_score(&file_path);
-    let duration = start_time.elapsed();
-
-    match result {
-        Ok(score) => {
-            log_info(
-                py,
-                format!(
-                    "ML readiness analysis completed in {:.3}s. Score: {:.1}% ({})",
-                    duration.as_secs_f64(),
-                    score.overall_score,
-                    score.readiness_level
-                ),
-                None,
-            )?;
-            Ok(score)
-        }
-        Err(e) => {
-            log_error(
-                py,
-                format!("ML readiness analysis failed for {}: {}", file_path, e),
                 None,
             )?;
             Err(e)

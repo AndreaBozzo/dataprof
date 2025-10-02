@@ -3,11 +3,10 @@ use clap::Args;
 use colored::*;
 use std::path::PathBuf;
 
-use super::script_generator::generate_database_preprocessing_script;
 // TODO: Refactor this command to use output_with_adaptive_formatter instead
 #[allow(deprecated)]
-use dataprof::output::{display_data_quality_metrics, display_ml_score, display_quality_issues};
-use dataprof::{generate_html_report, profile_database_with_ml, ColumnProfile, DatabaseConfig};
+use dataprof::output::{display_data_quality_metrics, display_quality_issues};
+use dataprof::{generate_html_report, profile_database, ColumnProfile, DatabaseConfig};
 
 /// Database analysis arguments
 #[derive(Debug, Args)]
@@ -30,25 +29,12 @@ pub struct DatabaseArgs {
     #[arg(long)]
     pub quality: bool,
 
-    /// Generate ML readiness score
-    #[arg(long)]
-    pub ml_score: bool,
-
-    /// Show ML code snippets
-    #[arg(long)]
-    pub ml_code: bool,
-
-    /// Generate preprocessing script
-    #[arg(long)]
-    pub output_script: Option<PathBuf>,
-
     /// Generate HTML report
     #[arg(long)]
     pub html: Option<PathBuf>,
 }
 
 /// Execute the database analysis command
-#[allow(deprecated)]
 pub fn execute(args: &DatabaseArgs) -> Result<()> {
     run_database_analysis(args, &args.connection_string)
 }
@@ -73,92 +59,6 @@ fn display_column_profile(profile: &ColumnProfile) {
             unique_count,
             (unique_count as f64 / profile.total_count as f64) * 100.0
         );
-    }
-}
-
-// Helper function to display ML score with code snippets (reused from analyze.rs)
-#[allow(deprecated)]
-fn display_ml_score_with_code(ml_score: &dataprof::analysis::MlReadinessScore) {
-    use colored::*;
-
-    // First display the standard ML score
-    display_ml_score(ml_score);
-
-    // Then show code snippets for recommendations
-    if !ml_score.recommendations.is_empty() {
-        println!(
-            "🐍 {} {}:",
-            "Code Snippets".bright_blue().bold(),
-            format!("({} recommendations)", ml_score.recommendations.len()).dimmed()
-        );
-        println!();
-
-        for (i, rec) in ml_score.recommendations.iter().enumerate() {
-            if let Some(code) = &rec.code_snippet {
-                let priority_color = match rec.priority {
-                    dataprof::analysis::RecommendationPriority::Critical => "red",
-                    dataprof::analysis::RecommendationPriority::High => "yellow",
-                    dataprof::analysis::RecommendationPriority::Medium => "blue",
-                    dataprof::analysis::RecommendationPriority::Low => "green",
-                };
-
-                println!(
-                    "{}. {} {} - {}",
-                    (i + 1).to_string().bright_white(),
-                    rec.category.color(priority_color).bold(),
-                    format!(
-                        "[{}]",
-                        match rec.priority {
-                            dataprof::analysis::RecommendationPriority::Critical => "critical",
-                            dataprof::analysis::RecommendationPriority::High => "high",
-                            dataprof::analysis::RecommendationPriority::Medium => "medium",
-                            dataprof::analysis::RecommendationPriority::Low => "low",
-                        }
-                    )
-                    .color(priority_color),
-                    rec.description.dimmed()
-                );
-
-                if let Some(framework) = &rec.framework {
-                    println!("   📦 Framework: {}", framework.bright_cyan());
-                }
-
-                if !rec.imports.is_empty() {
-                    println!("   📥 Imports: {}", rec.imports.join(", ").bright_green());
-                }
-
-                println!("   💻 Code:");
-                // Display code with proper indentation and syntax highlighting
-                for line in code.lines() {
-                    if line.trim().starts_with('#') {
-                        println!("   {}", line.bright_black());
-                    } else {
-                        println!("   {}", line);
-                    }
-                }
-                println!();
-            }
-        }
-    }
-
-    // Show summary of actionable items
-    let code_snippets_count = ml_score
-        .recommendations
-        .iter()
-        .filter(|r| r.code_snippet.is_some())
-        .count();
-
-    if code_snippets_count > 0 {
-        println!(
-            "💡 {} Ready to implement {} actionable code snippets!",
-            "Tip:".bright_yellow().bold(),
-            code_snippets_count.to_string().bright_white().bold()
-        );
-        println!(
-            "   Use {} to generate a complete preprocessing script.",
-            "--output-script preprocess.py".bright_cyan()
-        );
-        println!();
     }
 }
 
@@ -193,7 +93,6 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
         connection_timeout: Some(std::time::Duration::from_secs(30)),
         retry_config: Some(dataprof::database::RetryConfig::default()),
         sampling_config: None,
-        enable_ml_readiness: args.ml_score,
         ssl_config: Some(dataprof::database::SslConfig::default()),
         load_credentials_from_env: true,
     };
@@ -202,8 +101,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| anyhow::anyhow!("Failed to create async runtime: {}", e))?;
 
-    let (report, ml_score) =
-        rt.block_on(async { profile_database_with_ml(config, &query).await })?;
+    let report = rt.block_on(async { profile_database(config, &query).await })?;
 
     println!(
         "🔗 {} | {} columns | {} rows",
@@ -232,41 +130,6 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
         // Show comprehensive data quality metrics
         if let Some(metrics) = &report.data_quality_metrics {
             display_data_quality_metrics(metrics);
-        }
-    }
-
-    // Show ML readiness score if requested
-    if args.ml_score {
-        if let Some(ml_readiness_score) = &ml_score {
-            if args.ml_code {
-                display_ml_score_with_code(ml_readiness_score);
-            } else {
-                display_ml_score(ml_readiness_score);
-            }
-
-            // Generate preprocessing script if requested
-            if let Some(script_path) = &args.output_script {
-                match generate_database_preprocessing_script(
-                    ml_readiness_score,
-                    script_path,
-                    connection_string,
-                    &query,
-                ) {
-                    Ok(_) => {
-                        println!(
-                            "🐍 Preprocessing script saved to: {}",
-                            script_path.display().to_string().bright_green()
-                        );
-                        println!("   Ready to use with: python {}", script_path.display());
-                        println!();
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Failed to generate preprocessing script: {}", e);
-                    }
-                }
-            }
-
-            println!();
         }
     }
 

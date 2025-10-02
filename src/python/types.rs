@@ -2,12 +2,6 @@
 
 use pyo3::prelude::*;
 
-use crate::analysis::ml_readiness::{
-    FeatureImportancePotential, FeatureInteractionWarning, ImplementationEffort,
-    InteractionWarningType, MlBlockingIssue, MlFeatureType, MlReadinessLevel, MlRecommendation,
-    RecommendationPriority,
-};
-use crate::analysis::{FeatureAnalysis, MlReadinessScore, PreprocessingSuggestion};
 use crate::core::batch::BatchResult;
 use crate::types::{ColumnProfile, DataQualityMetrics, DataType, QualityIssue, QualityReport};
 
@@ -278,6 +272,14 @@ pub struct PyDataQualityMetrics {
     pub range_violations: usize,
     #[pyo3(get)]
     pub negative_values_in_positive: usize,
+
+    // Timeliness (ISO 8000-8)
+    #[pyo3(get)]
+    pub future_dates_count: usize,
+    #[pyo3(get)]
+    pub stale_data_ratio: f64,
+    #[pyo3(get)]
+    pub temporal_violations: usize,
 }
 
 impl From<&DataQualityMetrics> for PyDataQualityMetrics {
@@ -295,44 +297,33 @@ impl From<&DataQualityMetrics> for PyDataQualityMetrics {
             outlier_ratio: metrics.outlier_ratio,
             range_violations: metrics.range_violations,
             negative_values_in_positive: metrics.negative_values_in_positive,
+            future_dates_count: metrics.future_dates_count,
+            stale_data_ratio: metrics.stale_data_ratio,
+            temporal_violations: metrics.temporal_violations,
         }
     }
 }
 
 #[pymethods]
 impl PyDataQualityMetrics {
-    /// Calculate overall data quality score (0-100)
+    /// Calculate overall data quality score (0-100) based on ISO 8000/25012 dimensions
+    ///
+    /// Uses the same weighted formula as the core Rust implementation:
+    /// - Completeness: 30% (complete_records_ratio - already percentage 0-100)
+    /// - Consistency: 25% (data_type_consistency - already percentage 0-100)
+    /// - Uniqueness: 20% (key_uniqueness - already percentage 0-100)
+    /// - Accuracy: 15% (100 - outlier_ratio*100)
+    /// - Timeliness: 10% (100 - stale_data_ratio*100)
     fn overall_quality_score(&self) -> PyResult<f64> {
-        let mut score = 100.0;
+        let completeness = self.complete_records_ratio * 0.3;
+        let consistency = self.data_type_consistency * 0.25;
+        let uniqueness = self.key_uniqueness * 0.2;
 
-        // Completeness penalty
-        score -= self.missing_values_ratio * 0.5; // 0.5 point per % missing values
-        if self.complete_records_ratio < 90.0 {
-            score -= (90.0 - self.complete_records_ratio) * 0.3;
-        }
+        // outlier_ratio and stale_data_ratio are ratios (0-1), convert to percentage
+        let accuracy = (100.0 - self.outlier_ratio * 100.0) * 0.15;
+        let timeliness = (100.0 - self.stale_data_ratio * 100.0) * 0.1;
 
-        // Consistency penalty
-        if self.data_type_consistency < 100.0 {
-            score -= (100.0 - self.data_type_consistency) * 0.8;
-        }
-        score -= (self.format_violations as f64) * 0.1;
-        score -= (self.encoding_issues as f64) * 0.2;
-
-        // Uniqueness penalty
-        score -= (self.duplicate_rows as f64) * 0.05;
-        if self.key_uniqueness < 95.0 {
-            score -= (95.0 - self.key_uniqueness) * 0.5;
-        }
-        if self.high_cardinality_warning {
-            score -= 5.0;
-        }
-
-        // Accuracy penalty
-        score -= self.outlier_ratio * 0.3;
-        score -= (self.range_violations as f64) * 0.15;
-        score -= (self.negative_values_in_positive as f64) * 0.2;
-
-        Ok(score.max(0.0))
+        Ok(completeness + consistency + uniqueness + accuracy + timeliness)
     }
 
     /// Get completeness summary
@@ -366,6 +357,16 @@ impl PyDataQualityMetrics {
         format!(
             "Outlier ratio: {:.1}% | Range violations: {} | Negative values in positive fields: {}",
             self.outlier_ratio, self.range_violations, self.negative_values_in_positive
+        )
+    }
+
+    /// Get timeliness summary
+    fn timeliness_summary(&self) -> String {
+        format!(
+            "Future dates: {} | Stale data: {:.1}% | Temporal violations: {}",
+            self.future_dates_count,
+            self.stale_data_ratio * 100.0,
+            self.temporal_violations
         )
     }
 
@@ -427,6 +428,20 @@ impl PyDataQualityMetrics {
         dict.insert(
             "negative_values_in_positive".to_string(),
             self.negative_values_in_positive.to_string(),
+        );
+
+        // Timeliness
+        dict.insert(
+            "future_dates_count".to_string(),
+            self.future_dates_count.to_string(),
+        );
+        dict.insert(
+            "stale_data_ratio".to_string(),
+            format!("{:.2}", self.stale_data_ratio),
+        );
+        dict.insert(
+            "temporal_violations".to_string(),
+            self.temporal_violations.to_string(),
         );
 
         dict
@@ -512,6 +527,19 @@ impl PyDataQualityMetrics {
             <div><strong>Negative in Positive:</strong> {}</div>
         </div>
 
+        <!-- Timeliness -->
+        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
+            <h4 style="margin: 0 0 8px 0; color: #607D8B;">⏱️ Timeliness</h4>
+            <div style="margin-bottom: 8px;">
+                <strong>Stale Data Ratio:</strong> {:.1}%
+                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
+                    <div style="background-color: #607D8B; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
+                </div>
+            </div>
+            <div style="margin-bottom: 4px;"><strong>Future Dates:</strong> {}</div>
+            <div><strong>Temporal Violations:</strong> {}</div>
+        </div>
+
     </div>
 </div>
 "#,
@@ -533,19 +561,24 @@ impl PyDataQualityMetrics {
             self.outlier_ratio,
             self.outlier_ratio.min(100.0),
             self.range_violations,
-            self.negative_values_in_positive
+            self.negative_values_in_positive,
+            self.stale_data_ratio * 100.0,
+            (self.stale_data_ratio * 100.0).min(100.0),
+            self.future_dates_count,
+            self.temporal_violations
         )
     }
 
     /// Summary string representation
     fn __str__(&self) -> String {
         format!(
-            "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, key_uniqueness={:.1}%, outlier_ratio={:.1}%)",
+            "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, uniqueness={:.1}%, accuracy={:.1}%, timeliness={:.1}%)",
             self.overall_quality_score().unwrap_or(0.0),
             self.complete_records_ratio,
             self.data_type_consistency,
             self.key_uniqueness,
-            self.outlier_ratio
+            100.0 - self.outlier_ratio * 100.0,
+            100.0 - self.stale_data_ratio * 100.0
         )
     }
 }
@@ -574,484 +607,6 @@ impl From<&BatchResult> for PyBatchResult {
             total_duration_secs: result.summary.processing_time_seconds,
             total_quality_issues: result.summary.total_issues,
             average_quality_score: result.summary.average_quality_score,
-        }
-    }
-}
-
-/// Python wrapper for MlReadinessScore
-#[pyclass]
-#[derive(Clone)]
-pub struct PyMlReadinessScore {
-    #[pyo3(get)]
-    pub overall_score: f64,
-    #[pyo3(get)]
-    pub completeness_score: f64,
-    #[pyo3(get)]
-    pub consistency_score: f64,
-    #[pyo3(get)]
-    pub type_suitability_score: f64,
-    #[pyo3(get)]
-    pub feature_quality_score: f64,
-    #[pyo3(get)]
-    pub readiness_level: String,
-    #[pyo3(get)]
-    pub recommendations: Vec<PyMlRecommendation>,
-    #[pyo3(get)]
-    pub blocking_issues: Vec<PyMlBlockingIssue>,
-    #[pyo3(get)]
-    pub feature_analysis: Vec<PyFeatureAnalysis>,
-    #[pyo3(get)]
-    pub preprocessing_suggestions: Vec<PyPreprocessingSuggestion>,
-    #[pyo3(get)]
-    pub feature_warnings: Vec<PyFeatureInteractionWarning>,
-    #[pyo3(get)]
-    pub quality_integration_score: Option<f64>,
-}
-
-impl From<&MlReadinessScore> for PyMlReadinessScore {
-    fn from(score: &MlReadinessScore) -> Self {
-        Self {
-            overall_score: score.overall_score,
-            completeness_score: score.completeness_score,
-            consistency_score: score.consistency_score,
-            type_suitability_score: score.type_suitability_score,
-            feature_quality_score: score.feature_quality_score,
-            readiness_level: match score.readiness_level {
-                MlReadinessLevel::Ready => "ready".to_string(),
-                MlReadinessLevel::Good => "good".to_string(),
-                MlReadinessLevel::NeedsWork => "needs_work".to_string(),
-                MlReadinessLevel::NotReady => "not_ready".to_string(),
-            },
-            recommendations: score
-                .recommendations
-                .iter()
-                .map(PyMlRecommendation::from)
-                .collect(),
-            blocking_issues: score
-                .blocking_issues
-                .iter()
-                .map(PyMlBlockingIssue::from)
-                .collect(),
-            feature_analysis: score
-                .feature_analysis
-                .iter()
-                .map(PyFeatureAnalysis::from)
-                .collect(),
-            preprocessing_suggestions: score
-                .preprocessing_suggestions
-                .iter()
-                .map(PyPreprocessingSuggestion::from)
-                .collect(),
-            feature_warnings: score
-                .feature_warnings
-                .iter()
-                .map(PyFeatureInteractionWarning::from)
-                .collect(),
-            quality_integration_score: score.quality_integration_score,
-        }
-    }
-}
-
-#[pymethods]
-impl PyMlReadinessScore {
-    /// Get recommendations by priority
-    fn recommendations_by_priority(&self, priority: &str) -> Vec<PyMlRecommendation> {
-        self.recommendations
-            .iter()
-            .filter(|rec| rec.priority == priority)
-            .cloned()
-            .collect()
-    }
-
-    /// Get features by ML suitability threshold
-    fn features_by_suitability(&self, min_score: f64) -> Vec<PyFeatureAnalysis> {
-        self.feature_analysis
-            .iter()
-            .filter(|feature| feature.ml_suitability >= min_score)
-            .cloned()
-            .collect()
-    }
-
-    /// Get preprocessing steps by priority
-    fn preprocessing_by_priority(&self, priority: &str) -> Vec<PyPreprocessingSuggestion> {
-        self.preprocessing_suggestions
-            .iter()
-            .filter(|step| step.priority == priority)
-            .cloned()
-            .collect()
-    }
-
-    /// Check if data is ready for ML (no blocking issues)
-    fn is_ml_ready(&self) -> bool {
-        self.blocking_issues.is_empty() && self.overall_score >= 60.0
-    }
-
-    /// Get summary statistics
-    fn summary(&self) -> String {
-        format!(
-            "ML Readiness: {} ({:.1}%) | Features: {} | Recommendations: {} | Blocking Issues: {}",
-            self.readiness_level,
-            self.overall_score,
-            self.feature_analysis.len(),
-            self.recommendations.len(),
-            self.blocking_issues.len()
-        )
-    }
-
-    /// Rich HTML representation for Jupyter notebooks
-    fn _repr_html_(&self) -> String {
-        let status_color = match self.readiness_level.as_str() {
-            "ready" => "#4CAF50",
-            "good" => "#8BC34A",
-            "needs_work" => "#FF9800",
-            "not_ready" => "#F44336",
-            _ => "#9E9E9E",
-        };
-
-        let status_icon = match self.readiness_level.as_str() {
-            "ready" => "✅",
-            "good" => "👍",
-            "needs_work" => "⚠️",
-            "not_ready" => "❌",
-            _ => "❓",
-        };
-
-        let mut html = format!(
-            r#"
-<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 8px 0;">
-    <h3 style="margin: 0 0 16px 0; color: #333;">
-        {icon} ML Readiness Assessment
-        <span style="background-color: {color}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.9em; margin-left: 8px;">
-            {level}
-        </span>
-    </h3>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 16px;">
-        <div style="text-align: center;">
-            <div style="font-size: 2em; font-weight: bold; color: {color};">{score:.1}%</div>
-            <div style="color: #666;">Overall Score</div>
-        </div>
-        <div style="text-align: center;">
-            <div style="font-size: 1.5em; font-weight: bold; color: #333;">{features}</div>
-            <div style="color: #666;">Features Analyzed</div>
-        </div>
-        <div style="text-align: center;">
-            <div style="font-size: 1.5em; font-weight: bold; color: #333;">{recs}</div>
-            <div style="color: #666;">Recommendations</div>
-        </div>
-        <div style="text-align: center;">
-            <div style="font-size: 1.5em; font-weight: bold; color: {blocking_color};">{blocks}</div>
-            <div style="color: #666;">Blocking Issues</div>
-        </div>
-    </div>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-bottom: 16px;">
-        <div>
-            <strong>Completeness:</strong>
-            <div style="background-color: #e0e0e0; border-radius: 4px; height: 8px; margin: 4px 0;">
-                <div style="background-color: #4CAF50; height: 100%; border-radius: 4px; width: {comp:.0}%;"></div>
-            </div>
-            <span style="font-size: 0.9em; color: #666;">{comp:.1}%</span>
-        </div>
-        <div>
-            <strong>Consistency:</strong>
-            <div style="background-color: #e0e0e0; border-radius: 4px; height: 8px; margin: 4px 0;">
-                <div style="background-color: #2196F3; height: 100%; border-radius: 4px; width: {cons:.0}%;"></div>
-            </div>
-            <span style="font-size: 0.9em; color: #666;">{cons:.1}%</span>
-        </div>
-        <div>
-            <strong>Type Suitability:</strong>
-            <div style="background-color: #e0e0e0; border-radius: 4px; height: 8px; margin: 4px 0;">
-                <div style="background-color: #FF9800; height: 100%; border-radius: 4px; width: {type_suit:.0}%;"></div>
-            </div>
-            <span style="font-size: 0.9em; color: #666;">{type_suit:.1}%</span>
-        </div>
-        <div>
-            <strong>Feature Quality:</strong>
-            <div style="background-color: #e0e0e0; border-radius: 4px; height: 8px; margin: 4px 0;">
-                <div style="background-color: #9C27B0; height: 100%; border-radius: 4px; width: {feat_qual:.0}%;"></div>
-            </div>
-            <span style="font-size: 0.9em; color: #666;">{feat_qual:.1}%</span>
-        </div>
-    </div>
-"#,
-            icon = status_icon,
-            color = status_color,
-            level = self.readiness_level,
-            score = self.overall_score,
-            features = self.feature_analysis.len(),
-            recs = self.recommendations.len(),
-            blocks = self.blocking_issues.len(),
-            blocking_color = if self.blocking_issues.is_empty() {
-                "#4CAF50"
-            } else {
-                "#F44336"
-            },
-            comp = self.completeness_score,
-            cons = self.consistency_score,
-            type_suit = self.type_suitability_score,
-            feat_qual = self.feature_quality_score,
-        );
-
-        // Add blocking issues if any
-        if !self.blocking_issues.is_empty() {
-            html.push_str(r#"
-    <div style="background-color: #ffebee; border-left: 4px solid #f44336; padding: 12px; margin: 8px 0;">
-        <h4 style="margin: 0 0 8px 0; color: #c62828;">🚫 Blocking Issues</h4>
-        <ul style="margin: 0; padding-left: 20px;">"#);
-
-            for issue in &self.blocking_issues {
-                html.push_str(&format!(
-                    r#"<li style="margin: 4px 0; color: #666;"><strong>{}:</strong> {}</li>"#,
-                    issue.issue_type, issue.description
-                ));
-            }
-            html.push_str("</ul></div>");
-        }
-
-        // Add top recommendations
-        if !self.recommendations.is_empty() {
-            html.push_str(r#"
-    <div style="background-color: #f3e5f5; border-left: 4px solid #9c27b0; padding: 12px; margin: 8px 0;">
-        <h4 style="margin: 0 0 8px 0; color: #7b1fa2;">💡 Top Recommendations</h4>
-        <ul style="margin: 0; padding-left: 20px;">"#);
-
-            for rec in self.recommendations.iter().take(3) {
-                let priority_color = match rec.priority.as_str() {
-                    "critical" => "#f44336",
-                    "high" => "#ff9800",
-                    "medium" => "#2196f3",
-                    "low" => "#4caf50",
-                    _ => "#666",
-                };
-                html.push_str(&format!(
-                    r#"<li style="margin: 4px 0; color: #666;">
-                        <span style="background-color: {}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 8px;">{}</span>
-                        <strong>{}:</strong> {}
-                    </li>"#,
-                    priority_color, rec.priority.to_uppercase(), rec.category, rec.description
-                ));
-            }
-            html.push_str("</ul></div>");
-        }
-
-        // Add feature summary
-        let ready_features: Vec<_> = self
-            .feature_analysis
-            .iter()
-            .filter(|f| f.ml_suitability > 0.7)
-            .collect();
-
-        html.push_str(&format!(r#"
-    <div style="background-color: #e8f5e8; border-left: 4px solid #4caf50; padding: 12px; margin: 8px 0;">
-        <h4 style="margin: 0 0 8px 0; color: #2e7d32;">🎯 Feature Summary</h4>
-        <p style="margin: 0; color: #666;">
-            <strong>{}/{}</strong> features are ready for ML (>70% suitability)
-        </p>
-    </div>
-</div>"#, ready_features.len(), self.feature_analysis.len()));
-
-        html
-    }
-}
-
-/// Python wrapper for MlRecommendation
-#[pyclass]
-#[derive(Clone)]
-pub struct PyMlRecommendation {
-    #[pyo3(get)]
-    pub category: String,
-    #[pyo3(get)]
-    pub priority: String,
-    #[pyo3(get)]
-    pub description: String,
-    #[pyo3(get)]
-    pub expected_impact: String,
-    #[pyo3(get)]
-    pub implementation_effort: String,
-    /// Ready-to-use code snippet for implementing the recommendation
-    #[pyo3(get)]
-    pub code_snippet: Option<String>,
-    /// Framework used in the code snippet (pandas, scikit-learn, etc.)
-    #[pyo3(get)]
-    pub framework: Option<String>,
-    /// Required imports for the code snippet
-    #[pyo3(get)]
-    pub imports: Vec<String>,
-    /// Variables used in code snippet for customization
-    #[pyo3(get)]
-    pub variables: std::collections::HashMap<String, String>,
-}
-
-impl From<&MlRecommendation> for PyMlRecommendation {
-    fn from(rec: &MlRecommendation) -> Self {
-        Self {
-            category: rec.category.clone(),
-            priority: match rec.priority {
-                RecommendationPriority::Critical => "critical".to_string(),
-                RecommendationPriority::High => "high".to_string(),
-                RecommendationPriority::Medium => "medium".to_string(),
-                RecommendationPriority::Low => "low".to_string(),
-            },
-            description: rec.description.clone(),
-            expected_impact: rec.expected_impact.clone(),
-            implementation_effort: match rec.implementation_effort {
-                ImplementationEffort::Trivial => "trivial".to_string(),
-                ImplementationEffort::Easy => "easy".to_string(),
-                ImplementationEffort::Moderate => "moderate".to_string(),
-                ImplementationEffort::Significant => "significant".to_string(),
-                ImplementationEffort::Complex => "complex".to_string(),
-            },
-            code_snippet: rec.code_snippet.clone(),
-            framework: rec.framework.clone(),
-            imports: rec.imports.clone(),
-            variables: rec.variables.clone(),
-        }
-    }
-}
-
-/// Python wrapper for MlBlockingIssue
-#[pyclass]
-#[derive(Clone)]
-pub struct PyMlBlockingIssue {
-    #[pyo3(get)]
-    pub issue_type: String,
-    #[pyo3(get)]
-    pub column: Option<String>,
-    #[pyo3(get)]
-    pub description: String,
-    #[pyo3(get)]
-    pub resolution_required: String,
-}
-
-impl From<&MlBlockingIssue> for PyMlBlockingIssue {
-    fn from(issue: &MlBlockingIssue) -> Self {
-        Self {
-            issue_type: issue.issue_type.clone(),
-            column: issue.column.clone(),
-            description: issue.description.clone(),
-            resolution_required: issue.resolution_required.clone(),
-        }
-    }
-}
-
-/// Python wrapper for FeatureAnalysis
-#[pyclass]
-#[derive(Clone)]
-pub struct PyFeatureAnalysis {
-    #[pyo3(get)]
-    pub column_name: String,
-    #[pyo3(get)]
-    pub ml_suitability: f64,
-    #[pyo3(get)]
-    pub feature_type: String,
-    #[pyo3(get)]
-    pub encoding_suggestions: Vec<String>,
-    #[pyo3(get)]
-    pub potential_issues: Vec<String>,
-    #[pyo3(get)]
-    pub feature_importance_potential: String,
-}
-
-impl From<&FeatureAnalysis> for PyFeatureAnalysis {
-    fn from(analysis: &FeatureAnalysis) -> Self {
-        Self {
-            column_name: analysis.column_name.clone(),
-            ml_suitability: analysis.ml_suitability,
-            feature_type: match analysis.feature_type {
-                MlFeatureType::NumericReady => "numeric_ready".to_string(),
-                MlFeatureType::NumericNeedsScaling => "numeric_needs_scaling".to_string(),
-                MlFeatureType::CategoricalNeedsEncoding => "categorical_needs_encoding".to_string(),
-                MlFeatureType::TextNeedsProcessing => "text_needs_processing".to_string(),
-                MlFeatureType::TemporalNeedsEngineering => "temporal_needs_engineering".to_string(),
-                MlFeatureType::HighCardinalityRisky => "high_cardinality_risky".to_string(),
-                MlFeatureType::TooManyMissing => "too_many_missing".to_string(),
-                MlFeatureType::LowVariance => "low_variance".to_string(),
-            },
-            encoding_suggestions: analysis.encoding_suggestions.clone(),
-            potential_issues: analysis.potential_issues.clone(),
-            feature_importance_potential: match analysis.feature_importance_potential {
-                FeatureImportancePotential::High => "high".to_string(),
-                FeatureImportancePotential::Medium => "medium".to_string(),
-                FeatureImportancePotential::Low => "low".to_string(),
-                FeatureImportancePotential::Unknown => "unknown".to_string(),
-            },
-        }
-    }
-}
-
-/// Python wrapper for PreprocessingSuggestion
-#[pyclass]
-#[derive(Clone)]
-pub struct PyPreprocessingSuggestion {
-    #[pyo3(get)]
-    pub step: String,
-    #[pyo3(get)]
-    pub description: String,
-    #[pyo3(get)]
-    pub columns_affected: Vec<String>,
-    #[pyo3(get)]
-    pub priority: String,
-    #[pyo3(get)]
-    pub tools_frameworks: Vec<String>,
-}
-
-impl From<&PreprocessingSuggestion> for PyPreprocessingSuggestion {
-    fn from(suggestion: &PreprocessingSuggestion) -> Self {
-        Self {
-            step: suggestion.step.clone(),
-            description: suggestion.description.clone(),
-            columns_affected: suggestion.columns_affected.clone(),
-            priority: match suggestion.priority {
-                RecommendationPriority::Critical => "critical".to_string(),
-                RecommendationPriority::High => "high".to_string(),
-                RecommendationPriority::Medium => "medium".to_string(),
-                RecommendationPriority::Low => "low".to_string(),
-            },
-            tools_frameworks: suggestion.tools_frameworks.clone(),
-        }
-    }
-}
-
-/// Python wrapper for FeatureInteractionWarning
-#[pyclass]
-#[derive(Clone)]
-pub struct PyFeatureInteractionWarning {
-    #[pyo3(get)]
-    pub warning_type: String,
-    #[pyo3(get)]
-    pub features: Vec<String>,
-    #[pyo3(get)]
-    pub description: String,
-    #[pyo3(get)]
-    pub severity: String,
-    #[pyo3(get)]
-    pub recommendation: String,
-}
-
-impl From<&FeatureInteractionWarning> for PyFeatureInteractionWarning {
-    fn from(warning: &FeatureInteractionWarning) -> Self {
-        Self {
-            warning_type: match warning.warning_type {
-                InteractionWarningType::PossibleLeakage => "possible_leakage".to_string(),
-                InteractionWarningType::HighCardinality => "high_cardinality".to_string(),
-                InteractionWarningType::AllCategorical => "all_categorical".to_string(),
-                InteractionWarningType::AllNumeric => "all_numeric".to_string(),
-                InteractionWarningType::InsufficientFeatures => "insufficient_features".to_string(),
-                InteractionWarningType::CurseOfDimensionality => {
-                    "curse_of_dimensionality".to_string()
-                }
-            },
-            features: warning.features.clone(),
-            description: warning.description.clone(),
-            severity: match warning.severity {
-                RecommendationPriority::Critical => "critical".to_string(),
-                RecommendationPriority::High => "high".to_string(),
-                RecommendationPriority::Medium => "medium".to_string(),
-                RecommendationPriority::Low => "low".to_string(),
-            },
-            recommendation: warning.recommendation.clone(),
         }
     }
 }

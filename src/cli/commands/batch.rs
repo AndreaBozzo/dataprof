@@ -43,10 +43,6 @@ pub struct BatchArgs {
     #[arg(long)]
     pub progress: bool,
 
-    /// Enable ML readiness scoring for all files
-    #[arg(long)]
-    pub ml: bool,
-
     /// Generate HTML batch report
     #[arg(long)]
     pub html: Option<PathBuf>,
@@ -66,7 +62,6 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
             num_cpus::get()
         },
         recursive: args.recursive,
-        ml_score: args.ml,
         html_output: args.html.clone(),
         ..Default::default()
     };
@@ -100,17 +95,7 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
         println!("\n📋 Detailed Results:");
         for (path, report) in &batch_result.reports {
             let score = report.quality_score().unwrap_or(0.0);
-            let ml_info = if args.ml {
-                batch_result
-                    .ml_scores
-                    .get(path)
-                    .map(|s| format!(" | ML: {:.0}%", s.overall_score))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-
-            println!("  {} - Quality: {:.1}%{}", path.display(), score, ml_info);
+            println!("  {} - Quality: {:.1}%", path.display(), score);
         }
     }
 

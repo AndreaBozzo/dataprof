@@ -1,10 +1,10 @@
 [package]
 name = "dataprof"
-version = "0.4.61"
+version = "0.4.70"
 edition = "2021"
 license = "MIT"
 authors = ["Andrea Bozzo"]
-description = "A fast, lightweight CLI tool for CSV data profiling and analysis"
+description = "A fast, lightweight CLI tool for CSV and JSON data profiling and analysis"
 repository = "https://github.com/AndreaBozzo/dataprof"
 keywords = ["csv", "data", "analysis", "profiling", "cli"]
 categories = ["command-line-utilities", "data-structures"]
@@ -73,7 +73,11 @@ pyo3 = { version = "0.24.1", features = ["extension-module"], optional = true }
 # Database connectors and async runtime
 tokio = { version = "1.0", features = ["full"], optional = true }
 async-trait = { version = "0.1", optional = true }
-sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "chrono", "uuid"], optional = true, default-features = false }
+sqlx = { version = "0.8.1", features = [
+    "runtime-tokio-rustls",
+    "chrono",
+    "uuid",
+], optional = true, default-features = false }
 url = { version = "2.5", optional = true }
 
 # Apache Arrow for columnar processing
@@ -127,11 +131,11 @@ harness = false
 
 # Debug profile per sviluppo veloce
 [profile.dev]
-opt-level = 0        # Nessuna ottimizzazione per compilazione più veloce
-debug = true         # Mantieni simboli debug
-split-debuginfo = "packed"  # Su Windows
-incremental = true   # Build incrementali
-codegen-units = 256  # Parallelizzazione massima per dev builds
+opt-level = 0              # Nessuna ottimizzazione per compilazione più veloce
+debug = true               # Mantieni simboli debug
+split-debuginfo = "packed" # Su Windows
+incremental = true         # Build incrementali
+codegen-units = 256        # Parallelizzazione massima per dev builds
 
 # Profile per test veloci
 [profile.test]
@@ -142,27 +146,27 @@ codegen-units = 256
 
 # Release profile ottimizzato
 [profile.release]
-lto = "thin"        # LTO più veloce di "true"
+lto = "thin"      # LTO più veloce di "true"
 codegen-units = 1
 opt-level = 3
-panic = "abort"     # Riduce dimensione binario
+panic = "abort"   # Riduce dimensione binario
 
 # Bench profile (based on release, but needs panic = "unwind" for benchmarks)
 [profile.bench]
 inherits = "release"
-panic = "unwind"  # Required for benchmarks and tests
+panic = "unwind"     # Required for benchmarks and tests
 
 
 # Configurazione per dipendenze più veloci
 [profile.dev.package."*"]
-opt-level = 1    # Ottimizza le dipendenze anche in dev mode
+opt-level = 1 # Ottimizza le dipendenze anche in dev mode
 
 [profile.test.package."*"]
-opt-level = 1    # Ottimizza le dipendenze anche nei test
+opt-level = 1 # Ottimizza le dipendenze anche nei test
 
 # Features
 [features]
-default = []  # Minimal by default - MUCH faster compilation
+default = [] # Minimal by default - MUCH faster compilation
 
 # Individual features
 python = ["dep:pyo3"]
@@ -174,9 +178,9 @@ mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 
 # Sensible feature combinations
-minimal = []  # Just CSV processing - fastest builds
-production = ["postgres", "mysql"]  # Most common production databases
-all-db = ["postgres", "mysql", "sqlite"]  # All databases
+minimal = []                             # Just CSV processing - fastest builds
+production = ["postgres", "mysql"]       # Most common production databases
+all-db = ["postgres", "mysql", "sqlite"] # All databases
 
 
 # Library configuration - rlib for internal use, cdylib for Python bindings

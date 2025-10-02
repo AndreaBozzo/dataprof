@@ -4,7 +4,7 @@ from .dataprof import *
 
 __version__ = "0.3.0"
 
-# ML readiness exports for easy access
+# Core exports for data profiling
 __all__ = [
     # Core analysis functions
     "analyze_csv_file",
@@ -24,13 +24,6 @@ __all__ = [
 
     # Enhanced analysis with logging
     "analyze_csv_with_logging",
-    "ml_readiness_score_with_logging",
-
-    # ML readiness functions
-    "ml_readiness_score",
-    "analyze_csv_for_ml",
-
-    # Note: Async functions temporarily disabled
 
     # Core classes
     "PyColumnProfile",
@@ -39,15 +32,7 @@ __all__ = [
     "PyDataQualityMetrics",
     "PyBatchResult",
 
-    # ML readiness classes
-    "PyMlReadinessScore",
-    "PyMlRecommendation",
-    "PyMlBlockingIssue",
-    "PyFeatureAnalysis",
-    "PyPreprocessingSuggestion",
-
     # Context managers
     "PyBatchAnalyzer",
-    "PyMlAnalyzer",
     "PyCsvProcessor",
 ]

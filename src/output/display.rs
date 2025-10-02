@@ -5,8 +5,7 @@
 //!
 //! See: `output::output_with_adaptive_formatter` for the modern approach.
 
-use crate::analysis::{MlReadinessLevel, MlReadinessScore, RecommendationPriority};
-use crate::types::{ColumnProfile, DataQualityMetrics, QualityIssue, Severity};
+use crate::types::{ColumnProfile, DataQualityMetrics, QualityIssue};
 use anyhow::Result;
 use colored::*;
 use serde::Serialize;
@@ -50,231 +49,45 @@ pub fn output_json_profiles(profiles: &[ColumnProfile]) -> Result<()> {
 )]
 pub fn display_quality_issues(issues: &[QualityIssue]) {
     if issues.is_empty() {
-        println!("✨ {}", "No quality issues found!".green().bold());
-        println!();
+        println!("✅ {}", "No quality issues found!".green().bold());
         return;
     }
 
     println!(
         "⚠️  {} {}",
-        "QUALITY ISSUES FOUND:".red().bold(),
-        format!("({})", issues.len()).red()
+        "Quality Issues:".bright_yellow().bold(),
+        format!("({} found)", issues.len()).dimmed()
     );
     println!();
 
-    let mut critical_count = 0;
-    let mut warning_count = 0;
-    let mut info_count = 0;
-
-    for (i, issue) in issues.iter().enumerate() {
-        let (icon, severity_text) = match issue.severity() {
-            Severity::High => {
-                critical_count += 1;
-                ("🚨", "CRITICAL".red().bold())
+    for issue in issues {
+        let (severity_icon, issue_desc) = match issue {
+            QualityIssue::NullValues { column, count, .. } => (
+                "🔵",
+                format!("{} null values in column '{}'", count, column),
+            ),
+            QualityIssue::MixedDateFormats { column, .. } => {
+                ("🟡", format!("Mixed date formats in column '{}'", column))
             }
-            Severity::Medium => {
-                warning_count += 1;
-                ("⚠️", "WARNING".yellow().bold())
-            }
-            Severity::Low => {
-                info_count += 1;
-                ("ℹ️", "INFO".blue().bold())
+            QualityIssue::Duplicates { column, count } => (
+                "🟡",
+                format!("{} duplicate values in column '{}'", count, column),
+            ),
+            QualityIssue::Outliers { column, values, .. } => (
+                "🟠",
+                format!("{} outliers in column '{}'", values.len(), column),
+            ),
+            QualityIssue::MixedTypes { column, .. } => {
+                ("🔴", format!("Mixed data types in column '{}'", column))
             }
         };
 
-        let (title, description, suggestion) = format_quality_issue(issue);
-
-        println!(
-            "{} {} {} {}",
-            format!("[{}]", i + 1).bright_black(),
-            icon,
-            severity_text,
-            title.bright_white().bold()
-        );
-
-        if !description.is_empty() {
-            println!("    {}", description.bright_black());
-        }
-
-        if !suggestion.is_empty() {
-            println!("    💡 {}", suggestion.bright_cyan());
-        }
-
-        println!();
-    }
-
-    println!("{}", "QUALITY SUMMARY:".bright_white().bold());
-    if critical_count > 0 {
-        println!("  🚨 Critical: {}", critical_count.to_string().red().bold());
-    }
-    if warning_count > 0 {
-        println!(
-            "  ⚠️  Warnings: {}",
-            warning_count.to_string().yellow().bold()
-        );
-    }
-    if info_count > 0 {
-        println!("  ℹ️  Info: {}", info_count.to_string().blue().bold());
+        println!("  {} {}", severity_icon, issue_desc.dimmed());
     }
     println!();
 }
 
-fn format_quality_issue(issue: &QualityIssue) -> (String, String, String) {
-    match issue {
-        QualityIssue::MixedDateFormats { column, formats } => {
-            let title = format!("Mixed date formats in column '{}'", column);
-            let description = format!("Found {} different date formats", formats.len());
-            let suggestion = "Consider standardizing date formats before analysis".to_string();
-            (title, description, suggestion)
-        }
-        QualityIssue::NullValues {
-            column,
-            count,
-            percentage,
-        } => {
-            let title = format!("Null values in column '{}'", column);
-            let description = format!("{} null values ({:.1}%)", count, percentage);
-            let suggestion = if *percentage > 50.0 {
-                "Consider removing this column or imputing values".to_string()
-            } else {
-                "Consider imputing missing values".to_string()
-            };
-            (title, description, suggestion)
-        }
-        QualityIssue::Duplicates { column, count } => {
-            let title = format!("Duplicate values in column '{}'", column);
-            let description = format!("{} duplicate values found", count);
-            let suggestion = "Review and remove duplicates if necessary".to_string();
-            (title, description, suggestion)
-        }
-        QualityIssue::Outliers {
-            column,
-            values,
-            threshold,
-        } => {
-            let title = format!("Outliers detected in column '{}'", column);
-            let description = format!("{} outliers beyond {}σ threshold", values.len(), threshold);
-            let suggestion = "Review outliers and consider removal or transformation".to_string();
-            (title, description, suggestion)
-        }
-        QualityIssue::MixedTypes { column, types } => {
-            let title = format!("Mixed data types in column '{}'", column);
-            let description = format!("Found {} different data types", types.len());
-            let suggestion = "Clean and standardize data types".to_string();
-            (title, description, suggestion)
-        }
-    }
-}
-
-/// Display ML readiness score with formatting
-///
-/// # Deprecated
-/// Use `output_with_adaptive_formatter` instead for consistent formatting across all commands.
-#[deprecated(
-    since = "0.4.62",
-    note = "Use output_with_adaptive_formatter from formatters module instead"
-)]
-pub fn display_ml_score(score: &MlReadinessScore) {
-    let (level_icon, _level_color) = match score.readiness_level {
-        MlReadinessLevel::Ready => ("🚀", "green"),
-        MlReadinessLevel::Good => ("✅", "green"),
-        MlReadinessLevel::NeedsWork => ("⚠️", "yellow"),
-        MlReadinessLevel::NotReady => ("❌", "red"),
-    };
-
-    println!(
-        "🤖 {} Machine Learning Readiness",
-        "ML READINESS SCORE".bright_blue().bold()
-    );
-
-    let score_str = format!("{:.1}%", score.overall_score);
-    let colored_score = match score.readiness_level {
-        MlReadinessLevel::Ready | MlReadinessLevel::Good => score_str.green().bold(),
-        MlReadinessLevel::NeedsWork => score_str.yellow().bold(),
-        MlReadinessLevel::NotReady => score_str.red().bold(),
-    };
-
-    println!(
-        "  {} Overall Score: {} {:?}",
-        level_icon, colored_score, score.readiness_level
-    );
-    println!();
-
-    println!("📊 {}", "Component Scores:".bright_white().bold());
-    println!(
-        "  Completeness: {:.1}% {}",
-        score.completeness_score,
-        if score.completeness_score >= 80.0 {
-            "✅".green()
-        } else if score.completeness_score >= 60.0 {
-            "⚠️".yellow()
-        } else {
-            "❌".red()
-        }
-    );
-
-    println!(
-        "  Consistency: {:.1}% {}",
-        score.consistency_score,
-        if score.consistency_score >= 80.0 {
-            "✅".green()
-        } else if score.consistency_score >= 60.0 {
-            "⚠️".yellow()
-        } else {
-            "❌".red()
-        }
-    );
-
-    println!(
-        "  Feature Quality: {:.1}% {}",
-        score.feature_quality_score,
-        if score.feature_quality_score >= 80.0 {
-            "✅".green()
-        } else if score.feature_quality_score >= 60.0 {
-            "⚠️".yellow()
-        } else {
-            "❌".red()
-        }
-    );
-
-    println!(
-        "  Type Suitability: {:.1}% {}",
-        score.type_suitability_score,
-        if score.type_suitability_score >= 80.0 {
-            "✅".green()
-        } else if score.type_suitability_score >= 60.0 {
-            "⚠️".yellow()
-        } else {
-            "❌".red()
-        }
-    );
-    println!();
-
-    if !score.blocking_issues.is_empty() {
-        println!("🚫 {}", "Blocking Issues:".red().bold());
-        for issue in &score.blocking_issues {
-            println!("  • {}", issue.description.red());
-            println!("    💡 {}", issue.resolution_required.bright_cyan());
-        }
-        println!();
-    }
-
-    if !score.recommendations.is_empty() {
-        println!("💡 {}", "Recommendations:".bright_cyan().bold());
-        for rec in &score.recommendations {
-            let priority_icon = match rec.priority {
-                RecommendationPriority::Critical => "🔴",
-                RecommendationPriority::High => "🟠",
-                RecommendationPriority::Medium => "🟡",
-                RecommendationPriority::Low => "🔵",
-            };
-            println!("  {} {}", priority_icon, rec.description);
-        }
-        println!();
-    }
-}
-
-/// Display comprehensive data quality metrics in a user-friendly format
+/// Display data quality metrics with ISO 8000/25012 dimensions
 ///
 /// # Deprecated
 /// Use `output_with_adaptive_formatter` instead for consistent formatting across all commands.
@@ -284,199 +97,202 @@ pub fn display_ml_score(score: &MlReadinessScore) {
 )]
 pub fn display_data_quality_metrics(metrics: &DataQualityMetrics) {
     println!(
-        "📊 {} Data Quality Metrics",
-        "COMPREHENSIVE".bright_blue().bold()
+        "📊 {}",
+        "Data Quality Metrics (ISO 8000/25012)".bright_blue().bold()
     );
     println!();
 
-    // Completeness Section
-    println!("🔍 {}", "Completeness".bright_green().bold());
+    // Completeness Dimension
     println!(
-        "  Missing Values Ratio: {:.1}% {}",
-        metrics.missing_values_ratio,
-        if metrics.missing_values_ratio <= 5.0 {
-            "✅ Excellent".green()
-        } else if metrics.missing_values_ratio <= 15.0 {
-            "⚠️ Good".yellow()
+        "  {} {}",
+        "📋".bright_white(),
+        "Completeness".bright_white().bold()
+    );
+    println!(
+        "    Missing Values: {:.1}% {}",
+        metrics.missing_values_ratio * 100.0,
+        if metrics.missing_values_ratio < 0.05 {
+            "✅".green()
+        } else if metrics.missing_values_ratio < 0.2 {
+            "⚠️".yellow()
         } else {
-            "❌ Needs Attention".red()
+            "❌".red()
         }
     );
-    println!("  Complete Records: {:.1}%", metrics.complete_records_ratio);
+    println!(
+        "    Complete Records: {:.1}% {}",
+        metrics.complete_records_ratio * 100.0,
+        if metrics.complete_records_ratio > 0.8 {
+            "✅".green()
+        } else if metrics.complete_records_ratio > 0.6 {
+            "⚠️".yellow()
+        } else {
+            "❌".red()
+        }
+    );
+
     if !metrics.null_columns.is_empty() {
         println!(
-            "  Columns with nulls: {}",
-            metrics.null_columns.join(", ").yellow()
+            "    Null Columns: {} {}",
+            metrics.null_columns.len(),
+            if metrics.null_columns.is_empty() {
+                "✅".green()
+            } else {
+                "⚠️".yellow()
+            }
         );
     }
     println!();
 
-    // Consistency Section
-    println!("⚡ {}", "Consistency".bright_cyan().bold());
+    // Consistency Dimension
     println!(
-        "  Data Type Consistency: {:.1}% {}",
-        metrics.data_type_consistency,
-        if metrics.data_type_consistency >= 95.0 {
-            "✅ Excellent".green()
-        } else if metrics.data_type_consistency >= 80.0 {
-            "⚠️ Good".yellow()
+        "  {} {}",
+        "🔄".bright_white(),
+        "Consistency".bright_white().bold()
+    );
+    println!(
+        "    Data Type Consistency: {:.1}% {}",
+        metrics.data_type_consistency * 100.0,
+        if metrics.data_type_consistency > 0.95 {
+            "✅".green()
+        } else if metrics.data_type_consistency > 0.8 {
+            "⚠️".yellow()
         } else {
-            "❌ Needs Work".red()
+            "❌".red()
         }
     );
-    if metrics.format_violations > 0 {
-        println!(
-            "  Format Violations: {} issues found",
-            metrics.format_violations.to_string().yellow()
-        );
-    }
-    if metrics.encoding_issues > 0 {
-        println!(
-            "  Encoding Issues: {} problems detected",
-            metrics.encoding_issues.to_string().red()
-        );
-    }
+    println!(
+        "    Format Violations: {} {}",
+        metrics.format_violations,
+        if metrics.format_violations == 0 {
+            "✅".green()
+        } else if metrics.format_violations < 10 {
+            "⚠️".yellow()
+        } else {
+            "❌".red()
+        }
+    );
+    println!(
+        "    Encoding Issues: {} {}",
+        metrics.encoding_issues,
+        if metrics.encoding_issues == 0 {
+            "✅".green()
+        } else {
+            "❌".red()
+        }
+    );
     println!();
 
-    // Uniqueness Section
-    println!("🔑 {}", "Uniqueness".bright_magenta().bold());
-    if metrics.duplicate_rows > 0 {
-        println!(
-            "  Duplicate Rows: {} found",
-            metrics.duplicate_rows.to_string().yellow()
-        );
-    } else {
-        println!("  Duplicate Rows: {} No duplicates", "✅".green());
-    }
+    // Uniqueness Dimension
     println!(
-        "  Key Uniqueness: {:.1}% {}",
-        metrics.key_uniqueness,
-        if metrics.key_uniqueness >= 95.0 {
-            "✅ Excellent".green()
-        } else if metrics.key_uniqueness >= 80.0 {
-            "⚠️ Good".yellow()
+        "  {} {}",
+        "🔑".bright_white(),
+        "Uniqueness".bright_white().bold()
+    );
+    println!(
+        "    Duplicate Rows: {} {}",
+        metrics.duplicate_rows,
+        if metrics.duplicate_rows == 0 {
+            "✅".green()
+        } else if metrics.duplicate_rows < 10 {
+            "⚠️".yellow()
         } else {
-            "❌ Low uniqueness".red()
+            "❌".red()
+        }
+    );
+    println!(
+        "    Key Uniqueness: {:.1}% {}",
+        metrics.key_uniqueness * 100.0,
+        if metrics.key_uniqueness > 0.95 {
+            "✅".green()
+        } else if metrics.key_uniqueness > 0.8 {
+            "⚠️".yellow()
+        } else {
+            "❌".red()
         }
     );
     if metrics.high_cardinality_warning {
         println!(
-            "  {} High cardinality detected - may impact performance",
+            "    High Cardinality: {} {}",
+            "Warning".yellow(),
             "⚠️".yellow()
         );
     }
     println!();
 
-    // Accuracy Section
-    println!("🎯 {}", "Accuracy".bright_red().bold());
+    // Accuracy Dimension
     println!(
-        "  Outlier Ratio: {:.1}% {} (ISO 25012 IQR method)",
-        metrics.outlier_ratio,
-        if metrics.outlier_ratio <= 2.0 {
-            "✅ Excellent".green()
-        } else if metrics.outlier_ratio <= 5.0 {
-            "⚠️ Acceptable".yellow()
+        "  {} {}",
+        "🎯".bright_white(),
+        "Accuracy".bright_white().bold()
+    );
+    println!(
+        "    Outlier Ratio: {:.1}% {}",
+        metrics.outlier_ratio * 100.0,
+        if metrics.outlier_ratio < 0.05 {
+            "✅".green()
+        } else if metrics.outlier_ratio < 0.1 {
+            "⚠️".yellow()
         } else {
-            "❌ High outlier rate".red()
+            "❌".red()
         }
     );
-    if metrics.range_violations > 0 {
-        println!(
-            "  Range Violations: {} values out of expected range",
-            metrics.range_violations.to_string().yellow()
-        );
-    }
-    if metrics.negative_values_in_positive > 0 {
-        println!(
-            "  Invalid Negative Values: {} negative values in positive columns",
-            metrics.negative_values_in_positive.to_string().red()
-        );
-    }
-    println!();
-
-    // Timeliness Section (ISO 8000-8)
-    println!("⏰ {}", "Timeliness".bright_yellow().bold());
-    if metrics.future_dates_count > 0 {
-        println!(
-            "  Future Dates: {} dates beyond current date",
-            metrics.future_dates_count.to_string().yellow()
-        );
-    } else {
-        println!("  Future Dates: {} None detected", "✅".green());
-    }
     println!(
-        "  Stale Data Ratio: {:.1}% {}",
-        metrics.stale_data_ratio,
-        if metrics.stale_data_ratio <= 10.0 {
-            "✅ Fresh data".green()
-        } else if metrics.stale_data_ratio <= 30.0 {
-            "⚠️ Some stale data".yellow()
+        "    Range Violations: {} {}",
+        metrics.range_violations,
+        if metrics.range_violations == 0 {
+            "✅".green()
+        } else if metrics.range_violations < 5 {
+            "⚠️".yellow()
         } else {
-            "❌ High staleness".red()
+            "❌".red()
         }
     );
-    if metrics.temporal_violations > 0 {
-        println!(
-            "  Temporal Violations: {} ordering issues (e.g., end_date < start_date)",
-            metrics.temporal_violations.to_string().red()
-        );
-    } else {
-        println!("  Temporal Ordering: {} Consistent", "✅".green());
-    }
-    println!();
-
-    // Overall Assessment
-    let overall_score = calculate_overall_data_quality_score(metrics);
-    let assessment = if overall_score >= 85.0 {
-        ("🚀 EXCELLENT", "green")
-    } else if overall_score >= 70.0 {
-        ("✅ GOOD", "green")
-    } else if overall_score >= 50.0 {
-        ("⚠️ FAIR", "yellow")
-    } else {
-        ("❌ POOR", "red")
-    };
-
     println!(
-        "📈 {} Overall Data Quality: {:.1}% - {}",
-        "SUMMARY".bright_white().bold(),
-        overall_score,
-        match assessment.1 {
-            "green" => assessment.0.green().bold(),
-            "yellow" => assessment.0.yellow().bold(),
-            "red" => assessment.0.red().bold(),
-            _ => assessment.0.white().bold(),
+        "    Negative in Positive: {} {}",
+        metrics.negative_values_in_positive,
+        if metrics.negative_values_in_positive == 0 {
+            "✅".green()
+        } else {
+            "❌".red()
         }
     );
     println!();
-}
 
-/// Calculate an overall data quality score from the metrics
-/// Now includes all 5 ISO dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
-fn calculate_overall_data_quality_score(metrics: &DataQualityMetrics) -> f64 {
-    // Weighted average of the five ISO 8000/25012 dimensions
-    let completeness_weight = 0.25;
-    let consistency_weight = 0.25;
-    let uniqueness_weight = 0.15;
-    let accuracy_weight = 0.20;
-    let timeliness_weight = 0.15;
-
-    let completeness_score = 100.0 - metrics.missing_values_ratio;
-    let consistency_score = metrics.data_type_consistency;
-    let uniqueness_score = metrics.key_uniqueness;
-    let accuracy_score = 100.0 - (metrics.outlier_ratio * 10.0); // Scale outlier ratio
-
-    // Timeliness score: penalize future dates and stale data
-    let future_penalty = (metrics.future_dates_count as f64).min(10.0) * 2.0;
-    let temporal_penalty = (metrics.temporal_violations as f64).min(10.0) * 3.0;
-    let timeliness_score =
-        (100.0 - metrics.stale_data_ratio - future_penalty - temporal_penalty).max(0.0);
-
-    let overall = (completeness_score * completeness_weight)
-        + (consistency_score * consistency_weight)
-        + (uniqueness_score * uniqueness_weight)
-        + (accuracy_score.clamp(0.0, 100.0) * accuracy_weight)
-        + (timeliness_score * timeliness_weight);
-
-    overall.clamp(0.0, 100.0)
+    // Timeliness Dimension
+    println!(
+        "  {} {}",
+        "⏰".bright_white(),
+        "Timeliness".bright_white().bold()
+    );
+    println!(
+        "    Future Dates: {} {}",
+        metrics.future_dates_count,
+        if metrics.future_dates_count == 0 {
+            "✅".green()
+        } else {
+            "⚠️".yellow()
+        }
+    );
+    println!(
+        "    Stale Data Ratio: {:.1}% {}",
+        metrics.stale_data_ratio * 100.0,
+        if metrics.stale_data_ratio < 0.1 {
+            "✅".green()
+        } else if metrics.stale_data_ratio < 0.3 {
+            "⚠️".yellow()
+        } else {
+            "❌".red()
+        }
+    );
+    println!(
+        "    Temporal Violations: {} {}",
+        metrics.temporal_violations,
+        if metrics.temporal_violations == 0 {
+            "✅".green()
+        } else {
+            "❌".red()
+        }
+    );
+    println!();
 }
