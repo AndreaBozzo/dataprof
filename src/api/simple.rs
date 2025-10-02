@@ -12,15 +12,8 @@ pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
     let report =
         profiler.analyze_file_with_context(file_path.as_ref(), ProcessingType::QualityFocused)?;
 
-    // Calculate a simple quality score based on issues
-    let total_issues = report.issues.len();
-    let quality_score = if total_issues == 0 {
-        100.0
-    } else {
-        (100.0 - (total_issues as f64 * 10.0)).max(0.0)
-    };
-
-    Ok(quality_score)
+    // Use ISO 8000/25012 quality score
+    Ok(report.quality_score())
 }
 
 /// Stream profiling with intelligent engine selection and progress logging

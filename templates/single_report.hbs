@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataProfiler Report - {{file_name}}</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 DataProfiler Report</h1>
+            <div class="file-info">
+                <h2>{{file_path}}</h2>
+                <div class="stats-grid">
+                    <div class="stat">
+                        <span class="label">File Size</span>
+                        <span class="value">{{file_size_mb}} MB</span>
+                    </div>
+                    <div class="stat">
+                        <span class="label">Total Rows</span>
+                        <span class="value">{{total_rows}}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="label">Columns</span>
+                        <span class="value">{{total_columns}}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="label">Scan Time</span>
+                        <span class="value">{{scan_time_ms}} ms</span>
+                    </div>
+                </div>
+                {{#if sampling_info}}
+                <div class="sampling-info">
+                    <span class="sampling-badge">Sampled {{sampling_info.rows_scanned}} rows ({{sampling_info.sampling_percentage}}%)</span>
+                </div>
+                {{/if}}
+            </div>
+        </header>
+
+        {{#if data_quality_metrics}}
+        <section class="data-quality-metrics">
+            <h2>📊 Comprehensive Data Quality Metrics</h2>
+
+            <div class="overall-score">
+                <div class="score-circle {{data_quality_metrics.assessment_class}}">
+                    <span class="score-value">{{data_quality_metrics.overall_score}}%</span>
+                    <span class="score-label">Overall Quality</span>
+                </div>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-card completeness">
+                    <div class="metric-header">
+                        <span class="metric-icon">🔍</span>
+                        <h3>Completeness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Missing Values</span>
+                            <span class="stat-value {{data_quality_metrics.completeness.missing_class}}">{{data_quality_metrics.completeness.missing_ratio}}%</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Complete Records</span>
+                            <span class="stat-value">{{data_quality_metrics.completeness.complete_ratio}}%</span>
+                        </div>
+                        {{#if data_quality_metrics.completeness.null_columns}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Columns with nulls</span>
+                            <span class="stat-value">{{data_quality_metrics.completeness.null_columns}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card consistency">
+                    <div class="metric-header">
+                        <span class="metric-icon">⚡</span>
+                        <h3>Consistency</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Type Consistency</span>
+                            <span class="stat-value {{data_quality_metrics.consistency.type_class}}">{{data_quality_metrics.consistency.type_consistency}}%</span>
+                        </div>
+                        {{#if data_quality_metrics.consistency.format_violations}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Format Violations</span>
+                            <span class="stat-value">{{data_quality_metrics.consistency.format_violations}}</span>
+                        </div>
+                        {{/if}}
+                        {{#if data_quality_metrics.consistency.encoding_issues}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Encoding Issues</span>
+                            <span class="stat-value">{{data_quality_metrics.consistency.encoding_issues}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card uniqueness">
+                    <div class="metric-header">
+                        <span class="metric-icon">🔑</span>
+                        <h3>Uniqueness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Key Uniqueness</span>
+                            <span class="stat-value {{data_quality_metrics.uniqueness.uniqueness_class}}">{{data_quality_metrics.uniqueness.key_uniqueness}}%</span>
+                        </div>
+                        {{#if data_quality_metrics.uniqueness.has_duplicates}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Duplicate Rows</span>
+                            <span class="stat-value">{{data_quality_metrics.uniqueness.duplicate_rows}}</span>
+                        </div>
+                        {{else}}
+                        <div class="stat-item excellent">
+                            <span class="stat-label">Duplicate Rows</span>
+                            <span class="stat-value">None</span>
+                        </div>
+                        {{/if}}
+                        {{#if data_quality_metrics.uniqueness.high_cardinality_warning}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">High Cardinality</span>
+                            <span class="stat-value">Warning</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card accuracy">
+                    <div class="metric-header">
+                        <span class="metric-icon">🎯</span>
+                        <h3>Accuracy</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Outlier Ratio</span>
+                            <span class="stat-value {{data_quality_metrics.accuracy.outlier_class}}">{{data_quality_metrics.accuracy.outlier_ratio}}%</span>
+                        </div>
+                        {{#if data_quality_metrics.accuracy.range_violations}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Range Violations</span>
+                            <span class="stat-value">{{data_quality_metrics.accuracy.range_violations}}</span>
+                        </div>
+                        {{/if}}
+                        {{#if data_quality_metrics.accuracy.negative_values}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Invalid Negatives</span>
+                            <span class="stat-value">{{data_quality_metrics.accuracy.negative_values}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+            </div>
+        </section>
+        {{/if}}
+
+        <section class="columns">
+            <h2>📈 Column Analysis</h2>
+            <div class="columns-grid">
+                {{#each column_profiles}}
+                <div class="column-card">
+                    <h3>{{this.name}}</h3>
+                    <div class="column-meta">
+                        <span class="type-badge type-{{this.data_type_class}}">{{this.data_type}}</span>
+                        <span class="records">{{this.total_count}} records</span>
+                        {{#if this.has_nulls}}
+                        <span class="nulls warning">{{this.null_count}} nulls ({{this.null_percentage}}%)</span>
+                        {{else}}
+                        <span class="nulls success">No nulls</span>
+                        {{/if}}
+                    </div>
+                    {{#if this.stats}}
+                    <div class="stats {{this.stats_type}}">
+                        {{#if this.stats.numeric}}
+                        <div class="stat"><label>Min:</label> <span>{{this.stats.min}}</span></div>
+                        <div class="stat"><label>Max:</label> <span>{{this.stats.max}}</span></div>
+                        <div class="stat"><label>Mean:</label> <span>{{this.stats.mean}}</span></div>
+                        {{/if}}
+                        {{#if this.stats.text}}
+                        <div class="stat"><label>Min Length:</label> <span>{{this.stats.min_length}}</span></div>
+                        <div class="stat"><label>Max Length:</label> <span>{{this.stats.max_length}}</span></div>
+                        <div class="stat"><label>Avg Length:</label> <span>{{this.stats.avg_length}}</span></div>
+                        {{/if}}
+                    </div>
+                    {{/if}}
+                    {{#if this.patterns}}
+                    <div class="patterns">
+                        <h4>Detected Patterns</h4>
+                        {{#each this.patterns}}
+                        <div class="pattern">
+                            <span class="pattern-name">{{this.name}}</span> - {{this.match_count}} matches ({{this.match_percentage}}%)
+                        </div>
+                        {{/each}}
+                    </div>
+                    {{/if}}
+                </div>
+                {{/each}}
+            </div>
+        </section>
+
+        <footer>
+            <p>Generated by <strong>DataProfiler CLI</strong> v0.2.0</p>
+        </footer>
+    </div>
+</body>
+</html>

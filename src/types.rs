@@ -99,21 +99,16 @@ impl DataQualityMetrics {
 pub struct QualityReport {
     pub file_info: FileInfo,
     pub column_profiles: Vec<ColumnProfile>,
-    pub issues: Vec<QualityIssue>,
     pub scan_info: ScanInfo,
-    /// Enhanced data quality metrics following industry standards
-    pub data_quality_metrics: Option<DataQualityMetrics>,
+    /// Data quality metrics following ISO 8000/25012 standards
+    /// This is the single source of truth for data quality assessment
+    pub data_quality_metrics: DataQualityMetrics,
 }
 
 impl QualityReport {
     /// Calculate overall quality score using ISO 8000/25012 metrics
-    ///
-    /// Returns the score from DataQualityMetrics if available,
-    /// otherwise returns None (metrics should always be present in modern analysis)
-    pub fn quality_score(&self) -> Option<f64> {
-        self.data_quality_metrics
-            .as_ref()
-            .map(|metrics| metrics.overall_score())
+    pub fn quality_score(&self) -> f64 {
+        self.data_quality_metrics.overall_score()
     }
 }
 
