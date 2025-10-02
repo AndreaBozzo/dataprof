@@ -125,7 +125,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
 
     if args.quality {
         // Use modern adaptive formatter for quality output
-        output_with_adaptive_formatter(&report, &OutputFormat::Text)?;
+        output_with_adaptive_formatter(&report, Some(OutputFormat::Text))?;
     }
 
     if args.quality {

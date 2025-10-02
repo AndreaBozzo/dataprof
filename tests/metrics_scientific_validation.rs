@@ -15,7 +15,7 @@ fn test_percentile_calculation_correctness() {
     // Q1 should be 3.25, Q3 should be 7.75 (using Type 7 interpolation)
     data.insert(
         "numbers".to_string(),
-        vec!["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -128,7 +128,7 @@ fn test_overall_score_normalization() {
         overall_score
     );
     assert!(
-        overall_score >= 0.0 && overall_score <= 100.0,
+        (0.0..=100.0).contains(&overall_score),
         "Score must be in 0-100 range"
     );
 }
@@ -161,7 +161,7 @@ fn test_format_violations_accurate_counting() {
     // Mixed decimal formats: 3 with dot, 2 with comma (2 violations expected)
     data.insert(
         "prices".to_string(),
-        vec!["10.50", "20.75", "30.25", "40,50", "50,75"]
+        ["10.50", "20.75", "30.25", "40,50", "50,75"]
             .iter()
             .map(|s| s.to_string())
             .collect(),

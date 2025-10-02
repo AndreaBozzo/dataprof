@@ -18,9 +18,7 @@ pub use logging::{
     log_warning,
 };
 pub use processor::PyCsvProcessor;
-pub use types::{
-    PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyQualityIssue, PyQualityReport,
-};
+pub use types::{PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -35,7 +33,6 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core data profiling classes
     m.add_class::<PyColumnProfile>()?;
     m.add_class::<PyQualityReport>()?;
-    m.add_class::<PyQualityIssue>()?;
     m.add_class::<PyDataQualityMetrics>()?;
     m.add_class::<PyBatchResult>()?;
 

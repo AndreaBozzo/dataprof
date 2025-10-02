@@ -225,7 +225,7 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 sampling_ratio: sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
                 scan_time_ms: start.elapsed().as_millis(),
             },
-            data_quality_metrics: DataQualityMetrics::default(),
+            data_quality_metrics: DataQualityMetrics::empty(),
         });
     }
 

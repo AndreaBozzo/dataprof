@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 
 use crate::core::batch::BatchResult;
-use crate::types::{ColumnProfile, DataQualityMetrics, DataType, QualityIssue, QualityReport};
+use crate::types::{ColumnProfile, DataQualityMetrics, DataType, QualityReport};
 
 /// Python wrapper for ColumnProfile
 #[pyclass]
@@ -60,87 +60,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
     }
 }
 
-/// Python wrapper for QualityIssue
-#[pyclass]
-#[derive(Clone)]
-pub struct PyQualityIssue {
-    #[pyo3(get)]
-    pub issue_type: String,
-    #[pyo3(get)]
-    pub column: String,
-    #[pyo3(get)]
-    pub severity: String,
-    #[pyo3(get)]
-    pub count: Option<usize>,
-    #[pyo3(get)]
-    pub percentage: Option<f64>,
-    #[pyo3(get)]
-    pub description: String,
-}
-
-impl From<&QualityIssue> for PyQualityIssue {
-    fn from(issue: &QualityIssue) -> Self {
-        match issue {
-            QualityIssue::NullValues {
-                column,
-                count,
-                percentage,
-            } => Self {
-                issue_type: "null_values".to_string(),
-                column: column.to_string(),
-                severity: "medium".to_string(),
-                count: Some(*count),
-                percentage: Some(*percentage),
-                description: format!(
-                    "{} null values ({}%) in column '{}'",
-                    count, percentage, column
-                ),
-            },
-            QualityIssue::Duplicates { column, count } => Self {
-                issue_type: "duplicates".to_string(),
-                column: column.to_string(),
-                severity: "low".to_string(),
-                count: Some(*count),
-                percentage: None,
-                description: format!("{} duplicate values in column '{}'", count, column),
-            },
-            QualityIssue::Outliers {
-                column,
-                values,
-                threshold,
-            } => Self {
-                issue_type: "outliers".to_string(),
-                column: column.to_string(),
-                severity: "medium".to_string(),
-                count: Some(values.len()),
-                percentage: None,
-                description: format!(
-                    "{} outlier values in column '{}' (threshold: {}): {:?}",
-                    values.len(),
-                    column,
-                    threshold,
-                    values
-                ),
-            },
-            QualityIssue::MixedDateFormats { column, formats } => Self {
-                issue_type: "mixed_date_formats".to_string(),
-                column: column.to_string(),
-                severity: "high".to_string(),
-                count: Some(formats.len()),
-                percentage: None,
-                description: format!("Mixed date formats in column '{}': {:?}", column, formats),
-            },
-            QualityIssue::MixedTypes { column, types } => Self {
-                issue_type: "mixed_types".to_string(),
-                column: column.to_string(),
-                severity: "high".to_string(),
-                count: Some(types.len()),
-                percentage: None,
-                description: format!("Mixed data types in column '{}': {:?}", column, types),
-            },
-        }
-    }
-}
+// PyQualityIssue removed - use DataQualityMetrics instead
 
 /// Python wrapper for QualityReport
 #[pyclass]
@@ -155,15 +75,13 @@ pub struct PyQualityReport {
     #[pyo3(get)]
     pub column_profiles: Vec<PyColumnProfile>,
     #[pyo3(get)]
-    pub issues: Vec<PyQualityIssue>,
-    #[pyo3(get)]
     pub rows_scanned: usize,
     #[pyo3(get)]
     pub sampling_ratio: f64,
     #[pyo3(get)]
     pub scan_time_ms: u128,
     #[pyo3(get)]
-    pub data_quality_metrics: Option<PyDataQualityMetrics>,
+    pub data_quality_metrics: PyDataQualityMetrics,
 }
 
 impl From<&QualityReport> for PyQualityReport {
@@ -177,63 +95,19 @@ impl From<&QualityReport> for PyQualityReport {
                 .iter()
                 .map(PyColumnProfile::from)
                 .collect(),
-            issues: report.issues.iter().map(PyQualityIssue::from).collect(),
             rows_scanned: report.scan_info.rows_scanned,
             sampling_ratio: report.scan_info.sampling_ratio,
             scan_time_ms: report.scan_info.scan_time_ms,
-            data_quality_metrics: report
-                .data_quality_metrics
-                .as_ref()
-                .map(PyDataQualityMetrics::from),
+            data_quality_metrics: PyDataQualityMetrics::from(&report.data_quality_metrics),
         }
     }
 }
 
 #[pymethods]
 impl PyQualityReport {
-    /// Calculate overall quality score (0-100)
+    /// Calculate overall quality score (0-100) using DataQualityMetrics
     fn quality_score(&self) -> PyResult<f64> {
-        if self.issues.is_empty() {
-            return Ok(100.0);
-        }
-
-        let mut score: f64 = 100.0;
-
-        for issue in &self.issues {
-            let penalty = match issue.issue_type.as_str() {
-                "mixed_date_formats" => 20.0,
-                "null_values" => {
-                    if let Some(percentage) = issue.percentage {
-                        if percentage > 50.0 {
-                            20.0
-                        } else if percentage > 20.0 {
-                            15.0
-                        } else {
-                            10.0
-                        }
-                    } else {
-                        10.0
-                    }
-                }
-                "outlier_values" => 15.0,
-                "invalid_email_format" => 10.0,
-                "duplicate_values" => 5.0,
-                "inconsistent_casing" => 3.0,
-                _ => 5.0,
-            };
-            score -= penalty;
-        }
-
-        Ok(score.max(0.0))
-    }
-
-    /// Get issues by severity
-    fn issues_by_severity(&self, severity: &str) -> Vec<PyQualityIssue> {
-        self.issues
-            .iter()
-            .filter(|issue| issue.severity == severity)
-            .cloned()
-            .collect()
+        Ok(self.data_quality_metrics.overall_quality_score)
     }
 }
 
@@ -241,6 +115,10 @@ impl PyQualityReport {
 #[pyclass]
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
+    // Overall Score
+    #[pyo3(get)]
+    pub overall_quality_score: f64,
+
     // Completeness
     #[pyo3(get)]
     pub missing_values_ratio: f64,
@@ -285,6 +163,7 @@ pub struct PyDataQualityMetrics {
 impl From<&DataQualityMetrics> for PyDataQualityMetrics {
     fn from(metrics: &DataQualityMetrics) -> Self {
         Self {
+            overall_quality_score: metrics.overall_score(),
             missing_values_ratio: metrics.missing_values_ratio,
             complete_records_ratio: metrics.complete_records_ratio,
             null_columns: metrics.null_columns.clone(),
@@ -592,8 +471,6 @@ pub struct PyBatchResult {
     #[pyo3(get)]
     pub total_duration_secs: f64,
     #[pyo3(get)]
-    pub total_quality_issues: usize,
-    #[pyo3(get)]
     pub average_quality_score: f64,
 }
 
@@ -603,7 +480,6 @@ impl From<&BatchResult> for PyBatchResult {
             processed_files: result.summary.successful,
             failed_files: result.summary.failed,
             total_duration_secs: result.summary.processing_time_seconds,
-            total_quality_issues: result.summary.total_issues,
             average_quality_score: result.summary.average_quality_score,
         }
     }

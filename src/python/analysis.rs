@@ -42,8 +42,7 @@ pub fn calculate_data_quality_metrics(path: &str) -> PyResult<Option<PyDataQuali
     let quality_report = analyze_csv_robust(Path::new(path))
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
 
-    match quality_report.data_quality_metrics {
-        Some(metrics) => Ok(Some(PyDataQualityMetrics::from(&metrics))),
-        None => Ok(None),
-    }
+    Ok(Some(PyDataQualityMetrics::from(
+        &quality_report.data_quality_metrics,
+    )))
 }

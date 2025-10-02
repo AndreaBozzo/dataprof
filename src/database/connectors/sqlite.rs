@@ -1,9 +1,10 @@
 //! SQLite database connector (embedded database)
 
+use super::common::{build_batch_query, build_count_query};
 use crate::database::connection::ConnectionInfo;
 #[cfg(feature = "sqlite")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
-use crate::database::{DatabaseConfig, DatabaseConnector};
+use crate::database::{validate_sql_identifier, DatabaseConfig, DatabaseConnector};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;

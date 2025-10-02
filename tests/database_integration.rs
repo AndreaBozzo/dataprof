@@ -96,12 +96,7 @@ mod sqlite_tests {
         match result {
             Ok(report) => {
                 // Verify that data_quality_metrics field is populated
-                assert!(
-                    report.data_quality_metrics.is_some(),
-                    "DataQualityMetrics should be present in database analysis results"
-                );
-
-                let metrics = report.data_quality_metrics.unwrap();
+                let metrics = &report.data_quality_metrics;
 
                 // Basic sanity checks on the metrics structure
                 assert!(

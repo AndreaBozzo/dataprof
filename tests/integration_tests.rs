@@ -73,27 +73,13 @@ fn test_csv_quality_analysis() -> Result<()> {
     let report = analyze_csv_with_sampling(temp_file.path())?;
 
     assert_eq!(report.column_profiles.len(), 3);
-    assert!(!report.issues.is_empty());
 
-    // Should detect mixed date formats OR outliers (at least some quality issues)
-    let has_mixed_dates = report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue, dataprof::QualityIssue::MixedDateFormats { .. }));
-    let has_outliers = report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue, dataprof::QualityIssue::Outliers { .. }));
-    let has_nulls = report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue, dataprof::QualityIssue::NullValues { .. }));
-
-    // At least one type of issue should be detected
+    // Should have data quality metrics
+    let quality_score = report.quality_score();
     assert!(
-        has_mixed_dates || has_outliers || has_nulls,
-        "Should detect at least one quality issue, found: {:?}",
-        report.issues
+        quality_score < 100.0,
+        "Should detect quality issues, score: {}",
+        quality_score
     );
 
     Ok(())
@@ -142,13 +128,9 @@ fn test_jsonl_analysis() -> Result<()> {
 
     assert_eq!(report.column_profiles.len(), 2);
 
-    // Should detect mixed date formats in timestamp
-    let has_mixed_dates = report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue, dataprof::QualityIssue::MixedDateFormats { .. }));
-
-    assert!(has_mixed_dates);
+    // Should detect quality issues (mixed date formats reduce quality score)
+    let quality_score = report.calculate_overall_quality_score();
+    assert!(quality_score < 100.0, "Should detect date format issues");
 
     Ok(())
 }
@@ -282,18 +264,13 @@ fn test_quality_issue_severity() -> Result<()> {
 
     let report = analyze_csv_with_sampling(temp_file.path())?;
 
-    // Check that different severity levels are detected
-    let has_critical = report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue.severity(), dataprof::types::Severity::High));
-    let has_warning = report
-        .issues
-        .iter()
-        .any(|issue| matches!(issue.severity(), dataprof::types::Severity::Medium));
-
-    assert!(has_critical); // Null values are critical
-    assert!(has_warning); // Duplicates are warnings
+    // Check that quality issues are detected via metrics
+    let metrics = &report.data_quality_metrics;
+    assert!(
+        metrics.missing_values_ratio > 0.0,
+        "Should detect null values"
+    );
+    assert!(metrics.duplicate_rows > 0, "Should detect duplicates");
 
     Ok(())
 }
