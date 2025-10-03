@@ -210,7 +210,7 @@ fn test_backward_compatibility() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(old_profiles.len(), 2);
 
     // Test existing DataProfiler methods still work
-    let streaming_profiler = DataProfiler::streaming();
+    let mut streaming_profiler = DataProfiler::streaming();
     let streaming_report = streaming_profiler.analyze_file(test_file.path())?;
     assert_eq!(streaming_report.column_profiles.len(), 2);
 
@@ -244,7 +244,7 @@ fn test_performance_improvement() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compare with a fixed engine choice (streaming)
     use dataprof::DataProfiler;
-    let streaming_profiler = DataProfiler::streaming();
+    let mut streaming_profiler = DataProfiler::streaming();
 
     let start = std::time::Instant::now();
     let streaming_report = streaming_profiler.analyze_file(test_file.path())?;

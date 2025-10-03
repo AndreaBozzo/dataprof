@@ -2,12 +2,17 @@
 //!
 //! These tests verify that the database connectors compile and work correctly.
 //! They use in-memory databases where possible to avoid requiring external setup.
+//!
+//! ## Heavy Memory Tests
+//! Some tests are marked with `#[ignore]` due to high memory consumption (>8GB RAM).
+//! To run these tests separately: `cargo test --test database_integration -- --ignored`
+//! For heavy integration tests, see `tests/database_heavy.rs`
 
 #[cfg(feature = "database")]
 use anyhow::Result;
 
 #[cfg(feature = "database")]
-use dataprof::{create_connector, profile_database, DatabaseConfig};
+use dataprof::{create_connector, DatabaseConfig};
 
 #[cfg(all(test, feature = "database", feature = "sqlite"))]
 mod sqlite_tests {
@@ -22,76 +27,6 @@ mod sqlite_tests {
             connection_timeout: Some(std::time::Duration::from_secs(5)),
             retry_config: Some(dataprof::database::RetryConfig::default()),
             sampling_config: None,
-            enable_ml_readiness: false,
-            ssl_config: Some(dataprof::database::SslConfig::default()),
-            load_credentials_from_env: false,
-        };
-
-        let mut connector = create_connector(config)?;
-
-        // Test connection
-        connector.connect().await?;
-        let is_connected = connector.test_connection().await?;
-        assert!(is_connected);
-
-        connector.disconnect().await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_create_and_profile_table() -> Result<()> {
-        let config = DatabaseConfig {
-            connection_string: ":memory:".to_string(),
-            batch_size: 1000,
-            max_connections: Some(1),
-            connection_timeout: Some(std::time::Duration::from_secs(5)),
-            retry_config: Some(dataprof::database::RetryConfig::default()),
-            sampling_config: None,
-            enable_ml_readiness: false,
-            ssl_config: Some(dataprof::database::SslConfig::default()),
-            load_credentials_from_env: false,
-        };
-
-        // Use the high-level profile_database function
-        // Note: This test would need actual SQLite setup with test data
-        // For now, we just verify the function exists and can be called
-
-        // This would normally fail because we don't have test data,
-        // but it verifies the API compiles correctly
-        let result = profile_database(config, "SELECT 1 as test_column").await;
-
-        // We expect this to fail with a connection error since we're using :memory:
-        // without setting up the database, but that's ok for a compilation test
-        match result {
-            Ok(_) => {
-                // If it somehow works, that's great
-                println!("SQLite test passed unexpectedly - that's good!");
-            }
-            Err(e) => {
-                // Expected - we don't have a proper test database setup
-                println!("SQLite test failed as expected: {}", e);
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(all(test, feature = "database", feature = "duckdb"))]
-mod duckdb_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_duckdb_memory_connection() -> Result<()> {
-        let config = DatabaseConfig {
-            connection_string: ":memory:".to_string(),
-            batch_size: 1000,
-            max_connections: Some(1),
-            connection_timeout: Some(std::time::Duration::from_secs(5)),
-            retry_config: Some(dataprof::database::RetryConfig::default()),
-            sampling_config: None,
-            enable_ml_readiness: false,
             ssl_config: Some(dataprof::database::SslConfig::default()),
             load_credentials_from_env: false,
         };
@@ -147,15 +82,6 @@ mod connection_tests {
 
         assert_eq!(info.database_type(), "sqlite");
         assert_eq!(info.path, Some("/path/to/database.db".to_string()));
-    }
-
-    #[test]
-    fn test_parse_duckdb_path() {
-        let conn_str = "/path/to/data.duckdb";
-        let info = ConnectionInfo::parse(conn_str).expect("Failed to parse connection string");
-
-        assert_eq!(info.database_type(), "duckdb");
-        assert_eq!(info.path, Some("/path/to/data.duckdb".to_string()));
     }
 
     #[test]
@@ -275,7 +201,6 @@ mod enhanced_features_tests {
     fn test_database_config_defaults() {
         let config = DatabaseConfig::default();
 
-        assert!(config.enable_ml_readiness);
         assert!(config.load_credentials_from_env);
         assert!(config.retry_config.is_some());
         assert!(config.ssl_config.is_some());
@@ -380,31 +305,6 @@ mod enhanced_features_tests {
         assert!(!warnings.is_empty());
         assert!(warnings.iter().any(|w| w.contains("Password embedded")));
         assert!(warnings.iter().any(|w| w.contains("localhost")));
-    }
-
-    #[test]
-    fn test_ml_readiness_assessment() {
-        use dataprof::database::assess_ml_readiness;
-        use dataprof::types::{ColumnProfile, ColumnStats, DataType};
-
-        let profile = ColumnProfile {
-            name: "price".to_string(),
-            data_type: DataType::Float,
-            null_count: 10,
-            total_count: 1000,
-            unique_count: Some(800),
-            stats: ColumnStats::Numeric {
-                min: 10.0,
-                max: 1000.0,
-                mean: 250.0,
-            },
-            patterns: vec![],
-        };
-
-        let ml_score = assess_ml_readiness(&[profile], 1000).unwrap();
-        assert!(ml_score.overall_score > 0.5);
-        assert_eq!(ml_score.column_scores.len(), 1);
-        assert!(ml_score.column_scores.contains_key("price"));
     }
 }
 

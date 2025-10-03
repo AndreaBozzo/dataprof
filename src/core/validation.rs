@@ -353,7 +353,7 @@ impl InputValidator {
         }
 
         // Check for supported protocols
-        let supported_protocols = ["postgresql", "postgres", "mysql", "sqlite", "duckdb"];
+        let supported_protocols = ["postgresql", "postgres", "mysql", "sqlite"];
         let protocol = connection_string.split("://").next().unwrap_or("");
 
         if !supported_protocols.contains(&protocol) {

@@ -109,52 +109,54 @@ dataprof.configure_logging(level="INFO")
 #### `analyze_csv_with_logging(file_path: str, log_level: Optional[str] = None) -> List[Dict[str, Any]]`
 Analyze CSV with integrated Python logging.
 
-#### `ml_readiness_score_with_logging(file_path: str, log_level: Optional[str] = None) -> PyMlReadinessScore`
-Calculate ML readiness with logging integration.
+## Quality Metrics (ISO 8000/25012 Compliant)
 
-## Enhanced ML Recommendations (v0.4.6+)
+DataProf provides comprehensive quality assessment across 5 ISO standard dimensions.
 
-The `PyMlReadinessScore` object now includes enhanced recommendations with **actionable code snippets**.
+### `PyDataQualityMetrics`
 
-### Enhanced PyMlRecommendation Properties
+Comprehensive quality metrics following ISO 8000/25012 standards.
 
-Each recommendation in `ml_score.recommendations` now includes:
+**Attributes:**
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `category` | `str` | Category of the recommendation |
-| `priority` | `str` | Priority level: "critical", "high", "medium", "low" |
-| `description` | `str` | Human-readable description |
-| `expected_impact` | `str` | Expected improvement description |
-| `implementation_effort` | `str` | Implementation difficulty |
-| **`code_snippet`** | `Optional[str]` | **Ready-to-use Python code** |
-| **`framework`** | `Optional[str]` | **Framework used (pandas, sklearn, etc.)** |
-| **`imports`** | `List[str]` | **Required import statements** |
-| **`variables`** | `Dict[str, str]` | **Variables used in code** |
+#### Completeness (ISO 8000-8)
+- `missing_values_ratio: float` - Percentage of missing values (0-100)
+- `complete_records_ratio: float` - Percentage of complete rows (0-100)
+- `null_columns: List[str]` - Columns with >50% null values
 
-### Code Snippet Usage Example
+#### Consistency (ISO 8000-61)
+- `data_type_consistency: float` - Type consistency percentage (0-100)
+- `format_violations: int` - Count of format issues
+- `encoding_issues: int` - UTF-8 encoding problems
+
+#### Uniqueness (ISO 8000-110)
+- `duplicate_rows: int` - Number of duplicate rows
+- `key_uniqueness: float` - Uniqueness in key columns (0-100)
+- `high_cardinality_warning: bool` - Flag for excessive unique values
+
+#### Accuracy (ISO 25012)
+- `outlier_ratio: float` - Percentage of outliers (0-100)
+- `range_violations: int` - Out-of-range values
+- `negative_values_in_positive: int` - Invalid negative values
+
+#### Timeliness (ISO 8000-8)
+- `future_dates_count: int` - Dates beyond current date
+- `stale_data_ratio: float` - Percentage of stale data (0-100)
+- `temporal_violations: int` - Temporal ordering issues
+
+### Quality Score Calculation
 
 ```python
-import dataprof
+report = dataprof.analyze_csv_with_quality("data.csv")
+metrics = report.data_quality_metrics
 
-ml_score = dataprof.ml_readiness_score("data.csv")
+# Overall score (0-100)
+print(f"Quality Score: {report.quality_score():.1f}%")
 
-for rec in ml_score.recommendations:
-    # Check if code snippet is available
-    if rec.code_snippet:
-        print(f"Recommendation: {rec.description}")
-        print(f"Framework: {rec.framework}")
-        print(f"Imports needed: {rec.imports}")
-        print(f"Code:\n{rec.code_snippet.replace('\\\\n', '\\n')}")
-```
-
-### CLI Script Generation
-
-Use the CLI to generate complete preprocessing scripts:
-
-```bash
-# Generate script with all code snippets
-dataprof data.csv --ml-score --output-script preprocess.py
+# Individual dimensions
+print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
+print(f"Consistency: {metrics.data_type_consistency:.1f}%")
+print(f"Uniqueness: {metrics.key_uniqueness:.1f}%")
 ```
 
 ## Pandas Integration
@@ -176,11 +178,11 @@ df = dataprof.analyze_csv_dataframe("data.csv")
 high_null_cols = df[df['null_percentage'] > 10.0]
 ```
 
-#### `feature_analysis_dataframe(file_path: str) -> pd.DataFrame`
-Return ML feature analysis as a pandas DataFrame.
+#### `quality_metrics_dataframe(report: PyQualityReport) -> pd.DataFrame`
+Convert quality metrics to a pandas DataFrame for easier analysis.
 
 **Returns:**
-- DataFrame with columns: `column_name`, `feature_type`, `ml_suitability`, `importance_potential`, etc.
+- DataFrame with quality dimensions and their scores
 
 ## Core Data Classes
 

@@ -6,8 +6,8 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::types::DataQualityMetrics;
 use crate::types::{ColumnProfile, ColumnStats, DataType, FileInfo, QualityReport, ScanInfo};
-use crate::QualityChecker;
 
 /// Columnar profiler using Apache Arrow for efficient column-oriented processing
 pub struct ArrowProfiler {
@@ -90,10 +90,12 @@ impl ArrowProfiler {
             column_profiles.push(profile);
         }
 
-        // Create sample data for quality checking
-        // Since we're using columnar processing, we'll create minimal samples
+        // Calculate data quality metrics using ISO 8000/25012 standards
         let sample_columns = self.create_quality_check_samples(&column_profiles);
-        let issues = QualityChecker::check_columns(&column_profiles, &sample_columns);
+        let data_quality_metrics =
+            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles).map_err(
+                |e| anyhow::anyhow!("Quality metrics calculation failed for Arrow data: {}", e),
+            )?;
 
         let scan_time_ms = start.elapsed().as_millis();
 
@@ -105,12 +107,12 @@ impl ArrowProfiler {
                 file_size_mb,
             },
             column_profiles,
-            issues,
             scan_info: ScanInfo {
                 rows_scanned: total_rows,
                 sampling_ratio: 1.0, // Arrow processes all data efficiently
                 scan_time_ms,
             },
+            data_quality_metrics,
         })
     }
 

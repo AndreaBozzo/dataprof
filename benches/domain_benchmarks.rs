@@ -1,7 +1,7 @@
 /// Domain-specific benchmark suite for comprehensive performance testing
 /// Tests CSV vs JSON vs Database-style data across different engines
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use dataprof::engines::local::analyze_csv;
+use dataprof::analyze_csv;
 use dataprof::testing::{
     CriterionResultParams, DatasetConfig, DatasetPattern, DatasetSize, ResultCollector,
 };

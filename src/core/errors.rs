@@ -1,8 +1,47 @@
 use std::fmt;
 use thiserror::Error;
 
+/// Auto-retry configuration for error recovery
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    pub max_attempts: usize,
+    pub enable_delimiter_detection: bool,
+    pub enable_encoding_detection: bool,
+    pub enable_flexible_parsing: bool,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            enable_delimiter_detection: true,
+            enable_encoding_detection: true,
+            enable_flexible_parsing: true,
+        }
+    }
+}
+
+/// Result of an auto-recovery attempt
+#[derive(Debug, Clone)]
+pub struct RecoveryAttempt {
+    pub attempt_number: usize,
+    pub strategy: RecoveryStrategy,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
+
+/// Strategies for error recovery
+#[derive(Debug, Clone)]
+pub enum RecoveryStrategy {
+    DelimiterDetection { delimiter: char },
+    EncodingConversion { from: String, to: String },
+    FlexibleParsing,
+    ChunkSizeReduction { new_size: usize },
+    MemoryOptimization,
+}
+
 /// Enhanced error types with more descriptive messages for DataProfiler
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum DataProfilerError {
     #[error("CSV parsing failed: {message}\n💡 Suggestion: {suggestion}")]
     CsvParsingError { message: String, suggestion: String },
@@ -50,6 +89,25 @@ pub enum DataProfilerError {
 
     #[error("HTML report generation failed: {message}\n💡 Check output directory permissions and available disk space")]
     HtmlReportError { message: String },
+
+    #[error(
+        "Recoverable error (attempt {attempt}/{max_attempts}): {message}\n💡 {recovery_suggestion}"
+    )]
+    RecoverableError {
+        message: String,
+        recovery_suggestion: String,
+        attempt: usize,
+        max_attempts: usize,
+        recovery_attempts: Vec<RecoveryAttempt>,
+    },
+
+    #[error("Auto-recovery failed after {attempts} attempts\n💡 Last strategy tried: {last_strategy}\n📋 Recovery log: {recovery_log}")]
+    RecoveryFailed {
+        attempts: usize,
+        last_strategy: String,
+        recovery_log: String,
+        original_error: String,
+    },
 }
 
 impl DataProfilerError {
@@ -155,6 +213,91 @@ impl DataProfilerError {
         }
     }
 
+    /// Create a recoverable error that can be auto-retried
+    pub fn recoverable_error(
+        message: &str,
+        recovery_suggestion: &str,
+        attempt: usize,
+        max_attempts: usize,
+    ) -> Self {
+        DataProfilerError::RecoverableError {
+            message: message.to_string(),
+            recovery_suggestion: recovery_suggestion.to_string(),
+            attempt,
+            max_attempts,
+            recovery_attempts: Vec::new(),
+        }
+    }
+
+    /// Create a recovery failed error with attempt log
+    pub fn recovery_failed(
+        attempts: usize,
+        last_strategy: &str,
+        recovery_log: &str,
+        original_error: &str,
+    ) -> Self {
+        DataProfilerError::RecoveryFailed {
+            attempts,
+            last_strategy: last_strategy.to_string(),
+            recovery_log: recovery_log.to_string(),
+            original_error: original_error.to_string(),
+        }
+    }
+
+    /// Add a recovery attempt to the error
+    pub fn add_recovery_attempt(&mut self, attempt: RecoveryAttempt) {
+        if let DataProfilerError::RecoverableError {
+            recovery_attempts, ..
+        } = self
+        {
+            recovery_attempts.push(attempt);
+        }
+    }
+
+    /// Check if error supports auto-recovery
+    pub fn supports_auto_recovery(&self) -> bool {
+        matches!(
+            self,
+            DataProfilerError::CsvParsingError { .. }
+                | DataProfilerError::JsonParsingError { .. }
+                | DataProfilerError::StreamingError { .. }
+                | DataProfilerError::MemoryLimitExceeded
+                | DataProfilerError::RecoverableError { .. }
+        )
+    }
+
+    /// Get suggested recovery strategies for this error
+    pub fn suggested_recovery_strategies(&self) -> Vec<RecoveryStrategy> {
+        match self {
+            DataProfilerError::CsvParsingError { .. } => vec![
+                RecoveryStrategy::DelimiterDetection { delimiter: ',' },
+                RecoveryStrategy::DelimiterDetection { delimiter: ';' },
+                RecoveryStrategy::DelimiterDetection { delimiter: '\t' },
+                RecoveryStrategy::DelimiterDetection { delimiter: '|' },
+                RecoveryStrategy::EncodingConversion {
+                    from: "latin1".to_string(),
+                    to: "utf8".to_string(),
+                },
+                RecoveryStrategy::FlexibleParsing,
+            ],
+            DataProfilerError::MemoryLimitExceeded => vec![
+                RecoveryStrategy::ChunkSizeReduction { new_size: 1000 },
+                RecoveryStrategy::MemoryOptimization,
+            ],
+            DataProfilerError::JsonParsingError { .. } => {
+                vec![RecoveryStrategy::EncodingConversion {
+                    from: "latin1".to_string(),
+                    to: "utf8".to_string(),
+                }]
+            }
+            DataProfilerError::StreamingError { .. } => vec![
+                RecoveryStrategy::ChunkSizeReduction { new_size: 500 },
+                RecoveryStrategy::MemoryOptimization,
+            ],
+            _ => vec![],
+        }
+    }
+
     /// Check if this error is recoverable (can continue processing)
     pub fn is_recoverable(&self) -> bool {
         matches!(
@@ -162,6 +305,7 @@ impl DataProfilerError {
             DataProfilerError::SimdUnavailable { .. }
                 | DataProfilerError::SamplingError { .. }
                 | DataProfilerError::DataQualityIssue { .. }
+                | DataProfilerError::RecoverableError { .. }
         )
     }
 
@@ -181,6 +325,8 @@ impl DataProfilerError {
             DataProfilerError::JsonParsingError { .. } => "json_parsing",
             DataProfilerError::ColumnAnalysisError { .. } => "column_analysis",
             DataProfilerError::HtmlReportError { .. } => "html_report",
+            DataProfilerError::RecoverableError { .. } => "recoverable",
+            DataProfilerError::RecoveryFailed { .. } => "recovery_failed",
         }
     }
 
@@ -200,6 +346,8 @@ impl DataProfilerError {
             DataProfilerError::SamplingError { .. } => ErrorSeverity::Low,
             DataProfilerError::DataQualityIssue { .. } => ErrorSeverity::Info,
             DataProfilerError::SimdUnavailable { .. } => ErrorSeverity::Info,
+            DataProfilerError::RecoverableError { .. } => ErrorSeverity::Medium,
+            DataProfilerError::RecoveryFailed { .. } => ErrorSeverity::High,
         }
     }
 }
@@ -277,6 +425,123 @@ impl From<std::io::Error> for DataProfilerError {
 impl From<csv::Error> for DataProfilerError {
     fn from(err: csv::Error) -> Self {
         DataProfilerError::csv_parsing(&err.to_string(), "unknown")
+    }
+}
+
+/// Auto-recovery manager for handling error recovery strategies
+pub struct AutoRecoveryManager {
+    config: RetryConfig,
+    recovery_log: Vec<RecoveryAttempt>,
+}
+
+impl AutoRecoveryManager {
+    pub fn new(config: RetryConfig) -> Self {
+        Self {
+            config,
+            recovery_log: Vec::new(),
+        }
+    }
+
+    /// Attempt auto-recovery for a given error
+    pub fn attempt_recovery<F, T>(
+        &mut self,
+        error: &DataProfilerError,
+        retry_fn: F,
+    ) -> Result<T, DataProfilerError>
+    where
+        F: Fn(RecoveryStrategy) -> Result<T, DataProfilerError>,
+    {
+        if !error.supports_auto_recovery() {
+            return Err(error.clone());
+        }
+
+        let strategies = error.suggested_recovery_strategies();
+        let mut last_error: DataProfilerError = error.clone();
+
+        for (attempt, strategy) in strategies.iter().enumerate() {
+            if attempt >= self.config.max_attempts {
+                break;
+            }
+
+            // Log attempt start
+            eprintln!(
+                "🔄 Auto-recovery attempt {}/{}: {:?}",
+                attempt + 1,
+                self.config.max_attempts,
+                strategy
+            );
+
+            match retry_fn(strategy.clone()) {
+                Ok(result) => {
+                    let recovery_attempt = RecoveryAttempt {
+                        attempt_number: attempt + 1,
+                        strategy: strategy.clone(),
+                        success: true,
+                        error_message: None,
+                    };
+                    self.recovery_log.push(recovery_attempt);
+
+                    eprintln!("✅ Auto-recovery successful with strategy: {:?}", strategy);
+                    return Ok(result);
+                }
+                Err(err) => {
+                    let recovery_attempt = RecoveryAttempt {
+                        attempt_number: attempt + 1,
+                        strategy: strategy.clone(),
+                        success: false,
+                        error_message: Some(err.to_string()),
+                    };
+                    self.recovery_log.push(recovery_attempt);
+                    last_error = err;
+
+                    eprintln!("❌ Auto-recovery attempt failed: {}", last_error);
+                }
+            }
+        }
+
+        // All recovery attempts failed
+        let recovery_log_text = self
+            .recovery_log
+            .iter()
+            .map(|attempt| {
+                format!(
+                    "Attempt {}: {:?} - {}",
+                    attempt.attempt_number,
+                    attempt.strategy,
+                    if attempt.success { "Success" } else { "Failed" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        let last_strategy = self
+            .recovery_log
+            .last()
+            .map(|attempt| format!("{:?}", attempt.strategy))
+            .unwrap_or_else(|| "None".to_string());
+
+        Err(DataProfilerError::recovery_failed(
+            self.recovery_log.len(),
+            &last_strategy,
+            &recovery_log_text,
+            &last_error.to_string(),
+        ))
+    }
+
+    /// Get the recovery log
+    pub fn get_recovery_log(&self) -> &[RecoveryAttempt] {
+        &self.recovery_log
+    }
+
+    /// Clear the recovery log
+    pub fn clear_log(&mut self) {
+        self.recovery_log.clear();
+    }
+}
+
+impl Default for AutoRecoveryManager {
+    fn default() -> Self {
+        Self::new(RetryConfig::default())
     }
 }
 

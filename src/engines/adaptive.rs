@@ -244,7 +244,7 @@ impl AdaptiveProfiler {
                 profiler.analyze_file(file_path)
             }
             EngineType::Streaming => {
-                let profiler = StreamingProfiler::new();
+                let mut profiler = StreamingProfiler::new();
                 profiler.analyze_file(file_path)
             }
         };

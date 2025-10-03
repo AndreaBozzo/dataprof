@@ -4,8 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::analysis::analyze_column;
-use crate::types::{ColumnProfile, FileInfo, QualityReport, ScanInfo};
-use crate::utils::quality::QualityChecker;
+use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
 // Simple JSON/JSONL support
 pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
@@ -98,12 +97,12 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
                 file_size_mb,
             },
             column_profiles: vec![],
-            issues: vec![],
             scan_info: ScanInfo {
                 rows_scanned: 0,
                 sampling_ratio: 1.0,
                 scan_time_ms: start.elapsed().as_millis(),
             },
+            data_quality_metrics: DataQualityMetrics::empty(),
         });
     }
 
@@ -142,8 +141,9 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
         column_profiles.push(profile);
     }
 
-    // Check quality issues
-    let issues = QualityChecker::check_columns(&column_profiles, &columns);
+    // Calculate comprehensive ISO 8000/25012 quality metrics
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
+        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
 
@@ -155,11 +155,11 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
             file_size_mb,
         },
         column_profiles,
-        issues,
         scan_info: ScanInfo {
             rows_scanned: records.len(),
             sampling_ratio: 1.0,
             scan_time_ms,
         },
+        data_quality_metrics,
     })
 }

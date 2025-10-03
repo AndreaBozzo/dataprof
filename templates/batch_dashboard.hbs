@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataProfiler Batch Analysis Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>{{{style_css}}}</style>
+    <style>{{{batch_css}}}</style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 DataProfiler Batch Analysis Dashboard</h1>
+
+            {{!-- Batch Summary Section --}}
+            <div class="batch-summary">
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <div class="card-icon">📁</div>
+                        <div class="card-content">
+                            <h3>Total Files</h3>
+                            <div class="metric">{{summary.total_files}}</div>
+                        </div>
+                    </div>
+                    <div class="summary-card success">
+                        <div class="card-icon">✅</div>
+                        <div class="card-content">
+                            <h3>Success Rate</h3>
+                            <div class="metric">{{summary.success_rate}}%</div>
+                            <div class="sub-metric">{{summary.successful}} successful</div>
+                        </div>
+                    </div>
+                    <div class="summary-card {{summary.avg_score_class}}">
+                        <div class="card-icon">📊</div>
+                        <div class="card-content">
+                            <h3>Avg Quality Score</h3>
+                            <div class="metric">{{summary.average_quality_score}}%</div>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon">⚡</div>
+                        <div class="card-content">
+                            <h3>Processing Time</h3>
+                            <div class="metric">{{summary.processing_time_seconds}}s</div>
+                            <div class="sub-metric">{{summary.files_per_second}} files/sec</div>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon">📈</div>
+                        <div class="card-content">
+                            <h3>Total Records</h3>
+                            <div class="metric">{{summary.total_records}}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        {{!-- Aggregated Data Quality Metrics Section --}}
+        {{#if aggregated_metrics}}
+        <section class="batch-aggregated-quality-metrics">
+            <h2>🏆 Aggregated Data Quality Metrics</h2>
+            <div class="aggregated-intro">
+                <p>Cross-file aggregated metrics representing the overall data quality across all processed files</p>
+            </div>
+
+            <div class="overall-score">
+                <div class="score-circle {{aggregated_metrics.assessment_class}}">
+                    <span class="score-value">{{aggregated_metrics.overall_score}}%</span>
+                    <span class="score-label">Overall Dataset Quality</span>
+                </div>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-card completeness">
+                    <div class="metric-header">
+                        <span class="metric-icon">🔍</span>
+                        <h3>Completeness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Missing Values</span>
+                            <span class="stat-value {{aggregated_metrics.completeness.missing_class}}">{{aggregated_metrics.completeness.missing_ratio}}%</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Complete Records</span>
+                            <span class="stat-value">{{aggregated_metrics.completeness.complete_ratio}}%</span>
+                        </div>
+                        {{#if aggregated_metrics.completeness.null_columns}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Columns with nulls</span>
+                            <span class="stat-value">{{aggregated_metrics.completeness.null_columns}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card consistency">
+                    <div class="metric-header">
+                        <span class="metric-icon">⚡</span>
+                        <h3>Consistency</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Type Consistency</span>
+                            <span class="stat-value {{aggregated_metrics.consistency.type_class}}">{{aggregated_metrics.consistency.type_consistency}}%</span>
+                        </div>
+                        {{#if aggregated_metrics.consistency.format_violations}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Format Violations</span>
+                            <span class="stat-value">{{aggregated_metrics.consistency.format_violations}} total</span>
+                        </div>
+                        {{/if}}
+                        {{#if aggregated_metrics.consistency.encoding_issues}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Encoding Issues</span>
+                            <span class="stat-value">{{aggregated_metrics.consistency.encoding_issues}} total</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card uniqueness">
+                    <div class="metric-header">
+                        <span class="metric-icon">🔑</span>
+                        <h3>Uniqueness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Key Uniqueness</span>
+                            <span class="stat-value {{aggregated_metrics.uniqueness.uniqueness_class}}">{{aggregated_metrics.uniqueness.key_uniqueness}}%</span>
+                        </div>
+                        {{#if aggregated_metrics.uniqueness.has_duplicates}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Duplicate Rows</span>
+                            <span class="stat-value">{{aggregated_metrics.uniqueness.duplicate_rows}} total</span>
+                        </div>
+                        {{else}}
+                        <div class="stat-item excellent">
+                            <span class="stat-label">Duplicate Rows</span>
+                            <span class="stat-value">None</span>
+                        </div>
+                        {{/if}}
+                        {{#if aggregated_metrics.uniqueness.high_cardinality_warning}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">High Cardinality</span>
+                            <span class="stat-value">Warning</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card accuracy">
+                    <div class="metric-header">
+                        <span class="metric-icon">🎯</span>
+                        <h3>Accuracy</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Outlier Ratio</span>
+                            <span class="stat-value {{aggregated_metrics.accuracy.outlier_class}}">{{aggregated_metrics.accuracy.outlier_ratio}}%</span>
+                        </div>
+                        {{#if aggregated_metrics.accuracy.range_violations}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Range Violations</span>
+                            <span class="stat-value">{{aggregated_metrics.accuracy.range_violations}} total</span>
+                        </div>
+                        {{/if}}
+                        {{#if aggregated_metrics.accuracy.negative_values}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Invalid Negatives</span>
+                            <span class="stat-value">{{aggregated_metrics.accuracy.negative_values}} total</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+
+                <div class="metric-card timeliness">
+                    <div class="metric-header">
+                        <span class="metric-icon">⏰</span>
+                        <h3>Timeliness</h3>
+                    </div>
+                    <div class="metric-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Data Freshness</span>
+                            <span class="stat-value {{aggregated_metrics.timeliness.freshness_class}}">{{aggregated_metrics.timeliness.freshness}}%</span>
+                        </div>
+                        {{#if aggregated_metrics.timeliness.future_dates}}
+                        <div class="stat-item warning">
+                            <span class="stat-label">Future Dates</span>
+                            <span class="stat-value">{{aggregated_metrics.timeliness.future_dates}} total</span>
+                        </div>
+                        {{/if}}
+                        {{#if aggregated_metrics.timeliness.temporal_violations}}
+                        <div class="stat-item error">
+                            <span class="stat-label">Temporal Violations</span>
+                            <span class="stat-value">{{aggregated_metrics.timeliness.temporal_violations}} total</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+            </div>
+        </section>
+        {{/if}}
+
+        {{!-- Files Overview Section --}}
+        <section class="files-overview">
+            <h2>📁 Files Overview</h2>
+            <div class="table-container">
+                <table class="files-table">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Quality Score</th>
+                            <th>Columns</th>
+                            <th>Rows</th>
+                            <th>Status</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{#each files}}
+                        <tr class="file-row {{#if this.is_error}}error{{/if}}">
+                            <td>
+                                <div class="file-name">{{this.filename}}</div>
+                                <div class="file-path">{{this.path}}</div>
+                            </td>
+                            <td class="score-cell">
+                                {{#if this.is_error}}
+                                <span class="error-message">ERROR</span>
+                                {{else}}
+                                <span class="score-badge {{this.quality_class}}">{{this.quality_score}}</span>
+                                {{/if}}
+                            </td>
+                            <td>{{#unless this.is_error}}{{this.columns}}{{/unless}}</td>
+                            <td>{{#unless this.is_error}}{{this.rows}}{{/unless}}</td>
+                            <td>
+                                {{#if this.is_error}}
+                                <span class="error-message" title="{{this.error_full}}">{{this.error_short}}</span>
+                                {{else}}
+                                ✓ Success
+                                {{/if}}
+                            </td>
+                            <td>
+                                {{#unless this.is_error}}
+                                <button class="toggle-details" onclick="toggleFileDetails('{{@index}}')">📊 View Metrics</button>
+                                {{/unless}}
+                            </td>
+                        </tr>
+                        {{#unless this.is_error}}
+                        <tr id="details-{{@index}}" class="details-row" style="display: none;">
+                            <td colspan="6">
+                                <div class="file-metrics-breakdown">
+                                    <h4>Quality Metrics Breakdown</h4>
+                                    <div class="breakdown-grid">
+                                        <div class="breakdown-card">
+                                            <h5>🔍 Completeness</h5>
+                                            <div class="breakdown-stat">Missing: {{this.metrics.completeness.missing_ratio}}%</div>
+                                            <div class="breakdown-stat">Complete: {{this.metrics.completeness.complete_ratio}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>⚡ Consistency</h5>
+                                            <div class="breakdown-stat">Type Consistency: {{this.metrics.consistency.type_consistency}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>🔑 Uniqueness</h5>
+                                            <div class="breakdown-stat">Key Uniqueness: {{this.metrics.uniqueness.key_uniqueness}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>🎯 Accuracy</h5>
+                                            <div class="breakdown-stat">Outlier Ratio: {{this.metrics.accuracy.outlier_ratio}}%</div>
+                                        </div>
+                                        <div class="breakdown-card">
+                                            <h5>⏰ Timeliness</h5>
+                                            <div class="breakdown-stat">Freshness: {{this.metrics.timeliness.freshness}}%</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                        {{/unless}}
+                        {{/each}}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <footer>
+            <p>Generated by <strong>DataProfiler CLI</strong> v0.4.1 - Batch Processing Mode</p>
+        </footer>
+    </div>
+
+    <script>{{{dashboard_js}}}</script>
+</body>
+</html>

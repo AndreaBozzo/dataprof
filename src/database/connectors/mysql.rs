@@ -1,7 +1,8 @@
 //! MySQL/MariaDB database connector
 
+use super::common::{build_batch_query, build_count_query};
 use crate::database::connection::ConnectionInfo;
-use crate::database::security::{validate_base_query, validate_sql_identifier};
+use crate::database::security::validate_sql_identifier;
 #[cfg(feature = "mysql")]
 use crate::database::streaming::{merge_column_batches, StreamingProgress};
 use crate::database::{DatabaseConfig, DatabaseConnector};
@@ -10,10 +11,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 #[cfg(feature = "mysql")]
-use {
-    sqlx::mysql::MySqlPoolOptions,
-    sqlx::{mysql::MySqlPool, Column, Row},
-};
+use {sqlx::mysql::MySqlPool, sqlx::mysql::MySqlPoolOptions};
 
 /// MySQL/MariaDB connector
 pub struct MySqlConnector {
@@ -93,6 +91,8 @@ impl DatabaseConnector for MySqlConnector {
     async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "mysql")]
         {
+            use sqlx::{Column, Row};
+
             let pool = self
                 .pool
                 .as_ref()
@@ -116,10 +116,10 @@ impl DatabaseConnector for MySqlConnector {
                 result.insert(col.name().to_string(), Vec::new());
             }
 
-            // Process rows
+            // Process rows - improved error handling
             for row in &rows {
                 for (i, col) in columns.iter().enumerate() {
-                    let value: Option<String> = row.try_get(i).unwrap_or(None);
+                    let value: Option<String> = row.try_get(i).ok();
                     let string_value = value.unwrap_or_default();
 
                     if let Some(column_data) = result.get_mut(col.name()) {
@@ -147,23 +147,15 @@ impl DatabaseConnector for MySqlConnector {
     ) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "mysql")]
         {
+            use sqlx::{Column, Row};
+
             let pool = self
                 .pool
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
 
-            // Get total count for progress tracking
-            let count_query = if query.trim().to_uppercase().starts_with("SELECT") {
-                let validated_query = validate_base_query(query)?;
-                format!(
-                    "SELECT COUNT(*) FROM ({}) as count_subquery",
-                    validated_query
-                )
-            } else {
-                validate_sql_identifier(query)?;
-                format!("SELECT COUNT(*) FROM {}", query)
-            };
-
+            // Get total count for progress tracking using common function
+            let count_query = build_count_query(query)?;
             let total_rows: i64 = sqlx::query_scalar(&count_query)
                 .fetch_one(pool)
                 .await
@@ -174,15 +166,8 @@ impl DatabaseConnector for MySqlConnector {
             let mut offset = 0;
 
             loop {
-                // Validate query before using in LIMIT/OFFSET
-                let validated_query = if query.trim().to_uppercase().starts_with("SELECT") {
-                    validate_base_query(query)?
-                } else {
-                    validate_sql_identifier(query)?;
-                    format!("SELECT * FROM {}", query)
-                };
-                let batch_query =
-                    format!("{} LIMIT {} OFFSET {}", validated_query, batch_size, offset);
+                // Build batch query using common function
+                let batch_query = build_batch_query(query, batch_size, offset)?;
 
                 let rows = sqlx::query(&batch_query)
                     .fetch_all(pool)
@@ -202,10 +187,10 @@ impl DatabaseConnector for MySqlConnector {
                     batch_result.insert(col.name().to_string(), Vec::new());
                 }
 
-                // Process rows in this batch
+                // Process rows in this batch - improved error handling
                 for row in &rows {
                     for (i, col) in columns.iter().enumerate() {
-                        let value: Option<String> = row.try_get(i).unwrap_or(None);
+                        let value: Option<String> = row.try_get(i).ok();
                         let string_value = value.unwrap_or_default();
 
                         if let Some(column_data) = batch_result.get_mut(col.name()) {
@@ -214,8 +199,9 @@ impl DatabaseConnector for MySqlConnector {
                     }
                 }
 
+                let batch_size_actual = rows.len();
                 all_batches.push(batch_result);
-                progress.update(rows.len() as u64);
+                progress.update(batch_size_actual as u64);
 
                 // Optional progress reporting
                 if let Some(percentage) = progress.percentage() {
@@ -228,7 +214,7 @@ impl DatabaseConnector for MySqlConnector {
                 offset += batch_size;
 
                 // Check if we've processed all rows
-                if rows.len() < batch_size {
+                if batch_size_actual < batch_size {
                     break;
                 }
             }
@@ -249,6 +235,8 @@ impl DatabaseConnector for MySqlConnector {
     async fn get_table_schema(&mut self, table_name: &str) -> Result<Vec<String>> {
         #[cfg(feature = "mysql")]
         {
+            use sqlx::Row;
+
             let pool = self
                 .pool
                 .as_ref()

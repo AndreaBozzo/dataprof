@@ -12,15 +12,8 @@ pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
     let report =
         profiler.analyze_file_with_context(file_path.as_ref(), ProcessingType::QualityFocused)?;
 
-    // Calculate a simple quality score based on issues
-    let total_issues = report.issues.len();
-    let quality_score = if total_issues == 0 {
-        100.0
-    } else {
-        (100.0 - (total_issues as f64 * 10.0)).max(0.0)
-    };
-
-    Ok(quality_score)
+    // Use ISO 8000/25012 quality score
+    Ok(report.quality_score())
 }
 
 /// Stream profiling with intelligent engine selection and progress logging
@@ -75,6 +68,11 @@ impl DataProfiler {
         self
     }
 
+    pub fn sampling(mut self, strategy: SamplingStrategy) -> Self {
+        self.inner = self.inner.sampling(strategy);
+        self
+    }
+
     pub fn progress_callback<F>(mut self, callback: F) -> Self
     where
         F: Fn(ProgressInfo) + Send + Sync + 'static,
@@ -83,7 +81,23 @@ impl DataProfiler {
         self
     }
 
-    pub fn analyze_file<P: AsRef<Path>>(&self, file_path: P) -> Result<QualityReport> {
+    /// Enable enhanced progress tracking with memory monitoring
+    pub fn with_enhanced_progress(mut self, leak_threshold_mb: usize) -> Self {
+        self.inner = self.inner.with_enhanced_progress(leak_threshold_mb);
+        self
+    }
+
+    /// Enable enhanced progress with smart defaults based on terminal context
+    pub fn with_smart_progress(mut self) -> Self {
+        use crate::output::supports_enhanced_output;
+
+        if supports_enhanced_output() {
+            self.inner = self.inner.with_enhanced_progress(100); // 100MB threshold
+        }
+        self
+    }
+
+    pub fn analyze_file<P: AsRef<Path>>(&mut self, file_path: P) -> Result<QualityReport> {
         self.inner.analyze_file(file_path.as_ref())
     }
 }

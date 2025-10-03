@@ -10,7 +10,6 @@ pub mod parsers;
 pub mod output;
 pub mod stats;
 pub mod types;
-pub mod utils;
 
 // Testing utilities (for benchmarks and tests)
 pub mod testing;
@@ -39,35 +38,32 @@ pub use core::config::DataprofConfig;
 pub use core::exit_codes;
 pub use core::validation::{InputValidator, ValidationError};
 
-// ML Analysis exports
-pub use analysis::MlReadinessEngine;
+// Engine exports
 pub use engines::streaming::ProgressInfo;
 pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
-// Re-exports for backward compatibility
+// Public API exports - Core types and functionality
 pub use output::html::generate_html_report;
 pub use types::{
-    ColumnProfile, ColumnStats, DataType, FileInfo, OutputFormat, Pattern, QualityIssue,
-    QualityReport, ScanInfo, Severity,
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, OutputFormat, Pattern,
+    QualityReport, ScanInfo,
 };
-pub use utils::quality::QualityChecker;
-pub use utils::sampler::{SampleInfo, Sampler};
+// Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
-// Re-export moved parsing functions for API compatibility
+// Parser API - CSV and JSON analysis functions
 pub use parsers::csv::{
     analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
 };
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 
-// Re-export moved analysis functions for API compatibility
-pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MlReadinessScore};
+// Analysis utilities - Column-level and statistical functions
+pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MetricsCalculator};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub use database::{
-    assess_ml_readiness, create_connector, profile_database, profile_database_with_ml,
-    DatabaseConfig, DatabaseConnector, DatabaseCredentials, DuckDbConnector, MLReadinessScore,
+    create_connector, profile_database, DatabaseConfig, DatabaseConnector, DatabaseCredentials,
     MySqlConnector, PostgresConnector, RetryConfig, SamplingConfig,
     SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
 };

@@ -85,11 +85,6 @@ def test_enhanced_analysis_with_logging():
         for i, profile in enumerate(profiles[:3]):
             print(f"  • {profile.name}: {profile.data_type} ({profile.null_count} nulls)")
 
-        # Test ML readiness analysis with logging
-        print("\n🧠 Testing ML readiness analysis with logging...")
-        ml_score = dataprof.ml_readiness_score_with_logging(sample_file, log_level="INFO")
-        print(f"✅ ML analysis completed: {ml_score.overall_score:.1f}% ({ml_score.readiness_level})")
-
         return True
 
     except Exception as e:
@@ -198,9 +193,8 @@ def test_performance_logging():
 
             # Analyze with logging
             profiles = dataprof.analyze_csv_with_logging(sample_file)
-            ml_score = dataprof.ml_readiness_score_with_logging(sample_file)
 
-            dataprof.log_info(f"File {i+1} completed: {len(profiles)} columns, ML score {ml_score.overall_score:.1f}%")
+            dataprof.log_info(f"File {i+1} completed: {len(profiles)} columns")
 
         total_time = time.time() - start_time
         dataprof.log_info(f"Batch processing completed in {total_time:.3f}s")

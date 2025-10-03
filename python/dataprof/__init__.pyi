@@ -1,11 +1,11 @@
 """
 Type stubs for dataprof Python bindings.
 
-This module provides data profiling and ML readiness assessment functionality
+This module provides data profiling and quality assessment functionality
 implemented in Rust with Python bindings via PyO3.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from typing_extensions import Self
 
 try:
@@ -17,9 +17,26 @@ except ImportError:
 __version__: str
 
 # Core analysis functions
-def analyze_csv(file_path: str) -> List[Dict[str, Any]]: ...
-def analyze_json(file_path: str) -> List[Dict[str, Any]]: ...
-def quality_score(file_path: str) -> Dict[str, Any]: ...
+def analyze_csv_file(path: str) -> List[PyColumnProfile]: ...
+def analyze_csv_with_quality(path: str) -> PyQualityReport: ...
+def analyze_json_file(path: str) -> List[PyColumnProfile]: ...
+def calculate_data_quality_metrics(path: str) -> PyDataQualityMetrics: ...
+
+# Batch processing functions
+def batch_analyze_glob(
+    pattern: str,
+    parallel: Optional[bool] = None,
+    max_concurrent: Optional[int] = None,
+    html_output: Optional[str] = None,
+) -> PyBatchResult: ...
+
+def batch_analyze_directory(
+    directory: str,
+    recursive: Optional[bool] = None,
+    parallel: Optional[bool] = None,
+    max_concurrent: Optional[int] = None,
+    html_output: Optional[str] = None,
+) -> PyBatchResult: ...
 
 # Python logging integration
 def configure_logging(level: Optional[str] = None, format: Optional[str] = None) -> None: ...
@@ -30,124 +47,104 @@ def log_warning(message: str, logger_name: Optional[str] = None) -> None: ...
 def log_error(message: str, logger_name: Optional[str] = None) -> None: ...
 
 # Enhanced analysis functions with logging
-def analyze_csv_with_logging(file_path: str, log_level: Optional[str] = None) -> List[Dict[str, Any]]: ...
-def ml_readiness_score_with_logging(file_path: str, log_level: Optional[str] = None) -> PyMlReadinessScore: ...
+def analyze_csv_with_logging(file_path: str, log_level: Optional[str] = None) -> List[PyColumnProfile]: ...
 
-# ML readiness functions
-def ml_readiness_score(file_path: str) -> PyMlReadinessScore: ...
-def analyze_csv_for_ml(file_path: str) -> List[PyFeatureAnalysis]: ...
-
-# Pandas integration functions (conditional)
+# Pandas integration (conditional)
 if _PANDAS_AVAILABLE:
     def analyze_csv_dataframe(file_path: str) -> pd.DataFrame: ...
-    def feature_analysis_dataframe(file_path: str) -> pd.DataFrame: ...
 else:
     def analyze_csv_dataframe(file_path: str) -> Any: ...
-    def feature_analysis_dataframe(file_path: str) -> Any: ...
 
-# Note: Async functions temporarily disabled due to compatibility issues
-
-# ML Readiness Classes
-class PyMlReadinessScore:
-    """Python wrapper for ML readiness assessment results."""
-
-    overall_score: float
-    readiness_level: str
-    completeness_score: float
-    consistency_score: float
-    type_suitability_score: float
-    feature_quality_score: float
-    blocking_issues: List[PyMlBlockingIssue]
-    recommendations: List[PyMlRecommendation]
-
-    def __new__(cls) -> Self: ...
-    def summary(self) -> str:
-        """Get a human-readable summary of the ML readiness assessment."""
-        ...
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the ML readiness score to a dictionary."""
-        ...
-    def _repr_html_(self) -> str:
-        """Rich HTML representation for Jupyter notebooks."""
-        ...
-
-class PyFeatureAnalysis:
-    """Python wrapper for individual feature analysis results."""
-
-    column_name: str
-    feature_type: str
-    ml_suitability: float
-    importance_potential: str
-    preprocessing_suggestions: List[PyPreprocessingSuggestion]
-
-    def __new__(cls) -> Self: ...
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the feature analysis to a dictionary."""
-        ...
-
-class PyMlRecommendation:
-    """Python wrapper for ML recommendation with code snippet generation."""
-
-    category: str
-    priority: str
-    description: str
-    expected_impact: str
-    implementation_effort: str
-    code_snippet: Optional[str]
-    framework: Optional[str]
-    imports: List[str]
-    variables: Dict[str, str]
-
-    def __new__(cls) -> Self: ...
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the recommendation to a dictionary."""
-        ...
-
-class PyMlBlockingIssue:
-    """Python wrapper for ML blocking issue."""
-
-    issue_type: str
-    severity: str
-    message: str
-    affected_columns: List[str]
-
-    def __new__(cls) -> Self: ...
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the blocking issue to a dictionary."""
-        ...
-
-class PyPreprocessingSuggestion:
-    """Python wrapper for preprocessing suggestion."""
-
-    technique: str
-    reason: str
-    priority: str
-
-    def __new__(cls) -> Self: ...
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the preprocessing suggestion to a dictionary."""
-        ...
-
-# Core profiling classes (existing)
-class ColumnProfile:
-    """Column profiling information."""
+# Core profiling classes exported from Rust
+class PyColumnProfile:
+    """Column profiling information from Rust."""
 
     name: str
     data_type: str
+    total_count: int
     null_count: int
+    unique_count: Optional[int]
     null_percentage: float
-    unique_count: int
-    unique_percentage: float
+    uniqueness_ratio: float
 
     def __new__(cls) -> Self: ...
 
-class QualityScore:
-    """Data quality scoring information."""
+class PyQualityIssue:
+    """Quality issue detected in data."""
 
-    overall_score: float
-    completeness_score: float
-    uniqueness_score: float
-    validity_score: float
+    issue_type: str
+    column: str
+    severity: str
+    count: Optional[int]
+    percentage: Optional[float]
+    description: str
+
+    def __new__(cls) -> Self: ...
+
+class PyQualityReport:
+    """Complete quality report for a dataset."""
+
+    file_path: str
+    total_rows: Optional[int]
+    total_columns: int
+    column_profiles: List[PyColumnProfile]
+    issues: List[PyQualityIssue]
+    rows_scanned: int
+    sampling_ratio: float
+    scan_time_ms: int
+    data_quality_metrics: Optional[PyDataQualityMetrics]
+
+    def __new__(cls) -> Self: ...
+    def quality_score(self) -> float: ...
+    def issues_by_severity(self, severity: str) -> List[PyQualityIssue]: ...
+
+class PyDataQualityMetrics:
+    """ISO 8000/25012 compliant data quality metrics."""
+
+    # Completeness
+    missing_values_ratio: float
+    complete_records_ratio: float
+    null_columns: List[str]
+
+    # Consistency
+    data_type_consistency: float
+    format_violations: int
+    encoding_issues: int
+
+    # Uniqueness
+    duplicate_rows: int
+    key_uniqueness: float
+    high_cardinality_warning: bool
+
+    # Accuracy
+    outlier_ratio: float
+    range_violations: int
+    negative_values_in_positive: int
+
+    # Timeliness (ISO 8000-8)
+    future_dates_count: int
+    stale_data_ratio: float
+    temporal_violations: int
+
+    def __new__(cls) -> Self: ...
+    def overall_quality_score(self) -> float: ...
+    def completeness_summary(self) -> str: ...
+    def consistency_summary(self) -> str: ...
+    def uniqueness_summary(self) -> str: ...
+    def accuracy_summary(self) -> str: ...
+    def timeliness_summary(self) -> str: ...
+    def summary_dict(self) -> Dict[str, str]: ...
+    def _repr_html_(self) -> str: ...
+    def __str__(self) -> str: ...
+
+class PyBatchResult:
+    """Result of batch processing operation."""
+
+    processed_files: int
+    failed_files: int
+    total_duration_secs: float
+    total_quality_issues: int
+    average_quality_score: float
 
     def __new__(cls) -> Self: ...
 
@@ -163,18 +160,6 @@ class PyBatchAnalyzer:
     def get_results(self) -> List[Any]: ...
     def analyze_batch(self, paths: List[str]) -> List[Any]: ...
 
-class PyMlAnalyzer:
-    """Context manager for ML analysis with resource tracking."""
-
-    def __new__(cls) -> Self: ...
-    def __enter__(self) -> Self: ...
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool: ...
-    def analyze_ml(self, path: str) -> PyMlReadinessScore: ...
-    def add_temp_file(self, path: str) -> None: ...
-    def get_stats(self) -> Dict[str, float]: ...
-    def get_ml_results(self) -> List[PyMlReadinessScore]: ...
-    def get_summary(self) -> Optional[Dict[str, Any]]: ...
-
 class PyCsvProcessor:
     """Context manager for CSV file processing with automatic handling."""
 
@@ -187,10 +172,13 @@ class PyCsvProcessor:
 
 # Export all public classes and functions
 __all__ = [
-    # Core functions
-    "analyze_csv",
-    "analyze_json",
-    "quality_score",
+    # Core analysis functions
+    "analyze_csv_file",
+    "analyze_csv_with_quality",
+    "analyze_json_file",
+    "calculate_data_quality_metrics",
+    "batch_analyze_glob",
+    "batch_analyze_directory",
 
     # Python logging integration
     "configure_logging",
@@ -202,31 +190,18 @@ __all__ = [
 
     # Enhanced analysis with logging
     "analyze_csv_with_logging",
-    "ml_readiness_score_with_logging",
-
-    # ML readiness functions
-    "ml_readiness_score",
-    "analyze_csv_for_ml",
 
     # Pandas integration
     "analyze_csv_dataframe",
-    "feature_analysis_dataframe",
-
-    # Note: Async functions temporarily disabled
-
-    # ML classes
-    "PyMlReadinessScore",
-    "PyFeatureAnalysis",
-    "PyMlRecommendation",
-    "PyMlBlockingIssue",
-    "PyPreprocessingSuggestion",
 
     # Core classes
-    "ColumnProfile",
-    "QualityScore",
+    "PyColumnProfile",
+    "PyQualityReport",
+    "PyQualityIssue",
+    "PyDataQualityMetrics",
+    "PyBatchResult",
 
     # Context managers
     "PyBatchAnalyzer",
-    "PyMlAnalyzer",
     "PyCsvProcessor",
 ]

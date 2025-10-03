@@ -1,6 +1,6 @@
 # DataProf Ecosystem Integrations
 
-Complete guide to integrating DataProf with popular data science and ML tools.
+Complete guide to integrating DataProf with popular data science tools for quality assessment and data analysis.
 
 ## 🐼 Pandas Integration
 
@@ -16,9 +16,9 @@ import dataprof
 profiles_df = dataprof.analyze_csv_dataframe("data.csv")
 print(profiles_df.head())
 
-# ML feature analysis as DataFrame
-features_df = dataprof.feature_analysis_dataframe("data.csv")
-print(features_df[['column_name', 'feature_type', 'ml_suitability']])
+# Quality analysis
+report = dataprof.analyze_csv_with_quality("data.csv")
+print(f"Quality Score: {report.quality_score():.1f}%")
 ```
 
 ### Data Manipulation Workflows
@@ -62,42 +62,42 @@ plt.show()
 
 ## 🔬 Scikit-learn Integration
 
-### Automated Pipeline Building
+### Quality-Based Preprocessing
 
-Use DataProf analysis to build scikit-learn preprocessing pipelines:
+Use DataProf quality analysis to guide preprocessing decisions:
 
 ```python
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.feature_selection import VarianceThreshold
+import dataprof
 
-def build_sklearn_pipeline_from_dataprof(file_path, target_column=None):
-    """Build sklearn pipeline based on DataProf analysis."""
+def build_preprocessing_pipeline(file_path, target_column=None):
+    """Build sklearn pipeline based on DataProf quality analysis."""
 
     # Get DataProf analysis
-    features_df = dataprof.feature_analysis_dataframe(file_path)
-    ml_score = dataprof.ml_readiness_score(file_path)
+    report = dataprof.analyze_csv_with_quality(file_path)
+    profiles_df = dataprof.analyze_csv_dataframe(file_path)
 
-    # Categorize features
-    numeric_features = features_df[
-        features_df['feature_type'] == 'numeric_ready'
-    ]['column_name'].tolist()
+    # Categorize by data type
+    numeric_features = profiles_df[
+        profiles_df['data_type'].isin(['Integer', 'Float'])
+    ]['name'].tolist()
 
-    categorical_features = features_df[
-        features_df['feature_type'] == 'categorical_needs_encoding'
-    ]['column_name'].tolist()
+    categorical_features = profiles_df[
+        profiles_df['data_type'] == 'String'
+    ]['name'].tolist()
 
     # Remove target column if specified
     if target_column:
         numeric_features = [f for f in numeric_features if f != target_column]
         categorical_features = [f for f in categorical_features if f != target_column]
 
-    # Remove low-quality features
-    low_quality = features_df[
-        features_df['ml_suitability'] < 0.3
-    ]['column_name'].tolist()
+    # Remove columns with excessive missing values (>50%)
+    high_null_cols = profiles_df[
+        profiles_df['null_percentage'] > 50.0
+    ]['name'].tolist()
 
     numeric_features = [f for f in numeric_features if f not in low_quality]
     categorical_features = [f for f in categorical_features if f not in low_quality]

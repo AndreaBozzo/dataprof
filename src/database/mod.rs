@@ -4,19 +4,17 @@
 //! - PostgreSQL (with connection pooling)
 //! - MySQL/MariaDB
 //! - SQLite
-//! - DuckDB
 //!
 //! Supports streaming/chunked processing for large datasets and maintains
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::types::{FileInfo, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 
 pub mod connection;
 pub mod connectors;
-pub mod ml_readiness_simple;
 pub mod retry;
 pub mod sampling;
 pub mod security;
@@ -24,7 +22,6 @@ pub mod streaming;
 
 pub use connection::*;
 pub use connectors::*;
-pub use ml_readiness_simple::*;
 pub use retry::*;
 pub use sampling::*;
 pub use security::*;
@@ -38,7 +35,6 @@ pub struct DatabaseConfig {
     pub connection_timeout: Option<std::time::Duration>,
     pub retry_config: Option<RetryConfig>,
     pub sampling_config: Option<SamplingConfig>,
-    pub enable_ml_readiness: bool,
     pub ssl_config: Option<SslConfig>,
     pub load_credentials_from_env: bool,
 }
@@ -51,8 +47,7 @@ impl Default for DatabaseConfig {
             max_connections: Some(10),
             connection_timeout: Some(std::time::Duration::from_secs(30)),
             retry_config: Some(RetryConfig::default()),
-            sampling_config: None,     // No sampling by default
-            enable_ml_readiness: true, // Enable ML readiness assessment by default
+            sampling_config: None, // No sampling by default
             ssl_config: Some(SslConfig::default()),
             load_credentials_from_env: true, // Load credentials from environment by default
         }
@@ -109,11 +104,9 @@ pub fn create_connector(mut config: DatabaseConfig) -> Result<Box<dyn DatabaseCo
         || connection_str == ":memory:"
     {
         Ok(Box::new(connectors::sqlite::SqliteConnector::new(config)?))
-    } else if connection_str.ends_with(".duckdb") || connection_str.contains("duckdb") {
-        Ok(Box::new(connectors::duckdb::DuckDbConnector::new(config)?))
     } else {
         Err(anyhow::anyhow!(
-            "Unsupported database connection string: {}",
+            "Unsupported database connection string: {}. Supported: postgresql://, mysql://, sqlite://",
             connection_str
         ))
     }
@@ -227,12 +220,12 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 file_size_mb: 0.0,
             },
             column_profiles: vec![],
-            issues: vec![],
             scan_info: ScanInfo {
                 rows_scanned: 0,
                 sampling_ratio: sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
                 scan_time_ms: start.elapsed().as_millis(),
             },
+            data_quality_metrics: DataQualityMetrics::empty(),
         });
     }
 
@@ -250,67 +243,9 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
         column_profiles.push(profile);
     }
 
-    // Check quality issues using existing quality checker
-    let issues = crate::utils::quality::QualityChecker::check_columns(&column_profiles, &columns);
-
-    // Convert to Vec<String> for compatibility with existing QualityIssue system
-    let mut string_issues: Vec<String> = issues
-        .into_iter()
-        .map(|issue| match issue {
-            crate::types::QualityIssue::NullValues {
-                column,
-                count,
-                percentage,
-            } => {
-                format!(
-                    "NULL VALUES in '{}': {} ({:.1}%)",
-                    column, count, percentage
-                )
-            }
-            crate::types::QualityIssue::MixedDateFormats { column, formats } => {
-                format!("MIXED DATE FORMATS in '{}': {:?}", column, formats)
-            }
-            crate::types::QualityIssue::Duplicates { column, count } => {
-                format!("DUPLICATES in '{}': {} duplicates", column, count)
-            }
-            crate::types::QualityIssue::Outliers {
-                column,
-                values,
-                threshold,
-            } => {
-                format!(
-                    "OUTLIERS in '{}': {} values beyond threshold {}",
-                    column,
-                    values.len(),
-                    threshold
-                )
-            }
-            crate::types::QualityIssue::MixedTypes { column, types } => {
-                format!("MIXED TYPES in '{}': {:?}", column, types)
-            }
-        })
-        .collect();
-
-    // Add sampling-related warnings if applicable
-    if let Some(ref sample_info) = sample_info {
-        if let Some(warning) = sample_info.get_warning() {
-            string_issues.push(format!("SAMPLING WARNING: {}", warning));
-        }
-    }
-
-    // Perform ML readiness assessment if enabled
-    let ml_readiness = if config.enable_ml_readiness {
-        Some(assess_ml_readiness(&column_profiles, effective_total_rows)?)
-    } else {
-        None
-    };
-
-    // Add ML readiness issues to the general issues list
-    if let Some(ref ml_assessment) = ml_readiness {
-        for ml_issue in &ml_assessment.issues {
-            string_issues.push(format!("ML READINESS: {}", ml_issue));
-        }
-    }
+    // Calculate data quality metrics using ISO 8000/25012 standards
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
+        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed for database: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
@@ -331,33 +266,13 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
             file_size_mb: 0.0, // Not applicable for database queries
         },
         column_profiles,
-        issues: vec![], // Convert string issues back to QualityIssue enum if needed
         scan_info: ScanInfo {
             rows_scanned: actual_rows_processed,
             sampling_ratio,
             scan_time_ms,
         },
+        data_quality_metrics,
     };
 
     Ok(report)
-}
-
-/// Enhanced database profiling with ML readiness assessment
-pub async fn profile_database_with_ml(
-    config: DatabaseConfig,
-    query: &str,
-) -> Result<(QualityReport, Option<MLReadinessScore>)> {
-    let quality_report = profile_database(config.clone(), query).await?;
-
-    let ml_readiness = if config.enable_ml_readiness {
-        let total_rows = quality_report.file_info.total_rows.unwrap_or(0);
-        Some(assess_ml_readiness(
-            &quality_report.column_profiles,
-            total_rows as u64,
-        )?)
-    } else {
-        None
-    };
-
-    Ok((quality_report, ml_readiness))
 }

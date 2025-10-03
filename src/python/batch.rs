@@ -8,11 +8,12 @@ use super::types::PyBatchResult;
 
 /// Batch process multiple files using glob pattern
 #[pyfunction]
-#[pyo3(signature = (pattern, parallel=None, max_concurrent=None))]
+#[pyo3(signature = (pattern, parallel=None, max_concurrent=None, html_output=None))]
 pub fn batch_analyze_glob(
     pattern: &str,
     parallel: Option<bool>,
     max_concurrent: Option<usize>,
+    html_output: Option<String>,
 ) -> PyResult<PyBatchResult> {
     let config = BatchConfig {
         parallel: parallel.unwrap_or(true),
@@ -20,6 +21,7 @@ pub fn batch_analyze_glob(
         recursive: false, // Not applicable for glob patterns
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+        html_output: html_output.map(std::path::PathBuf::from),
     };
 
     let processor = BatchProcessor::with_config(config);
@@ -32,12 +34,13 @@ pub fn batch_analyze_glob(
 
 /// Batch process all files in a directory
 #[pyfunction]
-#[pyo3(signature = (directory, recursive=None, parallel=None, max_concurrent=None))]
+#[pyo3(signature = (directory, recursive=None, parallel=None, max_concurrent=None, html_output=None))]
 pub fn batch_analyze_directory(
     directory: &str,
     recursive: Option<bool>,
     parallel: Option<bool>,
     max_concurrent: Option<usize>,
+    html_output: Option<String>,
 ) -> PyResult<PyBatchResult> {
     let config = BatchConfig {
         parallel: parallel.unwrap_or(true),
@@ -45,6 +48,7 @@ pub fn batch_analyze_directory(
         recursive: recursive.unwrap_or(false),
         extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
+        html_output: html_output.map(std::path::PathBuf::from),
     };
 
     let processor = BatchProcessor::with_config(config);

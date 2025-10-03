@@ -1,8 +1,8 @@
 /// Simplified Data Quality Tests for DataProfiler
 /// Tests core data quality scenarios
 use anyhow::Result;
+use dataprof::analyze_csv;
 use dataprof::core::errors::{DataProfilerError, ErrorSeverity};
-use dataprof::engines::local::analyze_csv;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use tempfile::TempDir;

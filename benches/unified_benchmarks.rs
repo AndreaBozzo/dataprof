@@ -1,11 +1,16 @@
 /// Unified benchmarking suite using standardized datasets
 ///
+/// IMPORTANT: Benchmark functions use closures with criterion which can cause
+/// confusion with `let result = b.iter_custom(...)` patterns.
+/// The return value from iter_custom() is the timing Duration, not the benchmark result.
+/// Variables like `result` should be removed when they're only used for timing.
+///
 /// This consolidates the previously fragmented benchmark files:
 /// - simple_benchmarks.rs (basic functionality)
 /// - memory_benchmarks.rs (memory patterns)
 /// - large_scale_benchmarks.rs (performance claims)
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use dataprof::engines::local::analyze_csv;
+use dataprof::analyze_csv;
 use dataprof::testing::{
     CriterionResultParams, DatasetPattern, DatasetSize, ResultCollector, StandardDatasets,
 };
@@ -103,18 +108,12 @@ fn bench_micro_performance(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let row_count = if !sample_result.is_empty() {
+        let _row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let col_count = sample_result.len() as u32;
-        let row_count = if !sample_result.is_empty() {
-            sample_result[0].total_count as u64
-        } else {
-            0
-        };
-        let col_count = sample_result.len() as u32;
+        let _col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new("micro_analysis", name),
@@ -123,8 +122,8 @@ fn bench_micro_performance(c: &mut Criterion) {
                 name,
                 "micro",
                 file_size as f64 / (1024.0 * 1024.0),
-                row_count,
-                Some(col_count),
+                _row_count,
+                Some(_col_count),
             ),
         );
 
@@ -153,18 +152,12 @@ fn bench_small_performance(c: &mut Criterion) {
 
         // Get sample result for metadata
         let sample_result = analyze_csv(&file_path).expect("Sample analysis failed");
-        let row_count = if !sample_result.is_empty() {
+        let _row_count = if !sample_result.is_empty() {
             sample_result[0].total_count as u64
         } else {
             0
         };
-        let col_count = sample_result.len() as u32;
-        let row_count = if !sample_result.is_empty() {
-            sample_result[0].total_count as u64
-        } else {
-            0
-        };
-        let col_count = sample_result.len() as u32;
+        let _col_count = sample_result.len() as u32;
 
         group.bench_with_input(
             BenchmarkId::new("small_analysis", name),
@@ -173,8 +166,8 @@ fn bench_small_performance(c: &mut Criterion) {
                 name,
                 "small",
                 file_size as f64 / (1024.0 * 1024.0),
-                row_count,
-                Some(col_count),
+                _row_count,
+                Some(_col_count),
             ),
         );
 
@@ -213,7 +206,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
             |b, path| {
                 let start_overall = std::time::Instant::now();
 
-                let result = b.iter_custom(|iters| {
+                b.iter_custom(|iters| {
                     let start_memory = get_memory_usage();
                     let start_time = std::time::Instant::now();
 
@@ -253,8 +246,6 @@ fn bench_memory_patterns(c: &mut Criterion) {
                         columns_processed: Some(col_count),
                     });
                 }
-
-                result
             },
         );
 
@@ -382,7 +373,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
             |b, path| {
                 let start_overall = std::time::Instant::now();
 
-                let result = b.iter_custom(|iters| {
+                b.iter_custom(|iters| {
                     let start = std::time::Instant::now();
                     for _i in 0..iters {
                         let result = analyze_csv(black_box(path));
@@ -407,8 +398,6 @@ fn bench_memory_efficiency(c: &mut Criterion) {
                         columns_processed: Some(col_count),
                     });
                 }
-
-                result
             },
         );
 
@@ -436,7 +425,7 @@ fn bench_memory_leak_detection(c: &mut Criterion) {
     group.bench_function("repeated_analysis", |b| {
         let start_overall = std::time::Instant::now();
 
-        let result = b.iter_custom(|iters| {
+        b.iter_custom(|iters| {
             let initial_memory = get_memory_usage();
             let start_time = std::time::Instant::now();
 
@@ -482,8 +471,6 @@ fn bench_memory_leak_detection(c: &mut Criterion) {
                 columns_processed: Some(col_count),
             });
         }
-
-        result
     });
 
     group.finish();
@@ -509,7 +496,7 @@ fn bench_regression_baseline(c: &mut Criterion) {
     group.bench_function("standard_mixed_baseline", |b| {
         let start_overall = std::time::Instant::now();
 
-        let result = b.iter(|| {
+        b.iter(|| {
             let result = analyze_csv(black_box(&file_path));
             assert!(result.is_ok());
             result.expect("Operation failed")
@@ -530,8 +517,6 @@ fn bench_regression_baseline(c: &mut Criterion) {
                 columns_processed: Some(col_count),
             });
         }
-
-        result
     });
 
     group.finish();
@@ -553,7 +538,7 @@ fn get_memory_usage() -> usize {
                 }
             }
         }
-        return 0;
+        0
     }
 
     #[cfg(target_os = "macos")]
@@ -579,11 +564,13 @@ fn get_memory_usage() -> usize {
     #[cfg(target_os = "windows")]
     {
         // Windows memory detection simplified for benchmarking
-        return 0;
+        0
     }
-
-    // Fallback for other platforms
-    0
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        // Fallback for other platforms
+        0
+    }
 }
 
 // Organize benchmarks into logical groups

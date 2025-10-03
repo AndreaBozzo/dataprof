@@ -6,8 +6,9 @@ use std::path::Path;
 
 use crate::acceleration::simd::{compute_stats_auto, should_use_simd};
 // use crate::core::streaming_stats::StreamingColumnCollection; // Future use
-use crate::types::{ColumnProfile, ColumnStats, DataType, FileInfo, QualityReport, ScanInfo};
-use crate::QualityChecker;
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, QualityReport, ScanInfo,
+};
 
 /// Simple columnar profiler that organizes data by columns for better cache performance
 pub struct SimpleColumnarProfiler {
@@ -82,8 +83,10 @@ impl SimpleColumnarProfiler {
             column_profiles.push(profile);
         }
 
-        // Quality checking with sample data
-        let issues = QualityChecker::check_columns(&column_profiles, &columnar_data);
+        // Calculate quality metrics
+        let data_quality_metrics =
+            DataQualityMetrics::calculate_from_data(&columnar_data, &column_profiles)
+                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
 
@@ -95,12 +98,12 @@ impl SimpleColumnarProfiler {
                 file_size_mb,
             },
             column_profiles,
-            issues,
             scan_info: ScanInfo {
                 rows_scanned: total_rows,
                 sampling_ratio: 1.0,
                 scan_time_ms,
             },
+            data_quality_metrics,
         })
     }
 

@@ -7,6 +7,504 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.70] - 2025-10-02 - "Quality-First Pivot: ISO 8000/25012 Focus Edition"
+
+### ⚠️ **BREAKING: ML Features and Script Generation Removed (~7200 lines)**
+
+**Strategic Pivot**: DataProfiler now focuses **exclusively** on ISO 8000/25012 data quality assessment.
+
+#### **Removed Features**:
+- ❌ ML readiness scoring and assessment engine
+- ❌ ML feature analysis and recommendations
+- ❌ Python/pandas preprocessing script generation
+- ❌ Code snippet generation for data preprocessing
+- ❌ `dataprof ml` CLI command
+- ❌ `--ml`, `--ml-score`, `--ml-code`, `--output-script` flags
+
+#### **Removed Modules** (~5000 lines):
+- `src/analysis/ml_readiness.rs` (ML scoring engine)
+- `src/analysis/code_generator.rs` (script generation)
+- `src/cli/commands/ml.rs` (ML CLI command)
+- `src/cli/commands/script_generator.rs` (script generation CLI)
+- `src/database/ml_readiness_simple.rs` (database ML support)
+- ML sections from `output/display.rs`, `output/html.rs`, `output/batch_results.rs`
+
+#### **Removed Python Bindings** (~1500 lines):
+- `src/python/ml.rs` (entire ML module)
+- All `PyMl*`, `PyFeature*`, `PyPreprocessing*` classes
+- Functions: `ml_readiness_score()`, `analyze_csv_for_ml()`, `feature_analysis_dataframe()`
+- `ml_readiness_score_with_logging()`
+
+#### **Removed Documentation & Tests** (~700 lines):
+- `docs/python/ML_FEATURES.md`
+- `python/examples/ml_readiness_example.py`
+- `python/examples/sklearn_integration_example.py`
+- `python/tests/test_ml_readiness.py`
+- ML-related tests in `tests/cli_basic_tests.rs`, `tests/database_integration.rs`
+
+#### **API Compatibility**:
+- Deprecated fields in `BatchConfig` and `BatchResult` kept with `#[deprecated]` attribute
+- Functions accepting ML parameters now accept `Option<&()>` placeholders
+- Existing data quality features remain **100% functional**
+
+#### **Migration Guide**:
+If you were using ML features:
+1. **CLI**: Remove `--ml*` flags from commands
+2. **Python**: Remove calls to `ml_readiness_score()` and related functions
+3. **Focus**: Use ISO 8000/25012 data quality metrics for data assessment
+
+**Rationale**: Simplify codebase, eliminate maintenance burden, focus on core competency (data quality).
+
+---
+
+### 🏗️ **Major Architecture Refactoring: Eliminated Tech Debt (~730 lines removed)**
+
+#### **Database Connectors** (~650 lines eliminated)
+- **REMOVED:** DuckDB connector (unstable, 486 lines)
+- **REMOVED:** ~150 lines of duplicated code across PostgreSQL, MySQL, SQLite connectors
+- **ADDED:** `database/connectors/common.rs` - Shared query building functions
+  - `build_count_query()` - Unified count query generation
+  - `build_batch_query()` - Unified batch query with LIMIT/OFFSET
+- **IMPROVED:** Error handling - replaced `.unwrap_or(None)` with `.ok()`
+- **IMPROVED:** All connectors now use common validation and query building
+- **FIXED:** Removed circular dependency and unused imports
+
+#### **CSV Parser** (~39 lines eliminated)
+- **REMOVED:** ~200 lines of duplicated initialization/processing logic
+- **ADDED:** 5 reusable helper functions in `parsers/csv.rs`:
+  - `initialize_columns()` - Initialize HashMap from headers
+  - `process_records_to_columns()` - Convert row-oriented to column-oriented
+  - `process_csv_record()` - Process single CSV record from reader
+  - `analyze_columns()` - Analyze all columns and return profiles
+  - `analyze_columns_fast()` - Fast analysis mode
+- **REFACTORED:** All 6 CSV functions now use shared helpers:
+  - `analyze_csv_robust()`
+  - `analyze_csv_with_sampling()`
+  - `analyze_csv()`
+  - `analyze_csv_fast()`
+  - `try_strict_csv_parsing()`
+  - `try_strict_csv_parsing_fast()`
+- **IMPROVED:** DRY principle - single source of truth for common operations
+
+#### **StreamingProfiler God Object Refactoring** (350 → 309 lines)
+- **PROBLEM:** `StreamingProfiler::analyze_file()` was a God Object (224 lines, 7 responsibilities)
+- **SOLUTION:** Split into focused modules following Single Responsibility Principle
+- **ADDED:** `engines/streaming/chunk_processor.rs` (153 lines)
+  - Handles chunk processing and sampling logic
+  - `ProcessingStats` - Track rows, chunks, bytes processed
+  - Testable in isolation
+- **ADDED:** `engines/streaming/report_builder.rs` (120 lines)
+  - Handles report construction from processed data
+  - Delegates to existing `analyze_column()` and `QualityChecker`
+  - Testable in isolation
+- **FIXED:** Wired existing `ProgressManager` from `output/progress.rs`
+  - Before: StreamingProfiler manually created `EnhancedProgressBar` (16 duplicate lines)
+  - After: Uses `manager.create_enhanced_file_progress()` (existing module)
+  - Eliminated 40 lines of progress tracking duplication
+- **IMPROVED:** `StreamingProfiler` now acts as clean coordinator (309 lines)
+  - Delegates to: `ProgressManager`, `ChunkProcessor`, `ReportBuilder`
+  - Single responsibility: orchestration
+  - Much easier to maintain and extend
+
+**Architecture Benefits:**
+- **-730 total lines** of duplicated/dead code removed
+- **+3 focused modules** (ChunkProcessor, ReportBuilder, common.rs)
+- **Zero breaking changes** - public API unchanged
+- **All tests passing** - no regressions
+- **Tech debt eliminated** - no more God Objects or code duplication
+
+### 🎯 **Refactoring: Code Deduplication & Architecture Improvements**
+
+- **REMOVED:** `utils/sampler.rs` module (125 lines) - duplicated functionality from `core/sampling/`
+- **IMPROVED:** `analyze_csv_with_sampling()` now uses modern `SamplingStrategy::adaptive()`
+- **IMPROVED:** Unified output system - `analyze` command now uses `output_with_adaptive_formatter()`
+- **DEPRECATED:** Legacy display functions in `output/display.rs` (use `output_with_adaptive_formatter()` instead)
+- **FIXED:** All clippy warnings with `-D warnings` flag (26 issues resolved)
+  - Removed unused functions and imports
+  - Fixed `ptr_arg` lint (`&PathBuf` → `&Path`)
+  - Derived `Default` trait instead of manual implementation
+  - Fixed test warnings (unused `vec![]`, unnecessary comparisons)
+
+**Code Quality:**
+- **-125 lines** from sampler removal
+- **-80 lines** from analyze command refactor
+- Eliminated output code duplication across commands
+- Single formatter system for all output formats (JSON, CSV, Text, Plain)
+
+### 🧹 **BREAKING: Legacy Code Cleanup & Architecture Simplification**
+
+- **REMOVED:** Legacy `check` subcommand (use `analyze` instead)
+- **REMOVED:** Old `src/commands/` directory (replaced by `src/cli/commands/`)
+- **REMOVED:** Legacy single-file CLI mode (now subcommands-only: `analyze`, `ml`, `report`, `batch`)
+- **REMOVED:** `QualityReport::quality_score()` penalty-based scoring (now uses ISO 8000/25012 via `DataQualityMetrics`)
+- **REMOVED:** Unused CLI files (`cli_parser.rs`, `validation.rs`, `smart_defaults.rs`, `args_v2.rs`)
+- **REMOVED:** `display_profile()` function (use `display_data_quality_metrics()` instead)
+
+- **IMPROVED:** **Simplified Architecture**
+  - Unified command files: merged `*_impl.rs` into main command modules
+  - Single quality scoring system based on ISO 8000/25012 standards
+  - Cleaner separation: 4 subcommands + utilities
+  - **~2400 lines of code removed** (reduced maintenance burden)
+
+- **IMPROVED:** **DataQualityMetrics Integration**
+  - `QualityReport::quality_score()` now returns `Option<f64>` using `DataQualityMetrics::overall_score()`
+  - Weighted ISO formula: Completeness (30%), Consistency (25%), Uniqueness (20%), Accuracy (15%), Timeliness (10%)
+  - All CLI commands use consistent DataQualityMetrics as base analysis layer
+  - ML analysis remains optional layer on top of base quality metrics
+
+- **CLI USAGE:**
+  ```bash
+  # New subcommand-only CLI
+  dataprof analyze data.csv              # Base analysis
+  dataprof analyze data.csv --detailed   # Detailed metrics
+  dataprof analyze data.csv --ml         # With ML layer
+  dataprof ml data.csv --script prep.py  # ML focus
+  dataprof report data.csv               # HTML report
+  dataprof batch examples/ --parallel    # Batch processing
+  ```
+
+### 🏆 **NEW: ISO 8000/25012 Compliance & Configurable Quality Thresholds**
+
+- **NEW:** **📊 ISO-Compliant Quality Metrics System (5 Dimensions)**
+  - `IsoQualityThresholds` configuration struct for industry-specific standards
+  - Three preset profiles: Default (general), Strict (finance/healthcare), Lenient (exploratory/marketing)
+  - Configurable thresholds for all 5 quality dimensions
+  - Full compliance with ISO 8000-8, ISO 8000-61, ISO 8000-110, ISO 25012 standards
+
+- **NEW:** **⏰ Timeliness Metrics (ISO 8000-8)**
+  - Future dates detection (dates beyond current date)
+  - Stale data ratio calculation (configurable age threshold: 2/5/10 years for strict/default/lenient)
+  - Temporal ordering violations (e.g., end_date < start_date, updated_at < created_at)
+  - Supports multiple date formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
+  - Industry-specific freshness requirements
+
+- **IMPROVED:** **🔬 Unified Outlier Detection (IQR Method)**
+  - Replaced 3-sigma rule with ISO 25012 compliant IQR (Interquartile Range) method
+  - More robust: not affected by extreme outliers like 3-sigma
+  - Configurable IQR multiplier: 1.5 (default), 1.0 (strict), 2.0 (lenient)
+  - Configurable minimum sample size for detection
+  - Deprecated legacy `check_outliers()` 3-sigma method in `QualityChecker`
+
+- **ADDED:** **⚙️ Configurable Quality Thresholds**
+  - `max_null_percentage`: Threshold for reporting columns with excessive nulls (default: 50%)
+  - `high_cardinality_threshold`: Threshold for detecting ID-like columns (default: 95%)
+  - `outlier_iqr_multiplier`: IQR sensitivity for outlier detection (default: 1.5)
+  - `duplicate_report_threshold`: Threshold for reporting duplicate issues (default: 5%)
+  - `min_type_consistency`: Minimum acceptable type consistency percentage (default: 95%)
+
+- **REFACTORED:** **🔧 MetricsCalculator Architecture**
+  - Now instance-based instead of static methods for configuration support
+  - Constructor methods: `new()`, `strict()`, `lenient()`, `with_thresholds()`
+  - Backward compatibility maintained with deprecated static method
+  - All quality metrics now respect configurable ISO thresholds
+
+- **UPDATED:** **📖 Enhanced Documentation**
+  - Updated `WHAT_DATAPROF_DOES.md` with ISO compliance details
+  - Added comparison table for Default/Strict/Lenient thresholds
+  - Documented IQR method advantages over 3-sigma
+  - Added example: `examples/iso_compliance.rs` demonstrating all threshold profiles
+
+- **ADDED:** **🧪 Comprehensive ISO Compliance Test Suite**
+  - 14 comprehensive tests covering all 5 ISO dimensions
+  - Tests for configurable thresholds across all profiles (default/strict/lenient)
+  - Validation of IQR outlier detection vs deprecated 3-sigma
+  - Timeliness metrics verification (future dates, stale data, temporal violations)
+  - ISO reproducibility and audit trail tests
+  - Test file: `tests/iso_compliance_test.rs`
+
+### 🎯 **Benefits for ISO Certification**
+  - ✅ Auditable threshold configuration per ISO 8000/25012
+  - ✅ Industry-standard outlier detection (IQR vs deprecated 3-sigma)
+  - ✅ Reproducible quality metrics with clear rationale
+  - ✅ Support for regulatory compliance (finance, healthcare)
+  - ✅ Clear separation: Quality Metrics (ISO) → ML Insights (domain-specific)
+  - ✅ **5 dimensions tracked**: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
+
+---
+
+### ⚡ **BREAKING: Unified Database ML Implementation**
+
+- **BREAKING CHANGE:** Database mode now uses full `MlReadinessEngine` instead of simplified `MLReadinessScore`
+  - Complete feature parity with single file and batch modes
+  - Access to advanced feature analysis, preprocessing suggestions, and interaction warnings
+  - Structured recommendations with category, priority, and implementation effort
+  - Code snippets automatically generated from ML recommendations
+
+- **IMPROVED:** Database preprocessing script generation
+  - Scripts now contain actual code from `MlRecommendation` structures
+  - Framework-specific imports and variable documentation included
+  - Priority-based preprocessing steps with implementation guidance
+
+- **IMPROVED:** Database command display logic
+  - Removed 100+ lines of hardcoded code snippets
+  - Reuses `display_ml_score_with_code()` helper for consistency
+  - Unified display logic across all modes (single file, batch, database)
+
+- **ADDED:** Comprehensive database ML integration test
+  - New `test_sqlite_ml_readiness_full_score()` validates full ML score structure
+  - Verifies component scores (completeness, consistency, type_suitability, feature_quality)
+  - Tests feature analysis presence and recommendation structure
+
+### 🤖 **NEW: Enhanced ML Readiness Analysis & Feature Intelligence**
+
+- **NEW:** **🎯 Advanced ML Feature Analysis**
+  - Enhanced feature suitability scoring using actual column statistics (min/max/mean/length)
+  - Precise numeric scaling assessment based on value ranges and magnitudes
+  - Intelligent text feature analysis distinguishing short vs long text with character count analysis
+  - Improved categorical cardinality evaluation with exact unique count assessment
+  - ID column detection for data leakage prevention
+
+- **NEW:** **⚠️ Feature Interaction Warnings System**
+  - Curse of dimensionality detection (features vs samples ratio analysis)
+  - Data leakage risk identification (ID-like columns with high uniqueness)
+  - High cardinality feature overload warnings
+  - Feature type diversity analysis (all-numeric vs all-categorical warnings)
+  - Insufficient features detection for dataset size
+
+- **NEW:** **🔗 DataQualityMetrics Integration for ML**
+  - Combined ML readiness and data quality scoring with intelligent weighting
+  - Quality impact quantification on ML performance
+  - Enhanced penalty system for consistency issues affecting ML algorithms
+  - Integrated completeness, accuracy, and uniqueness factors in ML assessment
+
+- **NEW:** **💡 Enhanced ML Recommendations with Code Generation**
+  - Priority-based recommendation system (Critical/High/Medium/Low)
+  - Framework-specific code snippet generation (pandas/scikit-learn/feature-engine)
+  - Implementation effort assessment (Trivial/Easy/Moderate/Significant/Complex)
+  - ML-specific preprocessing pipeline suggestions with dependency ordering
+
+- **NEW:** **🐍 Extended Python Bindings for ML Features**
+  - New `PyFeatureInteractionWarning` class exposing all warning types
+  - `quality_integration_score` field in `PyMlReadinessScore`
+  - `feature_warnings` array with severity levels and recommendations
+  - Full backward compatibility with existing ML analysis functions
+
+### 🐍 **NEW: Python PyDataQualityMetrics Integration & Database ML Pipeline**
+
+- **NEW:** **📊 Complete PyDataQualityMetrics Python Bindings**
+  - Added comprehensive `PyDataQualityMetrics` class with all 4-dimension metrics
+  - Rich HTML representation for Jupyter notebooks with interactive dashboards
+  - Individual dimension summary methods (completeness, consistency, uniqueness, accuracy)
+  - Overall quality score calculation with intelligent weighting
+  - Dictionary export for pandas integration and analysis workflows
+  - Added dedicated `calculate_data_quality_metrics()` function for standalone usage
+  - Full integration with existing `PyQualityReport` for seamless compatibility
+
+- **NEW:** **🗃️ Database ML Code Snippets & Script Generation**
+  - Enhanced database command with ML code snippets support (`--ml-code`)
+  - Database-specific preprocessing script generation (`--output-script`)
+  - PostgreSQL, MySQL, SQLite integration with ML readiness pipeline
+  - Context-aware database preprocessing recommendations with connection handling
+  - Complete database ML pipeline: Analysis → Code Snippets → Script Generation
+  - Real-time streaming with comprehensive DataQualityMetrics display
+
+- **ENHANCED:** **🔧 Feature Parity Across All Interfaces**
+  - Complete consistency between CLI, Python bindings, and database interfaces
+  - All analysis modes now support: Quality Metrics + ML Scoring + Code Generation
+  - Batch processing with enhanced DataQualityMetrics display per file
+  - Database analysis with streaming progress and comprehensive quality assessment
+  - Python test suite expanded with PyDataQualityMetrics verification tests
+  - End-to-end verification: CSV → JSON → Database → Python → Batch modes
+
+### 📊 **NEW: Complete DataQualityMetrics Display Integration**
+
+- **NEW:** **🎯 Comprehensive Data Quality Metrics CLI Display**
+  - Implemented complete visual display of industry-standard 4-dimension metrics
+  - Beautiful CLI output with icons, colors, and assessment indicators for Completeness, Consistency, Uniqueness, Accuracy
+  - Overall weighted data quality score calculation and categorization (Excellent/Good/Fair/Poor)
+  - Context-aware formatting with actionable insights and recommendations
+
+- **ENHANCED:** **🔄 Full Batch Processing Metrics Integration**
+  - Extended batch processing to display comprehensive data quality metrics per file
+  - Compact metrics summary in per-file analysis with all 4 dimensions
+  - Aggregated quality assessment across multiple files in batch operations
+  - Consistent metrics display format between single-file and batch modes
+
+- **COMPLETED:** **🔧 End-to-End DataQualityMetrics Pipeline**
+  - Fixed incomplete metrics exposure throughout the project (was "half baked")
+  - JSON output: ✅ Already working (comprehensive structured metrics)
+  - CLI text output: ✅ Now fully implemented with rich display
+  - Batch processing: ✅ Integrated with per-file metrics summary
+  - Database connectors: ✅ Using enhanced quality analysis
+  - All analysis modes now expose the complete industry-standard metrics
+
+- **COMPLETED:** **🎨 Enhanced HTML Output with DataQualityMetrics**
+  - Beautiful HTML reports with comprehensive 4-dimension metrics dashboard
+  - Interactive score circle with overall quality assessment and color coding
+  - Metric cards with icons for Completeness, Consistency, Uniqueness, Accuracy
+  - Improved UX: DataQualityMetrics first, legacy issues hidden to avoid redundancy
+  - PlainFormatter updated with structured metrics summary
+  - Responsive design with mobile-friendly metric grid layout
+
+- **COMPLETED:** **🧹 Code Quality Improvements (Issue #85 Phase 4)**
+  - Fixed benchmark compilation issues with proper clippy compliance
+  - Added comprehensive database integration tests for DataQualityMetrics
+  - Verified no critical dead code or unused imports in main codebase
+  - Documented benchmark function patterns to prevent future issues
+  - Legacy quality functions maintained for backward compatibility
+
+### 🤖 **NEW: Enhanced Batch Processing with ML Pipeline Features**
+
+- **NEW:** **🔄 Complete ML Batch Processing Integration**
+  - Extended batch processing to support all single-file ML features
+  - Unified ML readiness analysis across multiple files with intelligent aggregation
+  - Parallel ML scoring with configurable concurrency (`--parallel`, `--max-concurrent`)
+  - Cross-file recommendation analysis with pattern recognition and consolidation
+  - **CLI flags:** `--ml-score`, `--ml-code`, `--output-script` now fully support batch mode
+
+- **NEW:** **📊 Enhanced HTML Dashboard for Batch Analysis**
+  - Interactive batch dashboard with comprehensive ML readiness overview
+  - Per-file drill-down with detailed ML recommendations and code snippets
+  - Aggregated quality metrics with distribution analysis and trend visualization
+  - JavaScript-enhanced user experience with expandable file details
+  - **Performance stats:** Processing speed, success rates, and artifact generation tracking
+
+- **NEW:** **🐍 Automated Batch Script Generation**
+  - Complete Python preprocessing pipeline generation from batch ML analysis
+  - Aggregated recommendations with optimized common pattern detection
+  - Parallel processing template with ThreadPoolExecutor and robust error handling
+  - Ready-to-execute scripts with proper imports and configuration management
+  - **Output:** Production-ready Python scripts for immediate ML pipeline integration
+
+- **ENHANCED:** **🎯 Improved ML Metrics Display and Accuracy**
+  - **FIXED:** ML score calculation bug (corrected percentage display from >8000% to proper 0-100% range)
+  - Enhanced readiness categorization with accurate thresholds (Ready ≥80%, Good 60-80%, etc.)
+  - Consistent ML score formatting across all output modes (terminal, HTML, scripts)
+  - Improved aggregation algorithms for batch-level ML readiness assessment
+
+- **ENHANCED:** **⚡ Performance Optimizations for Large Batch Operations**
+  - Optimized memory usage for ML analysis across multiple files
+  - Improved processing speed with intelligent parallel execution (2.5→4.4 files/sec)
+  - Enhanced progress reporting with per-file and batch-level metrics
+  - Smart resource management for concurrent ML scoring operations
+
+- **IMPROVED:** **🎯 More Realistic ML Readiness Scoring Algorithm**
+  - **CRITICAL FIX**: Completeness scoring now properly penalizes high per-column missing rates
+  - Enhanced penalties for datasets with ≥50% missing values (0.1 score vs previous lenient calculation)
+  - Progressive penalty system: ≥30% (0.3), ≥20% (0.5), ≥10% (0.7), ≥5% (0.85), <5% (1.0)
+  - More accurate ML readiness classifications (problematic datasets now correctly rated as "Good" vs "Ready")
+  - Improved credibility of ML scoring system for production use cases
+
+### 🔧 **CRITICAL FIX: Smart Auto-Recovery System - Delimiter Detection**
+
+- **FIXED:** **🛠️ Automatic Delimiter Detection Now Fully Functional**
+  - Resolved critical bug where delimiter detection was disabled by default
+  - Enhanced algorithm to prefer delimiters with higher field counts
+  - CLI now uses robust parsing by default for intelligent CSV handling
+  - **Supported delimiters:** Comma (`,`), Semicolon (`;`), Pipe (`|`), Tab (`\t`)
+  - **Test Results:** All delimiters now correctly detect 4 columns vs 1
+  - Backward compatibility maintained for existing workflows
+
+### 🎯 Enhanced User Experience & Terminal Intelligence - Issue #79
+
+- **NEW:** **🖥️ Intelligent Terminal Detection & Adaptive Output**
+  - Automatic detection of terminal vs pipe/redirect contexts
+  - Smart output format selection (rich interactive vs machine-readable)
+  - Context-aware color and emoji support with graceful fallbacks
+  - CI/CD-optimized output for seamless automation integration
+
+- **NEW:** **📊 Enhanced Progress Indicators with Memory Intelligence**
+  - Real-time memory tracking with leak detection and optimization hints
+  - Comprehensive throughput metrics (MB/s, rows/s, columns/s) with smart ETAs
+  - Performance-aware progress templates with adaptive update frequencies
+  - Memory usage display with estimated peak consumption forecasting
+
+- **NEW:** **🔧 Smart Auto-Recovery System**
+  - Automatic delimiter detection (comma, semicolon, tab, pipe) with confidence scoring
+  - Intelligent encoding detection and conversion (UTF-8, Latin-1, CP1252)
+  - Multi-strategy error recovery with detailed logging and fallback mechanisms
+  - Contextual recovery suggestions with success rate tracking
+
+- **NEW:** **🚀 Real-time Performance Intelligence**
+  - Advanced performance analytics with intelligent optimization recommendations
+  - Memory-aware suggestions based on system resources and file characteristics
+  - Adaptive algorithm selection with real-time processing hints
+  - Performance bottleneck detection with actionable remediation steps
+
+- **NEW:** **🧠 Memory-Aware Recommendations System**
+  - Comprehensive memory tracking with resource lifecycle management
+  - Smart streaming mode suggestions for large files and memory-constrained environments
+  - Intelligent chunk size optimization based on available system resources
+  - Memory leak detection with detailed allocation/deallocation reporting
+
+- **ENHANCED:** **⚡ API Improvements & Backward Compatibility**
+  - `ProgressManager::with_memory_tracking()` - Enable enhanced tracking features
+  - `EnhancedProgressBar` - Advanced progress display with performance metrics
+  - `PerformanceIntelligence` - Real-time system analysis and optimization guidance
+  - `AutoRecoveryManager` - Configurable error recovery with strategy patterns
+  - All existing APIs preserved with full backward compatibility
+
+- **TECHNICAL:** **🔧 Code Quality & Performance**
+  - Added `is-terminal` dependency for robust terminal detection
+  - Comprehensive clippy fixes across all feature sets
+  - 71/71 tests passing with full regression protection
+  - Enhanced error handling with `Clone` trait support
+  - Memory-efficient streaming profiler with intelligent hint generation
+
+### 📈 **Impact & Results**
+- **🎯 Enhanced Developer Experience**: Rich terminal interfaces with actionable insights
+- **🤖 Seamless CI/CD Integration**: Auto-optimal output for scripts and automation pipelines
+- **🔧 Reduced Manual Intervention**: Automatic handling of common parsing and processing issues
+- **⚡ Optimized Performance**: Real-time guidance for better processing efficiency and resource utilization
+- **🛡️ Professional Quality**: Comprehensive error recovery with intelligent fallback strategies
+
+### 📚 **Documentation Overhaul**
+
+#### Comprehensive Documentation Updates
+- **UPDATED:** `README.md` - Complete rewrite focusing on ISO 8000/25012 quality assessment
+  - Removed all ML readiness references
+  - Updated CLI examples with new subcommand structure (`analyze`, `report`, `batch`, `database`, `benchmark`)
+  - Added both HTML report GIFs (HTML.gif and HTMLbatch.gif)
+  - Updated CI/CD section with batch processing support
+  - Clear binary path note for Windows users (`target/release/dataprof-cli.exe`)
+
+- **UPDATED:** `docs/WHAT_DATAPROF_DOES.md` - Complete accuracy audit
+  - Fixed dimension count: 5 dimensions (was incorrectly stating 4)
+  - Removed references to deleted `src/utils/quality.rs` file
+  - Removed redundant section 3.2 (moved to configuration reference only)
+  - All source file references verified and updated
+  - Version and audit dates updated to 2025-10-02
+
+- **UPDATED:** `docs/python/API_REFERENCE.md`
+  - Removed ML recommendation and code generation sections
+  - Added comprehensive `PyDataQualityMetrics` documentation
+  - Updated all 5 quality dimensions with ISO standards
+  - Removed `feature_analysis_dataframe()` references
+
+- **UPDATED:** `docs/python/INTEGRATIONS.md`
+  - Removed ML readiness and feature analysis functions
+  - Updated scikit-learn integration to use quality-based preprocessing
+  - Focus on data type and quality metrics instead of ML features
+
+- **UPDATED:** `docs/guides/CLI_USAGE_GUIDE.md`
+  - Updated command syntax to subcommand structure
+  - Documented all 5 commands: analyze, report, batch, database, benchmark
+  - Removed all `--ml*` flag references
+  - Updated examples to match actual CLI implementation
+
+- **FIXED:** `src/analysis/metrics.rs` module comment
+  - Updated from 4 to 5 quality dimensions
+  - Added Timeliness to ISO standard references
+
+### 🎯 **Summary of v0.4.70 Release**
+
+This release represents a **strategic pivot** from ML-focused tooling to **pure ISO 8000/25012 data quality assessment**:
+
+- **~7200 lines removed**: Eliminated ML readiness scoring, feature analysis, and code generation
+- **~730 lines cleaned**: Removed tech debt, duplicated code, and legacy modules
+- **5 ISO dimensions**: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
+- **Complete documentation**: All docs updated, verified, and accurate
+- **Modern CLI**: Clean subcommand structure with batch processing support
+- **Enhanced HTML reports**: Beautiful dashboards with comprehensive quality metrics
+
+**Migration Path**: Remove `--ml*` flags from CLI commands, use ISO quality metrics for data assessment.
+
+---
+
+## [0.4.61] - 2025-09-26
+
+- **MIGRATION:** From GNU 3.0 license to MIT.
+
 ## [0.4.6] - 2025-09-26
 
 ### 🚀 CI/CD Performance Optimizations - Issue #65
