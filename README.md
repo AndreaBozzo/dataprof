@@ -4,7 +4,6 @@
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
-[![Try Online](https://img.shields.io/badge/Try%20Online-CSV%20Online%20Check-blue?style=flat&logo=vercel)](https://csv-mlready-api.vercel.app)
 
 **DISCLAIMER FOR HUMAN READERS**
 
@@ -30,18 +29,6 @@ DataProf processes **all data locally** on your machine. Zero telemetry, zero ex
 - Read-only database access (when using DB features)
 
 **Complete transparency:** Every metric, calculation, and data point is documented with source code references for independent verification.
-
-## Try Online
-
-**No installation required!** Test dataprof instantly with our web interface:
-
-**[CSV Quality API →](https://csv-mlready-api.vercel.app)**
-
-- Drag & drop your CSV (up to 50MB)
-- Get comprehensive quality score in ~10 seconds
-- ISO 8000/25012 compliant metrics
-- Powered by dataprof v0.4.61 core engine
-- Embeddable badges for your README
 
 ## CI/CD Integration
 
