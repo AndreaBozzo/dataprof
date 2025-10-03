@@ -20,6 +20,8 @@ fn create_test_data_with_outliers() -> (HashMap<String, Vec<String>>, Vec<Column
             "25", "30", "35", "28", "45", "33", "27", "250", // 250 is outlier
             "29", "31", "", "34", "32", "-5", // -5 is invalid, "" is null
             "40", "38", "36", "180", "42", "44", // 180 is outlier
+            "26", "37", "39", "41", "43", "46", // Additional values for minimum sample size
+            "24", "35", "32", "29", "37", // More values to reach 30+ for outlier detection
         ]
         .iter()
         .map(|s| s.to_string())
@@ -29,13 +31,13 @@ fn create_test_data_with_outliers() -> (HashMap<String, Vec<String>>, Vec<Column
     let profiles = vec![ColumnProfile {
         name: "age".to_string(),
         data_type: DataType::Integer,
-        total_count: 20,
+        total_count: 31,
         null_count: 1,
-        unique_count: Some(18),
+        unique_count: Some(25),
         stats: ColumnStats::Numeric {
             min: -5.0,
             max: 250.0,
-            mean: 45.5,
+            mean: 42.0,
         },
         patterns: vec![],
     }];
@@ -146,10 +148,10 @@ fn test_completeness_null_detection() {
         .calculate_comprehensive_metrics(&data, &profiles)
         .unwrap();
 
-    // Should detect 1 null out of 20 values = 5%
+    // Should detect 1 null out of 31 values = ~3.2%
     assert!(
-        (metrics.missing_values_ratio - 5.0).abs() < 0.1,
-        "Expected ~5% missing values, got {}",
+        (metrics.missing_values_ratio - 3.23).abs() < 0.1,
+        "Expected ~3.2% missing values, got {}",
         metrics.missing_values_ratio
     );
 }
