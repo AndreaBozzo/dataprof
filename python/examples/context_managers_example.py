@@ -120,16 +120,13 @@ def test_batch_analyzer_context_manager():
             except:
                 pass
 
-def test_ml_analyzer_context_manager():
-    """Test PyMlAnalyzer context manager"""
-    print("\n🧠 Test 2: ML Analyzer Context Manager")
+def test_quality_metrics_batch():
+    """Test batch quality metrics calculation"""
+    print("\n📊 Test 2: Batch Quality Metrics")
     print("=" * 55)
 
     try:
         import dataprof
-        if not hasattr(dataprof, 'PyMlAnalyzer'):
-            print("❌ PyMlAnalyzer not available")
-            return False
     except ImportError:
         print("❌ dataprof module not available")
         return False
@@ -137,44 +134,28 @@ def test_ml_analyzer_context_manager():
     datasets = create_sample_datasets(2)
 
     try:
-        print(f"🎯 Testing ML analysis with {len(datasets)} datasets...")
+        print(f"🎯 Testing quality metrics with {len(datasets)} datasets...")
 
-        # Test ML analyzer context manager
-        with dataprof.PyMlAnalyzer() as ml_analyzer:
-            print("✅ ML Analyzer context manager entered")
+        # Analyze each dataset for quality
+        for i, dataset in enumerate(datasets):
+            start_time = time.time()
+            metrics = dataprof.calculate_data_quality_metrics(dataset)
+            duration = time.time() - start_time
 
-            # Analyze each dataset for ML readiness
-            for i, dataset in enumerate(datasets):
-                start_time = time.time()
-                ml_score = ml_analyzer.analyze_ml(dataset)
-                duration = time.time() - start_time
+            dataset_name = Path(dataset).name
+            print(f"  • {dataset_name}:")
+            print(f"    - Overall Quality: {metrics.overall_quality_score:.1f}%")
+            print(f"    - Completeness: {metrics.complete_records_ratio:.1f}%")
+            print(f"    - Consistency: {metrics.data_type_consistency:.1f}%")
+            print(f"    - Processing time: {duration:.3f}s")
 
-                dataset_name = Path(dataset).name
-                print(f"  • {dataset_name}: {ml_score.overall_score:.1f}% ({ml_score.readiness_level}) - {duration:.3f}s")
-
-            # Get processing statistics
-            stats = ml_analyzer.get_stats()
-            print(f"📊 Processing stats: {len(stats)} files tracked")
-
-            # Get ML results summary
-            ml_results = ml_analyzer.get_ml_results()
-            print(f"🧠 ML results: {len(ml_results)} analyses completed")
-
-            # Get comprehensive summary
-            summary = ml_analyzer.get_summary()
-            if summary:
-                print(f"📈 Summary:")
-                print(f"  • Total files: {summary['total_files']}")
-                print(f"  • Average ML score: {summary['average_score']:.1f}%")
-                print(f"  • Ready files: {summary['ready_files']}/{summary['total_files']} ({summary['ready_percentage']:.1f}%)")
-                print(f"  • Total processing time: {summary['total_processing_time']:.3f}s")
-                print(f"  • Average time per file: {summary['average_processing_time']:.3f}s")
-
-        print("✅ ML Analyzer context manager exited with cleanup")
+        print("✅ Quality metrics calculation completed")
         return True
 
     except Exception as e:
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     finally:
         for dataset in datasets:
@@ -307,7 +288,7 @@ def test_nested_context_managers():
 
     try:
         import dataprof
-        if not hasattr(dataprof, 'PyBatchAnalyzer') or not hasattr(dataprof, 'PyMlAnalyzer'):
+        if not hasattr(dataprof, 'PyBatchAnalyzer') or not hasattr(dataprof, 'PyCsvProcessor'):
             print("❌ Context managers not available")
             return False
     except ImportError:
@@ -319,33 +300,29 @@ def test_nested_context_managers():
     try:
         print("🔄 Testing nested context managers...")
 
-        # Nested context managers
+        # Nested context managers: batch + CSV processor
         with dataprof.PyBatchAnalyzer() as batch_analyzer:
             print("✅ Outer context (batch analyzer) entered")
 
-            with dataprof.PyMlAnalyzer() as ml_analyzer:
-                print("✅ Inner context (ML analyzer) entered")
-
-                # Use both analyzers
-                for dataset in datasets:
-                    # Batch analysis
-                    batch_analyzer.add_file(dataset)
-
-                    # ML analysis
-                    ml_score = ml_analyzer.analyze_ml(dataset)
-                    dataset_name = Path(dataset).name
-                    print(f"  • {dataset_name}: ML score {ml_score.overall_score:.1f}%")
-
-                # Get ML summary
-                ml_summary = ml_analyzer.get_summary()
-                if ml_summary:
-                    print(f"📊 ML Summary: {ml_summary['ready_files']}/{ml_summary['total_files']} files ML-ready")
-
-            print("✅ Inner context (ML analyzer) exited")
+            # Use batch analyzer for multiple files
+            for dataset in datasets:
+                batch_analyzer.add_file(dataset)
+                dataset_name = Path(dataset).name
+                print(f"  • Added {dataset_name} to batch")
 
             # Get batch results
             batch_results = batch_analyzer.get_results()
             print(f"📦 Batch results: {len(batch_results)} analyses completed")
+
+            # Use CSV processor on first dataset
+            with dataprof.PyCsvProcessor(chunk_size=100) as processor:
+                print("✅ Inner context (CSV processor) entered")
+
+                processor.open_file(datasets[0])
+                chunk_results = processor.process_chunks()
+                print(f"  • Processed {len(chunk_results)} chunks from {Path(datasets[0]).name}")
+
+                print("✅ Inner context (CSV processor) exited")
 
         print("✅ Outer context (batch analyzer) exited")
         print("🎉 Nested context managers completed successfully")
@@ -354,6 +331,8 @@ def test_nested_context_managers():
 
     except Exception as e:
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     finally:
         for dataset in datasets:
@@ -369,7 +348,7 @@ def main():
 
     tests = [
         test_batch_analyzer_context_manager,
-        test_ml_analyzer_context_manager,
+        test_quality_metrics_batch,
         test_csv_processor_context_manager,
         test_context_manager_error_handling,
         test_nested_context_managers,
@@ -390,7 +369,7 @@ def main():
         print("\n✨ DataProf context manager features:")
         print("  • Automatic resource cleanup with __enter__/__exit__")
         print("  • Batch analysis with temporary file management")
-        print("  • ML analysis with performance tracking")
+        print("  • Quality metrics calculation with ISO 8000/25012 standards")
         print("  • CSV chunked processing with temp file cleanup")
         print("  • Robust error handling and cleanup")
         print("  • Support for nested context managers")

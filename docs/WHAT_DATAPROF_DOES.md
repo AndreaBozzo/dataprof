@@ -477,18 +477,17 @@ $ grep -i "telemetry\|analytics\|tracking" Cargo.toml src/
 
 **Data Flow:**
 ```
-User's Database → DataProf (local analysis) → Results (local memory/files)
+User's Database → dataprof (local analysis) → Results (local memory/files)
 ```
 
 **Supported Databases:**
 - PostgreSQL (`feature = "postgres"`)
 - MySQL (`feature = "mysql"`)
 - SQLite (`feature = "sqlite"`)
-- DuckDB (`feature = "duckdb"`)
 
 **What Happens:**
 1. User provides connection string
-2. DataProf connects to database
+2. dataprof connects to database
 3. Reads specified table/query
 4. Analyzes data locally
 5. Returns results

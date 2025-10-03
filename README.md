@@ -71,49 +71,9 @@ Perfect for ensuring data quality in pipelines, validating data integrity, or ge
 
 ## Quick Start
 
-### Python
-```bash
-pip install dataprof
-```
+### CLI (Recommended - Full Features)
 
-```python
-import dataprof
-
-# Comprehensive quality analysis (ISO 8000/25012 compliant)
-report = dataprof.analyze_csv_with_quality("data.csv")
-print(f"Quality score: {report.quality_score():.1f}%")
-
-# Access individual quality dimensions
-metrics = report.data_quality_metrics
-print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
-print(f"Consistency: {metrics.data_type_consistency:.1f}%")
-print(f"Uniqueness: {metrics.key_uniqueness:.1f}%")
-
-# Production database profiling
-profiles = dataprof.analyze_database("postgresql://user:pass@host/db", "users")
-```
-
-### Rust
-```bash
-cargo add dataprof
-```
-
-```rust
-use dataprof::*;
-
-// High-performance Arrow processing for large files (>100MB)
-// Requires compilation with: cargo build --features arrow
-#[cfg(feature = "arrow")]
-let profiler = DataProfiler::columnar();
-#[cfg(feature = "arrow")]
-let report = profiler.analyze_csv_file("large_dataset.csv")?;
-
-// Standard adaptive profiling (recommended for most use cases)
-let profiler = DataProfiler::auto();
-let report = profiler.analyze_file("dataset.csv")?;
-```
-
-### CLI Usage
+> **Installation**: Download pre-built binaries from [Releases](https://github.com/AndreaBozzo/dataprof/releases) or build from source with `cargo install dataprof`.
 
 > **Note**: After building with `cargo build --release`, the binary is located at `target/release/dataprof-cli.exe` (Windows) or `target/release/dataprof` (Linux/Mac). Run it from the project root as `target/release/dataprof-cli.exe <command>` or add it to your PATH.
 
@@ -134,8 +94,6 @@ dataprof report data.csv -o quality_report.html
 # Custom template
 dataprof report data.csv --template custom.hbs --detailed
 ```
-
-![DataProf HTML Report](assets/animations/HTML.gif)
 
 #### Batch Processing
 ```bash
@@ -182,6 +140,55 @@ dataprof analyze data.csv --threshold-profile strict
 ```
 
 **Quick Reference**: All commands follow the pattern `dataprof <command> [args]`. Use `dataprof help` or `dataprof <command> --help` for detailed options.
+
+### Python Bindings
+
+```bash
+pip install dataprof
+```
+
+```python
+import dataprof
+
+# Comprehensive quality analysis (ISO 8000/25012 compliant)
+report = dataprof.analyze_csv_with_quality("data.csv")
+print(f"Quality score: {report.quality_score():.1f}%")
+
+# Access individual quality dimensions
+metrics = report.data_quality_metrics
+print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
+print(f"Consistency: {metrics.data_type_consistency:.1f}%")
+print(f"Uniqueness: {metrics.key_uniqueness:.1f}%")
+
+# Batch processing
+result = dataprof.batch_analyze_directory("/data", recursive=True)
+print(f"Processed {result.processed_files} files at {result.files_per_second:.1f} files/sec")
+```
+
+> **Note**: Database profiling is available via CLI only. Python users can export SQL results to CSV and use `analyze_csv_with_quality()`.
+
+**[Full Python API Documentation →](docs/python/README.md)**
+
+### Rust Library
+
+```bash
+cargo add dataprof
+```
+
+```rust
+use dataprof::*;
+
+// High-performance Arrow processing for large files (>100MB)
+// Requires compilation with: cargo build --features arrow
+#[cfg(feature = "arrow")]
+let profiler = DataProfiler::columnar();
+#[cfg(feature = "arrow")]
+let report = profiler.analyze_csv_file("large_dataset.csv")?;
+
+// Standard adaptive profiling (recommended for most use cases)
+let profiler = DataProfiler::auto();
+let report = profiler.analyze_file("dataset.csv")?;
+```
 
 ## Development
 

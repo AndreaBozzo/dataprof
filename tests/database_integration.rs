@@ -2,12 +2,17 @@
 //!
 //! These tests verify that the database connectors compile and work correctly.
 //! They use in-memory databases where possible to avoid requiring external setup.
+//!
+//! ## Heavy Memory Tests
+//! Some tests are marked with `#[ignore]` due to high memory consumption (>8GB RAM).
+//! To run these tests separately: `cargo test --test database_integration -- --ignored`
+//! For heavy integration tests, see `tests/database_heavy.rs`
 
 #[cfg(feature = "database")]
 use anyhow::Result;
 
 #[cfg(feature = "database")]
-use dataprof::{create_connector, profile_database, DatabaseConfig};
+use dataprof::{create_connector, DatabaseConfig};
 
 #[cfg(all(test, feature = "database", feature = "sqlite"))]
 mod sqlite_tests {
@@ -37,195 +42,6 @@ mod sqlite_tests {
 
         Ok(())
     }
-
-    #[tokio::test]
-    async fn test_sqlite_create_and_profile_table() -> Result<()> {
-        let config = DatabaseConfig {
-            connection_string: ":memory:".to_string(),
-            batch_size: 1000,
-            max_connections: Some(1),
-            connection_timeout: Some(std::time::Duration::from_secs(5)),
-            retry_config: Some(dataprof::database::RetryConfig::default()),
-            sampling_config: None,
-            ssl_config: Some(dataprof::database::SslConfig::default()),
-            load_credentials_from_env: false,
-        };
-
-        // Use the high-level profile_database function
-        // Note: This test would need actual SQLite setup with test data
-        // For now, we just verify the function exists and can be called
-
-        // This would normally fail because we don't have test data,
-        // but it verifies the API compiles correctly
-        let result = profile_database(config, "SELECT 1 as test_column").await;
-
-        // We expect this to fail with a connection error since we're using :memory:
-        // without setting up the database, but that's ok for a compilation test
-        match result {
-            Ok(_) => {
-                // If it somehow works, that's great
-                println!("SQLite test passed unexpectedly - that's good!");
-            }
-            Err(e) => {
-                // Expected - we don't have a proper test database setup
-                println!("SQLite test failed as expected: {}", e);
-            }
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_data_quality_metrics_integration() -> Result<()> {
-        // Test that DataQualityMetrics are properly exposed in database analysis
-        let config = DatabaseConfig {
-            connection_string: ":memory:".to_string(),
-            batch_size: 1000,
-            max_connections: Some(1),
-            connection_timeout: Some(std::time::Duration::from_secs(5)),
-            retry_config: Some(dataprof::database::RetryConfig::default()),
-            sampling_config: None,
-            ssl_config: Some(dataprof::database::SslConfig::default()),
-            load_credentials_from_env: false,
-        };
-
-        // Test with a simple SELECT statement that should work with in-memory SQLite
-        let result =
-            profile_database(config, "SELECT 1 as id, 'test' as name, 100.5 as value").await;
-
-        match result {
-            Ok(report) => {
-                // Verify that data_quality_metrics field is populated
-                let metrics = &report.data_quality_metrics;
-
-                // Basic sanity checks on the metrics structure
-                assert!(
-                    metrics.missing_values_ratio >= 0.0 && metrics.missing_values_ratio <= 100.0
-                );
-                assert!(
-                    metrics.complete_records_ratio >= 0.0
-                        && metrics.complete_records_ratio <= 100.0
-                );
-                assert!(
-                    metrics.data_type_consistency >= 0.0 && metrics.data_type_consistency <= 100.0
-                );
-                assert!(metrics.key_uniqueness >= 0.0 && metrics.key_uniqueness <= 100.0);
-                assert!(metrics.outlier_ratio >= 0.0 && metrics.outlier_ratio <= 100.0);
-
-                println!("✅ Database DataQualityMetrics integration test passed!");
-                println!("   Completeness: {:.1}%", metrics.complete_records_ratio);
-                println!("   Consistency: {:.1}%", metrics.data_type_consistency);
-                println!("   Uniqueness: {:.1}%", metrics.key_uniqueness);
-                println!("   Outliers: {:.1}%", metrics.outlier_ratio);
-            }
-            Err(e) => {
-                // If the test fails, we document why for future debugging
-                println!(
-                    "⚠️ Database test failed (expected for in-memory setup): {}",
-                    e
-                );
-                println!("   This indicates database connectors need real database testing");
-            }
-        }
-
-        Ok(())
-    }
-
-    //     #[tokio::test]
-    //     async fn test_sqlite_ml_readiness_full_score() -> Result<()> {
-    //         use dataprof::profile_database_with_ml;
-    //
-    //         // Test that the full MlReadinessScore (not simplified version) is returned
-    //         let config = DatabaseConfig {
-    //             connection_string: ":memory:".to_string(),
-    //             batch_size: 1000,
-    //             max_connections: Some(1),
-    //             connection_timeout: Some(std::time::Duration::from_secs(5)),
-    //             retry_config: Some(dataprof::database::RetryConfig::default()),
-    //             sampling_config: None,
-    //             enable_ml_readiness: true,
-    //             ssl_config: Some(dataprof::database::SslConfig::default()),
-    //             load_credentials_from_env: false,
-    //         };
-    //
-    //         let result =
-    //             profile_database_with_ml(config, "SELECT 1 as id, 'test' as name, 100.5 as value")
-    //                 .await;
-    //
-    //         match result {
-    //             Ok((report, ml_score_opt)) => {
-    //                 // Verify ML score is present
-    //                 if let Some(ml_score) = ml_score_opt {
-    //                     // Check that we have the full MlReadinessScore structure
-    //                     assert!(
-    //                         ml_score.overall_score >= 0.0 && ml_score.overall_score <= 100.0,
-    //                         "Overall ML score should be between 0-100"
-    //                     );
-    //
-    //                     // Verify component scores exist
-    //                     assert!(
-    //                         ml_score.completeness_score >= 0.0 && ml_score.completeness_score <= 100.0
-    //                     );
-    //                     assert!(
-    //                         ml_score.consistency_score >= 0.0 && ml_score.consistency_score <= 100.0
-    //                     );
-    //                     assert!(
-    //                         ml_score.type_suitability_score >= 0.0
-    //                             && ml_score.type_suitability_score <= 100.0
-    //                     );
-    //                     assert!(
-    //                         ml_score.feature_quality_score >= 0.0
-    //                             && ml_score.feature_quality_score <= 100.0
-    //                     );
-    //
-    //                     // Verify recommendations structure (should have code snippets if applicable)
-    //                     for rec in &ml_score.recommendations {
-    //                         // Check that recommendations have the full structure
-    //                         assert!(!rec.category.is_empty(), "Category should not be empty");
-    //                         assert!(
-    //                             !rec.description.is_empty(),
-    //                             "Description should not be empty"
-    //                         );
-    //                         // Code snippet may or may not be present depending on the recommendation
-    //                     }
-    //
-    //                     // Verify feature analysis is present (new full ML score feature)
-    //                     assert!(
-    //                         !ml_score.feature_analysis.is_empty(),
-    //                         "Feature analysis should be present in full ML score"
-    //                     );
-    //
-    //                     println!("✅ Database full ML readiness score test passed!");
-    //                     println!("   Overall Score: {:.1}%", ml_score.overall_score);
-    //                     println!("   Completeness: {:.1}%", ml_score.completeness_score);
-    //                     println!("   Consistency: {:.1}%", ml_score.consistency_score);
-    //                     println!(
-    //                         "   Type Suitability: {:.1}%",
-    //                         ml_score.type_suitability_score
-    //                     );
-    //                     println!("   Feature Quality: {:.1}%", ml_score.feature_quality_score);
-    //                     println!("   Recommendations: {}", ml_score.recommendations.len());
-    //                     println!("   Feature Analyses: {}", ml_score.feature_analysis.len());
-    //                 } else {
-    //                     println!("⚠️ ML readiness scoring was not enabled or returned None");
-    //                 }
-    //
-    //                 // Also verify DataQualityMetrics integration
-    //                 assert!(
-    //                     report.data_quality_metrics.is_some(),
-    //                     "DataQualityMetrics should be present"
-    //                 );
-    //             }
-    //             Err(e) => {
-    //                 println!(
-    //                     "⚠️ Database ML test failed (expected for in-memory setup): {}",
-    //                     e
-    //                 );
-    //             }
-    //         }
-    //
-    //         Ok(())
-    //     }
 }
 
 #[cfg(all(test, feature = "database"))]

@@ -8,7 +8,7 @@
 /// Run with:
 ///   cargo run --example arrow_example --features arrow
 use anyhow::Result;
-use dataprof::DataProfiler;
+use dataprof::{AdaptiveProfiler, DataProfiler};
 use std::path::Path;
 
 fn main() -> Result<()> {

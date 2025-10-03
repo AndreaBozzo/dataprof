@@ -1,6 +1,11 @@
 # Database Connectors Guide
 
-This guide explains how to use DataProfiler with various database systems for direct data profiling with production-ready features including ML readiness assessment, table sampling, and security.
+This guide explains how to use DataProfiler with various database systems for direct data profiling with production-ready features including quality assessment, table sampling, and security.
+
+> **⚠️ Python Bindings Note**: Database connectors are currently **CLI and Rust API only**. Python bindings for database profiling are not available due to async compatibility limitations with PyO3. Python users can:
+> - Use the CLI: `dataprof database --connection "postgresql://..." --table users`
+> - Export to CSV and use Python bindings: `pd.read_sql().to_csv()` → `dataprof.analyze_csv_with_quality()`
+> - Use native SQL connectors (psycopg2, SQLAlchemy) with dataprof for file analysis
 
 ## Supported Databases
 
@@ -9,14 +14,15 @@ This guide explains how to use DataProfiler with various database systems for di
 - **SQLite** - Embedded databases and file-based storage (✅ **Default**)
 - **DuckDB** - Analytical databases and data warehousing (Optional feature)
 
-## 🚀 New Enhanced Features
+## 🚀 Enhanced Features
 
-### ML Readiness Assessment
-Automatically assess how suitable your database tables are for machine learning:
-- **Column ML scores** based on data type and quality
-- **Feature engineering suggestions** for each column
-- **Table-level recommendations** for ML workflows
-- **Data quality issues** that impact ML training
+### Data Quality Assessment (ISO 8000/25012)
+Automatically assess database table quality across 5 dimensions:
+- **Completeness**: Missing values and null analysis
+- **Consistency**: Data type and format validation
+- **Uniqueness**: Duplicate detection and key analysis
+- **Accuracy**: Outlier detection and range validation
+- **Timeliness**: Temporal data quality metrics
 
 ### Large Dataset Sampling
 Handle massive database tables with intelligent sampling:
@@ -37,8 +43,8 @@ Enterprise-ready security and reliability:
 ### Command Line Usage
 
 ```bash
-# PostgreSQL with ML readiness assessment
-dataprof --database "postgresql://user:password@localhost:5432/mydb" --query "users"
+# PostgreSQL with quality assessment
+dataprof database --connection "postgresql://user:password@localhost:5432/mydb" --table "users"
 
 # MySQL with automatic sampling for large tables
 dataprof --database "mysql://root:password@localhost:3306/mydb" --query "SELECT * FROM orders"
@@ -60,10 +66,12 @@ export POSTGRES_DATABASE=analytics
 dataprof --database "postgresql://" --query "user_activity"
 ```
 
-### Programmatic Usage
+### Programmatic Usage (Rust API)
+
+> **Note**: Python bindings not available for database operations. Use CLI or Rust API.
 
 ```rust
-use dataprof::{DatabaseConfig, profile_database_with_ml, SamplingConfig, SslConfig};
+use dataprof::{DatabaseConfig, profile_database, SamplingConfig, SslConfig};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -73,26 +81,21 @@ async fn main() -> anyhow::Result<()> {
         batch_size: 10000,
         max_connections: Some(5),
         connection_timeout: Some(std::time::Duration::from_secs(30)),
-        // 🚀 New enhanced features
-        enable_ml_readiness: true,
         sampling_config: Some(SamplingConfig::representative_sample(50000, None)),
         ssl_config: Some(SslConfig::production()),
         load_credentials_from_env: true,
         retry_config: Some(RetryConfig::default()),
     };
 
-    // Get both data quality report AND ML readiness assessment
-    let (report, ml_readiness) = profile_database_with_ml(config, "SELECT * FROM large_table").await?;
+    // Get quality report with ISO 8000/25012 metrics
+    let report = profile_database(config, "SELECT * FROM large_table").await?;
 
     println!("📊 Processed {} rows across {} columns",
         report.file_info.total_rows.unwrap_or(0),
         report.file_info.total_columns
     );
 
-    if let Some(ml_assessment) = ml_readiness {
-        println!("🤖 ML Readiness Score: {:.2}/1.0", ml_assessment.overall_score);
-        println!("💡 Recommendations: {}", ml_assessment.recommendations.len());
-    }
+    println!("📈 Quality Score: {:.1}%", report.quality_score());
 
     Ok(())
 }
@@ -229,41 +232,29 @@ dataprof --database "postgresql://user:pass@host/db" --query "
 | `batch_size` | usize | 10000 | Rows per batch for streaming |
 | `max_connections` | Option<u32> | Some(10) | Connection pool size |
 | `connection_timeout` | Option<Duration> | Some(30s) | Connection timeout |
-| **🆕 `enable_ml_readiness`** | bool | true | Enable ML readiness assessment |
-| **🆕 `sampling_config`** | Option<SamplingConfig> | None | Large dataset sampling strategy |
-| **🆕 `ssl_config`** | Option<SslConfig> | Some(default) | SSL/TLS encryption settings |
-| **🆕 `load_credentials_from_env`** | bool | true | Load credentials from environment |
-| **🆕 `retry_config`** | Option<RetryConfig> | Some(default) | Connection retry with backoff |
+| `sampling_config` | Option<SamplingConfig> | None | Large dataset sampling strategy |
+| `ssl_config` | Option<SslConfig> | Some(default) | SSL/TLS encryption settings |
+| `load_credentials_from_env` | bool | true | Load credentials from environment |
+| `retry_config` | Option<RetryConfig> | Some(default) | Connection retry with backoff |
 
-### 🤖 ML Readiness Assessment
+### 📊 Quality Assessment
 
 ```rust
-// Enable ML readiness scoring
+// Get comprehensive quality report
 let config = DatabaseConfig {
-    enable_ml_readiness: true,
+    connection_string: "postgresql://user:pass@host/db".to_string(),
     ..Default::default()
 };
 
-let (report, ml_readiness) = profile_database_with_ml(config, "user_profiles").await?;
+let report = profile_database(config, "user_profiles").await?;
 
-if let Some(ml_assessment) = ml_readiness {
-    println!("Overall ML Score: {:.2}", ml_assessment.overall_score);
+println!("Overall Quality Score: {:.1}%", report.quality_score());
 
-    // Column-specific scores
-    for (column, score) in &ml_assessment.column_scores {
-        println!("  {}: {:.2}", column, score);
-    }
-
-    // Feature engineering recommendations
-    for recommendation in &ml_assessment.recommendations {
-        println!("💡 {}", recommendation);
-    }
-
-    // Issues that affect ML training
-    for issue in &ml_assessment.issues {
-        println!("⚠️  {}", issue);
-    }
-}
+// Access quality metrics (ISO 8000/25012)
+let metrics = &report.data_quality_metrics;
+println!("Completeness: {:.1}%", metrics.complete_records_ratio);
+println!("Consistency: {:.1}%", metrics.data_type_consistency);
+println!("Uniqueness: {:.1}%", metrics.key_uniqueness);
 ```
 
 ### 📊 Large Dataset Sampling

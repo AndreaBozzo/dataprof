@@ -24,16 +24,17 @@ for profile in profiles:
 report = dataprof.analyze_csv_with_quality("data.csv")
 print(f"Quality Score: {report.quality_score():.1f}%")
 
-# Check ML readiness
-ml_score = dataprof.ml_readiness_score("data.csv")
-print(f"ML Ready: {ml_score.is_ml_ready()} ({ml_score.overall_score:.1f}%)")
+# Access detailed quality metrics (ISO 8000/25012)
+metrics = report.data_quality_metrics
+print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
+print(f"Consistency: {metrics.data_type_consistency:.1f}%")
 ```
 
 ## 📋 Features
 
 - **🔥 High Performance**: Rust-powered analysis with SIMD acceleration
 - **📊 Comprehensive Profiling**: Data types, nulls, distributions, quality issues
-- **🤖 ML Readiness**: Advanced ML suitability assessment and recommendations
+- **📏 ISO 8000/25012 Compliant**: Industry-standard quality assessment across 5 dimensions
 - **🐼 Pandas Integration**: Native DataFrame support when pandas is available
 - **⚡ Batch Processing**: Parallel processing for multiple files
 - **📱 Jupyter Support**: Rich HTML displays in notebooks
@@ -46,21 +47,26 @@ print(f"ML Ready: {ml_score.is_ml_ready()} ({ml_score.overall_score:.1f}%)")
 ```python
 # Comprehensive quality report
 report = dataprof.analyze_csv_with_quality("customer_data.csv")
-print(f"Found {len(report.issues)} quality issues")
-for issue in report.issues[:5]:  # Show top 5 issues
-    print(f"• {issue.severity}: {issue.description}")
+print(f"Quality Score: {report.quality_score():.1f}%")
+print(f"Total rows: {report.total_rows}, columns: {report.total_columns}")
+print(f"Scan time: {report.scan_time_ms}ms")
+
+# Access detailed metrics
+metrics = report.data_quality_metrics
+print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
+print(f"Consistency: {metrics.data_type_consistency:.1f}%")
+print(f"Uniqueness: {metrics.key_uniqueness:.1f}%")
 ```
 
-### ML Dataset Preparation
+### Data Quality Metrics
 ```python
-# Check if data is ready for machine learning
-ml_score = dataprof.ml_readiness_score("features.csv")
-if ml_score.is_ml_ready():
-    print("✅ Dataset is ML-ready!")
-else:
-    print("⚠️ Dataset needs preprocessing:")
-    for rec in ml_score.recommendations_by_priority("high"):
-        print(f"  • {rec.description}")
+# Get detailed quality metrics (ISO 8000/25012 compliant)
+metrics = dataprof.calculate_data_quality_metrics("features.csv")
+print(f"Overall Quality: {metrics.overall_quality_score():.1f}%")
+print(f"Completeness: {metrics.completeness_summary()}")
+print(f"Consistency: {metrics.consistency_summary()}")
+print(f"Uniqueness: {metrics.uniqueness_summary()}")
+print(f"Accuracy: {metrics.accuracy_summary()}")
 ```
 
 ### Batch File Analysis
@@ -85,14 +91,14 @@ print(f"Columns with >20% nulls: {len(high_null_cols)}")
 
 ### Core Guides
 - **[API Reference](API_REFERENCE.md)** - Complete function and class reference
-- **[ML Features](ML_FEATURES.md)** - ML readiness assessment and recommendations
-- **[Integrations](INTEGRATIONS.md)** - Pandas, scikit-learn, and ecosystem integrations
+- **[Integrations](INTEGRATIONS.md)** - Pandas and ecosystem integrations
 
 ### Key Functions
 - `analyze_csv_file()` - Basic column profiling
-- `analyze_csv_with_quality()` - Quality assessment with issue detection
-- `ml_readiness_score()` - ML suitability analysis
+- `analyze_csv_with_quality()` - Quality assessment with ISO 8000/25012 metrics
+- `calculate_data_quality_metrics()` - Dedicated quality metrics calculation
 - `batch_analyze_directory()` - High-performance batch processing
+- `analyze_csv_dataframe()` - Pandas DataFrame integration
 
 ## ⚡ Performance
 
@@ -168,21 +174,20 @@ except RuntimeError as e:
    profiles = dataprof.analyze_csv_file("your_data.csv")
    ```
 
-3. **Check ML Readiness**:
+3. **Quality Assessment**:
    ```python
-   ml_score = dataprof.ml_readiness_score("your_data.csv")
-   print(f"ML Ready: {ml_score.is_ml_ready()}")
+   report = dataprof.analyze_csv_with_quality("your_data.csv")
+   print(f"Quality Score: {report.quality_score():.1f}%")
    ```
 
-4. **Explore Results**: Use the rich objects and DataFrames to explore your data quality and ML readiness in detail.
+4. **Explore Results**: Use the rich objects and DataFrames to explore your data quality in detail.
 
 ## 📖 Next Steps
 
 - Read the [API Reference](API_REFERENCE.md) for complete function documentation
-- Explore [ML Features](ML_FEATURES.md) for advanced ML workflow integration
-- Check [Integrations](INTEGRATIONS.md) for pandas and scikit-learn examples
+- Check [Integrations](INTEGRATIONS.md) for pandas integration examples
 - Visit the [main documentation](../../README.md) for CLI usage and Rust API
 
 ---
 
-**💡 Tip**: Start with `analyze_csv_with_quality()` for a comprehensive overview of your data, then use `ml_readiness_score()` to assess ML suitability.
+**💡 Tip**: Start with `analyze_csv_with_quality()` for a comprehensive overview of your data quality using ISO 8000/25012 standards.

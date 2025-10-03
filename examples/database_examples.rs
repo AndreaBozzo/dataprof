@@ -20,7 +20,6 @@ async fn postgresql_example() -> Result<()> {
         connection_timeout: Some(std::time::Duration::from_secs(30)),
         retry_config: Some(dataprof::database::RetryConfig::default()),
         sampling_config: None,
-        enable_ml_readiness: true,
         ssl_config: Some(dataprof::database::SslConfig::default()),
         load_credentials_from_env: false,
     };
@@ -45,7 +44,7 @@ async fn postgresql_example() -> Result<()> {
     )
     .await?;
 
-    println!("📊 Found {} quality issues", report.issues.len());
+    println!("📊 Quality Score: {:.1}%", report.quality_score());
 
     Ok(())
 }
@@ -163,17 +162,11 @@ async fn duckdb_example() -> Result<()> {
     println!("   Processing Time: {}ms", report.scan_info.scan_time_ms);
 
     // Quality analysis
-    let critical_issues = report
-        .issues
-        .iter()
-        .filter(|issue| matches!(issue.severity(), dataprof::types::Severity::High))
-        .count();
+    let quality_score = report.quality_score();
+    println!("   Quality Score: {:.1}%", quality_score);
 
-    if critical_issues > 0 {
-        println!(
-            "⚠️  {} high severity data quality issues found!",
-            critical_issues
-        );
+    if quality_score < 80.0 {
+        println!("⚠️  Quality below threshold (80%)");
     }
 
     Ok(())
@@ -192,7 +185,6 @@ async fn streaming_example() -> Result<()> {
         connection_timeout: Some(std::time::Duration::from_secs(60)),
         retry_config: Some(dataprof::database::RetryConfig::default()),
         sampling_config: Some(dataprof::database::SamplingConfig::quick_sample(50000)),
-        enable_ml_readiness: true,
         ssl_config: Some(dataprof::database::SslConfig::default()),
         load_credentials_from_env: false,
     };
@@ -253,7 +245,7 @@ async fn quality_monitoring_example() -> Result<()> {
             Ok(report) => {
                 println!("✅ {}: {} rows", name, report.scan_info.rows_scanned);
 
-                let quality_score = report.quality_score().unwrap_or(0.0);
+                let quality_score = report.quality_score();
                 if quality_score < 80.0 {
                     println!("   ⚠️  Quality Score: {:.1}%", quality_score);
                 }
