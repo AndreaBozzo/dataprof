@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔧 **REFACTOR: Config Module Technical Debt Cleanup - Issue #98**
+
+- **FIXED:** Critical compilation error - removed broken ML config references
+- **IMPROVED:** Magic numbers → 27+ documented named constants with rationale
+- **NEW:** Builder pattern for fluent configuration API
+  - `DataprofConfigBuilder` with 30+ chainable methods
+  - Preset configurations: `ci_preset()`, `interactive_preset()`, `production_quality_preset()`
+  - ISO quality profiles: `iso_quality_profile_strict()`, `iso_quality_profile_lenient()`
+- **IMPROVED:** Config file loading with auto-discovery
+  - Fixed TODO in `core_logic.rs` - proper config file loading implemented
+  - Auto-discovery: `.dataprof.toml`, `~/.config/dataprof/config.toml`, `dataprof.toml`
+  - Enhanced logging: `✓ Loaded configuration from...` with clear feedback
+- **IMPROVED:** Comprehensive validation with actionable error messages
+  - 20+ validation checks with `→ Fix:` and `→ Recommended:` guidance
+  - New validations: chunk size, memory limits, concurrent operations, database settings
+- **REFACTOR:** Consolidated overlapping config structures (no breaking changes)
+  - Removed dead code from `QualityConfig`: `null_threshold`, `detect_duplicates`, `detect_mixed_types`, `check_date_formats`
+  - Single source of truth: all quality control via `IsoQualityThresholds`
+  - Eliminated 4 unused fields + 4 constants + 2 builder methods
+  - Cleaner API: `quality_enabled` + `iso_thresholds` only
+
 ### 🎉 **NEW: JSON Batch Export - Issue #95**
 
 - **NEW:** **📊 Complete JSON Export for Batch Processing**

@@ -34,7 +34,7 @@ pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use parsers::robust_csv::CsvDiagnostics;
 
 // CLI-specific exports
-pub use core::config::DataprofConfig;
+pub use core::config::{DataprofConfig, DataprofConfigBuilder};
 pub use core::exit_codes;
 pub use core::validation::{InputValidator, ValidationError};
 

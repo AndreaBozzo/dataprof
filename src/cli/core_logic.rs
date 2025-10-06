@@ -92,10 +92,27 @@ pub fn analyze_file_with_options(
     file_path: &Path,
     options: AnalysisOptions,
 ) -> Result<QualityReport> {
-    // Load config (from CLI arg or use default)
-    // TODO: Implement config file loading (from_file, auto-discover)
-    let config = DataprofConfig::default();
-    let _ = options.config; // Acknowledge config option for now
+    // Load config (from CLI arg, auto-discover, or use default)
+    let config = if let Some(config_path) = &options.config {
+        // Explicit config file path provided via CLI
+        match DataprofConfig::load_from_file(config_path) {
+            Ok(cfg) => {
+                log::info!("Loaded configuration from: {}", config_path.display());
+                cfg
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to load config from {}: {}. Using defaults.",
+                    config_path.display(),
+                    e
+                );
+                DataprofConfig::default()
+            }
+        }
+    } else {
+        // No explicit config, try auto-discovery
+        DataprofConfig::load_with_discovery()
+    };
 
     // Detect file format and route to appropriate parser
     if super::commands::is_json_file(file_path) {
