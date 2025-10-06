@@ -3,7 +3,7 @@ use csv::{ReaderBuilder, Trim};
 use std::io::{BufRead, BufReader, Cursor};
 use std::path::Path;
 
-use crate::core::errors::{AutoRecoveryManager, DataProfilerError, RecoveryStrategy, RetryConfig};
+use crate::core::{AutoRecoveryManager, DataProfilerError, RecoveryStrategy, RetryConfig};
 
 /// Result type for robust CSV parsing operations
 pub type RobustParseResult = (Option<Vec<String>>, Vec<Vec<String>>);

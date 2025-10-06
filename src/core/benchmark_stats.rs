@@ -1,8 +1,7 @@
-// Statistics computation module with enhanced statistical rigor
+// Benchmark statistics module with enhanced statistical rigor
+// This module provides statistical analysis specifically for benchmarking and testing,
+// not for user data analysis (use stats/ module for that)
 use std::time::Duration;
-
-// Re-export existing stats logic for backward compatibility
-pub use crate::{calculate_numeric_stats, calculate_text_stats, ColumnStats};
 
 /// Statistical configuration for rigorous benchmarking
 #[derive(Debug, Clone)]

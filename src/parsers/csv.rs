@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::analysis::{analyze_column, analyze_column_fast};
-use crate::core::robust_csv::RobustCsvParser;
 use crate::core::sampling::SamplingStrategy;
+use crate::parsers::robust_csv::RobustCsvParser;
 use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
 // ============================================================================

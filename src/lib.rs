@@ -30,8 +30,8 @@ pub use engines::columnar::ArrowProfiler;
 pub use api::{quick_quality_check, stream_profile, DataProfiler};
 pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
-pub use core::robust_csv::CsvDiagnostics;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
+pub use parsers::robust_csv::CsvDiagnostics;
 
 // CLI-specific exports
 pub use core::config::DataprofConfig;
