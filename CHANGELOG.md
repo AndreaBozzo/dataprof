@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🎉 **NEW: JSON Batch Export - Issue #95**
+
+- **NEW:** **📊 Complete JSON Export for Batch Processing**
+  - `--json <path>` flag for batch command to export structured JSON reports
+  - `--format json` option for batch mode with stdout or file output
+  - Comprehensive JSON structure: summary, per-file reports, errors, aggregated metrics
+  - Full ISO 8000/25012 compliance with all 5 dimensions in JSON output
+  - CI/CD integration ready with machine-readable quality assessment
+
+- **IMPROVED:** **🧹 Formatters Architecture Cleanup**
+  - Removed duplicate structures (JsonSummary, JsonQuality)
+  - DataQualityMetrics as single source of truth for all quality metrics
+  - Full separation of concerns: no redundant quality score calculations
+  - Cleaner JSON output without duplicate metrics
+  - Removed legacy/unused formatter functions
+
 ## [0.4.70] - 2025-10-02 - "Quality-First Pivot: ISO 8000/25012 Focus Edition"
 
 ### ⚠️ **BREAKING: ML Features and Script Generation Removed (~7200 lines)**

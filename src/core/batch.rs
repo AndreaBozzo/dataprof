@@ -58,7 +58,7 @@ pub struct BatchProcessor {
 }
 
 /// Result of batch processing operation
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct BatchResult {
     /// Individual file reports
     pub reports: HashMap<PathBuf, QualityReport>,
@@ -71,7 +71,7 @@ pub struct BatchResult {
 }
 
 /// Summary statistics for batch processing
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct BatchSummary {
     pub total_files: usize,
     pub successful: usize,

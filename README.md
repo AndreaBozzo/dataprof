@@ -90,6 +90,12 @@ dataprof batch /data/folder --recursive --parallel
 # Generate HTML batch dashboard
 dataprof batch /data/folder --recursive --html batch_report.html
 
+# JSON export for CI/CD automation
+dataprof batch /data/folder --json batch_results.json --recursive
+
+# JSON output to stdout
+dataprof batch /data/folder --format json --recursive
+
 # With custom filter and progress
 dataprof batch /data/folder --filter "*.csv" --parallel --progress
 ```
