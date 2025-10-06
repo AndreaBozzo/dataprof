@@ -2,7 +2,7 @@
 /// Tests critical error scenarios that should be properly handled
 use anyhow::Result;
 use dataprof::core::errors::{DataProfilerError, ErrorSeverity};
-use dataprof::core::robust_csv::RobustCsvParser;
+use dataprof::parsers::robust_csv::RobustCsvParser;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
