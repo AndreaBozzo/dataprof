@@ -9,7 +9,7 @@ use crate::core::{AutoRecoveryManager, DataProfilerError, RecoveryStrategy, Retr
 pub type RobustParseResult = (Option<Vec<String>>, Vec<Vec<String>>);
 
 /// Robust CSV parser that handles edge cases and malformed data
-#[derive(Clone)]
+/// No longer derives Clone - uses parameter overrides instead of cloning for recovery
 pub struct RobustCsvParser {
     pub flexible: bool,
     pub quote_char: Option<u8>,
@@ -142,6 +142,7 @@ impl RobustCsvParser {
     }
 
     /// Try a specific recovery strategy
+    /// Optimized to avoid cloning the entire parser - only creates temporary parsing configs
     fn try_recovery_strategy(
         &self,
         file_path: &Path,
@@ -150,11 +151,11 @@ impl RobustCsvParser {
         match strategy {
             RecoveryStrategy::DelimiterDetection { delimiter } => {
                 eprintln!("🔍 Trying delimiter: '{}'", delimiter);
-                let mut parser = self.clone();
-                parser.delimiter = Some(delimiter as u8);
-                parser.parse_csv(file_path).map_err(|e| {
-                    DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
-                })
+                // Parse directly with overridden delimiter instead of cloning parser
+                self.parse_with_override(file_path, Some(delimiter as u8), None, None)
+                    .map_err(|e| {
+                        DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
+                    })
             }
             RecoveryStrategy::EncodingConversion {
                 from: _from,
@@ -163,28 +164,101 @@ impl RobustCsvParser {
                 eprintln!(
                     "🔤 Attempting encoding conversion (placeholder - full implementation needed)"
                 );
-                // For now, try with flexible parsing
-                let mut parser = self.clone();
-                parser.flexible = true;
-                parser.allow_variable_columns = true;
-                parser.parse_csv(file_path).map_err(|e| {
-                    DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
-                })
+                // Try with flexible parsing enabled, without cloning
+                self.parse_with_override(file_path, None, Some(true), Some(true))
+                    .map_err(|e| {
+                        DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
+                    })
             }
             RecoveryStrategy::FlexibleParsing => {
                 eprintln!("🔧 Enabling flexible parsing");
-                let mut parser = self.clone();
-                parser.flexible = true;
-                parser.allow_variable_columns = true;
-                parser.parse_csv(file_path).map_err(|e| {
-                    DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
-                })
+                // Enable flexible parsing without cloning the parser
+                self.parse_with_override(file_path, None, Some(true), Some(true))
+                    .map_err(|e| {
+                        DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
+                    })
             }
             _ => Err(DataProfilerError::csv_parsing(
                 "Unsupported recovery strategy for CSV parsing",
                 &file_path.to_string_lossy(),
             )),
         }
+    }
+
+    /// Internal helper to parse with specific overrides without cloning the parser
+    /// This avoids expensive parser cloning in recovery scenarios
+    fn parse_with_override(
+        &self,
+        file_path: &Path,
+        delimiter_override: Option<u8>,
+        flexible_override: Option<bool>,
+        allow_variable_override: Option<bool>,
+    ) -> Result<(Vec<String>, Vec<Vec<String>>)> {
+        let delimiter = delimiter_override
+            .or(self.delimiter)
+            .unwrap_or_else(|| self.detect_delimiter(file_path).unwrap_or(b','));
+
+        let flexible = flexible_override.unwrap_or(self.flexible);
+        let allow_variable = allow_variable_override.unwrap_or(self.allow_variable_columns);
+
+        // Use flexible parsing directly with overridden parameters
+        self.parse_with_config(file_path, delimiter, flexible, allow_variable)
+    }
+
+    /// Unified parsing method with explicit configuration
+    fn parse_with_config(
+        &self,
+        file_path: &Path,
+        delimiter: u8,
+        flexible: bool,
+        _allow_variable: bool,
+    ) -> Result<(Vec<String>, Vec<Vec<String>>)> {
+        let mut reader = ReaderBuilder::new()
+            .delimiter(delimiter)
+            .has_headers(true)
+            .flexible(flexible)
+            .quote(self.quote_char.unwrap_or(b'"'))
+            .trim(if self.trim_whitespace {
+                Trim::All
+            } else {
+                Trim::None
+            })
+            .from_path(file_path)?;
+
+        let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
+        let expected_field_count = headers.len();
+        let mut records = Vec::new();
+
+        if flexible {
+            // Use flexible parsing logic (similar to try_flexible_parsing)
+            for result in reader.records() {
+                match result {
+                    Ok(record) => {
+                        let mut row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                        // Normalize field count if needed
+                        if row.len() < expected_field_count {
+                            row.resize(expected_field_count, String::new());
+                        } else if row.len() > expected_field_count {
+                            row.truncate(expected_field_count);
+                        }
+                        records.push(row);
+                    }
+                    Err(_) => {
+                        // Skip malformed records in flexible mode
+                        continue;
+                    }
+                }
+            }
+        } else {
+            // Strict parsing
+            for result in reader.records() {
+                let record = result?;
+                let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                records.push(row);
+            }
+        }
+
+        Ok((headers, records))
     }
 
     /// Detect delimiter by sampling the file

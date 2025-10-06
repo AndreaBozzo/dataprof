@@ -79,11 +79,6 @@ pub struct QualityConfig {
     /// Threshold for null value warnings (percentage)
     pub null_threshold: f64,
 
-    /// Outlier detection sensitivity (standard deviations) - DEPRECATED
-    /// Use iso_thresholds.outlier_iqr_multiplier instead
-    #[deprecated(since = "0.5.0", note = "Use iso_thresholds.outlier_iqr_multiplier")]
-    pub outlier_threshold: f64,
-
     /// Enable duplicate detection
     pub detect_duplicates: bool,
 
@@ -293,8 +288,6 @@ impl Default for QualityConfig {
         Self {
             enabled: true,
             null_threshold: 10.0,
-            #[allow(deprecated)]
-            outlier_threshold: 3.0, // Kept for backward compatibility
             detect_duplicates: true,
             detect_mixed_types: true,
             check_date_formats: true,
