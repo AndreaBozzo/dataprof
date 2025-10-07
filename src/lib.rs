@@ -50,11 +50,13 @@ pub use types::{
 };
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
-// Parser API - CSV and JSON analysis functions
+// Parser API - CSV, JSON, and Parquet analysis functions
 pub use parsers::csv::{
     analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
 };
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
+#[cfg(feature = "parquet")]
+pub use parsers::parquet::{analyze_parquet_with_quality, is_parquet_file};
 
 // Analysis utilities - Column-level and statistical functions
 pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MetricsCalculator};

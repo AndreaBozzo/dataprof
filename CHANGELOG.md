@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🚀 **NEW: Parquet File Format Support with Unified API**
+
+- **NEW:** Apache Parquet format support with native columnar processing
+  - `analyze_parquet_with_quality()` - Direct Parquet file analysis
+  - `is_parquet_file()` - Robust format detection via magic number ("PAR1")
+  - Full integration with unified `DataProfiler::auto()` API
+  - Automatic format detection with two-tier approach:
+    - Fast path: File extension check (`.parquet`)
+    - Robust path: Magic number validation (works without extension)
+  - Comprehensive ISO 8000/25012 quality metrics for Parquet data
+  - Example: `examples/parquet_example.rs` demonstrating all features
+
+- **FIXED:** "stream did not contain valid UTF-8" error in unified API
+  - `AdaptiveProfiler` now detects Parquet files before attempting text parsing
+  - Prevents binary file content from being read as UTF-8
+  - Graceful error message when Parquet feature is not enabled
+
+- **IMPROVED:** `AdaptiveProfiler` with binary format awareness
+  - Pre-flight format detection before engine selection
+  - Dedicated routing for binary formats (Parquet, future formats)
+  - Maintains backward compatibility with CSV/JSON workflows
+
 ### 🔧 **REFACTOR: Config Module Technical Debt Cleanup - Issue #98**
 
 - **FIXED:** Critical compilation error - removed broken ML config references

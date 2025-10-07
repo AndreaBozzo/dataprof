@@ -21,7 +21,7 @@ pub struct EnginePerformance {
 
 /// Logger for engine selection and performance
 pub struct EngineLogger {
-    enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl EngineLogger {
@@ -145,6 +145,33 @@ impl AdaptiveProfiler {
         file_path: &Path,
         processing_type: ProcessingType,
     ) -> Result<QualityReport> {
+        // Check if this is a Parquet file - handle separately as it's a binary format
+        // Use both extension check (fast) and magic number check (robust)
+        let is_parquet = file_path
+            .extension()
+            .map(|ext| ext.eq_ignore_ascii_case("parquet"))
+            .unwrap_or(false);
+
+        #[cfg(feature = "parquet")]
+        let is_parquet = is_parquet || crate::parsers::parquet::is_parquet_file(file_path);
+
+        if is_parquet {
+            #[cfg(feature = "parquet")]
+            {
+                if self.logger.enabled {
+                    println!("🗂️  Parquet file detected - using native Parquet parser");
+                }
+                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+            }
+            #[cfg(not(feature = "parquet"))]
+            {
+                return Err(anyhow::anyhow!(
+                    "Parquet file detected but parquet feature is not enabled. \
+                     Recompile with --features parquet"
+                ));
+            }
+        }
+
         // Analyze file characteristics
         let characteristics = self.selector.analyze_file_characteristics(file_path)?;
 

@@ -83,7 +83,7 @@ impl ProfilerBuilder {
 /// High-level function to analyze a file with all improvements
 ///
 /// This function:
-/// - Detects file format (CSV, JSON, JSONL)
+/// - Detects file format (CSV, JSON, JSONL, Parquet)
 /// - Loads config file if specified
 /// - Configures profiler with progress, chunk size, etc.
 /// - Uses robust parsing with fallback
@@ -118,6 +118,18 @@ pub fn analyze_file_with_options(
     if super::commands::is_json_file(file_path) {
         // JSON files: use specialized JSON parser
         dataprof::analyze_json_with_quality(file_path)
+    } else if cfg!(feature = "parquet") && super::commands::is_parquet_file(file_path) {
+        // Parquet files: use Parquet parser (requires parquet feature)
+        #[cfg(feature = "parquet")]
+        {
+            dataprof::analyze_parquet_with_quality(file_path)
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            Err(anyhow::anyhow!(
+                "Parquet support not enabled. Rebuild with --features parquet"
+            ))
+        }
     } else {
         // CSV files: try streaming profiler, fallback to robust parser
         let builder = ProfilerBuilder::new(options, config);
