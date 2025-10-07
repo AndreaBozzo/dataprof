@@ -118,17 +118,24 @@ pub fn analyze_file_with_options(
     if super::commands::is_json_file(file_path) {
         // JSON files: use specialized JSON parser
         dataprof::analyze_json_with_quality(file_path)
-    } else if cfg!(feature = "parquet") && super::commands::is_parquet_file(file_path) {
-        // Parquet files: use Parquet parser (requires parquet feature)
+    } else if {
+        #[cfg(feature = "parquet")]
+        {
+            super::commands::is_parquet_file(file_path)
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            false
+        }
+    } {
+        // Parquet files: use Parquet parser
         #[cfg(feature = "parquet")]
         {
             dataprof::analyze_parquet_with_quality(file_path)
         }
         #[cfg(not(feature = "parquet"))]
         {
-            Err(anyhow::anyhow!(
-                "Parquet support not enabled. Rebuild with --features parquet"
-            ))
+            unreachable!()
         }
     } else {
         // CSV files: try streaming profiler, fallback to robust parser
