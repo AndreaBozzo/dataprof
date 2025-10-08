@@ -278,6 +278,43 @@
                                             <div class="breakdown-stat">Freshness: {{this.metrics.timeliness.freshness}}%</div>
                                         </div>
                                     </div>
+
+                                    {{!-- Parquet Metadata Section (if available) --}}
+                                    {{#if this.parquet_metadata}}
+                                    <div class="parquet-metadata-section">
+                                        <h4>📦 Parquet File Metadata</h4>
+                                        <div class="breakdown-grid">
+                                            <div class="breakdown-card">
+                                                <h5>Row Groups</h5>
+                                                <div class="breakdown-stat">{{this.parquet_metadata.num_row_groups}}</div>
+                                            </div>
+                                            <div class="breakdown-card">
+                                                <h5>Compression</h5>
+                                                <div class="breakdown-stat">{{this.parquet_metadata.compression}}</div>
+                                            </div>
+                                            <div class="breakdown-card">
+                                                <h5>Version</h5>
+                                                <div class="breakdown-stat">{{this.parquet_metadata.version}}</div>
+                                            </div>
+                                            <div class="breakdown-card">
+                                                <h5>Compressed Size</h5>
+                                                <div class="breakdown-stat">{{this.parquet_metadata.compressed_size_mb}} MB</div>
+                                            </div>
+                                            {{#if this.parquet_metadata.compression_ratio}}
+                                            <div class="breakdown-card">
+                                                <h5>Compression Ratio</h5>
+                                                <div class="breakdown-stat">{{this.parquet_metadata.compression_ratio}}</div>
+                                            </div>
+                                            {{/if}}
+                                        </div>
+                                        {{#if this.parquet_metadata.schema_summary}}
+                                        <div class="schema-summary">
+                                            <h5>Schema</h5>
+                                            <pre><code>{{this.parquet_metadata.schema_summary}}</code></pre>
+                                        </div>
+                                        {{/if}}
+                                    </div>
+                                    {{/if}}
                                 </div>
                             </td>
                         </tr>

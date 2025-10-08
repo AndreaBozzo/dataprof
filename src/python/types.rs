@@ -1,5 +1,6 @@
 #![allow(clippy::useless_conversion)]
 
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use crate::core::batch::BatchResult;
@@ -108,6 +109,68 @@ impl PyQualityReport {
     /// Calculate overall quality score (0-100) using DataQualityMetrics
     fn quality_score(&self) -> PyResult<f64> {
         Ok(self.data_quality_metrics.overall_quality_score)
+    }
+
+    /// Export the quality report as JSON string
+    fn to_json(&self, py: Python) -> PyResult<String> {
+        // Convert PyQualityReport back to QualityReport for formatting
+        // This is a workaround since we need the full report structure
+        py.allow_threads(|| {
+            // We need to serialize using serde_json directly since we don't have access
+            // to the original QualityReport here
+            let json_value = serde_json::json!({
+                "metadata": {
+                    "file_path": self.file_path,
+                    "total_rows": self.total_rows,
+                    "total_columns": self.total_columns,
+                    "rows_scanned": self.rows_scanned,
+                    "sampling_ratio": self.sampling_ratio,
+                    "scan_time_ms": self.scan_time_ms as u64,
+                },
+                "data_quality_metrics": {
+                    "overall_quality_score": self.data_quality_metrics.overall_quality_score,
+                    "completeness": {
+                        "missing_values_ratio": self.data_quality_metrics.missing_values_ratio,
+                        "complete_records_ratio": self.data_quality_metrics.complete_records_ratio,
+                        "null_columns": self.data_quality_metrics.null_columns,
+                    },
+                    "consistency": {
+                        "data_type_consistency": self.data_quality_metrics.data_type_consistency,
+                        "format_violations": self.data_quality_metrics.format_violations,
+                        "encoding_issues": self.data_quality_metrics.encoding_issues,
+                    },
+                    "uniqueness": {
+                        "duplicate_rows": self.data_quality_metrics.duplicate_rows,
+                        "key_uniqueness": self.data_quality_metrics.key_uniqueness,
+                        "high_cardinality_warning": self.data_quality_metrics.high_cardinality_warning,
+                    },
+                    "accuracy": {
+                        "outlier_ratio": self.data_quality_metrics.outlier_ratio,
+                        "range_violations": self.data_quality_metrics.range_violations,
+                        "negative_values_in_positive": self.data_quality_metrics.negative_values_in_positive,
+                    },
+                    "timeliness": {
+                        "future_dates_count": self.data_quality_metrics.future_dates_count,
+                        "stale_data_ratio": self.data_quality_metrics.stale_data_ratio,
+                        "temporal_violations": self.data_quality_metrics.temporal_violations,
+                    }
+                },
+                "column_profiles": self.column_profiles.iter().map(|p| {
+                    serde_json::json!({
+                        "name": p.name,
+                        "data_type": p.data_type,
+                        "total_count": p.total_count,
+                        "null_count": p.null_count,
+                        "null_percentage": p.null_percentage,
+                        "unique_count": p.unique_count,
+                        "uniqueness_ratio": p.uniqueness_ratio,
+                    })
+                }).collect::<Vec<_>>()
+            });
+
+            serde_json::to_string_pretty(&json_value)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize to JSON: {}", e)))
+        })
     }
 }
 

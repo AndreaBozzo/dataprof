@@ -3,7 +3,9 @@ use pyo3::prelude::*;
 
 use crate::core::batch::{BatchConfig, BatchProcessor};
 
-use super::analysis::analyze_csv_file;
+#[cfg(feature = "parquet")]
+use super::analysis::analyze_parquet_file;
+use super::analysis::{analyze_csv_file, analyze_json_file};
 use super::types::PyBatchResult;
 
 /// Batch process multiple files using glob pattern
@@ -19,7 +21,12 @@ pub fn batch_analyze_glob(
         parallel: parallel.unwrap_or(true),
         max_concurrent: max_concurrent.unwrap_or_else(num_cpus::get),
         recursive: false, // Not applicable for glob patterns
-        extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
+        extensions: vec![
+            "csv".to_string(),
+            "json".to_string(),
+            "jsonl".to_string(),
+            "parquet".to_string(),
+        ],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
         html_output: html_output.map(std::path::PathBuf::from),
     };
@@ -46,7 +53,12 @@ pub fn batch_analyze_directory(
         parallel: parallel.unwrap_or(true),
         max_concurrent: max_concurrent.unwrap_or_else(num_cpus::get),
         recursive: recursive.unwrap_or(false),
-        extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
+        extensions: vec![
+            "csv".to_string(),
+            "json".to_string(),
+            "jsonl".to_string(),
+            "parquet".to_string(),
+        ],
         exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
         html_output: html_output.map(std::path::PathBuf::from),
     };
@@ -97,9 +109,29 @@ impl PyBatchAnalyzer {
         Ok(false) // Don't suppress exceptions
     }
 
-    /// Add a file to analysis queue
+    /// Add a file to analysis queue (detects format automatically)
     fn add_file(&mut self, py: Python, path: &str) -> PyResult<()> {
-        let result = analyze_csv_file(path)?;
+        // Detect file extension
+        let path_obj = std::path::Path::new(path);
+        let ext = path_obj
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        // Route to appropriate analyzer based on extension
+        let result = match ext.as_str() {
+            "json" | "jsonl" => analyze_json_file(path),
+            #[cfg(feature = "parquet")]
+            "parquet" => analyze_parquet_file(path),
+            #[cfg(not(feature = "parquet"))]
+            "parquet" => Err(PyRuntimeError::new_err(
+                "Parquet support not enabled. Rebuild with --features parquet",
+            )),
+            "csv" => analyze_csv_file(path),
+            _ => analyze_csv_file(path), // Default to CSV for unknown extensions
+        }?;
+
         self.results.push(result.into_pyobject(py)?.into());
         Ok(())
     }
@@ -115,14 +147,35 @@ impl PyBatchAnalyzer {
         Ok(results_ref.into_pyobject(py)?.into())
     }
 
-    /// Analyze multiple files in batch
+    /// Analyze multiple files in batch (detects format automatically)
     fn analyze_batch(&mut self, py: Python, paths: Vec<String>) -> PyResult<PyObject> {
         let mut batch_results: Vec<Py<PyAny>> = Vec::new();
 
         for path in paths {
-            match analyze_csv_file(&path) {
-                Ok(result) => {
-                    batch_results.push(result.into_pyobject(py)?.into());
+            // Detect file extension
+            let path_obj = std::path::Path::new(&path);
+            let ext = path_obj
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            // Route to appropriate analyzer based on extension
+            let result = match ext.as_str() {
+                "json" | "jsonl" => analyze_json_file(&path),
+                #[cfg(feature = "parquet")]
+                "parquet" => analyze_parquet_file(&path),
+                #[cfg(not(feature = "parquet"))]
+                "parquet" => Err(PyRuntimeError::new_err(
+                    "Parquet support not enabled. Rebuild with --features parquet",
+                )),
+                "csv" => analyze_csv_file(&path),
+                _ => analyze_csv_file(&path), // Default to CSV for unknown extensions
+            };
+
+            match result {
+                Ok(profiles) => {
+                    batch_results.push(profiles.into_pyobject(py)?.into());
                 }
                 Err(e) => {
                     return Err(PyRuntimeError::new_err(format!(

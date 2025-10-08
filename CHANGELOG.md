@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🎯 **FEATURE PARITY: Python Bindings Match Rust Core**
+
+- **NEW:** Python bindings now support Parquet in batch processing
+  - `batch_analyze_glob()` and `batch_analyze_directory()` now accept `.parquet` files
+  - `PyBatchAnalyzer.add_file()` with automatic format detection (CSV/JSON/Parquet)
+  - `PyBatchAnalyzer.analyze_batch()` with automatic format detection
+  - Conditional compilation via `#[cfg(feature = "parquet")]` for clean builds
+
+- **IMPROVED:** Batch HTML reports now display Parquet metadata
+  - Extended `build_files_context()` to include Parquet metadata per file
+  - New "📦 Parquet File Metadata" section in batch dashboard file details
+  - Shows: row groups, compression codec, version, compressed size, compression ratio
+  - Schema summary displayed in formatted code blocks
+
+- **IMPROVED:** Enhanced Python type hints and documentation
+  - Updated docstrings for batch functions to indicate Parquet support
+  - `PyBatchAnalyzer` class documentation mentions format detection
+  - Consistent API documentation between single and batch operations
+
+- **FIXED:** Clippy warnings resolved
+  - Removed unused imports in `src/python/types.rs`
+  - Fixed wildcard-in-or-patterns warnings in batch format detection
+
 ### 🚀 **NEW: Production-Ready Parquet Support with Extended Type Coverage**
 
 - **NEW:** Apache Parquet format support with native columnar processing
