@@ -118,16 +118,7 @@ pub fn analyze_file_with_options(
     if super::commands::is_json_file(file_path) {
         // JSON files: use specialized JSON parser
         dataprof::analyze_json_with_quality(file_path)
-    } else if {
-        #[cfg(feature = "parquet")]
-        {
-            super::commands::is_parquet_file(file_path)
-        }
-        #[cfg(not(feature = "parquet"))]
-        {
-            false
-        }
-    } {
+    } else if cfg!(feature = "parquet") && super::commands::is_parquet_file(file_path) {
         // Parquet files: use Parquet parser
         #[cfg(feature = "parquet")]
         {

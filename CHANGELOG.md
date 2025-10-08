@@ -7,27 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### 🚀 **NEW: Parquet File Format Support with Unified API**
+### 🚀 **NEW: Production-Ready Parquet Support with Extended Type Coverage**
 
 - **NEW:** Apache Parquet format support with native columnar processing
   - `analyze_parquet_with_quality()` - Direct Parquet file analysis
+  - `analyze_parquet_with_config()` - Configurable batch size for performance tuning
+  - `ParquetConfig` - Adaptive batch sizing (1KB-32KB based on file size)
   - `is_parquet_file()` - Robust format detection via magic number ("PAR1")
   - Full integration with unified `DataProfiler::auto()` API
   - Automatic format detection with two-tier approach:
     - Fast path: File extension check (`.parquet`)
     - Robust path: Magic number validation (works without extension)
   - Comprehensive ISO 8000/25012 quality metrics for Parquet data
-  - Example: `examples/parquet_example.rs` demonstrating all features
+
+- **IMPROVED:** Complete Arrow type coverage - **21 types supported** (from 7)
+  - Integer types: `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`
+  - Date/Time types: `Date32`, `Date64`, `Timestamp` (4 variants), `Duration` (4 variants)
+  - Numeric types: `Float32`, `Float64`, `Decimal128`, `Decimal256`
+  - Binary types: `Binary`, `LargeBinary`
+  - Generic fallback: Uses Arrow `ArrayFormatter` for complex types (List, Struct, Map)
+  - Type fidelity preserved: Timestamp ≠ Date ≠ Integer in type inference
+
+- **NEW:** Parquet metadata exposure in quality reports
+  - `ParquetMetadata` struct with row groups, compression, version, schema
+  - Compressed size tracking and compression codec detection
+  - Available in JSON exports and programmatic API
+
+- **NEW:** Test data and examples
+  - `generate_test_parquets.rs` - Script to create realistic test files
+  - 3 sample Parquet files in `examples/test_data/`:
+    - `simple.parquet` - Basic types demo (1.7KB)
+    - `ecommerce.parquet` - Business data with Decimal/Timestamp (2.5KB)
+    - `sensors.parquet` - IoT time-series with Date64 (1.9KB)
 
 - **FIXED:** "stream did not contain valid UTF-8" error in unified API
   - `AdaptiveProfiler` now detects Parquet files before attempting text parsing
-  - Prevents binary file content from being read as UTF-8
+  - Report command now uses `DataProfiler::auto()` for format detection
   - Graceful error message when Parquet feature is not enabled
 
-- **IMPROVED:** `AdaptiveProfiler` with binary format awareness
-  - Pre-flight format detection before engine selection
-  - Dedicated routing for binary formats (Parquet, future formats)
-  - Maintains backward compatibility with CSV/JSON workflows
+- **IMPROVED:** Test coverage: **12 integration tests** (from 7)
+  - Extended types, binary, decimal, mixed types, custom batch size, adaptive sizing
+  - All tests passing ✅
 
 ### 🔧 **REFACTOR: Config Module Technical Debt Cleanup - Issue #98**
 

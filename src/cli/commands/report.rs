@@ -42,7 +42,8 @@ use std::fs;
 pub fn execute(args: &ReportArgs) -> Result<()> {
     println!("📊 Generating Report...");
 
-    let mut profiler = DataProfiler::streaming();
+    // Use auto() to support CSV, JSON, and Parquet files automatically
+    let profiler = DataProfiler::auto();
     let report = profiler.analyze_file(&args.file)?;
 
     let output_path = args.output.clone().unwrap_or_else(|| {

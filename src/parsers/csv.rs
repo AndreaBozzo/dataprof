@@ -97,6 +97,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
                 total_rows: Some(0),
                 total_columns: headers.len(),
                 file_size_mb,
+                parquet_metadata: None,
             },
             column_profiles: vec![],
             scan_info: ScanInfo {
@@ -126,6 +127,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
             total_rows: Some(records.len()),
             total_columns: headers.len(),
             file_size_mb,
+            parquet_metadata: None,
         },
         column_profiles,
         scan_info: ScanInfo {
@@ -214,6 +216,7 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
             total_rows: Some(total_rows),
             total_columns: column_profiles.len(),
             file_size_mb,
+            parquet_metadata: None,
         },
         column_profiles,
         scan_info: ScanInfo {

@@ -19,7 +19,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, FileInfo, ParquetMetadata, QualityReport, ScanInfo};
 
 /// Check if a file is a valid Parquet file by examining its magic number
 ///
@@ -81,6 +81,43 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
     &footer == b"PAR1"
 }
 
+/// Configuration options for Parquet analysis
+#[derive(Debug, Clone)]
+pub struct ParquetConfig {
+    /// Batch size for reading Parquet files (number of rows per batch)
+    /// Default: 8192 (optimal for most workloads)
+    /// - Smaller values (1024-4096): Better for memory-constrained environments
+    /// - Larger values (16384-65536): Better for large files with many columns
+    pub batch_size: usize,
+}
+
+impl Default for ParquetConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 8192, // 8K rows - good balance between memory and performance
+        }
+    }
+}
+
+impl ParquetConfig {
+    /// Create new config with custom batch size
+    pub fn with_batch_size(batch_size: usize) -> Self {
+        Self { batch_size }
+    }
+
+    /// Adaptive batch sizing based on file size
+    /// Returns optimal batch size for the given file size
+    pub fn adaptive_batch_size(file_size_bytes: u64) -> usize {
+        match file_size_bytes {
+            0..=1_048_576 => 1024,                // < 1MB: small batches
+            1_048_577..=10_485_760 => 4096,       // 1-10MB: medium batches
+            10_485_761..=104_857_600 => 8192,     // 10-100MB: default batches
+            104_857_601..=1_073_741_824 => 16384, // 100MB-1GB: large batches
+            _ => 32768,                           // > 1GB: very large batches
+        }
+    }
+}
+
 /// Analyze a Parquet file and return a comprehensive quality report
 ///
 /// This function:
@@ -113,6 +150,33 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
+    analyze_parquet_with_config(file_path, &ParquetConfig::default())
+}
+
+/// Analyze a Parquet file with custom configuration
+///
+/// Provides control over batch size and other processing parameters.
+///
+/// # Arguments
+/// * `file_path` - Path to the Parquet file
+/// * `config` - Configuration options for analysis
+///
+/// # Returns
+/// * `QualityReport` with column profiles and quality metrics
+///
+/// # Example
+/// ```no_run
+/// use dataprof::{analyze_parquet_with_config, ParquetConfig};
+/// use std::path::Path;
+///
+/// let config = ParquetConfig::with_batch_size(16384);
+/// let report = analyze_parquet_with_config(Path::new("data.parquet"), &config)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn analyze_parquet_with_config(
+    file_path: &Path,
+    config: &ParquetConfig,
+) -> Result<QualityReport> {
     let start = std::time::Instant::now();
 
     // Open the Parquet file
@@ -125,11 +189,33 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|e| anyhow::anyhow!("Failed to create Parquet reader: {}", e))?;
 
-    // Get schema information
-    let _schema = builder.schema();
+    // Extract Parquet metadata before consuming the builder
+    let parquet_meta = builder.metadata();
+    let file_metadata = parquet_meta.file_metadata();
 
-    // Build the reader with default batch size (Arrow's default is typically 1024)
+    // Extract metadata information
+    let num_row_groups = parquet_meta.num_row_groups();
+    let version = file_metadata.version();
+
+    // Get compression codec from first row group's first column (representative)
+    let compression = if num_row_groups > 0 && parquet_meta.row_group(0).num_columns() > 0 {
+        format!("{:?}", parquet_meta.row_group(0).column(0).compression())
+    } else {
+        "UNKNOWN".to_string()
+    };
+
+    // Calculate compressed size (sum of all row group compressed sizes)
+    let compressed_size_bytes: u64 = (0..num_row_groups)
+        .map(|i| parquet_meta.row_group(i).compressed_size() as u64)
+        .sum();
+
+    // Get schema information
+    let schema = builder.schema();
+    let schema_summary = format!("{}", schema);
+
+    // Build the reader with configured batch size
     let reader = builder
+        .with_batch_size(config.batch_size)
         .build()
         .map_err(|e| anyhow::anyhow!("Failed to build Parquet reader: {}", e))?;
 
@@ -156,12 +242,23 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
 
     let scan_time_ms = start.elapsed().as_millis();
 
+    // Create Parquet metadata
+    let parquet_metadata = Some(ParquetMetadata {
+        num_row_groups,
+        compression,
+        version,
+        schema_summary,
+        compressed_size_bytes,
+        uncompressed_size_bytes: None, // Not readily available without decompressing
+    });
+
     Ok(QualityReport {
         file_info: FileInfo {
             path: file_path.display().to_string(),
             total_rows: Some(total_rows),
             total_columns: column_profiles.len(),
             file_size_mb,
+            parquet_metadata,
         },
         column_profiles,
         scan_info: ScanInfo {

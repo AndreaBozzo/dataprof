@@ -56,7 +56,9 @@ pub use parsers::csv::{
 };
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 #[cfg(feature = "parquet")]
-pub use parsers::parquet::{analyze_parquet_with_quality, is_parquet_file};
+pub use parsers::parquet::{
+    analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file, ParquetConfig,
+};
 
 // Analysis utilities - Column-level and statistical functions
 pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MetricsCalculator};

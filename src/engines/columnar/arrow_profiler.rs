@@ -105,6 +105,7 @@ impl ArrowProfiler {
                 total_rows: Some(total_rows),
                 total_columns: column_profiles.len(),
                 file_size_mb,
+                parquet_metadata: None,
             },
             column_profiles,
             scan_info: ScanInfo {

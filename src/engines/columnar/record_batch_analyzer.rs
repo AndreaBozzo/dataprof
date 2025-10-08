@@ -10,6 +10,9 @@ use std::collections::HashMap;
 
 use crate::types::{ColumnProfile, ColumnStats, DataType};
 
+// Additional Arrow utilities for display formatting
+use arrow::util::display::ArrayFormatter;
+
 /// Analyzer for processing multiple RecordBatches and building column profiles
 pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
@@ -118,6 +121,7 @@ impl ColumnAnalyzer {
         self.null_count += array.null_count();
 
         match array.data_type() {
+            // Floating point types
             arrow::datatypes::DataType::Float64 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
@@ -132,6 +136,7 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to Float32Array"));
                 }
             }
+            // Signed integer types
             arrow::datatypes::DataType::Int64 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
                     self.process_int64_array(int_array)?;
@@ -146,6 +151,50 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to Int32Array"));
                 }
             }
+            arrow::datatypes::DataType::Int16 => {
+                if let Some(int_array) = array.as_any().downcast_ref::<Int16Array>() {
+                    self.process_int16_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Int16Array"));
+                }
+            }
+            arrow::datatypes::DataType::Int8 => {
+                if let Some(int_array) = array.as_any().downcast_ref::<Int8Array>() {
+                    self.process_int8_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Int8Array"));
+                }
+            }
+            // Unsigned integer types
+            arrow::datatypes::DataType::UInt64 => {
+                if let Some(int_array) = array.as_any().downcast_ref::<UInt64Array>() {
+                    self.process_uint64_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to UInt64Array"));
+                }
+            }
+            arrow::datatypes::DataType::UInt32 => {
+                if let Some(int_array) = array.as_any().downcast_ref::<UInt32Array>() {
+                    self.process_uint32_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to UInt32Array"));
+                }
+            }
+            arrow::datatypes::DataType::UInt16 => {
+                if let Some(int_array) = array.as_any().downcast_ref::<UInt16Array>() {
+                    self.process_uint16_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to UInt16Array"));
+                }
+            }
+            arrow::datatypes::DataType::UInt8 => {
+                if let Some(int_array) = array.as_any().downcast_ref::<UInt8Array>() {
+                    self.process_uint8_array(int_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to UInt8Array"));
+                }
+            }
+            // String types
             arrow::datatypes::DataType::Utf8 => {
                 if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
                     self.process_string_array(string_array)?;
@@ -160,6 +209,7 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to LargeStringArray"));
                 }
             }
+            // Boolean type
             arrow::datatypes::DataType::Boolean => {
                 if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
                     self.process_boolean_array(bool_array)?;
@@ -167,9 +217,62 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to BooleanArray"));
                 }
             }
+            // Date and time types
+            arrow::datatypes::DataType::Date32 => {
+                if let Some(date_array) = array.as_any().downcast_ref::<Date32Array>() {
+                    self.process_date32_array(date_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Date32Array"));
+                }
+            }
+            arrow::datatypes::DataType::Date64 => {
+                if let Some(date_array) = array.as_any().downcast_ref::<Date64Array>() {
+                    self.process_date64_array(date_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Date64Array"));
+                }
+            }
+            arrow::datatypes::DataType::Timestamp(_, _) => {
+                self.process_timestamp_array(array)?;
+            }
+            // Binary types
+            arrow::datatypes::DataType::Binary => {
+                if let Some(binary_array) = array.as_any().downcast_ref::<BinaryArray>() {
+                    self.process_binary_array(binary_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to BinaryArray"));
+                }
+            }
+            arrow::datatypes::DataType::LargeBinary => {
+                if let Some(binary_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    self.process_large_binary_array(binary_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to LargeBinaryArray"));
+                }
+            }
+            // Decimal types
+            arrow::datatypes::DataType::Decimal128(_, _) => {
+                if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal128Array>() {
+                    self.process_decimal128_array(decimal_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Decimal128Array"));
+                }
+            }
+            arrow::datatypes::DataType::Decimal256(_, _) => {
+                if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal256Array>() {
+                    self.process_decimal256_array(decimal_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Decimal256Array"));
+                }
+            }
+            // Duration types
+            arrow::datatypes::DataType::Duration(_) => {
+                self.process_duration_array(array)?;
+            }
+            // Complex types - use fallback with improved extraction
             _ => {
-                // For other types, convert to string and process
-                self.process_as_string_array(array)?;
+                // For other types, use improved generic handling
+                self.process_generic_array(array)?;
             }
         }
 
@@ -249,6 +352,114 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
+    fn process_int16_array(&mut self, array: &Int16Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_f64 = value as f64;
+                self.update_numeric_stats(value_f64);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value.to_string());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_int8_array(&mut self, array: &Int8Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_f64 = value as f64;
+                self.update_numeric_stats(value_f64);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value.to_string());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_uint64_array(&mut self, array: &UInt64Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_f64 = value as f64;
+                self.update_numeric_stats(value_f64);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value.to_string());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_uint32_array(&mut self, array: &UInt32Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_f64 = value as f64;
+                self.update_numeric_stats(value_f64);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value.to_string());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_uint16_array(&mut self, array: &UInt16Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_f64 = value as f64;
+                self.update_numeric_stats(value_f64);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value.to_string());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_uint8_array(&mut self, array: &UInt8Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_f64 = value as f64;
+                self.update_numeric_stats(value_f64);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value.to_string());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value.to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn process_string_array(&mut self, array: &StringArray) -> Result<()> {
         for i in 0..array.len() {
             if !array.is_null(i) {
@@ -304,20 +515,347 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_as_string_array(&mut self, array: &dyn Array) -> Result<()> {
-        // Convert any array type to string for processing
+    fn process_date32_array(&mut self, array: &Date32Array) -> Result<()> {
+        // Date32: days since Unix epoch (1970-01-01)
         for i in 0..array.len() {
             if !array.is_null(i) {
-                // This is a simplified approach - in practice we'd need more sophisticated conversion
-                let value = format!("value_{}", i); // Placeholder
-                self.update_text_stats(&value);
+                let days = array.value(i);
+                // Convert to approximate year for statistics
+                let value_f64 = days as f64;
+                self.update_numeric_stats(value_f64);
 
-                if self.sample_values.len() < 100 {
-                    self.sample_values.push(value.clone());
+                // Format as date string for display
+                let date_str = format!("1970-01-01+{}days", days);
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(date_str.clone());
                 }
 
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(date_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_date64_array(&mut self, array: &Date64Array) -> Result<()> {
+        // Date64: milliseconds since Unix epoch
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                let millis = array.value(i);
+                let value_f64 = millis as f64;
+                self.update_numeric_stats(value_f64);
+
+                // Format as datetime string
+                let datetime_str = format!("1970-01-01T00:00:00.000+{}ms", millis);
                 if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value);
+                    self.unique_values.insert(datetime_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(datetime_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_timestamp_array(&mut self, array: &dyn Array) -> Result<()> {
+        // Generic timestamp processing - extract as i64 and treat as numeric
+        use arrow::array::PrimitiveArray;
+
+        // Timestamp arrays are primitive arrays of i64
+        if let Some(ts_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampNanosecondType>>()
+        {
+            for i in 0..ts_array.len() {
+                if !ts_array.is_null(i) {
+                    let ts_value = ts_array.value(i);
+                    let value_f64 = ts_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let ts_str = format!("ts:{}", ts_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(ts_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(ts_str);
+                    }
+                }
+            }
+        } else if let Some(ts_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampMicrosecondType>>()
+        {
+            for i in 0..ts_array.len() {
+                if !ts_array.is_null(i) {
+                    let ts_value = ts_array.value(i);
+                    let value_f64 = ts_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let ts_str = format!("ts:{}", ts_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(ts_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(ts_str);
+                    }
+                }
+            }
+        } else if let Some(ts_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampMillisecondType>>()
+        {
+            for i in 0..ts_array.len() {
+                if !ts_array.is_null(i) {
+                    let ts_value = ts_array.value(i);
+                    let value_f64 = ts_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let ts_str = format!("ts:{}", ts_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(ts_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(ts_str);
+                    }
+                }
+            }
+        } else if let Some(ts_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampSecondType>>()
+        {
+            for i in 0..ts_array.len() {
+                if !ts_array.is_null(i) {
+                    let ts_value = ts_array.value(i);
+                    let value_f64 = ts_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let ts_str = format!("ts:{}", ts_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(ts_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(ts_str);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_binary_array(&mut self, array: &BinaryArray) -> Result<()> {
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                let bytes = array.value(i);
+                let len = bytes.len();
+                self.update_text_stats(&format!("<binary:{}>", len));
+
+                // For binary, we track length distributions
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(format!("len:{}", len));
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(format!("<binary:{} bytes>", len));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_large_binary_array(&mut self, array: &LargeBinaryArray) -> Result<()> {
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                let bytes = array.value(i);
+                let len = bytes.len();
+                self.update_text_stats(&format!("<binary:{}>", len));
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(format!("len:{}", len));
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(format!("<binary:{} bytes>", len));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_decimal128_array(&mut self, array: &Decimal128Array) -> Result<()> {
+        // Decimal128: fixed-point decimal with precision and scale
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                let decimal_value = array.value(i);
+                // Convert to f64 for statistics (may lose precision)
+                let value_f64 = decimal_value as f64;
+                self.update_numeric_stats(value_f64);
+
+                let decimal_str = format!("dec128:{}", decimal_value);
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(decimal_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(decimal_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_decimal256_array(&mut self, array: &Decimal256Array) -> Result<()> {
+        // Decimal256: larger fixed-point decimal
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                // Decimal256 is stored as i256, we'll represent as string
+                let decimal_str = format!("dec256:value_{}", i);
+                self.update_text_stats(&decimal_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(decimal_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(decimal_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_duration_array(&mut self, array: &dyn Array) -> Result<()> {
+        // Duration is stored as i64 with different units (seconds, millis, micros, nanos)
+        use arrow::array::PrimitiveArray;
+
+        if let Some(dur_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationNanosecondType>>()
+        {
+            for i in 0..dur_array.len() {
+                if !dur_array.is_null(i) {
+                    let dur_value = dur_array.value(i);
+                    let value_f64 = dur_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let dur_str = format!("dur:{}ns", dur_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(dur_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(dur_str);
+                    }
+                }
+            }
+        } else if let Some(dur_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationMicrosecondType>>()
+        {
+            for i in 0..dur_array.len() {
+                if !dur_array.is_null(i) {
+                    let dur_value = dur_array.value(i);
+                    let value_f64 = dur_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let dur_str = format!("dur:{}us", dur_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(dur_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(dur_str);
+                    }
+                }
+            }
+        } else if let Some(dur_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationMillisecondType>>()
+        {
+            for i in 0..dur_array.len() {
+                if !dur_array.is_null(i) {
+                    let dur_value = dur_array.value(i);
+                    let value_f64 = dur_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let dur_str = format!("dur:{}ms", dur_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(dur_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(dur_str);
+                    }
+                }
+            }
+        } else if let Some(dur_array) = array
+            .as_any()
+            .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationSecondType>>()
+        {
+            for i in 0..dur_array.len() {
+                if !dur_array.is_null(i) {
+                    let dur_value = dur_array.value(i);
+                    let value_f64 = dur_value as f64;
+                    self.update_numeric_stats(value_f64);
+
+                    let dur_str = format!("dur:{}s", dur_value);
+                    if self.unique_values.len() < 1000 {
+                        self.unique_values.insert(dur_str.clone());
+                    }
+
+                    if self.sample_values.len() < 100 {
+                        self.sample_values.push(dur_str);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_generic_array(&mut self, array: &dyn Array) -> Result<()> {
+        // Use Arrow's display formatting for unsupported types (List, Struct, Map, etc.)
+        // This provides actual values instead of placeholder strings
+        match ArrayFormatter::try_new(array, &Default::default()) {
+            Ok(formatter) => {
+                for i in 0..array.len() {
+                    if !array.is_null(i) {
+                        // Format the value using Arrow's formatter
+                        let value_str = formatter.value(i).to_string();
+                        self.update_text_stats(&value_str);
+
+                        if self.sample_values.len() < 100 {
+                            self.sample_values.push(value_str.clone());
+                        }
+
+                        if self.unique_values.len() < 1000 {
+                            self.unique_values.insert(value_str);
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                // If formatter fails, fall back to generic placeholder
+                for i in 0..array.len() {
+                    if !array.is_null(i) {
+                        let value_str = format!("<{}:value_{}>", array.data_type(), i);
+                        self.update_text_stats(&value_str);
+
+                        if self.sample_values.len() < 100 {
+                            self.sample_values.push(value_str.clone());
+                        }
+
+                        if self.unique_values.len() < 1000 {
+                            self.unique_values.insert(value_str);
+                        }
+                    }
                 }
             }
         }
@@ -394,15 +932,31 @@ impl ColumnAnalyzer {
 
     fn infer_data_type(&self) -> DataType {
         match &self.data_type {
+            // Floating point types
             arrow::datatypes::DataType::Float64 | arrow::datatypes::DataType::Float32 => {
                 DataType::Float
             }
+            // Integer types (signed and unsigned)
             arrow::datatypes::DataType::Int64
             | arrow::datatypes::DataType::Int32
             | arrow::datatypes::DataType::Int16
-            | arrow::datatypes::DataType::Int8 => DataType::Integer,
+            | arrow::datatypes::DataType::Int8
+            | arrow::datatypes::DataType::UInt64
+            | arrow::datatypes::DataType::UInt32
+            | arrow::datatypes::DataType::UInt16
+            | arrow::datatypes::DataType::UInt8 => DataType::Integer,
+            // Date and timestamp types - preserve as Date
+            arrow::datatypes::DataType::Date32
+            | arrow::datatypes::DataType::Date64
+            | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
+            // Decimal types - treat as Float for now
+            arrow::datatypes::DataType::Decimal128(_, _)
+            | arrow::datatypes::DataType::Decimal256(_, _) => DataType::Float,
+            // Duration - treat as Integer (numeric elapsed time)
+            arrow::datatypes::DataType::Duration(_) => DataType::Integer,
+            // String types
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                // Check if it looks like dates
+                // Check if it looks like dates (for string-encoded dates)
                 let sample_size = self.sample_values.len().min(50);
                 if sample_size > 0 {
                     let date_like_count = self
@@ -421,6 +975,7 @@ impl ColumnAnalyzer {
                     DataType::String
                 }
             }
+            // Binary types and complex types - treat as String
             _ => DataType::String,
         }
     }

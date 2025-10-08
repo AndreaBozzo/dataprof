@@ -95,6 +95,7 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
                 total_rows: Some(0),
                 total_columns: 0,
                 file_size_mb,
+                parquet_metadata: None,
             },
             column_profiles: vec![],
             scan_info: ScanInfo {
@@ -153,6 +154,7 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
             total_rows: Some(records.len()),
             total_columns: column_profiles.len(),
             file_size_mb,
+            parquet_metadata: None,
         },
         column_profiles,
         scan_info: ScanInfo {
