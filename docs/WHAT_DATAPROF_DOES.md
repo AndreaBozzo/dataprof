@@ -1,6 +1,6 @@
 # What DataProf Does: Complete Transparency Guide
 
-> **Last Updated:** 2025-10-02 | **Version:** 0.4.70
+> **Last Updated:** 2025-10-09 | **Version:** 0.4.75
 
 ## 🔒 TL;DR - Privacy First
 
@@ -32,7 +32,7 @@
 
 This document provides **complete transparency** about what DataProf analyzes when you process your data files. Every metric, calculation, and data point is documented here with source code references for independent verification.
 
-**Audit Status:** ✅ Complete codebase audit performed on 2025-10-02
+**Audit Status:** ✅ Complete codebase audit performed on 2025-10-09
 
 ---
 

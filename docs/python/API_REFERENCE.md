@@ -57,7 +57,7 @@ profiles = dataprof.analyze_json_file("data.jsonl")
 ### Batch Processing
 
 #### `batch_analyze_directory(directory: str, recursive: bool = False, parallel: bool = True, max_concurrent: Optional[int] = None) -> PyBatchResult`
-Process all supported files in a directory with high-performance parallel processing.
+Process all supported files (CSV, JSON/JSONL, Parquet) in a directory with high-performance parallel processing.
 
 **Parameters:**
 - `directory` (str): Directory path to analyze
@@ -68,6 +68,11 @@ Process all supported files in a directory with high-performance parallel proces
 **Returns:**
 - `PyBatchResult` object with processing statistics
 
+**Supported Formats:**
+- CSV files (`.csv`)
+- JSON/JSONL files (`.json`, `.jsonl`)
+- Parquet files (`.parquet`) - requires `parquet` feature flag
+
 **Example:**
 ```python
 result = dataprof.batch_analyze_directory("/data", recursive=True)
@@ -75,19 +80,28 @@ print(f"Processed {result.processed_files} files at {result.files_per_second:.1f
 ```
 
 #### `batch_analyze_glob(pattern: str, parallel: bool = True, max_concurrent: Optional[int] = None) -> PyBatchResult`
-Process files matching a glob pattern.
+Process files matching a glob pattern. Supports CSV, JSON/JSONL, and Parquet formats.
 
 **Parameters:**
-- `pattern` (str): Glob pattern (e.g., "/data/**/*.csv")
+- `pattern` (str): Glob pattern (e.g., "/data/**/*.csv", "/data/**/*.parquet")
 - `parallel` (bool): Enable parallel processing (default: True)
 - `max_concurrent` (Optional[int]): Maximum concurrent files (default: CPU count)
 
 **Returns:**
 - `PyBatchResult` object with processing statistics
 
+**Supported Formats:**
+- CSV files (`.csv`)
+- JSON/JSONL files (`.json`, `.jsonl`)
+- Parquet files (`.parquet`) - requires `parquet` feature flag
+
 **Example:**
 ```python
+# Process all CSV files
 result = dataprof.batch_analyze_glob("/data/**/*.csv")
+
+# Process all Parquet files
+result = dataprof.batch_analyze_glob("/data/**/*.parquet")
 ```
 
 ## Python Logging Integration

@@ -36,10 +36,11 @@ print(f"Consistency: {metrics.data_type_consistency:.1f}%")
 - **📊 Comprehensive Profiling**: Data types, nulls, distributions, quality issues
 - **📏 ISO 8000/25012 Compliant**: Industry-standard quality assessment across 5 dimensions
 - **🐼 Pandas Integration**: Native DataFrame support when pandas is available
-- **⚡ Batch Processing**: Parallel processing for multiple files
+- **⚡ Batch Processing**: Parallel processing for multiple files (CSV, JSON/JSONL, Parquet)
 - **📱 Jupyter Support**: Rich HTML displays in notebooks
 - **🔍 Quality Assessment**: Automated data quality issue detection
 - **🎯 Type Safety**: Complete type hints with mypy compatibility
+- **📦 Parquet Support**: Native columnar format analysis (requires `parquet` feature)
 
 ## 🎯 Use Cases
 
@@ -71,10 +72,13 @@ print(f"Accuracy: {metrics.accuracy_summary()}")
 
 ### Batch File Analysis
 ```python
-# Process multiple files in parallel
+# Process multiple files in parallel (CSV, JSON/JSONL, Parquet)
 result = dataprof.batch_analyze_directory("/data", recursive=True)
 print(f"Processed {result.processed_files} files at {result.files_per_second:.1f} files/sec")
 print(f"Average quality: {result.average_quality_score:.1f}%")
+
+# Process specific format with glob pattern
+result = dataprof.batch_analyze_glob("/data/**/*.parquet")
 ```
 
 ### Pandas Integration

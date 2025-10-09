@@ -309,9 +309,11 @@ dataprof table_name --database "..." --quality --ml-score
 
 ## Batch Processing
 
+Batch processing supports CSV, JSON/JSONL, and Parquet formats (Parquet requires `--features parquet` at build time).
+
 ### Directory Processing
 ```bash
-# Process all files in directory
+# Process all files in directory (CSV, JSON/JSONL, Parquet)
 dataprof batch /data/folder
 
 # Recursive processing
