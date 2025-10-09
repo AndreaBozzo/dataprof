@@ -1,12 +1,21 @@
 [package]
 name = "dataprof"
-version = "0.4.70"
+version = "0.4.75"
 edition = "2021"
 license = "MIT"
 authors = ["Andrea Bozzo"]
-description = "A fast, lightweight CLI tool for CSV and JSON data profiling and analysis"
+description = "High-performance data profiler with ISO 8000/25012 quality metrics for CSV, JSON/JSONL, and Parquet files"
 repository = "https://github.com/AndreaBozzo/dataprof"
-keywords = ["csv", "data", "analysis", "profiling", "cli"]
+keywords = [
+    "csv",
+    "data",
+    "analysis",
+    "profiling",
+    "cli",
+    "data-quality",
+    "JSON",
+    "parquet",
+]
 categories = ["command-line-utilities", "data-structures"]
 
 [dependencies]
