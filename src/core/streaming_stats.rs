@@ -160,6 +160,11 @@ impl StreamingStatistics {
         &self.sample_values
     }
 
+    /// Get text lengths for detailed analysis
+    pub fn text_lengths(&self) -> &[usize] {
+        &self.text_lengths
+    }
+
     /// Calculate text length statistics
     pub fn text_length_stats(&self) -> TextLengthStats {
         if self.text_lengths.is_empty() {

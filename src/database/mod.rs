@@ -218,6 +218,7 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 total_rows: Some(0),
                 total_columns: 0,
                 file_size_mb: 0.0,
+                parquet_metadata: None,
             },
             column_profiles: vec![],
             scan_info: ScanInfo {
@@ -264,6 +265,7 @@ pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<Qua
             total_rows: Some(effective_total_rows as usize),
             total_columns: column_profiles.len(),
             file_size_mb: 0.0, // Not applicable for database queries
+            parquet_metadata: None,
         },
         column_profiles,
         scan_info: ScanInfo {

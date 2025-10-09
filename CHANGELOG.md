@@ -7,6 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.75] - 2025-01-09
+
+### 🧹 **REFACTORING: Post-First-Month Cleanup (Phase 1 & 2)**
+
+- **REMOVED:** Legacy and deprecated code cleanup
+  - Removed unused `run_subcommand_mode()` function from `main.rs`
+  - Removed deprecated `_ml_code_enabled` parameter from `batch_results.rs`
+  - Removed deprecated `calculate_comprehensive_metrics_static()` method
+  - Removed backward compatibility alias `calculate_overall_quality_score()`
+  - Consolidated `api/simple.rs` into `api/mod.rs` (eliminated redundant wrapper)
+  - **Impact:** ~200 lines of technical debt eliminated
+
+- **IMPROVED:** Arrow Profiler now production-ready with complete feature parity
+  - Fixed sample collection: `ColumnAnalyzer` now properly exposes samples for quality metrics
+  - Extended Arrow type support: Added Boolean, Date32/64, Timestamp (all 4 variants), Binary/LargeBinary
+  - Fixed `process_as_string_array()`: Now uses Arrow's `array_value_to_string()` instead of placeholders
+  - Binary arrays displayed as hex strings (first 8 bytes) for inspection
+  - **Impact:** Arrow profiler achieves complete ISO 8000/25012 quality metrics support
+
+- **TESTING:** All test suites passing with zero regressions
+  - 75/75 library tests passing
+  - Arrow-specific tests verified
+  - Compilation time stable with incremental builds
+
+### 🎯 **FEATURE PARITY: Python Bindings Match Rust Core**
+
+- **NEW:** Python bindings now support Parquet in batch processing
+  - `batch_analyze_glob()` and `batch_analyze_directory()` now accept `.parquet` files
+  - `PyBatchAnalyzer.add_file()` with automatic format detection (CSV/JSON/Parquet)
+  - `PyBatchAnalyzer.analyze_batch()` with automatic format detection
+  - Conditional compilation via `#[cfg(feature = "parquet")]` for clean builds
+
+- **IMPROVED:** Batch HTML reports now display Parquet metadata
+  - Extended `build_files_context()` to include Parquet metadata per file
+  - New "📦 Parquet File Metadata" section in batch dashboard file details
+  - Shows: row groups, compression codec, version, compressed size, compression ratio
+  - Schema summary displayed in formatted code blocks
+
+- **IMPROVED:** Enhanced Python type hints and documentation
+  - Updated docstrings for batch functions to indicate Parquet support
+  - `PyBatchAnalyzer` class documentation mentions format detection
+  - Consistent API documentation between single and batch operations
+
+- **FIXED:** Clippy warnings resolved
+  - Removed unused imports in `src/python/types.rs`
+  - Fixed wildcard-in-or-patterns warnings in batch format detection
+
+### 🚀 **NEW: Production-Ready Parquet Support with Extended Type Coverage**
+
+- **NEW:** Apache Parquet format support with native columnar processing
+  - `analyze_parquet_with_quality()` - Direct Parquet file analysis
+  - `analyze_parquet_with_config()` - Configurable batch size for performance tuning
+  - `ParquetConfig` - Adaptive batch sizing (1KB-32KB based on file size)
+  - `is_parquet_file()` - Robust format detection via magic number ("PAR1")
+  - Full integration with unified `DataProfiler::auto()` API
+  - Automatic format detection with two-tier approach:
+    - Fast path: File extension check (`.parquet`)
+    - Robust path: Magic number validation (works without extension)
+  - Comprehensive ISO 8000/25012 quality metrics for Parquet data
+
+- **IMPROVED:** Complete Arrow type coverage - **21 types supported** (from 7)
+  - Integer types: `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`
+  - Date/Time types: `Date32`, `Date64`, `Timestamp` (4 variants), `Duration` (4 variants)
+  - Numeric types: `Float32`, `Float64`, `Decimal128`, `Decimal256`
+  - Binary types: `Binary`, `LargeBinary`
+  - Generic fallback: Uses Arrow `ArrayFormatter` for complex types (List, Struct, Map)
+  - Type fidelity preserved: Timestamp ≠ Date ≠ Integer in type inference
+
+- **NEW:** Parquet metadata exposure in quality reports
+  - `ParquetMetadata` struct with row groups, compression, version, schema
+  - Compressed size tracking and compression codec detection
+  - Available in JSON exports and programmatic API
+
+- **NEW:** Test data and examples
+  - `generate_test_parquets.rs` - Script to create realistic test files
+  - 3 sample Parquet files in `examples/test_data/`:
+    - `simple.parquet` - Basic types demo (1.7KB)
+    - `ecommerce.parquet` - Business data with Decimal/Timestamp (2.5KB)
+    - `sensors.parquet` - IoT time-series with Date64 (1.9KB)
+
+- **FIXED:** "stream did not contain valid UTF-8" error in unified API
+  - `AdaptiveProfiler` now detects Parquet files before attempting text parsing
+  - Report command now uses `DataProfiler::auto()` for format detection
+  - Graceful error message when Parquet feature is not enabled
+
+- **IMPROVED:** Test coverage: **12 integration tests** (from 7)
+  - Extended types, binary, decimal, mixed types, custom batch size, adaptive sizing
+  - All tests passing ✅
+
+### 🔧 **REFACTOR: Config Module Technical Debt Cleanup - Issue #98**
+
+- **FIXED:** Critical compilation error - removed broken ML config references
+- **IMPROVED:** Magic numbers → 27+ documented named constants with rationale
+- **NEW:** Builder pattern for fluent configuration API
+  - `DataprofConfigBuilder` with 30+ chainable methods
+  - Preset configurations: `ci_preset()`, `interactive_preset()`, `production_quality_preset()`
+  - ISO quality profiles: `iso_quality_profile_strict()`, `iso_quality_profile_lenient()`
+- **IMPROVED:** Config file loading with auto-discovery
+  - Fixed TODO in `core_logic.rs` - proper config file loading implemented
+  - Auto-discovery: `.dataprof.toml`, `~/.config/dataprof/config.toml`, `dataprof.toml`
+  - Enhanced logging: `✓ Loaded configuration from...` with clear feedback
+- **IMPROVED:** Comprehensive validation with actionable error messages
+  - 20+ validation checks with `→ Fix:` and `→ Recommended:` guidance
+  - New validations: chunk size, memory limits, concurrent operations, database settings
+- **REFACTOR:** Consolidated overlapping config structures (no breaking changes)
+  - Removed dead code from `QualityConfig`: `null_threshold`, `detect_duplicates`, `detect_mixed_types`, `check_date_formats`
+  - Single source of truth: all quality control via `IsoQualityThresholds`
+  - Eliminated 4 unused fields + 4 constants + 2 builder methods
+  - Cleaner API: `quality_enabled` + `iso_thresholds` only
+
+### 🎉 **NEW: JSON Batch Export - Issue #95**
+
+- **NEW:** **📊 Complete JSON Export for Batch Processing**
+  - `--json <path>` flag for batch command to export structured JSON reports
+  - `--format json` option for batch mode with stdout or file output
+  - Comprehensive JSON structure: summary, per-file reports, errors, aggregated metrics
+  - Full ISO 8000/25012 compliance with all 5 dimensions in JSON output
+  - CI/CD integration ready with machine-readable quality assessment
+
+- **IMPROVED:** **🧹 Formatters Architecture Cleanup**
+  - Removed duplicate structures (JsonSummary, JsonQuality)
+  - DataQualityMetrics as single source of truth for all quality metrics
+  - Full separation of concerns: no redundant quality score calculations
+  - Cleaner JSON output without duplicate metrics
+  - Removed legacy/unused formatter functions
+
 ## [0.4.70] - 2025-10-02 - "Quality-First Pivot: ISO 8000/25012 Focus Edition"
 
 ### ⚠️ **BREAKING: ML Features and Script Generation Removed (~7200 lines)**

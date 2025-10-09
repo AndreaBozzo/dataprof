@@ -140,11 +140,23 @@ impl QualityReport {
     pub fn quality_score(&self) -> f64 {
         self.data_quality_metrics.overall_score()
     }
+}
 
-    /// Alias for backward compatibility with legacy tests
-    pub fn calculate_overall_quality_score(&self) -> f64 {
-        self.quality_score()
-    }
+/// Metadata specific to Parquet files
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ParquetMetadata {
+    /// Number of row groups in the Parquet file
+    pub num_row_groups: usize,
+    /// Compression codec used (e.g., "SNAPPY", "GZIP", "ZSTD", "UNCOMPRESSED")
+    pub compression: String,
+    /// Parquet file version (e.g., "1.0", "2.0")
+    pub version: i32,
+    /// Arrow schema as string representation
+    pub schema_summary: String,
+    /// Total compressed size in bytes
+    pub compressed_size_bytes: u64,
+    /// Estimated uncompressed size if available
+    pub uncompressed_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -153,6 +165,9 @@ pub struct FileInfo {
     pub total_rows: Option<usize>,
     pub total_columns: usize,
     pub file_size_mb: f64,
+    /// Parquet-specific metadata (only present for Parquet files)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parquet_metadata: Option<ParquetMetadata>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

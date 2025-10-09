@@ -312,34 +312,58 @@ dataprof table_name --database "..." --quality --ml-score
 ### Directory Processing
 ```bash
 # Process all files in directory
-dataprof /data/folder --quality
+dataprof batch /data/folder
 
 # Recursive processing
-dataprof /data/folder --recursive --quality
+dataprof batch /data/folder --recursive
 
 # Parallel processing
-dataprof /data/folder --recursive --parallel --progress
+dataprof batch /data/folder --recursive --parallel --progress
 ```
+
+### JSON Export for CI/CD Integration
+```bash
+# Export batch results to JSON file (perfect for automation)
+dataprof batch /data/folder --json results.json --recursive
+
+# JSON output to stdout for piping
+dataprof batch /data/folder --format json --recursive
+
+# Combine with HTML report
+dataprof batch /data/folder --json batch.json --html report.html --recursive
+
+# Complete CI/CD pipeline
+dataprof batch /data/warehouse --json quality.json --parallel --recursive
+```
+
+**JSON Structure:**
+- `summary`: Aggregated statistics (total files, success rate, average quality)
+- `file_reports`: Per-file quality metrics with ISO 8000/25012 dimensions
+- `errors`: Failed files with error details
+- `aggregated_metrics`: Combined data quality metrics across all files
 
 ### Glob Pattern Processing
 ```bash
 # All CSV files in subdirectories
-dataprof --glob "data/**/*.csv" --quality
+dataprof batch --glob "data/**/*.csv"
 
-# Multiple file types
-dataprof --glob "data/**/*.{csv,json}" --parallel
+# Multiple file types with JSON export
+dataprof batch --glob "data/**/*.{csv,json}" --json output.json --parallel
 
 # Specific pattern matching
-dataprof --glob "sales_*_2024.csv" --quality --format json
+dataprof batch --glob "sales_*_2024.csv" --format json
 ```
 
 ### Batch Configuration
 ```bash
 # Control parallelism (default: auto-detect CPU cores)
-dataprof /data --recursive --parallel --max-concurrent 4
+dataprof batch /data --recursive --parallel --max-concurrent 4
 
 # Progress tracking for batch operations
-dataprof /data --recursive --progress --quality
+dataprof batch /data --recursive --progress
+
+# Generate both HTML and JSON outputs
+dataprof batch /data --html dashboard.html --json metrics.json --recursive
 ```
 
 ### Batch ML Processing

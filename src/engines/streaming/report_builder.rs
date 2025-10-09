@@ -53,6 +53,7 @@ impl ReportBuilder {
                 total_rows: Some(stats.total_rows_processed),
                 total_columns: column_profiles.len(),
                 file_size_mb: self.file_size_mb,
+                parquet_metadata: None,
             },
             column_profiles,
             scan_info: ScanInfo {

@@ -30,11 +30,11 @@ pub use engines::columnar::ArrowProfiler;
 pub use api::{quick_quality_check, stream_profile, DataProfiler};
 pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
-pub use core::robust_csv::CsvDiagnostics;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
+pub use parsers::robust_csv::CsvDiagnostics;
 
 // CLI-specific exports
-pub use core::config::DataprofConfig;
+pub use core::config::{DataprofConfig, DataprofConfigBuilder};
 pub use core::exit_codes;
 pub use core::validation::{InputValidator, ValidationError};
 
@@ -50,11 +50,15 @@ pub use types::{
 };
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
-// Parser API - CSV and JSON analysis functions
+// Parser API - CSV, JSON, and Parquet analysis functions
 pub use parsers::csv::{
     analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
 };
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
+#[cfg(feature = "parquet")]
+pub use parsers::parquet::{
+    analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file, ParquetConfig,
+};
 
 // Analysis utilities - Column-level and statistical functions
 pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MetricsCalculator};

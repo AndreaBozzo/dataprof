@@ -4,143 +4,37 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
+use crate::core::streaming_stats::StreamingStatistics;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
 use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
-/// Streaming statistics for incremental computation
-#[derive(Debug, Clone)]
-struct StreamingStats {
-    count: usize,
-    sum: f64,
-    sum_squares: f64,
-    min: f64,
-    max: f64,
-}
-
-impl StreamingStats {
-    fn new() -> Self {
-        Self {
-            count: 0,
-            sum: 0.0,
-            sum_squares: 0.0,
-            min: f64::INFINITY,
-            max: f64::NEG_INFINITY,
-        }
-    }
-
-    fn update(&mut self, value: f64) {
-        self.count += 1;
-        self.sum += value;
-        self.sum_squares += value * value;
-        self.min = self.min.min(value);
-        self.max = self.max.max(value);
-    }
-
-    fn mean(&self) -> f64 {
-        if self.count > 0 {
-            self.sum / self.count as f64
-        } else {
-            0.0
-        }
-    }
-
-    #[allow(dead_code)] // Future use for distributed processing
-    fn merge(&mut self, other: &StreamingStats) {
-        self.count += other.count;
-        self.sum += other.sum;
-        self.sum_squares += other.sum_squares;
-        self.min = self.min.min(other.min);
-        self.max = self.max.max(other.max);
-    }
-}
-
 /// Column metadata for streaming aggregation
+/// Now uses the canonical StreamingStatistics from core module
 #[derive(Debug)]
 struct StreamingColumnInfo {
     name: String,
-    total_count: usize,
-    null_count: usize,
-    unique_values: std::collections::HashSet<String>,
-    numeric_stats: Option<StreamingStats>,
-    text_lengths: Vec<usize>,
-    sample_values: Vec<String>, // Keep a sample for pattern detection
+    /// Streaming statistics aggregator (from core::streaming_stats)
+    stats: StreamingStatistics,
 }
 
 impl StreamingColumnInfo {
     fn new(name: String) -> Self {
         Self {
             name,
-            total_count: 0,
-            null_count: 0,
-            unique_values: std::collections::HashSet::new(),
-            numeric_stats: None,
-            text_lengths: Vec::new(),
-            sample_values: Vec::new(),
+            // Use the canonical streaming statistics with default limits
+            stats: StreamingStatistics::new(),
         }
     }
 
     fn process_value(&mut self, value: &str) {
-        self.total_count += 1;
-
-        if value.is_empty() {
-            self.null_count += 1;
-            return;
-        }
-
-        // Track unique values (with limit to prevent memory explosion)
-        if self.unique_values.len() < 10_000 {
-            self.unique_values.insert(value.to_string());
-        }
-
-        // Keep sample values for pattern detection (limit to prevent memory issues)
-        if self.sample_values.len() < 1000 {
-            self.sample_values.push(value.to_string());
-        }
-
-        // Track text length
-        self.text_lengths.push(value.len());
-
-        // Try to parse as numeric
-        if let Ok(num) = value.parse::<f64>() {
-            if self.numeric_stats.is_none() {
-                self.numeric_stats = Some(StreamingStats::new());
-            }
-            if let Some(stats) = &mut self.numeric_stats {
-                stats.update(num);
-            }
-        }
+        // Delegate to canonical StreamingStatistics implementation
+        self.stats.update(value);
     }
 
     #[allow(dead_code)] // Future use for distributed processing
     fn merge(&mut self, other: StreamingColumnInfo) {
-        self.total_count += other.total_count;
-        self.null_count += other.null_count;
-
-        // Merge unique values (with size limit)
-        for value in other.unique_values {
-            if self.unique_values.len() < 10_000 {
-                self.unique_values.insert(value);
-            }
-        }
-
-        // Merge text lengths
-        self.text_lengths.extend(other.text_lengths);
-
-        // Merge sample values
-        for value in other.sample_values {
-            if self.sample_values.len() < 1000 {
-                self.sample_values.push(value);
-            }
-        }
-
-        // Merge numeric stats
-        if let (Some(self_stats), Some(other_stats)) =
-            (&mut self.numeric_stats, &other.numeric_stats)
-        {
-            self_stats.merge(other_stats);
-        } else if other.numeric_stats.is_some() {
-            self.numeric_stats = other.numeric_stats;
-        }
+        // Delegate merge to canonical implementation
+        self.stats.merge(&other.stats);
     }
 }
 
@@ -304,6 +198,7 @@ impl MemoryEfficientProfiler {
                 total_rows: Some(estimated_total_rows),
                 total_columns: column_profiles.len(),
                 file_size_mb,
+                parquet_metadata: None,
             },
             column_profiles,
             scan_info: ScanInfo {
@@ -344,11 +239,15 @@ impl MemoryEfficientProfiler {
     fn convert_to_column_profile(&self, column_info: StreamingColumnInfo) -> ColumnProfile {
         use crate::types::{ColumnStats, DataType};
 
-        // Infer data type
-        let data_type = if column_info.numeric_stats.is_some() {
+        // Get sample values from StreamingStatistics
+        let sample_values = column_info.stats.sample_values();
+        let text_lengths = column_info.stats.text_lengths();
+
+        // Infer data type - check if numeric data was collected
+        let has_numeric = column_info.stats.min < f64::INFINITY;
+        let data_type = if has_numeric {
             // Check if all numeric values are integers
-            let all_integers = column_info
-                .sample_values
+            let all_integers = sample_values
                 .iter()
                 .filter(|s| !s.is_empty())
                 .all(|s| s.parse::<i64>().is_ok());
@@ -360,44 +259,32 @@ impl MemoryEfficientProfiler {
             }
         } else {
             // Check if looks like dates
-            let date_like = column_info
-                .sample_values
+            let date_like = sample_values
                 .iter()
                 .filter(|s| !s.is_empty())
                 .take(100)
                 .filter(|s| self.looks_like_date(s))
                 .count();
 
-            if date_like > column_info.sample_values.len() / 2 {
+            if date_like > sample_values.len() / 2 {
                 DataType::Date
             } else {
                 DataType::String
             }
         };
 
-        // Calculate stats
+        // Calculate stats from StreamingStatistics
         let stats = match data_type {
-            DataType::Integer | DataType::Float => {
-                if let Some(numeric_stats) = &column_info.numeric_stats {
-                    ColumnStats::Numeric {
-                        min: numeric_stats.min,
-                        max: numeric_stats.max,
-                        mean: numeric_stats.mean(),
-                    }
-                } else {
-                    ColumnStats::Numeric {
-                        min: 0.0,
-                        max: 0.0,
-                        mean: 0.0,
-                    }
-                }
-            }
+            DataType::Integer | DataType::Float => ColumnStats::Numeric {
+                min: column_info.stats.min,
+                max: column_info.stats.max,
+                mean: column_info.stats.mean(),
+            },
             DataType::String | DataType::Date => {
-                let min_length = column_info.text_lengths.iter().min().copied().unwrap_or(0);
-                let max_length = column_info.text_lengths.iter().max().copied().unwrap_or(0);
-                let avg_length = if !column_info.text_lengths.is_empty() {
-                    column_info.text_lengths.iter().sum::<usize>() as f64
-                        / column_info.text_lengths.len() as f64
+                let min_length = text_lengths.iter().min().copied().unwrap_or(0);
+                let max_length = text_lengths.iter().max().copied().unwrap_or(0);
+                let avg_length = if !text_lengths.is_empty() {
+                    text_lengths.iter().sum::<usize>() as f64 / text_lengths.len() as f64
                 } else {
                     0.0
                 };
@@ -411,14 +298,14 @@ impl MemoryEfficientProfiler {
         };
 
         // Detect patterns using sample values
-        let patterns = crate::detect_patterns(&column_info.sample_values);
+        let patterns = crate::detect_patterns(sample_values);
 
         ColumnProfile {
             name: column_info.name,
             data_type,
-            null_count: column_info.null_count,
-            total_count: column_info.total_count,
-            unique_count: Some(column_info.unique_values.len()),
+            null_count: column_info.stats.null_count,
+            total_count: column_info.stats.count,
+            unique_count: Some(column_info.stats.unique_count()),
             stats,
             patterns,
         }

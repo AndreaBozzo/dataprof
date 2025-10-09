@@ -62,6 +62,32 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
         None
     };
 
+    // Build Parquet metadata if available
+    let parquet_metadata = report.file_info.parquet_metadata.as_ref().map(|meta| {
+        let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
+            let uncompressed = meta.uncompressed_size_bytes.unwrap();
+            if uncompressed > 0 {
+                Some(format!("{:.1}x", uncompressed as f64 / meta.compressed_size_bytes as f64))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        json!({
+            "num_row_groups": meta.num_row_groups,
+            "compression": meta.compression,
+            "version": meta.version,
+            "schema_summary": meta.schema_summary,
+            "compressed_size_bytes": meta.compressed_size_bytes,
+            "compressed_size_mb": format!("{:.2}", meta.compressed_size_bytes as f64 / 1_048_576.0),
+            "uncompressed_size_bytes": meta.uncompressed_size_bytes,
+            "uncompressed_size_mb": meta.uncompressed_size_bytes.map(|s| format!("{:.2}", s as f64 / 1_048_576.0)),
+            "compression_ratio": compression_ratio
+        })
+    });
+
     json!({
         "file_name": file_name,
         "file_path": report.file_info.path,
@@ -70,6 +96,7 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
         "total_columns": report.file_info.total_columns,
         "scan_time_ms": report.scan_info.scan_time_ms,
         "sampling_info": sampling_info,
+        "parquet_metadata": parquet_metadata,
         "data_quality_metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
         "column_profiles": build_column_profiles_context(&report.column_profiles)
     })
@@ -369,6 +396,32 @@ fn build_files_context(
                 "critical"
             };
 
+            // Build Parquet metadata if available (same as single report)
+            let parquet_metadata = report.file_info.parquet_metadata.as_ref().map(|meta| {
+                let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
+                    let uncompressed = meta.uncompressed_size_bytes.unwrap();
+                    if uncompressed > 0 {
+                        Some(format!("{:.1}x", uncompressed as f64 / meta.compressed_size_bytes as f64))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                json!({
+                    "num_row_groups": meta.num_row_groups,
+                    "compression": meta.compression,
+                    "version": meta.version,
+                    "schema_summary": meta.schema_summary,
+                    "compressed_size_bytes": meta.compressed_size_bytes,
+                    "compressed_size_mb": format!("{:.2}", meta.compressed_size_bytes as f64 / 1_048_576.0),
+                    "uncompressed_size_bytes": meta.uncompressed_size_bytes,
+                    "uncompressed_size_mb": meta.uncompressed_size_bytes.map(|s| format!("{:.2}", s as f64 / 1_048_576.0)),
+                    "compression_ratio": compression_ratio
+                })
+            });
+
             json!({
                 "filename": path.file_name().unwrap_or_default().to_string_lossy(),
                 "path": path.display().to_string(),
@@ -377,7 +430,8 @@ fn build_files_context(
                 "columns": report.file_info.total_columns,
                 "rows": report.file_info.total_rows.map_or("Unknown".to_string(), |r| r.to_string()),
                 "is_error": false,
-                "metrics": build_data_quality_metrics_context(&report.data_quality_metrics)
+                "metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
+                "parquet_metadata": parquet_metadata
             })
         })
         .collect();

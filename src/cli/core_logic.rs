@@ -83,7 +83,7 @@ impl ProfilerBuilder {
 /// High-level function to analyze a file with all improvements
 ///
 /// This function:
-/// - Detects file format (CSV, JSON, JSONL)
+/// - Detects file format (CSV, JSON, JSONL, Parquet)
 /// - Loads config file if specified
 /// - Configures profiler with progress, chunk size, etc.
 /// - Uses robust parsing with fallback
@@ -92,15 +92,47 @@ pub fn analyze_file_with_options(
     file_path: &Path,
     options: AnalysisOptions,
 ) -> Result<QualityReport> {
-    // Load config (from CLI arg or use default)
-    // TODO: Implement config file loading (from_file, auto-discover)
-    let config = DataprofConfig::default();
-    let _ = options.config; // Acknowledge config option for now
+    // Load config (from CLI arg, auto-discover, or use default)
+    let config = if let Some(config_path) = &options.config {
+        // Explicit config file path provided via CLI
+        match DataprofConfig::load_from_file(config_path) {
+            Ok(cfg) => {
+                log::info!("Loaded configuration from: {}", config_path.display());
+                cfg
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to load config from {}: {}. Using defaults.",
+                    config_path.display(),
+                    e
+                );
+                DataprofConfig::default()
+            }
+        }
+    } else {
+        // No explicit config, try auto-discovery
+        DataprofConfig::load_with_discovery()
+    };
 
     // Detect file format and route to appropriate parser
+    #[cfg(feature = "parquet")]
+    let is_parquet = super::commands::is_parquet_file(file_path);
+    #[cfg(not(feature = "parquet"))]
+    let is_parquet = false;
+
     if super::commands::is_json_file(file_path) {
         // JSON files: use specialized JSON parser
         dataprof::analyze_json_with_quality(file_path)
+    } else if is_parquet {
+        // Parquet files: use Parquet parser
+        #[cfg(feature = "parquet")]
+        {
+            dataprof::analyze_parquet_with_quality(file_path)
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            unreachable!()
+        }
     } else {
         // CSV files: try streaming profiler, fallback to robust parser
         let builder = ProfilerBuilder::new(options, config);

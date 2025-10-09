@@ -9,6 +9,8 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "parquet")]
+use crate::analyze_parquet_with_quality;
 use crate::output::progress::ProgressManager;
 use crate::types::{DataQualityMetrics, QualityReport};
 use crate::{analyze_csv_robust, analyze_json_with_quality};
@@ -36,7 +38,12 @@ impl Default for BatchConfig {
             parallel: true,
             max_concurrent: num_cpus::get(),
             recursive: false,
-            extensions: vec!["csv".to_string(), "json".to_string(), "jsonl".to_string()],
+            extensions: vec![
+                "csv".to_string(),
+                "json".to_string(),
+                "jsonl".to_string(),
+                "parquet".to_string(),
+            ],
             exclude_patterns: vec!["**/.*".to_string(), "**/*tmp*".to_string()],
             html_output: None,
         }
@@ -58,7 +65,7 @@ pub struct BatchProcessor {
 }
 
 /// Result of batch processing operation
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct BatchResult {
     /// Individual file reports
     pub reports: HashMap<PathBuf, QualityReport>,
@@ -71,7 +78,7 @@ pub struct BatchResult {
 }
 
 /// Summary statistics for batch processing
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct BatchSummary {
     pub total_files: usize,
     pub successful: usize,
@@ -375,6 +382,17 @@ impl BatchProcessor {
             "csv" => analyze_csv_robust(path).map_err(|e| format!("CSV processing failed: {}", e)),
             "json" | "jsonl" => analyze_json_with_quality(path)
                 .map_err(|e| format!("JSON processing failed: {}", e)),
+            "parquet" => {
+                #[cfg(feature = "parquet")]
+                {
+                    analyze_parquet_with_quality(path)
+                        .map_err(|e| format!("Parquet processing failed: {}", e))
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    Err("Parquet support not enabled. Rebuild with --features parquet".to_string())
+                }
+            }
             _ => Err(format!("Unsupported file type: {}", ext)),
         }
     }

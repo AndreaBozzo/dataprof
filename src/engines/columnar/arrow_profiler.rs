@@ -83,15 +83,19 @@ impl ArrowProfiler {
             }
         }
 
-        // Convert analyzers to column profiles
+        // Convert analyzers to column profiles and extract samples
         let mut column_profiles = Vec::new();
+        let mut sample_columns = std::collections::HashMap::new();
+
         for (name, analyzer) in &column_analyzers {
             let profile = analyzer.to_column_profile(name.clone());
             column_profiles.push(profile);
+
+            // Extract samples from analyzer for quality metrics
+            sample_columns.insert(name.clone(), analyzer.get_sample_values());
         }
 
         // Calculate data quality metrics using ISO 8000/25012 standards
-        let sample_columns = self.create_quality_check_samples(&column_profiles);
         let data_quality_metrics =
             DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles).map_err(
                 |e| anyhow::anyhow!("Quality metrics calculation failed for Arrow data: {}", e),
@@ -105,6 +109,7 @@ impl ArrowProfiler {
                 total_rows: Some(total_rows),
                 total_columns: column_profiles.len(),
                 file_size_mb,
+                parquet_metadata: None,
             },
             column_profiles,
             scan_info: ScanInfo {
@@ -114,19 +119,6 @@ impl ArrowProfiler {
             },
             data_quality_metrics,
         })
-    }
-
-    fn create_quality_check_samples(
-        &self,
-        profiles: &[ColumnProfile],
-    ) -> std::collections::HashMap<String, Vec<String>> {
-        // Create empty samples for quality checking
-        // In a real implementation, we'd keep samples during processing
-        let mut samples = std::collections::HashMap::new();
-        for profile in profiles {
-            samples.insert(profile.name.clone(), Vec::new());
-        }
-        samples
     }
 }
 
@@ -218,6 +210,54 @@ impl ColumnAnalyzer {
                     self.process_large_string_array(string_array)?;
                 } else {
                     return Err(anyhow::anyhow!("Failed to downcast to LargeStringArray"));
+                }
+            }
+            arrow::datatypes::DataType::Boolean => {
+                if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
+                    self.process_boolean_array(bool_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to BooleanArray"));
+                }
+            }
+            arrow::datatypes::DataType::Date32 => {
+                if let Some(date_array) = array.as_any().downcast_ref::<Date32Array>() {
+                    self.process_date32_array(date_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Date32Array"));
+                }
+            }
+            arrow::datatypes::DataType::Date64 => {
+                if let Some(date_array) = array.as_any().downcast_ref::<Date64Array>() {
+                    self.process_date64_array(date_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast to Date64Array"));
+                }
+            }
+            arrow::datatypes::DataType::Timestamp(_, _) => {
+                if let Some(ts_array) = array.as_any().downcast_ref::<TimestampNanosecondArray>() {
+                    self.process_timestamp_array(ts_array)?;
+                } else if let Some(ts_array) =
+                    array.as_any().downcast_ref::<TimestampMicrosecondArray>()
+                {
+                    self.process_timestamp_micro_array(ts_array)?;
+                } else if let Some(ts_array) =
+                    array.as_any().downcast_ref::<TimestampMillisecondArray>()
+                {
+                    self.process_timestamp_milli_array(ts_array)?;
+                } else if let Some(ts_array) = array.as_any().downcast_ref::<TimestampSecondArray>()
+                {
+                    self.process_timestamp_second_array(ts_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast Timestamp array"));
+                }
+            }
+            arrow::datatypes::DataType::Binary | arrow::datatypes::DataType::LargeBinary => {
+                if let Some(bin_array) = array.as_any().downcast_ref::<BinaryArray>() {
+                    self.process_binary_array(bin_array)?;
+                } else if let Some(bin_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    self.process_large_binary_array(bin_array)?;
+                } else {
+                    return Err(anyhow::anyhow!("Failed to downcast Binary array"));
                 }
             }
             _ => {
@@ -338,12 +378,196 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_as_string_array(&mut self, array: &dyn Array) -> Result<()> {
-        // Convert any array type to string for processing
+    fn process_boolean_array(&mut self, array: &BooleanArray) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let value_str = value.to_string();
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(value_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(value_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_date32_array(&mut self, array: &Date32Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                // Date32 represents days since epoch
+                let date_str = format!("date32:{}", value);
+                self.update_text_stats(&date_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(date_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(date_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_date64_array(&mut self, array: &Date64Array) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                // Date64 represents milliseconds since epoch
+                let date_str = format!("date64:{}", value);
+                self.update_text_stats(&date_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(date_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(date_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_timestamp_array(&mut self, array: &TimestampNanosecondArray) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let ts_str = format!("timestamp_ns:{}", value);
+                self.update_text_stats(&ts_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(ts_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(ts_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_timestamp_micro_array(&mut self, array: &TimestampMicrosecondArray) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let ts_str = format!("timestamp_us:{}", value);
+                self.update_text_stats(&ts_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(ts_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(ts_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_timestamp_milli_array(&mut self, array: &TimestampMillisecondArray) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let ts_str = format!("timestamp_ms:{}", value);
+                self.update_text_stats(&ts_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(ts_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(ts_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_timestamp_second_array(&mut self, array: &TimestampSecondArray) -> Result<()> {
+        for i in 0..array.len() {
+            if let Some(value) = array.value(i).into() {
+                let ts_str = format!("timestamp_s:{}", value);
+                self.update_text_stats(&ts_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(ts_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(ts_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_binary_array(&mut self, array: &BinaryArray) -> Result<()> {
         for i in 0..array.len() {
             if !array.is_null(i) {
-                // This is a simplified approach - in practice we'd need more sophisticated conversion
-                let value = format!("value_{}", i); // Placeholder
+                let value = array.value(i);
+                // Convert to hex string manually (first 8 bytes)
+                let sample_bytes = &value[..value.len().min(8)];
+                let hex_str = format!(
+                    "0x{}",
+                    sample_bytes
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>()
+                );
+                self.update_text_stats(&hex_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(hex_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(hex_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_large_binary_array(&mut self, array: &LargeBinaryArray) -> Result<()> {
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                let value = array.value(i);
+                // Convert to hex string manually (first 8 bytes)
+                let sample_bytes = &value[..value.len().min(8)];
+                let hex_str = format!(
+                    "0x{}",
+                    sample_bytes
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<String>()
+                );
+                self.update_text_stats(&hex_str);
+
+                if self.unique_values.len() < 1000 {
+                    self.unique_values.insert(hex_str.clone());
+                }
+
+                if self.sample_values.len() < 100 {
+                    self.sample_values.push(hex_str);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn process_as_string_array(&mut self, array: &dyn Array) -> Result<()> {
+        // Convert any array type to string for processing using Arrow's display functionality
+        use arrow::util::display::array_value_to_string;
+
+        for i in 0..array.len() {
+            if !array.is_null(i) {
+                // Use Arrow's built-in conversion to string
+                let value = array_value_to_string(array, i)
+                    .unwrap_or_else(|_| format!("<type:{}>", array.data_type()));
                 self.update_text_stats(&value);
 
                 if self.sample_values.len() < 100 {
@@ -473,6 +697,11 @@ impl ColumnAnalyzer {
                 .map(|re| re.is_match(value))
                 .unwrap_or(false)
         })
+    }
+
+    /// Get collected sample values for quality metrics calculation
+    fn get_sample_values(&self) -> Vec<String> {
+        self.sample_values.clone()
     }
 }
 

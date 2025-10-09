@@ -1,10 +1,10 @@
-# DataProfiler CLI - Project Documentation
+# dataprof - Project Documentation
 
 ## Overview
 
 Fast data profiling and quality checking library and CLI tool for large datasets built in Rust.
 
-## Rules
+## Rules, do not modify.
 
 Start simple, then iterate.
 Best practices, always.
@@ -15,7 +15,7 @@ Proven solutions to recurring problems
 Security is non negotable, OWASP
 DRY codebase mandatory
 
-## Essential Commands
+## Essential Commands (to be updated)
 
 ```bash
 # Build & Test
@@ -35,7 +35,7 @@ cargo test --features arrow         # Test with Arrow
 
 ## Architecture
 
-- **Engines**: Streaming, MemoryEfficient, TrueStreaming, Arrow
+- **Engines**: Streaming, MemoryEfficient, TrueStreaming, Arrow (to be reviewed)
 - **Selection**: Intelligent auto-selection based on file/system characteristics
 - **Fallback**: Transparent recovery with logging
-- **API**: Zero breaking changes, backward compatible
+- **API**: Breaking changes allowed for now, do not enforce backward compatibilities if not requested.

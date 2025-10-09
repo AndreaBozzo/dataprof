@@ -130,7 +130,7 @@ fn test_jsonl_analysis() -> Result<()> {
     assert_eq!(report.column_profiles.len(), 2);
 
     // Should detect quality issues (mixed date formats reduce quality score)
-    let quality_score = report.calculate_overall_quality_score();
+    let quality_score = report.quality_score();
     assert!(quality_score < 100.0, "Should detect date format issues");
 
     Ok(())

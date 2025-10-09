@@ -1,6 +1,6 @@
 /// Statistical rigor benchmark suite implementing comprehensive testing
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use dataprof::core::stats::{StatisticalConfig, StatisticalSample, StatisticalSummary};
+use dataprof::core::{StatisticalConfig, StatisticalSample, StatisticalSummary};
 use dataprof::testing::{
     DatasetInfo, DatasetPattern, DatasetSize, EngineBenchmarkConfig, EngineBenchmarkFramework,
     EngineSelectionAccuracy, MetricCollection, MetricMeasurement, MetricType, StandardDatasets,

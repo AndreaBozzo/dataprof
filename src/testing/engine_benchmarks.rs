@@ -1,5 +1,5 @@
 /// Engine selection benchmarking framework for comprehensive testing
-use crate::core::stats::{StatisticalConfig, StatisticalSample, StatisticalSummary};
+use crate::core::benchmark_stats::{StatisticalConfig, StatisticalSample, StatisticalSummary};
 use crate::engines::{AdaptiveProfiler, EnginePerformance, EngineType};
 use crate::testing::{DatasetInfo, MetricCollection, MetricMeasurement, MetricType};
 use anyhow::Result;

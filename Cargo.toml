@@ -1,12 +1,21 @@
 [package]
 name = "dataprof"
-version = "0.4.70"
+version = "0.4.75"
 edition = "2021"
 license = "MIT"
 authors = ["Andrea Bozzo"]
-description = "A fast, lightweight CLI tool for CSV and JSON data profiling and analysis"
+description = "High-performance data profiler with ISO 8000/25012 quality metrics for CSV, JSON/JSONL, and Parquet files"
 repository = "https://github.com/AndreaBozzo/dataprof"
-keywords = ["csv", "data", "analysis", "profiling", "cli"]
+keywords = [
+    "csv",
+    "data",
+    "analysis",
+    "profiling",
+    "cli",
+    "data-quality",
+    "JSON",
+    "parquet",
+]
 categories = ["command-line-utilities", "data-structures"]
 
 [dependencies]
@@ -85,6 +94,7 @@ url = { version = "2.5", optional = true }
 
 # Apache Arrow for columnar processing
 arrow = { version = "56.1", optional = true }
+parquet = { version = "56.1", features = ["arrow"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -176,6 +186,7 @@ python = ["dep:pyo3"]
 # python-async = ["python", "dep:pyo3-asyncio", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
 arrow = ["dep:arrow"]
+parquet = ["arrow", "dep:parquet"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]

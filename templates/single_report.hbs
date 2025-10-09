@@ -38,6 +38,42 @@
                     <span class="sampling-badge">Sampled {{sampling_info.rows_scanned}} rows ({{sampling_info.sampling_percentage}}%)</span>
                 </div>
                 {{/if}}
+
+                {{#if parquet_metadata}}
+                <div class="parquet-metadata">
+                    <h3>📦 Parquet File Metadata</h3>
+                    <div class="stats-grid">
+                        <div class="stat">
+                            <span class="label">Row Groups</span>
+                            <span class="value">{{parquet_metadata.num_row_groups}}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Compression</span>
+                            <span class="value">{{parquet_metadata.compression}}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Version</span>
+                            <span class="value">{{parquet_metadata.version}}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="label">Compressed Size</span>
+                            <span class="value">{{parquet_metadata.compressed_size_mb}} MB</span>
+                        </div>
+                        {{#if parquet_metadata.compression_ratio}}
+                        <div class="stat">
+                            <span class="label">Compression Ratio</span>
+                            <span class="value">{{parquet_metadata.compression_ratio}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                    {{#if parquet_metadata.schema_summary}}
+                    <div class="schema-summary">
+                        <h4>Schema</h4>
+                        <pre><code>{{parquet_metadata.schema_summary}}</code></pre>
+                    </div>
+                    {{/if}}
+                </div>
+                {{/if}}
             </div>
         </header>
 

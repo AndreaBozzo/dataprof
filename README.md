@@ -69,6 +69,9 @@ Perfect for ensuring data quality in pipelines, validating data integrity, or ge
 # Comprehensive quality analysis
 dataprof analyze data.csv --detailed
 
+# Analyze Parquet files (requires --features parquet)
+dataprof analyze data.parquet --detailed
+
 # Windows example (from project root after cargo build --release)
 target\release\dataprof-cli.exe analyze data.csv --detailed
 ```
@@ -89,6 +92,12 @@ dataprof batch /data/folder --recursive --parallel
 
 # Generate HTML batch dashboard
 dataprof batch /data/folder --recursive --html batch_report.html
+
+# JSON export for CI/CD automation
+dataprof batch /data/folder --json batch_results.json --recursive
+
+# JSON output to stdout
+dataprof batch /data/folder --format json --recursive
 
 # With custom filter and progress
 dataprof batch /data/folder --filter "*.csv" --parallel --progress
@@ -204,10 +213,13 @@ cargo build --release
 # With Apache Arrow (columnar processing, ~90s compile)
 cargo build --release --features arrow
 
+# With Parquet support (requires arrow, ~95s compile)
+cargo build --release --features parquet
+
 # With database connectors
 cargo build --release --features postgres,mysql,sqlite
 
-# All features (full functionality, ~120s compile)
+# All features (full functionality, ~130s compile)
 cargo build --release --all-features
 ```
 
@@ -217,6 +229,13 @@ cargo build --release --all-features
 - ✅ Need maximum throughput (up to 13x faster)
 - ❌ Small files (<10MB) - standard engine is faster
 - ❌ Mixed/messy data - streaming engine handles better
+
+**When to use Parquet?**
+- ✅ Analytics workloads with columnar data
+- ✅ Data lake architectures
+- ✅ Integration with Spark, Pandas, PyArrow
+- ✅ Efficient storage and compression
+- ✅ Type-safe schema preservation
 
 ### Common Development Tasks
 ```bash

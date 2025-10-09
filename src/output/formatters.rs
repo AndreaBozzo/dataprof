@@ -127,23 +127,23 @@ impl InteractiveFormatter {
     }
 }
 
-/// Enhanced JSON structure for reports
+/// Enhanced JSON structure for reports following separation of concerns
+/// All quality metrics are in data_quality_metrics (ISO 8000/25012)
 #[derive(Serialize)]
 pub struct JsonReport {
     pub metadata: JsonMetadata,
-    pub quality: JsonQuality,
     pub columns: Vec<JsonColumn>,
-    pub summary: JsonSummary,
-    pub data_quality_metrics: Option<JsonDataQualityMetrics>,
+    pub data_quality_metrics: JsonDataQualityMetrics,
 }
 
-/// Comprehensive data quality metrics following industry standards
+/// Comprehensive data quality metrics following industry standards (ISO 8000/25012)
 #[derive(Serialize)]
 pub struct JsonDataQualityMetrics {
     pub completeness: JsonCompletenessMetrics,
     pub consistency: JsonConsistencyMetrics,
     pub uniqueness: JsonUniquenessMetrics,
     pub accuracy: JsonAccuracyMetrics,
+    pub timeliness: JsonTimelinessMetrics,
 }
 
 #[derive(Serialize)]
@@ -175,6 +175,13 @@ pub struct JsonAccuracyMetrics {
 }
 
 #[derive(Serialize)]
+pub struct JsonTimelinessMetrics {
+    pub future_dates_count: usize,
+    pub stale_data_ratio: f64,
+    pub temporal_violations: usize,
+}
+
+#[derive(Serialize)]
 pub struct JsonMetadata {
     pub file_path: String,
     pub file_size_mb: f64,
@@ -189,11 +196,6 @@ pub struct JsonSampling {
     pub rows_scanned: usize,
     pub sampling_ratio: f64,
     pub was_sampled: bool,
-}
-
-#[derive(Serialize)]
-pub struct JsonQuality {
-    pub quality_score: f64,
 }
 
 #[derive(Serialize)]
@@ -214,10 +216,41 @@ pub struct JsonPattern {
     pub match_percentage: f64,
 }
 
+/// Batch processing results for JSON export
 #[derive(Serialize)]
-pub struct JsonSummary {
-    pub data_quality_score: f64,
-    pub completeness_score: f64,
+pub struct JsonBatchReport {
+    pub summary: JsonBatchSummary,
+    pub file_reports: Vec<JsonFileReport>,
+    pub errors: Vec<JsonFileError>,
+    pub aggregated_metrics: Option<JsonDataQualityMetrics>,
+}
+
+/// Batch summary statistics
+#[derive(Serialize)]
+pub struct JsonBatchSummary {
+    pub total_files: usize,
+    pub successful: usize,
+    pub failed: usize,
+    pub total_records: usize,
+    pub average_quality_score: f64,
+    pub processing_time_seconds: f64,
+}
+
+/// Individual file report in batch
+#[derive(Serialize)]
+pub struct JsonFileReport {
+    pub file_path: String,
+    pub quality_score: f64,
+    pub total_rows: Option<usize>,
+    pub total_columns: usize,
+    pub data_quality_metrics: JsonDataQualityMetrics,
+}
+
+/// File processing error
+#[derive(Serialize)]
+pub struct JsonFileError {
+    pub file_path: String,
+    pub error_message: String,
 }
 
 impl OutputFormatter for JsonFormatter {
@@ -239,21 +272,12 @@ impl OutputFormatter for JsonFormatter {
                     None
                 },
             },
-            quality: JsonQuality {
-                quality_score: report.quality_score(),
-            },
             columns: report
                 .column_profiles
                 .iter()
                 .map(|p| self.format_column(p))
                 .collect(),
-            summary: JsonSummary {
-                data_quality_score: report.quality_score(),
-                completeness_score: self.calculate_completeness_score(&report.column_profiles),
-            },
-            data_quality_metrics: Some(
-                self.format_data_quality_metrics(&report.data_quality_metrics),
-            ),
+            data_quality_metrics: self.format_data_quality_metrics(&report.data_quality_metrics),
         };
 
         Ok(serde_json::to_string_pretty(&json_report)?)
@@ -324,22 +348,7 @@ impl JsonFormatter {
         }
     }
 
-    fn calculate_completeness_score(&self, profiles: &[ColumnProfile]) -> f64 {
-        if profiles.is_empty() {
-            return 100.0;
-        }
-
-        let total_cells: usize = profiles.iter().map(|p| p.total_count).sum();
-        let null_cells: usize = profiles.iter().map(|p| p.null_count).sum();
-
-        if total_cells == 0 {
-            100.0
-        } else {
-            ((total_cells - null_cells) as f64 / total_cells as f64) * 100.0
-        }
-    }
-
-    /// Format comprehensive data quality metrics for JSON output
+    /// Format comprehensive data quality metrics for JSON output (ISO 8000/25012)
     fn format_data_quality_metrics(&self, metrics: &DataQualityMetrics) -> JsonDataQualityMetrics {
         JsonDataQualityMetrics {
             completeness: JsonCompletenessMetrics {
@@ -361,6 +370,11 @@ impl JsonFormatter {
                 outlier_ratio: metrics.outlier_ratio,
                 range_violations: metrics.range_violations,
                 negative_values_in_positive: metrics.negative_values_in_positive,
+            },
+            timeliness: JsonTimelinessMetrics {
+                future_dates_count: metrics.future_dates_count,
+                stale_data_ratio: metrics.stale_data_ratio,
+                temporal_violations: metrics.temporal_violations,
             },
         }
     }
@@ -655,18 +669,6 @@ impl OutputFormatter for AdaptiveFormatter {
     }
 }
 
-/// Factory function to create formatters
-pub fn create_formatter(format: &str) -> Box<dyn OutputFormatter> {
-    match format.to_lowercase().as_str() {
-        "json" => Box::new(JsonFormatter),
-        "csv" => Box::new(CsvFormatter),
-        "plain" => Box::new(PlainFormatter),
-        "adaptive" => Box::new(AdaptiveFormatter::new()),
-        "interactive" => Box::new(InteractiveFormatter::new(OutputContext::detect())),
-        _ => Box::new(JsonFormatter), // Default fallback
-    }
-}
-
 /// Create adaptive formatter that auto-selects based on context
 pub fn create_adaptive_formatter() -> Box<dyn OutputFormatter> {
     Box::new(AdaptiveFormatter::new())
@@ -675,21 +677,6 @@ pub fn create_adaptive_formatter() -> Box<dyn OutputFormatter> {
 /// Create adaptive formatter with forced format
 pub fn create_adaptive_formatter_with_format(format: OutputFormat) -> Box<dyn OutputFormatter> {
     Box::new(AdaptiveFormatter::with_forced_format(format))
-}
-
-/// Output report with specified formatter
-pub fn output_with_formatter(report: &QualityReport, format: &OutputFormat) -> Result<()> {
-    let format_str = match format {
-        OutputFormat::Json => "json",
-        OutputFormat::Csv => "csv",
-        OutputFormat::Plain => "plain",
-        OutputFormat::Text => "text",
-    };
-
-    let formatter = create_formatter(format_str);
-    let output = formatter.format_report(report)?;
-    println!("{}", output);
-    Ok(())
 }
 
 /// Adaptive output that automatically selects best format based on terminal context
@@ -714,13 +701,52 @@ pub fn supports_enhanced_output() -> bool {
     context.is_interactive && context.supports_color && context.supports_unicode
 }
 
-/// Get a hint about the best output format for current context
-pub fn suggest_output_format() -> String {
-    let context = OutputContext::detect();
-    match context.preferred_format() {
-        OutputFormat::Json => "JSON (machine-readable for CI/automated processing)".to_string(),
-        OutputFormat::Text => "Interactive text (rich formatting for terminals)".to_string(),
-        OutputFormat::Plain => "Plain text (simple format for pipes/scripts)".to_string(),
-        OutputFormat::Csv => "CSV (tabular data format)".to_string(),
-    }
+/// Format batch results as JSON
+pub fn format_batch_as_json(batch_result: &crate::core::batch::BatchResult) -> Result<String> {
+    let formatter = JsonFormatter;
+
+    // Convert file reports
+    let file_reports: Vec<JsonFileReport> = batch_result
+        .reports
+        .iter()
+        .map(|(path, report)| JsonFileReport {
+            file_path: path.to_string_lossy().to_string(),
+            quality_score: report.quality_score(),
+            total_rows: report.file_info.total_rows,
+            total_columns: report.file_info.total_columns,
+            data_quality_metrics: formatter
+                .format_data_quality_metrics(&report.data_quality_metrics),
+        })
+        .collect();
+
+    // Convert errors
+    let errors: Vec<JsonFileError> = batch_result
+        .errors
+        .iter()
+        .map(|(path, error)| JsonFileError {
+            file_path: path.to_string_lossy().to_string(),
+            error_message: error.clone(),
+        })
+        .collect();
+
+    // Build batch report
+    let json_batch = JsonBatchReport {
+        summary: JsonBatchSummary {
+            total_files: batch_result.summary.total_files,
+            successful: batch_result.summary.successful,
+            failed: batch_result.summary.failed,
+            total_records: batch_result.summary.total_records,
+            average_quality_score: batch_result.summary.average_quality_score,
+            processing_time_seconds: batch_result.summary.processing_time_seconds,
+        },
+        file_reports,
+        errors,
+        aggregated_metrics: batch_result
+            .summary
+            .aggregated_data_quality_metrics
+            .as_ref()
+            .map(|m| formatter.format_data_quality_metrics(m)),
+    };
+
+    Ok(serde_json::to_string_pretty(&json_batch)?)
 }

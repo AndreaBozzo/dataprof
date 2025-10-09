@@ -9,8 +9,12 @@ pub mod types;
 
 // Re-export all public types and functions
 pub use analysis::{
-    analyze_csv_file, analyze_csv_with_quality, analyze_json_file, calculate_data_quality_metrics,
+    analyze_csv_file, analyze_csv_with_quality, analyze_json_file, analyze_json_with_quality,
+    calculate_data_quality_metrics,
 };
+
+#[cfg(feature = "parquet")]
+pub use analysis::{analyze_parquet_file, analyze_parquet_with_quality_py};
 pub use batch::{batch_analyze_directory, batch_analyze_glob, PyBatchAnalyzer};
 pub use dataframe::analyze_csv_dataframe;
 pub use logging::{
@@ -44,7 +48,15 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_csv_file, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_csv_with_quality, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_json_file, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_json_with_quality, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_data_quality_metrics, m)?)?;
+
+    // Parquet analysis (only available with parquet feature)
+    #[cfg(feature = "parquet")]
+    {
+        m.add_function(wrap_pyfunction!(analyze_parquet_file, m)?)?;
+        m.add_function(wrap_pyfunction!(analyze_parquet_with_quality_py, m)?)?;
+    }
 
     // Pandas integration (optional)
     m.add_function(wrap_pyfunction!(analyze_csv_dataframe, m)?)?;
