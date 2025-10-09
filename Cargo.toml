@@ -6,16 +6,7 @@ license = "MIT"
 authors = ["Andrea Bozzo"]
 description = "High-performance data profiler with ISO 8000/25012 quality metrics for CSV, JSON/JSONL, and Parquet files"
 repository = "https://github.com/AndreaBozzo/dataprof"
-keywords = [
-    "csv",
-    "data",
-    "analysis",
-    "profiling",
-    "cli",
-    "data-quality",
-    "JSON",
-    "parquet",
-]
+keywords = ["data", "analysis", "cli", "data-quality", "parquet"]
 categories = ["command-line-utilities", "data-structures"]
 
 [dependencies]
