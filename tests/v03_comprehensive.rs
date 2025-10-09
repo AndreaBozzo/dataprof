@@ -223,10 +223,7 @@ fn test_full_integration() -> Result<()> {
         assert!(!memory_report.column_profiles.is_empty());
 
         println!("  ✓ All profilers processed successfully");
-        println!(
-            "  ✓ Quality score: {:.2}",
-            streaming_report.calculate_overall_quality_score()
-        );
+        println!("  ✓ Quality score: {:.2}", streaming_report.quality_score());
     }
 
     println!("✓ Full integration test completed");

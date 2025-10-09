@@ -129,26 +129,3 @@ fn show_engine_info() -> Result<()> {
 
     Ok(())
 }
-
-/// Run in new subcommand mode (legacy, currently unused)
-#[allow(dead_code)]
-fn run_subcommand_mode() -> Result<()> {
-    #[derive(Parser)]
-    #[command(name = "dataprof")]
-    #[command(version, about = "Fast CSV data profiler with quality checking")]
-    struct SubcommandCli {
-        #[command(subcommand)]
-        command: Command,
-    }
-
-    let cli = SubcommandCli::parse();
-
-    // Route to appropriate command handler
-    match route_command(cli.command) {
-        Ok(_) => std::process::exit(exit_codes::SUCCESS),
-        Err(e) => {
-            eprintln!("❌ Error: {}", e);
-            std::process::exit(exit_codes::GENERAL_ERROR);
-        }
-    }
-}

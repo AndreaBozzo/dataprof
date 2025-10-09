@@ -140,11 +140,6 @@ impl QualityReport {
     pub fn quality_score(&self) -> f64 {
         self.data_quality_metrics.overall_score()
     }
-
-    /// Alias for backward compatibility with legacy tests
-    pub fn calculate_overall_quality_score(&self) -> f64 {
-        self.quality_score()
-    }
 }
 
 /// Metadata specific to Parquet files

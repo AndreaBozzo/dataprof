@@ -155,19 +155,6 @@ impl MetricsCalculator {
         })
     }
 
-    /// Static convenience method for backward compatibility
-    /// Creates a default calculator and runs metrics calculation
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use MetricsCalculator::new().calculate_comprehensive_metrics() for ISO compliance"
-    )]
-    pub fn calculate_comprehensive_metrics_static(
-        data: &HashMap<String, Vec<String>>,
-        column_profiles: &[ColumnProfile],
-    ) -> Result<DataQualityMetrics> {
-        Self::new().calculate_comprehensive_metrics(data, column_profiles)
-    }
-
     /// Create default metrics for empty dataset
     fn default_metrics_for_empty_dataset() -> DataQualityMetrics {
         DataQualityMetrics {

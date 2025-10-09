@@ -2,14 +2,6 @@ use crate::core::batch::BatchResult;
 use colored::*;
 
 pub fn display_batch_results(result: &BatchResult, quality_enabled: bool) {
-    display_enhanced_batch_results(result, quality_enabled, false);
-}
-
-pub fn display_enhanced_batch_results(
-    result: &BatchResult,
-    quality_enabled: bool,
-    _ml_code_enabled: bool, // Deprecated - kept for API compatibility
-) {
     println!(
         "\n📈 {} Batch Analysis Dashboard",
         "DataProfiler".bright_blue().bold()
@@ -17,8 +9,6 @@ pub fn display_enhanced_batch_results(
 
     // Display overall summary
     display_batch_summary(&result.summary);
-
-    // ML features removed
 
     // Display aggregated quality issues
     if quality_enabled {
