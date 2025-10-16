@@ -1,6 +1,6 @@
 [package]
 name = "dataprof"
-version = "0.4.75"
+version = "0.4.77"
 edition = "2021"
 license = "MIT"
 authors = ["Andrea Bozzo"]
@@ -36,6 +36,7 @@ thiserror = "2.0"
 
 # Pattern detection
 regex = "1.10"
+lazy_static = "1.4"
 
 
 # JSON support
