@@ -10,12 +10,12 @@ pub struct InfoArgs {
 }
 
 /// Execute the info command - displays engine information and system capabilities
-pub fn execute(_args: &InfoArgs) -> Result<()> {
-    show_engine_info()
+pub fn execute(args: &InfoArgs) -> Result<()> {
+    show_engine_info(args.detailed)
 }
 
 /// Show engine information
-fn show_engine_info() -> Result<()> {
+fn show_engine_info(detailed: bool) -> Result<()> {
     use colored::*;
     use sysinfo::System;
 
@@ -100,6 +100,30 @@ fn show_engine_info() -> Result<()> {
             "  ⚠️ {} Low memory detected - streaming engines recommended",
             "Warning:".yellow()
         );
+    }
+
+    if detailed {
+        println!();
+        println!("{}", "Detailed Information:".bright_yellow());
+        println!("  Cargo version: {}", env!("CARGO_PKG_VERSION"));
+        println!("  Features enabled:");
+
+        #[cfg(feature = "arrow")]
+        println!("    - arrow");
+        #[cfg(feature = "parquet")]
+        println!("    - parquet");
+        #[cfg(feature = "python")]
+        println!("    - python");
+        #[cfg(feature = "database")]
+        println!("    - database");
+
+        #[cfg(not(any(
+            feature = "arrow",
+            feature = "parquet",
+            feature = "python",
+            feature = "database"
+        )))]
+        println!("    - minimal (no optional features)");
     }
 
     Ok(())
