@@ -7,7 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.75] - 2025-01-09
+## [0.4.77] - 2025-10-16
+
+### Performance
+
+- **Analysis Module Optimization**
+  - Pre-compiled regex patterns with lazy_static (eliminated runtime compilation overhead)
+  - Single-pass numeric type checking in inference (reduced iterations)
+  - IEEE 754 compliant sorting using total_cmp (safer NaN handling)
+  - Consistent whitespace handling across all analysis components
+
+### Fixed
+
+- IT phone regex pattern: corrected anchor and grouping syntax
+- Unsafe unwrap on partial_cmp in metrics module (prevented potential panic with NaN)
+- Clippy len_zero lint in column tests
+
+### Added
+
+- 43 unit tests for analysis module (inference: 17, patterns: 14, column: 12)
+- --detailed flag implementation in info command (shows version and enabled features)
+
+### Performance Impact
+
+- Regex compilation overhead: eliminated
+- Type inference: +15-25% estimated improvement
+- Pattern detection: +20-30% estimated improvement
+
+## [0.4.75] - 2025-10-09
 
 ### 🧹 **REFACTORING: Post-First-Month Cleanup (Phase 1 & 2)**
 
@@ -1306,23 +1333,23 @@ dataprof --engine memory-efficient data.csv  # Force memory-efficient
 
 #### Engine Selection Decision Matrix
 
-| Factor | Arrow Score | Memory-Efficient | True Streaming | Standard |
-|--------|-------------|------------------|----------------|----------|
-| **File Size** | >100MB: ✅ | 50-200MB: ✅ | >500MB: ✅ | <50MB: ✅ |
-| **Column Count** | >20 cols: ✅ | 10-50 cols: ✅ | Any: ✅ | <20 cols: ✅ |
-| **Data Types** | Numeric majority: ✅ | Mixed: ✅ | Complex: ✅ | Simple: ✅ |
-| **Memory Available** | >1GB: ✅ | 500MB-1GB: ✅ | <500MB: ✅ | Any: ✅ |
-| **Processing Type** | Batch/Aggregation: ✅ | Quality Check: ✅ | Streaming: ✅ | Quick Analysis: ✅ |
+| Factor               | Arrow Score          | Memory-Efficient | True Streaming | Standard          |
+| -------------------- | -------------------- | ---------------- | -------------- | ----------------- |
+| **File Size**        | >100MB: ✅            | 50-200MB: ✅      | >500MB: ✅      | <50MB: ✅          |
+| **Column Count**     | >20 cols: ✅          | 10-50 cols: ✅    | Any: ✅         | <20 cols: ✅       |
+| **Data Types**       | Numeric majority: ✅  | Mixed: ✅         | Complex: ✅     | Simple: ✅         |
+| **Memory Available** | >1GB: ✅              | 500MB-1GB: ✅     | <500MB: ✅      | Any: ✅            |
+| **Processing Type**  | Batch/Aggregation: ✅ | Quality Check: ✅ | Streaming: ✅   | Quick Analysis: ✅ |
 
 #### Historical Performance Comparison
 
 | File Size | Standard | Arrow | Memory-Eff | True Stream | Auto Selected |
-|-----------|----------|-------|------------|-------------|---------------|
-| 10MB      | 0.8s     | 1.2s  | 0.6s       | 0.9s        | Memory-Eff ✅ |
-| 100MB     | 2.1s     | 0.8s  | 1.4s       | 1.8s        | Arrow ✅      |
-| 500MB     | 12.3s    | 3.2s  | 8.1s       | 4.9s        | Arrow ✅      |
-| 1GB       | 28.7s    | 5.9s  | 18.2s      | 9.1s        | Arrow ✅      |
-| 5GB       | 156s     | 24s   | 89s        | 31s         | Arrow ✅      |
+| --------- | -------- | ----- | ---------- | ----------- | ------------- |
+| 10MB      | 0.8s     | 1.2s  | 0.6s       | 0.9s        | Memory-Eff ✅  |
+| 100MB     | 2.1s     | 0.8s  | 1.4s       | 1.8s        | Arrow ✅       |
+| 500MB     | 12.3s    | 3.2s  | 8.1s       | 4.9s        | Arrow ✅       |
+| 1GB       | 28.7s    | 5.9s  | 18.2s      | 9.1s        | Arrow ✅       |
+| 5GB       | 156s     | 24s   | 89s        | 31s         | Arrow ✅       |
 
 ### 🔄 Migration & Compatibility
 
@@ -1869,11 +1896,11 @@ dataprof --sample 10000 huge_dataset.csv
 ### 📈 Performance Benchmarks
 
 | Dataset Size | DataProfiler v0.3 | pandas.info() | Speedup |
-|--------------|-------------------|---------------|---------|
-| 1MB CSV      | 12ms             | 150ms         | 12.5x   |
-| 10MB CSV     | 85ms             | 800ms         | 9.4x    |
-| 100MB CSV    | 650ms            | 6.2s          | 9.5x    |
-| 1GB CSV      | 4.2s             | 45s           | 10.7x   |
+| ------------ | ----------------- | ------------- | ------- |
+| 1MB CSV      | 12ms              | 150ms         | 12.5x   |
+| 10MB CSV     | 85ms              | 800ms         | 9.4x    |
+| 100MB CSV    | 650ms             | 6.2s          | 9.5x    |
+| 1GB CSV      | 4.2s              | 45s           | 10.7x   |
 
 ### 🔄 Migration Guide from v0.1
 

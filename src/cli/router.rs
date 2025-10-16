@@ -10,5 +10,6 @@ pub fn route_command(command: Command) -> Result<()> {
         #[cfg(feature = "database")]
         Command::Database(args) => crate::cli::commands::database::execute(&args),
         Command::Benchmark(args) => crate::cli::commands::benchmark::execute(&args),
+        Command::Info(args) => crate::cli::commands::info::execute(&args),
     }
 }
