@@ -741,8 +741,8 @@ impl MetricsCalculator {
         }
 
         let mut sorted = numeric_values.clone();
-        // Safe sorting: NaN/Infinity values are treated as equal (fall through to end)
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // Safe total ordering: NaN/Infinity values are placed at the end (IEEE 754)
+        sorted.sort_by(|a, b| a.total_cmp(b));
 
         // Calculate Q1 and Q3 using linear interpolation (percentile method Type 7)
         let q1 = Self::calculate_percentile(&sorted, 25.0);

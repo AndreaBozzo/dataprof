@@ -19,7 +19,7 @@ lazy_static! {
         ),
         (
             "Phone (IT)",
-            Regex::new(r"^\+39|0039|39?[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{5,10}$")
+            Regex::new(r"^(?:\+39|0039|39)[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{5,10}$")
                 .expect("BUG: Invalid hardcoded regex pattern for IT Phone"),
         ),
         (
