@@ -15,8 +15,51 @@ use crate::core::config::IsoQualityThresholds;
 use crate::types::{ColumnProfile, DataQualityMetrics, DataType};
 use anyhow::Result;
 use chrono::Datelike;
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+
+// Pre-compile date validation regex patterns for better performance
+lazy_static! {
+    static ref DATE_VALIDATION_REGEXES: Vec<Regex> = vec![
+        Regex::new(r"^\d{4}-\d{2}-\d{2}$")
+            .expect("BUG: Invalid hardcoded regex for date validation YYYY-MM-DD"),
+        Regex::new(r"^\d{2}/\d{2}/\d{4}$")
+            .expect("BUG: Invalid hardcoded regex for date validation DD/MM/YYYY"),
+        Regex::new(r"^\d{2}-\d{2}-\d{4}$")
+            .expect("BUG: Invalid hardcoded regex for date validation DD-MM-YYYY"),
+        Regex::new(r"^\d{4}/\d{2}/\d{2}$")
+            .expect("BUG: Invalid hardcoded regex for date validation YYYY/MM/DD"),
+        Regex::new(r"^\d{1,2}/\d{1,2}/\d{4}$")
+            .expect("BUG: Invalid hardcoded regex for date validation M/D/YYYY"),
+        Regex::new(r"^\d{4}-\d{1,2}-\d{1,2}$")
+            .expect("BUG: Invalid hardcoded regex for date validation YYYY-M-D"),
+        Regex::new(r"^\d{1,2}-\d{1,2}-\d{4}$")
+            .expect("BUG: Invalid hardcoded regex for date validation M-D-YYYY"),
+    ];
+    static ref DATE_FORMAT_REGEXES: Vec<(&'static str, Regex)> = vec![
+        (
+            "YYYY-MM-DD",
+            Regex::new(r"^\d{4}-\d{2}-\d{2}$")
+                .expect("BUG: Invalid hardcoded regex for format YYYY-MM-DD"),
+        ),
+        (
+            "DD/MM/YYYY",
+            Regex::new(r"^\d{2}/\d{2}/\d{4}$")
+                .expect("BUG: Invalid hardcoded regex for format DD/MM/YYYY"),
+        ),
+        (
+            "DD-MM-YYYY",
+            Regex::new(r"^\d{2}-\d{2}-\d{4}$")
+                .expect("BUG: Invalid hardcoded regex for format DD-MM-YYYY"),
+        ),
+        (
+            "YYYY/MM/DD",
+            Regex::new(r"^\d{4}/\d{2}/\d{2}$")
+                .expect("BUG: Invalid hardcoded regex for format YYYY/MM/DD"),
+        ),
+    ];
+}
 
 /// Engine for calculating comprehensive data quality metrics
 /// Supports ISO 8000/25012 configurable thresholds
@@ -368,27 +411,11 @@ impl MetricsCalculator {
     }
 
     /// Check if a string represents a valid date format
+    /// Uses pre-compiled regex patterns for optimal performance
     fn is_valid_date_format(value: &str) -> bool {
-        // Common date patterns
-        let date_patterns = [
-            r"^\d{4}-\d{2}-\d{2}$",     // YYYY-MM-DD
-            r"^\d{2}/\d{2}/\d{4}$",     // DD/MM/YYYY or MM/DD/YYYY
-            r"^\d{2}-\d{2}-\d{4}$",     // DD-MM-YYYY
-            r"^\d{4}/\d{2}/\d{2}$",     // YYYY/MM/DD
-            r"^\d{1,2}/\d{1,2}/\d{4}$", // M/D/YYYY or MM/DD/YYYY
-            r"^\d{4}-\d{1,2}-\d{1,2}$", // YYYY-M-D
-            r"^\d{1,2}-\d{1,2}-\d{4}$", // M-D-YYYY
-        ];
-
-        for pattern in &date_patterns {
-            if let Ok(regex) = Regex::new(pattern) {
-                if regex.is_match(value) {
-                    return true;
-                }
-            }
-        }
-
-        false
+        DATE_VALIDATION_REGEXES
+            .iter()
+            .any(|regex| regex.is_match(value))
     }
 
     /// Count format violations (malformed dates, inconsistent formats)
@@ -407,6 +434,7 @@ impl MetricsCalculator {
     }
 
     /// Count mixed date formats within a column
+    /// Uses pre-compiled regex patterns for optimal performance
     fn count_mixed_date_formats(column_name: &str, values: &[String]) -> usize {
         // Skip if column name doesn't suggest it contains dates
         if !Self::is_likely_date_column(column_name) {
@@ -414,23 +442,18 @@ impl MetricsCalculator {
         }
 
         let mut format_counts = HashMap::new();
-        let date_patterns = [
-            ("YYYY-MM-DD", r"^\d{4}-\d{2}-\d{2}$"),
-            ("DD/MM/YYYY", r"^\d{2}/\d{2}/\d{4}$"),
-            ("DD-MM-YYYY", r"^\d{2}-\d{2}-\d{4}$"),
-            ("YYYY/MM/DD", r"^\d{4}/\d{2}/\d{2}$"),
-        ];
 
-        let non_empty: Vec<&String> = values.iter().filter(|s| !s.is_empty()).collect();
+        // Use trim() for consistent whitespace handling
+        let non_empty: Vec<&String> = values.iter().filter(|s| !s.trim().is_empty()).collect();
+
         let sample_size = 50.min(non_empty.len());
 
         for value in non_empty.iter().take(sample_size) {
-            for (format_name, pattern) in &date_patterns {
-                if let Ok(regex) = Regex::new(pattern) {
-                    if regex.is_match(value) {
-                        *format_counts.entry(*format_name).or_insert(0) += 1;
-                        break;
-                    }
+            let trimmed = value.trim();
+            for (format_name, regex) in DATE_FORMAT_REGEXES.iter() {
+                if regex.is_match(trimmed) {
+                    *format_counts.entry(*format_name).or_insert(0) += 1;
+                    break;
                 }
             }
         }
@@ -718,7 +741,8 @@ impl MetricsCalculator {
         }
 
         let mut sorted = numeric_values.clone();
-        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // Safe sorting: NaN/Infinity values are treated as equal (fall through to end)
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         // Calculate Q1 and Q3 using linear interpolation (percentile method Type 7)
         let q1 = Self::calculate_percentile(&sorted, 25.0);

@@ -1,6 +1,7 @@
 // Command modules (args + implementation)
 pub mod analyze;
 pub mod batch;
+pub mod info;
 pub mod report;
 
 // Utility modules
@@ -80,6 +81,15 @@ pub enum Command {
     ///   dataprof benchmark data.csv
     ///   dataprof benchmark large_file.csv
     Benchmark(benchmark::BenchmarkArgs),
+
+    /// Show engine information and system capabilities
+    ///
+    /// Display available processing engines, system resources, and recommendations.
+    ///
+    /// Examples:
+    ///   dataprof info
+    ///   dataprof info --detailed
+    Info(info::InfoArgs),
 }
 
 /// Common analysis options inherited by all commands

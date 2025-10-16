@@ -8,7 +8,7 @@
 /// Run with:
 ///   cargo run --example arrow_example --features arrow
 use anyhow::Result;
-use dataprof::DataProfiler;
+use dataprof::AdaptiveProfiler;
 use std::path::Path;
 
 fn main() -> Result<()> {
@@ -16,7 +16,7 @@ fn main() -> Result<()> {
 
     // Example 1: Adaptive profiler with automatic engine selection (RECOMMENDED)
     println!("=== Example 1: Automatic Engine Selection ===");
-    let profiler = DataProfiler::auto();
+    let profiler = AdaptiveProfiler::new();
 
     // The adaptive profiler will automatically choose:
     // - Arrow engine for large files (>100MB) with many columns
@@ -58,11 +58,8 @@ fn main() -> Result<()> {
     #[cfg(feature = "arrow")]
     {
         println!("=== Example 3: Explicit Arrow Engine ===");
-        let arrow_profiler = DataProfiler::columnar()
-            .batch_size(8192) // Optimize batch size for your data
-            .memory_limit_mb(512); // Set memory constraints
-
-        let report = arrow_profiler.analyze_csv_file(Path::new("data/large_dataset.csv"))?;
+        let arrow_profiler = AdaptiveProfiler::new();
+        let report = arrow_profiler.analyze_file(Path::new("data/large_dataset.csv"))?;
 
         println!("✅ Arrow engine processed:");
         println!("   Rows: {}", report.scan_info.rows_scanned);
