@@ -150,7 +150,7 @@ mod tests {
         ];
         let profile = analyze_column("test_col", &data);
 
-        assert!(profile.patterns.len() > 0); // Normal mode detects patterns
+        assert!(!profile.patterns.is_empty()); // Normal mode detects patterns
         assert_eq!(profile.unique_count, Some(3)); // Normal mode calculates unique count
     }
 
