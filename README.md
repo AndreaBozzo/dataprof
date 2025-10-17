@@ -5,13 +5,6 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
 
-**DISCLAIMER FOR HUMAN READERS**
-
-dataprof, even if working, is in early-stage development, therefore you might encounter bugs, minor or even major ones during your data-quality exploration journey.
-
-Report them appropriately by opening an issue or by mailing the maintainer for security issues.
-
-Thanks for your time here!
 
 A fast, reliable data quality assessment tool built in Rust. Analyze datasets with 20x better memory efficiency than pandas, unlimited file streaming, and comprehensive ISO 8000/25012 compliant quality checks across 5 dimensions: Completeness, Consistency, Uniqueness, Accuracy, and Timeliness. Full Python bindings and production database connectivity included.
 
@@ -46,7 +39,7 @@ Automate data quality checks in your workflows with our GitHub Action:
     output-html: 'quality-report.html'
 ```
 
-**[Get the Action →](https://github.com/AndreaBozzo/dataprof-actions)**
+**[Get the Action →](https://github.com/AndreaBozzo/dataprof-action)**
 
 - **Zero setup** - works out of the box
 - **ISO 8000/25012 compliant** - industry-standard quality metrics
@@ -54,7 +47,7 @@ Automate data quality checks in your workflows with our GitHub Action:
 - **Flexible** - customizable thresholds and output formats
 - **Fast** - typically completes in under 2 minutes
 
-Perfect for ensuring data quality in pipelines, validating data integrity, or generating automated quality reports.
+Perfect for ensuring data quality in pipelines, validating data integrity, or generating automated quality reports.Updated to latest release.
 
 ## Quick Start
 
