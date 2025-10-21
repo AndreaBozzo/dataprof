@@ -18,6 +18,7 @@ pub struct RobustCsvParser {
     pub trim_whitespace: bool,
     pub auto_recovery: bool,
     pub retry_config: RetryConfig,
+    pub verbosity: u8,
 }
 
 impl Default for RobustCsvParser {
@@ -30,6 +31,7 @@ impl Default for RobustCsvParser {
             trim_whitespace: true,
             auto_recovery: true,
             retry_config: RetryConfig::default(),
+            verbosity: 1, // Normal verbosity by default
         }
     }
 }
@@ -46,6 +48,13 @@ impl RobustCsvParser {
 
     pub fn allow_variable_columns(mut self, allow: bool) -> Self {
         self.allow_variable_columns = allow;
+        self
+    }
+
+    /// Set verbosity level for logging
+    /// 0=quiet, 1=normal, 2=verbose, 3=debug
+    pub fn verbosity(mut self, level: u8) -> Self {
+        self.verbosity = level;
         self
     }
 
@@ -380,10 +389,10 @@ impl RobustCsvParser {
         match self.try_strict_parsing(file_path, delimiter) {
             Ok(result) => return Ok(result),
             Err(e) => {
-                eprintln!(
-                    "⚠️ Strict CSV parsing failed: {}. Trying flexible parsing...",
-                    e
-                );
+                // Only show fallback message at verbose level (2+)
+                if self.verbosity >= 2 {
+                    eprintln!("ℹ️  Using flexible CSV parsing (strict mode failed: {})", e);
+                }
             }
         }
 

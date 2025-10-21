@@ -51,6 +51,7 @@ pub fn execute(args: &AnalyzeArgs) -> Result<()> {
         config: args.common.config.clone(),
         streaming: args.streaming,
         sample: args.sample,
+        verbosity: Some(args.common.verbosity),
     };
 
     // Use shared core logic that handles all improvements

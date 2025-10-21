@@ -29,6 +29,8 @@ pub struct AnalysisOptions {
     pub streaming: bool,
     /// Sample size for large files
     pub sample: Option<usize>,
+    /// Verbosity level (0=quiet, 1=normal, 2=verbose, 3=debug)
+    pub verbosity: Option<u8>,
 }
 
 /// Builder for creating a properly configured profiler with all improvements
@@ -93,7 +95,7 @@ pub fn analyze_file_with_options(
     options: AnalysisOptions,
 ) -> Result<QualityReport> {
     // Load config (from CLI arg, auto-discover, or use default)
-    let config = if let Some(config_path) = &options.config {
+    let mut config = if let Some(config_path) = &options.config {
         // Explicit config file path provided via CLI
         match DataprofConfig::load_from_file(config_path) {
             Ok(cfg) => {
@@ -113,6 +115,11 @@ pub fn analyze_file_with_options(
         // No explicit config, try auto-discovery
         DataprofConfig::load_with_discovery()
     };
+
+    // Override verbosity from CLI if provided
+    if let Some(verbosity) = options.verbosity {
+        config.output.verbosity = verbosity;
+    }
 
     // Detect file format and route to appropriate parser
     #[cfg(feature = "parquet")]
@@ -135,7 +142,8 @@ pub fn analyze_file_with_options(
         }
     } else {
         // CSV files: try streaming profiler, fallback to robust parser
-        let builder = ProfilerBuilder::new(options, config);
+        let builder = ProfilerBuilder::new(options, config.clone());
+        let verbosity = config.output.verbosity;
 
         // Try streaming profiler first
         match builder.build_streaming(file_path) {
@@ -150,20 +158,26 @@ pub fn analyze_file_with_options(
                     }
                     Err(e) => {
                         // Streaming failed, try robust CSV parser with flexible mode
-                        eprintln!(
-                            "⚠️  Streaming analysis failed: {}. Trying robust parser...",
-                            e
-                        );
+                        // Only show this warning at verbose level (actual failures shown regardless)
+                        if verbosity >= 2 {
+                            eprintln!(
+                                "ℹ️  Streaming analysis failed: {}. Trying robust parser...",
+                                e
+                            );
+                        }
                         dataprof::analyze_csv_robust(file_path)
                     }
                 }
             }
             Err(e) => {
                 // Build failed, try robust CSV parser
-                eprintln!(
-                    "⚠️  Profiler initialization failed: {}. Trying robust parser...",
-                    e
-                );
+                // Only show this warning at verbose level
+                if verbosity >= 2 {
+                    eprintln!(
+                        "ℹ️  Profiler initialization failed: {}. Trying robust parser...",
+                        e
+                    );
+                }
                 dataprof::analyze_csv_robust(file_path)
             }
         }

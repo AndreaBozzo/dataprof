@@ -230,21 +230,32 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
 
 // Enhanced original function with robust parsing fallback for compatibility
 pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+    analyze_csv_with_verbosity(file_path, 1) // Default to normal verbosity
+}
+
+/// Analyze CSV with verbosity control for fallback messages
+///
+/// Verbosity levels:
+/// - 0: quiet (no fallback messages)
+/// - 1: normal (no fallback messages)
+/// - 2+: verbose/debug (show fallback info)
+pub fn analyze_csv_with_verbosity(file_path: &Path, verbosity: u8) -> Result<Vec<ColumnProfile>> {
     // First try strict CSV parsing
     match try_strict_csv_parsing(file_path) {
         Ok(profiles) => return Ok(profiles),
         Err(e) => {
-            eprintln!(
-                "⚠️ Strict CSV parsing failed: {}. Using robust parsing...",
-                e
-            );
+            // Only show fallback message at verbose level
+            if verbosity >= 2 {
+                eprintln!("ℹ️  Using flexible CSV parsing (strict mode failed: {})", e);
+            }
         }
     }
 
     // Fallback to robust parsing
     let parser = RobustCsvParser::new()
         .flexible(true)
-        .allow_variable_columns(true);
+        .allow_variable_columns(true)
+        .verbosity(verbosity);
 
     let (headers, records) = parser.parse_csv(file_path)?;
 
@@ -263,9 +274,11 @@ pub fn analyze_csv_fast(file_path: &Path) -> Result<Vec<ColumnProfile>> {
         Ok(profiles) => Ok(profiles),
         Err(_) => {
             // If strict fails, fallback to robust but still fast
+            // Suppress fallback messages in fast mode (verbosity=0)
             let parser = RobustCsvParser::new()
                 .flexible(true)
-                .allow_variable_columns(true);
+                .allow_variable_columns(true)
+                .verbosity(0);
 
             let (headers, records) = parser.parse_csv(file_path)?;
 
