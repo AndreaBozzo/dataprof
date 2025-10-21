@@ -53,6 +53,7 @@ pub use types::{
 // Parser API - CSV, JSON, and Parquet analysis functions
 pub use parsers::csv::{
     analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
+    analyze_csv_with_verbosity,
 };
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 #[cfg(feature = "parquet")]

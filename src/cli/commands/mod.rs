@@ -107,6 +107,10 @@ pub struct CommonAnalysisOptions {
     /// Load settings from TOML config file
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Verbosity level (-v, -vv, -vvv for increasing verbosity)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbosity: u8,
 }
 
 /// Common output options shared across commands
