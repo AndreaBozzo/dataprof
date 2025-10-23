@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.78] - 2025-10-23
+
+### Improved
+
+- **CSV Parsing Fallback Messaging**
+  - Integrated fallback messages into verbosity system (0=quiet, 1=normal, 2=verbose, 3=debug)
+  - Default behavior (verbosity 0-1) now suppresses fallback messages for cleaner output
+  - Verbose mode (-vv) shows informational messages for debugging
+  - Changed message tone from error-like "⚠️ Strict CSV parsing failed" to info-like "ℹ️ Using flexible CSV parsing"
+  - Fallback behavior is intentional design (fast strict path → robust fallback for malformed data)
+
 ## [0.4.77] - 2025-10-16
 
 ### Performance
