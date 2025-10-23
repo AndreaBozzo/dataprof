@@ -8,6 +8,9 @@ use crate::core::sampling::SamplingStrategy;
 use crate::parsers::robust_csv::RobustCsvParser;
 use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
 
+// Default verbosity level for CSV analysis (1 = normal, suppresses fallback messages)
+const DEFAULT_VERBOSITY: u8 = 1;
+
 // ============================================================================
 // HELPER FUNCTIONS - Reusable components to eliminate duplication
 // ============================================================================
@@ -230,7 +233,7 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
 
 // Enhanced original function with robust parsing fallback for compatibility
 pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
-    analyze_csv_with_verbosity(file_path, 1) // Default to normal verbosity
+    analyze_csv_with_verbosity(file_path, DEFAULT_VERBOSITY)
 }
 
 /// Analyze CSV with verbosity control for fallback messages

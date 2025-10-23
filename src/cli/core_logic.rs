@@ -95,7 +95,7 @@ pub fn analyze_file_with_options(
     options: AnalysisOptions,
 ) -> Result<QualityReport> {
     // Load config (from CLI arg, auto-discover, or use default)
-    let mut config = if let Some(config_path) = &options.config {
+    let config = if let Some(config_path) = &options.config {
         // Explicit config file path provided via CLI
         match DataprofConfig::load_from_file(config_path) {
             Ok(cfg) => {
@@ -116,10 +116,14 @@ pub fn analyze_file_with_options(
         DataprofConfig::load_with_discovery()
     };
 
-    // Override verbosity from CLI if provided
-    if let Some(verbosity) = options.verbosity {
-        config.output.verbosity = verbosity;
-    }
+    // Override verbosity from CLI if provided (using shadowing pattern)
+    let config = if let Some(verbosity) = options.verbosity {
+        let mut updated_config = config;
+        updated_config.output.verbosity = verbosity;
+        updated_config
+    } else {
+        config
+    };
 
     // Detect file format and route to appropriate parser
     #[cfg(feature = "parquet")]
