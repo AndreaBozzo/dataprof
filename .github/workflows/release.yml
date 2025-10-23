@@ -359,6 +359,8 @@ jobs:
         # Disable any CPU-specific optimizations in dependencies
         CFLAGS: "-march=x86-64"
         CXXFLAGS: "-march=x86-64"
+        # Enable forward compatibility for Python versions newer than PyO3 max supported
+        PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
 
     - name: Verify wheel compatibility (baseline only)
       if: matrix.cpu_profile == 'baseline'
