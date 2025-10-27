@@ -26,7 +26,7 @@ anyhow = "1.0"
 thiserror = "2.0"
 
 # Pattern detection
-regex = "1.10"
+regex = "1.12"
 lazy_static = "1.4"
 
 
