@@ -8,6 +8,14 @@ description = "High-performance data profiler with ISO 8000/25012 quality metric
 repository = "https://github.com/AndreaBozzo/dataprof"
 keywords = ["data", "analysis", "cli", "data-quality", "parquet"]
 categories = ["command-line-utilities", "data-structures"]
+readme = "README.md"
+documentation = "https://docs.rs/dataprof"
+homepage = "https://github.com/AndreaBozzo/dataprof"
+
+# Configuration for docs.rs
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # CSV parsing

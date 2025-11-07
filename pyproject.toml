@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "dataprof"
 description = "Fast, lightweight data profiling and quality assessment library"
-authors = [{name = "Andrea Bozzo", email = "andrea@example.com"}]
+authors = [{name = "Andrea Bozzo", email = "andreabozzo92@gmail.com"}]
 requires-python = ">=3.8"
 dependencies = []
 

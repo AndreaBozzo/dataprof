@@ -7,7 +7,7 @@ pub struct ReportArgs {
     /// Input file to analyze
     pub file: PathBuf,
 
-    /// Output report path (default: <filename>_report.html)
+    /// Output report path (default: FILENAME_report.html)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 

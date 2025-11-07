@@ -1,6 +1,7 @@
 # dataprof
 
 [![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
+[![codecov](https://codecov.io/gh/AndreaBozzo/dataprof/branch/master/graph/badge.svg)](https://codecov.io/gh/AndreaBozzo/dataprof)
 [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)

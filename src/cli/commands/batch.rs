@@ -51,7 +51,7 @@ pub struct BatchArgs {
     #[arg(long, default_value = "text")]
     pub format: String,
 
-    /// Generate JSON batch report (shorthand for --format json --output <path>)
+    /// Generate JSON batch report (shorthand for --format json --output PATH)
     #[arg(long)]
     pub json: Option<PathBuf>,
 }

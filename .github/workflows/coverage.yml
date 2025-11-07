@@ -1,0 +1,120 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'examples/**'
+      - '.gitignore'
+      - 'LICENSE*'
+  pull_request:
+    branches: [main, master, staging]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'examples/**'
+      - '.gitignore'
+      - 'LICENSE*'
+  workflow_dispatch:
+
+# Automatically cancel in-progress runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Code Coverage Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rust-coverage
+          shared-key: stable-ubuntu-latest
+          cache-on-failure: true
+
+      - name: Setup system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Install cargo-tarpaulin
+        run: |
+          cargo install cargo-tarpaulin --version 0.31.0 --locked
+
+      - name: Run tests with coverage
+        run: |
+          cargo tarpaulin \
+            --config tarpaulin.toml \
+            --profile ci \
+            --engine llvm \
+            --out Xml \
+            --out Lcov \
+            --output-dir coverage \
+            --verbose
+        env:
+          RUST_BACKTRACE: 1
+          RUSTFLAGS: "-C link-dead-code"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+          verbose: true
+          flags: unittests
+          name: codecov-dataprof
+          disable_search: true
+
+      - name: Upload coverage reports as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            coverage/lcov.info
+            coverage/cobertura.xml
+            coverage/tarpaulin-report.html
+          retention-days: 30
+
+      - name: Check coverage threshold
+        if: always()
+        run: |
+          if [ -f coverage/cobertura.xml ]; then
+            echo "✅ Coverage report generated successfully"
+            # Extract coverage percentage from XML
+            COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' coverage/cobertura.xml | head -1)
+            COVERAGE_PCT=$(echo "$COVERAGE * 100" | bc)
+            echo "📊 Code coverage: ${COVERAGE_PCT}%"
+
+            # Check against threshold (75% for CI)
+            THRESHOLD=75
+            if (( $(echo "$COVERAGE_PCT < $THRESHOLD" | bc -l) )); then
+              echo "⚠️  Warning: Coverage ${COVERAGE_PCT}% is below threshold ${THRESHOLD}%"
+              # Don't fail the build, just warn
+            else
+              echo "✅ Coverage meets threshold requirement"
+            fi
+          else
+            echo "❌ Coverage report not found"
+            exit 1
+          fi
