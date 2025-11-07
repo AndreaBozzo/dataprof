@@ -27,7 +27,7 @@ post-args = ["--", "--test-threads=1"]
 
 # Report configuration
 verbose = true
-color = "auto"
+color = "Auto"
 
 [ci]
 # Configuration for CI environments
