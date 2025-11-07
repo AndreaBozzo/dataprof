@@ -167,6 +167,13 @@ panic = "abort"   # Riduce dimensione binario
 inherits = "release"
 panic = "unwind"     # Required for benchmarks and tests
 
+# CI profile for coverage testing
+[profile.ci]
+inherits = "test"
+opt-level = 0        # No optimization for faster builds
+debug = 2            # Full debug info for coverage
+incremental = false  # Disable incremental for clean coverage
+codegen-units = 1    # Single codegen unit for better coverage accuracy
 
 # Configurazione per dipendenze più veloci
 [profile.dev.package."*"]

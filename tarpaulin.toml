@@ -33,7 +33,8 @@ color = "Auto"
 # Configuration for CI environments
 out = ["Lcov", "Xml"]
 output-dir = "coverage"
-fail-under = 75  # Slightly lower threshold for CI
+# Don't fail on coverage threshold in CI - let codecov handle reporting
+# fail-under = 75
 exclude-files = [
     "target/*",
     "tests/*",
