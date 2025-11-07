@@ -32,9 +32,9 @@ impl PyCsvProcessor {
     /// Exit context manager with cleanup
     fn __exit__(
         &mut self,
-        _exc_type: Option<PyObject>,
-        _exc_value: Option<PyObject>,
-        _traceback: Option<PyObject>,
+        _exc_type: Option<Py<PyAny>>,
+        _exc_value: Option<Py<PyAny>>,
+        _traceback: Option<Py<PyAny>>,
     ) -> PyResult<bool> {
         // Clean up all temporary files
         for temp_file in &self.temp_files {
@@ -59,7 +59,7 @@ impl PyCsvProcessor {
     }
 
     /// Process the file in chunks
-    fn process_chunks(&mut self, py: Python) -> PyResult<PyObject> {
+    fn process_chunks(&mut self, py: Python) -> PyResult<Py<PyAny>> {
         let file_path = self
             .file_handle
             .as_ref()
@@ -103,7 +103,7 @@ impl PyCsvProcessor {
     }
 
     /// Get processing statistics
-    fn get_processing_info(&self, py: Python) -> PyResult<PyObject> {
+    fn get_processing_info(&self, py: Python) -> PyResult<Py<PyAny>> {
         let mut info: std::collections::HashMap<&str, Py<PyAny>> = std::collections::HashMap::new();
         info.insert(
             "file_path",

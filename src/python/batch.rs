@@ -75,7 +75,7 @@ pub fn batch_analyze_directory(
 #[pyclass]
 pub struct PyBatchAnalyzer {
     temp_files: Vec<String>,
-    results: Vec<PyObject>,
+    results: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -96,9 +96,9 @@ impl PyBatchAnalyzer {
     /// Exit context manager with cleanup
     fn __exit__(
         &mut self,
-        _exc_type: Option<PyObject>,
-        _exc_value: Option<PyObject>,
-        _traceback: Option<PyObject>,
+        _exc_type: Option<Py<PyAny>>,
+        _exc_value: Option<Py<PyAny>>,
+        _traceback: Option<Py<PyAny>>,
     ) -> PyResult<bool> {
         // Clean up temporary files
         for temp_file in &self.temp_files {
@@ -142,13 +142,13 @@ impl PyBatchAnalyzer {
     }
 
     /// Get all analysis results
-    fn get_results(&self, py: Python) -> PyResult<PyObject> {
-        let results_ref: Vec<&PyObject> = self.results.iter().collect();
+    fn get_results(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let results_ref: Vec<&Py<PyAny>> = self.results.iter().collect();
         Ok(results_ref.into_pyobject(py)?.into())
     }
 
     /// Analyze multiple files in batch (detects format automatically)
-    fn analyze_batch(&mut self, py: Python, paths: Vec<String>) -> PyResult<PyObject> {
+    fn analyze_batch(&mut self, py: Python, paths: Vec<String>) -> PyResult<Py<PyAny>> {
         let mut batch_results: Vec<Py<PyAny>> = Vec::new();
 
         for path in paths {

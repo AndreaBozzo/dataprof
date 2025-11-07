@@ -78,7 +78,7 @@ impl ReservoirSampler {
         }
 
         // Calculate if this record should replace one in the reservoir
-        let random_index = self.rng.gen_range(0..self.total_processed);
+        let random_index = self.rng.random_range(0..self.total_processed);
 
         if random_index < self.capacity {
             // Replace the record at random_index in reservoir
@@ -101,7 +101,7 @@ impl ReservoirSampler {
     fn calculate_next_skip(&mut self) {
         // Use geometric distribution to calculate skip distance
         // This is based on Vitter's Algorithm S optimization
-        let u: f64 = self.rng.gen();
+        let u: f64 = self.rng.random();
         let skip = if u > 0.0 {
             ((self.total_processed as f64) * (u.powf(1.0 / self.capacity as f64) - 1.0)) as usize
         } else {
@@ -190,7 +190,7 @@ impl WeightedReservoirSampler {
 
         // Adjust sampling probability based on weight
         let adjusted_probability = weight / self.total_weight;
-        let u: f64 = self.base_sampler.rng.gen();
+        let u: f64 = self.base_sampler.rng.random();
 
         if u < adjusted_probability {
             self.base_sampler.process_record(record_index)
