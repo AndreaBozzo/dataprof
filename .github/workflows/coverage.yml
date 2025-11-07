@@ -65,11 +65,7 @@ jobs:
           cargo tarpaulin \
             --config tarpaulin.toml \
             --profile ci \
-            --engine llvm \
-            --out Xml \
-            --out Lcov \
-            --output-dir coverage \
-            --verbose
+            --engine llvm
         env:
           RUST_BACKTRACE: 1
           RUSTFLAGS: "-C link-dead-code"

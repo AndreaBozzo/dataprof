@@ -1,7 +1,7 @@
 # Tarpaulin Configuration for DataProfiler
 # Run with: cargo tarpaulin --config tarpaulin.toml
 
-[tool.tarpaulin.default]
+[default]
 # Output formats
 out = ["Html", "Json", "Lcov"]
 output-dir = "coverage"
@@ -29,9 +29,9 @@ post-args = ["--", "--test-threads=1"]
 verbose = true
 color = "auto"
 
-[tool.tarpaulin.ci]
+[ci]
 # Configuration for CI environments
-out = ["Lcov", "Json"]
+out = ["Lcov", "Xml"]
 output-dir = "coverage"
 fail-under = 75  # Slightly lower threshold for CI
 exclude-files = [
@@ -44,7 +44,7 @@ exclude-files = [
 ]
 timeout = 600  # Longer timeout for CI
 
-[tool.tarpaulin.quick]
+[quick]
 # Quick coverage check during development
 out = ["Json"]
 exclude-files = [
