@@ -153,9 +153,23 @@ print(f"Uniqueness: {metrics.key_uniqueness:.1f}%")
 # Batch processing
 result = dataprof.batch_analyze_directory("/data", recursive=True)
 print(f"Processed {result.processed_files} files at {result.files_per_second:.1f} files/sec")
+
+# Async database profiling (requires python-async feature)
+import asyncio
+
+async def profile_db():
+    result = await dataprof.profile_database_async(
+        "postgresql://user:pass@localhost/db",
+        "SELECT * FROM users LIMIT 1000",
+        batch_size=1000,
+        calculate_quality=True
+    )
+    print(f"Quality score: {result['quality'].overall_score:.1%}")
+
+asyncio.run(profile_db())
 ```
 
-> **Note**: Database profiling is available via CLI only. Python users can export SQL results to CSV and use `analyze_csv_with_quality()`.
+> **Note**: Async database profiling requires building with `--features python-async,database,postgres` (or mysql/sqlite). See [Async Support](#async-support) below.
 
 **[Full Python API Documentation →](docs/python/README.md)**
 
@@ -213,6 +227,9 @@ cargo build --release --features parquet
 # With database connectors
 cargo build --release --features postgres,mysql,sqlite
 
+# With Python async support (for async database profiling)
+maturin develop --features python-async,database,postgres
+
 # All features (full functionality, ~130s compile)
 cargo build --release --all-features
 ```
@@ -230,6 +247,90 @@ cargo build --release --all-features
 - ✅ Integration with Spark, Pandas, PyArrow
 - ✅ Efficient storage and compression
 - ✅ Type-safe schema preservation
+
+### Async Support
+
+DataProf supports asynchronous operations for non-blocking database profiling, both in Rust and Python.
+
+#### Rust Async (Database Features)
+
+Database connectors are fully async and use `tokio` runtime:
+
+```rust
+use dataprof::database::{DatabaseConfig, profile_database};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config = DatabaseConfig {
+        connection_string: "postgresql://localhost/mydb".to_string(),
+        batch_size: 10000,
+        ..Default::default()
+    };
+
+    let report = profile_database(config, "SELECT * FROM users").await?;
+    println!("Profiled {} rows", report.total_rows);
+    Ok(())
+}
+```
+
+**Available async features:**
+- ✅ Non-blocking database queries
+- ✅ Concurrent query execution
+- ✅ Streaming for large result sets
+- ✅ Connection pooling with SQLx
+- ✅ Retry logic with exponential backoff
+
+#### Python Async (python-async Feature)
+
+Enable async Python bindings for database profiling:
+
+```bash
+# Build with async support
+maturin develop --features python-async,database,postgres
+```
+
+```python
+import asyncio
+import dataprof
+
+async def main():
+    # Test connection
+    connected = await dataprof.test_connection_async(
+        "postgresql://user:pass@localhost/db"
+    )
+
+    # Get table schema
+    columns = await dataprof.get_table_schema_async(
+        "postgresql://user:pass@localhost/db",
+        "users"
+    )
+
+    # Count rows
+    count = await dataprof.count_table_rows_async(
+        "postgresql://user:pass@localhost/db",
+        "users"
+    )
+
+    # Profile database query
+    result = await dataprof.profile_database_async(
+        "postgresql://user:pass@localhost/db",
+        "SELECT * FROM users LIMIT 1000",
+        batch_size=1000,
+        calculate_quality=True
+    )
+
+    print(f"Quality score: {result['quality'].overall_score:.1%}")
+
+asyncio.run(main())
+```
+
+**Benefits:**
+- ✅ Non-blocking I/O for better performance
+- ✅ Concurrent database profiling
+- ✅ Integration with async Python frameworks (FastAPI, aiohttp, etc.)
+- ✅ Efficient resource usage
+
+**See also:** [examples/async_database_example.py](examples/async_database_example.py) for complete examples.
 
 ### Common Development Tasks
 ```bash

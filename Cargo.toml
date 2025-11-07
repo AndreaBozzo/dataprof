@@ -54,7 +54,7 @@ memmap2 = "0.9"  # Latest: 0.9.9 (patch available via cargo update)
 rand_distr = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 
-# Note: Async support temporarily disabled
+# Note: Async support is available via feature flags (database, python-async)
 
 # SIMD acceleration
 wide = "0.8"
@@ -71,7 +71,7 @@ num_cpus = "1.16"
 
 # Python bindings
 pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
-# pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"], optional = true }
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"], optional = true }
 
 # Database connectors and async runtime
 tokio = { version = "1.0", features = ["full"], optional = true }  # Latest: 1.48.0 (patch available via cargo update)
@@ -173,7 +173,7 @@ default = [] # Minimal by default - MUCH faster compilation
 
 # Individual features
 python = ["dep:pyo3"]
-# python-async = ["python", "dep:pyo3-asyncio", "dep:tokio"]
+python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
 arrow = ["dep:arrow"]
 parquet = ["arrow", "dep:parquet"]

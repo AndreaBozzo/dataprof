@@ -7,6 +7,9 @@ pub mod logging;
 pub mod processor;
 pub mod types;
 
+#[cfg(all(feature = "python-async", feature = "database"))]
+pub mod database_async;
+
 // Re-export all public types and functions
 pub use analysis::{
     analyze_csv_file, analyze_csv_with_quality, analyze_json_file, analyze_json_with_quality,
@@ -76,7 +79,26 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Enhanced analysis functions with logging
     m.add_function(wrap_pyfunction!(analyze_csv_with_logging, m)?)?;
 
-    // Note: Async functions temporarily disabled due to compatibility issues
+    // Async database functions (available with python-async and database features)
+    #[cfg(all(feature = "python-async", feature = "database"))]
+    {
+        m.add_function(wrap_pyfunction!(
+            database_async::profile_database_async,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            database_async::test_connection_async,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            database_async::get_table_schema_async,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            database_async::count_table_rows_async,
+            m
+        )?)?;
+    }
 
     Ok(())
 }
