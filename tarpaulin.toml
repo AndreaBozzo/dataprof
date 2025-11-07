@@ -21,7 +21,7 @@ exclude-files = [
 ]
 
 # Test execution
-timeout = 300  # 5 minutes timeout
+timeout = "300s"  # 5 minutes timeout
 follow-exec = true
 post-args = ["--", "--test-threads=1"]
 
@@ -42,7 +42,10 @@ exclude-files = [
     "src/main.rs",
     "src/python.rs",
 ]
-timeout = 600  # Longer timeout for CI
+timeout = "600s"  # Longer timeout for CI
+verbose = true
+follow-exec = true
+post-args = ["--", "--test-threads=1"]
 
 [quick]
 # Quick coverage check during development
@@ -55,5 +58,5 @@ exclude-files = [
     "src/main.rs",
     "src/python.rs",
 ]
-timeout = 120
+timeout = "120s"
 fail-under = 70
