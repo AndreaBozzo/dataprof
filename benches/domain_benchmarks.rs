@@ -6,7 +6,7 @@ use dataprof::testing::{
     CriterionResultParams, DatasetConfig, DatasetPattern, DatasetSize, ResultCollector,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 mod domain_datasets {
@@ -197,9 +197,7 @@ mod domain_datasets {
 use domain_datasets::DomainDatasets;
 
 // Global result collector for CI/CD integration
-lazy_static::lazy_static! {
-    static ref DOMAIN_RESULT_COLLECTOR: Mutex<ResultCollector> = Mutex::new(ResultCollector::new());
-}
+static DOMAIN_RESULT_COLLECTOR: LazyLock<Mutex<ResultCollector>> = LazyLock::new(|| Mutex::new(ResultCollector::new()));
 
 /// Helper to collect domain benchmark results
 fn collect_domain_result(

@@ -8,7 +8,7 @@ use super::types::PyColumnProfile;
 
 /// Analyze CSV and return column profiles as pandas DataFrame (if pandas available)
 #[pyfunction]
-pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
+pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<Py<PyAny>> {
     // Get column profiles
     let profiles = analyze_csv(Path::new(path))
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
@@ -24,7 +24,7 @@ pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<PyObject> {
     };
 
     // Create DataFrame data
-    let mut data: std::collections::HashMap<&str, Vec<PyObject>> = std::collections::HashMap::new();
+    let mut data: std::collections::HashMap<&str, Vec<Py<PyAny>>> = std::collections::HashMap::new();
     data.insert("column_name", Vec::new());
     data.insert("data_type", Vec::new());
     data.insert("total_count", Vec::new());

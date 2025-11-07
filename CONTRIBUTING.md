@@ -6,7 +6,7 @@ Thank you for considering contributing to DataProfiler CLI! This document provid
 
 ### Prerequisites
 
-- Rust 1.70 or later
+- Rust 1.80 or later
 - Cargo (comes with Rust)
 - Git
 

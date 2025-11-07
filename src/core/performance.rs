@@ -94,7 +94,7 @@ impl PerformanceIntelligence {
 
         // Refresh system information
         self.system.refresh_memory();
-        self.system.refresh_cpu();
+        self.system.refresh_cpu_all();
 
         let processing_speed = if elapsed.as_secs_f64() > 0.0 {
             rows_processed as f64 / elapsed.as_secs_f64()
@@ -113,7 +113,7 @@ impl PerformanceIntelligence {
             .unwrap_or(0);
 
         let available_memory_mb = self.system.available_memory() / 1_048_576; // Convert to MB
-        let cpu_usage_percent = self.system.global_cpu_info().cpu_usage() as f64;
+        let cpu_usage_percent = self.system.global_cpu_usage() as f64;
 
         let metrics = PerformanceMetrics {
             processing_speed,

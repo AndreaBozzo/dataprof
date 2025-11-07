@@ -45,7 +45,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 #### Issue: Outdated Rust version
 ```
-error: package requires Rust 1.70+ but you have 1.65
+error: package requires Rust 1.80+ but you have 1.75
 ```
 
 **Solutions**:

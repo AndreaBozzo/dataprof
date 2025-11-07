@@ -14,13 +14,11 @@ use dataprof::analyze_csv;
 use dataprof::testing::{
     CriterionResultParams, DatasetPattern, DatasetSize, ResultCollector, StandardDatasets,
 };
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // Global result collector for CI/CD integration
-lazy_static::lazy_static! {
-    static ref RESULT_COLLECTOR: Mutex<ResultCollector> = Mutex::new(ResultCollector::new());
-}
+static RESULT_COLLECTOR: LazyLock<Mutex<ResultCollector>> = LazyLock::new(|| Mutex::new(ResultCollector::new()));
 
 /// Helper to collect benchmark results for CI/CD integration with precise timing
 fn collect_benchmark_result(

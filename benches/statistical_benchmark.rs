@@ -6,13 +6,11 @@ use dataprof::testing::{
     EngineSelectionAccuracy, MetricCollection, MetricMeasurement, MetricType, StandardDatasets,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // Global result collector with enhanced metrics
-lazy_static::lazy_static! {
-    static ref STATISTICAL_RESULTS: Mutex<Vec<StatisticalBenchmarkResult>> = Mutex::new(Vec::new());
-}
+static STATISTICAL_RESULTS: LazyLock<Mutex<Vec<StatisticalBenchmarkResult>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Enhanced benchmark result with statistical rigor metrics
 #[derive(Debug, Clone)]

@@ -115,7 +115,7 @@ impl PyQualityReport {
     fn to_json(&self, py: Python) -> PyResult<String> {
         // Convert PyQualityReport back to QualityReport for formatting
         // This is a workaround since we need the full report structure
-        py.allow_threads(|| {
+        py.detach(|| {
             // We need to serialize using serde_json directly since we don't have access
             // to the original QualityReport here
             let json_value = serde_json::json!({
