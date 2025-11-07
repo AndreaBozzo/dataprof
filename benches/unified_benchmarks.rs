@@ -18,7 +18,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // Global result collector for CI/CD integration
-static RESULT_COLLECTOR: LazyLock<Mutex<ResultCollector>> = LazyLock::new(|| Mutex::new(ResultCollector::new()));
+static RESULT_COLLECTOR: LazyLock<Mutex<ResultCollector>> =
+    LazyLock::new(|| Mutex::new(ResultCollector::new()));
 
 /// Helper to collect benchmark results for CI/CD integration with precise timing
 fn collect_benchmark_result(

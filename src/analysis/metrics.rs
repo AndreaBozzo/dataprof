@@ -20,7 +20,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 // Pre-compile date validation regex patterns for better performance
-static DATE_VALIDATION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| vec![
+static DATE_VALIDATION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"^\d{4}-\d{2}-\d{2}$")
             .expect("BUG: Invalid hardcoded regex for date validation YYYY-MM-DD"),
         Regex::new(r"^\d{2}/\d{2}/\d{4}$")
@@ -35,9 +36,11 @@ static DATE_VALIDATION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| vec![
             .expect("BUG: Invalid hardcoded regex for date validation YYYY-M-D"),
         Regex::new(r"^\d{1,2}-\d{1,2}-\d{4}$")
             .expect("BUG: Invalid hardcoded regex for date validation M-D-YYYY"),
-    ]);
+    ]
+});
 
-static DATE_FORMAT_REGEXES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| vec![
+static DATE_FORMAT_REGEXES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+    vec![
         (
             "YYYY-MM-DD",
             Regex::new(r"^\d{4}-\d{2}-\d{2}$")
@@ -58,7 +61,8 @@ static DATE_FORMAT_REGEXES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new
             Regex::new(r"^\d{4}/\d{2}/\d{2}$")
                 .expect("BUG: Invalid hardcoded regex for format YYYY/MM/DD"),
         ),
-    ]);
+    ]
+});
 
 /// Engine for calculating comprehensive data quality metrics
 /// Supports ISO 8000/25012 configurable thresholds

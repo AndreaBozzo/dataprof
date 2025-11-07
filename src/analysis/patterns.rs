@@ -5,7 +5,8 @@ use crate::types::Pattern;
 
 // Pre-compile pattern regexes for better performance
 // These patterns are compiled once at startup instead of on every detect_patterns call
-static PATTERN_REGEXES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| vec![
+static PATTERN_REGEXES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+    vec![
         (
             "Email",
             Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
@@ -31,7 +32,8 @@ static PATTERN_REGEXES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| 
             Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
                 .expect("BUG: Invalid hardcoded regex pattern for UUID"),
         ),
-    ]);
+    ]
+});
 
 /// Detect common data patterns in a column
 ///

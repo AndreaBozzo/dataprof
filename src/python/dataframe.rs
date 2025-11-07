@@ -24,7 +24,8 @@ pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<Py<PyAny>> {
     };
 
     // Create DataFrame data
-    let mut data: std::collections::HashMap<&str, Vec<Py<PyAny>>> = std::collections::HashMap::new();
+    let mut data: std::collections::HashMap<&str, Vec<Py<PyAny>>> =
+        std::collections::HashMap::new();
     data.insert("column_name", Vec::new());
     data.insert("data_type", Vec::new());
     data.insert("total_count", Vec::new());

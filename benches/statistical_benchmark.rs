@@ -10,7 +10,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // Global result collector with enhanced metrics
-static STATISTICAL_RESULTS: LazyLock<Mutex<Vec<StatisticalBenchmarkResult>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static STATISTICAL_RESULTS: LazyLock<Mutex<Vec<StatisticalBenchmarkResult>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Enhanced benchmark result with statistical rigor metrics
 #[derive(Debug, Clone)]

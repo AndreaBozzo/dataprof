@@ -197,7 +197,8 @@ mod domain_datasets {
 use domain_datasets::DomainDatasets;
 
 // Global result collector for CI/CD integration
-static DOMAIN_RESULT_COLLECTOR: LazyLock<Mutex<ResultCollector>> = LazyLock::new(|| Mutex::new(ResultCollector::new()));
+static DOMAIN_RESULT_COLLECTOR: LazyLock<Mutex<ResultCollector>> =
+    LazyLock::new(|| Mutex::new(ResultCollector::new()));
 
 /// Helper to collect domain benchmark results
 fn collect_domain_result(

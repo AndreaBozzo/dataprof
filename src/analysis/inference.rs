@@ -5,7 +5,8 @@ use crate::types::DataType;
 
 // Pre-compile regex patterns for better performance
 // These patterns are compiled once at startup instead of on every column analysis
-static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| vec![
+static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
         Regex::new(r"^\d{4}-\d{2}-\d{2}$")
             .expect("BUG: Invalid hardcoded regex pattern for ISO 8601 date"),
         Regex::new(r"^\d{2}/\d{2}/\d{4}$")
@@ -16,7 +17,8 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| vec![
             .expect("BUG: Invalid hardcoded regex pattern for YYYY/MM/DD date"),
         Regex::new(r"^\d{2}\.\d{2}\.\d{4}$")
             .expect("BUG: Invalid hardcoded regex pattern for DD.MM.YYYY date"),
-    ]);
+    ]
+});
 
 pub fn infer_type(data: &[String]) -> DataType {
     // Filter empty and whitespace-only strings for more robust inference
