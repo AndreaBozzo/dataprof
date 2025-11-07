@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.80] - 2025-11-07
+
+### Added
+
+- **Async Support for Database Profiling**
+  - Re-enabled async support with Python bindings for non-blocking database operations
+  - New `python-async` feature flag with `pyo3-async-runtimes` 0.27
+  - Four async Python functions: `profile_database_async()`, `test_connection_async()`, `get_table_schema_async()`, `count_table_rows_async()`
+  - Complete async examples in `examples/async_database_example.py`
+  - Full integration with Python's asyncio framework
+  - Backward compatible (async is opt-in via feature flags)
+
+- **Dependency Upgrades**
+  - pyo3: 0.24.2 → 0.27.1 with API migrations
+  - arrow/parquet: 56.2.0 → 57.0.0
+  - criterion: 0.5.1 → 0.7.0
+  - indicatif: 0.17.11 → 0.18.2
+  - sysinfo: 0.30.13 → 0.37.2
+  - rand ecosystem: 0.8 → 0.9
+  - wide: 0.7.33 → 0.8.1
+  - handlebars: 5.1.2 → 6.3.2
+  - toml: 0.8.23 → 0.9.8
+
+### Changed
+
+- **MSRV updated: 1.70 → 1.80** (required by criterion 0.7)
+- **Removed lazy_static dependency**: Migrated to `std::sync::LazyLock` (stable since Rust 1.70)
+- API migrations for pyo3 0.27: `PyObject` → `Py<PyAny>`, `allow_threads()` → `detach()`, `Python::with_gil()` → `Python::attach()`
+- API migrations for sysinfo 0.37: `refresh_cpu()` → `refresh_cpu_all()`, `global_cpu_info().cpu_usage()` → `global_cpu_usage()`
+- API migrations for rand 0.9: `gen_range()` → `random_range()`, `gen()` → `random()`, `thread_rng()` → `rng()`
+
+### Documentation
+
+- Added comprehensive "Async Support" section to README with Rust and Python examples
+- Updated feature flags documentation with async build instructions
+- Added async usage examples and benefits
+
 ## [0.4.78] - 2025-10-23
 
 ### Improved

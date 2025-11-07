@@ -62,7 +62,7 @@ pub fn profile_database_async<'py>(
     #[cfg(not(feature = "python-async"))]
     {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Async support not enabled. Please compile with --features python-async"
+            "Async support not enabled. Please compile with --features python-async",
         ))
     }
 }
@@ -73,7 +73,7 @@ async fn profile_database_internal(
     connection_string: String,
     query: String,
     batch_size: usize,
-    calculate_quality: bool,
+    _calculate_quality: bool,
 ) -> Result<pyo3::Py<pyo3::PyAny>, anyhow::Error> {
     use pyo3::Python;
 
@@ -95,12 +95,15 @@ async fn profile_database_internal(
         let py_profiles: Vec<PyColumnProfile> = quality_report
             .column_profiles
             .iter()
-            .map(|cp| PyColumnProfile::from(cp))
+            .map(PyColumnProfile::from)
             .collect();
         result.set_item("columns", py_profiles)?;
 
         // Add quality metrics
-        result.set_item("quality", PyDataQualityMetrics::from(&quality_report.data_quality_metrics))?;
+        result.set_item(
+            "quality",
+            PyDataQualityMetrics::from(&quality_report.data_quality_metrics),
+        )?;
 
         // Add metadata
         result.set_item("row_count", quality_report.file_info.total_rows)?;
@@ -151,7 +154,7 @@ pub fn test_connection_async<'py>(
     #[cfg(not(feature = "python-async"))]
     {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Async support not enabled. Please compile with --features python-async"
+            "Async support not enabled. Please compile with --features python-async",
         ))
     }
 }
@@ -209,7 +212,7 @@ pub fn get_table_schema_async<'py>(
     #[cfg(not(feature = "python-async"))]
     {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Async support not enabled. Please compile with --features python-async"
+            "Async support not enabled. Please compile with --features python-async",
         ))
     }
 }
@@ -274,7 +277,7 @@ pub fn count_table_rows_async<'py>(
     #[cfg(not(feature = "python-async"))]
     {
         Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Async support not enabled. Please compile with --features python-async"
+            "Async support not enabled. Please compile with --features python-async",
         ))
     }
 }

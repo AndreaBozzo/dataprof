@@ -82,22 +82,10 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Async database functions (available with python-async and database features)
     #[cfg(all(feature = "python-async", feature = "database"))]
     {
-        m.add_function(wrap_pyfunction!(
-            database_async::profile_database_async,
-            m
-        )?)?;
-        m.add_function(wrap_pyfunction!(
-            database_async::test_connection_async,
-            m
-        )?)?;
-        m.add_function(wrap_pyfunction!(
-            database_async::get_table_schema_async,
-            m
-        )?)?;
-        m.add_function(wrap_pyfunction!(
-            database_async::count_table_rows_async,
-            m
-        )?)?;
+        m.add_function(wrap_pyfunction!(database_async::profile_database_async, m)?)?;
+        m.add_function(wrap_pyfunction!(database_async::test_connection_async, m)?)?;
+        m.add_function(wrap_pyfunction!(database_async::get_table_schema_async, m)?)?;
+        m.add_function(wrap_pyfunction!(database_async::count_table_rows_async, m)?)?;
     }
 
     Ok(())
