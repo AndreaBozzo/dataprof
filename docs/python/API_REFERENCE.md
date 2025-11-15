@@ -37,7 +37,9 @@ Analyze CSV file with comprehensive quality assessment and issue detection.
 ```python
 report = dataprof.analyze_csv_with_quality("data.csv")
 print(f"Quality Score: {report.quality_score():.1f}%")
-print(f"Issues Found: {len(report.issues)}")
+metrics = report.data_quality_metrics
+print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
+print(f"Missing Values: {metrics.missing_values_ratio:.1f}%")
 ```
 
 #### `analyze_json_file(path: str) -> List[PyColumnProfile]`
@@ -220,23 +222,14 @@ Comprehensive quality assessment report.
 - `total_rows: Optional[int]` - Total rows in file
 - `total_columns: int` - Total columns
 - `column_profiles: List[PyColumnProfile]` - Column analysis results
-- `issues: List[PyQualityIssue]` - Detected quality issues
+- `data_quality_metrics: PyDataQualityMetrics` - ISO 8000/25012 compliant quality metrics
+- `rows_scanned: int` - Number of rows scanned
+- `sampling_ratio: float` - Sampling ratio used (1.0 = full scan)
 - `scan_time_ms: int` - Processing time in milliseconds
 
 **Methods:**
 - `quality_score() -> float` - Calculate overall quality score (0-100)
-- `issues_by_severity(severity: str) -> List[PyQualityIssue]` - Filter issues by severity
-
-### `PyQualityIssue`
-Detected data quality issue.
-
-**Attributes:**
-- `issue_type: str` - Type of issue (e.g., "null_values", "duplicates")
-- `column: str` - Affected column name
-- `severity: str` - Issue severity ("high", "medium", "low")
-- `count: Optional[int]` - Number of affected values
-- `percentage: Optional[float]` - Percentage of values affected
-- `description: str` - Human-readable description
+- `to_json() -> str` - Export report as JSON string
 
 ### `PyBatchResult`
 Batch processing results and performance metrics.
@@ -245,8 +238,6 @@ Batch processing results and performance metrics.
 - `processed_files: int` - Successfully processed files
 - `failed_files: int` - Failed file count
 - `total_duration_secs: float` - Total processing time
-- `files_per_second: float` - Processing throughput
-- `total_quality_issues: int` - Total issues found across all files
 - `average_quality_score: float` - Average quality score across files
 
 ## Context Managers

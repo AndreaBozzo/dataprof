@@ -75,18 +75,6 @@ class PyColumnProfile:
 
     def __new__(cls) -> Self: ...
 
-class PyQualityIssue:
-    """Quality issue detected in data."""
-
-    issue_type: str
-    column: str
-    severity: str
-    count: Optional[int]
-    percentage: Optional[float]
-    description: str
-
-    def __new__(cls) -> Self: ...
-
 class PyQualityReport:
     """Complete quality report for a dataset."""
 
@@ -94,19 +82,20 @@ class PyQualityReport:
     total_rows: Optional[int]
     total_columns: int
     column_profiles: List[PyColumnProfile]
-    issues: List[PyQualityIssue]
     rows_scanned: int
     sampling_ratio: float
     scan_time_ms: int
-    data_quality_metrics: Optional[PyDataQualityMetrics]
+    data_quality_metrics: PyDataQualityMetrics
 
     def __new__(cls) -> Self: ...
     def quality_score(self) -> float: ...
-    def issues_by_severity(self, severity: str) -> List[PyQualityIssue]: ...
     def to_json(self) -> str: ...
 
 class PyDataQualityMetrics:
     """ISO 8000/25012 compliant data quality metrics."""
+
+    # Overall Score
+    overall_quality_score: float
 
     # Completeness
     missing_values_ratio: float
@@ -150,7 +139,6 @@ class PyBatchResult:
     processed_files: int
     failed_files: int
     total_duration_secs: float
-    total_quality_issues: int
     average_quality_score: float
 
     def __new__(cls) -> Self: ...
@@ -215,7 +203,6 @@ __all__ = [
     # Core classes
     "PyColumnProfile",
     "PyQualityReport",
-    "PyQualityIssue",
     "PyDataQualityMetrics",
     "PyBatchResult",
 

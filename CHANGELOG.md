@@ -5,7 +5,16 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.81] - 2025-11-14
+
+Refactor and enhance testing suite for DataProf
+
+- Removed outdated test file `test_bindings.py` and replaced it with a comprehensive suite in `test_context_managers.py` and `test_python_api.py`.
+- Added tests for context managers including `PyBatchAnalyzer` and `PyCsvProcessor`, ensuring proper functionality and error handling.
+- Implemented a detailed API contract test suite to validate the presence and types of attributes in various DataProf classes.
+- Introduced tests for JSON analysis and batch processing, ensuring robust error handling and edge case coverage.
+- Deleted `test_timeliness_metrics.py` as its functionality is now covered in the new tests.
+- Refactored batch processing logic in `batch.rs` to improve thread pool management for parallel processing.
 
 ## [0.4.80] - 2025-11-07
 

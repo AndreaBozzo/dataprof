@@ -35,30 +35,26 @@ def quality_assessment():
     print(f"📊 Dataset: {report.total_rows} rows × {report.total_columns} columns")
     print(f"⚡ Scan time: {report.scan_time_ms}ms")
 
-    if report.issues:
-        print(f"\n⚠️ Quality Issues Found ({len(report.issues)}):")
+    # Display data quality metrics details
+    metrics = report.data_quality_metrics
+    print(f"\n📊 Quality Metrics Breakdown:")
+    print(f"  📋 Completeness: {metrics.completeness_summary()}")
+    print(f"  🔧 Consistency: {metrics.consistency_summary()}")
+    print(f"  🔑 Uniqueness: {metrics.uniqueness_summary()}")
+    print(f"  🎯 Accuracy: {metrics.accuracy_summary()}")
+    print(f"  ⏱️ Timeliness: {metrics.timeliness_summary()}")
 
-        # Group by severity
-        high_issues = report.issues_by_severity("high")
-        medium_issues = report.issues_by_severity("medium")
-        low_issues = report.issues_by_severity("low")
-
-        if high_issues:
-            print(f"🔴 Critical ({len(high_issues)} issues)")
-            for issue in high_issues:
-                print(f"   • {issue.description}")
-
-        if medium_issues:
-            print(f"🟡 Medium ({len(medium_issues)} issues)")
-            for issue in medium_issues:
-                print(f"   • {issue.description}")
-
-        if low_issues:
-            print(f"🔵 Low ({len(low_issues)} issues)")
-            for issue in low_issues:
-                print(f"   • {issue.description}")
+    # Check for quality issues
+    if metrics.missing_values_ratio > 10.0 or metrics.duplicate_rows > 0:
+        print("\n⚠️ Quality Issues Detected:")
+        if metrics.missing_values_ratio > 10.0:
+            print(f"  • High missing values: {metrics.missing_values_ratio:.1f}%")
+        if metrics.duplicate_rows > 0:
+            print(f"  • Duplicate rows found: {metrics.duplicate_rows}")
+        if metrics.format_violations > 0:
+            print(f"  • Format violations: {metrics.format_violations}")
     else:
-        print("✅ No quality issues detected!")
+        print("\n✅ No major quality issues detected!")
 
 def batch_processing():
     """Batch processing example"""
@@ -74,9 +70,9 @@ def batch_processing():
     )
 
     print(f"📊 Processed {result.processed_files} files")
-    print(f"⚡ Speed: {result.files_per_second:.1f} files/second")
+    print(f"⏱️ Duration: {result.total_duration_secs:.2f} seconds")
     print(f"📈 Average Quality: {result.average_quality_score:.1f}%")
-    print(f"⚠️ Total Issues: {result.total_quality_issues}")
+    print(f"❌ Failed: {result.failed_files}")
 
     # Process with glob pattern
     result = dataprof.batch_analyze_glob(
@@ -106,21 +102,21 @@ def airflow_integration():
 
         if score < threshold:
             # Fail the task if quality is too low
-            high_issues = report.issues_by_severity("high")
-            medium_issues = report.issues_by_severity("medium")
+            metrics = report.data_quality_metrics
 
             error_msg = f"Data quality below threshold ({score:.1f}% < {threshold}%)\n"
-            if high_issues:
-                error_msg += f"Critical issues: {len(high_issues)}\n"
-            if medium_issues:
-                error_msg += f"Medium issues: {len(medium_issues)}\n"
+            error_msg += f"Completeness: {metrics.complete_records_ratio:.1f}%\n"
+            error_msg += f"Consistency: {metrics.data_type_consistency:.1f}%\n"
+            error_msg += f"Missing values: {metrics.missing_values_ratio:.1f}%\n"
+            if metrics.duplicate_rows > 0:
+                error_msg += f"Duplicate rows: {metrics.duplicate_rows}\n"
 
             raise ValueError(error_msg)
 
         return {
             'quality_score': score,
-            'total_issues': len(report.issues),
-            'file_size_mb': report.scan_time_ms / 1000,  # Approximate from scan time
+            'rows_scanned': report.rows_scanned,
+            'scan_time_ms': report.scan_time_ms,
         }
 
     # DAG definition

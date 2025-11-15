@@ -28,7 +28,6 @@ __all__ = [
     # Core classes
     "PyColumnProfile",
     "PyQualityReport",
-    "PyQualityIssue",
     "PyDataQualityMetrics",
     "PyBatchResult",
 

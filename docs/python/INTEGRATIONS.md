@@ -473,7 +473,9 @@ def dataprof_quality_check(**context):
 
     # Log results
     print(f"Quality score: {quality_score:.1f}%")
-    print(f"Issues found: {len(report.issues)}")
+    metrics = report.data_quality_metrics
+    print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
+    print(f"Missing values: {metrics.missing_values_ratio:.1f}%")
 
     # Check threshold
     if quality_score < quality_threshold:
@@ -482,7 +484,7 @@ def dataprof_quality_check(**context):
     # Store results in XCom
     return {
         'quality_score': quality_score,
-        'issues_count': len(report.issues),
+        'completeness': metrics.complete_records_ratio,
         'file_path': file_path
     }
 
@@ -582,10 +584,12 @@ def run_dataprof_analysis(model_path):
         # Write results to metadata
         with open(f"{model_path}.dataprof.json", "w") as f:
             import json
+            metrics = report.data_quality_metrics
             json.dump({
                 'quality_score': report.quality_score(),
                 'ml_readiness': ml_score.overall_score,
-                'issues_count': len(report.issues)
+                'completeness': metrics.complete_records_ratio,
+                'missing_values_ratio': metrics.missing_values_ratio
             }, f)
 
     except Exception as e:
@@ -703,13 +707,15 @@ async def analyze_quality(file: UploadFile) -> Dict[str, Any]:
     try:
         # Analyze with DataProf
         report = dataprof.analyze_csv_with_quality(tmp_file_path)
+        metrics = report.data_quality_metrics
 
         result = {
             'filename': file.filename,
             'quality_score': report.quality_score(),
             'total_columns': report.total_columns,
             'total_rows': report.total_rows,
-            'issues_count': len(report.issues),
+            'completeness': metrics.complete_records_ratio,
+            'missing_values_ratio': metrics.missing_values_ratio,
             'scan_time_ms': report.scan_time_ms
         }
 

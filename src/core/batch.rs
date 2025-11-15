@@ -259,17 +259,17 @@ impl BatchProcessor {
             .as_ref()
             .and_then(|pm| pm.create_batch_progress(paths.len() as u64));
 
-        // Configure thread pool if parallel processing is enabled
-        if self.config.parallel {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(self.config.max_concurrent)
-                .build_global()
-                .context("Failed to configure thread pool")?;
-        }
-
         // Process files (parallel or sequential)
         let results = if self.config.parallel {
-            self.process_parallel(paths, &progress_bar)
+            // Build a scoped thread pool for this batch operation
+            // This avoids issues with build_global() which can only be called once
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(self.config.max_concurrent)
+                .build()
+                .context("Failed to configure thread pool")?;
+
+            // Execute processing within the pool's scope
+            pool.install(|| self.process_parallel(paths, &progress_bar))
         } else {
             self.process_sequential(paths, &progress_bar)
         };
