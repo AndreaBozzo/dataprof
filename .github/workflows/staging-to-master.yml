@@ -14,9 +14,9 @@ permissions:
   contents: read
 
 jobs:
-  # Validate this is from staging
+  # Check if this is from staging (informative only)
   validate-staging-pr:
-    name: Validate Staging PR
+    name: Check PR Source
     runs-on: ubuntu-latest
     outputs:
       is-staging: ${{ steps.check.outputs.is-staging }}
@@ -26,15 +26,17 @@ jobs:
       id: check
       run: |
         if [[ "${{ github.head_ref }}" == "staging" ]]; then
-          echo "✅ Valid staging→master PR"
+          echo "✅ This is a staging→master PR - full production validation will run"
           echo "is-staging=true" >> $GITHUB_OUTPUT
         else
-          echo "❌ Only staging→master PRs allowed"
+          echo "ℹ️  This is a PR from branch '${{ github.head_ref }}'"
+          echo "ℹ️  Production validation tests will be skipped"
+          echo "ℹ️  Standard CI and security workflows will still run"
+          echo "ℹ️  Note: Production releases typically go through staging branch"
           echo "is-staging=false" >> $GITHUB_OUTPUT
-          exit 1
         fi
 
-  # Production-critical tests only - focused on release blockers
+  # Production-critical tests only - runs only for staging→master PRs
   production-tests:
     name: Production Critical Tests
     runs-on: ubuntu-latest
@@ -97,7 +99,8 @@ jobs:
 
         echo "ℹ️  Comprehensive testing handled by CI workflow"
 
-  # Production security gate - relies on security-advanced.yml for comprehensive scanning
+  # Production security gate - runs only for staging→master PRs
+  # Note: security-advanced.yml provides comprehensive scanning for all PRs
   security-gate:
     name: Production Security Gate
     runs-on: ubuntu-latest
@@ -135,7 +138,7 @@ jobs:
         echo "✅ Essential production security validation passed"
         echo "ℹ️  Comprehensive security scanning handled by security-advanced workflow"
 
-  # Simple readiness gate
+  # Production readiness gate - runs only for staging→master PRs
   production-ready:
     name: Production Ready
     runs-on: ubuntu-latest
@@ -143,9 +146,9 @@ jobs:
     if: always() && needs.validate-staging-pr.outputs.is-staging == 'true'
 
     steps:
-    - name: Check readiness
+    - name: Check production readiness
       run: |
-        echo "📋 Production Readiness Check"
+        echo "📋 Production Readiness Check (staging→master)"
         echo "Tests: ${{ needs.production-tests.result }}"
         echo "Security Gate: ${{ needs.security-gate.result }}"
 
