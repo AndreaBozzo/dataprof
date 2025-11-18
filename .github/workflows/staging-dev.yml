@@ -1,25 +1,26 @@
 name: Staging Development Workflow
 
-on:
-  push:
-    branches: [staging]
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - 'examples/**/*.md'
-      - '.gitignore'
-      - 'LICENSE*'
-      - '.devcontainer/**'
-  pull_request:
-    branches: [staging]
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - 'examples/**/*.md'
-      - '.gitignore'
-      - 'LICENSE*'
-      - '.devcontainer/**'
-  workflow_dispatch:
+# Workflow temporarily disabled - superfluous for now.
+# on:
+#   push:
+#     branches: [staging]
+#     paths-ignore:
+#       - '*.md'
+#       - 'docs/**'
+#       - 'examples/**/*.md'
+#       - '.gitignore'
+#       - 'LICENSE*'
+#       - '.devcontainer/**'
+#   pull_request:
+#     branches: [staging]
+#     paths-ignore:
+#       - '*.md'
+#       - 'docs/**'
+#       - 'examples/**/*.md'
+#       - '.gitignore'
+#       - 'LICENSE*'
+#       - '.devcontainer/**'
+#   workflow_dispatch:
 
 # Automatically cancel in-progress runs on the same branch
 concurrency:
