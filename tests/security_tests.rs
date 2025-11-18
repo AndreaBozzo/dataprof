@@ -157,8 +157,7 @@ mod error_sanitization_tests {
                 !sanitized.contains("secret")
                     && !sanitized.contains("admin")
                     && !sanitized.contains("password"),
-                "Should not contain password text in: {}",
-                sanitized
+                "Should not contain password-like text in sanitized output"
             );
         }
     }
