@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::acceleration::simd::{compute_stats_auto, should_use_simd};
+use crate::analysis::patterns::looks_like_date;
 // use crate::core::streaming_stats::StreamingColumnCollection; // Future use
 use crate::types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, QualityReport, ScanInfo,
@@ -183,7 +184,7 @@ impl SimpleColumnarProfiler {
         let date_pattern_count = non_empty
             .iter()
             .take(100) // Sample first 100 values
-            .filter(|s| self.looks_like_date(s))
+            .filter(|s| looks_like_date(s))
             .count();
 
         if date_pattern_count as f64 / non_empty.len().min(100) as f64 > 0.7 {
@@ -191,22 +192,6 @@ impl SimpleColumnarProfiler {
         } else {
             DataType::String
         }
-    }
-
-    fn looks_like_date(&self, value: &str) -> bool {
-        use regex::Regex;
-
-        let date_patterns = [
-            r"^\d{4}-\d{2}-\d{2}$",
-            r"^\d{2}/\d{2}/\d{4}$",
-            r"^\d{2}-\d{2}-\d{4}$",
-        ];
-
-        date_patterns.iter().any(|pattern| {
-            Regex::new(pattern)
-                .map(|re| re.is_match(value))
-                .unwrap_or(false)
-        })
     }
 }
 

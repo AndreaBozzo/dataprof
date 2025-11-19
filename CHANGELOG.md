@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Enhanced Pattern Detection (11 New Patterns)**
+  - IPv4 addresses (192.168.1.1)
+  - IPv6 addresses (2001:0db8:85a3::7334)
+  - MAC addresses (00:1B:44:11:3A:B7)
+  - Geographic coordinates (41.9028, 12.4964)
+  - IBAN (IT60X0542811101000000123456)
+  - Codice Fiscale IT (RSSMRA85M01H501Z)
+  - P.IVA IT (12345678901)
+  - CAP IT (00118)
+  - ZIP Code US (12345, 90210-1234)
+  - File paths Unix (/home/user/documents)
+  - File paths Windows (C:\Users\Admin\Documents)
+
+### Changed
+
+- **Performance Improvements**
+  - Consolidated date pattern detection logic across all engines
+  - Pre-compiled date regex patterns using LazyLock (eliminates runtime compilation)
+  - Removed ~80 lines of duplicated code from 5 engine files
+  - Pattern detection now uses centralized `looks_like_date()` function in `analysis::patterns`
+  - Pattern count: 5 → 16 total patterns
+
+### Fixed
+
+- Eliminated code duplication in date pattern detection (was in 5 separate files)
+- Date regex patterns now compiled once at startup instead of on every analysis
+
 ### Dependencies
 
 - **GitHub Actions Updates**
@@ -17,7 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Rust Dependencies**
   - wide: 0.8.1 → 0.8.2 (WASM build fixes)
 
-### Removed outdated notebooks
+### Removed
+
+- Removed outdated notebooks
+- Removed duplicated `looks_like_date()` functions from engine files
 
 
 ## [0.4.81] - 2025-11-14

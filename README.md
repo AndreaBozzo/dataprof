@@ -9,6 +9,8 @@
 
 A fast, reliable data quality assessment tool built in Rust. Analyze datasets with 20x better memory efficiency than pandas, unlimited file streaming, and comprehensive ISO 8000/25012 compliant quality checks across 5 dimensions: Completeness, Consistency, Uniqueness, Accuracy, and Timeliness. Full Python bindings and production database connectivity included.
 
+**Automatic Pattern Detection** - Identifies 16+ common data patterns including emails, phone numbers, IP addresses, coordinates, IBAN, file paths, and more.
+
 Perfect for data scientists, engineers, analysts, and anyone working with data who needs quick, reliable quality insights.
 
 ## Privacy & Transparency
@@ -52,84 +54,58 @@ Perfect for ensuring data quality in pipelines, validating data integrity, or ge
 
 ## Quick Start
 
-### CLI (Recommended - Full Features)
+### Installation
 
-> **Installation**: Download pre-built binaries from [Releases](https://github.com/AndreaBozzo/dataprof/releases) or build from source with `cargo install dataprof`.
-
-> **Note**: After building with `cargo build --release`, the binary is located at `target/release/dataprof-cli.exe` (Windows) or `target/release/dataprof` (Linux/Mac). Run it from the project root as `target/release/dataprof-cli.exe <command>` or add it to your PATH.
-
-#### Basic Analysis
 ```bash
-# Comprehensive quality analysis
-dataprof analyze data.csv --detailed
+# Install from crates.io (recommended)
+cargo install dataprof
+
+# Or build from source
+git clone https://github.com/AndreaBozzo/dataprof
+cd dataprof
+cargo install --path .
+```
+
+**That's it!** Now you can use `dataprof-cli` from anywhere.
+
+### Basic Usage
+
+```bash
+# Analyze a CSV file
+dataprof-cli analyze data.csv
+
+# Get detailed analysis
+dataprof-cli analyze data.csv --detailed
+
+# Generate HTML report
+dataprof-cli report data.csv -o report.html
 
 # Analyze Parquet files (requires --features parquet)
-dataprof analyze data.parquet --detailed
-
-# Windows example (from project root after cargo build --release)
-target\release\dataprof-cli.exe analyze data.csv --detailed
+dataprof-cli analyze data.parquet
 ```
 
-#### HTML Reports
+### More Features
+
 ```bash
-# Generate HTML report with visualizations
-dataprof report data.csv -o quality_report.html
+# Batch process entire directory
+dataprof-cli batch /data/folder --recursive --parallel
 
-# Custom template
-dataprof report data.csv --template custom.hbs --detailed
-```
+# Database profiling
+dataprof-cli database postgres://user:pass@host/db --table users
 
-#### Batch Processing
-```bash
-# Process entire directory with parallel execution
-dataprof batch /data/folder --recursive --parallel
+# Benchmark engines
+dataprof-cli benchmark data.csv
 
-# Generate HTML batch dashboard
-dataprof batch /data/folder --recursive --html batch_report.html
+# Streaming mode for large files
+dataprof-cli analyze large_file.csv --streaming
 
-# JSON export for CI/CD automation
-dataprof batch /data/folder --json batch_results.json --recursive
-
-# JSON output to stdout
-dataprof batch /data/folder --format json --recursive
-
-# With custom filter and progress
-dataprof batch /data/folder --filter "*.csv" --parallel --progress
+# JSON output for automation
+dataprof-cli analyze data.csv --format json
 ```
 
 ![DataProf Batch Report](assets/animations/HTMLbatch.gif)
 
-#### Database Analysis
-```bash
-# PostgreSQL table profiling
-dataprof database postgres://user:pass@host/db --table users
-
-# Custom SQL query
-dataprof database sqlite://data.db --query "SELECT * FROM users WHERE active=1"
-```
-
-#### Benchmarking
-```bash
-# Benchmark different engines on your data
-dataprof benchmark data.csv
-
-# Show engine information
-dataprof benchmark --info
-```
-
-#### Advanced Options
-```bash
-# Streaming for large files
-dataprof analyze large_dataset.csv --streaming --sample 10000
-
-# JSON output for programmatic use
-dataprof analyze data.csv --format json --output results.json
-
-# Custom ISO threshold profile
-dataprof analyze data.csv --threshold-profile strict
-```
-
-**Quick Reference**: All commands follow the pattern `dataprof <command> [args]`. Use `dataprof help` or `dataprof <command> --help` for detailed options.
+**Need help?** Run `dataprof-cli --help` or `dataprof-cli <command> --help` for detailed options.
 
 ### Python Bindings
 

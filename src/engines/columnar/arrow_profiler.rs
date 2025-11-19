@@ -6,6 +6,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::analysis::patterns::looks_like_date;
 use crate::types::DataQualityMetrics;
 use crate::types::{ColumnProfile, ColumnStats, DataType, FileInfo, QualityReport, ScanInfo};
 
@@ -667,7 +668,7 @@ impl ColumnAnalyzer {
                         .sample_values
                         .iter()
                         .take(sample_size)
-                        .filter(|s| self.looks_like_date(s))
+                        .filter(|s| looks_like_date(s))
                         .count();
 
                     if date_like_count as f64 / sample_size as f64 > 0.7 {
@@ -681,22 +682,6 @@ impl ColumnAnalyzer {
             }
             _ => DataType::String,
         }
-    }
-
-    fn looks_like_date(&self, value: &str) -> bool {
-        use regex::Regex;
-
-        let date_patterns = [
-            r"^\d{4}-\d{2}-\d{2}$",
-            r"^\d{2}/\d{2}/\d{4}$",
-            r"^\d{2}-\d{2}-\d{4}$",
-        ];
-
-        date_patterns.iter().any(|pattern| {
-            Regex::new(pattern)
-                .map(|re| re.is_match(value))
-                .unwrap_or(false)
-        })
     }
 
     /// Get collected sample values for quality metrics calculation

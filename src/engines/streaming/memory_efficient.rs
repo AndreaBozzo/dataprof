@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::analysis::patterns::looks_like_date;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingStatistics;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
@@ -263,7 +264,7 @@ impl MemoryEfficientProfiler {
                 .iter()
                 .filter(|s| !s.is_empty())
                 .take(100)
-                .filter(|s| self.looks_like_date(s))
+                .filter(|s| looks_like_date(s))
                 .count();
 
             if date_like > sample_values.len() / 2 {
@@ -309,22 +310,6 @@ impl MemoryEfficientProfiler {
             stats,
             patterns,
         }
-    }
-
-    fn looks_like_date(&self, value: &str) -> bool {
-        use regex::Regex;
-
-        let date_patterns = [
-            r"^\d{4}-\d{2}-\d{2}$",
-            r"^\d{2}/\d{2}/\d{4}$",
-            r"^\d{2}-\d{2}-\d{4}$",
-        ];
-
-        date_patterns.iter().any(|pattern| {
-            Regex::new(pattern)
-                .map(|re| re.is_match(value))
-                .unwrap_or(false)
-        })
     }
 
     fn create_sample_columns_for_quality_check(
