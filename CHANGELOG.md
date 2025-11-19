@@ -5,6 +5,21 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Dependencies
+
+- **GitHub Actions Updates**
+  - github/codeql-action: v3 → v4 (Node.js v24 support, improved security scanning)
+  - actions/download-artifact: v4 → v6 (improved artifact handling, Node.js v24 support)
+  - actions/upload-pages-artifact: v3 → v4 (updated artifact packaging)
+
+- **Rust Dependencies**
+  - wide: 0.8.1 → 0.8.2 (WASM build fixes)
+
+### Removed outdated notebooks
+
+
 ## [0.4.81] - 2025-11-14
 
 Refactor and enhance testing suite for DataProf
