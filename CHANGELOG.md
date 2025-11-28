@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.83] - 2025-11-28
+
+### Added
+
+- **Enhanced Statistical Analysis (Issue #139)**
+  - Advanced numeric statistics: quartiles (Q1, Q2, Q3, IQR), mode, coefficient of variation, skewness, kurtosis
+  - Reservoir sampling for large datasets (>10,000 rows) with `is_approximate` flag
+  - Text frequency analysis: top 10 and bottom 10 most/least frequent values with counts and percentages
+  - Datetime statistics: year, month, day of week, and hour distributions with duration calculation
+  - Configurable precision control via custom serde helpers (2 decimals for percentages, 4 for metrics)
+
+### Changed
+
+- **Performance Improvements**
+  - Datetime parsing optimized: single-pass architecture eliminates redundant parsing (50% reduction)
+  - Sample variance calculation now uses (n-1) for unbiased estimation
+  - Mode calculation now deterministic for multimodal distributions (returns smallest value)
+
+- **Robustness Improvements**
+  - NaN/Infinity validation in all serialization helpers (serialized as `null` for JSON compatibility)
+  - Non-finite value filtering at parse time in numeric statistics
+  - Comprehensive edge case handling with test coverage
+
+- **Compatibility**
+  - Replaced `is_multiple_of()` with modulo operator for Rust <1.82 compatibility
+  - Added `#[allow(clippy::manual_is_multiple_of)]` annotations where needed
+
+### Fixed
+
+- Date format ambiguity documented (DD/MM/YYYY vs MM/DD/YYYY, defaults to European)
+- Removed unused `frequency_items` serializer module
+- Eliminated redundant checks in text statistics
+
+### Dependencies
+
+- clap: 4.5.51 → 4.5.53 (#142)
+- wide: 0.8.2 → 0.8.3 (#141)
+- indicatif: 0.18.2 → 0.18.3 (#140)
 
 ## [0.4.82] - 2025-11-21
 
