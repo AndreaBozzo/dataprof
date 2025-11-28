@@ -306,112 +306,38 @@ impl OutputFormatter for JsonFormatter {
 
 impl JsonFormatter {
     fn format_column(&self, profile: &ColumnProfile) -> JsonColumn {
-        let stats_json = match &profile.stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                std_dev,
-                variance,
-                median,
-                quartiles,
-                mode,
-                coefficient_of_variation,
-                skewness,
-                kurtosis,
-                is_approximate,
-            } => {
-                let mut stats = serde_json::json!({
-                    "type": "numeric",
-                    "min": min,
-                    "max": max,
-                    "mean": mean,
-                    "std_dev": std_dev,
-                    "variance": variance
-                });
+        // Serialize the stats using serde to respect custom serializers
+        let serialized =
+            serde_json::to_value(&profile.stats).unwrap_or_else(|_| serde_json::json!({}));
 
-                if let Some(med) = median {
-                    stats["median"] = serde_json::json!(med);
-                }
-                if let Some(q) = quartiles {
-                    stats["quartiles"] = serde_json::json!({
-                        "q1": q.q1,
-                        "q2": q.q2,
-                        "q3": q.q3,
-                        "iqr": q.iqr
-                    });
-                }
-                if let Some(m) = mode {
-                    stats["mode"] = serde_json::json!(m);
-                }
-                if let Some(cv) = coefficient_of_variation {
-                    stats["coefficient_of_variation"] = serde_json::json!(cv);
-                }
-                if let Some(s) = skewness {
-                    stats["skewness"] = serde_json::json!(s);
-                }
-                if let Some(k) = kurtosis {
-                    stats["kurtosis"] = serde_json::json!(k);
-                }
-                if let Some(approx) = is_approximate {
-                    if *approx {
-                        stats["is_approximate"] = serde_json::json!(true);
-                    }
-                }
-
-                stats
+        // Extract the inner object from the enum variant
+        let mut stats_json = match serialized {
+            serde_json::Value::Object(mut map) => {
+                // serde serializes enums as {"Variant": {fields}}
+                // Extract the inner object
+                map.values_mut()
+                    .next()
+                    .and_then(|v| v.as_object_mut())
+                    .map(|inner| inner.clone())
+                    .map(serde_json::Value::Object)
+                    .unwrap_or_else(|| serde_json::json!({}))
             }
-            ColumnStats::Text {
-                min_length,
-                max_length,
-                avg_length,
-                most_frequent,
-                least_frequent,
-            } => {
-                let mut stats = serde_json::json!({
-                    "type": "text",
-                    "min_length": min_length,
-                    "max_length": max_length,
-                    "avg_length": avg_length
-                });
-
-                if let Some(freq) = most_frequent {
-                    stats["most_frequent"] = serde_json::json!(freq);
-                }
-                if let Some(freq) = least_frequent {
-                    stats["least_frequent"] = serde_json::json!(freq);
-                }
-
-                stats
-            }
-            ColumnStats::DateTime {
-                min_datetime,
-                max_datetime,
-                duration_days,
-                year_distribution,
-                month_distribution,
-                day_of_week_distribution,
-                hour_distribution,
-            } => {
-                let mut stats = serde_json::json!({
-                    "type": "datetime",
-                    "min": min_datetime,
-                    "max": max_datetime,
-                    "duration_days": duration_days,
-                    "distributions": {
-                        "year": year_distribution,
-                        "month": month_distribution,
-                        "day_of_week": day_of_week_distribution
-                    }
-                });
-
-                if let Some(hours) = hour_distribution {
-                    stats["distributions"]["hour"] = serde_json::json!(hours);
-                }
-
-                stats
-            }
+            _ => serde_json::json!({}),
         };
+
+        // Add type field
+        let type_name = match &profile.stats {
+            ColumnStats::Numeric { .. } => "numeric",
+            ColumnStats::Text { .. } => "text",
+            ColumnStats::DateTime { .. } => "datetime",
+        };
+
+        if let serde_json::Value::Object(ref mut map) = stats_json {
+            map.insert(
+                "type".to_string(),
+                serde_json::Value::String(type_name.to_string()),
+            );
+        }
 
         JsonColumn {
             name: profile.name.clone(),

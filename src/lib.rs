@@ -8,6 +8,7 @@ pub mod parsers;
 
 // Organized modules
 pub mod output;
+pub mod serde_helpers;
 pub mod stats;
 pub mod types;
 
