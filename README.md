@@ -11,6 +11,8 @@ A fast, reliable data quality assessment tool built in Rust. Analyze datasets wi
 
 **Automatic Pattern Detection** - Identifies 16+ common data patterns including emails, phone numbers, IP addresses, coordinates, IBAN, file paths, and more.
 
+**Enhanced Statistical Analysis** - Comprehensive numeric statistics (mean, median, variance, quartiles, skewness, kurtosis), deterministic mode calculation, and optimized datetime parsing with timezone support.
+
 Perfect for data scientists, engineers, analysts, and anyone working with data who needs quick, reliable quality insights.
 
 ## Privacy & Transparency
@@ -25,32 +27,6 @@ DataProf processes **all data locally** on your machine. Zero telemetry, zero ex
 - Read-only database access (when using DB features)
 
 **Complete transparency:** Every metric, calculation, and data point is documented with source code references for independent verification.
-
-## CI/CD Integration
-
-Automate data quality checks in your workflows with our GitHub Action:
-
-```yaml
-- name: DataProf Quality Check
-  uses: AndreaBozzo/dataprof-actions@v1
-  with:
-    file: 'data/dataset.csv'
-    quality-threshold: 80
-    fail-on-issues: true
-    # Batch mode (NEW)
-    recursive: true
-    output-html: 'quality-report.html'
-```
-
-**[Get the Action →](https://github.com/AndreaBozzo/dataprof-action)**
-
-- **Zero setup** - works out of the box
-- **ISO 8000/25012 compliant** - industry-standard quality metrics
-- **Batch processing** - analyze entire directories recursively
-- **Flexible** - customizable thresholds and output formats
-- **Fast** - typically completes in under 2 minutes
-
-Perfect for ensuring data quality in pipelines, validating data integrity, or generating automated quality reports.Updated to latest release.
 
 ## Quick Start
 
