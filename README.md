@@ -45,8 +45,6 @@ dataprof-cli batch /data/folder --recursive --parallel
 dataprof-cli database postgres://user:pass@host/db --table users
 ```
 
-![DataProf Batch Report](assets/animations/HTMLbatch.gif)
-
 **More options:** `dataprof-cli --help` | [Full CLI Guide](docs/guides/CLI_USAGE_GUIDE.md)
 
 ### Python API
