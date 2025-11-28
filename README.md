@@ -1,314 +1,149 @@
-# dataprof
+<div align="center">
+  <img src="assets/images/logo.png" alt="dataprof logo" width="200" height="auto" />
+  <h1>dataprof</h1>
+  <p>
+    <strong>Fast, reliable data quality assessment for CSV, Parquet, and databases</strong>
+  </p>
 
-[![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
-[![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.80%2B-orange.svg)](https://www.rust-lang.org)
-[![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/dataprof?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/dataprof)
+  [![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
+  [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
+  [![License](https://img.shields.io/github/license/AndreaBozzo/dataprof)](LICENSE)
+  [![PyPI Downloads](https://static.pepy.tech/personalized-badge/dataprof?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/dataprof)
+</div>
 
+<br />
 
-A fast, reliable data quality assessment tool built in Rust. Analyze datasets with 20x better memory efficiency than pandas, unlimited file streaming, and comprehensive ISO 8000/25012 compliant quality checks across 5 dimensions: Completeness, Consistency, Uniqueness, Accuracy, and Timeliness. Full Python bindings and production database connectivity included.
+**20x faster** than pandas with **unlimited streaming** for large files. ISO 8000/25012 compliant quality metrics, automatic pattern detection (emails, IPs, IBANs, etc.), and comprehensive statistics (mean, median, skewness, kurtosis). Available as CLI, Rust library, or Python package.
 
-**Automatic Pattern Detection** - Identifies 16+ common data patterns including emails, phone numbers, IP addresses, coordinates, IBAN, file paths, and more.
-
-**Enhanced Statistical Analysis** - Comprehensive numeric statistics (mean, median, variance, quartiles, skewness, kurtosis), deterministic mode calculation, and optimized datetime parsing with timezone support.
-
-Perfect for data scientists, engineers, analysts, and anyone working with data who needs quick, reliable quality insights.
-
-## Privacy & Transparency
-
-DataProf processes **all data locally** on your machine. Zero telemetry, zero external data transmission.
-
-**[Read exactly what DataProf analyzes →](docs/WHAT_DATAPROF_DOES.md)**
-
-- 100% local processing - your data never leaves your machine
-- No telemetry or tracking
-- Open source & fully auditable
-- Read-only database access (when using DB features)
-
-**Complete transparency:** Every metric, calculation, and data point is documented with source code references for independent verification.
+**🔒 Privacy First:** 100% local processing, no telemetry, read-only DB access. [See what dataprof analyzes →](docs/WHAT_DATAPROF_DOES.md)
 
 ## Quick Start
 
-### Installation
+### CLI Installation
 
 ```bash
-# Install from crates.io (recommended)
+# Install from crates.io
 cargo install dataprof
 
-# Or build from source
-git clone https://github.com/AndreaBozzo/dataprof
-cd dataprof
-cargo install --path .
+# Or use Python
+pip install dataprof
 ```
 
-**That's it!** Now you can use `dataprof-cli` from anywhere.
-
-### Basic Usage
+### CLI Usage
 
 ```bash
-# Analyze a CSV file
+# Analyze a file
 dataprof-cli analyze data.csv
-
-# Get detailed analysis
-dataprof-cli analyze data.csv --detailed
 
 # Generate HTML report
 dataprof-cli report data.csv -o report.html
 
-# Analyze Parquet files (requires --features parquet)
-dataprof-cli analyze data.parquet
-```
-
-### More Features
-
-```bash
-# Batch process entire directory
+# Batch process directories
 dataprof-cli batch /data/folder --recursive --parallel
 
 # Database profiling
 dataprof-cli database postgres://user:pass@host/db --table users
-
-# Benchmark engines
-dataprof-cli benchmark data.csv
-
-# Streaming mode for large files
-dataprof-cli analyze large_file.csv --streaming
-
-# JSON output for automation
-dataprof-cli analyze data.csv --format json
 ```
 
 ![DataProf Batch Report](assets/animations/HTMLbatch.gif)
 
-**Need help?** Run `dataprof-cli --help` or `dataprof-cli <command> --help` for detailed options.
+**More options:** `dataprof-cli --help` | [Full CLI Guide](docs/guides/CLI_USAGE_GUIDE.md)
 
-### Python Bindings
-
-```bash
-pip install dataprof
-```
+### Python API
 
 ```python
 import dataprof
 
-# Comprehensive quality analysis (ISO 8000/25012 compliant)
+# Quality analysis (ISO 8000/25012 compliant)
 report = dataprof.analyze_csv_with_quality("data.csv")
 print(f"Quality score: {report.quality_score():.1f}%")
 
-# Access individual quality dimensions
-metrics = report.data_quality_metrics
-print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
-print(f"Consistency: {metrics.data_type_consistency:.1f}%")
-print(f"Uniqueness: {metrics.key_uniqueness:.1f}%")
-
 # Batch processing
 result = dataprof.batch_analyze_directory("/data", recursive=True)
-print(f"Processed {result.processed_files} files at {result.files_per_second:.1f} files/sec")
 
-# Async database profiling (requires python-async feature)
-import asyncio
-
+# Async database profiling
 async def profile_db():
     result = await dataprof.profile_database_async(
         "postgresql://user:pass@localhost/db",
-        "SELECT * FROM users LIMIT 1000",
+        "SELECT * FROM users",
         batch_size=1000,
         calculate_quality=True
     )
-    print(f"Quality score: {result['quality'].overall_score:.1%}")
-
-asyncio.run(profile_db())
+    return result
 ```
 
-> **Note**: Async database profiling requires building with `--features python-async,database,postgres` (or mysql/sqlite). See [Async Support](#async-support) below.
-
-**[Full Python API Documentation →](docs/python/README.md)**
+**[Python Documentation](docs/python/README.md)** | **[Integrations](docs/python/INTEGRATIONS.md)** (Pandas, scikit-learn, Jupyter, Airflow, dbt)
 
 ### Rust Library
-
-```bash
-cargo add dataprof
-```
 
 ```rust
 use dataprof::*;
 
-// High-performance Arrow processing for large files (>100MB)
-// Requires compilation with: cargo build --features arrow
-#[cfg(feature = "arrow")]
-let profiler = DataProfiler::columnar();
-#[cfg(feature = "arrow")]
-let report = profiler.analyze_csv_file("large_dataset.csv")?;
-
-// Standard adaptive profiling (recommended for most use cases)
+// Adaptive profiling (recommended)
 let profiler = DataProfiler::auto();
 let report = profiler.analyze_file("dataset.csv")?;
+
+// Arrow for large files (>100MB, requires --features arrow)
+let profiler = DataProfiler::columnar();
+let report = profiler.analyze_csv_file("large_dataset.csv")?;
 ```
 
 ## Development
 
-Want to contribute or build from source? Here's what you need:
-
-### Prerequisites
-- Rust (latest stable via [rustup](https://rustup.rs/))
-- Docker (for database testing)
-
-### Quick Setup
 ```bash
+# Setup
 git clone https://github.com/AndreaBozzo/dataprof.git
 cd dataprof
-cargo build --release  # Build the project
-docker-compose -f .devcontainer/docker-compose.yml up -d  # Start test databases
+cargo build --release
+
+# Test databases (optional)
+docker-compose -f .devcontainer/docker-compose.yml up -d
+
+# Common tasks
+cargo test          # Run tests
+cargo bench         # Benchmarks
+cargo clippy        # Linting
 ```
+
+**[Development Guide](docs/DEVELOPMENT.md)** | **[Performance Guide](docs/guides/performance-guide.md)**
 
 ### Feature Flags
 
-dataprof uses optional features to keep compile times fast and binaries lean:
-
 ```bash
-# Minimal build (CSV/JSON only, ~60s compile)
+# Minimal (CSV/JSON only)
 cargo build --release
 
-# With Apache Arrow (columnar processing, ~90s compile)
+# With Apache Arrow (large files >100MB)
 cargo build --release --features arrow
 
-# With Parquet support (requires arrow, ~95s compile)
+# With Parquet support
 cargo build --release --features parquet
 
-# With database connectors
+# With databases
 cargo build --release --features postgres,mysql,sqlite
 
-# With Python async support (for async database profiling)
+# Python async support
 maturin develop --features python-async,database,postgres
 
-# All features (full functionality, ~130s compile)
+# All features
 cargo build --release --all-features
 ```
 
-**When to use Arrow?**
-- ✅ Files > 100MB with many columns (>20)
-- ✅ Columnar data with uniform types
-- ✅ Need maximum throughput (up to 13x faster)
-- ❌ Small files (<10MB) - standard engine is faster
-- ❌ Mixed/messy data - streaming engine handles better
+**When to use Arrow:** Large files (>100MB), many columns (>20), uniform types
+**When to use Parquet:** Analytics, data lakes, Spark/Pandas integration
 
-**When to use Parquet?**
-- ✅ Analytics workloads with columnar data
-- ✅ Data lake architectures
-- ✅ Integration with Spark, Pandas, PyArrow
-- ✅ Efficient storage and compression
-- ✅ Type-safe schema preservation
-
-### Async Support
-
-DataProf supports asynchronous operations for non-blocking database profiling, both in Rust and Python.
-
-#### Rust Async (Database Features)
-
-Database connectors are fully async and use `tokio` runtime:
-
-```rust
-use dataprof::database::{DatabaseConfig, profile_database};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let config = DatabaseConfig {
-        connection_string: "postgresql://localhost/mydb".to_string(),
-        batch_size: 10000,
-        ..Default::default()
-    };
-
-    let report = profile_database(config, "SELECT * FROM users").await?;
-    println!("Profiled {} rows", report.total_rows);
-    Ok(())
-}
-```
-
-**Available async features:**
-- ✅ Non-blocking database queries
-- ✅ Concurrent query execution
-- ✅ Streaming for large result sets
-- ✅ Connection pooling with SQLx
-- ✅ Retry logic with exponential backoff
-
-#### Python Async (python-async Feature)
-
-Enable async Python bindings for database profiling:
-
-```bash
-# Build with async support
-maturin develop --features python-async,database,postgres
-```
-
-```python
-import asyncio
-import dataprof
-
-async def main():
-    # Test connection
-    connected = await dataprof.test_connection_async(
-        "postgresql://user:pass@localhost/db"
-    )
-
-    # Get table schema
-    columns = await dataprof.get_table_schema_async(
-        "postgresql://user:pass@localhost/db",
-        "users"
-    )
-
-    # Count rows
-    count = await dataprof.count_table_rows_async(
-        "postgresql://user:pass@localhost/db",
-        "users"
-    )
-
-    # Profile database query
-    result = await dataprof.profile_database_async(
-        "postgresql://user:pass@localhost/db",
-        "SELECT * FROM users LIMIT 1000",
-        batch_size=1000,
-        calculate_quality=True
-    )
-
-    print(f"Quality score: {result['quality'].overall_score:.1%}")
-
-asyncio.run(main())
-```
-
-**Benefits:**
-- ✅ Non-blocking I/O for better performance
-- ✅ Concurrent database profiling
-- ✅ Integration with async Python frameworks (FastAPI, aiohttp, etc.)
-- ✅ Efficient resource usage
-
-**See also:** [examples/async_database_example.py](examples/async_database_example.py) for complete examples.
-
-### Common Development Tasks
-```bash
-cargo test          # Run all tests
-cargo bench         # Performance benchmarks
-cargo fmt           # Format code
-cargo clippy        # Code quality checks
-```
 
 ## Documentation
 
-### Privacy & Transparency
-- [What DataProf Does](docs/WHAT_DATAPROF_DOES.md) - **Complete transparency guide with source code verification**
+**User Guides:**
+[CLI Reference](docs/guides/CLI_USAGE_GUIDE.md) | [Python API](docs/python/API_REFERENCE.md) | [Python Integrations](docs/python/INTEGRATIONS.md) | [Database Connectors](docs/guides/database-connectors.md) | [Apache Arrow](docs/guides/apache-arrow-integration.md)
 
-### User Guides
-- [Python API Reference](docs/python/API_REFERENCE.md) - Full Python API documentation
-- [Python Integrations](docs/python/INTEGRATIONS.md) - Pandas, scikit-learn, Jupyter, Airflow, dbt
-- [Database Connectors](docs/guides/database-connectors.md) - Production database connectivity
-- [Apache Arrow Integration](docs/guides/apache-arrow-integration.md) - Columnar processing guide
-- [CLI Usage Guide](docs/guides/CLI_USAGE_GUIDE.md) - Complete CLI reference
+**Developer:**
+[Development Guide](docs/DEVELOPMENT.md) | [Performance Guide](docs/guides/performance-guide.md) | [Benchmarks](docs/project/benchmarking.md)
 
-### Developer Guides
-- [Development Guide](docs/DEVELOPMENT.md) - Complete setup and contribution guide
-- [Performance Guide](docs/guides/performance-guide.md) - Optimization and benchmarking
-- [Performance Benchmarks](docs/project/benchmarking.md) - Benchmark results and methodology
+**Privacy:**
+[What DataProf Does](docs/WHAT_DATAPROF_DOES.md) - Complete transparency with source verification
 
 ## License
 
-Licensed under the MIT License. See [LICENSE](LICENSE) for details.
+MIT License - See [LICENSE](LICENSE) for details.
