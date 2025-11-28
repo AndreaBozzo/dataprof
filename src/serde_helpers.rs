@@ -93,7 +93,6 @@ pub mod quartiles {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
