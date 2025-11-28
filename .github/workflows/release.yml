@@ -148,7 +148,6 @@ jobs:
 
         📋 **For detailed changes and migration notes, see:** [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)
 
-        🤖 Generated with [Claude Code](https://claude.ai/code)
         EOF
 
         echo "changelog<<EOF" >> $GITHUB_OUTPUT
@@ -159,7 +158,7 @@ jobs:
       run: |
         echo "Creating release ${{ steps.tag.outputs.tag }}..."
         gh release create ${{ steps.tag.outputs.tag }} \
-          --title "DataProfiler ${{ steps.tag.outputs.tag }}" \
+          --title "dataprof ${{ steps.tag.outputs.tag }}" \
           --notes-file release_notes.md \
           --draft
       env:
