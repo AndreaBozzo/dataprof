@@ -897,6 +897,15 @@ impl ColumnAnalyzer {
                 } else {
                     0.0
                 },
+                std_dev: 0.0,
+                variance: 0.0,
+                median: None,
+                quartiles: None,
+                mode: None,
+                coefficient_of_variation: None,
+                skewness: None,
+                kurtosis: None,
+                is_approximate: None,
             },
             DataType::String | DataType::Date => {
                 let avg_length = if self.total_count > self.null_count {
@@ -913,6 +922,8 @@ impl ColumnAnalyzer {
                     },
                     max_length: self.max_length,
                     avg_length,
+                    most_frequent: None,
+                    least_frequent: None,
                 }
             }
         };

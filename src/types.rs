@@ -7,14 +7,17 @@ use std::collections::HashMap;
 pub struct DataQualityMetrics {
     // Completeness (ISO 8000-8)
     /// Percentage of missing values across all cells
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub missing_values_ratio: f64,
     /// Percentage of rows with no null values
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub complete_records_ratio: f64,
     /// Columns with more than 50% null values
     pub null_columns: Vec<String>,
 
     // Consistency (ISO 8000-61)
     /// Percentage of values conforming to expected data type
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub data_type_consistency: f64,
     /// Number of format violations (e.g., malformed dates)
     pub format_violations: usize,
@@ -25,12 +28,14 @@ pub struct DataQualityMetrics {
     /// Number of exact duplicate rows
     pub duplicate_rows: usize,
     /// Percentage of unique values in key columns (if applicable)
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub key_uniqueness: f64,
     /// Warning flag for columns with excessive unique values
     pub high_cardinality_warning: bool,
 
     // Accuracy (ISO 25012)
     /// Percentage of statistically anomalous values (outliers)
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
     /// Number of values outside expected ranges
     pub range_violations: usize,
@@ -41,6 +46,7 @@ pub struct DataQualityMetrics {
     /// Number of future dates detected (dates beyond current date)
     pub future_dates_count: usize,
     /// Percentage of dates older than staleness threshold (e.g., >5 years)
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub stale_data_ratio: f64,
     /// Temporal ordering violations (e.g., end_date < start_date)
     pub temporal_violations: usize,
@@ -197,17 +203,105 @@ pub enum DataType {
     Date,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Quartiles {
+    pub q1: f64,  // 25th percentile
+    pub q2: f64,  // 50th percentile (median)
+    pub q3: f64,  // 75th percentile
+    pub iqr: f64, // Interquartile range (Q3 - Q1)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct FrequencyItem {
+    pub value: String,
+    pub count: usize,
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub percentage: f64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum ColumnStats {
     Numeric {
+        // Existing (always present)
+        #[serde(serialize_with = "crate::serde_helpers::round_2")]
         min: f64,
+        #[serde(serialize_with = "crate::serde_helpers::round_2")]
         max: f64,
+        #[serde(serialize_with = "crate::serde_helpers::round_4")]
         mean: f64,
+
+        // NEW - Streaming-compatible (always present)
+        #[serde(serialize_with = "crate::serde_helpers::round_4")]
+        std_dev: f64,
+        #[serde(serialize_with = "crate::serde_helpers::round_4")]
+        variance: f64,
+
+        // NEW - Require sorted data (Option for large datasets)
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "crate::serde_helpers::round_2_opt"
+        )]
+        median: Option<f64>,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "crate::serde_helpers::quartiles::serialize"
+        )]
+        quartiles: Option<Quartiles>,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "crate::serde_helpers::round_2_opt"
+        )]
+        mode: Option<f64>,
+
+        // NEW - Advanced metrics (Option for large datasets)
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "crate::serde_helpers::round_2_opt"
+        )]
+        coefficient_of_variation: Option<f64>,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "crate::serde_helpers::round_4_opt"
+        )]
+        skewness: Option<f64>,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "crate::serde_helpers::round_4_opt"
+        )]
+        kurtosis: Option<f64>,
+
+        // NEW - Approximation flag
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_approximate: Option<bool>,
     },
     Text {
+        // Existing
         min_length: usize,
         max_length: usize,
+        #[serde(serialize_with = "crate::serde_helpers::round_2")]
         avg_length: f64,
+
+        // NEW - Frequency analysis
+        #[serde(skip_serializing_if = "Option::is_none")]
+        most_frequent: Option<Vec<FrequencyItem>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        least_frequent: Option<Vec<FrequencyItem>>,
+    },
+    DateTime {
+        // Basic range
+        min_datetime: String, // ISO 8601 format
+        max_datetime: String,
+        #[serde(serialize_with = "crate::serde_helpers::round_2")]
+        duration_days: f64,
+
+        // Temporal distributions
+        year_distribution: HashMap<i32, usize>,
+        month_distribution: HashMap<u32, usize>,
+        day_of_week_distribution: HashMap<String, usize>,
+
+        // Optional: only if times are present
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hour_distribution: Option<HashMap<u32, usize>>,
     },
 }
 

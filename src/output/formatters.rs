@@ -306,28 +306,38 @@ impl OutputFormatter for JsonFormatter {
 
 impl JsonFormatter {
     fn format_column(&self, profile: &ColumnProfile) -> JsonColumn {
-        let stats_json = match &profile.stats {
-            ColumnStats::Numeric { min, max, mean } => {
-                serde_json::json!({
-                    "type": "numeric",
-                    "min": min,
-                    "max": max,
-                    "mean": mean
-                })
+        // Serialize the stats using serde to respect custom serializers
+        let serialized =
+            serde_json::to_value(&profile.stats).unwrap_or_else(|_| serde_json::json!({}));
+
+        // Extract the inner object from the enum variant
+        let mut stats_json = match serialized {
+            serde_json::Value::Object(mut map) => {
+                // serde serializes enums as {"Variant": {fields}}
+                // Extract the inner object
+                map.values_mut()
+                    .next()
+                    .and_then(|v| v.as_object_mut())
+                    .map(|inner| inner.clone())
+                    .map(serde_json::Value::Object)
+                    .unwrap_or_else(|| serde_json::json!({}))
             }
-            ColumnStats::Text {
-                min_length,
-                max_length,
-                avg_length,
-            } => {
-                serde_json::json!({
-                    "type": "text",
-                    "min_length": min_length,
-                    "max_length": max_length,
-                    "avg_length": avg_length
-                })
-            }
+            _ => serde_json::json!({}),
         };
+
+        // Add type field
+        let type_name = match &profile.stats {
+            ColumnStats::Numeric { .. } => "numeric",
+            ColumnStats::Text { .. } => "text",
+            ColumnStats::DateTime { .. } => "datetime",
+        };
+
+        if let serde_json::Value::Object(ref mut map) = stats_json {
+            map.insert(
+                "type".to_string(),
+                serde_json::Value::String(type_name.to_string()),
+            );
+        }
 
         JsonColumn {
             name: profile.name.clone(),
@@ -495,19 +505,41 @@ impl OutputFormatter for PlainFormatter {
             output.push_str(&format!("  Nulls: {}\n", profile.null_count));
 
             match &profile.stats {
-                ColumnStats::Numeric { min, max, mean } => {
+                ColumnStats::Numeric {
+                    min,
+                    max,
+                    mean,
+                    std_dev,
+                    median,
+                    ..
+                } => {
                     output.push_str(&format!("  Min: {:.2}\n", min));
                     output.push_str(&format!("  Max: {:.2}\n", max));
                     output.push_str(&format!("  Mean: {:.2}\n", mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
+                    if let Some(med) = median {
+                        output.push_str(&format!("  Median: {:.2}\n", med));
+                    }
                 }
                 ColumnStats::Text {
                     min_length,
                     max_length,
                     avg_length,
+                    ..
                 } => {
                     output.push_str(&format!("  Min Length: {}\n", min_length));
                     output.push_str(&format!("  Max Length: {}\n", max_length));
                     output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                }
+                ColumnStats::DateTime {
+                    min_datetime,
+                    max_datetime,
+                    duration_days,
+                    ..
+                } => {
+                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
                 }
             }
             output.push('\n');
@@ -608,19 +640,41 @@ impl OutputFormatter for InteractiveFormatter {
             }
 
             match &profile.stats {
-                ColumnStats::Numeric { min, max, mean } => {
+                ColumnStats::Numeric {
+                    min,
+                    max,
+                    mean,
+                    std_dev,
+                    median,
+                    ..
+                } => {
                     output.push_str(&format!("  Min: {:.2}\n", min));
                     output.push_str(&format!("  Max: {:.2}\n", max));
                     output.push_str(&format!("  Mean: {:.2}\n", mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
+                    if let Some(med) = median {
+                        output.push_str(&format!("  Median: {:.2}\n", med));
+                    }
                 }
                 ColumnStats::Text {
                     min_length,
                     max_length,
                     avg_length,
+                    ..
                 } => {
                     output.push_str(&format!("  Min Length: {}\n", min_length));
                     output.push_str(&format!("  Max Length: {}\n", max_length));
                     output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                }
+                ColumnStats::DateTime {
+                    min_datetime,
+                    max_datetime,
+                    duration_days,
+                    ..
+                } => {
+                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
                 }
             }
             output.push('\n');

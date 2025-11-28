@@ -280,6 +280,15 @@ impl MemoryEfficientProfiler {
                 min: column_info.stats.min,
                 max: column_info.stats.max,
                 mean: column_info.stats.mean(),
+                std_dev: column_info.stats.std_dev(),
+                variance: column_info.stats.variance(),
+                median: None,
+                quartiles: None,
+                mode: None,
+                coefficient_of_variation: None,
+                skewness: None,
+                kurtosis: None,
+                is_approximate: None,
             },
             DataType::String | DataType::Date => {
                 let min_length = text_lengths.iter().min().copied().unwrap_or(0);
@@ -294,6 +303,8 @@ impl MemoryEfficientProfiler {
                     min_length,
                     max_length,
                     avg_length,
+                    most_frequent: None,
+                    least_frequent: None,
                 }
             }
         };

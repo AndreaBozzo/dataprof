@@ -2,7 +2,7 @@ use crate::types::{ColumnProfile, DataType};
 
 use crate::analysis::inference::infer_type;
 use crate::analysis::patterns::detect_patterns;
-use crate::stats::{calculate_numeric_stats, calculate_text_stats};
+use crate::stats::{calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats};
 
 /// Analyze a column with full profiling (includes pattern detection and unique counts)
 pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
@@ -39,7 +39,8 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     // Calculate stats
     let stats = match data_type {
         DataType::Integer | DataType::Float => calculate_numeric_stats(data),
-        DataType::String | DataType::Date => calculate_text_stats(data),
+        DataType::Date => calculate_datetime_stats(data),
+        DataType::String => calculate_text_stats(data),
     };
 
     // Skip expensive operations in fast mode
