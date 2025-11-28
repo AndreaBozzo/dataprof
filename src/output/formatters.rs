@@ -307,25 +307,109 @@ impl OutputFormatter for JsonFormatter {
 impl JsonFormatter {
     fn format_column(&self, profile: &ColumnProfile) -> JsonColumn {
         let stats_json = match &profile.stats {
-            ColumnStats::Numeric { min, max, mean } => {
-                serde_json::json!({
+            ColumnStats::Numeric {
+                min,
+                max,
+                mean,
+                std_dev,
+                variance,
+                median,
+                quartiles,
+                mode,
+                coefficient_of_variation,
+                skewness,
+                kurtosis,
+                is_approximate,
+            } => {
+                let mut stats = serde_json::json!({
                     "type": "numeric",
                     "min": min,
                     "max": max,
-                    "mean": mean
-                })
+                    "mean": mean,
+                    "std_dev": std_dev,
+                    "variance": variance
+                });
+
+                if let Some(med) = median {
+                    stats["median"] = serde_json::json!(med);
+                }
+                if let Some(q) = quartiles {
+                    stats["quartiles"] = serde_json::json!({
+                        "q1": q.q1,
+                        "q2": q.q2,
+                        "q3": q.q3,
+                        "iqr": q.iqr
+                    });
+                }
+                if let Some(m) = mode {
+                    stats["mode"] = serde_json::json!(m);
+                }
+                if let Some(cv) = coefficient_of_variation {
+                    stats["coefficient_of_variation"] = serde_json::json!(cv);
+                }
+                if let Some(s) = skewness {
+                    stats["skewness"] = serde_json::json!(s);
+                }
+                if let Some(k) = kurtosis {
+                    stats["kurtosis"] = serde_json::json!(k);
+                }
+                if let Some(approx) = is_approximate {
+                    if *approx {
+                        stats["is_approximate"] = serde_json::json!(true);
+                    }
+                }
+
+                stats
             }
             ColumnStats::Text {
                 min_length,
                 max_length,
                 avg_length,
+                most_frequent,
+                least_frequent,
             } => {
-                serde_json::json!({
+                let mut stats = serde_json::json!({
                     "type": "text",
                     "min_length": min_length,
                     "max_length": max_length,
                     "avg_length": avg_length
-                })
+                });
+
+                if let Some(freq) = most_frequent {
+                    stats["most_frequent"] = serde_json::json!(freq);
+                }
+                if let Some(freq) = least_frequent {
+                    stats["least_frequent"] = serde_json::json!(freq);
+                }
+
+                stats
+            }
+            ColumnStats::DateTime {
+                min_datetime,
+                max_datetime,
+                duration_days,
+                year_distribution,
+                month_distribution,
+                day_of_week_distribution,
+                hour_distribution,
+            } => {
+                let mut stats = serde_json::json!({
+                    "type": "datetime",
+                    "min": min_datetime,
+                    "max": max_datetime,
+                    "duration_days": duration_days,
+                    "distributions": {
+                        "year": year_distribution,
+                        "month": month_distribution,
+                        "day_of_week": day_of_week_distribution
+                    }
+                });
+
+                if let Some(hours) = hour_distribution {
+                    stats["distributions"]["hour"] = serde_json::json!(hours);
+                }
+
+                stats
             }
         };
 
@@ -495,19 +579,41 @@ impl OutputFormatter for PlainFormatter {
             output.push_str(&format!("  Nulls: {}\n", profile.null_count));
 
             match &profile.stats {
-                ColumnStats::Numeric { min, max, mean } => {
+                ColumnStats::Numeric {
+                    min,
+                    max,
+                    mean,
+                    std_dev,
+                    median,
+                    ..
+                } => {
                     output.push_str(&format!("  Min: {:.2}\n", min));
                     output.push_str(&format!("  Max: {:.2}\n", max));
                     output.push_str(&format!("  Mean: {:.2}\n", mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
+                    if let Some(med) = median {
+                        output.push_str(&format!("  Median: {:.2}\n", med));
+                    }
                 }
                 ColumnStats::Text {
                     min_length,
                     max_length,
                     avg_length,
+                    ..
                 } => {
                     output.push_str(&format!("  Min Length: {}\n", min_length));
                     output.push_str(&format!("  Max Length: {}\n", max_length));
                     output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                }
+                ColumnStats::DateTime {
+                    min_datetime,
+                    max_datetime,
+                    duration_days,
+                    ..
+                } => {
+                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
                 }
             }
             output.push('\n');
@@ -608,19 +714,41 @@ impl OutputFormatter for InteractiveFormatter {
             }
 
             match &profile.stats {
-                ColumnStats::Numeric { min, max, mean } => {
+                ColumnStats::Numeric {
+                    min,
+                    max,
+                    mean,
+                    std_dev,
+                    median,
+                    ..
+                } => {
                     output.push_str(&format!("  Min: {:.2}\n", min));
                     output.push_str(&format!("  Max: {:.2}\n", max));
                     output.push_str(&format!("  Mean: {:.2}\n", mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
+                    if let Some(med) = median {
+                        output.push_str(&format!("  Median: {:.2}\n", med));
+                    }
                 }
                 ColumnStats::Text {
                     min_length,
                     max_length,
                     avg_length,
+                    ..
                 } => {
                     output.push_str(&format!("  Min Length: {}\n", min_length));
                     output.push_str(&format!("  Max Length: {}\n", max_length));
                     output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                }
+                ColumnStats::DateTime {
+                    min_datetime,
+                    max_datetime,
+                    duration_days,
+                    ..
+                } => {
+                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
                 }
             }
             output.push('\n');

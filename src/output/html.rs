@@ -502,24 +502,52 @@ fn format_type_class(data_type: &DataType) -> &'static str {
 
 fn format_column_stats_json(stats: &ColumnStats) -> serde_json::Value {
     match stats {
-        ColumnStats::Numeric { min, max, mean } => {
-            json!({
+        ColumnStats::Numeric {
+            min,
+            max,
+            mean,
+            std_dev,
+            median,
+            ..
+        } => {
+            let mut stats_json = json!({
                 "type": "numeric",
                 "min": format!("{:.2}", min),
                 "max": format!("{:.2}", max),
-                "mean": format!("{:.2}", mean)
-            })
+                "mean": format!("{:.2}", mean),
+                "std_dev": format!("{:.2}", std_dev)
+            });
+
+            if let Some(med) = median {
+                stats_json["median"] = json!(format!("{:.2}", med));
+            }
+
+            stats_json
         }
         ColumnStats::Text {
             min_length,
             max_length,
             avg_length,
+            ..
         } => {
             json!({
                 "type": "text",
                 "min_length": min_length,
                 "max_length": max_length,
                 "avg_length": format!("{:.1}", avg_length)
+            })
+        }
+        ColumnStats::DateTime {
+            min_datetime,
+            max_datetime,
+            duration_days,
+            ..
+        } => {
+            json!({
+                "type": "datetime",
+                "min": min_datetime,
+                "max": max_datetime,
+                "duration_days": format!("{:.0}", duration_days)
             })
         }
     }

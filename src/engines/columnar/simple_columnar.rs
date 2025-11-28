@@ -134,6 +134,15 @@ impl SimpleColumnarProfiler {
                         min: simd_stats.min,
                         max: simd_stats.max,
                         mean: simd_stats.mean(),
+                        std_dev: 0.0,
+                        variance: 0.0,
+                        median: None,
+                        quartiles: None,
+                        mode: None,
+                        coefficient_of_variation: None,
+                        skewness: None,
+                        kurtosis: None,
+                        is_approximate: None,
                     }
                 } else {
                     // Fallback to regular computation

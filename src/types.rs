@@ -197,17 +197,79 @@ pub enum DataType {
     Date,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Quartiles {
+    pub q1: f64,  // 25th percentile
+    pub q2: f64,  // 50th percentile (median)
+    pub q3: f64,  // 75th percentile
+    pub iqr: f64, // Interquartile range (Q3 - Q1)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct FrequencyItem {
+    pub value: String,
+    pub count: usize,
+    pub percentage: f64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum ColumnStats {
     Numeric {
+        // Existing (always present)
         min: f64,
         max: f64,
         mean: f64,
+
+        // NEW - Streaming-compatible (always present)
+        std_dev: f64,
+        variance: f64,
+
+        // NEW - Require sorted data (Option for large datasets)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        median: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        quartiles: Option<Quartiles>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mode: Option<f64>,
+
+        // NEW - Advanced metrics (Option for large datasets)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        coefficient_of_variation: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        skewness: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kurtosis: Option<f64>,
+
+        // NEW - Approximation flag
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_approximate: Option<bool>,
     },
     Text {
+        // Existing
         min_length: usize,
         max_length: usize,
         avg_length: f64,
+
+        // NEW - Frequency analysis
+        #[serde(skip_serializing_if = "Option::is_none")]
+        most_frequent: Option<Vec<FrequencyItem>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        least_frequent: Option<Vec<FrequencyItem>>,
+    },
+    DateTime {
+        // Basic range
+        min_datetime: String, // ISO 8601 format
+        max_datetime: String,
+        duration_days: f64,
+
+        // Temporal distributions
+        year_distribution: HashMap<i32, usize>,
+        month_distribution: HashMap<u32, usize>,
+        day_of_week_distribution: HashMap<String, usize>,
+
+        // Optional: only if times are present
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hour_distribution: Option<HashMap<u32, usize>>,
     },
 }
 

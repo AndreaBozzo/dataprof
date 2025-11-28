@@ -336,6 +336,15 @@ fn create_column_profiles_from_data(data: &HashMap<String, Vec<String>>) -> Vec<
                         min: 0.0,
                         max: 0.0,
                         mean: 0.0,
+                        std_dev: 0.0,
+                        variance: 0.0,
+                        median: None,
+                        quartiles: None,
+                        mode: None,
+                        coefficient_of_variation: None,
+                        skewness: None,
+                        kurtosis: None,
+                        is_approximate: None,
                     }
                 } else {
                     let min = numeric_values.iter().fold(f64::INFINITY, |a, &b| a.min(b));
@@ -343,7 +352,20 @@ fn create_column_profiles_from_data(data: &HashMap<String, Vec<String>>) -> Vec<
                         .iter()
                         .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
                     let mean = numeric_values.iter().sum::<f64>() / numeric_values.len() as f64;
-                    ColumnStats::Numeric { min, max, mean }
+                    ColumnStats::Numeric {
+                        min,
+                        max,
+                        mean,
+                        std_dev: 0.0,
+                        variance: 0.0,
+                        median: None,
+                        quartiles: None,
+                        mode: None,
+                        coefficient_of_variation: None,
+                        skewness: None,
+                        kurtosis: None,
+                        is_approximate: None,
+                    }
                 }
             }
             DataType::String | DataType::Date => ColumnStats::Text {
@@ -359,6 +381,8 @@ fn create_column_profiles_from_data(data: &HashMap<String, Vec<String>>) -> Vec<
                 } else {
                     0.0
                 },
+                most_frequent: None,
+                least_frequent: None,
             },
         };
 

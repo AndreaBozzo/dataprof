@@ -205,6 +205,15 @@ impl TrueStreamingProfiler {
                 min: stats.min,
                 max: stats.max,
                 mean: stats.mean(),
+                std_dev: stats.std_dev(),
+                variance: stats.variance(),
+                median: None,
+                quartiles: None,
+                mode: None,
+                coefficient_of_variation: None,
+                skewness: None,
+                kurtosis: None,
+                is_approximate: None,
             },
             DataType::String | DataType::Date => {
                 let text_stats = stats.text_length_stats();
@@ -212,6 +221,8 @@ impl TrueStreamingProfiler {
                     min_length: text_stats.min_length,
                     max_length: text_stats.max_length,
                     avg_length: text_stats.avg_length,
+                    most_frequent: None,
+                    least_frequent: None,
                 }
             }
         };

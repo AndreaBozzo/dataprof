@@ -307,6 +307,7 @@ mod parquet_tests {
             min_length,
             max_length,
             avg_length,
+            ..
         } = desc_profile.stats
         {
             assert_eq!(min_length, 1); // "A"
