@@ -1,26 +1,59 @@
+//! Datetime statistics calculation
+//!
+//! # Date Format Handling
+//!
+//! ## Unambiguous Formats (Recommended)
+//! - ISO 8601: `2023-01-15` (YYYY-MM-DD)
+//! - ISO with slashes: `2023/01/15` (YYYY/MM/DD)
+//! - ISO datetime: `2023-01-15T10:30:00`
+//!
+//! ## Ambiguous Formats
+//! **WARNING**: Dates like `05/06/2023` are ambiguous and interpreted as European (DD/MM/YYYY):
+//! - `15/01/2023` → January 15, 2023
+//! - `15-01-2023` → January 15, 2023
+//! - `15.01.2023` → January 15, 2023
+//!
+//! For unambiguous parsing, use ISO 8601 format (YYYY-MM-DD).
+
 use crate::types::ColumnStats;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use std::collections::HashMap;
 
-pub fn calculate_datetime_stats(data: &[String]) -> ColumnStats {
-    let dates = parse_dates(data);
+/// Parse result containing both date and optional time component
+struct ParsedDateTime {
+    date: NaiveDate,
+    datetime: Option<NaiveDateTime>,
+}
 
-    if dates.is_empty() {
+pub fn calculate_datetime_stats(data: &[String]) -> ColumnStats {
+    // Parse once, store both date and optional datetime
+    let parsed: Vec<ParsedDateTime> = data.iter().filter_map(|s| parse_flexible_full(s)).collect();
+
+    if parsed.is_empty() {
         return empty_datetime_stats();
     }
+
+    // Extract dates for date-based calculations
+    let dates: Vec<NaiveDate> = parsed.iter().map(|p| p.date).collect();
 
     // Calculate min/max and duration
     let min_date = dates.iter().min().unwrap();
     let max_date = dates.iter().max().unwrap();
     let duration_days = (*max_date - *min_date).num_days() as f64;
 
-    // Build distributions
+    // Build distributions from dates
     let year_distribution = build_year_distribution(&dates);
     let month_distribution = build_month_distribution(&dates);
     let day_of_week_distribution = build_day_of_week_distribution(&dates);
 
-    // Check if times present (only for datetime, not date)
-    let hour_distribution = detect_and_build_hour_distribution(data);
+    // Build hour distribution from datetimes (if any have time components)
+    let datetimes: Vec<NaiveDateTime> = parsed.iter().filter_map(|p| p.datetime).collect();
+
+    let hour_distribution = if datetimes.is_empty() {
+        None
+    } else {
+        Some(build_hour_distribution(&datetimes))
+    };
 
     ColumnStats::DateTime {
         min_datetime: min_date.format("%Y-%m-%d").to_string(),
@@ -45,36 +78,56 @@ fn empty_datetime_stats() -> ColumnStats {
     }
 }
 
-fn parse_dates(data: &[String]) -> Vec<NaiveDate> {
-    data.iter().filter_map(|s| parse_flexible(s)).collect()
-}
-
-fn parse_flexible(s: &str) -> Option<NaiveDate> {
+fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     let trimmed = s.trim();
 
-    // Try datetime formats first (extract date part)
+    // Try datetime formats first (these have time components)
     if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Some(dt.date());
+        return Some(ParsedDateTime {
+            date: dt.date(),
+            datetime: Some(dt),
+        });
     }
 
-    // Additional datetime format variations
     if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S") {
-        return Some(dt.date());
+        return Some(ParsedDateTime {
+            date: dt.date(),
+            datetime: Some(dt),
+        });
     }
 
-    // Try date-only formats
-    let formats = vec![
-        "%Y-%m-%d", // ISO: 2023-01-15
-        "%d/%m/%Y", // European: 15/01/2023
-        "%d-%m-%Y", // European: 15-01-2023
-        "%d.%m.%Y", // European: 15.01.2023
-        "%Y/%m/%d", // ISO slash: 2023/01/15
-        "%m/%d/%Y", // US: 01/15/2023
+    if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%d/%m/%Y %H:%M:%S") {
+        return Some(ParsedDateTime {
+            date: dt.date(),
+            datetime: Some(dt),
+        });
+    }
+
+    if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(ParsedDateTime {
+            date: dt.date(),
+            datetime: Some(dt),
+        });
+    }
+
+    // Try date-only formats (no time component)
+    // NOTE: Order matters for ambiguous formats (DD/MM/YYYY vs MM/DD/YYYY)
+    // European formats are tried first. For unambiguous parsing, use ISO 8601.
+    let date_formats = vec![
+        "%Y-%m-%d", // ISO: 2023-01-15 (unambiguous)
+        "%d/%m/%Y", // European: 15/01/2023 (DD/MM/YYYY)
+        "%d-%m-%Y", // European: 15-01-2023 (DD-MM-YYYY)
+        "%d.%m.%Y", // European: 15.01.2023 (DD.MM.YYYY)
+        "%Y/%m/%d", // ISO slash: 2023/01/15 (unambiguous)
+        "%m/%d/%Y", // US: 01/15/2023 (MM/DD/YYYY) - fallback if European fails
     ];
 
-    for format in formats {
+    for format in date_formats {
         if let Ok(date) = NaiveDate::parse_from_str(trimmed, format) {
-            return Some(date);
+            return Some(ParsedDateTime {
+                date,
+                datetime: None,
+            });
         }
     }
 
@@ -118,38 +171,12 @@ fn weekday_name(weekday: Weekday) -> &'static str {
     }
 }
 
-fn detect_and_build_hour_distribution(data: &[String]) -> Option<HashMap<u32, usize>> {
-    let datetimes: Vec<NaiveDateTime> = data
-        .iter()
-        .filter_map(|s| parse_datetime_with_time(s.trim()))
-        .collect();
-
-    if datetimes.is_empty() {
-        return None;
-    }
-
+fn build_hour_distribution(datetimes: &[NaiveDateTime]) -> HashMap<u32, usize> {
     let mut dist = HashMap::new();
     for dt in datetimes {
         *dist.entry(dt.hour()).or_insert(0) += 1;
     }
-    Some(dist)
-}
-
-fn parse_datetime_with_time(s: &str) -> Option<NaiveDateTime> {
-    let formats = vec![
-        "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-        "%d/%m/%Y %H:%M:%S",
-        "%Y-%m-%dT%H:%M:%S%.f", // With milliseconds
-    ];
-
-    for format in formats {
-        if let Ok(dt) = NaiveDateTime::parse_from_str(s, format) {
-            return Some(dt);
-        }
-    }
-
-    None
+    dist
 }
 
 #[cfg(test)]
@@ -158,35 +185,38 @@ mod tests {
 
     #[test]
     fn test_parse_iso_date() {
-        let date = parse_flexible("2023-01-15");
-        assert!(date.is_some());
-        assert_eq!(date.unwrap().year(), 2023);
-        assert_eq!(date.unwrap().month(), 1);
-        assert_eq!(date.unwrap().day(), 15);
+        let parsed = parse_flexible_full("2023-01-15").unwrap();
+        assert_eq!(parsed.date.year(), 2023);
+        assert_eq!(parsed.date.month(), 1);
+        assert_eq!(parsed.date.day(), 15);
+        assert!(parsed.datetime.is_none());
     }
 
     #[test]
     fn test_parse_european_format() {
-        let date = parse_flexible("15/01/2023");
-        assert!(date.is_some());
-        assert_eq!(date.unwrap().day(), 15);
-        assert_eq!(date.unwrap().month(), 1);
-        assert_eq!(date.unwrap().year(), 2023);
+        let parsed = parse_flexible_full("15/01/2023").unwrap();
+        assert_eq!(parsed.date.day(), 15);
+        assert_eq!(parsed.date.month(), 1);
+        assert_eq!(parsed.date.year(), 2023);
+        assert!(parsed.datetime.is_none());
     }
 
     #[test]
     fn test_parse_us_format() {
-        let date = parse_flexible("01/15/2023");
-        assert!(date.is_some());
-        assert_eq!(date.unwrap().month(), 1);
-        assert_eq!(date.unwrap().day(), 15);
+        let parsed = parse_flexible_full("01/15/2023").unwrap();
+        assert_eq!(parsed.date.month(), 1);
+        assert_eq!(parsed.date.day(), 15);
+        assert!(parsed.datetime.is_none());
     }
 
     #[test]
     fn test_parse_datetime_iso() {
-        let date = parse_flexible("2023-01-15T10:30:00");
-        assert!(date.is_some());
-        assert_eq!(date.unwrap().year(), 2023);
+        let parsed = parse_flexible_full("2023-01-15T10:30:00").unwrap();
+        assert_eq!(parsed.date.year(), 2023);
+        assert!(parsed.datetime.is_some());
+        let dt = parsed.datetime.unwrap();
+        assert_eq!(dt.hour(), 10);
+        assert_eq!(dt.minute(), 30);
     }
 
     #[test]

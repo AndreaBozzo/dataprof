@@ -4,7 +4,11 @@ use std::collections::HashMap;
 const SAMPLE_THRESHOLD: usize = 10_000;
 
 pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
-    let numbers: Vec<f64> = data.iter().filter_map(|s| s.parse::<f64>().ok()).collect();
+    let numbers: Vec<f64> = data
+        .iter()
+        .filter_map(|s| s.parse::<f64>().ok())
+        .filter(|x| x.is_finite())
+        .collect();
 
     if numbers.is_empty() {
         return ColumnStats::Numeric {
@@ -88,7 +92,8 @@ pub fn calculate_median(sorted_data: &[f64]) -> Option<f64> {
     }
 
     let len = sorted_data.len();
-    if len.is_multiple_of(2) {
+    #[allow(clippy::manual_is_multiple_of)]
+    if len % 2 == 0 {
         // Even number of elements - average of two middle values
         let mid1 = sorted_data[len / 2 - 1];
         let mid2 = sorted_data[len / 2];
@@ -371,6 +376,64 @@ mod tests {
                 median,
                 ..
             } => {
+                assert_eq!(min, 0.0);
+                assert_eq!(max, 0.0);
+                assert_eq!(mean, 0.0);
+                assert_eq!(median, None);
+            }
+            _ => panic!("Expected Numeric stats"),
+        }
+    }
+
+    #[test]
+    fn test_numeric_stats_filters_nan() {
+        let data = vec!["1.0".to_string(), "NaN".to_string(), "3.0".to_string()];
+        let stats = calculate_numeric_stats(&data);
+
+        match stats {
+            ColumnStats::Numeric { min, max, mean, .. } => {
+                assert_eq!(min, 1.0);
+                assert_eq!(max, 3.0);
+                assert_eq!(mean, 2.0);
+            }
+            _ => panic!("Expected Numeric stats"),
+        }
+    }
+
+    #[test]
+    fn test_numeric_stats_filters_infinity() {
+        let data = vec![
+            "1.0".to_string(),
+            "inf".to_string(),
+            "3.0".to_string(),
+            "-inf".to_string(),
+        ];
+        let stats = calculate_numeric_stats(&data);
+
+        match stats {
+            ColumnStats::Numeric { min, max, mean, .. } => {
+                assert_eq!(min, 1.0);
+                assert_eq!(max, 3.0);
+                assert_eq!(mean, 2.0);
+            }
+            _ => panic!("Expected Numeric stats"),
+        }
+    }
+
+    #[test]
+    fn test_numeric_stats_all_nan() {
+        let data = vec!["NaN".to_string(), "inf".to_string(), "-inf".to_string()];
+        let stats = calculate_numeric_stats(&data);
+
+        match stats {
+            ColumnStats::Numeric {
+                min,
+                max,
+                mean,
+                median,
+                ..
+            } => {
+                // Should return empty stats when all values are non-finite
                 assert_eq!(min, 0.0);
                 assert_eq!(max, 0.0);
                 assert_eq!(mean, 0.0);

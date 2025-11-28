@@ -5,6 +5,10 @@ use crate::types::DataType;
 
 // Pre-compile regex patterns for better performance
 // These patterns are compiled once at startup instead of on every column analysis
+//
+// NOTE: Some patterns (^\d{2}/\d{2}/\d{4}$) are ambiguous between DD/MM/YYYY and MM/DD/YYYY.
+// The datetime parsing module assumes European format (DD/MM/YYYY) by default.
+// See datetime.rs documentation for details on date format handling.
 static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         Regex::new(r"^\d{4}-\d{2}-\d{2}$")

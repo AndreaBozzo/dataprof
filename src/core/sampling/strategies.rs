@@ -148,7 +148,8 @@ impl SamplingStrategy {
                 self.random_sample(row_index, total_processed, *size)
             }
 
-            SamplingStrategy::Systematic { interval } => row_index.is_multiple_of(*interval),
+            #[allow(clippy::manual_is_multiple_of)]
+            SamplingStrategy::Systematic { interval } => row_index % interval == 0,
 
             SamplingStrategy::Reservoir { size } => {
                 self.reservoir_sample(row_index, total_processed, *size, state)
