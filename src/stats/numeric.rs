@@ -75,6 +75,7 @@ pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
 }
 
 /// Calculate variance using sum of squares
+/// Uses sample variance (n-1) for unbiased estimation
 pub fn calculate_variance(sum_squares: f64, sum: f64, count: usize) -> f64 {
     let n = count as f64;
     if n <= 1.0 {
@@ -82,7 +83,7 @@ pub fn calculate_variance(sum_squares: f64, sum: f64, count: usize) -> f64 {
     }
 
     let mean = sum / n;
-    (sum_squares - n * mean * mean) / n
+    (sum_squares - n * mean * mean) / (n - 1.0)
 }
 
 /// Calculate median from sorted data
@@ -145,6 +146,7 @@ fn calculate_percentile(sorted_data: &[f64], p: f64, n: f64) -> f64 {
 }
 
 /// Calculate mode (most frequent value)
+/// For multimodal distributions, returns the smallest value with maximum frequency
 pub fn calculate_mode(data: &[f64]) -> Option<f64> {
     if data.is_empty() {
         return None;
@@ -166,13 +168,14 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
         return None;
     }
 
-    // Find the value with maximum frequency
-    let mode_str = freq_map
+    // Find all values with maximum frequency and return the smallest (deterministic)
+    let mut modes: Vec<f64> = freq_map
         .iter()
-        .find(|(_, &count)| count == max_freq)
-        .map(|(value, _)| value)?;
-
-    mode_str.parse::<f64>().ok()
+        .filter(|(_, &count)| count == max_freq)
+        .filter_map(|(value, _)| value.parse::<f64>().ok())
+        .collect();
+    modes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    modes.first().copied()
 }
 
 /// Calculate coefficient of variation (CV)
@@ -336,7 +339,8 @@ mod tests {
         let sum = 15.0; // 1 + 2 + 3 + 4 + 5
         let count = 5;
         let var = calculate_variance(sum_squares, sum, count);
-        assert!((var - 2.0).abs() < 0.01);
+        // Sample variance (n-1): 2.5
+        assert!((var - 2.5).abs() < 0.01);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use crate::types::{ColumnStats, FrequencyItem};
 use std::collections::HashMap;
 
-const TOP_N_DEFAULT: usize = 5;
-const BOTTOM_N_DEFAULT: usize = 5;
+const TOP_N_DEFAULT: usize = 10;
+const BOTTOM_N_DEFAULT: usize = 10;
 
 pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     let non_empty: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
@@ -28,17 +28,8 @@ pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     };
 
     // NEW: Frequency analysis
-    let most_frequent = if !non_empty.is_empty() {
-        calculate_most_frequent(&non_empty, TOP_N_DEFAULT)
-    } else {
-        None
-    };
-
-    let least_frequent = if non_empty.len() > BOTTOM_N_DEFAULT {
-        calculate_least_frequent(&non_empty, BOTTOM_N_DEFAULT)
-    } else {
-        None
-    };
+    let most_frequent = calculate_most_frequent(&non_empty, TOP_N_DEFAULT);
+    let least_frequent = calculate_least_frequent(&non_empty, BOTTOM_N_DEFAULT);
 
     ColumnStats::Text {
         min_length,

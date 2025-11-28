@@ -93,44 +93,6 @@ pub mod quartiles {
     }
 }
 
-/// Round FrequencyItem percentage to 2 decimal places
-pub mod frequency_items {
-    use super::*;
-    use crate::types::FrequencyItem;
-
-    pub fn serialize<S>(
-        value: &Option<Vec<FrequencyItem>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(items) => {
-                use serde::Serialize;
-                #[derive(Serialize)]
-                struct RoundedFrequencyItem {
-                    value: String,
-                    count: usize,
-                    #[serde(serialize_with = "round_2")]
-                    percentage: f64,
-                }
-
-                let rounded: Vec<RoundedFrequencyItem> = items
-                    .iter()
-                    .map(|item| RoundedFrequencyItem {
-                        value: item.value.clone(),
-                        count: item.count,
-                        percentage: item.percentage,
-                    })
-                    .collect();
-
-                serializer.serialize_some(&rounded)
-            }
-            None => serializer.serialize_none(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
