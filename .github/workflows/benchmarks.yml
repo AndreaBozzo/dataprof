@@ -57,7 +57,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -109,7 +109,7 @@ jobs:
     if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -132,7 +132,7 @@ jobs:
     if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -164,7 +164,7 @@ jobs:
     if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -196,7 +196,7 @@ jobs:
     if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -228,7 +228,7 @@ jobs:
     if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Python dependencies
         uses: ./.github/actions/setup-python-deps
@@ -262,7 +262,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Download all benchmark results
         uses: actions/download-artifact@v6
@@ -450,7 +450,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -509,7 +509,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Download benchmark results
         uses: actions/download-artifact@v6

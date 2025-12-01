@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
 
     - name: Production-critical test suite
@@ -108,7 +108,7 @@ jobs:
     if: needs.validate-staging-pr.outputs.is-staging == 'true'
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
