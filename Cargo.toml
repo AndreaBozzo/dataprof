@@ -65,7 +65,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Note: Async support is available via feature flags (database, python-async)
 
 # SIMD acceleration
-wide = "0.8"
+wide = "1.0"
 
 # Random number generation for sampling
 rand = { version = "0.9", features = ["small_rng"] }
