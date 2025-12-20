@@ -102,7 +102,7 @@ tempfile = "3.10"
 proptest = "1.9"  # Updated: 1.8.0 -> 1.9.0 (minor bump, backward compatible)
 
 # Performance benchmarking
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 serde_json = "1.0"
 
 # Memory profiling for benchmarks (Windows compatibility issue with pprof 0.13)
