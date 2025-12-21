@@ -50,11 +50,9 @@ jobs:
           key: security-tools-${{ runner.os }}-v2
 
       # Install only essential security tool
-      - name: Install cargo-audit
+      - name: Install/Update cargo-audit
         run: |
-          if ! command -v cargo-audit &> /dev/null; then
-            cargo install --locked cargo-audit
-          fi
+          cargo install --locked cargo-audit --force
 
       - name: Run cargo-audit (RustSec database)
         run: |
