@@ -96,7 +96,7 @@ arrow = { version = "57.1", optional = true }
 parquet = { version = "57.1", features = ["arrow"], optional = true }
 
 [dev-dependencies]
-tempfile = "3.10"
+tempfile = "3.24"
 
 # Property-based testing
 proptest = "1.9"  # Updated: 1.8.0 -> 1.9.0 (minor bump, backward compatible)
