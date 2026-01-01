@@ -148,7 +148,7 @@ jobs:
           echo "✅ Unified benchmarks completed"
 
       - name: Upload unified results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: unified-benchmark-results
           path: benchmark-results/unified.txt
@@ -180,7 +180,7 @@ jobs:
           echo "✅ Domain benchmarks completed"
 
       - name: Upload domain results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: domain-benchmark-results
           path: benchmark-results/domain.txt
@@ -212,7 +212,7 @@ jobs:
           echo "✅ Statistical benchmarks completed"
 
       - name: Upload statistical results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: statistical-benchmark-results
           path: benchmark-results/statistical.txt
@@ -247,7 +247,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload comparison results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: comparison-benchmark-results
           path: benchmark-results/comparison.txt
@@ -413,7 +413,7 @@ jobs:
           echo "✅ Real benchmark reports generated with extracted metrics"
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: aggregated-benchmark-results
           path: benchmark-results/
@@ -490,7 +490,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload manual results
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: manual-benchmark-${{ github.event.inputs.benchmark_type }}-${{ github.sha }}
           path: |
