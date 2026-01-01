@@ -64,11 +64,11 @@ fn create_test_data_with_dates() -> (HashMap<String, Vec<String>>, Vec<ColumnPro
             "2015-01-01", // Old (stale)
             "2023-06-15", // Recent
             "2024-12-01", // Recent
-            "2026-01-01", // Future
+            "2027-06-01", // Future
             "2018-03-20", // Old
             "2024-08-10", // Recent
             "",           // Null
-            "2030-12-31", // Future
+            "2028-12-31", // Future
         ]
         .iter()
         .map(|s| s.to_string())

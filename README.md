@@ -142,6 +142,47 @@ cargo build --release --all-features
 **Privacy:**
 [What DataProf Does](docs/WHAT_DATAPROF_DOES.md) - Complete transparency with source verification
 
+## 🤝 Contributing
+
+We welcome contributions from everyone! Whether you want to:
+- **Fix a bug** 🐛
+- **Add a feature** ✨
+- **Improve documentation** 📚
+- **Report an issue** 📝
+
+### Quick Start for Contributors
+
+1. **Fork & clone:**
+   ```bash
+   git clone https://github.com/YOUR-USERNAME/dataprof.git
+   cd dataprof
+   ```
+
+2. **Build & test:**
+   ```bash
+   cargo build
+   cargo test
+   ```
+
+3. **Create a feature branch:**
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+4. **Before submitting PR:**
+   ```bash
+   cargo fmt --all
+   cargo clippy --all --all-targets
+   cargo test --all
+   ```
+
+5. **Submit a Pull Request** with clear description
+
+📖 **[Full Contributing Guide →](CONTRIBUTING.md)**
+
+All contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
+

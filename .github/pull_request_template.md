@@ -1,68 +1,100 @@
 # Pull Request
 
-## Summary
+**👋 Thank you for contributing to dataprof!** 
 
-Brief description of the changes in this PR.
+Please fill out this template to help us understand your changes.
 
-## Type of Change
+## 📝 Summary
 
-- [ ] Bug fix (non-breaking change that fixes an issue)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Documentation update
-- [ ] Performance improvement
-- [ ] Code refactoring (no functional changes)
+Brief description of the changes in this PR. What problem does it solve or what feature does it add?
 
-## Changes Made
+## 🔧 Type of Change
 
-- List key changes here
-- Use bullet points for clarity
-- Include any new dependencies added
+Select the type(s) of change:
 
-## Testing
+- [ ] 🐛 Bug fix (non-breaking change that fixes an issue)
+- [ ] ✨ New feature (non-breaking change that adds functionality)
+- [ ] 🚨 Breaking change (would cause existing functionality to not work as expected)
+- [ ] 📚 Documentation update
+- [ ] ⚡ Performance improvement
+- [ ] 🎨 Code refactoring (no functional changes)
 
-- [ ] I have tested the changes locally
-- [ ] I have added tests for new functionality
+## 📋 Changes Made
+
+Describe the specific changes:
+
+- Change 1
+- Change 2
+- Change 3
+
+**Related Issue:** Closes #(issue number)
+
+## 🧪 Testing
+
+### How did you test this?
+
+Describe your testing approach:
+
+- [ ] Tested locally with `cargo test`
+- [ ] Added new tests for this feature
 - [ ] All existing tests pass
-- [ ] I have tested with sample data files
+- [ ] Tested with sample data files
+- [ ] Tested edge cases (empty files, large files, etc.)
 
 ### Test Commands Run
 
 ```bash
-# List the commands you used to test
-cargo test
+cargo test --all
+cargo clippy --all --all-targets
+cargo fmt --all -- --check
 cargo build --release
-# Any specific test scenarios
 ```
 
-## Documentation
+Include any specific test scenarios or data used.
 
-- [ ] I have updated the README if needed
-- [ ] I have updated inline documentation/comments
-- [ ] I have updated CONTRIBUTING.md if needed
+## 📖 Documentation
 
-## Performance Impact
+- [ ] Updated README.md if user-facing changes
+- [ ] Added/updated inline code comments
+- [ ] Updated docs/ folder if architectural changes
+- [ ] No documentation changes needed
+
+## ⚡ Performance Impact
 
 - [ ] No performance impact
 - [ ] Performance improved
 - [ ] Performance may be affected (explain below)
 
-If performance is affected, explain:
+**Details (if applicable):**
 
-## Breaking Changes
+## 🚨 Breaking Changes
 
-If this is a breaking change, describe what breaks and migration path:
+If this is a breaking change, describe:
 
-## Additional Notes
+- What breaks
+- Migration path for users
 
-Any additional information, screenshots, or context for reviewers:
+**If no breaking changes, just check:** [ ] No breaking changes
+
+## 📌 Additional Notes
+
+Any additional context for reviewers:
+
+- Screenshots/examples (if applicable)
+- Related PRs or discussions
+- Implementation notes
 
 ---
 
-## Checklist
+## ✅ Checklist
 
-- [ ] My code follows the project's style guidelines
-- [ ] I have performed a self-review of my code
-- [ ] My changes generate no new warnings
-- [ ] I have made corresponding changes to the documentation
-- [ ] Any dependent changes have been merged and published
+- [ ] Code builds without warnings
+- [ ] No linting errors (`cargo clippy`)
+- [ ] Code is formatted (`cargo fmt`)
+- [ ] All tests pass
+- [ ] Self-reviewed my code
+- [ ] Comments added for complex logic
+- [ ] No hardcoded secrets or sensitive data
+
+**Need help?** See [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines and [docs/](../../docs/) for architecture details.
+
