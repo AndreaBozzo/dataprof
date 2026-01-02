@@ -180,7 +180,7 @@ jobs:
             name: dataprof-linux-arm64
             cross: true
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-15-intel
             name: dataprof-macos-x64
           - target: aarch64-apple-darwin
             os: macos-latest
@@ -305,7 +305,7 @@ jobs:
             target: x64
             cpu_profile: baseline
             rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64
             cpu_profile: baseline
             rustflags: "-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2"
@@ -323,7 +323,7 @@ jobs:
             target: x64
             cpu_profile: optimized
             rustflags: "-C target-cpu=native"
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64
             cpu_profile: optimized
             rustflags: "-C target-cpu=native"
