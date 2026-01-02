@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.84] - 2026-01-02
+
+### Fixed
+
+- **CI/CD Improvements**
+  - Fixed cargo-audit CVSS 4.0 parsing error by forcing latest version installation (#156)
+
+### Changed
+
+- **External Contributions**
+  - Eased external PR contribution workflow (#165)
+
+### Dependencies
+
+- **Rust Crates**
+  - arrow: 57.0.0 → 57.1.0 (#146)
+  - parquet: 57.0.0 → 57.1.0 (#159)
+  - wide: 0.8.3 → 1.1.0 (#155, major version bump)
+  - criterion: 0.7.0 → 0.8.1 (#154)
+  - log: 0.4.28 → 0.4.29 (#153)
+  - pyo3: 0.27.1 → 0.27.2 (#149)
+
+- **GitHub Actions**
+  - actions/checkout: 5 → 6 (#150)
+  - actions/upload-artifact: 4 → 5 → 6 (#152, #163)
+  - actions/download-artifact: 6 → 7 (#164)
+
+### Documentation
+
+- Updated README with new logo and improved project description
+- Added enhanced statistical analysis features documentation
+
 ## [0.4.83] - 2025-11-28
 
 ### Added
