@@ -1,335 +1,232 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DataProfiler Batch Analysis Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>{{{style_css}}}</style>
-    <style>{{{batch_css}}}</style>
+    <title>Batch Analysis Dashboard - DataProf</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#1e293b' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .sidebar { width: 280px; }
+        .content { margin-left: 280px; }
+        @media (max-width: 1024px) {
+            .sidebar { display: none; }
+            .content { margin-left: 0; }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>📊 DataProfiler Batch Analysis Dashboard</h1>
+<body class="bg-slate-50 text-slate-900 antialiased">
 
-            {{!-- Batch Summary Section --}}
-            <div class="batch-summary">
-                <div class="summary-grid">
-                    <div class="summary-card">
-                        <div class="card-icon">📁</div>
-                        <div class="card-content">
-                            <h3>Total Files</h3>
-                            <div class="metric">{{summary.total_files}}</div>
-                        </div>
-                    </div>
-                    <div class="summary-card success">
-                        <div class="card-icon">✅</div>
-                        <div class="card-content">
-                            <h3>Success Rate</h3>
-                            <div class="metric">{{summary.success_rate}}%</div>
-                            <div class="sub-metric">{{summary.successful}} successful</div>
-                        </div>
-                    </div>
-                    <div class="summary-card {{summary.avg_score_class}}">
-                        <div class="card-icon">📊</div>
-                        <div class="card-content">
-                            <h3>Avg Quality Score</h3>
-                            <div class="metric">{{summary.average_quality_score}}%</div>
-                        </div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="card-icon">⚡</div>
-                        <div class="card-content">
-                            <h3>Processing Time</h3>
-                            <div class="metric">{{summary.processing_time_seconds}}s</div>
-                            <div class="sub-metric">{{summary.files_per_second}} files/sec</div>
-                        </div>
-                    </div>
-                    <div class="summary-card">
-                        <div class="card-icon">📈</div>
-                        <div class="card-content">
-                            <h3>Total Records</h3>
-                            <div class="metric">{{summary.total_records}}</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </header>
-
-        {{!-- Aggregated Data Quality Metrics Section --}}
-        {{#if aggregated_metrics}}
-        <section class="batch-aggregated-quality-metrics">
-            <h2>🏆 Aggregated Data Quality Metrics</h2>
-            <div class="aggregated-intro">
-                <p>Cross-file aggregated metrics representing the overall data quality across all processed files</p>
-            </div>
-
-            <div class="overall-score">
-                <div class="score-circle {{aggregated_metrics.assessment_class}}">
-                    <span class="score-value">{{aggregated_metrics.overall_score}}%</span>
-                    <span class="score-label">Overall Dataset Quality</span>
-                </div>
-            </div>
-
-            <div class="metrics-grid">
-                <div class="metric-card completeness">
-                    <div class="metric-header">
-                        <span class="metric-icon">🔍</span>
-                        <h3>Completeness</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Missing Values</span>
-                            <span class="stat-value {{aggregated_metrics.completeness.missing_class}}">{{aggregated_metrics.completeness.missing_ratio}}%</span>
-                        </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Complete Records</span>
-                            <span class="stat-value">{{aggregated_metrics.completeness.complete_ratio}}%</span>
-                        </div>
-                        {{#if aggregated_metrics.completeness.null_columns}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Columns with nulls</span>
-                            <span class="stat-value">{{aggregated_metrics.completeness.null_columns}}</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card consistency">
-                    <div class="metric-header">
-                        <span class="metric-icon">⚡</span>
-                        <h3>Consistency</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Type Consistency</span>
-                            <span class="stat-value {{aggregated_metrics.consistency.type_class}}">{{aggregated_metrics.consistency.type_consistency}}%</span>
-                        </div>
-                        {{#if aggregated_metrics.consistency.format_violations}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Format Violations</span>
-                            <span class="stat-value">{{aggregated_metrics.consistency.format_violations}} total</span>
-                        </div>
-                        {{/if}}
-                        {{#if aggregated_metrics.consistency.encoding_issues}}
-                        <div class="stat-item error">
-                            <span class="stat-label">Encoding Issues</span>
-                            <span class="stat-value">{{aggregated_metrics.consistency.encoding_issues}} total</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card uniqueness">
-                    <div class="metric-header">
-                        <span class="metric-icon">🔑</span>
-                        <h3>Uniqueness</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Key Uniqueness</span>
-                            <span class="stat-value {{aggregated_metrics.uniqueness.uniqueness_class}}">{{aggregated_metrics.uniqueness.key_uniqueness}}%</span>
-                        </div>
-                        {{#if aggregated_metrics.uniqueness.has_duplicates}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Duplicate Rows</span>
-                            <span class="stat-value">{{aggregated_metrics.uniqueness.duplicate_rows}} total</span>
-                        </div>
-                        {{else}}
-                        <div class="stat-item excellent">
-                            <span class="stat-label">Duplicate Rows</span>
-                            <span class="stat-value">None</span>
-                        </div>
-                        {{/if}}
-                        {{#if aggregated_metrics.uniqueness.high_cardinality_warning}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">High Cardinality</span>
-                            <span class="stat-value">Warning</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card accuracy">
-                    <div class="metric-header">
-                        <span class="metric-icon">🎯</span>
-                        <h3>Accuracy</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Outlier Ratio</span>
-                            <span class="stat-value {{aggregated_metrics.accuracy.outlier_class}}">{{aggregated_metrics.accuracy.outlier_ratio}}%</span>
-                        </div>
-                        {{#if aggregated_metrics.accuracy.range_violations}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Range Violations</span>
-                            <span class="stat-value">{{aggregated_metrics.accuracy.range_violations}} total</span>
-                        </div>
-                        {{/if}}
-                        {{#if aggregated_metrics.accuracy.negative_values}}
-                        <div class="stat-item error">
-                            <span class="stat-label">Invalid Negatives</span>
-                            <span class="stat-value">{{aggregated_metrics.accuracy.negative_values}} total</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card timeliness">
-                    <div class="metric-header">
-                        <span class="metric-icon">⏰</span>
-                        <h3>Timeliness</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Data Freshness</span>
-                            <span class="stat-value {{aggregated_metrics.timeliness.freshness_class}}">{{aggregated_metrics.timeliness.freshness}}%</span>
-                        </div>
-                        {{#if aggregated_metrics.timeliness.future_dates}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Future Dates</span>
-                            <span class="stat-value">{{aggregated_metrics.timeliness.future_dates}} total</span>
-                        </div>
-                        {{/if}}
-                        {{#if aggregated_metrics.timeliness.temporal_violations}}
-                        <div class="stat-item error">
-                            <span class="stat-label">Temporal Violations</span>
-                            <span class="stat-value">{{aggregated_metrics.timeliness.temporal_violations}} total</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-            </div>
-        </section>
-        {{/if}}
-
-        {{!-- Files Overview Section --}}
-        <section class="files-overview">
-            <h2>📁 Files Overview</h2>
-            <div class="table-container">
-                <table class="files-table">
-                    <thead>
-                        <tr>
-                            <th>File</th>
-                            <th>Quality Score</th>
-                            <th>Columns</th>
-                            <th>Rows</th>
-                            <th>Status</th>
-                            <th>Details</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{#each files}}
-                        <tr class="file-row {{#if this.is_error}}error{{/if}}">
-                            <td>
-                                <div class="file-name">{{this.filename}}</div>
-                                <div class="file-path">{{this.path}}</div>
-                            </td>
-                            <td class="score-cell">
-                                {{#if this.is_error}}
-                                <span class="error-message">ERROR</span>
-                                {{else}}
-                                <span class="score-badge {{this.quality_class}}">{{this.quality_score}}</span>
-                                {{/if}}
-                            </td>
-                            <td>{{#unless this.is_error}}{{this.columns}}{{/unless}}</td>
-                            <td>{{#unless this.is_error}}{{this.rows}}{{/unless}}</td>
-                            <td>
-                                {{#if this.is_error}}
-                                <span class="error-message" title="{{this.error_full}}">{{this.error_short}}</span>
-                                {{else}}
-                                ✓ Success
-                                {{/if}}
-                            </td>
-                            <td>
-                                {{#unless this.is_error}}
-                                <button class="toggle-details" onclick="toggleFileDetails('{{@index}}')">📊 View Metrics</button>
-                                {{/unless}}
-                            </td>
-                        </tr>
-                        {{#unless this.is_error}}
-                        <tr id="details-{{@index}}" class="details-row" style="display: none;">
-                            <td colspan="6">
-                                <div class="file-metrics-breakdown">
-                                    <h4>Quality Metrics Breakdown</h4>
-                                    <div class="breakdown-grid">
-                                        <div class="breakdown-card">
-                                            <h5>🔍 Completeness</h5>
-                                            <div class="breakdown-stat">Missing: {{this.metrics.completeness.missing_ratio}}%</div>
-                                            <div class="breakdown-stat">Complete: {{this.metrics.completeness.complete_ratio}}%</div>
-                                        </div>
-                                        <div class="breakdown-card">
-                                            <h5>⚡ Consistency</h5>
-                                            <div class="breakdown-stat">Type Consistency: {{this.metrics.consistency.type_consistency}}%</div>
-                                        </div>
-                                        <div class="breakdown-card">
-                                            <h5>🔑 Uniqueness</h5>
-                                            <div class="breakdown-stat">Key Uniqueness: {{this.metrics.uniqueness.key_uniqueness}}%</div>
-                                        </div>
-                                        <div class="breakdown-card">
-                                            <h5>🎯 Accuracy</h5>
-                                            <div class="breakdown-stat">Outlier Ratio: {{this.metrics.accuracy.outlier_ratio}}%</div>
-                                        </div>
-                                        <div class="breakdown-card">
-                                            <h5>⏰ Timeliness</h5>
-                                            <div class="breakdown-stat">Freshness: {{this.metrics.timeliness.freshness}}%</div>
-                                        </div>
-                                    </div>
-
-                                    {{!-- Parquet Metadata Section (if available) --}}
-                                    {{#if this.parquet_metadata}}
-                                    <div class="parquet-metadata-section">
-                                        <h4>📦 Parquet File Metadata</h4>
-                                        <div class="breakdown-grid">
-                                            <div class="breakdown-card">
-                                                <h5>Row Groups</h5>
-                                                <div class="breakdown-stat">{{this.parquet_metadata.num_row_groups}}</div>
-                                            </div>
-                                            <div class="breakdown-card">
-                                                <h5>Compression</h5>
-                                                <div class="breakdown-stat">{{this.parquet_metadata.compression}}</div>
-                                            </div>
-                                            <div class="breakdown-card">
-                                                <h5>Version</h5>
-                                                <div class="breakdown-stat">{{this.parquet_metadata.version}}</div>
-                                            </div>
-                                            <div class="breakdown-card">
-                                                <h5>Compressed Size</h5>
-                                                <div class="breakdown-stat">{{this.parquet_metadata.compressed_size_mb}} MB</div>
-                                            </div>
-                                            {{#if this.parquet_metadata.compression_ratio}}
-                                            <div class="breakdown-card">
-                                                <h5>Compression Ratio</h5>
-                                                <div class="breakdown-stat">{{this.parquet_metadata.compression_ratio}}</div>
-                                            </div>
-                                            {{/if}}
-                                        </div>
-                                        {{#if this.parquet_metadata.schema_summary}}
-                                        <div class="schema-summary">
-                                            <h5>Schema</h5>
-                                            <pre><code>{{this.parquet_metadata.schema_summary}}</code></pre>
-                                        </div>
-                                        {{/if}}
-                                    </div>
-                                    {{/if}}
-                                </div>
-                            </td>
-                        </tr>
-                        {{/unless}}
-                        {{/each}}
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-        <footer>
-            <p>Generated by <strong>DataProfiler CLI</strong> v0.4.1 - Batch Processing Mode</p>
-        </footer>
+    <!-- Mobile Header -->
+    <div class="lg:hidden bg-slate-900 text-white p-4 flex items-center justify-between sticky top-0 z-50">
+        <h1 class="font-bold text-xl">DataProf Batch Dashboard</h1>
     </div>
 
-    <script>{{{dashboard_js}}}</script>
+    <div class="flex min-h-screen">
+        <!-- Sidebar -->
+        <aside class="sidebar fixed inset-y-0 left-0 bg-slate-900 text-white z-40 overflow-y-auto hidden lg:block">
+            <div class="p-6">
+                <div class="flex item-center gap-3 mb-8">
+                    <div class="w-8 h-8 rounded bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center font-bold text-lg">D</div>
+                    <span class="font-bold text-xl tracking-tight">DataProf</span>
+                </div>
+                
+                <nav class="space-y-1">
+                    <a href="#overview" class="flex items-center gap-3 px-3 py-2 text-slate-100 bg-slate-800 rounded-md transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        Overview
+                    </a>
+                    <a href="#files" class="flex items-center gap-3 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        Processed Files ({{summary.successful}})
+                    </a>
+                </nav>
+
+                <div class="mt-8 pt-8 border-t border-slate-700">
+                    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Run Info</h3>
+                    <div class="space-y-3 text-sm text-slate-400">
+                        <div class="flex justify-between">
+                            <span>Process Time</span>
+                            <span class="text-white">{{summary.processing_time_seconds}}s</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Throughput</span>
+                            <span class="text-white">{{summary.files_per_second}} files/s</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content flex-1 min-w-0">
+            <div class="max-w-7xl mx-auto p-4 lg:p-10">
+                
+                <!-- Header -->
+                <header id="overview" class="mb-10">
+                    <div class="flex justify-between items-start mb-6">
+                        <div>
+                            <h1 class="text-3xl font-bold text-gray-900 mb-2">Batch Analysis Dashboard</h1>
+                            <p class="text-gray-500 text-sm">Aggregated results from multiple datasets</p>
+                        </div>
+                        <div class="hidden sm:block text-right">
+                             <div class="text-sm text-gray-500">Generated on</div>
+                            <div class="font-medium text-gray-900" id="generatedDate"></div>
+                        </div>
+                    </div>
+
+                    <!-- Metrics Grid -->
+                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Total Files</div>
+                            <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-gray-900">{{summary.total_files}}</span>
+                            </div>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Avg Quality Score</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold {{#if (gte summary.average_quality_score 80)}}text-green-600{{else}}text-yellow-600{{/if}}">{{summary.average_quality_score}}%</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Total Records</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-gray-900">{{summary.total_records}}</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Success Rate</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-blue-600">{{summary.success_rate}}%</span>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+
+                {{#if aggregated_metrics}}
+                <div class="bg-blue-50 border border-blue-100 rounded-xl p-6 mb-10">
+                    <h3 class="text-blue-900 font-bold mb-4">Dataset Health Overview</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                            <div class="text-blue-600 text-sm font-medium mb-1">Completeness</div>
+                            <div class="w-full bg-blue-200 rounded-full h-2.5 mb-2">
+                                <div class="bg-blue-600 h-2.5 rounded-full" style="width: {{aggregated_metrics.completeness.complete_ratio}}%"></div>
+                            </div>
+                            <div class="text-xs text-blue-500">{{aggregated_metrics.completeness.complete_ratio}}% complete records</div>
+                        </div>
+                        <div>
+                            <div class="text-blue-600 text-sm font-medium mb-1">Consistency</div>
+                            <div class="w-full bg-blue-200 rounded-full h-2.5 mb-2">
+                                <div class="bg-blue-600 h-2.5 rounded-full" style="width: {{aggregated_metrics.consistency.type_consistency}}%"></div>
+                            </div>
+                            <div class="text-xs text-blue-500">{{aggregated_metrics.consistency.type_consistency}}% type consistency</div>
+                        </div>
+                        <div>
+                             <div class="text-blue-600 text-sm font-medium mb-1">Accuracy (Outliers)</div>
+                             <div class="text-xl font-bold text-blue-900">{{aggregated_metrics.accuracy.outlier_ratio}}% <span class="text-sm text-blue-500 font-normal">rows flagged</span></div>
+                        </div>
+                    </div>
+                </div>
+                {{/if}}
+
+                <hr class="border-gray-200 my-10" />
+
+                <!-- Files Table -->
+                <section id="files">
+                     <div class="flex flex-col sm:flex-row justify-between items-end sm:items-center mb-6 gap-4">
+                        <h2 class="text-2xl font-bold text-gray-900">Processed Files</h2>
+                        <input type="text" id="searchInput" placeholder="Search filenames..." class="w-full sm:w-64 px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                    </div>
+
+                    <div class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-gray-50 text-gray-600 text-xs uppercase font-semibold">
+                                    <tr>
+                                        <th class="px-6 py-4 border-b border-gray-200">File Name</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Path</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Rows</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Quality</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 text-sm">
+                                    {{#each files}}
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="{{file_name}}">
+                                        <td class="px-6 py-4 font-medium text-gray-900">{{file_name}}</td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title="{{file_path}}">{{file_path}}</td>
+                                        
+                                        {{#if error}}
+                                            <td colspan="2" class="px-6 py-4 text-gray-400 italic">Analysis failed</td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                                    Failed
+                                                </span>
+                                            </td>
+                                        {{else}}
+                                            <td class="px-6 py-4 text-gray-900">{{total_rows}}</td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium {{#if (gte quality_score 80)}}text-green-600{{else}}text-yellow-600{{/if}}">{{quality_score}}%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="{{#if (gte quality_score 80)}}bg-green-500{{else}}bg-yellow-500{{/if}} h-1.5 rounded-full" style="width: {{quality_score}}%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                        {{/if}}
+                                    </tr>
+                                    {{/each}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <footer class="mt-20 pt-10 border-t border-gray-200 text-center text-gray-400 text-sm">
+                    <p>Generated by <strong>DataProf</strong> - The High-Performance Data Profiler</p>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Set date
+        document.getElementById('generatedDate').textContent = new Date().toLocaleString();
+
+        // Search
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const term = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('.file-row');
+            
+            rows.forEach(row => {
+                const name = row.getAttribute('data-name').toLowerCase();
+                const path = row.querySelector('[title]')?.getAttribute('title')?.toLowerCase() || '';
+                
+                if (name.includes(term) || path.includes(term)) {
+                    row.style.display = 'table-row';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        });
+    </script>
 </body>
 </html>

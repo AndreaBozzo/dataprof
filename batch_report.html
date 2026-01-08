@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Analysis Dashboard - DataProf</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#1e293b' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .sidebar { width: 280px; }
+        .content { margin-left: 280px; }
+        @media (max-width: 1024px) {
+            .sidebar { display: none; }
+            .content { margin-left: 0; }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+
+    <!-- Mobile Header -->
+    <div class="lg:hidden bg-slate-900 text-white p-4 flex items-center justify-between sticky top-0 z-50">
+        <h1 class="font-bold text-xl">DataProf Batch Dashboard</h1>
+    </div>
+
+    <div class="flex min-h-screen">
+        <!-- Sidebar -->
+        <aside class="sidebar fixed inset-y-0 left-0 bg-slate-900 text-white z-40 overflow-y-auto hidden lg:block">
+            <div class="p-6">
+                <div class="flex item-center gap-3 mb-8">
+                    <div class="w-8 h-8 rounded bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center font-bold text-lg">D</div>
+                    <span class="font-bold text-xl tracking-tight">DataProf</span>
+                </div>
+                
+                <nav class="space-y-1">
+                    <a href="#overview" class="flex items-center gap-3 px-3 py-2 text-slate-100 bg-slate-800 rounded-md transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        Overview
+                    </a>
+                    <a href="#files" class="flex items-center gap-3 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        Processed Files (23)
+                    </a>
+                </nav>
+
+                <div class="mt-8 pt-8 border-t border-slate-700">
+                    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Run Info</h3>
+                    <div class="space-y-3 text-sm text-slate-400">
+                        <div class="flex justify-between">
+                            <span>Process Time</span>
+                            <span class="text-white">0.20s</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Throughput</span>
+                            <span class="text-white">114.87 files/s</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content flex-1 min-w-0">
+            <div class="max-w-7xl mx-auto p-4 lg:p-10">
+                
+                <!-- Header -->
+                <header id="overview" class="mb-10">
+                    <div class="flex justify-between items-start mb-6">
+                        <div>
+                            <h1 class="text-3xl font-bold text-gray-900 mb-2">Batch Analysis Dashboard</h1>
+                            <p class="text-gray-500 text-sm">Aggregated results from multiple datasets</p>
+                        </div>
+                        <div class="hidden sm:block text-right">
+                             <div class="text-sm text-gray-500">Generated on</div>
+                            <div class="font-medium text-gray-900" id="generatedDate"></div>
+                        </div>
+                    </div>
+
+                    <!-- Metrics Grid -->
+                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Total Files</div>
+                            <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-gray-900">23</span>
+                            </div>
+                        </div>
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Avg Quality Score</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-green-600">91.9%</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Total Records</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-gray-900">10213</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Success Rate</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-blue-600">100.0%</span>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+
+                <div class="bg-blue-50 border border-blue-100 rounded-xl p-6 mb-10">
+                    <h3 class="text-blue-900 font-bold mb-4">Dataset Health Overview</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                            <div class="text-blue-600 text-sm font-medium mb-1">Completeness</div>
+                            <div class="w-full bg-blue-200 rounded-full h-2.5 mb-2">
+                                <div class="bg-blue-600 h-2.5 rounded-full" style="width: 96.08%"></div>
+                            </div>
+                            <div class="text-xs text-blue-500">96.08% complete records</div>
+                        </div>
+                        <div>
+                            <div class="text-blue-600 text-sm font-medium mb-1">Consistency</div>
+                            <div class="w-full bg-blue-200 rounded-full h-2.5 mb-2">
+                                <div class="bg-blue-600 h-2.5 rounded-full" style="width: 100.0%"></div>
+                            </div>
+                            <div class="text-xs text-blue-500">100.0% type consistency</div>
+                        </div>
+                        <div>
+                             <div class="text-blue-600 text-sm font-medium mb-1">Accuracy (Outliers)</div>
+                             <div class="text-xl font-bold text-blue-900">0.91% <span class="text-sm text-blue-500 font-normal">rows flagged</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="border-gray-200 my-10" />
+
+                <!-- Files Table -->
+                <section id="files">
+                     <div class="flex flex-col sm:flex-row justify-between items-end sm:items-center mb-6 gap-4">
+                        <h2 class="text-2xl font-bold text-gray-900">Processed Files</h2>
+                        <input type="text" id="searchInput" placeholder="Search filenames..." class="w-full sm:w-64 px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                    </div>
+
+                    <div class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead class="bg-gray-50 text-gray-600 text-xs uppercase font-semibold">
+                                    <tr>
+                                        <th class="px-6 py-4 border-b border-gray-200">File Name</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Path</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Rows</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Quality</th>
+                                        <th class="px-6 py-4 border-b border-gray-200">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 text-sm">
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">90%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 90%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">87%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 87%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">90%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 90%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">85%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 85%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">84%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 84%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">90%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 90%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">94%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 94%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">98%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 98%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">93%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 93%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">83%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 83%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">92%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 92%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">96%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 96%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-yellow-600">79%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-yellow-500 h-1.5 rounded-full" style="width: 79%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">85%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 85%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">83%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 83%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">100%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 100%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                    <tr class="hover:bg-gray-50 transition-colors file-row" data-name="">
+                                        <td class="px-6 py-4 font-medium text-gray-900"></td>
+                                        <td class="px-6 py-4 text-gray-500 max-w-xs truncate" title=""></td>
+                                        
+                                            <td class="px-6 py-4 text-gray-900"></td>
+                                            <td class="px-6 py-4">
+                                                <div class="flex items-center gap-2">
+                                                    <span class="font-medium text-green-600">86%</span>
+                                                    <div class="w-16 bg-gray-200 rounded-full h-1.5">
+                                                        <div class="bg-green-500 h-1.5 rounded-full" style="width: 86%"></div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="px-6 py-4">
+                                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Success
+                                                </span>
+                                            </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <footer class="mt-20 pt-10 border-t border-gray-200 text-center text-gray-400 text-sm">
+                    <p>Generated by <strong>DataProf</strong> - The High-Performance Data Profiler</p>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Set date
+        document.getElementById('generatedDate').textContent = new Date().toLocaleString();
+
+        // Search
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const term = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('.file-row');
+            
+            rows.forEach(row => {
+                const name = row.getAttribute('data-name').toLowerCase();
+                const path = row.querySelector('[title]')?.getAttribute('title')?.toLowerCase() || '';
+                
+                if (name.includes(term) || path.includes(term)) {
+                    row.style.display = 'table-row';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
