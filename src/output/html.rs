@@ -150,33 +150,68 @@ fn build_column_profiles_context(columns: &[ColumnProfile]) -> Vec<serde_json::V
     columns
         .iter()
         .map(|col| {
+            let null_percentage = if col.total_count > 0 {
+                (col.null_count as f64 / col.total_count as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            // Calculate uniqueness ratio safely
+            let unique_count_val = col.unique_count.unwrap_or(0);
+            let uniqueness_ratio = if col.total_count > 0 {
+                unique_count_val as f64 / col.total_count as f64
+            } else {
+                0.0
+            };
+
             let (null_class, null_text) = if col.null_count == 0 {
                 ("success", "No nulls".to_string())
             } else if col.null_count < col.total_count / 10 {
-                (
-                    "success",
-                    format!(
-                        "{:.1}% nulls",
-                        (col.null_count as f64 / col.total_count as f64) * 100.0
-                    ),
-                )
+                ("success", format!("{:.1}% nulls", null_percentage))
             } else {
-                (
-                    "warning",
-                    format!(
-                        "{:.1}% nulls",
-                        (col.null_count as f64 / col.total_count as f64) * 100.0
-                    ),
-                )
+                ("warning", format!("{:.1}% nulls", null_percentage))
+            };
+
+            // Color logic for new UI
+            let null_color_class = if col.null_count == 0 {
+                "bg-green-500"
+            } else if null_percentage < 5.0 {
+                "bg-yellow-500"
+            } else {
+                "bg-red-500"
+            };
+
+            let null_text_color_class = if col.null_count > 0 {
+                "text-red-600"
+            } else {
+                "text-gray-900"
+            };
+
+            let type_badge_class = match col.data_type {
+                DataType::Integer | DataType::Float => "bg-blue-100 text-blue-800",
+                DataType::String => "bg-green-100 text-green-800",
+                DataType::Date => "bg-purple-100 text-purple-800",
             };
 
             json!({
                 "name": col.name,
                 "data_type": format_data_type(&col.data_type),
                 "type_class": format_type_class(&col.data_type),
+                "type_badge_class": type_badge_class,
                 "null_class": null_class,
+                "null_color_class": null_color_class,
+                "null_text_color_class": null_text_color_class,
                 "null_text": null_text,
                 "total_count": col.total_count,
+                "null_count": col.null_count,
+                "null_percentage": format!("{:.1}", null_percentage),
+                "null_percentage_raw": null_percentage,
+                "completeness_raw": 100.0 - null_percentage,
+                "completeness_formatted": format!("{:.1}", 100.0 - null_percentage),
+                "has_nulls": col.null_count > 0,
+                "unique_count": col.unique_count,
+                "uniqueness_ratio": format!("{:.1}", uniqueness_ratio * 100.0),
+                "uniqueness_ratio_raw": uniqueness_ratio * 100.0,
                 "stats": format_column_stats_json(&col.stats),
                 "patterns": format_patterns_json(&col.patterns)
             })

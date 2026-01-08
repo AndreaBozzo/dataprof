@@ -33,6 +33,7 @@ use pyo3::wrap_pyfunction;
 
 /// Python module definition
 #[pymodule]
+#[pyo3(name = "_dataprof")]
 pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add version information from Cargo.toml
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

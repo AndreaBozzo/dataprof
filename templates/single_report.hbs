@@ -1,272 +1,231 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DataProfiler Report - {{file_name}}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>{{{style_css}}}</style>
+    <title>Data Analysis Report - {{file_name}}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: { 850: '#1e293b' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .sidebar { width: 280px; }
+        .content { margin-left: 280px; }
+        @media (max-width: 1024px) {
+            .sidebar { display: none; }
+            .content { margin-left: 0; }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body>
-    <div class="container">
-        <header>
-            <h1>📊 DataProfiler Report</h1>
-            <div class="file-info">
-                <h2>{{file_path}}</h2>
-                <div class="stats-grid">
-                    <div class="stat">
-                        <span class="label">File Size</span>
-                        <span class="value">{{file_size_mb}} MB</span>
-                    </div>
-                    <div class="stat">
-                        <span class="label">Total Rows</span>
-                        <span class="value">{{total_rows}}</span>
-                    </div>
-                    <div class="stat">
-                        <span class="label">Columns</span>
-                        <span class="value">{{total_columns}}</span>
-                    </div>
-                    <div class="stat">
-                        <span class="label">Scan Time</span>
-                        <span class="value">{{scan_time_ms}} ms</span>
-                    </div>
-                </div>
-                {{#if sampling_info}}
-                <div class="sampling-info">
-                    <span class="sampling-badge">Sampled {{sampling_info.rows_scanned}} rows ({{sampling_info.sampling_percentage}}%)</span>
-                </div>
-                {{/if}}
+<body class="bg-slate-50 text-slate-900 antialiased">
 
-                {{#if parquet_metadata}}
-                <div class="parquet-metadata">
-                    <h3>📦 Parquet File Metadata</h3>
-                    <div class="stats-grid">
-                        <div class="stat">
-                            <span class="label">Row Groups</span>
-                            <span class="value">{{parquet_metadata.num_row_groups}}</span>
-                        </div>
-                        <div class="stat">
-                            <span class="label">Compression</span>
-                            <span class="value">{{parquet_metadata.compression}}</span>
-                        </div>
-                        <div class="stat">
-                            <span class="label">Version</span>
-                            <span class="value">{{parquet_metadata.version}}</span>
-                        </div>
-                        <div class="stat">
-                            <span class="label">Compressed Size</span>
-                            <span class="value">{{parquet_metadata.compressed_size_mb}} MB</span>
-                        </div>
-                        {{#if parquet_metadata.compression_ratio}}
-                        <div class="stat">
-                            <span class="label">Compression Ratio</span>
-                            <span class="value">{{parquet_metadata.compression_ratio}}</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                    {{#if parquet_metadata.schema_summary}}
-                    <div class="schema-summary">
-                        <h4>Schema</h4>
-                        <pre><code>{{parquet_metadata.schema_summary}}</code></pre>
-                    </div>
-                    {{/if}}
+    <!-- Mobile Header -->
+    <div class="lg:hidden bg-slate-900 text-white p-4 flex items-center justify-between sticky top-0 z-50">
+        <h1 class="font-bold text-xl">DataProf</h1>
+        <span class="text-xs text-slate-400">v0.4</span>
+    </div>
+
+    <div class="flex min-h-screen">
+        <!-- Sidebar -->
+        <aside class="sidebar fixed inset-y-0 left-0 bg-slate-900 text-white z-40 overflow-y-auto hidden lg:block">
+            <div class="p-6">
+                <div class="flex item-center gap-3 mb-8">
+                    <div class="w-8 h-8 rounded bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center font-bold text-lg">D</div>
+                    <span class="font-bold text-xl tracking-tight">DataProf</span>
                 </div>
-                {{/if}}
-            </div>
-        </header>
+                
+                <nav class="space-y-1">
+                    <a href="#overview" class="flex items-center gap-3 px-3 py-2 text-slate-100 bg-slate-800 rounded-md transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        Overview
+                    </a>
+                    <a href="#variables" class="flex items-center gap-3 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+                        Variables
+                    </a>
+                </nav>
 
-        {{#if data_quality_metrics}}
-        <section class="data-quality-metrics">
-            <h2>📊 Comprehensive Data Quality Metrics</h2>
-
-            <div class="overall-score">
-                <div class="score-circle {{data_quality_metrics.assessment_class}}">
-                    <span class="score-value">{{data_quality_metrics.overall_score}}%</span>
-                    <span class="score-label">Overall Quality</span>
-                </div>
-            </div>
-
-            <div class="metrics-grid">
-                <div class="metric-card completeness">
-                    <div class="metric-header">
-                        <span class="metric-icon">🔍</span>
-                        <h3>Completeness</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Missing Values</span>
-                            <span class="stat-value {{data_quality_metrics.completeness.missing_class}}">{{data_quality_metrics.completeness.missing_ratio}}%</span>
+                <div class="mt-8 pt-8 border-t border-slate-700">
+                    <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Meta Info</h3>
+                    <div class="space-y-3 text-sm text-slate-400">
+                        <div class="flex justify-between">
+                            <span>Rows</span>
+                            <span class="text-white">{{total_rows}}</span>
                         </div>
-                        <div class="stat-item">
-                            <span class="stat-label">Complete Records</span>
-                            <span class="stat-value">{{data_quality_metrics.completeness.complete_ratio}}%</span>
+                         <div class="flex justify-between">
+                            <span>Columns</span>
+                            <span class="text-white">{{total_columns}}</span>
                         </div>
-                        {{#if data_quality_metrics.completeness.null_columns}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Columns with nulls</span>
-                            <span class="stat-value">{{data_quality_metrics.completeness.null_columns}}</span>
+                        <div class="flex justify-between">
+                            <span>Analysis Time</span>
+                            <span class="text-white">{{scan_time_ms}}ms</span>
                         </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card consistency">
-                    <div class="metric-header">
-                        <span class="metric-icon">⚡</span>
-                        <h3>Consistency</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Type Consistency</span>
-                            <span class="stat-value {{data_quality_metrics.consistency.type_class}}">{{data_quality_metrics.consistency.type_consistency}}%</span>
-                        </div>
-                        {{#if data_quality_metrics.consistency.format_violations}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Format Violations</span>
-                            <span class="stat-value">{{data_quality_metrics.consistency.format_violations}}</span>
-                        </div>
-                        {{/if}}
-                        {{#if data_quality_metrics.consistency.encoding_issues}}
-                        <div class="stat-item error">
-                            <span class="stat-label">Encoding Issues</span>
-                            <span class="stat-value">{{data_quality_metrics.consistency.encoding_issues}}</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card uniqueness">
-                    <div class="metric-header">
-                        <span class="metric-icon">🔑</span>
-                        <h3>Uniqueness</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Key Uniqueness</span>
-                            <span class="stat-value {{data_quality_metrics.uniqueness.uniqueness_class}}">{{data_quality_metrics.uniqueness.key_uniqueness}}%</span>
-                        </div>
-                        {{#if data_quality_metrics.uniqueness.has_duplicates}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Duplicate Rows</span>
-                            <span class="stat-value">{{data_quality_metrics.uniqueness.duplicate_rows}}</span>
-                        </div>
-                        {{else}}
-                        <div class="stat-item excellent">
-                            <span class="stat-label">Duplicate Rows</span>
-                            <span class="stat-value">None</span>
-                        </div>
-                        {{/if}}
-                        {{#if data_quality_metrics.uniqueness.high_cardinality_warning}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">High Cardinality</span>
-                            <span class="stat-value">Warning</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card accuracy">
-                    <div class="metric-header">
-                        <span class="metric-icon">🎯</span>
-                        <h3>Accuracy</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Outlier Ratio</span>
-                            <span class="stat-value {{data_quality_metrics.accuracy.outlier_class}}">{{data_quality_metrics.accuracy.outlier_ratio}}%</span>
-                        </div>
-                        {{#if data_quality_metrics.accuracy.range_violations}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Range Violations</span>
-                            <span class="stat-value">{{data_quality_metrics.accuracy.range_violations}}</span>
-                        </div>
-                        {{/if}}
-                        {{#if data_quality_metrics.accuracy.negative_values}}
-                        <div class="stat-item error">
-                            <span class="stat-label">Invalid Negatives</span>
-                            <span class="stat-value">{{data_quality_metrics.accuracy.negative_values}}</span>
-                        </div>
-                        {{/if}}
-                    </div>
-                </div>
-
-                <div class="metric-card timeliness">
-                    <div class="metric-header">
-                        <span class="metric-icon">⏰</span>
-                        <h3>Timeliness</h3>
-                    </div>
-                    <div class="metric-stats">
-                        <div class="stat-item">
-                            <span class="stat-label">Data Freshness</span>
-                            <span class="stat-value {{data_quality_metrics.timeliness.freshness_class}}">{{data_quality_metrics.timeliness.freshness}}%</span>
-                        </div>
-                        {{#if data_quality_metrics.timeliness.future_dates}}
-                        <div class="stat-item warning">
-                            <span class="stat-label">Future Dates</span>
-                            <span class="stat-value">{{data_quality_metrics.timeliness.future_dates}}</span>
-                        </div>
-                        {{/if}}
-                        {{#if data_quality_metrics.timeliness.temporal_violations}}
-                        <div class="stat-item error">
-                            <span class="stat-label">Temporal Violations</span>
-                            <span class="stat-value">{{data_quality_metrics.timeliness.temporal_violations}}</span>
-                        </div>
-                        {{/if}}
                     </div>
                 </div>
             </div>
-        </section>
-        {{/if}}
+        </aside>
 
-        <section class="columns">
-            <h2>📈 Column Analysis</h2>
-            <div class="columns-grid">
-                {{#each column_profiles}}
-                <div class="column-card">
-                    <h3>{{this.name}}</h3>
-                    <div class="column-meta">
-                        <span class="type-badge type-{{this.data_type_class}}">{{this.data_type}}</span>
-                        <span class="records">{{this.total_count}} records</span>
-                        {{#if this.has_nulls}}
-                        <span class="nulls warning">{{this.null_count}} nulls ({{this.null_percentage}}%)</span>
-                        {{else}}
-                        <span class="nulls success">No nulls</span>
-                        {{/if}}
+        <!-- Main Content -->
+        <main class="content flex-1 min-w-0">
+            <div class="max-w-5xl mx-auto p-4 lg:p-10">
+                
+                <!-- Header -->
+                <header id="overview" class="mb-10">
+                    <div class="flex justify-between items-start mb-6">
+                        <div>
+                            <h1 class="text-3xl font-bold text-gray-900 mb-2">Analysis Report</h1>
+                            <p class="text-gray-500 font-mono text-sm break-all">{{file_path}}</p>
+                        </div>
+                        <div class="hidden sm:block text-right">
+                            <div class="text-sm text-gray-500">Generated on</div>
+                            <div class="font-medium text-gray-900" id="generatedDate"></div>
+                        </div>
                     </div>
-                    {{#if this.stats}}
-                    <div class="stats {{this.stats_type}}">
-                        {{#if this.stats.numeric}}
-                        <div class="stat"><label>Min:</label> <span>{{this.stats.min}}</span></div>
-                        <div class="stat"><label>Max:</label> <span>{{this.stats.max}}</span></div>
-                        <div class="stat"><label>Mean:</label> <span>{{this.stats.mean}}</span></div>
-                        {{/if}}
-                        {{#if this.stats.text}}
-                        <div class="stat"><label>Min Length:</label> <span>{{this.stats.min_length}}</span></div>
-                        <div class="stat"><label>Max Length:</label> <span>{{this.stats.max_length}}</span></div>
-                        <div class="stat"><label>Avg Length:</label> <span>{{this.stats.avg_length}}</span></div>
-                        {{/if}}
+
+                    <!-- Metrics Grid -->
+                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Quality Score</div>
+                            <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-blue-600">{{data_quality_metrics.overall_score}}%</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Total Variables</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-gray-900">{{total_columns}}</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Total Rows</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-gray-900">{{total_rows}}</span>
+                            </div>
+                        </div>
+                         <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                            <div class="text-sm font-medium text-gray-500 mb-1">Memory Usage</div>
+                             <div class="flex items-baseline gap-2">
+                                <span class="text-3xl font-bold text-purple-600">Low</span>
+                                <span class="text-xs text-gray-400">Streamed</span>
+                            </div>
+                        </div>
                     </div>
-                    {{/if}}
-                    {{#if this.patterns}}
-                    <div class="patterns">
-                        <h4>Detected Patterns</h4>
-                        {{#each this.patterns}}
-                        <div class="pattern">
-                            <span class="pattern-name">{{this.name}}</span> - {{this.match_count}} matches ({{this.match_percentage}}%)
+                </header>
+
+                <hr class="border-gray-200 my-10" />
+
+                <!-- Variables Section -->
+                <section id="variables">
+                    <div class="flex flex-col sm:flex-row justify-between items-end sm:items-center mb-6 gap-4">
+                        <h2 class="text-2xl font-bold text-gray-900">Variables</h2>
+                        <input type="text" id="searchInput" placeholder="Search variables..." class="w-full sm:w-64 px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm">
+                    </div>
+
+                    <div class="space-y-4" id="variablesContainer">
+                        {{#each column_profiles}}
+                        <div class="variable-card bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200" data-name="{{name}}">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-3 mb-2">
+                                        <h3 class="text-lg font-bold text-gray-900 font-mono">{{name}}</h3>
+                                        <span class="px-2.5 py-0.5 rounded-full text-xs font-medium {{type_badge_class}} border border-opacity-20">{{data_type}}</span>
+                                    </div>
+                                    
+                                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+                                        <!-- Valid -->
+                                        <div class="flex flex-col">
+                                            <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Count</span>
+                                            <span class="text-sm font-medium text-gray-900">{{total_count}}</span>
+                                        </div>
+                                        
+                                        <!-- Missing -->
+                                        <div class="flex flex-col">
+                                            <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Missing</span>
+                                            <div class="flex items-baseline gap-1">
+                                                <span class="text-sm font-medium {{null_text_color_class}}">
+                                                    {{null_count}}
+                                                </span>
+                                                <span class="text-xs text-gray-400">({{null_percentage}}%)</span>
+                                            </div>
+                                        </div>
+
+                                        <!-- Unique -->
+                                        <div class="flex flex-col">
+                                            <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Distinct</span>
+                                            <span class="text-sm font-medium text-gray-900">{{#if unique_count}}{{unique_count}}{{else}}N/A{{/if}}</span>
+                                        </div>
+
+                                        <!-- Uniqueness -->
+                                        <div class="flex flex-col">
+                                            <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Uniqueness</span>
+                                            <span class="text-sm font-medium text-gray-900">{{uniqueness_ratio}}%</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Mini Visualization Bars -->
+                                <div class="w-full md:w-48 flex flex-col gap-3 pt-2">
+                                    <div class="w-full">
+                                        <div class="flex justify-between text-xs mb-1">
+                                            <span class="text-gray-500">Completeness</span>
+                                            <span class="text-gray-700 font-medium">{{completeness_formatted}}%</span>
+                                        </div>
+                                        <div class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                                            <div class="{{null_color_class}} h-2 rounded-full" style="width: {{completeness_raw}}%"></div>
+                                        </div>
+                                    </div>
+                                    <div class="w-full">
+                                            <div class="flex justify-between text-xs mb-1">
+                                            <span class="text-gray-500">Uniqueness</span>
+                                            <span class="text-gray-700 font-medium">{{uniqueness_ratio}}%</span>
+                                        </div>
+                                        <div class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                                            <div class="bg-blue-500 h-2 rounded-full" style="width: {{uniqueness_ratio_raw}}%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         {{/each}}
                     </div>
-                    {{/if}}
-                </div>
-                {{/each}}
-            </div>
-        </section>
+                </section>
 
-        <footer>
-            <p>Generated by <strong>DataProfiler CLI</strong> v0.2.0</p>
-        </footer>
+                <footer class="mt-20 pt-10 border-t border-gray-200 text-center text-gray-400 text-sm">
+                    <p>Generated by <strong>DataProf</strong> - The High-Performance Data Profiler</p>
+                </footer>
+            </div>
+        </main>
     </div>
+
+    <!-- Scripts -->
+    <script>
+        // Set date
+        document.getElementById('generatedDate').textContent = new Date().toLocaleString();
+
+        // Search
+        document.getElementById('searchInput').addEventListener('input', function(e) {
+            const term = e.target.value.toLowerCase();
+            const cards = document.querySelectorAll('.variable-card');
+            
+            cards.forEach(card => {
+                const name = card.getAttribute('data-name').toLowerCase();
+                if (name.includes(term)) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        });
+    </script>
 </body>
 </html>

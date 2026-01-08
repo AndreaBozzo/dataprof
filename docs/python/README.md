@@ -1,6 +1,4 @@
-# DataProf Python Bindings
-
-High-performance Python bindings for DataProf - the blazing-fast data profiling library built in Rust.
+# DataProf Python API
 
 ## 🚀 Quick Start
 
@@ -12,22 +10,32 @@ pip install dataprof
 
 ### Basic Usage
 
+The easiest way to use DataProf is via the high-level `profile` function:
+
 ```python
 import dataprof
 
-# Analyze a CSV file
-profiles = dataprof.analyze_csv_file("data.csv")
-for profile in profiles:
-    print(f"{profile.name}: {profile.data_type} ({profile.null_percentage:.1f}% nulls)")
+# generate a comprehensive HTML report
+dataprof.profile("large_file.csv").save("report.html")
 
-# Get quality assessment
+# or save as JSON
+dataprof.profile("large_file.csv").save("report.json")
+```
+
+### Advanced Usage
+
+For granular control, you can access the core profiling functions directly:
+
+```python
+import dataprof
+
+# Get a report object programmatically
 report = dataprof.analyze_csv_with_quality("data.csv")
 print(f"Quality Score: {report.quality_score():.1f}%")
 
-# Access detailed quality metrics (ISO 8000/25012)
-metrics = report.data_quality_metrics
-print(f"Completeness: {metrics.complete_records_ratio:.1f}%")
-print(f"Consistency: {metrics.data_type_consistency:.1f}%")
+# Access column profiles
+for col in report.column_profiles:
+     print(f"{col.name}: {col.null_percentage:.1f}% nulls")
 ```
 
 ## 📋 Features
