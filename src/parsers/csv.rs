@@ -72,10 +72,10 @@ fn process_csv_record(
     columns: &mut HashMap<String, Vec<String>>,
 ) {
     for (i, field) in record.iter().enumerate() {
-        if let Some(header_name) = header_names.get(i) {
-            if let Some(column_data) = columns.get_mut(header_name) {
-                column_data.push(field.to_string());
-            }
+        if let Some(header_name) = header_names.get(i)
+            && let Some(column_data) = columns.get_mut(header_name)
+        {
+            column_data.push(field.to_string());
         }
     }
 }

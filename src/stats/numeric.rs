@@ -171,7 +171,7 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
     // Find all values with maximum frequency and return the smallest (deterministic)
     let mut modes: Vec<f64> = freq_map
         .iter()
-        .filter(|(_, &count)| count == max_freq)
+        .filter(|(_, count)| **count == max_freq)
         .filter_map(|(value, _)| value.parse::<f64>().ok())
         .collect();
     modes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));

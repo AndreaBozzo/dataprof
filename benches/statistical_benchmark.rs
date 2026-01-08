@@ -1,10 +1,11 @@
 /// Statistical rigor benchmark suite implementing comprehensive testing
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use dataprof::core::{StatisticalConfig, StatisticalSample, StatisticalSummary};
 use dataprof::testing::{
     DatasetInfo, DatasetPattern, DatasetSize, EngineBenchmarkConfig, EngineBenchmarkFramework,
     EngineSelectionAccuracy, MetricCollection, MetricMeasurement, MetricType, StandardDatasets,
 };
+use std::hint::black_box;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -313,7 +314,7 @@ fn bench_systematic_engine_comparison(c: &mut Criterion) {
                         .statistical_summary
                         .get(&comparison_result.winner)
                         .cloned()
-                        .unwrap_or_else(|| StatisticalSummary {
+                        .unwrap_or(StatisticalSummary {
                             sample_count: 0,
                             mean: 0.0,
                             std_dev: 0.0,
@@ -373,7 +374,7 @@ fn bench_generate_final_report(c: &mut Criterion) {
 fn generate_controlled_measurements(count: usize, mean: f64, std_dev: f64) -> Vec<f64> {
     use rand_distr::{Distribution, Normal};
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let normal = Normal::new(mean, std_dev).unwrap();
 
     (0..count).map(|_| normal.sample(&mut rng)).collect()
@@ -596,12 +597,12 @@ fn generate_comprehensive_report(results: &[StatisticalBenchmarkResult]) -> Stri
         report.push("- **Increase sample sizes** for better statistical significance".to_string());
     }
 
-    if let Some(avg_accuracy) = accuracy_results.first().map(|a| a.accuracy_percentage) {
-        if avg_accuracy < 85.0 {
-            report.push(
-                "- **Improve engine selection logic** to achieve 85%+ accuracy target".to_string(),
-            );
-        }
+    if let Some(avg_accuracy) = accuracy_results.first().map(|a| a.accuracy_percentage)
+        && avg_accuracy < 85.0
+    {
+        report.push(
+            "- **Improve engine selection logic** to achieve 85%+ accuracy target".to_string(),
+        );
     }
 
     let high_variance_count = results

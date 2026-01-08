@@ -152,12 +152,11 @@ impl MemoryEfficientProfiler {
 
                 // Process each field in the record
                 for (field_idx, field) in record.iter().enumerate() {
-                    if let Some(ref header_record) = headers {
-                        if let Some(header) = header_record.get(field_idx) {
-                            if let Some(column_info) = column_infos.get_mut(header) {
-                                column_info.process_value(field);
-                            }
-                        }
+                    if let Some(ref header_record) = headers
+                        && let Some(header) = header_record.get(field_idx)
+                        && let Some(column_info) = column_infos.get_mut(header)
+                    {
+                        column_info.process_value(field);
                     }
                 }
             }

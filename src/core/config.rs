@@ -478,10 +478,10 @@ impl DataprofConfig {
         }
 
         // Verbosity override
-        if let Ok(verbosity) = std::env::var("DATAPROF_VERBOSITY") {
-            if let Ok(level) = verbosity.parse::<u8>() {
-                self.output.verbosity = level;
-            }
+        if let Ok(verbosity) = std::env::var("DATAPROF_VERBOSITY")
+            && let Ok(level) = verbosity.parse::<u8>()
+        {
+            self.output.verbosity = level;
         }
 
         // Engine override
@@ -490,10 +490,10 @@ impl DataprofConfig {
         }
 
         // Quality checking override
-        if let Ok(quality) = std::env::var("DATAPROF_QUALITY") {
-            if let Ok(enabled) = quality.parse::<bool>() {
-                self.quality.enabled = enabled;
-            }
+        if let Ok(quality) = std::env::var("DATAPROF_QUALITY")
+            && let Ok(enabled) = quality.parse::<bool>()
+        {
+            self.quality.enabled = enabled;
         }
 
         // Disable colors if NO_COLOR is set
@@ -502,10 +502,10 @@ impl DataprofConfig {
         }
 
         // Progress override
-        if let Ok(progress) = std::env::var("DATAPROF_PROGRESS") {
-            if let Ok(enabled) = progress.parse::<bool>() {
-                self.output.show_progress = enabled;
-            }
+        if let Ok(progress) = std::env::var("DATAPROF_PROGRESS")
+            && let Ok(enabled) = progress.parse::<bool>()
+        {
+            self.output.show_progress = enabled;
         }
     }
 

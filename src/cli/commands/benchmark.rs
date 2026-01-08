@@ -180,14 +180,14 @@ pub fn run_benchmark_analysis(file: &Path) -> Result<()> {
     }
 
     // Recommendations
-    if let Some(fastest) = sorted.first() {
-        if fastest.success {
-            println!(
-                "🎯 {} Recommendation: Use {:?} for optimal performance on this file type",
-                "Best:".green().bold(),
-                fastest.engine_type
-            );
-        }
+    if let Some(fastest) = sorted.first()
+        && fastest.success
+    {
+        println!(
+            "🎯 {} Recommendation: Use {:?} for optimal performance on this file type",
+            "Best:".green().bold(),
+            fastest.engine_type
+        );
     }
 
     Ok(())

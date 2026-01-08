@@ -63,10 +63,10 @@ impl SimpleColumnarProfiler {
 
             // Add values to respective columns
             for (i, field) in record.iter().enumerate() {
-                if let Some(header) = header_names.get(i) {
-                    if let Some(column_data) = columnar_data.get_mut(header) {
-                        column_data.push(field.to_string());
-                    }
+                if let Some(header) = header_names.get(i)
+                    && let Some(column_data) = columnar_data.get_mut(header)
+                {
+                    column_data.push(field.to_string());
                 }
             }
 

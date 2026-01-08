@@ -599,7 +599,7 @@ impl RobustCsvParser {
         }
 
         // Find the most common field count (likely the correct one)
-        if let Some((&most_common_fields, &count)) = field_counts.iter().max_by_key(|(_, &v)| v) {
+        if let Some((&most_common_fields, &count)) = field_counts.iter().max_by_key(|(_, v)| *v) {
             diagnostics.most_common_field_count = most_common_fields;
             diagnostics.consistent_field_rows = count;
         }

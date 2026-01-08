@@ -293,10 +293,10 @@ impl EngineSelector {
         }
 
         // Arrow is great for many columns
-        if let Some(columns) = characteristics.estimated_columns {
-            if columns > 20 {
-                score += 0.3;
-            }
+        if let Some(columns) = characteristics.estimated_columns
+            && columns > 20
+        {
+            score += 0.3;
         }
 
         // Arrow prefers homogeneous data types
@@ -416,18 +416,15 @@ impl EngineSelector {
             ),
             EngineType::TrueStreaming => format!(
                 "True streaming selected for {:.1}MB file due to memory constraints (pressure: {:.1}) or streaming requirements.",
-                characteristics.file_size_mb,
-                self.system_resources.memory_pressure
+                characteristics.file_size_mb, self.system_resources.memory_pressure
             ),
             EngineType::MemoryEfficient => format!(
                 "Memory-efficient engine selected for {:.1}MB file with moderate complexity ({:.2}).",
-                characteristics.file_size_mb,
-                characteristics.complexity_score
+                characteristics.file_size_mb, characteristics.complexity_score
             ),
             EngineType::Streaming => format!(
                 "Standard streaming selected for {:.1}MB file with low complexity ({:.2}).",
-                characteristics.file_size_mb,
-                characteristics.complexity_score
+                characteristics.file_size_mb, characteristics.complexity_score
             ),
         }
     }

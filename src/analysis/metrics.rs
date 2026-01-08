@@ -917,10 +917,10 @@ impl MetricsCalculator {
                     }
 
                     // Extract year from common date formats
-                    if let Some(year) = Self::extract_year(value) {
-                        if year > current_year {
-                            future_count += 1;
-                        }
+                    if let Some(year) = Self::extract_year(value)
+                        && year > current_year
+                    {
+                        future_count += 1;
                     }
                 }
             }
@@ -1013,21 +1013,19 @@ impl MetricsCalculator {
     /// Supports: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
     fn extract_year(date_str: &str) -> Option<i32> {
         // Try YYYY-MM-DD or YYYY/MM/DD format (year first)
-        if date_str.len() >= 4 {
-            if let Ok(year) = date_str[0..4].parse::<i32>() {
-                if (1900..=2100).contains(&year) {
-                    return Some(year);
-                }
-            }
+        if date_str.len() >= 4
+            && let Ok(year) = date_str[0..4].parse::<i32>()
+            && (1900..=2100).contains(&year)
+        {
+            return Some(year);
         }
 
         // Try DD/MM/YYYY or DD-MM-YYYY format (year last)
-        if date_str.len() >= 10 {
-            if let Ok(year) = date_str[6..10].parse::<i32>() {
-                if (1900..=2100).contains(&year) {
-                    return Some(year);
-                }
-            }
+        if date_str.len() >= 10
+            && let Ok(year) = date_str[6..10].parse::<i32>()
+            && (1900..=2100).contains(&year)
+        {
+            return Some(year);
         }
 
         None

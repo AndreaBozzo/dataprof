@@ -77,10 +77,10 @@ impl ReportBuilder {
 
     /// Calculate sampling ratio
     fn calculate_sampling_ratio(&self, rows_processed: usize) -> f64 {
-        if let Some(total) = self.estimated_total_rows {
-            if total > 0 {
-                return rows_processed as f64 / total as f64;
-            }
+        if let Some(total) = self.estimated_total_rows
+            && total > 0
+        {
+            return rows_processed as f64 / total as f64;
         }
         1.0
     }

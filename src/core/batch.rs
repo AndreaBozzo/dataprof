@@ -330,14 +330,14 @@ impl BatchProcessor {
                 let result = self.process_single_file(path);
 
                 // Update progress bar
-                if let Ok(pb_guard) = progress_mutex.lock() {
-                    if let Some(pb) = pb_guard.as_ref() {
-                        pb.inc(1);
-                        pb.set_message(format!(
-                            "Processed {}",
-                            path.file_name().unwrap_or_default().to_string_lossy()
-                        ));
-                    }
+                if let Ok(pb_guard) = progress_mutex.lock()
+                    && let Some(pb) = pb_guard.as_ref()
+                {
+                    pb.inc(1);
+                    pb.set_message(format!(
+                        "Processed {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    ));
                 }
 
                 (path.clone(), result)

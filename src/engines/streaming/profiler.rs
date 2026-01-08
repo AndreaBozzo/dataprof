@@ -190,7 +190,7 @@ impl StreamingProfiler {
     ) {
         let stats = chunk_processor.stats();
 
-        if let Some(ref mut enhanced_pb) = enhanced_progress {
+        if let Some(enhanced_pb) = enhanced_progress {
             // Use PerformanceIntelligence for hints if available
             let hints = if let Some(ref mut perf_intel) = self.performance_intelligence {
                 let memory_tracker = self
@@ -231,11 +231,11 @@ impl StreamingProfiler {
             enhanced_pb.finish_with_summary();
 
             // Check for memory leaks and report if any
-            if let Some(leak_report) = enhanced_pb.check_memory_leaks() {
-                if !leak_report.contains("No memory leaks") {
-                    eprintln!("⚠️ Memory leak detection report:");
-                    eprintln!("{}", leak_report);
-                }
+            if let Some(leak_report) = enhanced_pb.check_memory_leaks()
+                && !leak_report.contains("No memory leaks")
+            {
+                eprintln!("⚠️ Memory leak detection report:");
+                eprintln!("{}", leak_report);
             }
         }
     }

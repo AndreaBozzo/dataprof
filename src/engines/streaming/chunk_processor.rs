@@ -60,10 +60,10 @@ impl ChunkProcessor {
 
         // Add record to current chunk
         for (i, field) in record.iter().enumerate() {
-            if let Some(header) = headers.get(i) {
-                if let Some(column_data) = self.current_chunk.get_mut(header) {
-                    column_data.push(field.to_string());
-                }
+            if let Some(header) = headers.get(i)
+                && let Some(column_data) = self.current_chunk.get_mut(header)
+            {
+                column_data.push(field.to_string());
             }
         }
 

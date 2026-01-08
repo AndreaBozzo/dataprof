@@ -1,7 +1,7 @@
 [package]
 name = "dataprof"
 version = "0.4.84"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 authors = ["Andrea Bozzo"]
 description = "High-performance data profiler with ISO 8000/25012 quality metrics for CSV, JSON/JSONL, and Parquet files"
@@ -23,7 +23,7 @@ csv = "1.4"  # Updated: 1.3.1 -> 1.4.0 (minor bump, backward compatible)
 serde = { version = "1.0", features = ["derive"] }
 
 # CLI
-clap = { version = "4.5", features = ["derive"] }  # Latest: 4.5.51 (patch available via cargo update)
+clap = { version = "4.5.54", features = ["derive"] }  # Latest: 4.5.51 (patch available via cargo update)
 
 # Terminal output
 colored = "3.0"
@@ -38,7 +38,7 @@ regex = "1.12"  # Updated: 1.11.3 -> 1.12.2 (minor bump, backward compatible)
 
 
 # JSON support
-serde_json = "1.0"
+serde_json = "1.0.149"
 
 # Template engine for HTML generation
 handlebars = "6.4"
@@ -65,7 +65,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Note: Async support is available via feature flags (database, python-async)
 
 # SIMD acceleration
-wide = "1.1"
+wide = "1.1.1"
 
 # Random number generation for sampling
 rand = { version = "0.9", features = ["small_rng"] }
@@ -89,7 +89,7 @@ sqlx = { version = "0.8.1", features = [
     "chrono",
     "uuid",
 ], optional = true, default-features = false }
-url = { version = "2.5", optional = true }
+url = { version = "2.5.8", optional = true }
 
 # Apache Arrow for columnar processing
 arrow = { version = "57.1", optional = true }
@@ -113,7 +113,7 @@ serde_json = "1.0"
 
 # Additional test utilities - REMOVED unused dependencies (identified by cargo-machete)
 # assert_matches = "1.5"  # Not used
-serial_test = "3.1"
+serial_test = "3.3.1"
 # fake = { version = "2.9", features = ["derive"] }  # Not used
 # quickcheck = "1.0"  # Not used
 # quickcheck_macros = "1.0"  # Not used
@@ -162,10 +162,9 @@ codegen-units = 1
 opt-level = 3
 panic = "abort"   # Riduce dimensione binario
 
-# Bench profile (based on release, but needs panic = "unwind" for benchmarks)
+# Bench profile (based on release)
 [profile.bench]
 inherits = "release"
-panic = "unwind"     # Required for benchmarks and tests
 
 # CI profile for coverage testing
 [profile.ci]

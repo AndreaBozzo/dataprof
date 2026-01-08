@@ -1,10 +1,11 @@
 /// Domain-specific benchmark suite for comprehensive performance testing
 /// Tests CSV vs JSON vs Database-style data across different engines
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use dataprof::analyze_csv;
 use dataprof::testing::{
     CriterionResultParams, DatasetConfig, DatasetPattern, DatasetSize, ResultCollector,
 };
+use std::hint::black_box;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -31,7 +32,10 @@ mod domain_datasets {
             let file = File::create(&temp_path)?;
             let mut writer = BufWriter::new(file);
 
-            writeln!(writer, "transaction_id,user_id,amount,currency,timestamp,status,payment_method,merchant_id")?;
+            writeln!(
+                writer,
+                "transaction_id,user_id,amount,currency,timestamp,status,payment_method,merchant_id"
+            )?;
 
             let rows = config.default_rows();
             for i in 0..rows {
@@ -216,7 +220,7 @@ fn collect_domain_result(
     move |b, path| {
         let start_time = std::time::Instant::now();
 
-        let result = b.iter(|| {
+        b.iter(|| {
             let analysis_result = analyze_csv(black_box(path)).expect("Analysis failed");
             black_box(analysis_result)
         });
@@ -235,8 +239,6 @@ fn collect_domain_result(
                 columns_processed,
             });
         }
-
-        result
     }
 }
 
@@ -569,7 +571,7 @@ fn bench_engine_selection_domains(c: &mut Criterion) {
             |b, path| {
                 let start_overall = std::time::Instant::now();
 
-                let result = b.iter(|| {
+                b.iter(|| {
                     // Test adaptive engine selection
                     let analysis_result = analyze_csv(black_box(path)).expect("Analysis failed");
                     black_box(analysis_result)
@@ -588,8 +590,6 @@ fn bench_engine_selection_domains(c: &mut Criterion) {
                         columns_processed: Some(col_count),
                     });
                 }
-
-                result
             },
         );
     }

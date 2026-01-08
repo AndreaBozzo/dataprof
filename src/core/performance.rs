@@ -280,21 +280,21 @@ impl PerformanceIntelligence {
             None
         };
 
-        if let Some(completion_time) = estimated_completion {
-            if completion_time > Duration::from_secs(300) {
-                // More than 5 minutes
-                self.recommendations.push(PerformanceRecommendation {
-                    category: RecommendationCategory::FileSize,
-                    priority: RecommendationPriority::High,
-                    message: "Long processing time expected".to_string(),
-                    technical_details: format!(
-                        "Estimated completion: {:.1} minutes",
-                        completion_time.as_secs_f64() / 60.0
-                    ),
-                    estimated_impact: ImpactLevel::Medium,
-                    auto_applicable: false,
-                });
-            }
+        if let Some(completion_time) = estimated_completion
+            && completion_time > Duration::from_secs(300)
+        {
+            // More than 5 minutes
+            self.recommendations.push(PerformanceRecommendation {
+                category: RecommendationCategory::FileSize,
+                priority: RecommendationPriority::High,
+                message: "Long processing time expected".to_string(),
+                technical_details: format!(
+                    "Estimated completion: {:.1} minutes",
+                    completion_time.as_secs_f64() / 60.0
+                ),
+                estimated_impact: ImpactLevel::Medium,
+                auto_applicable: false,
+            });
         }
     }
 

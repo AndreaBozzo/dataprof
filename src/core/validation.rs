@@ -67,16 +67,16 @@ impl InputValidator {
         }
 
         // Check if it's a TOML file
-        if let Some(ext) = config_path.extension() {
-            if ext != "toml" {
-                return Err(ValidationError {
-                    message: "Configuration file must have .toml extension".to_string(),
-                    suggestion:
-                        "Rename your config file to have .toml extension (e.g., .dataprof.toml)"
-                            .to_string(),
-                    error_code: 22, // EINVAL
-                });
-            }
+        if let Some(ext) = config_path.extension()
+            && ext != "toml"
+        {
+            return Err(ValidationError {
+                message: "Configuration file must have .toml extension".to_string(),
+                suggestion:
+                    "Rename your config file to have .toml extension (e.g., .dataprof.toml)"
+                        .to_string(),
+                error_code: 22, // EINVAL
+            });
         }
 
         Ok(())

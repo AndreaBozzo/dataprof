@@ -9,11 +9,12 @@
 /// - simple_benchmarks.rs (basic functionality)
 /// - memory_benchmarks.rs (memory patterns)
 /// - large_scale_benchmarks.rs (performance claims)
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use dataprof::analyze_csv;
 use dataprof::testing::{
     CriterionResultParams, DatasetPattern, DatasetSize, ResultCollector, StandardDatasets,
 };
+use std::hint::black_box;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -528,12 +529,11 @@ fn get_memory_usage() -> usize {
         use std::fs;
         if let Ok(status) = fs::read_to_string("/proc/self/status") {
             for line in status.lines() {
-                if line.starts_with("VmRSS:") {
-                    if let Some(kb_str) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = kb_str.parse::<usize>() {
-                            return kb * 1024; // Convert KB to bytes
-                        }
-                    }
+                if line.starts_with("VmRSS:")
+                    && let Some(kb_str) = line.split_whitespace().nth(1)
+                    && let Ok(kb) = kb_str.parse::<usize>()
+                {
+                    return kb * 1024; // Convert KB to bytes
                 }
             }
         }
