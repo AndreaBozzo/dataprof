@@ -157,7 +157,7 @@ fn test_html_report_generation() -> Result<()> {
 
     // Check that HTML contains expected elements
     assert!(html_content.contains("<!DOCTYPE html>"));
-    assert!(html_content.contains("DataProfiler Report"));
+    assert!(html_content.contains("Data Analysis Report"));
     assert!(html_content.contains("name"));
     assert!(html_content.contains("score"));
 
