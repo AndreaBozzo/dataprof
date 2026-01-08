@@ -458,13 +458,13 @@ fn build_files_context(
             });
 
             json!({
-                "filename": path.file_name().unwrap_or_default().to_string_lossy(),
-                "path": path.display().to_string(),
+                "file_name": path.file_name().unwrap_or_default().to_string_lossy(),
+                "file_path": path.display().to_string(),
                 "quality_score": format!("{:.0}", quality_score),
                 "quality_class": quality_class,
                 "columns": report.file_info.total_columns,
-                "rows": report.file_info.total_rows.map_or("Unknown".to_string(), |r| r.to_string()),
-                "is_error": false,
+                "total_rows": report.file_info.total_rows.map_or("Unknown".to_string(), |r| r.to_string()),
+                "error": false,
                 "metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
                 "parquet_metadata": parquet_metadata
             })
@@ -474,9 +474,9 @@ fn build_files_context(
     // Add error files
     for (path, error_msg) in errors {
         files.push(json!({
-            "filename": path.file_name().unwrap_or_default().to_string_lossy(),
-            "path": path.display().to_string(),
-            "is_error": true,
+            "file_name": path.file_name().unwrap_or_default().to_string_lossy(),
+            "file_path": path.display().to_string(),
+            "error": true,
             "error_short": if error_msg.len() > 50 {
                 format!("{}...", &error_msg[..50])
             } else {
