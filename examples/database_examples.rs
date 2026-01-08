@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 #[cfg(feature = "database")]
-use dataprof::{profile_database, DatabaseConfig};
+use dataprof::{DatabaseConfig, profile_database};
 
 /// Example: Profile a PostgreSQL table
 #[cfg(feature = "database")]

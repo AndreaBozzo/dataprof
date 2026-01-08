@@ -1,6 +1,6 @@
 use anyhow::Error;
 use colored::Colorize;
-use dataprof::core::{exit_codes, ValidationError};
+use dataprof::core::{ValidationError, exit_codes};
 use dataprof::{DataProfilerError, ErrorSeverity};
 use std::path::Path;
 

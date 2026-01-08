@@ -111,7 +111,9 @@ impl SslConfig {
 
         // Warn about security implications
         if self.require_ssl && !self.verify_server_cert {
-            eprintln!("WARNING: SSL required but server certificate verification is disabled. This may be insecure.");
+            eprintln!(
+                "WARNING: SSL required but server certificate verification is disabled. This may be insecure."
+            );
         }
 
         if !self.require_ssl {

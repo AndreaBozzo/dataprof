@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
     use arrow::array::{BooleanArray, Float64Array, Int32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
-    use dataprof::{analyze_parquet_with_quality, DataProfiler};
+    use dataprof::{DataProfiler, analyze_parquet_with_quality};
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
     use std::fs::File;

@@ -18,7 +18,7 @@ pub use analysis::{
 
 #[cfg(feature = "parquet")]
 pub use analysis::{analyze_parquet_file, analyze_parquet_with_quality_py};
-pub use batch::{batch_analyze_directory, batch_analyze_glob, PyBatchAnalyzer};
+pub use batch::{PyBatchAnalyzer, batch_analyze_directory, batch_analyze_glob};
 pub use dataframe::analyze_csv_dataframe;
 pub use logging::{
     analyze_csv_with_logging, configure_logging, get_logger, log_debug, log_error, log_info,

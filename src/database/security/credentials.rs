@@ -167,7 +167,11 @@ impl DatabaseCredentials {
         format!(
             "DatabaseCredentials {{ username: {:?}, password: {}, host: {:?}, port: {:?}, database: {:?} }}",
             self.username,
-            if self.password.is_some() { "***" } else { "None" },
+            if self.password.is_some() {
+                "***"
+            } else {
+                "None"
+            },
             self.host,
             self.port,
             self.database

@@ -98,7 +98,7 @@ fn test_arrow_with_adaptive_selection() -> Result<(), Box<dyn std::error::Error>
 #[cfg(feature = "arrow")]
 #[test]
 fn test_arrow_fallback_behavior() -> Result<(), Box<dyn std::error::Error>> {
-    use dataprof::{engines::EngineSelector, AdaptiveProfiler, ProcessingType};
+    use dataprof::{AdaptiveProfiler, ProcessingType, engines::EngineSelector};
     use std::io::Write;
     use tempfile::NamedTempFile;
 

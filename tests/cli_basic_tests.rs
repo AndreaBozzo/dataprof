@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fs;
 use std::io::Write;
 use std::process::Command;
-use tempfile::{tempdir, NamedTempFile};
+use tempfile::{NamedTempFile, tempdir};
 
 /// Helper function to create test CSV data
 fn create_test_csv() -> Result<NamedTempFile> {

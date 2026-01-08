@@ -10,9 +10,9 @@ use anyhow::Result;
 use std::path::Path;
 
 use dataprof::{
-    core::{sampling::SamplingStrategy, DataprofConfig},
-    types::QualityReport,
     ChunkSize, DataProfiler, ProgressInfo,
+    core::{DataprofConfig, sampling::SamplingStrategy},
+    types::QualityReport,
 };
 
 /// Common options that all analysis commands should support

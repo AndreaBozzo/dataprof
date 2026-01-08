@@ -12,7 +12,7 @@
 use anyhow::Result;
 
 #[cfg(feature = "database")]
-use dataprof::{create_connector, DatabaseConfig};
+use dataprof::{DatabaseConfig, create_connector};
 
 #[cfg(all(test, feature = "database", feature = "sqlite"))]
 mod sqlite_tests {
@@ -129,7 +129,7 @@ mod connection_tests {
 #[cfg(all(test, feature = "database"))]
 mod streaming_tests {
     use dataprof::database::streaming::{
-        estimate_memory_usage, merge_column_batches, StreamingProgress,
+        StreamingProgress, estimate_memory_usage, merge_column_batches,
     };
     use std::collections::HashMap;
 

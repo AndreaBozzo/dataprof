@@ -57,11 +57,7 @@ pub fn calculate_most_frequent(data: &[&String], top_n: usize) -> Option<Vec<Fre
     // Take top N
     items.truncate(top_n);
 
-    if items.is_empty() {
-        None
-    } else {
-        Some(items)
-    }
+    if items.is_empty() { None } else { Some(items) }
 }
 
 /// Calculate least frequent strings
@@ -81,11 +77,7 @@ pub fn calculate_least_frequent(data: &[&String], bottom_n: usize) -> Option<Vec
     // Take bottom N
     items.truncate(bottom_n);
 
-    if items.is_empty() {
-        None
-    } else {
-        Some(items)
-    }
+    if items.is_empty() { None } else { Some(items) }
 }
 
 /// Build frequency map from data

@@ -46,26 +46,34 @@ pub enum DataProfilerError {
     #[error("CSV parsing failed: {message}\n💡 Suggestion: {suggestion}")]
     CsvParsingError { message: String, suggestion: String },
 
-    #[error("File not found: {path}\n💡 Please check that the file exists and you have permission to read it")]
+    #[error(
+        "File not found: {path}\n💡 Please check that the file exists and you have permission to read it"
+    )]
     FileNotFound { path: String },
 
     #[error("Unsupported file format: {format}\n💡 Supported formats: CSV, JSON, JSONL")]
     UnsupportedFormat { format: String },
 
-    #[error("Memory limit exceeded while processing large file\n💡 Try using --streaming mode or increase available memory")]
+    #[error(
+        "Memory limit exceeded while processing large file\n💡 Try using --streaming mode or increase available memory"
+    )]
     MemoryLimitExceeded,
 
     #[error("Invalid configuration: {message}\n💡 {suggestion}")]
     InvalidConfiguration { message: String, suggestion: String },
 
-    #[error("Data quality issue detected: {issue}\n📊 Impact: {impact}\n💡 Recommendation: {recommendation}")]
+    #[error(
+        "Data quality issue detected: {issue}\n📊 Impact: {impact}\n💡 Recommendation: {recommendation}"
+    )]
     DataQualityIssue {
         issue: String,
         impact: String,
         recommendation: String,
     },
 
-    #[error("Streaming processing failed: {message}\n💡 Try using --chunk-size with a smaller value or disable streaming")]
+    #[error(
+        "Streaming processing failed: {message}\n💡 Try using --chunk-size with a smaller value or disable streaming"
+    )]
     StreamingError { message: String },
 
     #[error("SIMD acceleration not available: {reason}\n💡 Falling back to standard processing")]
@@ -87,7 +95,9 @@ pub enum DataProfilerError {
         suggestion: String,
     },
 
-    #[error("HTML report generation failed: {message}\n💡 Check output directory permissions and available disk space")]
+    #[error(
+        "HTML report generation failed: {message}\n💡 Check output directory permissions and available disk space"
+    )]
     HtmlReportError { message: String },
 
     #[error(
@@ -101,7 +111,9 @@ pub enum DataProfilerError {
         recovery_attempts: Vec<RecoveryAttempt>,
     },
 
-    #[error("Auto-recovery failed after {attempts} attempts\n💡 Last strategy tried: {last_strategy}\n📋 Recovery log: {recovery_log}")]
+    #[error(
+        "Auto-recovery failed after {attempts} attempts\n💡 Last strategy tried: {last_strategy}\n📋 Recovery log: {recovery_log}"
+    )]
     RecoveryFailed {
         attempts: usize,
         last_strategy: String,
@@ -114,7 +126,10 @@ impl DataProfilerError {
     /// Create a CSV parsing error with helpful suggestions
     pub fn csv_parsing(original_error: &str, file_path: &str) -> Self {
         let suggestion = if original_error.contains("field") && original_error.contains("record") {
-            format!("The CSV file '{}' has inconsistent column counts. This often happens with:\n  • Text fields containing commas without proper quoting\n  • Mixed line endings (Windows/Unix)\n  • Embedded newlines in data\n\n  DataProfiler will attempt to parse it with flexible mode automatically.", file_path)
+            format!(
+                "The CSV file '{}' has inconsistent column counts. This often happens with:\n  • Text fields containing commas without proper quoting\n  • Mixed line endings (Windows/Unix)\n  • Embedded newlines in data\n\n  DataProfiler will attempt to parse it with flexible mode automatically.",
+                file_path
+            )
         } else if original_error.contains("UTF-8") {
             "The file contains non-UTF-8 characters. Try converting it to UTF-8 encoding."
                 .to_string()

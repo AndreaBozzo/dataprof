@@ -5,7 +5,7 @@ use clap::Parser;
 mod cli;
 mod error;
 
-use cli::{route_command, Command};
+use cli::{Command, route_command};
 use dataprof::core::exit_codes;
 
 fn main() -> Result<()> {

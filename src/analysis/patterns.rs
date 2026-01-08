@@ -430,9 +430,11 @@ mod tests {
 
         // Note: CAP might conflict with ZIP Code pattern
         assert!(!patterns.is_empty());
-        assert!(patterns
-            .iter()
-            .any(|p| p.name == "CAP (IT)" || p.name == "ZIP Code (US)"));
+        assert!(
+            patterns
+                .iter()
+                .any(|p| p.name == "CAP (IT)" || p.name == "ZIP Code (US)")
+        );
     }
 
     #[test]
@@ -445,9 +447,11 @@ mod tests {
         let patterns = detect_patterns(&data);
 
         assert!(!patterns.is_empty());
-        assert!(patterns
-            .iter()
-            .any(|p| p.name == "ZIP Code (US)" || p.name == "CAP (IT)"));
+        assert!(
+            patterns
+                .iter()
+                .any(|p| p.name == "ZIP Code (US)" || p.name == "CAP (IT)")
+        );
     }
 
     #[test]

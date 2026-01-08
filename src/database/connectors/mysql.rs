@@ -4,7 +4,7 @@ use super::common::{build_batch_query, build_count_query};
 use crate::database::connection::ConnectionInfo;
 use crate::database::security::validate_sql_identifier;
 #[cfg(feature = "mysql")]
-use crate::database::streaming::{merge_column_batches, StreamingProgress};
+use crate::database::streaming::{StreamingProgress, merge_column_batches};
 use crate::database::{DatabaseConfig, DatabaseConnector};
 use anyhow::Result;
 use async_trait::async_trait;

@@ -28,7 +28,7 @@ pub mod python;
 pub use engines::columnar::ArrowProfiler;
 
 // v0.3.0 public API - main exports
-pub use api::{quick_quality_check, stream_profile, DataProfiler};
+pub use api::{DataProfiler, quick_quality_check, stream_profile};
 pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
@@ -59,19 +59,19 @@ pub use parsers::csv::{
 pub use parsers::json::{analyze_json, analyze_json_with_quality};
 #[cfg(feature = "parquet")]
 pub use parsers::parquet::{
-    analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file, ParquetConfig,
+    ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file,
 };
 
 // Analysis utilities - Column-level and statistical functions
-pub use analysis::{analyze_column_fast, detect_patterns, infer_type, MetricsCalculator};
+pub use analysis::{MetricsCalculator, analyze_column_fast, detect_patterns, infer_type};
 pub use stats::{calculate_numeric_stats, calculate_text_stats};
 
 // Database connectors re-exports (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub use database::{
-    create_connector, profile_database, DatabaseConfig, DatabaseConnector, DatabaseCredentials,
-    MySqlConnector, PostgresConnector, RetryConfig, SamplingConfig,
-    SamplingStrategy as DbSamplingStrategy, SqliteConnector, SslConfig,
+    DatabaseConfig, DatabaseConnector, DatabaseCredentials, MySqlConnector, PostgresConnector,
+    RetryConfig, SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector,
+    SslConfig, create_connector, profile_database,
 };
 
 /// Global memory leak detection utility

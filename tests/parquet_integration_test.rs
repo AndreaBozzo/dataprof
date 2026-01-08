@@ -8,8 +8,8 @@ mod parquet_tests {
     use anyhow::Result;
     use arrow::array::{
         BinaryArray, BooleanArray, Date32Array, Decimal128Array, Float32Array, Float64Array,
-        Int16Array, Int32Array, Int8Array, StringArray, TimestampMillisecondArray, UInt16Array,
-        UInt32Array, UInt64Array, UInt8Array,
+        Int8Array, Int16Array, Int32Array, StringArray, TimestampMillisecondArray, UInt8Array,
+        UInt16Array, UInt32Array, UInt64Array,
     };
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;

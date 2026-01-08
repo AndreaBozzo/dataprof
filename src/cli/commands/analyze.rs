@@ -40,7 +40,7 @@ use anyhow::Result;
 use dataprof::OutputFormat;
 use std::fs;
 
-use crate::cli::{analyze_file_with_options, AnalysisOptions};
+use crate::cli::{AnalysisOptions, analyze_file_with_options};
 
 /// Execute the analyze command - comprehensive ISO 8000/25012 analysis
 pub fn execute(args: &AnalyzeArgs) -> Result<()> {

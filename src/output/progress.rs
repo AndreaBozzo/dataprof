@@ -80,7 +80,7 @@ impl ProgressManager {
 
         let pb = ProgressBar::new(file_size);
         if let Ok(style) = ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}"
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}",
         ) {
             pb.set_style(
                 style
@@ -103,7 +103,7 @@ impl ProgressManager {
 
         let pb = ProgressBar::new(total_files);
         if let Ok(style) = ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.yellow/orange}] {pos:>3}/{len:3} files ({eta}) {msg}"
+            "{spinner:.green} [{elapsed_precise}] [{wide_bar:.yellow/orange}] {pos:>3}/{len:3} files ({eta}) {msg}",
         ) {
             pb.set_style(
                 style
@@ -126,11 +126,9 @@ impl ProgressManager {
 
         let pb = ProgressBar::new(total_steps);
         if let Ok(style) = ProgressStyle::with_template(
-            "{spinner:.magenta} [{elapsed_precise}] [{wide_bar:.magenta/pink}] {pos:>2}/{len:2} {msg}"
+            "{spinner:.magenta} [{elapsed_precise}] [{wide_bar:.magenta/pink}] {pos:>2}/{len:2} {msg}",
         ) {
-            pb.set_style(
-                style.progress_chars("🤖🔮⚪"),
-            );
+            pb.set_style(style.progress_chars("🤖🔮⚪"));
         }
 
         pb.set_message("ML Readiness Analysis...");
@@ -145,11 +143,9 @@ impl ProgressManager {
 
         let pb = ProgressBar::new(total_columns);
         if let Ok(style) = ProgressStyle::with_template(
-            "{spinner:.blue} [{elapsed_precise}] [{wide_bar:.blue/cyan}] {pos:>3}/{len:3} columns {msg}"
+            "{spinner:.blue} [{elapsed_precise}] [{wide_bar:.blue/cyan}] {pos:>3}/{len:3} columns {msg}",
         ) {
-            pb.set_style(
-                style.progress_chars("🔍🔎⚪"),
-            );
+            pb.set_style(style.progress_chars("🔍🔎⚪"));
         }
 
         pb.set_message("Quality checking...");
@@ -185,7 +181,7 @@ impl ProgressManager {
             // Rich interactive progress bar with emojis and colors
             let pb = ProgressBar::new(file_size);
             if let Ok(style) = ProgressStyle::with_template(
-                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}) | {msg}"
+                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}) | {msg}",
             ) {
                 pb.set_style(
                     style

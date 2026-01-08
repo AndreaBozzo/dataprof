@@ -96,7 +96,7 @@ pub fn load_secure_database_config(database_type: &str) -> Result<(String, SslCo
             return Err(anyhow::anyhow!(
                 "Unsupported database type: {}",
                 database_type
-            ))
+            ));
         }
     };
 

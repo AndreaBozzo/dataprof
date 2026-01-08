@@ -1,6 +1,8 @@
 use anyhow::Result;
 use dataprof::core::sampling::{ReservoirSampler, SamplingStrategy};
 use dataprof::{
+    // v0.3.0 imports for testing new API
+    DataProfiler,
     analyze_csv,
     analyze_csv_robust,
     analyze_csv_with_sampling,
@@ -8,12 +10,10 @@ use dataprof::{
     analyze_json_with_quality,
     generate_html_report,
     quick_quality_check,
-    // v0.3.0 imports for testing new API
-    DataProfiler,
 };
 use std::fs;
 use std::io::Write;
-use tempfile::{tempdir, NamedTempFile};
+use tempfile::{NamedTempFile, tempdir};
 
 #[test]
 fn test_csv_basic_analysis() -> Result<()> {
@@ -60,7 +60,7 @@ fn test_csv_quality_analysis() -> Result<()> {
     writeln!(temp_file, "5,2024-01-03,100.00")?;
     writeln!(temp_file, "6,2024-01-04,150.00")?;
     writeln!(temp_file, "7,2024-01-05,120.00")?; // more data for outlier detection
-                                                 // Add more normal values for proper outlier detection
+    // Add more normal values for proper outlier detection
     writeln!(temp_file, "9,2024-01-06,110.00")?;
     writeln!(temp_file, "10,2024-01-07,130.00")?;
     writeln!(temp_file, "11,2024-01-08,140.00")?;

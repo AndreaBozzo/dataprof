@@ -259,29 +259,23 @@ mod integration_security_tests {
             // Union-based attacks
             "users' UNION SELECT username, password FROM admin_users --",
             "products' UNION SELECT 1, @@version, 3 --",
-
             // Boolean-based blind attacks
             "users' AND 1=1 --",
             "users' AND 1=2 --",
             "users' AND (SELECT COUNT(*) FROM information_schema.tables) > 0 --",
-
             // Time-based blind attacks
             "users'; WAITFOR DELAY '00:00:05'; --",
             "users' AND (SELECT COUNT(*) FROM SLEEP(5)) --",
-
             // Error-based attacks
             "users' AND EXTRACTVALUE(1, CONCAT(0x7e, VERSION(), 0x7e)) --",
             "users' AND (SELECT * FROM (SELECT COUNT(*), CONCAT(VERSION(), FLOOR(RAND(0)*2)) x FROM information_schema.tables GROUP BY x) a) --",
-
             // Stacked queries
             "users'; DROP TABLE users; CREATE TABLE users (id INT); --",
             "users'; INSERT INTO admin_users VALUES ('hacker', 'password'); --",
-
             // Comment injection
             "users /* comment */ --",
             "users -- comment",
             "users # comment",
-
             // Encoding attacks
             "users%27; DROP TABLE users; --",
             "users\'; DROP TABLE users; --",

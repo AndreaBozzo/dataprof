@@ -36,7 +36,7 @@ pub struct ReportArgs {
     pub streaming: bool,
 }
 use anyhow::{Context, Result};
-use dataprof::{generate_html_report, DataProfiler};
+use dataprof::{DataProfiler, generate_html_report};
 use std::fs;
 
 pub fn execute(args: &ReportArgs) -> Result<()> {

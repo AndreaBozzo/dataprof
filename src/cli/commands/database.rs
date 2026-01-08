@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use dataprof::output::output_with_adaptive_formatter;
 use dataprof::{
-    generate_html_report, profile_database, ColumnProfile, DatabaseConfig, OutputFormat,
+    ColumnProfile, DatabaseConfig, OutputFormat, generate_html_report, profile_database,
 };
 
 /// Database analysis arguments

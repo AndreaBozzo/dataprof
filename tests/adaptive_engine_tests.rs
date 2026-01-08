@@ -197,7 +197,7 @@ fn test_runtime_arrow_detection() -> Result<(), Box<dyn std::error::Error>> {
 /// Test backward compatibility with existing APIs
 #[test]
 fn test_backward_compatibility() -> Result<(), Box<dyn std::error::Error>> {
-    use dataprof::{analyze_csv, DataProfiler};
+    use dataprof::{DataProfiler, analyze_csv};
 
     let mut test_file = NamedTempFile::new()?;
     writeln!(test_file, "name,score")?;
