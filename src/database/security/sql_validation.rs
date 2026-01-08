@@ -54,12 +54,13 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
         }
 
         // Must start with letter or underscore
-        if let Some(first_char) = identifier.chars().next() {
-            if !first_char.is_alphabetic() && first_char != '_' {
-                return Err(anyhow::anyhow!(
-                    "SQL identifier must start with letter or underscore"
-                ));
-            }
+        if let Some(first_char) = identifier.chars().next()
+            && !first_char.is_alphabetic()
+            && first_char != '_'
+        {
+            return Err(anyhow::anyhow!(
+                "SQL identifier must start with letter or underscore"
+            ));
         }
     }
 

@@ -126,12 +126,12 @@ impl StreamingProgress {
     }
 
     pub fn estimated_total_time(&self) -> Option<std::time::Duration> {
-        if let Some(percentage) = self.percentage() {
-            if percentage > 0.0 {
-                let elapsed_secs = self.elapsed().as_secs_f64();
-                let total_secs = elapsed_secs * (100.0 / percentage);
-                return Some(std::time::Duration::from_secs_f64(total_secs));
-            }
+        if let Some(percentage) = self.percentage()
+            && percentage > 0.0
+        {
+            let elapsed_secs = self.elapsed().as_secs_f64();
+            let total_secs = elapsed_secs * (100.0 / percentage);
+            return Some(std::time::Duration::from_secs_f64(total_secs));
         }
         None
     }

@@ -40,25 +40,24 @@ pub fn validate_connection_security(
         }
 
         // Check for development/localhost connections in production
-        if let Some(host) = &conn_info.host {
-            if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-                warnings.push(
-                    "Connecting to localhost. Ensure this is intentional in production."
-                        .to_string(),
-                );
-            }
+        if let Some(host) = &conn_info.host
+            && (host == "localhost" || host == "127.0.0.1" || host == "::1")
+        {
+            warnings.push(
+                "Connecting to localhost. Ensure this is intentional in production.".to_string(),
+            );
         }
 
         // Check for default ports
         let default_ports = HashMap::from([("postgresql", 5432), ("mysql", 3306)]);
 
-        if let Some(default_port) = default_ports.get(database_type) {
-            if conn_info.port == Some(*default_port) {
-                warnings.push(format!(
-                    "Using default port for {}. Consider using a non-standard port for security.",
-                    database_type
-                ));
-            }
+        if let Some(default_port) = default_ports.get(database_type)
+            && conn_info.port == Some(*default_port)
+        {
+            warnings.push(format!(
+                "Using default port for {}. Consider using a non-standard port for security.",
+                database_type
+            ));
         }
     }
 

@@ -69,26 +69,26 @@ impl DatabaseCredentials {
             .or_else(|| env::var("DB_NAME").ok());
 
         // Load URL-style environment variable
-        if let Ok(database_url) = env::var("DATABASE_URL") {
-            if let Ok(parsed) = crate::database::connection::ConnectionInfo::parse(&database_url) {
-                creds.username = creds.username.or(parsed.username);
-                creds.password = creds.password.or(parsed.password);
-                creds.host = creds.host.or(parsed.host);
-                creds.port = creds.port.or(parsed.port);
-                creds.database = creds.database.or(parsed.database);
-            }
+        if let Ok(database_url) = env::var("DATABASE_URL")
+            && let Ok(parsed) = crate::database::connection::ConnectionInfo::parse(&database_url)
+        {
+            creds.username = creds.username.or(parsed.username);
+            creds.password = creds.password.or(parsed.password);
+            creds.host = creds.host.or(parsed.host);
+            creds.port = creds.port.or(parsed.port);
+            creds.database = creds.database.or(parsed.database);
         }
 
         // Load database-specific URL variables
         let url_var = format!("{}_URL", prefix);
-        if let Ok(url) = env::var(&url_var) {
-            if let Ok(parsed) = crate::database::connection::ConnectionInfo::parse(&url) {
-                creds.username = creds.username.or(parsed.username);
-                creds.password = creds.password.or(parsed.password);
-                creds.host = creds.host.or(parsed.host);
-                creds.port = creds.port.or(parsed.port);
-                creds.database = creds.database.or(parsed.database);
-            }
+        if let Ok(url) = env::var(&url_var)
+            && let Ok(parsed) = crate::database::connection::ConnectionInfo::parse(&url)
+        {
+            creds.username = creds.username.or(parsed.username);
+            creds.password = creds.password.or(parsed.password);
+            creds.host = creds.host.or(parsed.host);
+            creds.port = creds.port.or(parsed.port);
+            creds.database = creds.database.or(parsed.database);
         }
 
         creds

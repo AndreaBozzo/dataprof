@@ -63,31 +63,31 @@ impl SslConfig {
     /// Validate SSL configuration
     pub fn validate(&self) -> Result<()> {
         // Check if certificate files exist
-        if let Some(ca_cert_path) = &self.ca_cert_path {
-            if !Path::new(ca_cert_path).exists() {
-                return Err(anyhow::anyhow!(
-                    "CA certificate file not found: {}",
-                    ca_cert_path
-                ));
-            }
+        if let Some(ca_cert_path) = &self.ca_cert_path
+            && !Path::new(ca_cert_path).exists()
+        {
+            return Err(anyhow::anyhow!(
+                "CA certificate file not found: {}",
+                ca_cert_path
+            ));
         }
 
-        if let Some(client_cert_path) = &self.client_cert_path {
-            if !Path::new(client_cert_path).exists() {
-                return Err(anyhow::anyhow!(
-                    "Client certificate file not found: {}",
-                    client_cert_path
-                ));
-            }
+        if let Some(client_cert_path) = &self.client_cert_path
+            && !Path::new(client_cert_path).exists()
+        {
+            return Err(anyhow::anyhow!(
+                "Client certificate file not found: {}",
+                client_cert_path
+            ));
         }
 
-        if let Some(client_key_path) = &self.client_key_path {
-            if !Path::new(client_key_path).exists() {
-                return Err(anyhow::anyhow!(
-                    "Client private key file not found: {}",
-                    client_key_path
-                ));
-            }
+        if let Some(client_key_path) = &self.client_key_path
+            && !Path::new(client_key_path).exists()
+        {
+            return Err(anyhow::anyhow!(
+                "Client private key file not found: {}",
+                client_key_path
+            ));
         }
 
         // Validate SSL mode
