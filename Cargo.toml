@@ -160,7 +160,7 @@ codegen-units = 256
 lto = "thin"      # LTO più veloce di "true"
 codegen-units = 1
 opt-level = 3
-panic = "abort"   # Riduce dimensione binario
+
 
 # Bench profile (based on release)
 [profile.bench]
