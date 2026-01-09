@@ -525,7 +525,7 @@ impl EngineBenchmarkFramework {
         {
             use std::mem;
 
-            extern "C" {
+            unsafe extern "C" {
                 fn mach_task_self() -> u32;
                 fn task_info(
                     target_task: u32,
