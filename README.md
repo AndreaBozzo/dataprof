@@ -73,6 +73,12 @@ dataprof-cli report huge_data.csv -o report.html
 ## 📊 Beautiful Reports
 
 <div align="center">
+  <p><strong>Interactive Demo</strong><br/>
+  <em>Animated walkthrough of dataprof features and dashboards</em></p>
+  <img src="assets/animations/dataprof_demo_minimal.gif" alt="DataProf Demo" width="100%" />
+  
+  <br/><br/>
+  
   <p><strong>Single File Analysis</strong><br/>
   <em>Interactive dashboards with quality scoring and distributions</em></p>
   <img src="assets/images/dataprofhtml2026.png" alt="Single Report Dashboard" width="100%" />
