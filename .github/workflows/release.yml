@@ -47,19 +47,31 @@ jobs:
       id: changelog
       run: |
         VERSION="${{ steps.tag.outputs.version }}"
+        TAG="${{ steps.tag.outputs.tag }}"
 
-        echo "Generating changelog with git-cliff..."
+        echo "Generating changelog with git-cliff for $TAG..."
+        echo "Working directory: $(pwd)"
+        echo "cliff.toml exists: $(test -f cliff.toml && echo 'yes' || echo 'no')"
+        echo "Git tags:"
+        git tag --list | tail -5
 
-        # Generate changelog for this release (from last tag)
-        RELEASE_NOTES=$(git cliff --latest --strip header 2>/dev/null || echo "")
+        # Generate changelog for this release
+        echo "Running: git cliff --current --strip header"
+        RELEASE_NOTES=$(git cliff --current --strip header 2>&1) || true
 
-        # Fallback if empty
-        if [ -z "$RELEASE_NOTES" ]; then
-          echo "No conventional commits found, using fallback"
+        echo "git-cliff output:"
+        echo "$RELEASE_NOTES"
+
+        # Check if output contains actual changelog or just warnings
+        if echo "$RELEASE_NOTES" | grep -q "^### \|^- "; then
+          # Filter out WARN lines
+          RELEASE_NOTES=$(echo "$RELEASE_NOTES" | grep -v "^ WARN")
+        else
+          echo "No valid changelog found, using fallback"
           RELEASE_NOTES="- Various improvements and bug fixes"
         fi
 
-        echo "Release notes generated:"
+        echo "Final release notes:"
         echo "$RELEASE_NOTES"
 
         # Generate release notes file with assets info
