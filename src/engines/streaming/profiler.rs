@@ -129,8 +129,8 @@ impl StreamingProfiler {
 
             // 1. FASE DI LETTURA (I/O Bound)
             // Read directly into the pool, reusing memory
-            for i in 0..BATCH_SIZE {
-                if reader.read_byte_record(&mut batch_pool[i])? {
+            for record in batch_pool.iter_mut().take(BATCH_SIZE) {
+                if reader.read_byte_record(record)? {
                     records_read += 1;
                 } else {
                     eof = true;
@@ -149,7 +149,7 @@ impl StreamingProfiler {
             // Qui avviene la magia: passiamo tutto il blocco al processore
             // che ora può usare Rayon per calcolare le colonne in parallelo.
             chunk_processor.process_batch(current_batch, &header_names, row_index);
-            
+
             // Aggiorniamo l'indice globale
             row_index += records_read;
 

@@ -3,8 +3,8 @@
 //! Separates chunk processing logic from StreamingProfiler (God Object refactoring)
 
 use csv::ByteRecord;
-use std::collections::HashMap;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 use crate::core::sampling::SamplingStrategy;
 
@@ -53,43 +53,49 @@ impl ChunkProcessor {
         headers: &[String],
         start_row_index: usize,
     ) {
-         // Determine which rows to process based on sampling
-         let batch_indices: Vec<(usize, usize)> = batch.iter()
+        // Determine which rows to process based on sampling
+        let batch_indices: Vec<(usize, usize)> = batch
+            .iter()
             .enumerate()
             .map(|(i, _)| (i, start_row_index + i))
             .filter(|&(_, global_idx)| {
-                 self.sampling_strategy.should_include(global_idx, self.stats.total_rows_processed + 1)
+                self.sampling_strategy
+                    .should_include(global_idx, self.stats.total_rows_processed + 1)
             })
             .collect();
 
         if batch_indices.is_empty() {
-             self.stats.total_rows_processed += batch.len();
-             return;
+            self.stats.total_rows_processed += batch.len();
+            return;
         }
 
         // Parallel processing: Iterate over headers (columns)
-        let new_columns: Vec<Vec<String>> = headers.par_iter().enumerate().map(|(col_idx, _)| {
-            let mut column_data = Vec::with_capacity(batch_indices.len());
-            for &(batch_idx, _) in &batch_indices {
-                if let Some(record) = batch.get(batch_idx) {
-                    if let Some(field) = record.get(col_idx) {
-                         column_data.push(String::from_utf8_lossy(field).to_string());
-                    } else {
-                         // Missing field? Use empty string or handle somehow.
-                         // Standard CSV reader behavior fills gaps if configured, but here we might just get None
-                         column_data.push(String::new());
+        let new_columns: Vec<Vec<String>> = headers
+            .par_iter()
+            .enumerate()
+            .map(|(col_idx, _)| {
+                let mut column_data = Vec::with_capacity(batch_indices.len());
+                for &(batch_idx, _) in &batch_indices {
+                    if let Some(record) = batch.get(batch_idx) {
+                        if let Some(field) = record.get(col_idx) {
+                            column_data.push(String::from_utf8_lossy(field).to_string());
+                        } else {
+                            // Missing field? Use empty string or handle somehow.
+                            // Standard CSV reader behavior fills gaps if configured, but here we might just get None
+                            column_data.push(String::new());
+                        }
                     }
                 }
-            }
-            column_data
-        }).collect();
+                column_data
+            })
+            .collect();
 
         // Merge back into current_chunk (sequential part)
         for (i, header) in headers.iter().enumerate() {
-            if let Some(column_vec) = self.current_chunk.get_mut(header) {
-                 if let Some(new_data) = new_columns.get(i) {
-                     column_vec.extend_from_slice(new_data);
-                 }
+            if let Some(column_vec) = self.current_chunk.get_mut(header)
+                && let Some(new_data) = new_columns.get(i)
+            {
+                column_vec.extend_from_slice(new_data);
             }
         }
 
