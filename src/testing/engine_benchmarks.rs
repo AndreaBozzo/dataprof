@@ -463,7 +463,7 @@ impl EngineBenchmarkFramework {
             use std::mem;
 
             // Use Windows API for accurate memory measurement
-            extern "system" {
+            unsafe extern "system" {
                 fn GetCurrentProcess() -> *mut std::ffi::c_void;
                 fn GetProcessMemoryInfo(
                     process: *mut std::ffi::c_void,

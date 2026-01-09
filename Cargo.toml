@@ -11,6 +11,15 @@ categories = ["command-line-utilities", "data-structures"]
 readme = "README.md"
 documentation = "https://docs.rs/dataprof"
 homepage = "https://github.com/AndreaBozzo/dataprof"
+exclude = [
+    "assets/animations/*",
+    "assets/images/*.png",
+    "examples/test_datasets/*",
+    ".venv/*",
+    ".mypy_cache/*",
+    "python/*",
+    ".github/*",
+]
 
 # Configuration for docs.rs
 [package.metadata.docs.rs]
