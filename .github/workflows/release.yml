@@ -36,93 +36,71 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Tag: $TAG, Version: $VERSION"
 
-    - name: Install git-cliff
+    - name: Generate changelog with git-cliff
+      id: git-cliff
       uses: orhun/git-cliff-action@v4
       with:
-        args: --version
+        config: cliff.toml
+        args: --current --strip header
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Generate changelog with git-cliff
+    - name: Build release notes
       id: changelog
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        CLIFF_OUTPUT: ${{ steps.git-cliff.outputs.content }}
       run: |
         VERSION="${{ steps.tag.outputs.version }}"
-        TAG="${{ steps.tag.outputs.tag }}"
 
-        echo "Generating changelog with git-cliff for $TAG..."
-        echo "Working directory: $(pwd)"
-        echo "cliff.toml exists: $(test -f cliff.toml && echo 'yes' || echo 'no')"
-        echo "Git tags:"
-        git tag --list | tail -5
+        echo "git-cliff content:"
+        echo "$CLIFF_OUTPUT"
 
-        # Generate changelog for this release
-        echo "Running: git-cliff --current --strip header"
-        RELEASE_NOTES=$(git-cliff --current --strip header 2>&1) || true
-
-        echo "git-cliff output:"
-        echo "$RELEASE_NOTES"
-
-        # Check if output contains actual changelog or just warnings
-        if echo "$RELEASE_NOTES" | grep -q "^### \|^- "; then
-          # Filter out WARN lines
-          RELEASE_NOTES=$(echo "$RELEASE_NOTES" | grep -v "^ WARN")
-        else
-          echo "No valid changelog found, using fallback"
-          RELEASE_NOTES="- Various improvements and bug fixes"
+        # Use git-cliff output or fallback
+        if [ -z "$CLIFF_OUTPUT" ]; then
+          CLIFF_OUTPUT="- Various improvements and bug fixes"
         fi
 
-        echo "Final release notes:"
-        echo "$RELEASE_NOTES"
-
-        # Generate release notes file with assets info
-        cat > release_notes.md << 'RELEASE_EOF'
-        ## What's Changed
-
-        RELEASE_EOF
-
-        echo "$RELEASE_NOTES" >> release_notes.md
-
-        cat >> release_notes.md << ASSETS_EOF
-
-        ## Assets
-
-        ### CLI Binaries
-        - **Linux (x86_64)**: \`dataprof-$VERSION-x86_64-unknown-linux-gnu\`
-        - **Linux (ARM64)**: \`dataprof-$VERSION-aarch64-unknown-linux-gnu\`
-        - **macOS (Intel)**: \`dataprof-$VERSION-x86_64-apple-darwin\`
-        - **macOS (Apple Silicon)**: \`dataprof-$VERSION-aarch64-apple-darwin\`
-        - **Windows**: \`dataprof-$VERSION-x86_64-pc-windows-msvc.exe\`
-
-        ### Python Package
-        - **PyPI**: \`pip install dataprof==$VERSION\`
-        - **GitHub Releases**: Additional optimized wheels available
-
-        ### Rust Crate
-        - **crates.io**: \`cargo add dataprof@$VERSION\`
-
-        ## Installation
-
-        \`\`\`bash
-        # CLI via Cargo
-        cargo install dataprof@$VERSION
-
-        # Python package
-        pip install dataprof==$VERSION
-        \`\`\`
-
-        ---
-
-        **Full changelog**: [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)
-        ASSETS_EOF
-
-        # Clean up indentation from heredoc
-        sed -i 's/^        //' release_notes.md
+        # Build release notes file
+        {
+          echo "## What's Changed"
+          echo ""
+          echo "$CLIFF_OUTPUT"
+          echo ""
+          echo "## Assets"
+          echo ""
+          echo "### CLI Binaries"
+          echo "- **Linux (x86_64)**: \`dataprof-$VERSION-x86_64-unknown-linux-gnu\`"
+          echo "- **Linux (ARM64)**: \`dataprof-$VERSION-aarch64-unknown-linux-gnu\`"
+          echo "- **macOS (Intel)**: \`dataprof-$VERSION-x86_64-apple-darwin\`"
+          echo "- **macOS (Apple Silicon)**: \`dataprof-$VERSION-aarch64-apple-darwin\`"
+          echo "- **Windows**: \`dataprof-$VERSION-x86_64-pc-windows-msvc.exe\`"
+          echo ""
+          echo "### Python Package"
+          echo "- **PyPI**: \`pip install dataprof==$VERSION\`"
+          echo "- **GitHub Releases**: Additional optimized wheels available"
+          echo ""
+          echo "### Rust Crate"
+          echo "- **crates.io**: \`cargo add dataprof@$VERSION\`"
+          echo ""
+          echo "## Installation"
+          echo ""
+          echo "\`\`\`bash"
+          echo "# CLI via Cargo"
+          echo "cargo install dataprof@$VERSION"
+          echo ""
+          echo "# Python package"
+          echo "pip install dataprof==$VERSION"
+          echo "\`\`\`"
+          echo ""
+          echo "---"
+          echo ""
+          echo "**Full changelog**: [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)"
+        } > release_notes.md
 
         echo "changelog<<EOF" >> $GITHUB_OUTPUT
         cat release_notes.md >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create GitHub Release
       run: |
