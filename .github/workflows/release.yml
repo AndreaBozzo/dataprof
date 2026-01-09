@@ -36,103 +36,59 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Tag: $TAG, Version: $VERSION"
 
-    - name: Get previous tag for changelog
-      id: prev-tag
-      run: |
-        PREV_TAG=$(git describe --tags --abbrev=0 ${{ steps.tag.outputs.tag }}^ 2>/dev/null || echo "")
-        if [ -z "$PREV_TAG" ]; then
-          # Fallback: get the first commit if no previous tags
-          PREV_TAG=$(git rev-list --max-parents=0 HEAD)
-          echo "No previous tag found, using first commit: $PREV_TAG"
-        else
-          echo "Previous tag: $PREV_TAG"
-        fi
-        echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+    - name: Install git-cliff
+      uses: orhun/git-cliff-action@v4
+      with:
+        args: --version
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Generate changelog
+    - name: Generate changelog with git-cliff
       id: changelog
       run: |
-        echo "Generating changelog from ${{ steps.prev-tag.outputs.prev_tag }} to ${{ steps.tag.outputs.tag }}..."
-
-        PREV_TAG="${{ steps.prev-tag.outputs.prev_tag }}"
-        CURRENT_TAG="${{ steps.tag.outputs.tag }}"
         VERSION="${{ steps.tag.outputs.version }}"
 
-        # Strategy 1: Try to extract from CHANGELOG.md [Unreleased] section
-        echo "🔍 Checking CHANGELOG.md for [Unreleased] section..."
-        if [ -f "CHANGELOG.md" ]; then
-          CHANGELOG_CONTENT=$(awk '/^## \[Unreleased\]/{flag=1;next}/^## \[/{flag=0}flag' CHANGELOG.md | sed '/^$/d')
-          if [ -n "$CHANGELOG_CONTENT" ] && [ "$CHANGELOG_CONTENT" != "## [Unreleased]" ]; then
-            echo "✅ Found rich changelog content in CHANGELOG.md"
-            CHANGELOG="$CHANGELOG_CONTENT"
-            CHANGELOG_SOURCE="changelog"
-          fi
+        echo "Generating changelog with git-cliff..."
+
+        # Generate changelog for this release (from last tag)
+        RELEASE_NOTES=$(git cliff --latest --strip header 2>/dev/null || echo "")
+
+        # Fallback if empty
+        if [ -z "$RELEASE_NOTES" ]; then
+          echo "No conventional commits found, using fallback"
+          RELEASE_NOTES="- Various improvements and bug fixes"
         fi
 
-        # Strategy 2: Fallback to PR extraction from merge commits
-        if [ -z "$CHANGELOG" ]; then
-          echo "🔍 Extracting merged PRs since last tag..."
-          PR_COMMITS=$(git log --pretty=format:"%s" "$PREV_TAG".."$CURRENT_TAG" 2>/dev/null | \
-            grep -E "^Merge pull request #[0-9]+" || true)
+        echo "Release notes generated:"
+        echo "$RELEASE_NOTES"
 
-          if [ -n "$PR_COMMITS" ]; then
-            echo "✅ Found PR merge commits"
-            CHANGELOG=$(echo "$PR_COMMITS" | \
-              sed 's/Merge pull request #\([0-9]*\) from [^:]*: */- 🔀 **PR #\1:** /' | \
-              sed 's/Merge pull request #\([0-9]*\) from .*/- 🔀 **PR #\1:** Merged changes/' | \
-              head -10)
-            CHANGELOG_SOURCE="prs"
-          fi
-        fi
-
-        # Strategy 3: Fallback to conventional commits
-        if [ -z "$CHANGELOG" ]; then
-          echo "🔍 Using conventional commit messages..."
-          CHANGELOG=$(git log --pretty=format:"- %s" "$PREV_TAG".."$CURRENT_TAG" 2>/dev/null | \
-            grep -E "(feat|fix|refactor|perf|docs|test):" | \
-            sed 's/feat:/✨ **Feature:**/g' | \
-            sed 's/fix:/🐛 **Fix:**/g' | \
-            sed 's/refactor:/🔧 **Refactor:**/g' | \
-            sed 's/perf:/⚡ **Performance:**/g' | \
-            sed 's/docs:/📚 **Documentation:**/g' | \
-            sed 's/test:/🧪 **Testing:**/g' | \
-            head -20)
-          CHANGELOG_SOURCE="commits"
-        fi
-
-        # Strategy 4: Final fallback
-        if [ -z "$CHANGELOG" ]; then
-          echo "⚠️ No structured changelog found, using fallback"
-          CHANGELOG="- Various improvements and bug fixes"
-          CHANGELOG_SOURCE="fallback"
-        fi
-
-        echo "📝 Using changelog source: $CHANGELOG_SOURCE"
-
-        # Generate release notes with improved footer
-        cat > release_notes.md << EOF
+        # Generate release notes file with assets info
+        cat > release_notes.md << 'RELEASE_EOF'
         ## What's Changed
 
-        $CHANGELOG
+        RELEASE_EOF
 
-        ## 📦 Assets
+        echo "$RELEASE_NOTES" >> release_notes.md
+
+        cat >> release_notes.md << ASSETS_EOF
+
+        ## Assets
 
         ### CLI Binaries
         - **Linux (x86_64)**: \`dataprof-$VERSION-x86_64-unknown-linux-gnu\`
+        - **Linux (ARM64)**: \`dataprof-$VERSION-aarch64-unknown-linux-gnu\`
         - **macOS (Intel)**: \`dataprof-$VERSION-x86_64-apple-darwin\`
         - **macOS (Apple Silicon)**: \`dataprof-$VERSION-aarch64-apple-darwin\`
         - **Windows**: \`dataprof-$VERSION-x86_64-pc-windows-msvc.exe\`
 
         ### Python Package
-        - **PyPI (baseline compatibility)**: \`pip install dataprof==$VERSION\`
-        - **GitHub Releases**: Additional optimized wheels available for better performance
-          - **Baseline wheels**: Maximum compatibility (works on all CPUs)
-          - **Optimized wheels**: Performance optimized (requires modern CPUs)
+        - **PyPI**: \`pip install dataprof==$VERSION\`
+        - **GitHub Releases**: Additional optimized wheels available
 
         ### Rust Crate
-        - Available on [crates.io](https://crates.io/crates/dataprof): \`cargo add dataprof@$VERSION\`
+        - **crates.io**: \`cargo add dataprof@$VERSION\`
 
-        ## 🚀 Installation
+        ## Installation
 
         \`\`\`bash
         # CLI via Cargo
@@ -140,19 +96,21 @@ jobs:
 
         # Python package
         pip install dataprof==$VERSION
-
-        # Or download binaries from this release
         \`\`\`
 
         ---
 
-        📋 **For detailed changes and migration notes, see:** [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)
+        **Full changelog**: [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)
+        ASSETS_EOF
 
-        EOF
+        # Clean up indentation from heredoc
+        sed -i 's/^        //' release_notes.md
 
         echo "changelog<<EOF" >> $GITHUB_OUTPUT
         cat release_notes.md >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create GitHub Release
       run: |

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.85] - 2026-01-09
+
+### Added
+
+- **HTML Report Overhaul** (#168)
+  - Completely redesigned HTML UI with improved styling and usability
+  - Fixed Python bindings compatibility issues
+
+### Changed
+
+- **Rust 2024 Edition**
+  - Migrated to Rust 2024 edition with comprehensive clippy cleanup
+  - Refactored JSON context field names for clarity in batch reports
+
+- **Release Process**
+  - Integrated git-cliff for automated changelog generation with author attribution
+  - Simplified release notes with structured conventional commits support
+
+### Fixed
+
+- CI clippy `collapsible_if` warning
+- Removed unnecessary panic setting in release profile
+- Updated HTML report image asset cropping
+
+### Dependencies
+
+- **Rust Crates**
+  - tempfile: 3.23.0 → 3.24.0 (#161)
+  - handlebars: 6.3.2 → 6.4.0 (#166)
+  - rsa: security update (#167)
+
 ## [0.4.84] - 2026-01-02
 
 ### Fixed

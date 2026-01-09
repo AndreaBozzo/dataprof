@@ -1,0 +1,109 @@
+# git-cliff configuration for dataprof
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to DataProfiler will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+"""
+
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+
+### {{ group | upper_first }}
+{% for commit in commits %}
+{% if commit.scope %}\
+- **{{ commit.scope | upper_first }}**: {{ commit.message | upper_first }}{% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}
+{% else %}\
+- {{ commit.message | upper_first }}{% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}
+{% endif %}\
+{% endfor %}
+{% endfor %}
+"""
+
+footer = ""
+trim = true
+
+postprocessors = [
+    { pattern = '\n{3,}', replace = "\n\n" },
+]
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+
+commit_parsers = [
+    # Skip merge commits
+    { message = "^Merge pull request", skip = true },
+    { message = "^Merge branch", skip = true },
+
+    # Features
+    { message = "^feat", group = "Added" },
+
+    # Bug fixes
+    { message = "^fix", group = "Fixed" },
+
+    # Refactoring and changes
+    { message = "^refactor", group = "Changed" },
+    { message = "^perf", group = "Changed" },
+    { message = "^style", group = "Changed" },
+    { message = "^test", group = "Changed" },
+    { message = "^build", group = "Changed" },
+    { message = "^ci", group = "Changed" },
+
+    # Documentation
+    { message = "^docs", group = "Documentation" },
+
+    # Dependencies - Dependabot patterns
+    { message = "^deps\\(deps\\)", group = "Dependencies" },
+    { message = "^chore\\(deps\\)", group = "Dependencies" },
+
+    # Generic chore (excluding deps already captured)
+    { message = "^chore", group = "Changed" },
+
+    # Security
+    { message = "^security", group = "Security" },
+
+    # Removed
+    { message = "^remove", group = "Removed" },
+
+    # Revert
+    { message = "^revert", group = "Reverted" },
+
+    # Deprecated
+    { message = "^deprecated", group = "Deprecated" },
+]
+
+protect_breaking_commits = false
+
+# Order of groups in changelog
+group_order = [
+    "Added",
+    "Changed",
+    "Deprecated",
+    "Removed",
+    "Fixed",
+    "Security",
+    "Documentation",
+    "Dependencies",
+]
+
+filter_commits = true
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "newest"
+
+[remote.github]
+owner = "AndreaBozzo"
+repo = "dataprof"
