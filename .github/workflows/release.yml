@@ -56,8 +56,8 @@ jobs:
         git tag --list | tail -5
 
         # Generate changelog for this release
-        echo "Running: git cliff --current --strip header"
-        RELEASE_NOTES=$(git cliff --current --strip header 2>&1) || true
+        echo "Running: git-cliff --current --strip header"
+        RELEASE_NOTES=$(git-cliff --current --strip header 2>&1) || true
 
         echo "git-cliff output:"
         echo "$RELEASE_NOTES"
