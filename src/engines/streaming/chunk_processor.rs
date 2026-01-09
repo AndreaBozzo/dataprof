@@ -2,8 +2,9 @@
 //!
 //! Separates chunk processing logic from StreamingProfiler (God Object refactoring)
 
-use csv::StringRecord;
+use csv::ByteRecord;
 use std::collections::HashMap;
+use rayon::prelude::*;
 
 use crate::core::sampling::SamplingStrategy;
 
@@ -43,10 +44,63 @@ impl ChunkProcessor {
         }
     }
 
+    /// Process a batch of records, buffering them efficiently
+    ///
+    /// This uses Rayon for parallel processing of columns within the batch.
+    pub fn process_batch(
+        &mut self,
+        batch: &[ByteRecord],
+        headers: &[String],
+        start_row_index: usize,
+    ) {
+         // Determine which rows to process based on sampling
+         let batch_indices: Vec<(usize, usize)> = batch.iter()
+            .enumerate()
+            .map(|(i, _)| (i, start_row_index + i))
+            .filter(|&(_, global_idx)| {
+                 self.sampling_strategy.should_include(global_idx, self.stats.total_rows_processed + 1)
+            })
+            .collect();
+
+        if batch_indices.is_empty() {
+             self.stats.total_rows_processed += batch.len();
+             return;
+        }
+
+        // Parallel processing: Iterate over headers (columns)
+        let new_columns: Vec<Vec<String>> = headers.par_iter().enumerate().map(|(col_idx, _)| {
+            let mut column_data = Vec::with_capacity(batch_indices.len());
+            for &(batch_idx, _) in &batch_indices {
+                if let Some(record) = batch.get(batch_idx) {
+                    if let Some(field) = record.get(col_idx) {
+                         column_data.push(String::from_utf8_lossy(field).to_string());
+                    } else {
+                         // Missing field? Use empty string or handle somehow.
+                         // Standard CSV reader behavior fills gaps if configured, but here we might just get None
+                         column_data.push(String::new());
+                    }
+                }
+            }
+            column_data
+        }).collect();
+
+        // Merge back into current_chunk (sequential part)
+        for (i, header) in headers.iter().enumerate() {
+            if let Some(column_vec) = self.current_chunk.get_mut(header) {
+                 if let Some(new_data) = new_columns.get(i) {
+                     column_vec.extend_from_slice(new_data);
+                 }
+            }
+        }
+
+        self.rows_in_current_chunk += batch_indices.len();
+        self.stats.total_rows_processed += batch.len();
+    }
+
     /// Process a single record, returns true if chunk is full
     pub fn process_record(
         &mut self,
-        record: &StringRecord,
+        record: &ByteRecord,
         headers: &[String],
         row_index: usize,
     ) -> bool {
@@ -63,7 +117,7 @@ impl ChunkProcessor {
             if let Some(header) = headers.get(i)
                 && let Some(column_data) = self.current_chunk.get_mut(header)
             {
-                column_data.push(field.to_string());
+                column_data.push(String::from_utf8_lossy(field).to_string());
             }
         }
 
@@ -71,6 +125,11 @@ impl ChunkProcessor {
         self.stats.total_rows_processed += 1;
 
         // Check if chunk is full
+        self.rows_in_current_chunk >= self.chunk_size
+    }
+
+    /// Check if the chunk is full and should be flushed
+    pub fn is_full(&self) -> bool {
         self.rows_in_current_chunk >= self.chunk_size
     }
 
@@ -122,12 +181,12 @@ mod tests {
         processor.initialize_headers(&headers);
 
         // Process first record
-        let record = StringRecord::from(vec!["a", "b"]);
+        let record = ByteRecord::from(vec!["a", "b"]);
         assert!(!processor.process_record(&record, &headers, 0));
         assert_eq!(processor.rows_in_current_chunk(), 1);
 
         // Process second record - chunk should be full
-        let record = StringRecord::from(vec!["c", "d"]);
+        let record = ByteRecord::from(vec!["c", "d"]);
         assert!(processor.process_record(&record, &headers, 1));
         assert_eq!(processor.rows_in_current_chunk(), 2);
     }
@@ -138,7 +197,7 @@ mod tests {
         let headers = vec!["col1".to_string()];
         processor.initialize_headers(&headers);
 
-        let record = StringRecord::from(vec!["value"]);
+        let record = ByteRecord::from(vec!["value"]);
         processor.process_record(&record, &headers, 0);
 
         let mut all_data = HashMap::new();

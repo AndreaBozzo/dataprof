@@ -8,7 +8,7 @@
 //! REFACTORED: Eliminated God Object pattern (was 350 lines doing everything)
 
 use anyhow::Result;
-use csv::ReaderBuilder;
+use csv::{ByteRecord, ReaderBuilder};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -116,12 +116,45 @@ impl StreamingProfiler {
         let mut chunk_processor = ChunkProcessor::new(chunk_size, self.sampling_strategy.clone());
         chunk_processor.initialize_headers(&header_names);
 
-        // Process records in chunks
-        for (row_index, result) in reader.records().enumerate() {
-            let record = result?;
+        // Initialize reusable record buffer
+        const BATCH_SIZE: usize = 10_000;
+        // Optimization: Pool of ByteRecords to minimize allocation by reusing buffers
+        let mut batch_pool: Vec<ByteRecord> = vec![ByteRecord::new(); BATCH_SIZE];
+        let mut row_index = 0;
 
-            // Process record - ChunkProcessor handles sampling and chunking
-            if chunk_processor.process_record(&record, &header_names, row_index) {
+        // Process records in chunks
+        loop {
+            let mut records_read = 0;
+            let mut eof = false;
+
+            // 1. FASE DI LETTURA (I/O Bound)
+            // Read directly into the pool, reusing memory
+            for i in 0..BATCH_SIZE {
+                if reader.read_byte_record(&mut batch_pool[i])? {
+                    records_read += 1;
+                } else {
+                    eof = true;
+                    break;
+                }
+            }
+
+            if records_read == 0 {
+                break;
+            }
+
+            // Slice only the valid records for this batch
+            let current_batch = &batch_pool[0..records_read];
+
+            // 2. FASE DI ELABORAZIONE (CPU Bound & Parallel)
+            // Qui avviene la magia: passiamo tutto il blocco al processore
+            // che ora può usare Rayon per calcolare le colonne in parallelo.
+            chunk_processor.process_batch(current_batch, &header_names, row_index);
+            
+            // Aggiorniamo l'indice globale
+            row_index += records_read;
+
+            // Check if we need to flush
+            if chunk_processor.is_full() {
                 // Flush chunk to aggregated data
                 chunk_processor.flush_chunk(&mut all_column_data);
 
@@ -134,6 +167,13 @@ impl StreamingProfiler {
                     file_size_mb,
                     &header_names,
                 );
+            }
+
+            // 3. PULIZIA
+            // No need to clear vector, we just overwrite in next loop
+
+            if eof {
+                break;
             }
         }
 
