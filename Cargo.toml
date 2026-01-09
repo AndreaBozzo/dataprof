@@ -160,7 +160,7 @@ incremental = true
 codegen-units = 256
 
 [profile.release]
-lto = true        
+# lto = true        # TODO: find a solution for this Can cause linking issues with mixed rlib/cdylib
 codegen-units = 1 
 panic = "abort"   
 strip = true      
