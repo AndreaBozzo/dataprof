@@ -56,7 +56,7 @@ handlebars = "6.4"
 toml = "0.9"
 log = "0.4"
 indicatif = "0.18"
-# clap_complete = "4.4"  # Temporarily disabled for Windows compatibility
+
 
 # System info for adaptive chunking
 sysinfo = "0.37"
@@ -84,13 +84,13 @@ rand_chacha = "0.9"
 glob = "0.3"
 glob-match = "0.2"
 num_cpus = "1.16"
-# walkdir = "2.5"  # REMOVED: Not used in codebase (identified by cargo-machete)
 
-# Python bindings
+
+
 pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
 pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"], optional = true }
 
-# Database connectors and async runtime
+
 tokio = { version = "1.0", features = ["full"], optional = true }  # Latest: 1.48.0 (patch available via cargo update)
 async-trait = { version = "0.1", optional = true }
 sqlx = { version = "0.8.1", features = [
@@ -100,36 +100,22 @@ sqlx = { version = "0.8.1", features = [
 ], optional = true, default-features = false }
 url = { version = "2.5.8", optional = true }
 
-# Apache Arrow for columnar processing
+
 arrow = { version = "57.1", optional = true }
 parquet = { version = "57.1", features = ["arrow"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.24"
 
-# Property-based testing
+
 proptest = "1.9"  # Updated: 1.8.0 -> 1.9.0 (minor bump, backward compatible)
 
-# Performance benchmarking
+
 criterion = { version = "0.8", features = ["html_reports"] }
 serde_json = "1.0"
 
-# Memory profiling for benchmarks (Windows compatibility issue with pprof 0.13)
-# pprof = { version = "0.13", features = ["criterion", "protobuf-codec"] }
-
-# Coverage reporting (install with: cargo install cargo-tarpaulin)
-# Run with: cargo tarpaulin --out Html --output-dir coverage
-
-# Additional test utilities - REMOVED unused dependencies (identified by cargo-machete)
-# assert_matches = "1.5"  # Not used
 serial_test = "3.3.1"
-# fake = { version = "2.9", features = ["derive"] }  # Not used
-# quickcheck = "1.0"  # Not used
-# quickcheck_macros = "1.0"  # Not used
-
-# CLI integration testing - temporarily disabled due to Windows registry issues
-# assert_cmd = "1.0"
-# predicates = "2.1"
+predicates = "2.1"
 
 [[bin]]
 name = "dataprof-cli"
@@ -149,50 +135,48 @@ name = "statistical_benchmark"
 harness = false
 
 
-# Debug profile per sviluppo veloce
-[profile.dev]
-opt-level = 0              # Nessuna ottimizzazione per compilazione più veloce
-debug = true               # Mantieni simboli debug
-split-debuginfo = "packed" # Su Windows
-incremental = true         # Build incrementali
-codegen-units = 256        # Parallelizzazione massima per dev builds
 
-# Profile per test veloci
+[profile.dev]
+opt-level = 0             
+debug = true               
+split-debuginfo = "packed" 
+incremental = true         
+codegen-units = 256        
+
+
 [profile.test]
 opt-level = 1
 debug = 2
 incremental = true
 codegen-units = 256
 
-# Release profile ottimizzato
 [profile.release]
-lto = "thin"      # LTO più veloce di "true"
-codegen-units = 1
-opt-level = 3
+lto = true        
+codegen-units = 1 
+panic = "abort"   
+strip = true      
 
 
-# Bench profile (based on release)
 [profile.bench]
 inherits = "release"
 
-# CI profile for coverage testing
+
 [profile.ci]
 inherits = "test"
-opt-level = 0        # No optimization for faster builds
-debug = 2            # Full debug info for coverage
-incremental = false  # Disable incremental for clean coverage
-codegen-units = 1    # Single codegen unit for better coverage accuracy
+opt-level = 0        
+debug = 2            
+incremental = false  
+codegen-units = 1    
 
-# Configurazione per dipendenze più veloci
 [profile.dev.package."*"]
-opt-level = 1 # Ottimizza le dipendenze anche in dev mode
+opt-level = 1 
 
 [profile.test.package."*"]
-opt-level = 1 # Ottimizza le dipendenze anche nei test
+opt-level = 1 
 
-# Features
+
 [features]
-default = [] # Minimal by default - MUCH faster compilation
+default = [] 
 
 # Individual features
 python = ["dep:pyo3"]
@@ -206,8 +190,8 @@ sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 
 # Sensible feature combinations
 minimal = []                             # Just CSV processing - fastest builds
-production = ["postgres", "mysql"]       # Most common production databases
-all-db = ["postgres", "mysql", "sqlite"] # All databases
+production = ["postgres", "mysql"]       
+all-db = ["postgres", "mysql", "sqlite"] 
 
 
 # Library configuration - rlib for internal use, cdylib for Python bindings
