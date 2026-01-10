@@ -1,705 +1,85 @@
-name: Comprehensive Performance Benchmarks
+name: Benchmarks
+
 on:
-  # Only on main/master pushes for full benchmarks
   push:
     branches: [main, master]
     paths:
       - 'src/**'
       - 'benches/**'
-      - 'scripts/benchmark_comparison.py'
-      - '.github/workflows/benchmarks.yml'
       - 'Cargo.toml'
-      - 'Cargo.lock'
+      - '.github/workflows/benchmarks.yml'
 
-  # Quick benchmarks on PRs (limited scope)
   pull_request:
-    branches: [main, master, staging]
+    branches: [main, master]
     paths:
       - 'src/**'
       - 'benches/**'
       - 'Cargo.toml'
 
-  # Scheduled full benchmark runs
-  schedule:
-    - cron: '0 2 * * 1,4'  # Monday and Thursday at 2 AM UTC
-
-  # Manual dispatch for on-demand benchmarks
   workflow_dispatch:
     inputs:
-      benchmark_type:
-        description: 'Type of benchmark to run'
-        required: true
-        default: 'all'
-        type: choice
-        options: [all, unified, domain, statistical, comparison, quick]
+      full_benchmark:
+        description: 'Run full benchmarks (slower, more samples)'
+        type: boolean
+        default: false
 
-# Prevent multiple benchmark runs on the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
 
 jobs:
-  # Quick performance validation for PRs (lightweight)
-  quick-performance-check:
-    name: Quick Performance Validation
+  benchmark:
+    name: Run Benchmarks
     runs-on: ubuntu-latest
-    timeout-minutes: 8
-    # Only run on PRs (replaces quick-benchmarks.yml)
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    timeout-minutes: 15
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Rust
-        uses: ./.github/actions/setup-rust
+        uses: dtolnay/rust-action@v1
         with:
-          cache-prefix: rust-bench
+          components: rustfmt
 
-      - name: Environment health check
-        run: |
-          echo "🔍 Environment health check..."
-          rustc --version
-          cargo --version
-          echo "Available memory: $(free -h | grep '^Mem:' | awk '{print $7}')"
-          echo "CPU cores: $(nproc)"
-
-      - name: Build benchmark binaries
-        run: |
-          echo "🔨 Building benchmark binaries..."
-          timeout 300 cargo bench --no-run --lib --benches
-
-      - name: Run quick benchmarks
-        uses: ./.github/actions/benchmark-runner
+      - name: Cache cargo
+        uses: actions/cache@v4
         with:
-          benchmark-type: unified
-          mode: quick
-          sample-size: 10
-          measurement-time: 3
-          timeout: 3
-
-      - name: Run smoke test
-        uses: ./.github/actions/benchmark-runner
-        with:
-          benchmark-type: domain
-          mode: quick
-          sample-size: 10
-          measurement-time: 2
-          timeout: 2
-
-      - name: Report results
-        run: |
-          echo "✅ Quick performance check completed in under 8 minutes"
-          echo "ℹ️  For comprehensive benchmarks, check the full benchmark workflow on main/master"
-
-  # Build check with parallel cache warming
-  build-check:
-    name: Build Benchmarks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Only run on main/master pushes, schedule, or manual dispatch
-    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-prefix: rust-bench
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+            ${{ runner.os }}-cargo-
 
       - name: Build benchmarks
+        run: cargo bench --no-run
+
+      - name: Run benchmarks
         run: |
-          echo "🔨 Building all benchmarks..."
-          timeout 600 cargo bench --no-run --lib --benches
-          echo "✅ Benchmark build completed"
-
-  # Unified benchmark job
-  unified-benchmarks:
-    name: Unified Performance Benchmarks
-    runs-on: ubuntu-latest
-    needs: build-check
-    timeout-minutes: 20
-    # Only run on main/master pushes, schedule, or manual dispatch
-    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-prefix: rust-bench
-
-      - name: Run unified benchmarks
-        run: |
-          echo "🏃 Running unified benchmarks..."
           mkdir -p benchmark-results
-          timeout 15m cargo bench --bench unified_benchmarks > benchmark-results/unified.txt 2>&1 || \
-          echo "⚠️ Unified benchmarks timed out - partial results saved"
-          echo "✅ Unified benchmarks completed"
+          cargo bench --bench benchmarks 2>&1 | tee benchmark-results/output.txt
 
-      - name: Upload unified results
-        uses: actions/upload-artifact@v6
+      - name: Upload results
+        uses: actions/upload-artifact@v4
         with:
-          name: unified-benchmark-results
-          path: benchmark-results/unified.txt
-          retention-days: 30
-
-  # Domain benchmark job
-  domain-benchmarks:
-    name: Domain-Specific Performance Benchmarks
-    runs-on: ubuntu-latest
-    needs: build-check
-    timeout-minutes: 15
-    # Only run on main/master pushes, schedule, or manual dispatch
-    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-prefix: rust-bench
-
-      - name: Run domain benchmarks
-        run: |
-          echo "🏢 Running domain benchmarks..."
-          mkdir -p benchmark-results
-          timeout 12m cargo bench --bench domain_benchmarks > benchmark-results/domain.txt 2>&1 || \
-          echo "⚠️ Domain benchmarks timed out - partial results saved"
-          echo "✅ Domain benchmarks completed"
-
-      - name: Upload domain results
-        uses: actions/upload-artifact@v6
-        with:
-          name: domain-benchmark-results
-          path: benchmark-results/domain.txt
-          retention-days: 30
-
-  # Statistical benchmark job
-  statistical-benchmarks:
-    name: Statistical Rigor Benchmarks
-    runs-on: ubuntu-latest
-    needs: build-check
-    timeout-minutes: 12
-    # Only run on main/master pushes, schedule, or manual dispatch
-    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-prefix: rust-bench
-
-      - name: Run statistical benchmarks
-        run: |
-          echo "📊 Running statistical benchmarks..."
-          mkdir -p benchmark-results
-          timeout 10m cargo bench --bench statistical_benchmark > benchmark-results/statistical.txt 2>&1 || \
-          echo "⚠️ Statistical benchmarks timed out - partial results saved"
-          echo "✅ Statistical benchmarks completed"
-
-      - name: Upload statistical results
-        uses: actions/upload-artifact@v6
-        with:
-          name: statistical-benchmark-results
-          path: benchmark-results/statistical.txt
-          retention-days: 30
-
-  # External comparison job
-  external-comparison:
-    name: External Tool Comparison
-    runs-on: ubuntu-latest
-    needs: build-check
-    timeout-minutes: 10
-    # Only run on main/master pushes, schedule, or manual dispatch
-    if: github.event_name != 'pull_request' && (contains(fromJSON('["main", "master"]'), github.ref_name) || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Python dependencies
-        uses: ./.github/actions/setup-python-deps
-
-      - name: Run external comparison benchmarks
-        run: |
-          echo "🔄 Running simplified external tool comparison..."
-          mkdir -p benchmark-results
-          if timeout 300 python scripts/benchmark_comparison.py 1 2 5 > benchmark-results/comparison.txt 2>&1; then
-            echo "✅ Comparison benchmarks completed successfully"
-          else
-            echo "⚠️ External tools unavailable in CI - skipping comparison"
-            echo "External tool comparison skipped - not available in CI environment." > benchmark-results/comparison.txt
-            echo "Benchmark results focus on internal performance metrics." >> benchmark-results/comparison.txt
-          fi
-        continue-on-error: true
-
-      - name: Upload comparison results
-        uses: actions/upload-artifact@v6
-        with:
-          name: comparison-benchmark-results
-          path: benchmark-results/comparison.txt
-          retention-days: 30
-
-  # Comprehensive results aggregation
-  comprehensive-results:
-    name: Aggregate Benchmark Results
-    runs-on: ubuntu-latest
-    needs: [unified-benchmarks, domain-benchmarks, statistical-benchmarks, external-comparison]
-    if: always()
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Download all benchmark results
-        uses: actions/download-artifact@v7
-        with:
-          pattern: "*-benchmark-results"
-          path: benchmark-results/
-          merge-multiple: true
-
-      - name: Performance regression analysis
-        run: |
-          echo "🔍 Running basic performance analysis..."
-
-          # Create baseline if missing
-          if [[ ! -f "benchmark-results/performance_baseline.json" ]]; then
-            echo "⚠️ Creating initial baseline..."
-            echo '{"version":"1.0","benchmarks":[],"statistics":{}}' > benchmark-results/performance_baseline.json
-          fi
-
-          # Simple analysis only for main benchmark
-          if [[ -f "benchmark-results/unified_benchmark_results.json" ]]; then
-            echo "Analyzing unified benchmark results..." > benchmark-results/unified_regression_analysis.txt
-            echo "Baseline comparison completed." >> benchmark-results/unified_regression_analysis.txt
-          fi
-
-          echo "✅ Basic analysis completed"
-        continue-on-error: true
-
-      - name: Process benchmark results and generate real reports
-        run: |
-          echo "📈 Processing benchmark results into usable data..."
-
-          # Extract key metrics from benchmark outputs
-          UNIFIED_METRICS=""
-          DOMAIN_METRICS=""
-          STATISTICAL_METRICS=""
-
-          # Process unified benchmark results
-          if [[ -f "benchmark-results/unified.txt" ]]; then
-            UNIFIED_METRICS=$(grep -E "(time:|thrpt:|time \[)" benchmark-results/unified.txt | head -10 || echo "Processing...")
-
-            cat > benchmark-results/unified_benchmark_report.md << EOF
-          # Unified Performance Report
-
-          **Generated:** $(date -u)
-          **Commit:** ${{ github.sha }}
-
-          ## Core Performance Metrics
-
-          \`\`\`
-          $UNIFIED_METRICS
-          \`\`\`
-
-          ## Raw Output
-          \`\`\`
-          $(head -50 benchmark-results/unified.txt)
-          \`\`\`
-          EOF
-          fi
-
-          # Process domain benchmark results
-          if [[ -f "benchmark-results/domain.txt" ]]; then
-            DOMAIN_METRICS=$(grep -E "(time:|thrpt:|time \[)" benchmark-results/domain.txt | head -10 || echo "Processing...")
-
-            cat > benchmark-results/domain_benchmark_report.md << EOF
-          # Domain-Specific Performance Report
-
-          **Generated:** $(date -u)
-          **Commit:** ${{ github.sha }}
-
-          ## Domain Performance Metrics
-
-          \`\`\`
-          $DOMAIN_METRICS
-          \`\`\`
-
-          ## Raw Output
-          \`\`\`
-          $(head -50 benchmark-results/domain.txt)
-          \`\`\`
-          EOF
-          fi
-
-          # Process statistical benchmark results
-          if [[ -f "benchmark-results/statistical.txt" ]]; then
-            STATISTICAL_METRICS=$(grep -E "(time:|thrpt:|time \[)" benchmark-results/statistical.txt | head -10 || echo "Processing...")
-
-            cat > benchmark-results/statistical_rigor_report.md << EOF
-          # Statistical Rigor Performance Report
-
-          **Generated:** $(date -u)
-          **Commit:** ${{ github.sha }}
-
-          ## Statistical Performance Metrics
-
-          \`\`\`
-          $STATISTICAL_METRICS
-          \`\`\`
-
-          ## Raw Output
-          \`\`\`
-          $(head -50 benchmark-results/statistical.txt)
-          \`\`\`
-          EOF
-          fi
-
-          # Generate comprehensive report with real data
-          cat > benchmark-results/report.md << EOF
-          # DataProfiler Performance Benchmark Report
-
-          **Branch:** \`${{ github.ref_name }}\`
-          **Commit:** \`${{ github.sha }}\`
-          **Date:** $(date -u)
-          **Run ID:** ${{ github.run_id }}
-
-          ## 🚀 Performance Summary
-
-          ### Key Metrics
-          - **Unified Performance:** $(echo "$UNIFIED_METRICS" | head -3 | tr '\n' ' ' || echo "Data processing...")
-          - **Domain Performance:** $(echo "$DOMAIN_METRICS" | head -3 | tr '\n' ' ' || echo "Data processing...")
-          - **Statistical Analysis:** $(echo "$STATISTICAL_METRICS" | head -3 | tr '\n' ' ' || echo "Data processing...")
-
-          ## 📊 Detailed Results
-
-          ### Unified Performance Suite
-          \`\`\`
-          $UNIFIED_METRICS
-          \`\`\`
-
-          ### Domain-Specific Performance
-          \`\`\`
-          $DOMAIN_METRICS
-          \`\`\`
-
-          ### Statistical Rigor Framework
-          \`\`\`
-          $STATISTICAL_METRICS
-          \`\`\`
-
-          ### External Tool Comparison
-          \`\`\`
-          $(cat benchmark-results/comparison.txt 2>/dev/null || echo "External comparison data not available")
-          \`\`\`
-
-          ---
-          🤖 Generated automatically by GitHub Actions | [Workflow Run](https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }})
-          EOF
-
-          echo "✅ Real benchmark reports generated with extracted metrics"
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v6
-        with:
-          name: aggregated-benchmark-results
-          path: benchmark-results/
-          retention-days: 30
-
-      - name: Performance summary
-        run: |
-          echo "📊 Performance Results Summary"
-          echo "================================="
-
-          if [[ -f "benchmark-results/comparison.txt" ]]; then
-            # Extract performance assessment
-            if grep -q "🏆 OUTSTANDING\|🥇 EXCELLENT" benchmark-results/comparison.txt; then
-              echo "🏆 EXCELLENT: Outstanding performance achieved!"
-            elif grep -q "🥈 COMPETITIVE\|💾 MEMORY CHAMPION" benchmark-results/comparison.txt; then
-              echo "🥈 COMPETITIVE: Good performance with excellent efficiency!"
-            else
-              echo "✅ Performance validation completed"
-            fi
-
-            echo ""
-            echo "🎯 Key Metrics:"
-            grep -E "(Speed:|Memory:)" benchmark-results/comparison.txt 2>/dev/null | head -5 || echo "Metrics in detailed report"
-          fi
-
-          echo ""
-          echo "✅ Comprehensive benchmark analysis completed"
-
-  # Manual benchmark execution
-  manual-benchmarks:
-    name: Manual Benchmark Execution
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-    timeout-minutes: 45
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-        with:
-          cache-prefix: rust-bench
-
-      - name: Setup Python dependencies
-        if: github.event.inputs.benchmark_type == 'comparison' || github.event.inputs.benchmark_type == 'all'
-        uses: ./.github/actions/setup-python-deps
-
-      - name: Execute selected benchmarks
-        run: |
-          echo "🚀 Running ${{ github.event.inputs.benchmark_type }} benchmarks..."
-          mkdir -p benchmark-results
-
-          case "${{ github.event.inputs.benchmark_type }}" in
-            "unified"|"all")
-              timeout 15m cargo bench --bench unified_benchmarks > benchmark-results/unified.txt 2>&1 || echo "Unified timeout"
-              ;;
-            "domain"|"all")
-              timeout 10m cargo bench --bench domain_benchmarks > benchmark-results/domain.txt 2>&1 || echo "Domain timeout"
-              ;;
-            "statistical"|"all")
-              timeout 8m cargo bench --bench statistical_benchmark > benchmark-results/statistical.txt 2>&1 || echo "Statistical timeout"
-              ;;
-          esac
-
-          echo "✅ Selected benchmarks completed"
-        continue-on-error: true
-
-      - name: Run external comparison
-        if: github.event.inputs.benchmark_type == 'comparison' || github.event.inputs.benchmark_type == 'all'
-        run: |
-          echo "🔄 Running external tool comparison..."
-          timeout 600 python scripts/benchmark_comparison.py 1 5 || echo "External comparison skipped in CI"
-          echo "✅ External comparison completed"
-        continue-on-error: true
-
-      - name: Upload manual results
-        uses: actions/upload-artifact@v6
-        with:
-          name: manual-benchmark-${{ github.event.inputs.benchmark_type }}-${{ github.sha }}
+          name: benchmark-results
           path: |
-            target/criterion/
             benchmark-results/
-          retention-days: 7
+            target/criterion/
+          retention-days: 30
 
-  # Performance trend analysis with GitHub Pages (Interactive Dashboard)
-  performance-dashboard:
-    name: Update Performance Dashboard
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    needs: comprehensive-results
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Download benchmark results
-        uses: actions/download-artifact@v7
-        with:
-          name: aggregated-benchmark-results
-          path: benchmark-results/
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Generate timestamps
-        id: timestamps
+      - name: Summary
         run: |
-          RUN_TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
-          ISO_TIMESTAMP=$(date -u --iso-8601=seconds)
-          echo "run_timestamp=$RUN_TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "iso_timestamp=$ISO_TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "Generated timestamps: $RUN_TIMESTAMP / $ISO_TIMESTAMP"
-
-      - name: Fetch existing history from GitHub Pages
-        run: |
-          mkdir -p performance-site/data
-
-          # Try to fetch existing history.json from deployed site
-          if curl -sf "https://andreabozzo.github.io/dataprof/data/history.json" \
-             -o performance-site/data/history.json 2>/dev/null; then
-            echo "Fetched existing history.json with $(jq '.entries | length' performance-site/data/history.json) entries"
-          else
-            echo '{"version":"1.0","max_entries":50,"entries":[]}' > performance-site/data/history.json
-            echo "Created new history.json"
-          fi
-
-      - name: Aggregate metrics and update history
-        run: |
-          RUN_TIMESTAMP="${{ steps.timestamps.outputs.run_timestamp }}"
-          ISO_TIMESTAMP="${{ steps.timestamps.outputs.iso_timestamp }}"
-
-          # Create run data directory
-          mkdir -p performance-site/data/runs/$RUN_TIMESTAMP
-          cp benchmark-results/*.json performance-site/data/runs/$RUN_TIMESTAMP/ 2>/dev/null || true
-          cp benchmark-results/*.txt performance-site/data/runs/$RUN_TIMESTAMP/ 2>/dev/null || true
-          cp benchmark-results/*.md performance-site/data/runs/$RUN_TIMESTAMP/ 2>/dev/null || true
-
-          # Aggregate metrics and update history using Node.js
-          node << 'NODESCRIPT'
-          const fs = require('fs');
-          const path = require('path');
-
-          // Load benchmark results
-          const resultsPath = 'benchmark-results/unified_benchmark_results.json';
-          let results = [];
-          if (fs.existsSync(resultsPath)) {
-            try {
-              results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
-            } catch (e) {
-              console.log('Warning: Could not parse benchmark results:', e.message);
-            }
-          }
-
-          // Aggregate metrics by pattern and size
-          const patterns = {};
-          let totalTime = 0;
-          let totalBenchmarks = results.length;
-
-          results.forEach(bench => {
-            const pattern = bench.dataset_pattern || 'unknown';
-            const size = bench.dataset_size || 'unknown';
-
-            if (!patterns[pattern]) patterns[pattern] = {};
-
-            const successResults = (bench.results || []).filter(r => r.success);
-            if (successResults.length > 0) {
-              const avgTime = successResults.reduce((s, r) => s + r.time_seconds, 0) / successResults.length;
-              patterns[pattern][size] = parseFloat(avgTime.toFixed(4));
-              totalTime += successResults.reduce((s, r) => s + r.time_seconds, 0);
-            }
-          });
-
-          // Create new history entry
-          const newEntry = {
-            timestamp: process.env.ISO_TIMESTAMP || new Date().toISOString(),
-            commit: process.env.GITHUB_SHA || 'unknown',
-            branch: process.env.GITHUB_REF_NAME || 'unknown',
-            run_id: process.env.GITHUB_RUN_ID || 'unknown',
-            metrics: {
-              total_benchmarks: totalBenchmarks,
-              total_time_seconds: parseFloat(totalTime.toFixed(2)),
-              patterns: patterns
-            }
-          };
-
-          // Load and update history
-          const historyPath = 'performance-site/data/history.json';
-          let history = { version: '1.0', max_entries: 50, entries: [] };
-          if (fs.existsSync(historyPath)) {
-            try {
-              history = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
-            } catch (e) {
-              console.log('Warning: Could not parse history, starting fresh');
-            }
-          }
-
-          // Add new entry and keep last 50
-          history.entries.unshift(newEntry);
-          history.entries = history.entries.slice(0, 50);
-
-          // Save updated history
-          fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
-
-          // Save latest.json
-          const latest = {
-            ...newEntry,
-            results_path: process.env.RUN_TIMESTAMP,
-            workflow_url: `https://github.com/AndreaBozzo/dataprof/actions/runs/${process.env.GITHUB_RUN_ID}`,
-            status: 'completed'
-          };
-          fs.writeFileSync('performance-site/data/latest.json', JSON.stringify(latest, null, 2));
-
-          console.log(`Updated history with ${totalBenchmarks} benchmarks, ${history.entries.length} total entries`);
-          NODESCRIPT
-        env:
-          ISO_TIMESTAMP: ${{ steps.timestamps.outputs.iso_timestamp }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          RUN_TIMESTAMP: ${{ steps.timestamps.outputs.run_timestamp }}
-
-      - name: Generate interactive dashboard
-        run: |
-          RUN_TIMESTAMP="${{ steps.timestamps.outputs.run_timestamp }}"
-          ISO_TIMESTAMP="${{ steps.timestamps.outputs.iso_timestamp }}"
-          COMMIT_SHORT="${{ github.sha }}"
-          COMMIT_SHORT="${COMMIT_SHORT:0:7}"
-
-          # Copy template files
-          cp .github/templates/dashboard.html performance-site/index.html
-          cp .github/templates/dashboard.js performance-site/dashboard.js
-
-          # Replace simple placeholders (ORDER MATTERS: longer patterns first to avoid partial matches)
-          sed -i "s/RUN_TIMESTAMP_PLACEHOLDER/$RUN_TIMESTAMP/g" performance-site/index.html
-          sed -i "s/COMMIT_SHORT_PLACEHOLDER/$COMMIT_SHORT/g" performance-site/index.html
-          sed -i "s/TIMESTAMP_PLACEHOLDER/$ISO_TIMESTAMP/g" performance-site/index.html
-          sed -i "s/COMMIT_PLACEHOLDER/${{ github.sha }}/g" performance-site/index.html
-          sed -i "s/BRANCH_PLACEHOLDER/${{ github.ref_name }}/g" performance-site/index.html
-          sed -i "s|WORKFLOW_URL_PLACEHOLDER|https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}|g" performance-site/index.html
-
-          # Inject JSON data into HTML using Node.js (avoids sed escaping issues)
-          node << 'NODESCRIPT'
-          const fs = require('fs');
-
-          let html = fs.readFileSync('performance-site/index.html', 'utf8');
-
-          // Load data files
-          let historyData = '{"entries":[]}';
-          let benchmarkData = '[]';
-
-          try {
-            if (fs.existsSync('performance-site/data/history.json')) {
-              historyData = fs.readFileSync('performance-site/data/history.json', 'utf8');
-            }
-          } catch (e) {
-            console.log('Warning: Could not load history.json');
-          }
-
-          try {
-            if (fs.existsSync('benchmark-results/unified_benchmark_results.json')) {
-              benchmarkData = fs.readFileSync('benchmark-results/unified_benchmark_results.json', 'utf8');
-            }
-          } catch (e) {
-            console.log('Warning: Could not load benchmark results');
-          }
-
-          // Replace placeholders
-          html = html.replace('HISTORY_DATA_PLACEHOLDER', historyData);
-          html = html.replace('BENCHMARK_DATA_PLACEHOLDER', benchmarkData);
-
-          fs.writeFileSync('performance-site/index.html', html);
-          console.log('Dashboard generated successfully with inline data');
-          NODESCRIPT
-
-          echo "Dashboard files:"
-          ls -la performance-site/
-
-      - name: Deploy to GitHub Pages
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: ./performance-site
-
-      - name: Deploy GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          grep -E "(csv_analysis|time:|thrpt:)" benchmark-results/output.txt | head -50 >> $GITHUB_STEP_SUMMARY || echo "No results found"
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
