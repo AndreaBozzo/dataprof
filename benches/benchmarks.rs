@@ -26,12 +26,9 @@
 
 use anyhow::Result;
 use criterion::{
-    criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
+    BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
 };
-use dataprof::{
-    engines::streaming::profiler::StreamingProfiler,
-    types::QualityReport,
-};
+use dataprof::{engines::streaming::profiler::StreamingProfiler, types::QualityReport};
 use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;
@@ -127,11 +124,7 @@ fn bench_csv_parsing(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.warm_up_time(Duration::from_secs(1));
 
-    let sizes = [
-        DatasetSize::Tiny,
-        DatasetSize::Small,
-        DatasetSize::Medium,
-    ];
+    let sizes = [DatasetSize::Tiny, DatasetSize::Small, DatasetSize::Medium];
 
     for size in sizes {
         let path = generate_benchmark_csv(size);
@@ -140,16 +133,12 @@ fn bench_csv_parsing(c: &mut Criterion) {
         // KEY: throughput metric shows MB/s in the report
         group.throughput(Throughput::Bytes(file_size));
 
-        group.bench_with_input(
-            BenchmarkId::new("parse", size.name()),
-            &path,
-            |b, path| {
-                b.iter(|| {
-                    let result = analyze_csv(black_box(path)).expect("CSV analysis failed");
-                    black_box(result)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("parse", size.name()), &path, |b, path| {
+            b.iter(|| {
+                let result = analyze_csv(black_box(path)).expect("CSV analysis failed");
+                black_box(result)
+            })
+        });
     }
 
     group.finish();
@@ -316,7 +305,7 @@ criterion_group! {
         .sample_size(50)
         .measurement_time(Duration::from_secs(5))
         .warm_up_time(Duration::from_secs(2));
-    targets = 
+    targets =
         bench_full_analysis,
         bench_scaling_behavior,
         bench_large_scale
