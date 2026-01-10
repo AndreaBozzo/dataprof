@@ -157,7 +157,7 @@ panic = "abort"
 strip = true      
 
 
-[profile.bench]
+[profile.release-lto]
 inherits = "release"
 
 
