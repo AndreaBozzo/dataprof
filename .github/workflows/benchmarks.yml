@@ -498,7 +498,7 @@ jobs:
             benchmark-results/
           retention-days: 7
 
-  # Performance trend analysis with GitHub Pages
+  # Performance trend analysis with GitHub Pages (Interactive Dashboard)
   performance-dashboard:
     name: Update Performance Dashboard
     runs-on: ubuntu-latest
@@ -517,90 +517,174 @@ jobs:
           name: aggregated-benchmark-results
           path: benchmark-results/
 
-      - name: Generate GitHub Pages site
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch existing history from GitHub Pages
         run: |
-          # Create performance site structure
-          mkdir -p performance-site/{data,assets}
+          mkdir -p performance-site/data
 
-          TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
-          mkdir -p performance-site/data/$TIMESTAMP
-          cp -r benchmark-results/* performance-site/data/$TIMESTAMP/
+          # Try to fetch existing history.json from deployed site
+          if curl -sf "https://andreabozzo.github.io/dataprof/data/history.json" \
+             -o performance-site/data/history.json 2>/dev/null; then
+            echo "Fetched existing history.json with $(jq '.entries | length' performance-site/data/history.json) entries"
+          else
+            echo '{"version":"1.0","max_entries":50,"entries":[]}' > performance-site/data/history.json
+            echo "Created new history.json"
+          fi
 
-          # Create metadata
-          cat > performance-site/data/latest.json << EOF
-          {
-            "timestamp": "$(date -u --iso-8601)",
-            "commit": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "run_id": "${{ github.run_id }}",
-            "results_path": "$TIMESTAMP",
-            "workflow_url": "https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}",
-            "status": "completed"
+      - name: Aggregate metrics and update history
+        run: |
+          RUN_TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
+          ISO_TIMESTAMP=$(date -u --iso-8601=seconds)
+
+          # Create run data directory
+          mkdir -p performance-site/data/runs/$RUN_TIMESTAMP
+          cp benchmark-results/*.json performance-site/data/runs/$RUN_TIMESTAMP/ 2>/dev/null || true
+          cp benchmark-results/*.txt performance-site/data/runs/$RUN_TIMESTAMP/ 2>/dev/null || true
+          cp benchmark-results/*.md performance-site/data/runs/$RUN_TIMESTAMP/ 2>/dev/null || true
+
+          # Aggregate metrics and update history using Node.js
+          node << 'NODESCRIPT'
+          const fs = require('fs');
+          const path = require('path');
+
+          // Load benchmark results
+          const resultsPath = 'benchmark-results/unified_benchmark_results.json';
+          let results = [];
+          if (fs.existsSync(resultsPath)) {
+            try {
+              results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+            } catch (e) {
+              console.log('Warning: Could not parse benchmark results:', e.message);
+            }
           }
-          EOF
 
-          # Generate dashboard from template
+          // Aggregate metrics by pattern and size
+          const patterns = {};
+          let totalTime = 0;
+          let totalBenchmarks = results.length;
+
+          results.forEach(bench => {
+            const pattern = bench.dataset_pattern || 'unknown';
+            const size = bench.dataset_size || 'unknown';
+
+            if (!patterns[pattern]) patterns[pattern] = {};
+
+            const successResults = (bench.results || []).filter(r => r.success);
+            if (successResults.length > 0) {
+              const avgTime = successResults.reduce((s, r) => s + r.time_seconds, 0) / successResults.length;
+              patterns[pattern][size] = parseFloat(avgTime.toFixed(4));
+              totalTime += successResults.reduce((s, r) => s + r.time_seconds, 0);
+            }
+          });
+
+          // Create new history entry
+          const newEntry = {
+            timestamp: process.env.ISO_TIMESTAMP || new Date().toISOString(),
+            commit: process.env.GITHUB_SHA || 'unknown',
+            branch: process.env.GITHUB_REF_NAME || 'unknown',
+            run_id: process.env.GITHUB_RUN_ID || 'unknown',
+            metrics: {
+              total_benchmarks: totalBenchmarks,
+              total_time_seconds: parseFloat(totalTime.toFixed(2)),
+              patterns: patterns
+            }
+          };
+
+          // Load and update history
+          const historyPath = 'performance-site/data/history.json';
+          let history = { version: '1.0', max_entries: 50, entries: [] };
+          if (fs.existsSync(historyPath)) {
+            try {
+              history = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+            } catch (e) {
+              console.log('Warning: Could not parse history, starting fresh');
+            }
+          }
+
+          // Add new entry and keep last 50
+          history.entries.unshift(newEntry);
+          history.entries = history.entries.slice(0, 50);
+
+          // Save updated history
+          fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
+
+          // Save latest.json
+          const latest = {
+            ...newEntry,
+            results_path: process.env.RUN_TIMESTAMP,
+            workflow_url: `https://github.com/AndreaBozzo/dataprof/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            status: 'completed'
+          };
+          fs.writeFileSync('performance-site/data/latest.json', JSON.stringify(latest, null, 2));
+
+          console.log(`Updated history with ${totalBenchmarks} benchmarks, ${history.entries.length} total entries`);
+          NODESCRIPT
+        env:
+          ISO_TIMESTAMP: ${{ github.event.head_commit.timestamp || '' }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          RUN_TIMESTAMP: $(date -u +%Y%m%d_%H%M%S)
+
+      - name: Generate interactive dashboard
+        run: |
+          RUN_TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
+          ISO_TIMESTAMP=$(date -u --iso-8601=seconds)
+          COMMIT_SHORT="${{ github.sha }}"
+          COMMIT_SHORT="${COMMIT_SHORT:0:7}"
+
+          # Copy template files
           cp .github/templates/dashboard.html performance-site/index.html
+          cp .github/templates/dashboard.js performance-site/dashboard.js
 
-          # Extract metrics for dashboard
-          UNIFIED_SUMMARY="No data available"
-          DOMAIN_SUMMARY="No data available"
-          STATISTICAL_SUMMARY="No data available"
-
-          if [[ -f "benchmark-results/unified.txt" ]]; then
-            UNIFIED_SUMMARY=$(grep -E "(time:|thrpt:)" benchmark-results/unified.txt | head -5 | sed 's/^/  /' || echo "  Processing...")
-          fi
-
-          if [[ -f "benchmark-results/domain.txt" ]]; then
-            DOMAIN_SUMMARY=$(grep -E "(time:|thrpt:)" benchmark-results/domain.txt | head -5 | sed 's/^/  /' || echo "  Processing...")
-          fi
-
-          if [[ -f "benchmark-results/statistical.txt" ]]; then
-            STATISTICAL_SUMMARY=$(grep -E "(time:|thrpt:)" benchmark-results/statistical.txt | head -5 | sed 's/^/  /' || echo "  Processing...")
-          fi
-
-          # Replace placeholders with real data
-          sed -i "s/TIMESTAMP_PLACEHOLDER/$TIMESTAMP/g" performance-site/index.html
+          # Replace simple placeholders
+          sed -i "s/TIMESTAMP_PLACEHOLDER/$ISO_TIMESTAMP/g" performance-site/index.html
           sed -i "s/COMMIT_PLACEHOLDER/${{ github.sha }}/g" performance-site/index.html
+          sed -i "s/COMMIT_SHORT_PLACEHOLDER/$COMMIT_SHORT/g" performance-site/index.html
           sed -i "s/BRANCH_PLACEHOLDER/${{ github.ref_name }}/g" performance-site/index.html
+          sed -i "s/RUN_TIMESTAMP_PLACEHOLDER/$RUN_TIMESTAMP/g" performance-site/index.html
           sed -i "s|WORKFLOW_URL_PLACEHOLDER|https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}|g" performance-site/index.html
 
-          # Replace metrics placeholders using file-based approach (avoiding sed escaping issues)
-          echo "$UNIFIED_SUMMARY" > /tmp/unified_data.txt
-          echo "$DOMAIN_SUMMARY" > /tmp/domain_data.txt
-          echo "$STATISTICAL_SUMMARY" > /tmp/statistical_data.txt
+          # Inject JSON data into HTML using Node.js (avoids sed escaping issues)
+          node << 'NODESCRIPT'
+          const fs = require('fs');
 
-          # Replace only real benchmark data if available
-          if [[ -f "benchmark-results/unified.txt" && -s "benchmark-results/unified.txt" ]]; then
-            echo "$UNIFIED_SUMMARY" > /tmp/unified_data.txt
-            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/unified_data.txt"); $u=<F>; close(F); chomp($u)} s/UNIFIED_METRICS_PLACEHOLDER/$u/g' performance-site/index.html
-          else
-            sed -i 's/UNIFIED_METRICS_PLACEHOLDER/Benchmark data will be available after next CI run/g' performance-site/index.html
-          fi
+          let html = fs.readFileSync('performance-site/index.html', 'utf8');
 
-          if [[ -f "benchmark-results/domain.txt" && -s "benchmark-results/domain.txt" ]]; then
-            echo "$DOMAIN_SUMMARY" > /tmp/domain_data.txt
-            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/domain_data.txt"); $d=<F>; close(F); chomp($d)} s/DOMAIN_METRICS_PLACEHOLDER/$d/g' performance-site/index.html
-          else
-            sed -i 's/DOMAIN_METRICS_PLACEHOLDER/Benchmark data will be available after next CI run/g' performance-site/index.html
-          fi
+          // Load data files
+          let historyData = '{"entries":[]}';
+          let benchmarkData = '[]';
 
-          if [[ -f "benchmark-results/statistical.txt" && -s "benchmark-results/statistical.txt" ]]; then
-            echo "$STATISTICAL_SUMMARY" > /tmp/statistical_data.txt
-            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/statistical_data.txt"); $s=<F>; close(F); chomp($s)} s/STATISTICAL_METRICS_PLACEHOLDER/$s/g' performance-site/index.html
-          else
-            sed -i 's/STATISTICAL_METRICS_PLACEHOLDER/Benchmark data will be available after next CI run/g' performance-site/index.html
-          fi
+          try {
+            if (fs.existsSync('performance-site/data/history.json')) {
+              historyData = fs.readFileSync('performance-site/data/history.json', 'utf8');
+            }
+          } catch (e) {
+            console.log('Warning: Could not load history.json');
+          }
 
-          if [[ -f "benchmark-results/comparison.txt" && -s "benchmark-results/comparison.txt" ]]; then
-            COMPARISON_SUMMARY=$(head -10 benchmark-results/comparison.txt | grep -v "^$" | head -5 || echo "External comparison completed")
-            echo "$COMPARISON_SUMMARY" > /tmp/comparison_data.txt
-            perl -i -pe 'BEGIN{$/=undef; open(F,"/tmp/comparison_data.txt"); $c=<F>; close(F); chomp($c)} s/COMPARISON_RESULTS_PLACEHOLDER/$c/g' performance-site/index.html
-          else
-            sed -i 's/COMPARISON_RESULTS_PLACEHOLDER/External comparison will be available after next CI run/g' performance-site/index.html
-          fi
+          try {
+            if (fs.existsSync('benchmark-results/unified_benchmark_results.json')) {
+              benchmarkData = fs.readFileSync('benchmark-results/unified_benchmark_results.json', 'utf8');
+            }
+          } catch (e) {
+            console.log('Warning: Could not load benchmark results');
+          }
 
-          echo "✅ Performance dashboard generated"
+          // Replace placeholders
+          html = html.replace('HISTORY_DATA_PLACEHOLDER', historyData);
+          html = html.replace('BENCHMARK_DATA_PLACEHOLDER', benchmarkData);
+
+          fs.writeFileSync('performance-site/index.html', html);
+          console.log('Dashboard generated successfully with inline data');
+          NODESCRIPT
+
+          echo "Dashboard files:"
+          ls -la performance-site/
 
       - name: Deploy to GitHub Pages
         uses: actions/upload-pages-artifact@v4

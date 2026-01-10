@@ -1,199 +1,448 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>DataProfiler Performance Dashboard</title>
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DataProf Performance Dashboard</title>
+  <meta name="description" content="Interactive performance benchmarks for DataProf - High-performance data profiler">
+
+  <!-- Chart.js and plugins from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+
   <style>
+    :root {
+      --color-excellent: #0ea5e9;
+      --color-good: #6366f1;
+      --color-fair: #f59e0b;
+      --color-poor: #ef4444;
+      --color-bg-primary: #0f172a;
+      --color-bg-secondary: #1e293b;
+      --color-bg-tertiary: #334155;
+      --color-text-primary: #f1f5f9;
+      --color-text-secondary: #cbd5e1;
+      --color-text-muted: #94a3b8;
+      --color-border: #475569;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      margin: 0; padding: 0; background: #f8f9fa;
-      min-height: 100vh; color: #333;
+      font-family: var(--font-sans);
+      background: var(--color-bg-primary);
+      color: var(--color-text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
     }
-    .container {
-      max-width: 1200px; margin: 0 auto; padding: 20px;
-      background: white; margin-top: 20px; margin-bottom: 20px;
-      border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+
+    .dashboard-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
     }
-    .header {
-      background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-      color: white; padding: 30px; margin: -20px -20px 30px -20px;
-      border-radius: 8px 8px 0 0;
+
+    /* Header */
+    .dashboard-header {
+      background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 24px;
+      border: 1px solid var(--color-border);
+      position: relative;
+      overflow: hidden;
     }
-    .header h1 { margin: 0; font-size: 2.2em; font-weight: 400; letter-spacing: -0.02em; }
-    .header .subtitle { margin: 8px 0 0 0; opacity: 0.9; font-size: 1.1em; font-weight: 300; }
-    .header .meta { margin: 15px 0 0 0; opacity: 0.8; font-size: 0.9em; font-family: 'Monaco', 'Menlo', monospace; }
-    .metric {
-      background: #f8f9fa; border: 1px solid #e9ecef; padding: 25px; margin: 20px 0;
-      border-radius: 6px; transition: all 0.2s ease;
+
+    .dashboard-header::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--color-excellent), var(--color-good), var(--color-fair));
     }
-    .metric:hover { border-color: #007bff; box-shadow: 0 2px 8px rgba(0,123,255,0.1); }
-    .metric h3 { margin-top: 0; color: #2c3e50; font-size: 1.2em; font-weight: 500; margin-bottom: 15px; }
-    .metric p { line-height: 1.6; margin-bottom: 15px; color: #555; }
-    .success { border-left: 4px solid #28a745; }
-    .info { border-left: 4px solid #007bff; }
-    .statistical { border-left: 4px solid #6f42c1; }
-    .links { margin-top: 15px; padding-top: 15px; border-top: 1px solid #e9ecef; }
-    .links a {
-      display: inline-block; margin-right: 15px; margin-bottom: 8px; padding: 8px 16px;
-      background: #007bff; color: white; text-decoration: none; border-radius: 4px;
-      font-size: 0.9em; transition: background-color 0.2s ease;
+
+    .header-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 16px;
     }
-    .links a:hover { background: #0056b3; }
-    .links a.secondary { background: #6c757d; }
-    .links a.secondary:hover { background: #545b62; }
-    .status-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-      gap: 15px; margin: 20px 0;
+
+    .header-title h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
     }
-    .status-item {
-      padding: 15px; background: #f8f9fa; border-radius: 4px;
-      border: 1px solid #e9ecef; text-align: center;
+
+    .header-title p {
+      color: var(--color-text-secondary);
+      font-size: 0.95rem;
     }
-    .status-value { font-size: 1.5em; font-weight: 600; margin-bottom: 5px; }
-    .status-label { color: #6c757d; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
-    .badge {
-      display: inline-block; padding: 3px 8px; border-radius: 12px;
-      font-size: 0.75em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+
+    .header-meta {
+      text-align: right;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
     }
-    .badge-success { background: #d4edda; color: #155724; }
-    .badge-new { background: #e2e3e5; color: #383d41; }
-    .footer {
-      text-align: center; margin-top: 40px; padding-top: 20px;
-      border-top: 1px solid #e9ecef; color: #6c757d; font-size: 0.9em;
+
+    .header-meta a {
+      color: var(--color-excellent);
+      text-decoration: none;
     }
-    .footer a { color: #007bff; }
-    ul.feature-list { list-style: none; padding: 0; }
-    .feature-list li { margin: 12px 0; padding-left: 20px; position: relative; }
+
+    .header-meta a:hover {
+      text-decoration: underline;
+    }
+
+    /* KPI Strip */
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+
+    .kpi-card:hover {
+      border-color: var(--color-good);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+    }
+
+    .kpi-label {
+      font-size: 0.7rem;
+      color: var(--color-text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .kpi-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--color-text-primary);
+    }
+
+    /* Charts Grid */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .chart-card {
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 24px;
+      min-height: 350px;
+      position: relative;
+    }
+
+    .chart-card canvas {
+      max-height: 300px;
+    }
+
+    .chart-placeholder {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--color-text-muted);
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 20px;
+    }
+
+    /* Details Section */
+    .details-section {
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .details-section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .details-section h2::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: linear-gradient(180deg, var(--color-excellent), var(--color-good));
+      border-radius: 2px;
+    }
+
+    .feature-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      list-style: none;
+    }
+
+    .feature-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px;
+      background: var(--color-bg-primary);
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+
     .feature-list li::before {
-      content: "✓"; position: absolute; left: 0; top: 0; color: #28a745; font-weight: bold;
+      content: '\2713';
+      color: var(--color-excellent);
+      font-weight: bold;
+      flex-shrink: 0;
     }
-    pre {
-      background: #f8f9fa; color: #495057; padding: 20px; overflow-x: auto;
-      border-radius: 4px; border: 1px solid #e9ecef; max-height: 400px;
-      font-family: 'Monaco', 'Menlo', 'Consolas', monospace; font-size: 0.85em; line-height: 1.5;
+
+    /* Links Section */
+    .links-section {
+      background: var(--color-bg-secondary);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
     }
-    @media (max-width: 768px) {
-      .container { margin: 10px; padding: 15px; }
-      .header { padding: 20px; margin: -15px -15px 20px -15px; }
-      .header h1 { font-size: 1.8em; }
-      .status-grid { grid-template-columns: 1fr; }
-      .links a { display: block; margin-right: 0; margin-bottom: 10px; text-align: center; }
+
+    .links-section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .links-section h2::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: linear-gradient(180deg, var(--color-fair), var(--color-excellent));
+      border-radius: 2px;
+    }
+
+    .links-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .link-btn {
+      display: inline-block;
+      padding: 10px 18px;
+      background: var(--color-good);
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .link-btn:hover {
+      background: #4f46e5;
+      transform: translateY(-1px);
+    }
+
+    .link-btn.secondary {
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-secondary);
+    }
+
+    .link-btn.secondary:hover {
+      background: #475569;
+    }
+
+    /* Footer */
+    .dashboard-footer {
+      text-align: center;
+      padding: 24px;
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--color-border);
+    }
+
+    .dashboard-footer a {
+      color: var(--color-excellent);
+      text-decoration: none;
+    }
+
+    .dashboard-footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* Error banner */
+    .error-banner {
+      background: var(--color-poor);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 0.9rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .charts-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .header-content {
+        flex-direction: column;
+      }
+
+      .header-meta {
+        text-align: left;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .dashboard-container {
+        padding: 16px;
+      }
+
+      .dashboard-header, .chart-card, .details-section, .links-section {
+        padding: 16px;
+      }
+
+      .kpi-strip {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .header-title h1 {
+        font-size: 1.4rem;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>DataProfiler Performance Dashboard</h1>
-      <p class="subtitle">Comprehensive Performance Analysis & Statistical Rigor Framework</p>
-      <p class="meta" id="build-meta">
-        Last updated: TIMESTAMP_PLACEHOLDER<br>
-        Commit: COMMIT_PLACEHOLDER | Branch: BRANCH_PLACEHOLDER
-      </p>
-    </div>
-
-    <div class="metric success">
-      <h3>Latest Benchmark Results <span class="badge badge-success">Active</span></h3>
-      <p>Comprehensive performance analysis with unified infrastructure, domain-specific tests, and statistical rigor framework.</p>
-      <div class="links" id="result-links">
-        <a href="data/TIMESTAMP_PLACEHOLDER/report.md">Full Report</a>
-        <a href="data/TIMESTAMP_PLACEHOLDER/unified_benchmark_report.md">Unified Analysis</a>
-        <a href="data/TIMESTAMP_PLACEHOLDER/domain_benchmark_report.md">Domain Testing</a>
-        <a href="data/TIMESTAMP_PLACEHOLDER/statistical_rigor_report.md">Statistical Report</a>
-        <a href="data/TIMESTAMP_PLACEHOLDER/comparison.txt" class="secondary">External Comparison</a>
-        <a href="WORKFLOW_URL_PLACEHOLDER" class="secondary">Workflow Logs</a>
+  <div class="dashboard-container">
+    <!-- Header -->
+    <header class="dashboard-header">
+      <div class="header-content">
+        <div class="header-title">
+          <h1>DataProf Performance Dashboard</h1>
+          <p>High-performance data profiler with ISO 8000/25012 quality metrics</p>
+        </div>
+        <div class="header-meta">
+          <div>Updated: <strong>TIMESTAMP_PLACEHOLDER</strong></div>
+          <div>Commit: <a href="https://github.com/AndreaBozzo/dataprof/commit/COMMIT_PLACEHOLDER">COMMIT_SHORT_PLACEHOLDER</a></div>
+          <div>Branch: <strong>BRANCH_PLACEHOLDER</strong></div>
+          <div><a href="WORKFLOW_URL_PLACEHOLDER">View Workflow</a></div>
+        </div>
       </div>
-    </div>
+    </header>
 
-    <div class="metric info">
-      <h3>🏃 Unified Performance Metrics</h3>
-      <p><strong>Core engine performance:</strong></p>
-      <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 0.9em;">UNIFIED_METRICS_PLACEHOLDER</pre>
-    </div>
-
-    <div class="metric statistical">
-      <h3>🏢 Domain-Specific Performance</h3>
-      <p><strong>Domain testing results:</strong></p>
-      <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 0.9em;">DOMAIN_METRICS_PLACEHOLDER</pre>
-    </div>
-
-    <div class="metric">
-      <h3>📊 Statistical Rigor Metrics</h3>
-      <p><strong>Statistical analysis performance:</strong></p>
-      <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-size: 0.9em;">STATISTICAL_METRICS_PLACEHOLDER</pre>
-    </div>
-
-    <div class="status-grid">
-      <div class="status-item">
-        <div class="status-value">OPERATIONAL</div>
-        <div class="status-label">System Status</div>
+    <!-- KPI Strip -->
+    <section class="kpi-strip">
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Throughput</div>
+        <div class="kpi-value" id="kpi-throughput">--</div>
       </div>
-      <div class="status-item">
-        <div class="status-value">v0.4.6</div>
-        <div class="status-label">Current Version</div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Time (small)</div>
+        <div class="kpi-value" id="kpi-avg-time">--</div>
       </div>
-      <div class="status-item">
-        <div class="status-value">20x</div>
-        <div class="status-label">Memory Efficiency vs pandas</div>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Benchmarks</div>
+        <div class="kpi-value" id="kpi-total">--</div>
       </div>
-      <div class="status-item">
-        <div class="status-value">30+</div>
-        <div class="status-label">Quality Checks</div>
+      <div class="kpi-card">
+        <div class="kpi-label">Success Rate</div>
+        <div class="kpi-value" id="kpi-success">--</div>
       </div>
-    </div>
+      <div class="kpi-card">
+        <div class="kpi-label">vs Previous</div>
+        <div class="kpi-value" id="kpi-delta">--</div>
+      </div>
+    </section>
 
-    <div class="metric info">
-      <h3>Benchmark System Architecture</h3>
-      <p>Modern benchmarking infrastructure with statistical rigor and comprehensive testing coverage.</p>
+    <!-- Charts Grid -->
+    <section class="charts-grid">
+      <div class="chart-card">
+        <canvas id="time-series-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <canvas id="throughput-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <canvas id="heatmap-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <canvas id="comparison-chart"></canvas>
+      </div>
+    </section>
+
+    <!-- Benchmark Reports Links -->
+    <section class="links-section">
+      <h2>Benchmark Reports</h2>
+      <div class="links-grid">
+        <a href="data/RUN_TIMESTAMP_PLACEHOLDER/report.md" class="link-btn">Full Report</a>
+        <a href="data/RUN_TIMESTAMP_PLACEHOLDER/unified_benchmark_report.md" class="link-btn">Unified Analysis</a>
+        <a href="data/RUN_TIMESTAMP_PLACEHOLDER/domain_benchmark_report.md" class="link-btn">Domain Testing</a>
+        <a href="data/RUN_TIMESTAMP_PLACEHOLDER/statistical_rigor_report.md" class="link-btn">Statistical Report</a>
+        <a href="data/RUN_TIMESTAMP_PLACEHOLDER/comparison.txt" class="link-btn secondary">External Comparison</a>
+      </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="details-section">
+      <h2>Benchmark Infrastructure</h2>
       <ul class="feature-list">
-        <li><strong>Unified Infrastructure:</strong> Consolidated from fragmented benchmark files</li>
-        <li><strong>Domain-Specific Tests:</strong> Transactions, TimeSeries, Streaming data patterns</li>
-        <li><strong>Standardized Datasets:</strong> 7 realistic patterns (Basic, Mixed, Numeric, Wide, Deep, Unicode, Messy)</li>
-        <li><strong>JSON Result Collection:</strong> Structured data for CI/CD integration</li>
-        <li><strong>Statistical Rigor Framework:</strong> 95% confidence intervals, outlier detection, regression analysis</li>
-        <li><strong>Engine Selection Testing:</strong> AdaptiveProfiler accuracy validation (target 85%)</li>
+        <li><strong>Unified Infrastructure:</strong> Consolidated benchmark system with Criterion</li>
+        <li><strong>Domain-Specific Tests:</strong> Transactions, TimeSeries, Streaming patterns</li>
+        <li><strong>Standardized Datasets:</strong> 7 patterns (Basic, Mixed, Numeric, Wide, Deep, Unicode, Messy)</li>
+        <li><strong>Statistical Rigor:</strong> 95% confidence intervals, IQR outlier detection</li>
+        <li><strong>Engine Validation:</strong> AdaptiveProfiler accuracy target 85%</li>
+        <li><strong>External Comparison:</strong> Automated testing vs pandas, polars</li>
       </ul>
-    </div>
+    </section>
 
-    <div class="metric statistical">
-      <h3>Statistical Rigor Framework <span class="badge badge-new">New</span></h3>
-      <p>Advanced statistical analysis ensuring reliable performance measurements and regression detection.</p>
-      <div class="status-grid">
-        <div class="status-item">
-          <div class="status-value">95%</div>
-          <div class="status-label">Confidence Intervals</div>
-        </div>
-        <div class="status-item">
-          <div class="status-value">IQR</div>
-          <div class="status-label">Outlier Detection</div>
-        </div>
-        <div class="status-item">
-          <div class="status-value">&lt;5%</div>
-          <div class="status-label">Target CV</div>
-        </div>
-        <div class="status-item">
-          <div class="status-value">85%</div>
-          <div class="status-label">Engine Accuracy Target</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="metric">
-      <h3>Performance Validation Results</h3>
-      <p>Automated validation of DataProfiler's performance claims through comprehensive CI benchmarks comparing against pandas, polars, and other tools.</p>
-      <pre>COMPARISON_RESULTS_PLACEHOLDER</pre>
-    </div>
-
-    <div class="footer">
+    <!-- Footer -->
+    <footer class="dashboard-footer">
       <p>Generated automatically by GitHub Actions</p>
       <p>
-        <a href="https://github.com/AndreaBozzo/dataprof">View Repository</a> |
-        <a href="https://github.com/AndreaBozzo/dataprof/releases/latest">Latest Release</a> |
+        <a href="https://github.com/AndreaBozzo/dataprof">Repository</a> &bull;
+        <a href="https://github.com/AndreaBozzo/dataprof/releases/latest">Latest Release</a> &bull;
         <a href="https://github.com/AndreaBozzo/dataprof/actions">Actions</a>
       </p>
-    </div>
+    </footer>
   </div>
 
+  <!-- Inline Data (replaced by workflow) -->
+  <script id="history-data" type="application/json">HISTORY_DATA_PLACEHOLDER</script>
+  <script id="benchmark-data" type="application/json">BENCHMARK_DATA_PLACEHOLDER</script>
+
+  <!-- Dashboard Logic -->
+  <script src="dashboard.js"></script>
 </body>
 </html>
