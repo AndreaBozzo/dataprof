@@ -75,7 +75,7 @@ jobs:
       - name: Build benchmark binaries
         run: |
           echo "🔨 Building benchmark binaries..."
-          timeout 300 cargo bench --no-run
+          timeout 300 cargo bench --no-run --lib --benches
 
       - name: Run quick benchmarks
         uses: ./.github/actions/benchmark-runner
@@ -119,7 +119,7 @@ jobs:
       - name: Build benchmarks
         run: |
           echo "🔨 Building all benchmarks..."
-          timeout 600 cargo bench --no-run
+          timeout 600 cargo bench --no-run --lib --benches
           echo "✅ Benchmark build completed"
 
   # Unified benchmark job

@@ -160,9 +160,9 @@ incremental = true
 codegen-units = 256
 
 [profile.release]
-# lto = true        # TODO: find a solution for this Can cause linking issues with mixed rlib/cdylib
-codegen-units = 1 
-panic = "abort"   
+lto = true
+codegen-units = 1
+panic = "abort"
 strip = true      
 
 
@@ -203,7 +203,8 @@ production = ["postgres", "mysql"]
 all-db = ["postgres", "mysql", "sqlite"] 
 
 
-# Library configuration - rlib for internal use, cdylib for Python bindings
+# Library configuration - rlib only for Rust use
+# cdylib is added automatically by maturin when building Python bindings
 [lib]
 name = "dataprof"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
