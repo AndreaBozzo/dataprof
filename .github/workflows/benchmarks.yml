@@ -650,12 +650,12 @@ jobs:
           cp .github/templates/dashboard.html performance-site/index.html
           cp .github/templates/dashboard.js performance-site/dashboard.js
 
-          # Replace simple placeholders
+          # Replace simple placeholders (ORDER MATTERS: longer patterns first to avoid partial matches)
+          sed -i "s/RUN_TIMESTAMP_PLACEHOLDER/$RUN_TIMESTAMP/g" performance-site/index.html
+          sed -i "s/COMMIT_SHORT_PLACEHOLDER/$COMMIT_SHORT/g" performance-site/index.html
           sed -i "s/TIMESTAMP_PLACEHOLDER/$ISO_TIMESTAMP/g" performance-site/index.html
           sed -i "s/COMMIT_PLACEHOLDER/${{ github.sha }}/g" performance-site/index.html
-          sed -i "s/COMMIT_SHORT_PLACEHOLDER/$COMMIT_SHORT/g" performance-site/index.html
           sed -i "s/BRANCH_PLACEHOLDER/${{ github.ref_name }}/g" performance-site/index.html
-          sed -i "s/RUN_TIMESTAMP_PLACEHOLDER/$RUN_TIMESTAMP/g" performance-site/index.html
           sed -i "s|WORKFLOW_URL_PLACEHOLDER|https://github.com/AndreaBozzo/dataprof/actions/runs/${{ github.run_id }}|g" performance-site/index.html
 
           # Inject JSON data into HTML using Node.js (avoids sed escaping issues)
