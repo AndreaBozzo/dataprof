@@ -522,6 +522,15 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Generate timestamps
+        id: timestamps
+        run: |
+          RUN_TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
+          ISO_TIMESTAMP=$(date -u --iso-8601=seconds)
+          echo "run_timestamp=$RUN_TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "iso_timestamp=$ISO_TIMESTAMP" >> $GITHUB_OUTPUT
+          echo "Generated timestamps: $RUN_TIMESTAMP / $ISO_TIMESTAMP"
+
       - name: Fetch existing history from GitHub Pages
         run: |
           mkdir -p performance-site/data
@@ -537,8 +546,8 @@ jobs:
 
       - name: Aggregate metrics and update history
         run: |
-          RUN_TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
-          ISO_TIMESTAMP=$(date -u --iso-8601=seconds)
+          RUN_TIMESTAMP="${{ steps.timestamps.outputs.run_timestamp }}"
+          ISO_TIMESTAMP="${{ steps.timestamps.outputs.iso_timestamp }}"
 
           # Create run data directory
           mkdir -p performance-site/data/runs/$RUN_TIMESTAMP
@@ -624,16 +633,16 @@ jobs:
           console.log(`Updated history with ${totalBenchmarks} benchmarks, ${history.entries.length} total entries`);
           NODESCRIPT
         env:
-          ISO_TIMESTAMP: ${{ github.event.head_commit.timestamp || '' }}
+          ISO_TIMESTAMP: ${{ steps.timestamps.outputs.iso_timestamp }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_RUN_ID: ${{ github.run_id }}
-          RUN_TIMESTAMP: $(date -u +%Y%m%d_%H%M%S)
+          RUN_TIMESTAMP: ${{ steps.timestamps.outputs.run_timestamp }}
 
       - name: Generate interactive dashboard
         run: |
-          RUN_TIMESTAMP=$(date -u +%Y%m%d_%H%M%S)
-          ISO_TIMESTAMP=$(date -u --iso-8601=seconds)
+          RUN_TIMESTAMP="${{ steps.timestamps.outputs.run_timestamp }}"
+          ISO_TIMESTAMP="${{ steps.timestamps.outputs.iso_timestamp }}"
           COMMIT_SHORT="${{ github.sha }}"
           COMMIT_SHORT="${COMMIT_SHORT:0:7}"
 
