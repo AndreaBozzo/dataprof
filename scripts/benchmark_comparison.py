@@ -96,6 +96,7 @@ class BenchmarkRunner:
 
         result = subprocess.run([
             str(binary_path),
+            "analyze",
             str(csv_path), '--format', 'json'
         ], capture_output=True, text=True, cwd='.')
 

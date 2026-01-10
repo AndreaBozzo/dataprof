@@ -187,7 +187,7 @@ class BenchmarkMatrix:
                 return {'tool': 'DataProfiler', 'success': False, 'error': f'Build failed: {build_result.stderr}'}
 
         start_time = time.time()
-        result = subprocess.run([str(binary_path), str(csv_path), '--format', 'json'],
+        result = subprocess.run([str(binary_path), "analyze", str(csv_path), '--format', 'json'],
                               capture_output=True, text=True, cwd='.')
         time_taken = time.time() - start_time
 
