@@ -131,16 +131,7 @@ name = "dataprof-cli"
 path = "src/main.rs"
 
 [[bench]]
-name = "unified_benchmarks"
-harness = false
-
-[[bench]]
-name = "domain_benchmarks"
-harness = false
-
-
-[[bench]]
-name = "statistical_benchmark"
+name = "benchmarks"
 harness = false
 
 
