@@ -42,10 +42,6 @@ example_usage/
 .cargo/credentials
 .cargo/credentials.toml
 
-# Claude files
-CLAUDE.md
-.claude/
-
 # Node.js dependencies and artifacts
 node_modules/
 npm-debug.log*
@@ -73,3 +69,6 @@ venv/
 env/
 .venv/
 .env/
+
+#mypycache
+.mypy_cache/
