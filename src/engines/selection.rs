@@ -42,9 +42,9 @@ pub struct EngineRecommendation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EngineType {
     Arrow,
-    TrueStreaming,
-    MemoryEfficient,
-    Streaming,
+    Incremental,
+    MemoryMapped,
+    Buffered,
 }
 
 /// Intelligent engine selector
@@ -239,16 +239,16 @@ impl EngineSelector {
             self.score_arrow(characteristics, &processing_type),
         );
         scores.insert(
-            EngineType::TrueStreaming,
-            self.score_true_streaming(characteristics, &processing_type),
+            EngineType::Incremental,
+            self.score_incremental(characteristics, &processing_type),
         );
         scores.insert(
-            EngineType::MemoryEfficient,
-            self.score_memory_efficient(characteristics, &processing_type),
+            EngineType::MemoryMapped,
+            self.score_memory_mapped(characteristics, &processing_type),
         );
         scores.insert(
-            EngineType::Streaming,
-            self.score_streaming(characteristics, &processing_type),
+            EngineType::Buffered,
+            self.score_buffered(characteristics, &processing_type),
         );
 
         // Find the best engine
@@ -320,14 +320,14 @@ impl EngineSelector {
         score.min(1.0)
     }
 
-    fn score_true_streaming(
+    fn score_incremental(
         &self,
         characteristics: &FileCharacteristics,
         processing_type: &ProcessingType,
     ) -> f64 {
         let mut score: f64 = 0.0;
 
-        // True streaming for very large files
+        // Incremental profiler for very large files
         if characteristics.file_size_mb > 500.0 {
             score += 0.4;
         }
@@ -350,7 +350,7 @@ impl EngineSelector {
         score.min(1.0)
     }
 
-    fn score_memory_efficient(
+    fn score_memory_mapped(
         &self,
         characteristics: &FileCharacteristics,
         _processing_type: &ProcessingType,
@@ -377,7 +377,7 @@ impl EngineSelector {
         score.min(1.0)
     }
 
-    fn score_streaming(
+    fn score_buffered(
         &self,
         characteristics: &FileCharacteristics,
         _processing_type: &ProcessingType,
@@ -414,16 +414,16 @@ impl EngineSelector {
                 characteristics.file_size_mb,
                 characteristics.estimated_columns.unwrap_or(0)
             ),
-            EngineType::TrueStreaming => format!(
-                "True streaming selected for {:.1}MB file due to memory constraints (pressure: {:.1}) or streaming requirements.",
+            EngineType::Incremental => format!(
+                "Incremental profiler selected for {:.1}MB file due to memory constraints (pressure: {:.1}) or streaming requirements.",
                 characteristics.file_size_mb, self.system_resources.memory_pressure
             ),
-            EngineType::MemoryEfficient => format!(
-                "Memory-efficient engine selected for {:.1}MB file with moderate complexity ({:.2}).",
+            EngineType::MemoryMapped => format!(
+                "Memory-mapped profiler selected for {:.1}MB file with moderate complexity ({:.2}).",
                 characteristics.file_size_mb, characteristics.complexity_score
             ),
-            EngineType::Streaming => format!(
-                "Standard streaming selected for {:.1}MB file with low complexity ({:.2}).",
+            EngineType::Buffered => format!(
+                "Buffered profiler selected for {:.1}MB file with low complexity ({:.2}).",
                 characteristics.file_size_mb, characteristics.complexity_score
             ),
         }
@@ -463,10 +463,10 @@ mod tests {
         let recommendation =
             selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
-        // Small files should prefer streaming
+        // Small files should prefer buffered profiler
         assert!(matches!(
             recommendation.primary_engine,
-            EngineType::Streaming
+            EngineType::Buffered
         ));
 
         Ok(())
@@ -475,16 +475,16 @@ mod tests {
     #[test]
     fn test_engine_selection_large_file() {
         // Use fixed resources for deterministic testing
-        // High memory pressure to ensure TrueStreaming gets bonus points
+        // High memory pressure to ensure Incremental gets bonus points
         let selector = EngineSelector::new_with_resources(
             2048.0, // 2GB available memory
             8,      // 8 CPU cores
-            0.75,   // High memory pressure (>0.7) for TrueStreaming bonus
+            0.75,   // High memory pressure (>0.7) for Incremental bonus
             false,  // Arrow not available for this test
         );
 
         let characteristics = FileCharacteristics {
-            file_size_mb: 1200.0, // Much larger to clearly favor TrueStreaming
+            file_size_mb: 1200.0, // Much larger to clearly favor Incremental
             estimated_rows: Some(5_000_000),
             estimated_columns: Some(50),
             has_mixed_types: false,
@@ -495,13 +495,13 @@ mod tests {
         let recommendation =
             selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
-        // Large files with numeric data should prefer Arrow if available, otherwise TrueStreaming
+        // Large files with numeric data should prefer Arrow if available, otherwise Incremental
         if selector.arrow_available {
             assert!(matches!(recommendation.primary_engine, EngineType::Arrow));
         } else {
             assert!(matches!(
                 recommendation.primary_engine,
-                EngineType::TrueStreaming
+                EngineType::Incremental
             ));
         }
     }

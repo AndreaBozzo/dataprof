@@ -39,15 +39,16 @@ impl StreamingColumnInfo {
     }
 }
 
-/// Memory-efficient streaming profiler that uses memory mapping
-pub struct MemoryEfficientProfiler {
+/// Memory-mapped profiler that uses mmap for large files
+/// Falls back to BufferedProfiler for files under 10MB.
+pub struct MappedProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
     max_memory_mb: usize,
 }
 
-impl MemoryEfficientProfiler {
+impl MappedProfiler {
     pub fn new() -> Self {
         Self {
             chunk_size: ChunkSize::default(),
@@ -211,8 +212,8 @@ impl MemoryEfficientProfiler {
     }
 
     fn analyze_small_file(&self, file_path: &Path) -> Result<QualityReport> {
-        // For small files, fall back to the existing streaming profiler
-        let profiler = super::StreamingProfiler::new()
+        // For small files, fall back to the buffered profiler
+        let profiler = super::BufferedProfiler::new()
             .chunk_size(self.chunk_size.clone())
             .sampling(self.sampling_strategy.clone());
 
@@ -336,7 +337,7 @@ impl MemoryEfficientProfiler {
     }
 }
 
-impl Default for MemoryEfficientProfiler {
+impl Default for MappedProfiler {
     fn default() -> Self {
         Self::new()
     }

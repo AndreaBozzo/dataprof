@@ -3,9 +3,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::engines::selection::{EngineSelector, EngineType, ProcessingType};
-use crate::engines::streaming::{
-    MemoryEfficientProfiler, StreamingProfiler, TrueStreamingProfiler,
-};
+use crate::engines::streaming::{BufferedProfiler, IncrementalProfiler, MappedProfiler};
 use crate::types::QualityReport;
 
 /// Performance metrics for engine execution
@@ -262,16 +260,16 @@ impl AdaptiveProfiler {
                     ))
                 }
             }
-            EngineType::TrueStreaming => {
-                let profiler = TrueStreamingProfiler::new();
+            EngineType::Incremental => {
+                let profiler = IncrementalProfiler::new();
                 profiler.analyze_file(file_path)
             }
-            EngineType::MemoryEfficient => {
-                let profiler = MemoryEfficientProfiler::new();
+            EngineType::MemoryMapped => {
+                let profiler = MappedProfiler::new();
                 profiler.analyze_file(file_path)
             }
-            EngineType::Streaming => {
-                let mut profiler = StreamingProfiler::new();
+            EngineType::Buffered => {
+                let mut profiler = BufferedProfiler::new();
                 profiler.analyze_file(file_path)
             }
         };

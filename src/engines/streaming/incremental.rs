@@ -10,16 +10,17 @@ use crate::types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, QualityReport, ScanInfo,
 };
 
-/// True streaming profiler that processes data without loading everything into memory
-/// Uses incremental statistics and memory mapping for maximum efficiency
-pub struct TrueStreamingProfiler {
+/// Incremental profiler that processes data without loading everything into memory
+/// Uses online/streaming algorithms and memory mapping for maximum efficiency.
+/// Never accumulates full column data - maintains only running statistics.
+pub struct IncrementalProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
     memory_limit_mb: usize,
 }
 
-impl TrueStreamingProfiler {
+impl IncrementalProfiler {
     pub fn new() -> Self {
         Self {
             chunk_size: ChunkSize::default(),
@@ -305,7 +306,7 @@ impl TrueStreamingProfiler {
     }
 }
 
-impl Default for TrueStreamingProfiler {
+impl Default for IncrementalProfiler {
     fn default() -> Self {
         Self::new()
     }
@@ -318,7 +319,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_true_streaming_profiler() -> Result<()> {
+    fn test_incremental_profiler() -> Result<()> {
         // Create a test CSV file
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,age,salary")?;
@@ -327,8 +328,8 @@ mod tests {
         }
         temp_file.flush()?;
 
-        // Test true streaming profiler
-        let profiler = TrueStreamingProfiler::new().memory_limit_mb(10); // Very small memory limit to test streaming
+        // Test incremental profiler
+        let profiler = IncrementalProfiler::new().memory_limit_mb(10); // Very small memory limit to test streaming
 
         let report = profiler.analyze_file(temp_file.path())?;
 
@@ -358,7 +359,7 @@ mod tests {
         }
         temp_file.flush()?;
 
-        let profiler = TrueStreamingProfiler::new().memory_limit_mb(5); // Small memory limit
+        let profiler = IncrementalProfiler::new().memory_limit_mb(5); // Small memory limit
 
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);

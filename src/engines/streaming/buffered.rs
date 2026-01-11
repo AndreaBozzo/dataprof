@@ -1,9 +1,12 @@
-//! Streaming CSV profiler - refactored to use modular components
+//! Buffered CSV profiler - processes data in chunks but buffers all data in memory
 //!
 //! This module coordinates streaming analysis by delegating to:
 //! - ProgressManager (from output/progress.rs) for progress tracking
 //! - ChunkProcessor for chunk processing logic
 //! - ReportBuilder for report construction
+//!
+//! NOTE: Despite processing in chunks, this profiler accumulates ALL column data
+//! in a HashMap. For true streaming without buffering, use IncrementalProfiler.
 //!
 //! REFACTORED: Eliminated God Object pattern (was 350 lines doing everything)
 
@@ -22,7 +25,7 @@ use crate::output::progress::{EnhancedProgressBar, ProgressManager};
 use crate::types::QualityReport;
 
 /// Streaming profiler - now a clean coordinator delegating to specialized modules
-pub struct StreamingProfiler {
+pub struct BufferedProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
@@ -30,7 +33,7 @@ pub struct StreamingProfiler {
     performance_intelligence: Option<PerformanceIntelligence>,
 }
 
-impl StreamingProfiler {
+impl BufferedProfiler {
     pub fn new() -> Self {
         Self {
             chunk_size: ChunkSize::default(),
@@ -319,7 +322,7 @@ impl StreamingProfiler {
     }
 }
 
-impl Default for StreamingProfiler {
+impl Default for BufferedProfiler {
     fn default() -> Self {
         Self::new()
     }
@@ -339,7 +342,7 @@ mod tests {
         writeln!(file, "c,d").unwrap();
         file.flush().unwrap();
 
-        let mut profiler = StreamingProfiler::new();
+        let mut profiler = BufferedProfiler::new();
         let report = profiler.analyze_file(file.path()).unwrap();
 
         assert_eq!(report.file_info.total_rows, Some(2));

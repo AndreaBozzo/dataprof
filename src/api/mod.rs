@@ -1,5 +1,5 @@
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::engines::streaming::{ProgressInfo, StreamingProfiler};
+use crate::engines::streaming::{BufferedProfiler, ProgressInfo};
 use crate::engines::{AdaptiveProfiler, ProcessingType};
 use crate::types::QualityReport;
 use anyhow::Result;
@@ -31,7 +31,7 @@ where
 
 /// Simple builder API for profiling with flexible configuration
 pub struct DataProfiler {
-    inner: StreamingProfiler,
+    inner: BufferedProfiler,
 }
 
 impl DataProfiler {
@@ -43,7 +43,7 @@ impl DataProfiler {
     /// Create a streaming profiler
     pub fn streaming() -> Self {
         Self {
-            inner: StreamingProfiler::new(),
+            inner: BufferedProfiler::new(),
         }
     }
 
@@ -112,7 +112,7 @@ pub struct DataProfilerBuilder<P> {
 
 impl<P: AsRef<Path>> DataProfilerBuilder<P> {
     pub fn analyze(self) -> Result<QualityReport> {
-        let mut profiler = StreamingProfiler::new()
+        let mut profiler = BufferedProfiler::new()
             .chunk_size(self.chunk_size)
             .sampling(self.sampling);
 

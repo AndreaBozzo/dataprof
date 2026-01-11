@@ -25,7 +25,7 @@ impl EngineBenchmarkConfig {
             test_all_engines: true,
             measure_accuracy: true,
             enable_detailed_logging: false,
-            baseline_engine: Some(EngineType::Streaming), // Conservative baseline
+            baseline_engine: Some(EngineType::Buffered), // Conservative baseline
         }
     }
 
@@ -36,7 +36,7 @@ impl EngineBenchmarkConfig {
             test_all_engines: true,
             measure_accuracy: true,
             enable_detailed_logging: true,
-            baseline_engine: Some(EngineType::Streaming),
+            baseline_engine: Some(EngineType::Buffered),
         }
     }
 
@@ -364,7 +364,7 @@ impl EngineBenchmarkFramework {
         dataset_path: &Path,
         engine_type: &EngineType,
     ) -> Result<EnginePerformance> {
-        use crate::engines::streaming::{MemoryEfficientProfiler, TrueStreamingProfiler};
+        use crate::engines::streaming::{IncrementalProfiler, MappedProfiler};
         use crate::parsers::csv::analyze_csv;
         use std::fs;
 
@@ -376,20 +376,20 @@ impl EngineBenchmarkFramework {
         let _file_size_mb = file_metadata.len() as f64 / (1024.0 * 1024.0);
 
         let result = match engine_type {
-            EngineType::Streaming => {
+            EngineType::Buffered => {
                 // Use the standard CSV analyzer (which uses streaming internally)
                 analyze_csv(dataset_path)
             }
-            EngineType::MemoryEfficient => {
+            EngineType::MemoryMapped => {
                 // Use memory-efficient profiler
-                let profiler = MemoryEfficientProfiler::new();
+                let profiler = MappedProfiler::new();
                 profiler
                     .analyze_file(dataset_path)
                     .map(|qr| qr.column_profiles)
             }
-            EngineType::TrueStreaming => {
+            EngineType::Incremental => {
                 // Use true streaming profiler
-                let profiler = TrueStreamingProfiler::new();
+                let profiler = IncrementalProfiler::new();
                 profiler
                     .analyze_file(dataset_path)
                     .map(|qr| qr.column_profiles)
@@ -572,9 +572,9 @@ impl EngineBenchmarkFramework {
         #[cfg(feature = "arrow")]
         {
             vec![
-                EngineType::Streaming,
-                EngineType::MemoryEfficient,
-                EngineType::TrueStreaming,
+                EngineType::Buffered,
+                EngineType::MemoryMapped,
+                EngineType::Incremental,
                 EngineType::Arrow,
             ]
         }
@@ -582,9 +582,9 @@ impl EngineBenchmarkFramework {
         #[cfg(not(feature = "arrow"))]
         {
             vec![
-                EngineType::Streaming,
-                EngineType::MemoryEfficient,
-                EngineType::TrueStreaming,
+                EngineType::Buffered,
+                EngineType::MemoryMapped,
+                EngineType::Incremental,
             ]
         }
     }
@@ -595,7 +595,7 @@ impl EngineBenchmarkFramework {
             .filter(|p| p.success)
             .min_by_key(|p| p.execution_time_ms)
             .map(|p| p.engine_type.clone())
-            .unwrap_or(EngineType::Streaming)
+            .unwrap_or(EngineType::Buffered)
     }
 
     fn evaluate_selection_outcome(
@@ -647,7 +647,7 @@ impl EngineBenchmarkFramework {
         let winner = rankings
             .first()
             .map(|(engine, _)| engine.clone())
-            .unwrap_or(EngineType::Streaming);
+            .unwrap_or(EngineType::Buffered);
 
         (winner, rankings)
     }
@@ -750,16 +750,16 @@ mod tests {
         let test_results = vec![
             EngineSelectionTestResult {
                 dataset_name: "test1".to_string(),
-                selected_engine: EngineType::Streaming,
-                actual_best_engine: EngineType::Streaming,
+                selected_engine: EngineType::Buffered,
+                actual_best_engine: EngineType::Buffered,
                 selection_time_ms: 100,
                 outcome: SelectionOutcome::Optimal,
                 all_engine_performances: vec![],
             },
             EngineSelectionTestResult {
                 dataset_name: "test2".to_string(),
-                selected_engine: EngineType::MemoryEfficient,
-                actual_best_engine: EngineType::Streaming,
+                selected_engine: EngineType::MemoryMapped,
+                actual_best_engine: EngineType::Buffered,
                 selection_time_ms: 120,
                 outcome: SelectionOutcome::Suboptimal {
                     performance_gap: 15.0,
@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn test_tradeoff_analysis() {
         let analysis = TradeoffAnalysis {
-            engine_type: EngineType::Streaming,
+            engine_type: EngineType::Buffered,
             execution_time_ms: 1000,
             memory_usage_mb: 100.0,
             accuracy_percentage: 95.0,
@@ -798,7 +798,7 @@ mod tests {
 
         let performances = vec![
             EnginePerformance {
-                engine_type: EngineType::Streaming,
+                engine_type: EngineType::Buffered,
                 execution_time_ms: 1000,
                 memory_usage_mb: 100.0,
                 rows_per_second: 1000.0,
@@ -806,7 +806,7 @@ mod tests {
                 error_message: None,
             },
             EnginePerformance {
-                engine_type: EngineType::MemoryEfficient,
+                engine_type: EngineType::MemoryMapped,
                 execution_time_ms: 1200,
                 memory_usage_mb: 80.0,
                 rows_per_second: 833.0,
@@ -816,8 +816,8 @@ mod tests {
         ];
 
         let outcome = framework.evaluate_selection_outcome(
-            &EngineType::MemoryEfficient,
-            &EngineType::Streaming,
+            &EngineType::MemoryMapped,
+            &EngineType::Buffered,
             &performances,
         );
 

@@ -5,8 +5,8 @@ use anyhow::Result;
 use dataprof::core::sampling::strategies::SamplingStrategy;
 use dataprof::engines::columnar::simple_columnar::SimpleColumnarProfiler;
 use dataprof::engines::streaming::memmap::MemoryMappedCsvReader;
-use dataprof::engines::streaming::memory_efficient::MemoryEfficientProfiler;
-use dataprof::engines::streaming::true_streaming::TrueStreamingProfiler;
+use dataprof::engines::streaming::incremental::IncrementalProfiler;
+use dataprof::engines::streaming::mapped::MappedProfiler;
 use std::path::Path;
 
 /// Test memory mapping functionality with real CSV files
@@ -45,7 +45,7 @@ fn test_streaming_processing() -> Result<()> {
         return Ok(());
     }
 
-    let profiler = TrueStreamingProfiler::new().memory_limit_mb(20);
+    let profiler = IncrementalProfiler::new().memory_limit_mb(20);
     let report = profiler.analyze_file(test_file)?;
 
     assert!(report.scan_info.rows_scanned > 0, "Should scan > 0 rows");
@@ -126,7 +126,7 @@ fn test_memory_efficient() -> Result<()> {
         return Ok(());
     }
 
-    let profiler = MemoryEfficientProfiler::new();
+    let profiler = MappedProfiler::new();
     let report = profiler.analyze_file(test_file)?;
 
     assert!(report.scan_info.rows_scanned > 0, "Should scan > 0 rows");
@@ -209,13 +209,13 @@ fn test_full_integration() -> Result<()> {
         println!("Testing: {}", file_path);
 
         // Test all profilers on the same file
-        let streaming_report = TrueStreamingProfiler::new()
+        let streaming_report = IncrementalProfiler::new()
             .memory_limit_mb(20)
             .analyze_file(test_file)?;
 
         let columnar_report = SimpleColumnarProfiler::new().analyze_csv_file(test_file)?;
 
-        let memory_report = MemoryEfficientProfiler::new().analyze_file(test_file)?;
+        let memory_report = MappedProfiler::new().analyze_file(test_file)?;
 
         // Basic consistency checks
         assert!(!streaming_report.column_profiles.is_empty());
@@ -259,7 +259,7 @@ fn test_performance_benchmark() -> Result<()> {
 
     // Benchmark profilers
     let start = std::time::Instant::now();
-    let streaming_report = TrueStreamingProfiler::new().analyze_file(&test_file)?;
+    let streaming_report = IncrementalProfiler::new().analyze_file(&test_file)?;
     let streaming_time = start.elapsed();
 
     let start = std::time::Instant::now();
