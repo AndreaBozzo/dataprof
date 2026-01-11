@@ -217,5 +217,9 @@ All contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) fo
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
+Dual-licensed under either:
+- [MIT License](LICENSE)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+You may use this project under the terms of either license.
 
