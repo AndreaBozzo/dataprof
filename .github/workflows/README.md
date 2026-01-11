@@ -336,4 +336,4 @@ gh workflow run benchmarks.yml -f benchmark_type=all
 ```
 
 For detailed development guidance, see [DEVELOPMENT.md](../DEVELOPMENT.md).
-For benchmarking documentation, see [docs/project/benchmarking.md](../../docs/project/benchmarking.md).
+For performance information, see [Performance Guide](../../docs/guides/performance-guide.md).

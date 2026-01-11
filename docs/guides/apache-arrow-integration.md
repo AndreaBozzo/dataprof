@@ -35,7 +35,7 @@ cargo install dataprof --features arrow
 - Want faster compilation times (~30% faster without Arrow)
 - Limited build environment (CI/CD optimization)
 
-### 🚀 New in v0.4.0: Smart Engine Selection
+### Engine Selection
 
 - **🎯 Intelligent Selection**: Automatic engine choice based on file characteristics, system resources, and processing context
 - **🔄 Runtime Detection**: Arrow availability detected at runtime without compile-time dependencies
@@ -69,13 +69,11 @@ dataprof --engine arrow --batch-size 16384 huge_file.csv
 ### Programmatic Usage
 
 ```rust
-use dataprof::{DataProfiler, AdaptiveProfiler, ProcessingType};
+use dataprof::DataProfiler;
 
 fn main() -> anyhow::Result<()> {
-    // 🚀 NEW: Adaptive profiler with intelligent selection (RECOMMENDED)
-    let profiler = DataProfiler::auto()  // Or AdaptiveProfiler::new()
-        .with_logging(true)              // Show engine selection reasoning
-        .with_performance_logging(true); // Log performance metrics
+    // Standard profiler with automatic engine selection
+    let profiler = DataProfiler::default();
 
     let report = profiler.analyze_file("large_data.csv")?;
 

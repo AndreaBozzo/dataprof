@@ -95,7 +95,6 @@ dataprof-cli report huge_data.csv -o report.html
 - **[Python API Reference](docs/python/README.md)**
 - **[CLI Guide](docs/guides/CLI_USAGE_GUIDE.md)**
 - **[Performance & Benchmarks](docs/guides/performance-guide.md)**
-- **[Developer Guide](docs/DEVELOPMENT.md)**
 
 ### Advanced Examples
 
@@ -141,7 +140,7 @@ cargo bench         # Benchmarks
 cargo clippy        # Linting
 ```
 
-**[Development Guide](docs/DEVELOPMENT.md)** | **[Performance Guide](docs/guides/performance-guide.md)**
+**[Performance Guide](docs/guides/performance-guide.md)**
 
 ### Feature Flags
 
@@ -172,10 +171,7 @@ cargo build --release --all-features
 ## Documentation
 
 **User Guides:**
-[CLI Reference](docs/guides/CLI_USAGE_GUIDE.md) | [Python API](docs/python/API_REFERENCE.md) | [Python Integrations](docs/python/INTEGRATIONS.md) | [Database Connectors](docs/guides/database-connectors.md) | [Apache Arrow](docs/guides/apache-arrow-integration.md)
-
-**Developer:**
-[Development Guide](docs/DEVELOPMENT.md) | [Performance Guide](docs/guides/performance-guide.md) | [Benchmarks](docs/project/benchmarking.md)
+[CLI Reference](docs/guides/CLI_USAGE_GUIDE.md) | [Python API](docs/python/API_REFERENCE.md) | [Python Integrations](docs/python/INTEGRATIONS.md) | [Database Connectors](docs/guides/database-connectors.md) | [Apache Arrow](docs/guides/apache-arrow-integration.md) | [Performance Guide](docs/guides/performance-guide.md)
 
 **Privacy:**
 [What DataProf Does](docs/WHAT_DATAPROF_DOES.md) - Complete transparency with source verification

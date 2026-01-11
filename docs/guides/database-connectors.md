@@ -2,6 +2,14 @@
 
 This guide explains how to use DataProfiler with various database systems for direct data profiling with production-ready features including quality assessment, table sampling, and security.
 
+## ⚙️ Feature Requirements
+
+Database support requires feature flags. Install with:
+```bash
+cargo install dataprof --features postgres,mysql  # PostgreSQL + MySQL
+cargo install dataprof --features all-db          # All databases
+```
+
 > **⚠️ Python Bindings Note**: Database connectors are currently **CLI and Rust API only**. Python bindings for database profiling are not available due to async compatibility limitations with PyO3. Python users can:
 > - Use the CLI: `dataprof database --connection "postgresql://..." --table users`
 > - Export to CSV and use Python bindings: `pd.read_sql().to_csv()` → `dataprof.analyze_csv_with_quality()`
@@ -52,8 +60,8 @@ dataprof --database "mysql://root:password@localhost:3306/mydb" --query "SELECT 
 # SQLite file
 dataprof --database "data.db" --query "products"
 
-# DuckDB file (requires --features duckdb)
-dataprof --database "analytics.duckdb" --query "SELECT * FROM sales WHERE date > '2024-01-01'"
+# SQLite file
+dataprof --database "file://analytics.sqlite" --query "SELECT * FROM sales WHERE date > '2024-01-01'"
 
 # In-memory SQLite for testing
 dataprof --database ":memory:" --query "temp_data"
@@ -68,12 +76,13 @@ dataprof --database "postgresql://" --query "user_activity"
 
 ### Programmatic Usage (Rust API)
 
-> **Note**: Python bindings not available for database operations. Use CLI or Rust API.
+> **Note**: Python bindings not available for database operations. Use CLI or Rust API.  
+> **Feature requirement**: Enable database feature: `dataprof = { version = "0.4", features = ["postgres"] }`
 
 ```rust
 use dataprof::{DatabaseConfig, profile_database, SamplingConfig, SslConfig};
 
-#[tokio::main]
+#[tokio::main]  // Required: tokio async runtime is mandatory
 async fn main() -> anyhow::Result<()> {
     // Production-ready configuration
     let config = DatabaseConfig {

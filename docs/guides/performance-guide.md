@@ -22,7 +22,8 @@ Based on systematic benchmarking across different data sizes and types, DataProf
 - **Memory-constrained environments**: 20x less memory than pandas
 - **Production pipelines**: Stable memory usage, no OOM crashes
 - **Streaming data**: Process files larger than RAM
-- **Quality-focused analysis**: Built-in quality detection
+- **Quality-focused analysis**: Built-in ISO 8000/25012 quality metrics
+- **Database profiling**: Direct PostgreSQL, MySQL, SQLite analysis
 
 ### ⚖️ **DataProfiler is COMPARABLE for:**
 
