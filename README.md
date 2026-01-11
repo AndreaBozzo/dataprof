@@ -212,7 +212,6 @@ We welcome contributions from everyone! Whether you want to:
 
 5. **Submit a Pull Request** with clear description
 
-📖 **[Full Contributing Guide →](CONTRIBUTING.md)**
 
 All contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [Code of Conduct](CODE_OF_CONDUCT.md).
 
