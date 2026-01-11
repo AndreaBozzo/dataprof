@@ -1,10 +1,12 @@
 //! SQLite database connector (embedded database)
 
-use super::common::{build_batch_query, build_count_query};
-use crate::database::connection::ConnectionInfo;
+#[cfg(not(feature = "sqlite"))]
+use super::common::feature_not_enabled_error;
 #[cfg(feature = "sqlite")]
-use crate::database::streaming::{StreamingProgress, merge_column_batches};
+use super::common::{build_count_query, not_connected_error};
+use crate::database::connection::ConnectionInfo;
 use crate::database::{DatabaseConfig, DatabaseConnector, validate_sql_identifier};
+use crate::{process_rows_to_columns, streaming_profile_loop};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -107,52 +109,18 @@ impl DatabaseConnector for SqliteConnector {
     async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "sqlite")]
         {
-            use sqlx::{Column, Row};
-
-            let pool = self
-                .pool
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
+            let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
             let rows = sqlx::query(query)
                 .fetch_all(pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("Query execution failed: {}", e))?;
 
-            if rows.is_empty() {
-                return Ok(HashMap::new());
-            }
-
-            // Get column names from the first row
-            let columns = rows[0].columns().to_vec();
-            let mut result: HashMap<String, Vec<String>> = HashMap::new();
-
-            // Initialize columns
-            for col in &columns {
-                result.insert(col.name().to_string(), Vec::new());
-            }
-
-            // Process rows - improved error handling
-            for row in &rows {
-                for (i, col) in columns.iter().enumerate() {
-                    let value: Option<String> = row.try_get(i).ok();
-                    let string_value = value.unwrap_or_default();
-
-                    if let Some(column_data) = result.get_mut(col.name()) {
-                        column_data.push(string_value);
-                    }
-                }
-            }
-
-            Ok(result)
+            Ok(process_rows_to_columns!(rows))
         }
 
         #[cfg(not(feature = "sqlite"))]
-        {
-            Err(anyhow::anyhow!(
-                "SQLite support not compiled. Enable 'sqlite' feature."
-            ))
-        }
+        Err(feature_not_enabled_error("SQLite", "sqlite"))
     }
 
     #[allow(unused_variables)]
@@ -163,88 +131,20 @@ impl DatabaseConnector for SqliteConnector {
     ) -> Result<HashMap<String, Vec<String>>> {
         #[cfg(feature = "sqlite")]
         {
-            use sqlx::{Column, Row};
+            let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            let pool = self
-                .pool
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
-
-            // Get total count for progress tracking using common function
+            // Get total count for progress tracking
             let count_query = build_count_query(query)?;
             let total_rows: i64 = sqlx::query_scalar(&count_query)
                 .fetch_one(pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to count rows: {}", e))?;
 
-            let mut progress = StreamingProgress::new(Some(total_rows as u64));
-            let mut all_batches = Vec::new();
-            let mut offset = 0;
-
-            loop {
-                // Build batch query using common function
-                let batch_query = build_batch_query(query, batch_size, offset)?;
-
-                let rows = sqlx::query(&batch_query)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Batch query execution failed: {}", e))?;
-
-                if rows.is_empty() {
-                    break;
-                }
-
-                // Process batch
-                let columns = rows[0].columns().to_vec();
-                let mut batch_result: HashMap<String, Vec<String>> = HashMap::new();
-
-                // Initialize columns for this batch
-                for col in &columns {
-                    batch_result.insert(col.name().to_string(), Vec::new());
-                }
-
-                // Process rows in this batch - improved error handling
-                for row in &rows {
-                    for (i, col) in columns.iter().enumerate() {
-                        let value: Option<String> = row.try_get(i).ok();
-                        let string_value = value.unwrap_or_default();
-
-                        if let Some(column_data) = batch_result.get_mut(col.name()) {
-                            column_data.push(string_value);
-                        }
-                    }
-                }
-
-                let batch_size_actual = rows.len();
-                all_batches.push(batch_result);
-                progress.update(batch_size_actual as u64);
-
-                // Optional progress reporting
-                if let Some(percentage) = progress.percentage() {
-                    println!(
-                        "SQLite streaming progress: {:.1}% ({}/{} rows)",
-                        percentage, progress.processed_rows, total_rows
-                    );
-                }
-
-                offset += batch_size;
-
-                // Check if we've processed all rows
-                if batch_size_actual < batch_size {
-                    break;
-                }
-            }
-
-            // Merge all batches
-            merge_column_batches(all_batches)
+            streaming_profile_loop!(pool, query, batch_size, total_rows, "SQLite")
         }
 
         #[cfg(not(feature = "sqlite"))]
-        {
-            Err(anyhow::anyhow!(
-                "SQLite support not compiled. Enable 'sqlite' feature."
-            ))
-        }
+        Err(feature_not_enabled_error("SQLite", "sqlite"))
     }
 
     #[allow(unused_variables)]
@@ -253,11 +153,9 @@ impl DatabaseConnector for SqliteConnector {
         {
             use sqlx::Row;
 
-            let pool = self
-                .pool
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
+            let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
+            // SQLite uses PRAGMA instead of information_schema
             let query = format!("PRAGMA table_info({})", table_name);
 
             let rows = sqlx::query(&query)
@@ -268,7 +166,7 @@ impl DatabaseConnector for SqliteConnector {
             let mut columns = Vec::new();
             for row in rows {
                 let column_name: String = row
-                    .try_get(1) // name column is at index 1
+                    .try_get(1) // PRAGMA table_info: name column is at index 1
                     .map_err(|e| anyhow::anyhow!("Failed to read column name: {}", e))?;
                 columns.push(column_name);
             }
@@ -277,21 +175,14 @@ impl DatabaseConnector for SqliteConnector {
         }
 
         #[cfg(not(feature = "sqlite"))]
-        {
-            Err(anyhow::anyhow!(
-                "SQLite support not compiled. Enable 'sqlite' feature."
-            ))
-        }
+        Err(feature_not_enabled_error("SQLite", "sqlite"))
     }
 
     #[allow(unused_variables)]
     async fn count_table_rows(&mut self, table_name: &str) -> Result<u64> {
         #[cfg(feature = "sqlite")]
         {
-            let pool = self
-                .pool
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
+            let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
             validate_sql_identifier(table_name)?;
             let query = format!("SELECT COUNT(*) FROM {}", table_name);
@@ -304,20 +195,13 @@ impl DatabaseConnector for SqliteConnector {
         }
 
         #[cfg(not(feature = "sqlite"))]
-        {
-            Err(anyhow::anyhow!(
-                "SQLite support not compiled. Enable 'sqlite' feature."
-            ))
-        }
+        Err(feature_not_enabled_error("SQLite", "sqlite"))
     }
 
     async fn test_connection(&mut self) -> Result<bool> {
         #[cfg(feature = "sqlite")]
         {
-            let pool = self
-                .pool
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Not connected to database"))?;
+            let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
             let result: i32 = sqlx::query_scalar("SELECT 1")
                 .fetch_one(pool)
@@ -328,10 +212,6 @@ impl DatabaseConnector for SqliteConnector {
         }
 
         #[cfg(not(feature = "sqlite"))]
-        {
-            Err(anyhow::anyhow!(
-                "SQLite support not compiled. Enable 'sqlite' feature."
-            ))
-        }
+        Err(feature_not_enabled_error("SQLite", "sqlite"))
     }
 }
