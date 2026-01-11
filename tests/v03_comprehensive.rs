@@ -4,9 +4,9 @@
 use anyhow::Result;
 use dataprof::core::sampling::strategies::SamplingStrategy;
 use dataprof::engines::columnar::simple_columnar::SimpleColumnarProfiler;
-use dataprof::engines::streaming::memmap::MemoryMappedCsvReader;
 use dataprof::engines::streaming::incremental::IncrementalProfiler;
 use dataprof::engines::streaming::mapped::MappedProfiler;
+use dataprof::engines::streaming::memmap::MemoryMappedCsvReader;
 use std::path::Path;
 
 /// Test memory mapping functionality with real CSV files
