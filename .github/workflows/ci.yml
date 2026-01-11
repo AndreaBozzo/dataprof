@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [master]
     paths-ignore:
       - '*.md'
       - 'docs/**'
@@ -11,7 +11,7 @@ on:
       - 'LICENSE*'
       - '.devcontainer/**'
   pull_request:
-    branches: [main, master, staging]
+    branches: [master]
     paths-ignore:
       - '*.md'
       - 'docs/**'
@@ -19,7 +19,6 @@ on:
       - '.gitignore'
       - 'LICENSE*'
       - '.devcontainer/**'
-  # Exclude staging - it has its own workflow
 
 # Automatically cancel in-progress runs on the same branch
 concurrency:
@@ -90,18 +89,18 @@ jobs:
 
       - name: Check formatting
         run: |
-          echo "🎨 Checking code formatting..."
+          echo "Checking code formatting..."
           cargo fmt --all -- --check
-          echo "✅ Formatting check passed"
+          echo "Formatting check passed"
 
       - name: Run clippy
         run: |
-          echo "📎 Running clippy analysis..."
+          echo "Running clippy analysis..."
           cargo clippy --lib --tests --all-features -- -D warnings
-          echo "✅ Clippy analysis passed"
+          echo "Clippy analysis passed"
 
       - name: Check documentation
         run: |
-          echo "📚 Checking documentation..."
+          echo "Checking documentation..."
           cargo doc --no-deps --document-private-items
-          echo "✅ Documentation check passed"
+          echo "Documentation check passed"
