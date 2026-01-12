@@ -35,6 +35,8 @@ jobs:
   test-suite:
     name: Test Suite
     runs-on: ubuntu-latest
+    # Skip on master pushes since coverage job runs all tests
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/master'
     timeout-minutes: 25
     strategy:
       fail-fast: false
