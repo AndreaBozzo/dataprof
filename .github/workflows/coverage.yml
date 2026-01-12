@@ -51,6 +51,7 @@ jobs:
         uses: codecov/codecov-action@v5.5.2
         if: always()
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           flags: rust
           fail_ci_if_error: false

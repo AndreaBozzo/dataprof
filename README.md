@@ -6,6 +6,7 @@
   </p>
 
   [![CI](https://github.com/AndreaBozzo/dataprof/workflows/CI/badge.svg)](https://github.com/AndreaBozzo/dataprof/actions)
+  [![codecov](https://codecov.io/gh/AndreaBozzo/dataprof/branch/master/graph/badge.svg)](https://codecov.io/gh/AndreaBozzo/dataprof)
   [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
    [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
   [![PyPI Downloads](https://static.pepy.tech/personalized-badge/dataprof?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/dataprof)
