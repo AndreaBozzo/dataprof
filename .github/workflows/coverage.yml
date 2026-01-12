@@ -43,13 +43,14 @@ jobs:
       - name: Generate coverage
         run: |
           echo "📊 Generating code coverage..."
-          cargo tarpaulin --config tarpaulin.toml --timeout 300
+          cargo tarpaulin --out Lcov --output-dir coverage --timeout 300 --exclude-files target/* tests/* benches/* examples/* src/main.rs
+          echo "✅ Coverage generated"
         continue-on-error: true
 
       - name: Upload coverage (Codecov)
         uses: codecov/codecov-action@v5.5.2
         if: always()
         with:
-          files: ./coverage/cobertura.xml
+          files: ./coverage/lcov.info
           flags: rust
           fail_ci_if_error: false
