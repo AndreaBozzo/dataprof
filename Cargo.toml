@@ -124,7 +124,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 serde_json = "1.0"
 
 serial_test = "3.3.1"
-predicates = "2.1"
+predicates = "3.1"
 
 [[bin]]
 name = "dataprof-cli"
