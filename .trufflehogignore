@@ -1,4 +1,4 @@
-# TruffleHog ignore patterns for DataProfiler
+# TruffleHog ignore patterns for dataprof
 # Documentation and example files with fake credentials
 
 # Documentation directories (regex patterns)
