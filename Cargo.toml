@@ -111,7 +111,7 @@ url = { version = "2.5.8", optional = true }
 
 
 arrow = { version = "57.2", optional = true }
-parquet = { version = "57.1", features = ["arrow"], optional = true }
+parquet = { version = "57.2", features = ["arrow"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.24"
