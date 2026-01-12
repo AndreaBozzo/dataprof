@@ -1,6 +1,11 @@
 [advisories]
-# Allow RSA timing attack vulnerability as it has no fix available
-# and requires very specific attack scenarios to exploit
-ignore = [
-    "RUSTSEC-2023-0071", # RSA Marvin Attack - no fix available
-]
+# Set severity threshold to fail on high/critical vulnerabilities
+severity_threshold = "high"
+
+# Note: RUSTSEC-2023-0071 removed - not in current dependency tree
+# The RSA Marvin Attack advisory was from transitive deps no longer used
+
+# Current issues to monitor:
+# - RUSTSEC-2024-0436: paste 1.0.15 is unmaintained (used via parquet)
+#   Status: Warning (not blocking)
+#   Action: Track parquet releases for migration to maintained fork

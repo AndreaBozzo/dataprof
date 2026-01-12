@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -44,7 +44,7 @@ jobs:
 
       # Cache security tools for faster builds
       - name: Cache security tools
-        uses: actions/cache@v4
+        uses: actions/cache@v5.0.1
         with:
           path: ~/.cargo/bin
           key: security-tools-${{ runner.os }}-v2
@@ -57,8 +57,10 @@ jobs:
       - name: Run cargo-audit (RustSec database)
         run: |
           echo "🔍 Running cargo-audit..."
-          cargo audit --ignore RUSTSEC-2023-0071  # Ignore known issues without fix
+          cargo audit
           echo "✅ cargo-audit passed"
+        env:
+          CARGO_TERM_COLOR: always
 
   # Static Application Security Testing (SAST)
   static-analysis:
@@ -69,7 +71,7 @@ jobs:
     if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -104,7 +106,7 @@ jobs:
 
       # Upload SARIF results to GitHub Security tab
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v4.31.10
         if: always()
         with:
           sarif_file: semgrep.sarif
@@ -118,11 +120,11 @@ jobs:
     if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
 
-      # TruffleHog for verified secrets only
+      # TruffleHog for verified secrets only (latest v3.92.4 - Jan 2026)
       - name: TruffleHog OSS secrets scan
         uses: trufflesecurity/trufflehog@v3.92.4
         with:
@@ -164,7 +166,7 @@ jobs:
     if: github.event.pull_request.draft == false || github.event_name != 'pull_request'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -189,7 +191,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -212,7 +214,7 @@ jobs:
     if: github.head_ref == 'staging' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
