@@ -32,9 +32,8 @@ permissions:
   contents: read
 
 jobs:
-  # Comprehensive test suite - canonical testing for CI
   test-suite:
-    name: Comprehensive Test Suite
+    name: Test Suite
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -73,7 +72,6 @@ jobs:
           test-type: ${{ matrix.test-scope }}
           timeout: ${{ matrix.timeout }}
 
-  # Lint and format checks
   quality-checks:
     name: Code Quality
     runs-on: ubuntu-latest
@@ -104,3 +102,42 @@ jobs:
           echo "Checking documentation..."
           cargo doc --no-deps --document-private-items
           echo "Documentation check passed"
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-ci
+
+      - name: Setup system dependencies
+        uses: ./.github/actions/setup-system-deps
+
+      - name: Install cargo-tarpaulin
+        run: |
+          echo "Installing cargo-tarpaulin..."
+          cargo install cargo-tarpaulin --version 0.35.0 --locked
+          echo "cargo-tarpaulin installed"
+
+      - name: Generate coverage
+        run: |
+          echo "Generating code coverage..."
+          cargo tarpaulin --out Lcov --output-dir coverage --timeout 300 --exclude-files target/* tests/* benches/* examples/* src/main.rs
+          echo "Coverage generated"
+        continue-on-error: true
+
+      - name: Upload coverage (Codecov)
+        uses: codecov/codecov-action@v5.5.2
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: rust
+          fail_ci_if_error: false

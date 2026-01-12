@@ -148,9 +148,9 @@ jobs:
     - name: Install cross-compilation tools
       if: matrix.cross
       run: |
-        echo "🔧 Installing cross-compilation tools..."
+        echo "Installing cross-compilation tools..."
         cargo install cross --git https://github.com/cross-rs/cross
-        echo "✅ Cross-compilation tools installed"
+        echo "Cross-compilation tools installed"
 
     - name: Build binary
       run: |
@@ -182,10 +182,10 @@ jobs:
 
         # Verify file exists
         if [ -f "$BINARY_NAME" ]; then
-          echo "✅ Binary created successfully: $BINARY_NAME"
+          echo "Binary created successfully: $BINARY_NAME"
           ls -la "$BINARY_NAME"
         else
-          echo "❌ Binary not found: $BINARY_NAME"
+          echo "Binary not found: $BINARY_NAME"
           exit 1
         fi
       shell: bash
@@ -219,15 +219,15 @@ jobs:
 
     - name: Publish to crates.io
       run: |
-        echo "📦 Publishing to crates.io..."
+        echo "Publishing to crates.io..."
         if cargo publish --token ${{ secrets.CRATES_TOKEN }}; then
-          echo "✅ Successfully published to crates.io"
+          echo "Successfully published to crates.io"
         else
           EXIT_CODE=$?
           if [ $EXIT_CODE -eq 101 ]; then
-            echo "ℹ️ Version already exists on crates.io"
+            echo "ℹVersion already exists on crates.io"
           else
-            echo "❌ Failed to publish to crates.io"
+            echo "Failed to publish to crates.io"
             exit $EXIT_CODE
           fi
         fi
@@ -398,20 +398,20 @@ jobs:
     - name: Verify wheels for PyPI compatibility
       run: |
         cd dist
-        echo "🔍 Verifying wheels for PyPI publishing..."
+        echo "Verifying wheels for PyPI publishing..."
         for wheel in *.whl; do
           if [[ "$wheel" == *"-optimized.whl" ]]; then
-            echo "❌ Removing optimized wheel from PyPI upload: $wheel"
+            echo "Removing optimized wheel from PyPI upload: $wheel"
             rm "$wheel"
           else
-            echo "✅ PyPI-compatible wheel: $wheel"
+            echo "PyPI-compatible wheel: $wheel"
           fi
         done
 
         wheel_count=$(ls -1 *.whl 2>/dev/null | wc -l)
-        echo "📦 Total wheels for PyPI: $wheel_count"
+        echo "Total wheels for PyPI: $wheel_count"
         if [ "$wheel_count" -eq 0 ]; then
-          echo "❌ No wheels found for PyPI publishing"
+          echo "No wheels found for PyPI publishing"
           exit 1
         fi
 
