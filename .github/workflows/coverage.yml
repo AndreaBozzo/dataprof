@@ -1,0 +1,55 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE*'
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE*'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Code Coverage Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: coverage
+
+      - name: Install tarpaulin
+        run: cargo install --locked cargo-tarpaulin
+
+      - name: Generate coverage
+        run: |
+          echo "📊 Generating code coverage..."
+          cargo tarpaulin --config tarpaulin.toml --timeout 300
+        continue-on-error: true
+
+      - name: Upload coverage (Codecov)
+        uses: codecov/codecov-action@v5.5.2
+        if: always()
+        with:
+          files: ./coverage/cobertura.xml
+          flags: rust
+          fail_ci_if_error: false
