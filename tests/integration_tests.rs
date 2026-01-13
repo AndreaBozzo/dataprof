@@ -108,33 +108,6 @@ fn test_json_basic_analysis() -> Result<()> {
     Ok(())
 }
 
-#[test]
-#[ignore = "Legacy test - outdated expectations"]
-fn test_jsonl_analysis() -> Result<()> {
-    let mut temp_file = NamedTempFile::new()?;
-    writeln!(
-        temp_file,
-        r#"{{"timestamp": "2024-01-01T10:00:00Z", "level": "INFO"}}"#
-    )?;
-    writeln!(
-        temp_file,
-        r#"{{"timestamp": "01/01/2024 10:01:00", "level": "ERROR"}}"#
-    )?;
-    writeln!(
-        temp_file,
-        r#"{{"timestamp": "2024-01-01T10:02:00Z", "level": "INFO"}}"#
-    )?;
-
-    let report = analyze_json_with_quality(temp_file.path())?;
-
-    assert_eq!(report.column_profiles.len(), 2);
-
-    // Should detect quality issues (mixed date formats reduce quality score)
-    let quality_score = report.quality_score();
-    assert!(quality_score < 100.0, "Should detect date format issues");
-
-    Ok(())
-}
 
 #[test]
 fn test_html_report_generation() -> Result<()> {
@@ -250,29 +223,6 @@ fn test_data_type_inference() -> Result<()> {
     assert!(matches!(int_profile.data_type, dataprof::DataType::Integer));
     assert!(matches!(float_profile.data_type, dataprof::DataType::Float));
     assert!(matches!(date_profile.data_type, dataprof::DataType::Date));
-
-    Ok(())
-}
-
-#[test]
-#[ignore = "Legacy test - outdated expectations"]
-fn test_quality_issue_severity() -> Result<()> {
-    let mut temp_file = NamedTempFile::new()?;
-    writeln!(temp_file, "critical_nulls,warning_dups,info_outliers")?;
-    writeln!(temp_file, ",duplicate,100")?;
-    writeln!(temp_file, ",duplicate,200")?;
-    writeln!(temp_file, ",duplicate,999999")?; // outlier
-    writeln!(temp_file, ",duplicate,150")?;
-
-    let report = analyze_csv_with_sampling(temp_file.path())?;
-
-    // Check that quality issues are detected via metrics
-    let metrics = &report.data_quality_metrics;
-    assert!(
-        metrics.missing_values_ratio > 0.0,
-        "Should detect null values"
-    );
-    assert!(metrics.duplicate_rows > 0, "Should detect duplicates");
 
     Ok(())
 }

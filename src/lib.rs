@@ -12,9 +12,6 @@ pub mod serde_helpers;
 pub mod stats;
 pub mod types;
 
-// Testing utilities (for benchmarks and tests)
-pub mod testing;
-
 // Database connectors (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub mod database;
