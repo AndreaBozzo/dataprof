@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use dataprof::core::sampling::strategies::SamplingStrategy;
-use dataprof::engines::columnar::simple_columnar::SimpleColumnarProfiler;
+use dataprof::engines::columnar::ArrowProfiler;
 use dataprof::engines::streaming::incremental::IncrementalProfiler;
 use dataprof::engines::streaming::mapped::MappedProfiler;
 use dataprof::engines::streaming::memmap::MemoryMappedCsvReader;
@@ -101,7 +101,7 @@ fn test_columnar_processing() -> Result<()> {
         return Ok(());
     }
 
-    let profiler = SimpleColumnarProfiler::new().use_simd(true);
+    let profiler = ArrowProfiler::new();
     let report = profiler.analyze_csv_file(test_file)?;
 
     assert!(report.scan_info.rows_scanned > 0, "Should scan > 0 rows");
@@ -213,7 +213,7 @@ fn test_full_integration() -> Result<()> {
             .memory_limit_mb(20)
             .analyze_file(test_file)?;
 
-        let columnar_report = SimpleColumnarProfiler::new().analyze_csv_file(test_file)?;
+        let columnar_report = ArrowProfiler::new().analyze_csv_file(test_file)?;
 
         let memory_report = MappedProfiler::new().analyze_file(test_file)?;
 
@@ -263,7 +263,7 @@ fn test_performance_benchmark() -> Result<()> {
     let streaming_time = start.elapsed();
 
     let start = std::time::Instant::now();
-    let columnar_report = SimpleColumnarProfiler::new().analyze_csv_file(&test_file)?;
+    let columnar_report = ArrowProfiler::new().analyze_csv_file(&test_file)?;
     let columnar_time = start.elapsed();
 
     println!("Performance benchmark (2000 rows):");
