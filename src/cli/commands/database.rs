@@ -66,7 +66,6 @@ fn display_column_profile(profile: &ColumnProfile) {
 fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result<()> {
     use tokio;
 
-
     println!(
         "{}",
         "🗃️ DataProfiler v0.3.0 - Database Analysis"
@@ -85,7 +84,6 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
             "Please specify either --query 'SELECT * FROM table' or provide table name as argument"
         ));
     };
-
 
     // Create database configuration
     let config = DatabaseConfig {
@@ -114,7 +112,6 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
         report.file_info.total_columns,
         report.file_info.total_rows.unwrap_or(0)
     );
-
 
     if report.scan_info.rows_scanned > 0 {
         let scan_time_sec = report.scan_info.scan_time_ms as f64 / 1000.0;

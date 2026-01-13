@@ -7,7 +7,6 @@ use dataprof::{
     analyze_csv_robust,
     analyze_csv_with_sampling,
     analyze_json,
-    analyze_json_with_quality,
     generate_html_report,
     quick_quality_check,
 };
@@ -107,7 +106,6 @@ fn test_json_basic_analysis() -> Result<()> {
 
     Ok(())
 }
-
 
 #[test]
 fn test_html_report_generation() -> Result<()> {
