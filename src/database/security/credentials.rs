@@ -148,12 +148,12 @@ impl DatabaseCredentials {
             "sqlite" => {
                 // SQLite doesn't need network credentials
                 if self.database.is_none() {
-                    eprintln!("WARNING: No database file path specified for SQLite");
+                    log::warn!("No database file path specified for SQLite");
                 }
             }
             _ => {
-                eprintln!(
-                    "WARNING: Credential validation for database type '{}' not implemented",
+                log::warn!(
+                    "Credential validation for database type '{}' not implemented",
                     database_type
                 );
             }

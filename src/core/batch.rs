@@ -120,11 +120,7 @@ impl BatchProcessor {
         let start_time = std::time::Instant::now();
         let paths = self.collect_glob_paths(pattern)?;
 
-        println!(
-            "🔍 Found {} files matching pattern: {}",
-            paths.len(),
-            pattern
-        );
+        log::info!("Found {} files matching pattern: {}", paths.len(), pattern);
 
         self.process_paths(&paths, start_time)
     }
@@ -134,8 +130,8 @@ impl BatchProcessor {
         let start_time = std::time::Instant::now();
         let paths = self.collect_directory_paths(dir_path)?;
 
-        println!(
-            "📁 Found {} files in directory: {}",
+        log::info!(
+            "Found {} files in directory: {}",
             paths.len(),
             dir_path.display()
         );
@@ -152,7 +148,7 @@ impl BatchProcessor {
             .cloned()
             .collect();
 
-        println!("📋 Processing {} files from provided list", paths.len());
+        log::info!("Processing {} files from provided list", paths.len());
 
         self.process_paths(&paths, start_time)
     }
@@ -170,7 +166,7 @@ impl BatchProcessor {
                         paths.push(path);
                     }
                 }
-                Err(e) => eprintln!("⚠️ Glob error: {}", e),
+                Err(e) => log::warn!("Glob error: {}", e),
             }
         }
 
@@ -448,8 +444,8 @@ impl BatchProcessor {
         );
 
         if summary.failed > 0 {
-            println!(
-                "\n⚠️ {} files failed processing. Use --verbose for details.",
+            log::warn!(
+                "\n{} files failed to process. Check logs for details.",
                 summary.failed
             );
         }

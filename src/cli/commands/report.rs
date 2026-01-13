@@ -40,7 +40,7 @@ use dataprof::{DataProfiler, generate_html_report};
 use std::fs;
 
 pub fn execute(args: &ReportArgs) -> Result<()> {
-    println!("📊 Generating Report...");
+    log::info!("Generating Report...");
 
     // Use auto() to support CSV, JSON, and Parquet files automatically
     let profiler = DataProfiler::auto();
@@ -62,18 +62,18 @@ pub fn execute(args: &ReportArgs) -> Result<()> {
     let file_size = fs::metadata(&output_path)?.len();
     let size_mb = file_size as f64 / 1_048_576.0;
 
-    println!(
-        "\n📄 Report saved: {} ({:.1} MB)",
+    log::info!(
+        "\nReport saved: {} ({:.1} MB)",
         output_path.display(),
         size_mb
     );
 
     if cfg!(target_os = "windows") {
-        println!("💡 Open with: start {}", output_path.display());
+        log::info!("Open with: start {}", output_path.display());
     } else if cfg!(target_os = "macos") {
-        println!("💡 Open with: open {}", output_path.display());
+        log::info!("Open with: open {}", output_path.display());
     } else {
-        println!("💡 Open with: xdg-open {}", output_path.display());
+        log::info!("Open with: xdg-open {}", output_path.display());
     }
 
     Ok(())

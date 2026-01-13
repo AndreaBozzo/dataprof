@@ -116,7 +116,7 @@ pub fn load_secure_database_config(database_type: &str) -> Result<(String, SslCo
     let warnings =
         validate_connection_security(&secure_connection_string, &ssl_config, database_type)?;
     for warning in warnings {
-        eprintln!("SECURITY WARNING: {}", warning);
+        log::warn!("SECURITY WARNING: {}", warning);
     }
 
     Ok((secure_connection_string, ssl_config))

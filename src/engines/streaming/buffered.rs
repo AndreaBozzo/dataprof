@@ -277,7 +277,7 @@ impl BufferedProfiler {
             if let Some(leak_report) = enhanced_pb.check_memory_leaks()
                 && !leak_report.contains("No memory leaks")
             {
-                eprintln!("⚠️ Memory leak detection report:");
+                eprintln!("Memory leak detection report:");
                 eprintln!("{}", leak_report);
             }
         }

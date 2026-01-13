@@ -77,9 +77,12 @@ macro_rules! streaming_profile_loop {
             progress.update(batch_size_actual as u64);
 
             if let Some(percentage) = progress.percentage() {
-                println!(
+                log::info!(
                     "{} streaming progress: {:.1}% ({}/{} rows)",
-                    $db_name, percentage, progress.processed_rows, $total_rows
+                    $db_name,
+                    percentage,
+                    progress.processed_rows,
+                    $total_rows
                 );
             }
 

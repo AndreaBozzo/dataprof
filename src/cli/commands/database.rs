@@ -140,7 +140,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
                     println!();
                 }
                 Err(e) => {
-                    eprintln!("❌ Failed to generate HTML report: {}", e);
+                    eprintln!("Failed to generate HTML report: {}", e);
                 }
             }
         }

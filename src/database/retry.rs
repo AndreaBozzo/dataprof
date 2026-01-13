@@ -60,7 +60,7 @@ where
                     };
 
                     let sanitized_error = sanitize_error_message(&error.to_string());
-                    eprintln!(
+                    log::warn!(
                         "Database operation '{}' failed on attempt {}/{}, retrying in {:?}: {}",
                         operation_name,
                         attempt + 1,
@@ -153,7 +153,7 @@ where
                     };
 
                     let sanitized_error = sanitize_error_message(&error.to_string());
-                    eprintln!(
+                    log::warn!(
                         "Retryable database error in '{}' (attempt {}/{}), retrying in {:?}: {}",
                         operation_name,
                         attempt + 1,

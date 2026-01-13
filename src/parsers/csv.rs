@@ -249,7 +249,7 @@ pub fn analyze_csv_with_verbosity(file_path: &Path, verbosity: u8) -> Result<Vec
         Err(e) => {
             // Only show fallback message at verbose level
             if verbosity >= 2 {
-                eprintln!("ℹ️  Using flexible CSV parsing (strict mode failed: {})", e);
+                log::info!("Using flexible CSV parsing (strict mode failed: {})", e);
             }
         }
     }

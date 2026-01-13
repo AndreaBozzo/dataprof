@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     match route_command(cli.command) {
         Ok(_) => std::process::exit(exit_codes::SUCCESS),
         Err(e) => {
-            eprintln!("❌ Error: {}", e);
+            eprintln!("Error: {}", e);
             std::process::exit(exit_codes::GENERAL_ERROR);
         }
     }

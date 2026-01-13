@@ -125,7 +125,7 @@ impl RobustCsvParser {
             Ok(result) => Ok(result),
             Err(initial_error) => {
                 eprintln!(
-                    "🔄 Initial parsing failed: {}. Attempting auto-recovery...",
+                    "Initial parsing failed: {}. Attempting auto-recovery...",
                     initial_error
                 );
 
@@ -159,7 +159,7 @@ impl RobustCsvParser {
     ) -> Result<(Vec<String>, Vec<Vec<String>>), DataProfilerError> {
         match strategy {
             RecoveryStrategy::DelimiterDetection { delimiter } => {
-                eprintln!("🔍 Trying delimiter: '{}'", delimiter);
+                log::debug!("Trying delimiter: '{}'", delimiter);
                 // Parse directly with overridden delimiter instead of cloning parser
                 self.parse_with_override(file_path, Some(delimiter as u8), None, None)
                     .map_err(|e| {
@@ -170,8 +170,8 @@ impl RobustCsvParser {
                 from: _from,
                 to: _to,
             } => {
-                eprintln!(
-                    "🔤 Attempting encoding conversion (placeholder - full implementation needed)"
+                log::debug!(
+                    "Attempting encoding conversion (placeholder - full implementation needed)"
                 );
                 // Try with flexible parsing enabled, without cloning
                 self.parse_with_override(file_path, None, Some(true), Some(true))
@@ -180,7 +180,7 @@ impl RobustCsvParser {
                     })
             }
             RecoveryStrategy::FlexibleParsing => {
-                eprintln!("🔧 Enabling flexible parsing");
+                log::debug!("Enabling flexible parsing");
                 // Enable flexible parsing without cloning the parser
                 self.parse_with_override(file_path, None, Some(true), Some(true))
                     .map_err(|e| {
@@ -391,7 +391,7 @@ impl RobustCsvParser {
             Err(e) => {
                 // Only show fallback message at verbose level (2+)
                 if self.verbosity >= 2 {
-                    eprintln!("ℹ️  Using flexible CSV parsing (strict mode failed: {})", e);
+                    log::info!("Using flexible CSV parsing (strict mode failed: {})", e);
                 }
             }
         }
@@ -489,7 +489,7 @@ impl RobustCsvParser {
                     let enhanced_error =
                         DataProfilerError::csv_parsing(&e.to_string(), "current file");
                     eprintln!(
-                        "⚠️ Row {}: {}",
+                        "Row {}: {}",
                         row_index + 2, // +2 because row_index is 0-based and we have headers
                         enhanced_error
                     );
@@ -507,7 +507,7 @@ impl RobustCsvParser {
 
         if error_count > 0 {
             eprintln!(
-                "ℹ️ Successfully parsed {} rows with {} errors skipped.",
+                "Successfully parsed {} rows with {} errors skipped.",
                 records.len(),
                 error_count
             );
@@ -554,7 +554,7 @@ impl RobustCsvParser {
                     error_count += 1;
                     if error_count <= 10 {
                         // Only log first 10 errors to avoid spam
-                        eprintln!("⚠️ Chunk row {}: {}", row_index + 1, e);
+                        eprintln!("Chunk row {}: {}", row_index + 1, e);
                     }
                 }
             }
@@ -626,7 +626,7 @@ pub struct CsvDiagnostics {
 
 impl CsvDiagnostics {
     pub fn print_summary(&self) {
-        println!("🔍 CSV File Diagnostics:");
+        println!("CSV File Diagnostics:");
         println!("  Total lines: {}", self.total_lines);
         println!("  Empty lines: {}", self.empty_lines);
         println!(
@@ -641,7 +641,7 @@ impl CsvDiagnostics {
 
         if self.inconsistent_field_rows > 0 {
             println!(
-                "  ⚠️ Inconsistent rows: {} ({:.1}%)",
+                "  WARNING: Inconsistent rows: {} ({:.1}%)",
                 self.inconsistent_field_rows,
                 self.inconsistent_field_rows as f64 / self.total_lines as f64 * 100.0
             );
@@ -649,20 +649,20 @@ impl CsvDiagnostics {
 
         if self.field_count_variations > 1 {
             println!(
-                "  ⚠️ Different field counts detected: {}",
+                "  WARNING: Different field counts detected: {}",
                 self.field_count_variations
             );
         }
 
         if self.unmatched_quotes > 0 {
             println!(
-                "  ⚠️ Lines with unmatched quotes: {}",
+                "  WARNING: Lines with unmatched quotes: {}",
                 self.unmatched_quotes
             );
         }
 
         if self.null_bytes > 0 {
-            println!("  ⚠️ Lines with null bytes: {}", self.null_bytes);
+            println!("  WARNING: Lines with null bytes: {}", self.null_bytes);
         }
     }
 }

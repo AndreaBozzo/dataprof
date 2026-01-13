@@ -479,8 +479,8 @@ impl AutoRecoveryManager {
             }
 
             // Log attempt start
-            eprintln!(
-                "🔄 Auto-recovery attempt {}/{}: {:?}",
+            log::info!(
+                "Auto-recovery attempt {}/{}: {:?}",
                 attempt + 1,
                 self.config.max_attempts,
                 strategy
@@ -496,7 +496,7 @@ impl AutoRecoveryManager {
                     };
                     self.recovery_log.push(recovery_attempt);
 
-                    eprintln!("✅ Auto-recovery successful with strategy: {:?}", strategy);
+                    log::info!("Auto-recovery successful with strategy: {:?}", strategy);
                     return Ok(result);
                 }
                 Err(err) => {
@@ -509,7 +509,7 @@ impl AutoRecoveryManager {
                     self.recovery_log.push(recovery_attempt);
                     last_error = err;
 
-                    eprintln!("❌ Auto-recovery attempt failed: {}", last_error);
+                    log::warn!("Auto-recovery attempt failed: {}", last_error);
                 }
             }
         }

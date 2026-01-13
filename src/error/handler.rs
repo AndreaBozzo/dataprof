@@ -61,10 +61,10 @@ pub fn handle_error(error: &Error, file_path: &Path) {
         } else if error_str.contains("CSV") {
             let csv_error =
                 DataProfilerError::csv_parsing(&error_str, &file_path.display().to_string());
-            eprintln!("\n🟠 HIGH Error: {}", csv_error);
+            eprintln!("\n[HIGH] Error: {}", csv_error);
         } else {
-            eprintln!("\n❌ Error: {}", error);
-            eprintln!("💡 For help, run: {} --help", "dataprof".bright_blue());
+            eprintln!("\nError: {}", error);
+            eprintln!("For help, run: {} --help", "dataprof".bright_blue());
         }
     }
 }

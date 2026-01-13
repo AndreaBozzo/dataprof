@@ -96,6 +96,6 @@ fn save_output_to_file(
     let content = formatter.format_report(report)?;
 
     fs::write(path, content)?;
-    println!("✅ Results saved to: {}", path.display());
+    log::info!("Results saved to: {}", path.display());
     Ok(())
 }

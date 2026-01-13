@@ -111,13 +111,13 @@ impl SslConfig {
 
         // Warn about security implications
         if self.require_ssl && !self.verify_server_cert {
-            eprintln!(
-                "WARNING: SSL required but server certificate verification is disabled. This may be insecure."
+            log::warn!(
+                "SSL required but server certificate verification is disabled. This may be insecure."
             );
         }
 
         if !self.require_ssl {
-            eprintln!("WARNING: SSL not required. Database connections may be unencrypted.");
+            log::warn!("SSL not required. Database connections may be unencrypted.");
         }
 
         Ok(())
@@ -164,12 +164,12 @@ impl SslConfig {
             "sqlite" => {
                 // SQLite doesn't support SSL as it's an embedded database
                 if self.require_ssl {
-                    eprintln!("WARNING: SSL configuration ignored for SQLite (embedded database)");
+                    log::warn!("SSL configuration ignored for SQLite (embedded database)");
                 }
             }
             _ => {
-                eprintln!(
-                    "WARNING: SSL configuration for database type '{}' not implemented",
+                log::warn!(
+                    "SSL configuration validation for '{}' not fully implemented",
                     database_type
                 );
             }

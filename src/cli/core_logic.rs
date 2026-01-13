@@ -71,7 +71,7 @@ impl ProfilerBuilder {
             // Add progress callback for real-time stats
             profiler = profiler.progress_callback(|progress: ProgressInfo| {
                 print!(
-                    "\r🔄 Processing: {:.1}% ({} rows, {:.1} rows/sec)",
+                    "\rProcessing: {:.1}% ({} rows, {:.1} rows/sec)",
                     progress.percentage, progress.rows_processed, progress.processing_speed
                 );
                 let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -164,10 +164,7 @@ pub fn analyze_file_with_options(
                         // Streaming failed, try robust CSV parser with flexible mode
                         // Only show this warning at verbose level (actual failures shown regardless)
                         if verbosity >= 2 {
-                            eprintln!(
-                                "ℹ️  Streaming analysis failed: {}. Trying robust parser...",
-                                e
-                            );
+                            eprintln!("Streaming analysis failed: {}. Trying robust parser...", e);
                         }
                         dataprof::analyze_csv_robust(file_path)
                     }
@@ -178,7 +175,7 @@ pub fn analyze_file_with_options(
                 // Only show this warning at verbose level
                 if verbosity >= 2 {
                     eprintln!(
-                        "ℹ️  Profiler initialization failed: {}. Trying robust parser...",
+                        "Profiler initialization failed: {}. Trying robust parser...",
                         e
                     );
                 }
