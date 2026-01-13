@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 dist/
 *.egg
+*.so
 
 # IDE files - personal settings only
 .vscode/settings.json
