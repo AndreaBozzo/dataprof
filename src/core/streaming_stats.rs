@@ -47,7 +47,7 @@ impl StreamingStatistics {
         }
     }
 
-    pub fn with_limits(max_unique: usize, max_sample: usize) -> Self {
+    pub fn limits(max_unique: usize, max_sample: usize) -> Self {
         Self {
             max_unique_values: max_unique,
             max_sample_size: max_sample,
@@ -227,7 +227,7 @@ impl StreamingColumnCollection {
         }
     }
 
-    pub fn with_memory_limit(limit_mb: usize) -> Self {
+    pub fn memory_limit(limit_mb: usize) -> Self {
         Self {
             columns: HashMap::new(),
             memory_limit_bytes: limit_mb * 1024 * 1024,

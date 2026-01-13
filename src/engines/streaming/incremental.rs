@@ -67,7 +67,7 @@ impl IncrementalProfiler {
         let chunk_size_bytes = self.calculate_optimal_chunk_size(file_size_bytes);
 
         // Initialize streaming statistics collection
-        let mut column_stats = StreamingColumnCollection::with_memory_limit(self.memory_limit_mb);
+        let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb);
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
 
         let mut headers: Option<csv::StringRecord> = None;

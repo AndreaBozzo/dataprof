@@ -101,7 +101,7 @@ impl Default for ParquetConfig {
 
 impl ParquetConfig {
     /// Create new config with custom batch size
-    pub fn with_batch_size(batch_size: usize) -> Self {
+    pub fn batch_size(batch_size: usize) -> Self {
         Self { batch_size }
     }
 
@@ -169,7 +169,7 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
 /// use dataprof::{analyze_parquet_with_config, ParquetConfig};
 /// use std::path::Path;
 ///
-/// let config = ParquetConfig::with_batch_size(16384);
+/// let config = ParquetConfig::batch_size(16384);
 /// let report = analyze_parquet_with_config(Path::new("data.parquet"), &config)?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```

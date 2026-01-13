@@ -38,11 +38,11 @@ pub struct ReservoirStats {
 impl ReservoirSampler {
     /// Create a new reservoir sampler with specified capacity
     pub fn new(capacity: usize) -> Self {
-        Self::with_seed(capacity, 42) // Default seed for reproducibility
+        Self::seed(capacity, 42) // Default seed for reproducibility
     }
 
     /// Create a new reservoir sampler with custom seed
-    pub fn with_seed(capacity: usize, seed: u64) -> Self {
+    pub fn seed(capacity: usize, seed: u64) -> Self {
         Self {
             capacity,
             reservoir: Vec::with_capacity(capacity),
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_replacement_phase() {
-        let mut sampler = ReservoirSampler::with_seed(3, 42); // Fixed seed for reproducibility
+        let mut sampler = ReservoirSampler::seed(3, 42); // Fixed seed for reproducibility
 
         // Fill reservoir
         for i in 0..3 {
@@ -404,8 +404,8 @@ mod tests {
 
     #[test]
     fn test_deterministic_with_seed() {
-        let mut sampler1 = ReservoirSampler::with_seed(5, 123);
-        let mut sampler2 = ReservoirSampler::with_seed(5, 123);
+        let mut sampler1 = ReservoirSampler::seed(5, 123);
+        let mut sampler2 = ReservoirSampler::seed(5, 123);
 
         for i in 0..50 {
             sampler1.process_record(i);

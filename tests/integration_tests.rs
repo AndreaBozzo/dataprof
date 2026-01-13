@@ -326,8 +326,8 @@ fn test_v030_streaming_profiler_basic() -> Result<()> {
 #[test]
 fn test_improved_reservoir_sampling_deterministic() -> Result<()> {
     // Test that improved reservoir sampling is deterministic with same seed
-    let mut sampler1 = ReservoirSampler::with_seed(10, 42);
-    let mut sampler2 = ReservoirSampler::with_seed(10, 42);
+    let mut sampler1 = ReservoirSampler::seed(10, 42);
+    let mut sampler2 = ReservoirSampler::seed(10, 42);
 
     for i in 0..100 {
         sampler1.process_record(i);

@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 #[cfg(feature = "database")]
-use crate::database::{DatabaseConfig, create_connector, analyze_database};
+use crate::database::{DatabaseConfig, analyze_database, create_connector};
 use crate::python::types::{PyColumnProfile, PyDataQualityMetrics};
 
 /// Async Python wrapper for database analysis

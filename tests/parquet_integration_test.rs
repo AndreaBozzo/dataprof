@@ -547,7 +547,7 @@ mod parquet_tests {
         let temp_file = create_test_parquet_file()?;
 
         // Test with small batch size
-        let config = dataprof::ParquetConfig::with_batch_size(2);
+        let config = dataprof::ParquetConfig::batch_size(2);
         let report = dataprof::analyze_parquet_with_config(temp_file.path(), &config)?;
 
         // Should still analyze all data correctly
@@ -555,7 +555,7 @@ mod parquet_tests {
         assert_eq!(report.column_profiles.len(), 5);
 
         // Test with large batch size
-        let config = dataprof::ParquetConfig::with_batch_size(10000);
+        let config = dataprof::ParquetConfig::batch_size(10000);
         let report = dataprof::analyze_parquet_with_config(temp_file.path(), &config)?;
 
         assert_eq!(report.file_info.total_rows, Some(5));

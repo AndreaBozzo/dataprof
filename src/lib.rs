@@ -68,7 +68,7 @@ pub use stats::{calculate_numeric_stats, calculate_text_stats};
 pub use database::{
     DatabaseConfig, DatabaseConnector, DatabaseCredentials, MySqlConnector, PostgresConnector,
     RetryConfig, SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector,
-    SslConfig, create_connector, analyze_database,
+    SslConfig, analyze_database, create_connector,
 };
 
 /// Global memory leak detection utility

@@ -89,7 +89,7 @@ impl AdaptiveFormatter {
         }
     }
 
-    pub fn with_forced_format(format: OutputFormat) -> Self {
+    pub fn format(format: OutputFormat) -> Self {
         Self {
             is_interactive: OutputContext::detect().is_interactive,
             force_format: Some(format),
@@ -730,7 +730,7 @@ pub fn create_adaptive_formatter() -> Box<dyn OutputFormatter> {
 
 /// Create adaptive formatter with forced format
 pub fn create_adaptive_formatter_with_format(format: OutputFormat) -> Box<dyn OutputFormatter> {
-    Box::new(AdaptiveFormatter::with_forced_format(format))
+    Box::new(AdaptiveFormatter::format(format))
 }
 
 /// Adaptive output that automatically selects best format based on terminal context
