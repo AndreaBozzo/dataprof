@@ -1,8 +1,7 @@
 """DataProf Python bindings"""
 
 from ._dataprof import *
-
-__version__ = "0.3.0"
+from ._dataprof import __version__
 
 # Core exports for data profiling
 __all__ = [

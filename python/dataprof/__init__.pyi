@@ -14,6 +14,7 @@ try:
 except ImportError:
     _PANDAS_AVAILABLE = False
 
+# Version is imported from Rust binary module (_dataprof)
 __version__: str
 
 # Core analysis functions
