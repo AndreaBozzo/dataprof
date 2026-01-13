@@ -41,7 +41,7 @@ cleanup_on_error() {
 
     # Stop any running containers that might have been started
     if command -v docker-compose &> /dev/null; then
-        docker-compose -f .devcontainer/docker-compose.yml down &> /dev/null || true
+        docker-compose -f .devcontainer/compose.yml down &> /dev/null || true
     fi
 
     log_info "Log file saved to: $LOG_FILE"
@@ -350,11 +350,11 @@ display_summary() {
     echo "   cargo test                   # Run tests"
     echo "   cargo fmt                    # Format code"
     echo "   cargo clippy                 # Lint code"
-    echo "   docker-compose -f .devcontainer/docker-compose.yml up -d  # Start databases"
+    echo "   docker-compose -f .devcontainer/compose.yml up -d  # Start databases"
     echo ""
     log_info "🗃️ Database commands:"
-    echo "   docker-compose -f .devcontainer/docker-compose.yml up -d     # Start databases"
-    echo "   docker-compose -f .devcontainer/docker-compose.yml ps        # Check status"
+    echo "   docker-compose -f .devcontainer/compose.yml up -d     # Start databases"
+    echo "   docker-compose -f .devcontainer/compose.yml ps        # Check status"
     echo "   docker exec -it dataprof-postgres-dev psql -U dataprof -d dataprof_test  # Connect PostgreSQL"
     echo "   docker exec -it dataprof-mysql-dev mysql -u dataprof -pdev_password_123  # Connect MySQL"
     echo ""
@@ -367,7 +367,7 @@ display_summary() {
 
     if [[ "$SETUP_MODE" != "minimal" ]] && command_exists docker; then
         log_info "🚀 Next steps:"
-        echo "   1. Run 'docker-compose -f .devcontainer/docker-compose.yml up -d' to start development databases"
+        echo "   1. Run 'docker-compose -f .devcontainer/compose.yml up -d' to start development databases"
         echo "   2. Run 'cargo test --features all-db' to verify database integration"
         echo "   3. Open the project in VS Code with the Dev Containers extension"
     fi

@@ -133,7 +133,7 @@ cd dataprof
 cargo build --release
 
 # Test databases (optional)
-docker-compose -f .devcontainer/docker-compose.yml up -d
+docker-compose -f .devcontainer/compose.yml up -d
 
 # Common tasks
 cargo test          # Run tests
