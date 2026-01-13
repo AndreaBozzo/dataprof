@@ -31,12 +31,6 @@ impl StreamingColumnInfo {
         // Delegate to canonical StreamingStatistics implementation
         self.stats.update(value);
     }
-
-    #[allow(dead_code)] // Future use for distributed processing
-    fn merge(&mut self, other: StreamingColumnInfo) {
-        // Delegate merge to canonical implementation
-        self.stats.merge(&other.stats);
-    }
 }
 
 /// Memory-mapped profiler that uses mmap for large files

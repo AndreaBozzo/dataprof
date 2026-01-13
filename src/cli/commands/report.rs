@@ -30,10 +30,6 @@ pub struct ReportArgs {
     /// ISO quality threshold profile (default, strict, lenient)
     #[arg(long, default_value = "default")]
     pub threshold_profile: String,
-
-    /// Use streaming for large files
-    #[arg(long)]
-    pub streaming: bool,
 }
 use anyhow::{Context, Result};
 use dataprof::{DataProfiler, generate_html_report};

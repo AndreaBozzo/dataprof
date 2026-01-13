@@ -23,10 +23,6 @@ pub struct AnalyzeArgs {
     #[arg(long, default_value = "default")]
     pub threshold_profile: String,
 
-    /// Use streaming for large files
-    #[arg(long)]
-    pub streaming: bool,
-
     /// Sample size for large files
     #[arg(long)]
     pub sample: Option<usize>,
@@ -49,7 +45,6 @@ pub fn execute(args: &AnalyzeArgs) -> Result<()> {
         progress: args.common.progress,
         chunk_size: args.common.chunk_size,
         config: args.common.config.clone(),
-        streaming: args.streaming,
         sample: args.sample,
         verbosity: Some(args.common.verbosity),
     };

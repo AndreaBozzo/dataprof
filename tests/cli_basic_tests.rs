@@ -165,18 +165,6 @@ fn test_analyze_with_output_file() -> Result<()> {
 }
 
 #[test]
-fn test_analyze_streaming_mode() -> Result<()> {
-    let test_file = create_test_csv()?;
-    let file_path = test_file.path().to_str().unwrap();
-
-    let (success, _stdout, _stderr) = run_cli_command(&["analyze", file_path, "--streaming"])?;
-
-    assert!(success, "Streaming mode should succeed");
-
-    Ok(())
-}
-
-#[test]
 fn test_analyze_with_sample() -> Result<()> {
     let test_file = create_test_csv()?;
     let file_path = test_file.path().to_str().unwrap();

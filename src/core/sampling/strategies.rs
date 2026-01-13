@@ -50,10 +50,6 @@ pub struct SamplingState {
 
     /// Enhanced reservoir sampler
     reservoir_sampler: Option<ReservoirSampler>,
-
-    /// Importance sampling state
-    #[allow(dead_code)] // Future use for importance sampling
-    importance_scores: Vec<f64>,
 }
 
 impl SamplingState {
@@ -64,7 +60,6 @@ impl SamplingState {
             stratum_counts: HashMap::new(),
             stratum_samples: HashMap::new(),
             reservoir_sampler: None,
-            importance_scores: Vec::new(),
         }
     }
 

@@ -24,9 +24,6 @@ pub struct AnalysisOptions {
     pub chunk_size: Option<usize>,
     /// Config file path
     pub config: Option<std::path::PathBuf>,
-    /// Force streaming mode (currently unused, reserved for future use)
-    #[allow(dead_code)]
-    pub streaming: bool,
     /// Sample size for large files
     pub sample: Option<usize>,
     /// Verbosity level (0=quiet, 1=normal, 2=verbose, 3=debug)
