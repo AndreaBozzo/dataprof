@@ -109,7 +109,7 @@ print(f"Processed {result.processed_files} files at {result.files_per_second:.1f
 **Database Integration (Python)**
 ```python
 # Profile a SQL query directly
-await dataprof.profile_database_async(
+await dataprof.analyze_database_async(
     "postgresql://user:pass@localhost/db",
     "SELECT * FROM sales_data_2024"
 )

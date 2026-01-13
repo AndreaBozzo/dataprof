@@ -16,7 +16,7 @@ fn main() {
 #[cfg(feature = "database")]
 use anyhow::Result;
 #[cfg(feature = "database")]
-use dataprof::{DatabaseConfig, profile_database};
+use dataprof::{DatabaseConfig, analyze_database};
 
 #[cfg(feature = "database")]
 #[tokio::main]
@@ -47,7 +47,7 @@ async fn test_postgresql_advanced() -> Result<()> {
         load_credentials_from_env: false,
     };
 
-    let report = profile_database(config, "SELECT * FROM test_users").await?;
+    let report = analyze_database(config, "SELECT * FROM test_users").await?;
 
     println!("\n📈 Overall Statistics:");
     println!("  Total Rows: {}", report.file_info.total_rows.unwrap_or(0));
@@ -139,7 +139,7 @@ async fn test_mysql_advanced() -> Result<()> {
         load_credentials_from_env: false,
     };
 
-    let report = profile_database(config, "SELECT * FROM test_products").await?;
+    let report = analyze_database(config, "SELECT * FROM test_products").await?;
 
     println!("\n📈 Overall Statistics:");
     println!("  Total Rows: {}", report.file_info.total_rows.unwrap_or(0));

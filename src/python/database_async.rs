@@ -7,17 +7,17 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 #[cfg(feature = "database")]
-use crate::database::{DatabaseConfig, create_connector, profile_database};
+use crate::database::{DatabaseConfig, create_connector, analyze_database};
 use crate::python::types::{PyColumnProfile, PyDataQualityMetrics};
 
-/// Async Python wrapper for database profiling
+/// Async Python wrapper for database analysis
 ///
-/// This function allows Python code to profile database queries asynchronously
+/// This function allows Python code to analyze database queries asynchronously
 /// using Python's asyncio framework.
 ///
 /// # Arguments
 /// * `connection_string` - Database connection string (postgres://, mysql://, sqlite://)
-/// * `query` - SQL query to profile
+/// * `query` - SQL query to analyze
 /// * `batch_size` - Optional batch size for streaming (default: 10000)
 /// * `calculate_quality` - Whether to calculate quality metrics (default: false)
 ///
@@ -29,8 +29,8 @@ use crate::python::types::{PyColumnProfile, PyDataQualityMetrics};
 /// import asyncio
 /// import dataprof
 ///
-/// async def profile_db():
-///     result = await dataprof.profile_database_async(
+/// async def analyze_db():
+///     result = await dataprof.analyze_database_async(
 ///         "postgresql://user:pass@localhost/db",
 ///         "SELECT * FROM users LIMIT 1000",
 ///         batch_size=1000,
@@ -38,11 +38,11 @@ use crate::python::types::{PyColumnProfile, PyDataQualityMetrics};
 ///     )
 ///     print(result)
 ///
-/// asyncio.run(profile_db())
+/// asyncio.run(analyze_db())
 /// ```
 #[pyfunction]
 #[pyo3(signature = (connection_string, query, batch_size=10000, calculate_quality=false))]
-pub fn profile_database_async<'py>(
+pub fn analyze_database_async<'py>(
     py: Python<'py>,
     connection_string: String,
     query: String,
@@ -53,7 +53,7 @@ pub fn profile_database_async<'py>(
     #[cfg(feature = "python-async")]
     {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            profile_database_internal(connection_string, query, batch_size, calculate_quality)
+            analyze_database_internal(connection_string, query, batch_size, calculate_quality)
                 .await
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
         })
@@ -67,9 +67,9 @@ pub fn profile_database_async<'py>(
     }
 }
 
-/// Internal async function that does the actual database profiling
+/// Internal async function that does the actual database analysis
 #[cfg(all(feature = "database", feature = "python-async"))]
-async fn profile_database_internal(
+async fn analyze_database_internal(
     connection_string: String,
     query: String,
     batch_size: usize,
@@ -84,8 +84,8 @@ async fn profile_database_internal(
         ..Default::default()
     };
 
-    // Profile the database query
-    let quality_report = profile_database(config, &query).await?;
+    // Analyze the database query
+    let quality_report = analyze_database(config, &query).await?;
 
     // Convert to Python objects
     Python::attach(|py| {

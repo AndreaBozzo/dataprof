@@ -80,7 +80,7 @@ dataprof --database "postgresql://" --query "user_activity"
 > **Feature requirement**: Enable database feature: `dataprof = { version = "0.4", features = ["postgres"] }`
 
 ```rust
-use dataprof::{DatabaseConfig, profile_database, SamplingConfig, SslConfig};
+use dataprof::{DatabaseConfig, analyze_database, SamplingConfig, SslConfig};
 
 #[tokio::main]  // Required: tokio async runtime is mandatory
 async fn main() -> anyhow::Result<()> {
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Get quality report with ISO 8000/25012 metrics
-    let report = profile_database(config, "SELECT * FROM large_table").await?;
+    let report = analyze_database(config, "SELECT * FROM large_table").await?;
 
     println!("📊 Processed {} rows across {} columns",
         report.file_info.total_rows.unwrap_or(0),
@@ -255,7 +255,7 @@ let config = DatabaseConfig {
     ..Default::default()
 };
 
-let report = profile_database(config, "user_profiles").await?;
+let report = analyze_database(config, "user_profiles").await?;
 
 println!("Overall Quality Score: {:.1}%", report.quality_score());
 
@@ -427,7 +427,7 @@ SECURITY WARNING: No SSL/TLS configuration detected. Database traffic may be une
 
 ### Data Pipeline
 ```rust
-use dataprof::{DatabaseConfig, profile_database};
+use dataprof::{DatabaseConfig, analyze_database};
 
 async fn profile_daily_data() -> anyhow::Result<()> {
     let databases = vec![
@@ -443,7 +443,7 @@ async fn profile_daily_data() -> anyhow::Result<()> {
             ..Default::default()
         };
 
-        let report = profile_database(config, "daily_metrics").await?;
+        let report = analyze_database(config, "daily_metrics").await?;
         println!("{}: {} rows profiled", name, report.scan_info.rows_scanned);
     }
 
@@ -453,7 +453,7 @@ async fn profile_daily_data() -> anyhow::Result<()> {
 
 ### Quality Monitoring
 ```rust
-use dataprof::{DatabaseConfig, profile_database, ErrorSeverity};
+use dataprof::{DatabaseConfig, analyze_database, ErrorSeverity};
 
 async fn monitor_data_quality() -> anyhow::Result<()> {
     let config = DatabaseConfig {
@@ -462,7 +462,7 @@ async fn monitor_data_quality() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let report = profile_database(config, "
+    let report = analyze_database(config, "
         SELECT * FROM customer_data
         WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
     ").await?;

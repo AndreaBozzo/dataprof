@@ -93,7 +93,7 @@ async def example_postgres_async():
         print("\n4️⃣ Profiling query...")
         query = f"SELECT * FROM {table_name} LIMIT 1000"
 
-        result = await dataprof.profile_database_async(
+        result = await dataprof.analyze_database_async(
             connection_string,
             query,
             batch_size=1000,

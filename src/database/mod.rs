@@ -158,8 +158,8 @@ fn apply_environment_configuration(mut config: DatabaseConfig) -> Result<Databas
     Ok(config)
 }
 
-/// High-level function to profile a database table or query
-pub async fn profile_database(config: DatabaseConfig, query: &str) -> Result<QualityReport> {
+/// High-level function to analyze a database table or query
+pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<QualityReport> {
     let mut connector = create_connector(config.clone())?;
 
     // Connect to database

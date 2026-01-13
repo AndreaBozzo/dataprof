@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use dataprof::output::output_with_adaptive_formatter;
 use dataprof::{
-    ColumnProfile, DatabaseConfig, OutputFormat, generate_html_report, profile_database,
+    ColumnProfile, DatabaseConfig, OutputFormat, generate_html_report, analyze_database,
 };
 
 /// Database analysis arguments
@@ -101,7 +101,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| anyhow::anyhow!("Failed to create async runtime: {}", e))?;
 
-    let report = rt.block_on(async { profile_database(config, &query).await })?;
+    let report = rt.block_on(async { analyze_database(config, &query).await })?;
 
     println!(
         "🔗 {} | {} columns | {} rows",

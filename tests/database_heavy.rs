@@ -21,7 +21,7 @@ use dataprof::DatabaseConfig;
 #[cfg(all(test, feature = "database", feature = "sqlite"))]
 mod heavy_sqlite_tests {
     use super::*;
-    use dataprof::profile_database;
+    use dataprof::analyze_database;
 
     #[tokio::test]
     async fn test_sqlite_create_and_profile_table() -> Result<()> {
@@ -36,13 +36,13 @@ mod heavy_sqlite_tests {
             load_credentials_from_env: false,
         };
 
-        // Use the high-level profile_database function
+        // Use the high-level analyze_database function
         // Note: This test would need actual SQLite setup with test data
         // For now, we just verify the function exists and can be called
 
         // This would normally fail because we don't have test data,
         // but it verifies the API compiles correctly
-        let result = profile_database(config, "SELECT 1 as test_column").await;
+        let result = analyze_database(config, "SELECT 1 as test_column").await;
 
         // We expect this to fail with a connection error since we're using :memory:
         // without setting up the database, but that's ok for a compilation test
@@ -76,7 +76,7 @@ mod heavy_sqlite_tests {
 
         // Test with a simple SELECT statement that should work with in-memory SQLite
         let result =
-            profile_database(config, "SELECT 1 as id, 'test' as name, 100.5 as value").await;
+            analyze_database(config, "SELECT 1 as id, 'test' as name, 100.5 as value").await;
 
         match result {
             Ok(report) => {

@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 #[cfg(feature = "database")]
-use dataprof::{DatabaseConfig, profile_database};
+use dataprof::{DatabaseConfig, analyze_database};
 
 /// Example: Profile a PostgreSQL table
 #[cfg(feature = "database")]
@@ -25,7 +25,7 @@ async fn postgresql_example() -> Result<()> {
     };
 
     // Profile entire table
-    let report = profile_database(config.clone(), "users").await?;
+    let report = analyze_database(config.clone(), "users").await?;
 
     println!(
         "✅ Profiled {} rows across {} columns",
@@ -34,7 +34,7 @@ async fn postgresql_example() -> Result<()> {
     );
 
     // Profile with custom query
-    let report = profile_database(
+    let report = analyze_database(
         config,
         "
         SELECT user_id, email, created_at, last_login
@@ -62,7 +62,7 @@ async fn mysql_example() -> Result<()> {
     };
 
     // Complex query with joins
-    let report = profile_database(
+    let report = analyze_database(
         config,
         "
         SELECT
@@ -110,7 +110,7 @@ async fn sqlite_example() -> Result<()> {
         ..Default::default()
     };
 
-    let report = profile_database(config, "products").await?;
+    let report = analyze_database(config, "products").await?;
 
     println!("🔍 SQLite Analysis Complete");
     println!("   Rows: {}", report.scan_info.rows_scanned);
@@ -141,7 +141,7 @@ async fn duckdb_example() -> Result<()> {
     };
 
     // Analytical query with aggregations
-    let report = profile_database(
+    let report = analyze_database(
         config,
         "
         SELECT
@@ -192,7 +192,7 @@ async fn streaming_example() -> Result<()> {
     // Query that returns millions of rows
     let start_time = std::time::Instant::now();
 
-    let report = profile_database(
+    let report = analyze_database(
         config,
         "
         SELECT
@@ -241,7 +241,7 @@ async fn quality_monitoring_example() -> Result<()> {
         };
 
         // Skip if connection fails (for demo purposes)
-        match profile_database(config, "SELECT 1 as health_check").await {
+        match analyze_database(config, "SELECT 1 as health_check").await {
             Ok(report) => {
                 println!("✅ {}: {} rows", name, report.scan_info.rows_scanned);
 
