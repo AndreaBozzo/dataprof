@@ -4,7 +4,7 @@
 //! Key metrics: duplicate rows, key uniqueness, high cardinality warnings.
 
 use super::utils::is_likely_id_column;
-use crate::core::config::IsoQualityThresholds;
+use crate::core::config::IsoQualityConfig;
 use crate::types::ColumnProfile;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -19,11 +19,11 @@ pub(crate) struct UniquenessMetrics {
 
 /// Calculator for uniqueness dimension metrics
 pub(crate) struct UniquenessCalculator<'a> {
-    thresholds: &'a IsoQualityThresholds,
+    thresholds: &'a IsoQualityConfig,
 }
 
 impl<'a> UniquenessCalculator<'a> {
-    pub fn new(thresholds: &'a IsoQualityThresholds) -> Self {
+    pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
         Self { thresholds }
     }
 

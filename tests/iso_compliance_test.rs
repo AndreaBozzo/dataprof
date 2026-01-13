@@ -7,7 +7,7 @@
 //! - ISO 25012 (Data Quality Model - Accuracy)
 
 use dataprof::analysis::MetricsCalculator;
-use dataprof::core::config::IsoQualityThresholds;
+use dataprof::core::config::IsoQualityConfig;
 use dataprof::types::{ColumnProfile, ColumnStats, DataType};
 use std::collections::HashMap;
 
@@ -459,7 +459,7 @@ fn test_all_dimensions_integrated() {
 #[test]
 fn test_iso_threshold_validation() {
     // Test that all threshold profiles are valid
-    let default_thresholds = IsoQualityThresholds::default();
+    let default_thresholds = IsoQualityConfig::default();
     assert!(
         default_thresholds.outlier_iqr_multiplier > 0.0,
         "IQR multiplier must be positive"
@@ -470,13 +470,13 @@ fn test_iso_threshold_validation() {
         "Null percentage must be 0-100"
     );
 
-    let strict_thresholds = IsoQualityThresholds::strict();
+    let strict_thresholds = IsoQualityConfig::strict();
     assert!(
         strict_thresholds.max_null_percentage < default_thresholds.max_null_percentage,
         "Strict should have lower null tolerance"
     );
 
-    let lenient_thresholds = IsoQualityThresholds::lenient();
+    let lenient_thresholds = IsoQualityConfig::lenient();
     assert!(
         lenient_thresholds.max_null_percentage > default_thresholds.max_null_percentage,
         "Lenient should have higher null tolerance"

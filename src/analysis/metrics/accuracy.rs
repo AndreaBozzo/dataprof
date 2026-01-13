@@ -4,7 +4,7 @@
 //! Key metrics: outlier ratio, range violations, negative values in positive fields.
 
 use super::utils::{calculate_percentile, validate_sample_size};
-use crate::core::config::IsoQualityThresholds;
+use crate::core::config::IsoQualityConfig;
 use crate::types::{ColumnProfile, DataType};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -19,11 +19,11 @@ pub(crate) struct AccuracyMetrics {
 
 /// Calculator for accuracy dimension metrics
 pub(crate) struct AccuracyCalculator<'a> {
-    thresholds: &'a IsoQualityThresholds,
+    thresholds: &'a IsoQualityConfig,
 }
 
 impl<'a> AccuracyCalculator<'a> {
-    pub fn new(thresholds: &'a IsoQualityThresholds) -> Self {
+    pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
         Self { thresholds }
     }
 

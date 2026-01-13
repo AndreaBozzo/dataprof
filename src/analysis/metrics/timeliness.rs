@@ -4,7 +4,7 @@
 //! Key metrics: future dates, stale data ratio, temporal violations.
 
 use super::utils::extract_year;
-use crate::core::config::IsoQualityThresholds;
+use crate::core::config::IsoQualityConfig;
 use crate::types::{ColumnProfile, DataType};
 use anyhow::Result;
 use chrono::Datelike;
@@ -20,11 +20,11 @@ pub(crate) struct TimelinessMetrics {
 
 /// Calculator for timeliness dimension metrics
 pub(crate) struct TimelinessCalculator<'a> {
-    thresholds: &'a IsoQualityThresholds,
+    thresholds: &'a IsoQualityConfig,
 }
 
 impl<'a> TimelinessCalculator<'a> {
-    pub fn new(thresholds: &'a IsoQualityThresholds) -> Self {
+    pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
         Self { thresholds }
     }
 

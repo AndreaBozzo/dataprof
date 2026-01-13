@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example config_builder_example
 
-use dataprof::core::config::{DataprofConfigBuilder, IsoQualityThresholds};
+use dataprof::core::config::{DataprofConfigBuilder, IsoQualityConfig};
 
 fn main() -> anyhow::Result<()> {
     println!("=== DataProf Configuration Builder Examples ===\n");
@@ -80,7 +80,7 @@ fn main() -> anyhow::Result<()> {
 
     // Example 5: Custom ISO thresholds
     println!("--- Example 5: Custom ISO Thresholds ---");
-    let custom_thresholds = IsoQualityThresholds {
+    let custom_thresholds = IsoQualityConfig {
         max_null_percentage: 40.0,
         null_report_threshold: 8.0,
         min_type_consistency: 96.0,

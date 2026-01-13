@@ -46,7 +46,7 @@
 //! 2. Add `mod {dimension};` and `use {dimension}::...;` in this file
 //! 3. Extend `DataQualityMetrics` in `src/types.rs` with new fields
 //! 4. Call the calculator in `calculate_comprehensive_metrics()` and map fields
-//! 5. Update `IsoQualityThresholds` in `src/core/config.rs` if configurable thresholds needed
+//! 5. Update `IsoQualityConfig` in `src/core/config.rs` if configurable thresholds needed
 //!
 //! ### References
 //! - ISO 25012: <https://iso25000.com/index.php/en/iso-25000-standards/iso-25012>
@@ -70,7 +70,7 @@ use consistency::ConsistencyCalculator;
 use timeliness::TimelinessCalculator;
 use uniqueness::UniquenessCalculator;
 
-use crate::core::config::IsoQualityThresholds;
+use crate::core::config::IsoQualityConfig;
 use crate::types::{ColumnProfile, DataQualityMetrics};
 use anyhow::Result;
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ use std::collections::HashMap;
 /// Supports ISO 8000/25012 configurable thresholds
 pub struct MetricsCalculator {
     /// ISO-compliant quality thresholds
-    pub thresholds: IsoQualityThresholds,
+    pub thresholds: IsoQualityConfig,
 }
 
 impl Default for MetricsCalculator {
@@ -92,26 +92,26 @@ impl MetricsCalculator {
     /// Create a new calculator with default ISO thresholds
     pub fn new() -> Self {
         Self {
-            thresholds: IsoQualityThresholds::default(),
+            thresholds: IsoQualityConfig::default(),
         }
     }
 
     /// Create a calculator with custom thresholds
-    pub fn with_thresholds(thresholds: IsoQualityThresholds) -> Self {
+    pub fn with_thresholds(thresholds: IsoQualityConfig) -> Self {
         Self { thresholds }
     }
 
     /// Create a calculator with strict thresholds (finance, healthcare)
     pub fn strict() -> Self {
         Self {
-            thresholds: IsoQualityThresholds::strict(),
+            thresholds: IsoQualityConfig::strict(),
         }
     }
 
     /// Create a calculator with lenient thresholds (exploratory, marketing)
     pub fn lenient() -> Self {
         Self {
-            thresholds: IsoQualityThresholds::lenient(),
+            thresholds: IsoQualityConfig::lenient(),
         }
     }
 

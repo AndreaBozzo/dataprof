@@ -3,7 +3,7 @@
 //! Measures the presence of all required data elements.
 //! Key metrics: missing values ratio, complete records ratio, null columns.
 
-use crate::core::config::IsoQualityThresholds;
+use crate::core::config::IsoQualityConfig;
 use crate::types::ColumnProfile;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -18,11 +18,11 @@ pub(crate) struct CompletenessMetrics {
 
 /// Calculator for completeness dimension metrics
 pub(crate) struct CompletenessCalculator<'a> {
-    thresholds: &'a IsoQualityThresholds,
+    thresholds: &'a IsoQualityConfig,
 }
 
 impl<'a> CompletenessCalculator<'a> {
-    pub fn new(thresholds: &'a IsoQualityThresholds) -> Self {
+    pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
         Self { thresholds }
     }
 

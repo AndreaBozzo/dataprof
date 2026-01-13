@@ -160,16 +160,16 @@ pub struct QualityConfig {
     /// date format checking, outlier detection, etc.) are controlled through
     /// these ISO-compliant thresholds.
     ///
-    /// Use `IsoQualityThresholds::strict()` for high-compliance industries,
-    /// `IsoQualityThresholds::lenient()` for exploratory data, or customize
+    /// Use `IsoQualityConfig::strict()` for high-compliance industries,
+    /// `IsoQualityConfig::lenient()` for exploratory data, or customize
     /// individual thresholds as needed.
-    pub iso_thresholds: IsoQualityThresholds,
+    pub iso_thresholds: IsoQualityConfig,
 }
 
 /// ISO 8000/25012 compliant quality thresholds
 /// These thresholds are configurable for industry-specific requirements
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IsoQualityThresholds {
+pub struct IsoQualityConfig {
     // Completeness thresholds (ISO 8000-8)
     /// Maximum acceptable null percentage for a column (default: 50%)
     pub max_null_percentage: f64,
@@ -204,7 +204,7 @@ pub struct IsoQualityThresholds {
     pub stale_data_threshold: f64,
 }
 
-impl Default for IsoQualityThresholds {
+impl Default for IsoQualityConfig {
     fn default() -> Self {
         Self {
             // ISO 8000-8 Completeness
@@ -229,7 +229,7 @@ impl Default for IsoQualityThresholds {
     }
 }
 
-impl IsoQualityThresholds {
+impl IsoQualityConfig {
     /// Create strict thresholds for high-compliance industries (finance, healthcare)
     pub fn strict() -> Self {
         Self {
@@ -349,7 +349,7 @@ impl Default for QualityConfig {
     fn default() -> Self {
         Self {
             enabled: DEFAULT_QUALITY_ENABLED,
-            iso_thresholds: IsoQualityThresholds::default(),
+            iso_thresholds: IsoQualityConfig::default(),
         }
     }
 }
@@ -746,7 +746,7 @@ impl DataprofConfig {
 /// # Examples
 ///
 /// ```
-/// use dataprof::core::config::{DataprofConfigBuilder, IsoQualityThresholds};
+/// use dataprof::core::config::{DataprofConfigBuilder, IsoQualityConfig};
 ///
 /// // Simple configuration with defaults
 /// let config = DataprofConfigBuilder::new()
@@ -848,7 +848,7 @@ impl DataprofConfigBuilder {
     }
 
     /// Set custom ISO quality thresholds.
-    pub fn iso_quality_thresholds(mut self, thresholds: IsoQualityThresholds) -> Self {
+    pub fn iso_quality_thresholds(mut self, thresholds: IsoQualityConfig) -> Self {
         self.quality.iso_thresholds = thresholds;
         self
     }
@@ -861,7 +861,7 @@ impl DataprofConfigBuilder {
     /// - Stricter duplicate detection (1% vs 5%)
     /// - More recent data requirements (2 years vs 5 years)
     pub fn iso_quality_profile_strict(mut self) -> Self {
-        self.quality.iso_thresholds = IsoQualityThresholds::strict();
+        self.quality.iso_thresholds = IsoQualityConfig::strict();
         self
     }
 
@@ -873,7 +873,7 @@ impl DataprofConfigBuilder {
     /// - More lenient duplicate detection (10% vs 5%)
     /// - Older data accepted (10 years vs 5 years)
     pub fn iso_quality_profile_lenient(mut self) -> Self {
-        self.quality.iso_thresholds = IsoQualityThresholds::lenient();
+        self.quality.iso_thresholds = IsoQualityConfig::lenient();
         self
     }
 

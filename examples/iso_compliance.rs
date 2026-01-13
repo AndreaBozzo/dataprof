@@ -6,7 +6,7 @@
 //! Run with: cargo run --example iso_compliance
 
 use dataprof::analysis::MetricsCalculator;
-use dataprof::core::config::IsoQualityThresholds;
+use dataprof::core::config::IsoQualityConfig;
 use dataprof::types::{ColumnProfile, ColumnStats, DataType};
 use std::collections::HashMap;
 
@@ -90,7 +90,7 @@ fn main() -> anyhow::Result<()> {
 
     // ===== Example 4: Custom Thresholds =====
     println!("--- Example 4: Custom Thresholds ---");
-    let custom_thresholds = IsoQualityThresholds {
+    let custom_thresholds = IsoQualityConfig {
         max_null_percentage: 25.0,
         null_report_threshold: 5.0,
         min_type_consistency: 99.0,
