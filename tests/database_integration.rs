@@ -109,13 +109,6 @@ mod connection_tests {
         let sqlite_connector = create_connector(sqlite_config);
         assert!(sqlite_connector.is_ok());
 
-        let duckdb_config = DatabaseConfig {
-            connection_string: "/path/to/data.duckdb".to_string(),
-            ..Default::default()
-        };
-        let duckdb_connector = create_connector(duckdb_config);
-        assert!(duckdb_connector.is_ok());
-
         // Test unsupported connection string
         let invalid_config = DatabaseConfig {
             connection_string: "invalid://connection".to_string(),

@@ -50,19 +50,6 @@ services:
     networks:
       - dataprof-dev
 
-  # DuckDB standalone service (for testing)
-  duckdb:
-    image: alpine:latest
-    container_name: dataprof-duckdb-dev
-    restart: unless-stopped
-    command: tail -f /dev/null  # Keep container running
-    volumes:
-      - duckdb_data:/data
-      - ./test-data:/test-data:ro
-    working_dir: /data
-    networks:
-      - dataprof-dev
-
   # Redis for caching tests (if needed in the future)
   redis:
     image: redis:7-alpine
@@ -147,8 +134,6 @@ volumes:
   postgres_data:
     driver: local
   mysql_data:
-    driver: local
-  duckdb_data:
     driver: local
   redis_data:
     driver: local
