@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use env_logger::Env;
+use std::io::Write;
 
 // Local modules
 mod cli;
@@ -9,6 +11,11 @@ use cli::{Command, route_command};
 use dataprof::core::exit_codes;
 
 fn main() -> Result<()> {
+    // Initialize logger with sensible default so log::info!/warn! are visible by default
+    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        .format(|buf, record| writeln!(buf, "{}: {}", record.level(), record.args()))
+        .init();
+
     // Parse subcommand CLI
     #[derive(Parser)]
     #[command(name = "dataprof")]

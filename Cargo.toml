@@ -46,6 +46,7 @@ clap = { version = "4.5.54", features = ["derive"] }  # Latest: 4.5.51 (patch av
 # Terminal output
 colored = "3.0"
 is-terminal = "0.4"  # Latest: 0.4.17 (patch available via cargo update)
+env_logger = "0.11"
 
 # Error handling
 anyhow = "1.0"

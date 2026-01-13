@@ -29,29 +29,29 @@ impl EngineLogger {
 
     pub fn log_selection(&self, engine: &EngineType, reasoning: &str) {
         if self.enabled {
-            println!("🚀 Engine selected: {:?} - {}", engine, reasoning);
+            log::info!("Engine selected: {:?} - {}", engine, reasoning);
         }
     }
 
     pub fn log_fallback(&self, from: &EngineType, to: &EngineType, reason: &str) {
         if self.enabled {
-            println!("⚠️  Fallback: {:?} → {:?} - {}", from, to, reason);
+            log::warn!("Fallback: {:?} → {:?} - {}", from, to, reason);
         }
     }
 
     pub fn log_performance(&self, performance: &EnginePerformance) {
         if self.enabled {
             if performance.success {
-                println!(
-                    "✅ {:?}: {:.1}s, {:.0} rows/sec, {:.1}MB memory",
+                log::info!(
+                    "{:?}: {:.1}s, {:.0} rows/sec, {:.1}MB memory",
                     performance.engine_type,
                     performance.execution_time_ms as f64 / 1000.0,
                     performance.rows_per_second,
                     performance.memory_usage_mb
                 );
             } else {
-                println!(
-                    "❌ {:?}: Failed - {}",
+                log::warn!(
+                    "{:?}: Failed - {}",
                     performance.engine_type,
                     performance
                         .error_message
@@ -67,7 +67,7 @@ impl EngineLogger {
             return;
         }
 
-        println!("📊 Engine Performance Comparison:");
+        log::info!("Engine Performance Comparison:");
         let mut sorted = performances.to_vec();
         sorted.sort_by(|a, b| a.execution_time_ms.cmp(&b.execution_time_ms));
 
@@ -79,7 +79,7 @@ impl EngineLogger {
             } else {
                 "🥉"
             };
-            println!(
+            log::info!(
                 "  {} {:?}: {:.2}s ({:.0} rows/sec)",
                 icon,
                 perf.engine_type,
@@ -157,7 +157,7 @@ impl AdaptiveProfiler {
             #[cfg(feature = "parquet")]
             {
                 if self.logger.enabled {
-                    println!("🗂️  Parquet file detected - using native Parquet parser");
+                    log::info!("Parquet file detected - using native Parquet parser");
                 }
                 return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
             }

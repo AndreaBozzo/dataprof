@@ -77,16 +77,16 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
     // Create batch processor with config
     let processor = BatchProcessor::with_config(config);
 
-    println!("🔍 Processing batch...");
+    log::info!("Processing batch...");
 
     // Process directory
     let batch_result = processor.process_directory(&args.path)?;
 
     // Generate HTML report if requested
     if let Some(html_path) = &args.html {
-        println!("📄 Generating HTML batch report...");
+        log::info!("Generating HTML batch report...");
         generate_batch_html_report(&batch_result, html_path)?;
-        println!("✅ HTML report saved to: {}", html_path.display());
+        log::info!("HTML report saved to: {}", html_path.display());
     }
 
     // Handle JSON output (both --json flag and --format json)
@@ -101,7 +101,7 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
         if let Some(json_path) = json_output_path {
             // Save to file
             std::fs::write(json_path, &json_content)?;
-            println!("📄 JSON report saved to: {}", json_path.display());
+            log::info!("JSON report saved to: {}", json_path.display());
         } else if is_json_format && args.output.is_none() {
             // Output to stdout if --format json without --output
             println!("{}", json_content);
@@ -109,26 +109,25 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
         } else if let Some(output_path) = &args.output {
             // Save to --output path when --format json is used
             std::fs::write(output_path, &json_content)?;
-            println!("📄 JSON report saved to: {}", output_path.display());
+            log::info!("JSON report saved to: {}", output_path.display());
         }
     }
 
     // Display summary (skip if JSON format to stdout)
     if !is_json_format || args.output.is_some() || json_output_path.is_some() {
-        println!("\n📊 Batch Summary:");
-        println!("  Total files: {}", batch_result.summary.total_files);
-        println!("  Successful: {}", batch_result.summary.successful);
-        println!("  Failed: {}", batch_result.summary.failed);
-        println!(
-            "  Duration: {:.2}s",
+        log::info!(
+            "\nBatch Summary:\n  Total files: {}\n  Successful: {}\n  Failed: {}\n  Duration: {:.2}s",
+            batch_result.summary.total_files,
+            batch_result.summary.successful,
+            batch_result.summary.failed,
             batch_result.summary.processing_time_seconds
         );
 
         if args.detailed {
-            println!("\n📋 Detailed Results:");
+            log::info!("\nDetailed Results:");
             for (path, report) in &batch_result.reports {
                 let score = report.quality_score();
-                println!("  {} - Quality: {:.1}%", path.display(), score);
+                log::info!("  {} - Quality: {:.1}%", path.display(), score);
             }
         }
     }
