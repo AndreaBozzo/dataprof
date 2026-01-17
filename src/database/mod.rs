@@ -9,7 +9,7 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::types::{DataQualityMetrics, DataSource, QueryEngine, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 

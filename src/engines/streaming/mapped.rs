@@ -95,7 +95,7 @@ impl MappedProfiler {
         let reader = MemoryMappedCsvReader::new(file_path)?;
 
         let file_size_bytes = reader.file_size();
-        let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
+        let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
         // Estimate total rows
         let estimated_total_rows = reader.estimate_row_count()?;

@@ -73,7 +73,7 @@ pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 // JSON analysis with quality checking
 pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
-    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+    let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
 
     let start = std::time::Instant::now();
 

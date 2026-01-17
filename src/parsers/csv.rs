@@ -85,7 +85,7 @@ fn process_csv_record(
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
-    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+    let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
     let start = std::time::Instant::now();
 
     // Use robust CSV parser
@@ -219,7 +219,13 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
             parquet_metadata: None,
         },
         column_profiles,
-        ScanInfo::new(total_rows, num_columns, rows_read, sampling_ratio, scan_time_ms),
+        ScanInfo::new(
+            total_rows,
+            num_columns,
+            rows_read,
+            sampling_ratio,
+            scan_time_ms,
+        ),
         data_quality_metrics,
     ))
 }

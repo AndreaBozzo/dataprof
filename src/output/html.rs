@@ -69,14 +69,11 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
                 parquet_metadata.clone(),
             )
         }
-        DataSource::Query { statement, engine, .. } => {
+        DataSource::Query {
+            statement, engine, ..
+        } => {
             let name = format!("{} Query", engine);
-            (
-                name,
-                statement.clone(),
-                0.0,
-                None,
-            )
+            (name, statement.clone(), 0.0, None)
         }
     };
 

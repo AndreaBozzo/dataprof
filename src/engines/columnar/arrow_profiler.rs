@@ -40,7 +40,7 @@ impl ArrowProfiler {
         let start = std::time::Instant::now();
         let file = File::open(file_path)?;
         let file_size_bytes = file.metadata()?.len();
-        let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
+        let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
         // Read first to infer schema from headers
         let mut reader = csv::ReaderBuilder::new()

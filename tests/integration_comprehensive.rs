@@ -50,7 +50,7 @@ fn test_streaming_processing() -> Result<()> {
 
     assert!(report.scan_info.rows_scanned > 0, "Should scan > 0 rows");
     assert!(
-        report.file_info.total_columns > 0,
+        report.data_source.total_columns > 0,
         "Should have > 0 columns"
     );
     assert!(
@@ -60,7 +60,7 @@ fn test_streaming_processing() -> Result<()> {
 
     println!(
         "✓ Streaming: {} rows, {} columns",
-        report.scan_info.rows_scanned, report.file_info.total_columns
+        report.scan_info.rows_scanned, report.data_source.total_columns
     );
     Ok(())
 }
@@ -112,7 +112,7 @@ fn test_columnar_processing() -> Result<()> {
 
     println!(
         "✓ Columnar: {} rows, {} columns",
-        report.scan_info.rows_scanned, report.file_info.total_columns
+        report.scan_info.rows_scanned, report.data_source.total_columns
     );
     Ok(())
 }
@@ -137,7 +137,7 @@ fn test_memory_efficient() -> Result<()> {
 
     println!(
         "✓ Memory efficient: {} rows, {} columns",
-        report.scan_info.rows_scanned, report.file_info.total_columns
+        report.scan_info.rows_scanned, report.data_source.total_columns
     );
     Ok(())
 }

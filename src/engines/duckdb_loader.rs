@@ -1,5 +1,5 @@
 use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, DataSource, QueryEngine, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, ScanInfo};
 
 use anyhow::{Context, Result};
 use duckdb::{Arrow, Connection};

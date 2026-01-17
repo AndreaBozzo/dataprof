@@ -49,7 +49,9 @@ impl ReportBuilder {
         let scan_time_ms = self.start_time.elapsed().as_millis();
         let sampling_ratio = self.calculate_sampling_ratio(stats.total_rows_processed);
         let num_columns = column_profiles.len();
-        let total_rows = self.estimated_total_rows.unwrap_or(stats.total_rows_processed);
+        let total_rows = self
+            .estimated_total_rows
+            .unwrap_or(stats.total_rows_processed);
 
         Ok(QualityReport::new(
             DataSource::File {

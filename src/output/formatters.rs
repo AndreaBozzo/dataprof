@@ -602,7 +602,11 @@ impl OutputFormatter for InteractiveFormatter {
                 report.scan_info.total_columns
             ));
         } else {
-            output.push_str(&format!("{} {}\n", source_label, report.data_source.identifier()));
+            output.push_str(&format!(
+                "{} {}\n",
+                source_label,
+                report.data_source.identifier()
+            ));
             if size_mb > 0.0 {
                 output.push_str(&format!("Size: {:.1} MB\n", size_mb));
             }
