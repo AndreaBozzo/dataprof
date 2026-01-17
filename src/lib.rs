@@ -20,8 +20,7 @@ pub mod database;
 #[cfg(feature = "python")]
 pub mod python;
 
-// Apache Arrow integration (optional)
-#[cfg(feature = "arrow")]
+// Apache Arrow integration (always enabled)
 pub use engines::columnar::ArrowProfiler;
 
 // v0.3.0 public API - main exports

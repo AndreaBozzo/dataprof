@@ -111,9 +111,9 @@ sqlx = { version = "0.8.1", features = [
 url = { version = "2.5.8", optional = true }
 
 
-arrow = { version = "57.2", optional = true }
-parquet = { version = "57.2", features = ["arrow"], optional = true }
-duckdb = { version = "1.1", features = ["bundled", "vtab-arrow"] }
+arrow = { version = "56.2" }
+parquet = { version = "56.2", features = ["arrow"], optional = true }
+duckdb = { version = "1.4", features = ["bundled", "vtab-arrow"] }
 
 [dev-dependencies]
 tempfile = "3.24"
@@ -184,8 +184,7 @@ default = []
 python = ["dep:pyo3"]
 python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
-arrow = ["dep:arrow"]
-parquet = ["arrow", "dep:parquet"]
+parquet = ["dep:parquet"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]

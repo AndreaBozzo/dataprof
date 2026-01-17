@@ -92,15 +92,8 @@ impl EngineSelector {
 
     /// Detect if Arrow is available at runtime
     fn detect_arrow_availability() -> bool {
-        // Try to create an ArrowProfiler to test availability
-        #[cfg(feature = "arrow")]
-        {
-            true
-        }
-        #[cfg(not(feature = "arrow"))]
-        {
-            false
-        }
+        // Arrow is always available now
+        true
     }
 
     /// Analyze file characteristics for intelligent selection
