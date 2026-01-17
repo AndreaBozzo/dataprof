@@ -247,12 +247,16 @@ fn test_file_info_accuracy() -> Result<()> {
 
     let report = analyze_csv_with_sampling(temp_file.path())?;
 
-    assert!(report.file_info.file_size_mb > 0.0);
-    assert_eq!(report.file_info.total_columns, 2);
-
-    if let Some(total_rows) = report.file_info.total_rows {
-        assert_eq!(total_rows, 2); // Excluding header
+    // Check file size from data_source
+    match &report.data_source {
+        dataprof::types::DataSource::File { size_bytes, .. } => {
+            assert!(*size_bytes > 0, "File size should be > 0");
+        }
+        _ => panic!("Expected File data source"),
     }
+    assert_eq!(report.scan_info.total_columns, 2);
+
+    assert_eq!(report.scan_info.total_rows, 2);
 
     Ok(())
 }
@@ -289,7 +293,7 @@ fn test_v030_streaming_profiler_basic() -> Result<()> {
     let report = profiler.analyze_file(temp_file.path())?;
 
     assert_eq!(report.column_profiles.len(), 3);
-    assert_eq!(report.file_info.total_columns, 3);
+    assert_eq!(report.scan_info.total_columns, 3);
 
     // Should have processed all rows
     assert_eq!(report.scan_info.rows_scanned, 3);

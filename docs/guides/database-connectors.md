@@ -100,8 +100,8 @@ async fn main() -> anyhow::Result<()> {
     let report = analyze_database(config, "SELECT * FROM large_table").await?;
 
     println!("📊 Processed {} rows across {} columns",
-        report.file_info.total_rows.unwrap_or(0),
-        report.file_info.total_columns
+        report.scan_info.total_rows,
+        report.scan_info.total_columns
     );
 
     println!("📈 Quality Score: {:.1}%", report.quality_score());

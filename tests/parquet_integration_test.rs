@@ -69,8 +69,8 @@ mod parquet_tests {
         let report = analyze_parquet_with_quality(temp_file.path())?;
 
         // Verify basic file info
-        assert_eq!(report.file_info.total_rows, Some(5));
-        assert_eq!(report.file_info.total_columns, 5);
+        assert_eq!(report.scan_info.total_rows, 5);
+        assert_eq!(report.scan_info.total_columns, 5);
         assert_eq!(report.scan_info.rows_scanned, 5);
         assert_eq!(report.scan_info.sampling_ratio, 1.0);
 
@@ -242,7 +242,7 @@ mod parquet_tests {
         let report = analyze_parquet_with_quality(path)?;
 
         // Should process all batches (3 batches × 3 rows = 9 rows)
-        assert_eq!(report.file_info.total_rows, Some(9));
+        assert_eq!(report.scan_info.total_rows, 9);
         assert_eq!(report.scan_info.rows_scanned, 9);
 
         Ok(())
@@ -551,14 +551,14 @@ mod parquet_tests {
         let report = dataprof::analyze_parquet_with_config(temp_file.path(), &config)?;
 
         // Should still analyze all data correctly
-        assert_eq!(report.file_info.total_rows, Some(5));
+        assert_eq!(report.scan_info.total_rows, 5);
         assert_eq!(report.column_profiles.len(), 5);
 
         // Test with large batch size
         let config = dataprof::ParquetConfig::batch_size(10000);
         let report = dataprof::analyze_parquet_with_config(temp_file.path(), &config)?;
 
-        assert_eq!(report.file_info.total_rows, Some(5));
+        assert_eq!(report.scan_info.total_rows, 5);
         assert_eq!(report.column_profiles.len(), 5);
 
         Ok(())

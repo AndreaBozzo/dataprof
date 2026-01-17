@@ -50,8 +50,8 @@ async fn test_postgresql_advanced() -> Result<()> {
     let report = analyze_database(config, "SELECT * FROM test_users").await?;
 
     println!("\n📈 Overall Statistics:");
-    println!("  Total Rows: {}", report.file_info.total_rows.unwrap_or(0));
-    println!("  Total Columns: {}", report.file_info.total_columns);
+    println!("  Total Rows: {}", report.scan_info.total_rows);
+    println!("  Total Columns: {}", report.scan_info.total_columns);
     println!("  Quality Score: {:.2}%", report.quality_score());
 
     println!("\n📋 Column Analysis:");
@@ -142,8 +142,8 @@ async fn test_mysql_advanced() -> Result<()> {
     let report = analyze_database(config, "SELECT * FROM test_products").await?;
 
     println!("\n📈 Overall Statistics:");
-    println!("  Total Rows: {}", report.file_info.total_rows.unwrap_or(0));
-    println!("  Total Columns: {}", report.file_info.total_columns);
+    println!("  Total Rows: {}", report.scan_info.total_rows);
+    println!("  Total Columns: {}", report.scan_info.total_columns);
     println!("  Quality Score: {:.2}%", report.quality_score());
 
     println!("\n📋 Column Analysis:");

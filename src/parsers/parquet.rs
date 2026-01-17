@@ -147,8 +147,8 @@ impl ParquetConfig {
 ///
 /// let report = analyze_parquet_with_quality(Path::new("data.parquet"))?;
 /// println!("Analyzed {} rows in {} columns",
-///          report.file_info.total_rows.unwrap_or(0),
-///          report.file_info.total_columns);
+///          report.scan_info.total_rows,
+///          report.scan_info.total_columns);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
@@ -315,8 +315,8 @@ mod tests {
         let report = analyze_parquet_with_quality(path)?;
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.file_info.total_rows, Some(3));
-        assert_eq!(report.file_info.total_columns, 3);
+        assert_eq!(report.scan_info.total_rows, 3);
+        assert_eq!(report.scan_info.total_columns, 3);
         assert_eq!(report.scan_info.rows_scanned, 3);
         assert_eq!(report.scan_info.sampling_ratio, 1.0);
 
