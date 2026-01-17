@@ -41,16 +41,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test-scope: [core, integration, features]
+        test-scope: [core, features]
         include:
           - test-scope: core
             test-args: "--lib --tests"
             timeout: 12
             skip-on-draft: false
-          - test-scope: integration
-            test-args: "--test '*'"
-            timeout: 15
-            skip-on-draft: true
+          # - test-scope: integration
+          #   test-args: "--test '*'"
+          #   timeout: 15
+          #   skip-on-draft: true
           - test-scope: features
             test-args: "--features postgres,mysql,sqlite,database"
             timeout: 10
