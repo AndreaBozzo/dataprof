@@ -1,4 +1,6 @@
-use crate::types::{ColumnProfile, ColumnStats, DataQualityMetrics, OutputFormat, QualityReport};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, OutputFormat, QualityReport,
+};
 use anyhow::Result;
 use is_terminal::IsTerminal;
 use serde::Serialize;
@@ -257,10 +259,10 @@ impl OutputFormatter for JsonFormatter {
     fn format_report(&self, report: &QualityReport) -> Result<String> {
         let json_report = JsonReport {
             metadata: JsonMetadata {
-                file_path: report.file_info.path.clone(),
-                file_size_mb: report.file_info.file_size_mb,
-                total_rows: report.file_info.total_rows,
-                total_columns: report.file_info.total_columns,
+                file_path: report.data_source.identifier(),
+                file_size_mb: report.data_source.size_mb().unwrap_or(0.0),
+                total_rows: Some(report.scan_info.total_rows),
+                total_columns: report.scan_info.total_columns,
                 scan_time_ms: report.scan_info.scan_time_ms,
                 sampling_info: if report.scan_info.sampling_ratio < 1.0 {
                     Some(JsonSampling {
@@ -442,13 +444,13 @@ impl OutputFormatter for PlainFormatter {
     fn format_report(&self, report: &QualityReport) -> Result<String> {
         let mut output = String::new();
 
-        // File info
-        output.push_str(&format!("File: {}\n", report.file_info.path));
-        output.push_str(&format!("Size: {:.1} MB\n", report.file_info.file_size_mb));
-        output.push_str(&format!("Columns: {}\n", report.file_info.total_columns));
-        if let Some(rows) = report.file_info.total_rows {
-            output.push_str(&format!("Rows: {}\n", rows));
+        // Source info
+        output.push_str(&format!("Source: {}\n", report.data_source.identifier()));
+        if let Some(size_mb) = report.data_source.size_mb() {
+            output.push_str(&format!("Size: {:.1} MB\n", size_mb));
         }
+        output.push_str(&format!("Columns: {}\n", report.scan_info.total_columns));
+        output.push_str(&format!("Rows: {}\n", report.scan_info.total_rows));
         output.push_str(&format!(
             "Scan time: {} ms\n\n",
             report.scan_info.scan_time_ms
@@ -572,35 +574,49 @@ impl OutputFormatter for InteractiveFormatter {
         use colored::*;
         let mut output = String::new();
 
-        // Enhanced file info section with colors and emojis
+        // Determine source label based on data source type
+        let (source_label, source_emoji) = match &report.data_source {
+            DataSource::File { .. } => ("File:", "📁"),
+            DataSource::Query { .. } => ("Query:", "🔍"),
+        };
+
+        // Enhanced source info section with colors and emojis
+        let size_mb = report.data_source.size_mb().unwrap_or(0.0);
         if self.context.supports_unicode {
             output.push_str(&format!(
-                "📁 {} {}\n",
-                "File:".bright_blue().bold(),
-                report.file_info.path
+                "{} {} {}\n",
+                source_emoji,
+                source_label.bright_blue().bold(),
+                report.data_source.identifier()
             ));
-            output.push_str(&format!(
-                "📏 {} {:.1} MB\n",
-                "Size:".bright_blue().bold(),
-                report.file_info.file_size_mb
-            ));
+            if size_mb > 0.0 {
+                output.push_str(&format!(
+                    "📏 {} {:.1} MB\n",
+                    "Size:".bright_blue().bold(),
+                    size_mb
+                ));
+            }
             output.push_str(&format!(
                 "📊 {} {}\n",
                 "Columns:".bright_blue().bold(),
-                report.file_info.total_columns
+                report.scan_info.total_columns
             ));
         } else {
-            output.push_str(&format!("File: {}\n", report.file_info.path));
-            output.push_str(&format!("Size: {:.1} MB\n", report.file_info.file_size_mb));
-            output.push_str(&format!("Columns: {}\n", report.file_info.total_columns));
+            output.push_str(&format!("{} {}\n", source_label, report.data_source.identifier()));
+            if size_mb > 0.0 {
+                output.push_str(&format!("Size: {:.1} MB\n", size_mb));
+            }
+            output.push_str(&format!("Columns: {}\n", report.scan_info.total_columns));
         }
 
-        if let Some(rows) = report.file_info.total_rows {
-            if self.context.supports_unicode {
-                output.push_str(&format!("📈 {} {}\n", "Rows:".bright_blue().bold(), rows));
-            } else {
-                output.push_str(&format!("Rows: {}\n", rows));
-            }
+        if self.context.supports_unicode {
+            output.push_str(&format!(
+                "📈 {} {}\n",
+                "Rows:".bright_blue().bold(),
+                report.scan_info.total_rows
+            ));
+        } else {
+            output.push_str(&format!("Rows: {}\n", report.scan_info.total_rows));
         }
 
         // Performance info
@@ -766,8 +782,8 @@ pub fn format_batch_as_json(batch_result: &crate::core::batch::BatchResult) -> R
         .map(|(path, report)| JsonFileReport {
             file_path: path.to_string_lossy().to_string(),
             quality_score: report.quality_score(),
-            total_rows: report.file_info.total_rows,
-            total_columns: report.file_info.total_columns,
+            total_rows: Some(report.scan_info.total_rows),
+            total_columns: report.scan_info.total_columns,
             data_quality_metrics: formatter
                 .format_data_quality_metrics(&report.data_quality_metrics),
         })

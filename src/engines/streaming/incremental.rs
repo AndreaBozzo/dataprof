@@ -7,7 +7,8 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, QualityReport, ScanInfo,
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, FileFormat,
+    QualityReport, ScanInfo,
 };
 
 /// Incremental profiler that processes data without loading everything into memory
@@ -144,23 +145,26 @@ impl IncrementalProfiler {
 
         let scan_time_ms = start.elapsed().as_millis();
         let sampling_ratio = processed_rows as f64 / estimated_total_rows as f64;
+        let num_columns = column_profiles.len();
 
-        Ok(QualityReport {
-            file_info: FileInfo {
+        Ok(QualityReport::new(
+            DataSource::File {
                 path: file_path.display().to_string(),
-                total_rows: Some(estimated_total_rows),
-                total_columns: column_profiles.len(),
-                file_size_mb,
+                format: FileFormat::Csv,
+                size_bytes: file_size_bytes,
+                modified_at: None,
                 parquet_metadata: None,
             },
             column_profiles,
-            scan_info: ScanInfo {
-                rows_scanned: processed_rows,
+            ScanInfo::new(
+                estimated_total_rows,
+                num_columns,
+                processed_rows,
                 sampling_ratio,
                 scan_time_ms,
-            },
+            ),
             data_quality_metrics,
-        })
+        ))
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {

@@ -345,7 +345,7 @@ mod tests {
         let mut profiler = BufferedProfiler::new();
         let report = profiler.analyze_file(file.path()).unwrap();
 
-        assert_eq!(report.file_info.total_rows, Some(2));
-        assert_eq!(report.file_info.total_columns, 2);
+        assert_eq!(report.scan_info.total_rows, 2);
+        assert_eq!(report.scan_info.total_columns, 2);
     }
 }

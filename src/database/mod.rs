@@ -9,7 +9,7 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::types::{DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, QueryEngine, QualityReport, ScanInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -211,23 +211,27 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
     // Disconnect
     connector.disconnect().await?;
 
+    // Detect query engine from connection string
+    let query_engine = detect_query_engine(&config.connection_string);
+
     if columns.is_empty() {
-        return Ok(QualityReport {
-            file_info: FileInfo {
-                path: format!("Database: {}", query),
-                total_rows: Some(0),
-                total_columns: 0,
-                file_size_mb: 0.0,
-                parquet_metadata: None,
+        return Ok(QualityReport::new(
+            DataSource::Query {
+                engine: query_engine.clone(),
+                statement: query.to_string(),
+                database: extract_database_name(&config.connection_string),
+                execution_id: None,
             },
-            column_profiles: vec![],
-            scan_info: ScanInfo {
-                rows_scanned: 0,
-                sampling_ratio: sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
-                scan_time_ms: start.elapsed().as_millis(),
-            },
-            data_quality_metrics: DataQualityMetrics::empty(),
-        });
+            vec![],
+            ScanInfo::new(
+                0,
+                0,
+                0,
+                sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
+                start.elapsed().as_millis(),
+            ),
+            DataQualityMetrics::empty(),
+        ));
     }
 
     // Use existing column analysis from lib.rs
@@ -250,31 +254,55 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
+    let num_columns = column_profiles.len();
 
-    let report = QualityReport {
-        file_info: FileInfo {
-            path: format!(
-                "Database: {} ({})",
-                query,
-                if sampling_ratio < 1.0 {
-                    format!("sampled {:.1}%", sampling_ratio * 100.0)
-                } else {
-                    "complete scan".to_string()
-                }
-            ),
-            total_rows: Some(effective_total_rows as usize),
-            total_columns: column_profiles.len(),
-            file_size_mb: 0.0, // Not applicable for database queries
-            parquet_metadata: None,
+    let report = QualityReport::new(
+        DataSource::Query {
+            engine: query_engine,
+            statement: query.to_string(),
+            database: extract_database_name(&config.connection_string),
+            execution_id: None,
         },
         column_profiles,
-        scan_info: ScanInfo {
-            rows_scanned: actual_rows_processed,
+        ScanInfo::new(
+            effective_total_rows as usize,
+            num_columns,
+            actual_rows_processed,
             sampling_ratio,
             scan_time_ms,
-        },
+        ),
         data_quality_metrics,
-    };
+    );
 
     Ok(report)
+}
+
+/// Detect query engine from connection string
+fn detect_query_engine(connection_string: &str) -> QueryEngine {
+    let conn = connection_string.to_lowercase();
+    if conn.starts_with("postgres") || conn.starts_with("postgresql") {
+        QueryEngine::Postgres
+    } else if conn.starts_with("mysql") || conn.starts_with("mariadb") {
+        QueryEngine::MySql
+    } else if conn.starts_with("sqlite") {
+        QueryEngine::Sqlite
+    } else {
+        QueryEngine::Custom("unknown".to_string())
+    }
+}
+
+/// Extract database name from connection string
+fn extract_database_name(connection_string: &str) -> Option<String> {
+    // Simple extraction - look for database name in common formats
+    // postgresql://user:pass@host/dbname
+    // mysql://user:pass@host/dbname
+    if let Some(pos) = connection_string.rfind('/') {
+        let db_part = &connection_string[pos + 1..];
+        // Remove query parameters if present
+        let db_name = db_part.split('?').next().unwrap_or(db_part);
+        if !db_name.is_empty() {
+            return Some(db_name.to_string());
+        }
+    }
+    None
 }

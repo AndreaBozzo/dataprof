@@ -1,5 +1,7 @@
 use crate::core::batch::{BatchResult, BatchSummary};
-use crate::types::{ColumnProfile, ColumnStats, DataQualityMetrics, DataType, QualityReport};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, QualityReport,
+};
 use anyhow::Result;
 use handlebars::Handlebars;
 use serde_json::json;
@@ -47,11 +49,36 @@ pub fn generate_html_report(report: &QualityReport, output_path: &Path) -> Resul
 
 /// Build context data for single report template
 fn build_report_context(report: &QualityReport) -> serde_json::Value {
-    let file_name = Path::new(&report.file_info.path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    // Extract file name from data source
+    let (file_name, file_path, file_size_mb, parquet_metadata) = match &report.data_source {
+        DataSource::File {
+            path,
+            size_bytes,
+            parquet_metadata,
+            ..
+        } => {
+            let name = Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            (
+                name,
+                path.clone(),
+                *size_bytes as f64 / 1_048_576.0,
+                parquet_metadata.clone(),
+            )
+        }
+        DataSource::Query { statement, engine, .. } => {
+            let name = format!("{} Query", engine);
+            (
+                name,
+                statement.clone(),
+                0.0,
+                None,
+            )
+        }
+    };
 
     let sampling_info = if report.scan_info.sampling_ratio < 1.0 {
         Some(json!({
@@ -63,7 +90,7 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
     };
 
     // Build Parquet metadata if available
-    let parquet_metadata = report.file_info.parquet_metadata.as_ref().map(|meta| {
+    let parquet_meta_json = parquet_metadata.as_ref().map(|meta| {
         let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
             let uncompressed = meta.uncompressed_size_bytes.unwrap();
             if uncompressed > 0 {
@@ -90,13 +117,13 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
 
     json!({
         "file_name": file_name,
-        "file_path": report.file_info.path,
-        "file_size_mb": format!("{:.1}", report.file_info.file_size_mb),
-        "total_rows": report.file_info.total_rows.map_or("Unknown".to_string(), |r| r.to_string()),
-        "total_columns": report.file_info.total_columns,
+        "file_path": file_path,
+        "file_size_mb": format!("{:.1}", file_size_mb),
+        "total_rows": report.scan_info.total_rows.to_string(),
+        "total_columns": report.scan_info.total_columns,
         "scan_time_ms": report.scan_info.scan_time_ms,
         "sampling_info": sampling_info,
-        "parquet_metadata": parquet_metadata,
+        "parquet_metadata": parquet_meta_json,
         "data_quality_metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
         "column_profiles": build_column_profiles_context(&report.column_profiles)
     })
@@ -432,38 +459,41 @@ fn build_files_context(
             };
 
             // Build Parquet metadata if available (same as single report)
-            let parquet_metadata = report.file_info.parquet_metadata.as_ref().map(|meta| {
-                let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
-                    let uncompressed = meta.uncompressed_size_bytes.unwrap();
-                    if uncompressed > 0 {
-                        Some(format!("{:.1}x", uncompressed as f64 / meta.compressed_size_bytes as f64))
+            let parquet_metadata = match &report.data_source {
+                DataSource::File { parquet_metadata: Some(meta), .. } => {
+                    let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
+                        let uncompressed = meta.uncompressed_size_bytes.unwrap();
+                        if uncompressed > 0 {
+                            Some(format!("{:.1}x", uncompressed as f64 / meta.compressed_size_bytes as f64))
+                        } else {
+                            None
+                        }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                json!({
-                    "num_row_groups": meta.num_row_groups,
-                    "compression": meta.compression,
-                    "version": meta.version,
-                    "schema_summary": meta.schema_summary,
-                    "compressed_size_bytes": meta.compressed_size_bytes,
-                    "compressed_size_mb": format!("{:.2}", meta.compressed_size_bytes as f64 / 1_048_576.0),
-                    "uncompressed_size_bytes": meta.uncompressed_size_bytes,
-                    "uncompressed_size_mb": meta.uncompressed_size_bytes.map(|s| format!("{:.2}", s as f64 / 1_048_576.0)),
-                    "compression_ratio": compression_ratio
-                })
-            });
+                    Some(json!({
+                        "num_row_groups": meta.num_row_groups,
+                        "compression": meta.compression,
+                        "version": meta.version,
+                        "schema_summary": meta.schema_summary,
+                        "compressed_size_bytes": meta.compressed_size_bytes,
+                        "compressed_size_mb": format!("{:.2}", meta.compressed_size_bytes as f64 / 1_048_576.0),
+                        "uncompressed_size_bytes": meta.uncompressed_size_bytes,
+                        "uncompressed_size_mb": meta.uncompressed_size_bytes.map(|s| format!("{:.2}", s as f64 / 1_048_576.0)),
+                        "compression_ratio": compression_ratio
+                    }))
+                }
+                _ => None,
+            };
 
             json!({
                 "file_name": path.file_name().unwrap_or_default().to_string_lossy(),
                 "file_path": path.display().to_string(),
                 "quality_score": format!("{:.0}", quality_score),
                 "quality_class": quality_class,
-                "columns": report.file_info.total_columns,
-                "total_rows": report.file_info.total_rows.map_or("Unknown".to_string(), |r| r.to_string()),
+                "columns": report.scan_info.total_columns,
+                "total_rows": report.scan_info.total_rows.to_string(),
                 "error": false,
                 "metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
                 "parquet_metadata": parquet_metadata

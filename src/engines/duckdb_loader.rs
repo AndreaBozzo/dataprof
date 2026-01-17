@@ -1,5 +1,5 @@
 use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, QueryEngine, QualityReport, ScanInfo};
 
 use anyhow::{Context, Result};
 use duckdb::{Arrow, Connection};
@@ -76,22 +76,18 @@ impl DuckDbLoader {
                 .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
 
         let scan_time_ms = start.elapsed().as_millis();
+        let num_columns = column_profiles.len();
 
-        Ok(QualityReport {
-            file_info: FileInfo {
-                path: format!("duckdb_query: {}", query),
-                total_rows: Some(total_rows),
-                total_columns: column_profiles.len(),
-                file_size_mb: 0.0, // N/A for queries
-                parquet_metadata: None,
+        Ok(QualityReport::new(
+            DataSource::Query {
+                engine: QueryEngine::DuckDb,
+                statement: query.to_string(),
+                database: None, // In-memory
+                execution_id: None,
             },
             column_profiles,
-            scan_info: ScanInfo {
-                rows_scanned: total_rows,
-                sampling_ratio: 1.0,
-                scan_time_ms,
-            },
+            ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
             data_quality_metrics,
-        })
+        ))
     }
 }

@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::analysis::patterns::looks_like_date;
 use crate::types::DataQualityMetrics;
-use crate::types::{ColumnProfile, ColumnStats, DataType, FileInfo, QualityReport, ScanInfo};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataSource, DataType, FileFormat, QualityReport, ScanInfo,
+};
 
 /// Columnar profiler using Apache Arrow for efficient column-oriented processing
 pub struct ArrowProfiler {
@@ -103,23 +105,20 @@ impl ArrowProfiler {
             )?;
 
         let scan_time_ms = start.elapsed().as_millis();
+        let num_columns = column_profiles.len();
 
-        Ok(QualityReport {
-            file_info: FileInfo {
+        Ok(QualityReport::new(
+            DataSource::File {
                 path: file_path.display().to_string(),
-                total_rows: Some(total_rows),
-                total_columns: column_profiles.len(),
-                file_size_mb,
+                format: FileFormat::Csv,
+                size_bytes: file_size_bytes,
+                modified_at: None,
                 parquet_metadata: None,
             },
             column_profiles,
-            scan_info: ScanInfo {
-                rows_scanned: total_rows,
-                sampling_ratio: 1.0, // Arrow processes all data efficiently
-                scan_time_ms,
-            },
+            ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
             data_quality_metrics,
-        })
+        ))
     }
 }
 

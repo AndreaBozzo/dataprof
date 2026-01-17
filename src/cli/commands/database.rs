@@ -109,8 +109,8 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
             .split('@')
             .next_back()
             .unwrap_or(connection_string),
-        report.file_info.total_columns,
-        report.file_info.total_rows.unwrap_or(0)
+        report.scan_info.total_columns,
+        report.scan_info.total_rows
     );
 
     if report.scan_info.rows_scanned > 0 {

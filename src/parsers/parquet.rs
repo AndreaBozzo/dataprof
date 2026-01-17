@@ -19,7 +19,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, FileInfo, ParquetMetadata, QualityReport, ScanInfo};
+use crate::types::{
+    DataQualityMetrics, DataSource, FileFormat, ParquetMetadata, QualityReport, ScanInfo,
+};
 
 /// Check if a file is a valid Parquet file by examining its magic number
 ///
@@ -252,22 +254,20 @@ pub fn analyze_parquet_with_config(
         uncompressed_size_bytes: None, // Not readily available without decompressing
     });
 
-    Ok(QualityReport {
-        file_info: FileInfo {
+    let num_columns = column_profiles.len();
+
+    Ok(QualityReport::new(
+        DataSource::File {
             path: file_path.display().to_string(),
-            total_rows: Some(total_rows),
-            total_columns: column_profiles.len(),
-            file_size_mb,
+            format: FileFormat::Parquet,
+            size_bytes: file_size_bytes,
+            modified_at: None,
             parquet_metadata,
         },
         column_profiles,
-        scan_info: ScanInfo {
-            rows_scanned: total_rows,
-            sampling_ratio: 1.0, // Parquet processes all data efficiently
-            scan_time_ms,
-        },
+        ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
         data_quality_metrics,
-    })
+    ))
 }
 
 #[cfg(test)]
