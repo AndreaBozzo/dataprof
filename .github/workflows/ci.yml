@@ -116,9 +116,6 @@ jobs:
         with:
           cache-prefix: rust-ci
 
-      - name: Setup system dependencies
-        uses: ./.github/actions/setup-system-deps
-
       - name: Install cargo-tarpaulin
         run: |
           echo "Installing cargo-tarpaulin..."
