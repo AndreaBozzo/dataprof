@@ -68,7 +68,7 @@ jobs:
         uses: ./.github/actions/setup-system-deps
 
       - name: Run ${{ matrix.test-scope }} tests
-        if: matrix.skip-on-draft == false || github.event.pull_request.draft == false || github.event_name != 'pull_request'
+        if: matrix.skip-on-draft == false || github.event.pull_request.draft == false
         uses: ./.github/actions/run-tests
         with:
           test-type: ${{ matrix.test-scope }}
