@@ -50,7 +50,6 @@ pub enum EngineType {
 /// Intelligent engine selector
 pub struct EngineSelector {
     system_resources: SystemResources,
-    arrow_available: bool,
 }
 
 impl EngineSelector {
@@ -68,7 +67,6 @@ impl EngineSelector {
                 cpu_cores: num_cpus::get(),
                 memory_pressure,
             },
-            arrow_available: Self::detect_arrow_availability(),
         }
     }
 
@@ -78,7 +76,6 @@ impl EngineSelector {
         available_memory_mb: f64,
         cpu_cores: usize,
         memory_pressure: f64,
-        arrow_available: bool,
     ) -> Self {
         Self {
             system_resources: SystemResources {
@@ -86,20 +83,6 @@ impl EngineSelector {
                 cpu_cores,
                 memory_pressure,
             },
-            arrow_available,
-        }
-    }
-
-    /// Detect if Arrow is available at runtime
-    fn detect_arrow_availability() -> bool {
-        // Try to create an ArrowProfiler to test availability
-        #[cfg(feature = "arrow")]
-        {
-            true
-        }
-        #[cfg(not(feature = "arrow"))]
-        {
-            false
         }
     }
 
@@ -281,10 +264,6 @@ impl EngineSelector {
         characteristics: &FileCharacteristics,
         processing_type: &ProcessingType,
     ) -> f64 {
-        if !self.arrow_available {
-            return 0.0; // Can't use if not available
-        }
-
         let mut score: f64 = 0.0;
 
         // Arrow excels with large files
@@ -449,7 +428,6 @@ mod tests {
             4096.0, // 4GB available memory
             4,      // 4 CPU cores
             0.3,    // Low memory pressure
-            false,  // Arrow not available
         );
 
         // Create small test file
@@ -475,18 +453,17 @@ mod tests {
     #[test]
     fn test_engine_selection_large_file() {
         // Use fixed resources for deterministic testing
-        // High memory pressure to ensure Incremental gets bonus points
+        // Large file with good memory should prefer Arrow
         let selector = EngineSelector::new_with_resources(
-            2048.0, // 2GB available memory
+            4096.0, // 4GB available memory
             8,      // 8 CPU cores
-            0.75,   // High memory pressure (>0.7) for Incremental bonus
-            false,  // Arrow not available for this test
+            0.3,    // Low memory pressure
         );
 
         let characteristics = FileCharacteristics {
-            file_size_mb: 1200.0, // Much larger to clearly favor Incremental
+            file_size_mb: 500.0, // Large file
             estimated_rows: Some(5_000_000),
-            estimated_columns: Some(50),
+            estimated_columns: Some(50), // Many columns
             has_mixed_types: false,
             has_numeric_majority: true,
             complexity_score: 0.4,
@@ -495,14 +472,35 @@ mod tests {
         let recommendation =
             selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
-        // Large files with numeric data should prefer Arrow if available, otherwise Incremental
-        if selector.arrow_available {
-            assert!(matches!(recommendation.primary_engine, EngineType::Arrow));
-        } else {
-            assert!(matches!(
-                recommendation.primary_engine,
-                EngineType::Incremental
-            ));
-        }
+        // Large files with many numeric columns should prefer Arrow
+        assert!(matches!(recommendation.primary_engine, EngineType::Arrow));
+    }
+
+    #[test]
+    fn test_engine_selection_memory_constrained() {
+        // High memory pressure should favor Incremental
+        let selector = EngineSelector::new_with_resources(
+            2048.0, // 2GB available memory
+            8,      // 8 CPU cores
+            0.8,    // High memory pressure
+        );
+
+        let characteristics = FileCharacteristics {
+            file_size_mb: 800.0, // Large file
+            estimated_rows: Some(5_000_000),
+            estimated_columns: Some(10),
+            has_mixed_types: true,
+            has_numeric_majority: false,
+            complexity_score: 0.7,
+        };
+
+        let recommendation =
+            selector.select_engine(&characteristics, ProcessingType::StreamingRequired);
+
+        // Memory constrained + streaming should prefer Incremental
+        assert!(matches!(
+            recommendation.primary_engine,
+            EngineType::Incremental
+        ));
     }
 }

@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::analysis::analyze_column;
-use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
+use crate::types::{
+    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+};
 
 // Simple JSON/JSONL support
 pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
@@ -71,7 +73,7 @@ pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 // JSON analysis with quality checking
 pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
-    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+    let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
 
     let start = std::time::Instant::now();
 
@@ -88,23 +90,26 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
             .collect::<Result<Vec<_>, _>>()?
     };
 
+    // Detect format
+    let format = if content.trim_start().starts_with('[') {
+        FileFormat::Json
+    } else {
+        FileFormat::Jsonl
+    };
+
     if records.is_empty() {
-        return Ok(QualityReport {
-            file_info: FileInfo {
+        return Ok(QualityReport::new(
+            DataSource::File {
                 path: file_path.display().to_string(),
-                total_rows: Some(0),
-                total_columns: 0,
-                file_size_mb,
+                format,
+                size_bytes: metadata.len(),
+                modified_at: None,
                 parquet_metadata: None,
             },
-            column_profiles: vec![],
-            scan_info: ScanInfo {
-                rows_scanned: 0,
-                sampling_ratio: 1.0,
-                scan_time_ms: start.elapsed().as_millis(),
-            },
-            data_quality_metrics: DataQualityMetrics::empty(),
-        });
+            vec![],
+            ScanInfo::new(0, 0, 0, 1.0, start.elapsed().as_millis()),
+            DataQualityMetrics::empty(),
+        ));
     }
 
     // Convert to columns
@@ -147,21 +152,19 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
         .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
+    let num_rows = records.len();
+    let num_columns = column_profiles.len();
 
-    Ok(QualityReport {
-        file_info: FileInfo {
+    Ok(QualityReport::new(
+        DataSource::File {
             path: file_path.display().to_string(),
-            total_rows: Some(records.len()),
-            total_columns: column_profiles.len(),
-            file_size_mb,
+            format,
+            size_bytes: metadata.len(),
+            modified_at: None,
             parquet_metadata: None,
         },
         column_profiles,
-        scan_info: ScanInfo {
-            rows_scanned: records.len(),
-            sampling_ratio: 1.0,
-            scan_time_ms,
-        },
+        ScanInfo::new(num_rows, num_columns, num_rows, 1.0, scan_time_ms),
         data_quality_metrics,
-    })
+    ))
 }

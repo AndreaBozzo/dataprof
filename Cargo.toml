@@ -80,6 +80,7 @@ memmap2 = "0.9"  # Latest: 0.9.9 (patch available via cargo update)
 # Statistical analysis and benchmarking
 rand_distr = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
 
 # Note: Async support is available via feature flags (database, python-async)
 
@@ -111,8 +112,9 @@ sqlx = { version = "0.8.1", features = [
 url = { version = "2.5.8", optional = true }
 
 
-arrow = { version = "57.2", optional = true }
-parquet = { version = "57.2", features = ["arrow"], optional = true }
+arrow = { version = "57" }
+parquet = { version = "57", features = ["arrow"], optional = true }
+datafusion = { version = "52", optional = true }
 
 [dev-dependencies]
 tempfile = "3.24"
@@ -183,8 +185,8 @@ default = []
 python = ["dep:pyo3"]
 python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
-arrow = ["dep:arrow"]
-parquet = ["arrow", "dep:parquet"]
+parquet = ["dep:parquet"]
+datafusion = ["dep:datafusion", "dep:tokio"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]

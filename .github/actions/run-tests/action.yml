@@ -22,7 +22,7 @@ runs:
       shell: bash
       run: |
         echo "🧪 Running core tests..."
-        timeout ${{ inputs.timeout }}m cargo test --lib --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        cargo test --lib ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
         echo "✅ Core tests completed"
 
     - name: Run integration tests
@@ -30,7 +30,7 @@ runs:
       shell: bash
       run: |
         echo "🔧 Running integration tests..."
-        timeout ${{ inputs.timeout }}m cargo test --test '*' --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        cargo test --test '*' ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
         echo "✅ Integration tests completed"
 
     - name: Run doc tests
@@ -38,7 +38,7 @@ runs:
       shell: bash
       run: |
         echo "📚 Running documentation tests..."
-        timeout 5m cargo test --doc --verbose ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        cargo test --doc ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
         echo "✅ Doc tests completed"
 
     - name: Test report summary

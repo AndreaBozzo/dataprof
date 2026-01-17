@@ -59,20 +59,10 @@ fn show_engine_info(detailed: bool) -> Result<()> {
         "TrueStreaming".green()
     );
 
-    #[cfg(feature = "arrow")]
-    {
-        println!(
-            "  ✅ {} - High-performance columnar processing (>500MB)",
-            "Arrow".green()
-        );
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        println!(
-            "  ❌ {} - Not available (compile with --features arrow)",
-            "Arrow".red()
-        );
-    }
+    println!(
+        "  ✅ {} - High-performance columnar processing (>500MB)",
+        "Arrow".green()
+    );
 
     println!(
         "  🚀 {} - Intelligent automatic selection",
@@ -87,14 +77,6 @@ fn show_engine_info(detailed: bool) -> Result<()> {
         "--engine auto".bright_green()
     );
 
-    #[cfg(not(feature = "arrow"))]
-    {
-        println!(
-            "  • Compile with {} for better large file performance",
-            "--features arrow".bright_yellow()
-        );
-    }
-
     if available_memory_gb < 2.0 {
         println!(
             "  ⚠️ {} Low memory detected - streaming engines recommended",
@@ -108,7 +90,6 @@ fn show_engine_info(detailed: bool) -> Result<()> {
         println!("  Cargo version: {}", env!("CARGO_PKG_VERSION"));
         println!("  Features enabled:");
 
-        #[cfg(feature = "arrow")]
         println!("    - arrow");
         #[cfg(feature = "parquet")]
         println!("    - parquet");
@@ -117,13 +98,8 @@ fn show_engine_info(detailed: bool) -> Result<()> {
         #[cfg(feature = "database")]
         println!("    - database");
 
-        #[cfg(not(any(
-            feature = "arrow",
-            feature = "parquet",
-            feature = "python",
-            feature = "database"
-        )))]
-        println!("    - minimal (no optional features)");
+        #[cfg(not(any(feature = "parquet", feature = "python", feature = "database")))]
+        println!("    - minimal (no optional features except arrow)");
     }
 
     Ok(())

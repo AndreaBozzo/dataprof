@@ -8,8 +8,6 @@ updates:
       day: "monday"
       time: "06:00"
     open-pull-requests-limit: 5
-    reviewers:
-      - "AndreaBozzo"
     commit-message:
       prefix: "deps"
       include: "scope"

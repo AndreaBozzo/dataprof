@@ -6,7 +6,9 @@ use std::path::Path;
 use crate::analysis::{analyze_column, analyze_column_fast};
 use crate::core::sampling::SamplingStrategy;
 use crate::parsers::robust_csv::RobustCsvParser;
-use crate::types::{ColumnProfile, DataQualityMetrics, FileInfo, QualityReport, ScanInfo};
+use crate::types::{
+    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+};
 
 // Default verbosity level for CSV analysis (1 = normal, suppresses fallback messages)
 const DEFAULT_VERBOSITY: u8 = 1;
@@ -83,7 +85,7 @@ fn process_csv_record(
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     let metadata = std::fs::metadata(file_path)?;
-    let file_size_mb = metadata.len() as f64 / 1_048_576.0;
+    let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
     let start = std::time::Instant::now();
 
     // Use robust CSV parser
@@ -94,22 +96,18 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     let (headers, records) = parser.parse_csv(file_path)?;
 
     if records.is_empty() {
-        return Ok(QualityReport {
-            file_info: FileInfo {
+        return Ok(QualityReport::new(
+            DataSource::File {
                 path: file_path.display().to_string(),
-                total_rows: Some(0),
-                total_columns: headers.len(),
-                file_size_mb,
+                format: FileFormat::Csv,
+                size_bytes: metadata.len(),
+                modified_at: None,
                 parquet_metadata: None,
             },
-            column_profiles: vec![],
-            scan_info: ScanInfo {
-                rows_scanned: 0,
-                sampling_ratio: 1.0,
-                scan_time_ms: start.elapsed().as_millis(),
-            },
-            data_quality_metrics: DataQualityMetrics::empty(),
-        });
+            vec![],
+            ScanInfo::new(0, headers.len(), 0, 1.0, start.elapsed().as_millis()),
+            DataQualityMetrics::empty(),
+        ));
     }
 
     // Convert records to column format using helper functions
@@ -123,23 +121,21 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
         .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
     let scan_time_ms = start.elapsed().as_millis();
+    let num_rows = records.len();
+    let num_columns = column_profiles.len();
 
-    Ok(QualityReport {
-        file_info: FileInfo {
+    Ok(QualityReport::new(
+        DataSource::File {
             path: file_path.display().to_string(),
-            total_rows: Some(records.len()),
-            total_columns: headers.len(),
-            file_size_mb,
+            format: FileFormat::Csv,
+            size_bytes: metadata.len(),
+            modified_at: None,
             parquet_metadata: None,
         },
         column_profiles,
-        scan_info: ScanInfo {
-            rows_scanned: records.len(),
-            sampling_ratio: 1.0,
-            scan_time_ms,
-        },
+        ScanInfo::new(num_rows, num_columns, num_rows, 1.0, scan_time_ms),
         data_quality_metrics,
-    })
+    ))
 }
 
 /// Enhanced function that uses robust parsing with adaptive sampling for large files
@@ -212,23 +208,26 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
     } else {
         1.0
     };
+    let num_columns = column_profiles.len();
 
-    Ok(QualityReport {
-        file_info: FileInfo {
+    Ok(QualityReport::new(
+        DataSource::File {
             path: file_path.display().to_string(),
-            total_rows: Some(total_rows),
-            total_columns: column_profiles.len(),
-            file_size_mb,
+            format: FileFormat::Csv,
+            size_bytes: metadata.len(),
+            modified_at: None,
             parquet_metadata: None,
         },
         column_profiles,
-        scan_info: ScanInfo {
-            rows_scanned: rows_read,
+        ScanInfo::new(
+            total_rows,
+            num_columns,
+            rows_read,
             sampling_ratio,
             scan_time_ms,
-        },
+        ),
         data_quality_metrics,
-    })
+    ))
 }
 
 // Enhanced original function with robust parsing fallback for compatibility

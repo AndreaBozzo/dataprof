@@ -106,7 +106,7 @@ async fn analyze_database_internal(
         )?;
 
         // Add metadata
-        result.set_item("row_count", quality_report.file_info.total_rows)?;
+        result.set_item("row_count", quality_report.scan_info.total_rows)?;
 
         // Convert scan_info to a simple string representation
         let scan_info = format!("{:?}", quality_report.scan_info);

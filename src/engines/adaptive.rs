@@ -247,18 +247,9 @@ impl AdaptiveProfiler {
 
         let result = match engine_type {
             EngineType::Arrow => {
-                #[cfg(feature = "arrow")]
-                {
-                    use crate::engines::columnar::ArrowProfiler;
-                    let profiler = ArrowProfiler::new();
-                    profiler.analyze_csv_file(file_path)
-                }
-                #[cfg(not(feature = "arrow"))]
-                {
-                    Err(anyhow::anyhow!(
-                        "Arrow engine not available (compiled without arrow feature)"
-                    ))
-                }
+                use crate::engines::columnar::ArrowProfiler;
+                let profiler = ArrowProfiler::new();
+                profiler.analyze_csv_file(file_path)
             }
             EngineType::Incremental => {
                 let profiler = IncrementalProfiler::new();

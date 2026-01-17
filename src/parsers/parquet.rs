@@ -19,7 +19,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, FileInfo, ParquetMetadata, QualityReport, ScanInfo};
+use crate::types::{
+    DataQualityMetrics, DataSource, FileFormat, ParquetMetadata, QualityReport, ScanInfo,
+};
 
 /// Check if a file is a valid Parquet file by examining its magic number
 ///
@@ -145,8 +147,8 @@ impl ParquetConfig {
 ///
 /// let report = analyze_parquet_with_quality(Path::new("data.parquet"))?;
 /// println!("Analyzed {} rows in {} columns",
-///          report.file_info.total_rows.unwrap_or(0),
-///          report.file_info.total_columns);
+///          report.scan_info.total_rows,
+///          report.scan_info.total_columns);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
@@ -183,7 +185,6 @@ pub fn analyze_parquet_with_config(
     let file = File::open(file_path)?;
     let metadata = file.metadata()?;
     let file_size_bytes = metadata.len();
-    let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
     // Create Parquet reader using Arrow
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
@@ -252,22 +253,20 @@ pub fn analyze_parquet_with_config(
         uncompressed_size_bytes: None, // Not readily available without decompressing
     });
 
-    Ok(QualityReport {
-        file_info: FileInfo {
+    let num_columns = column_profiles.len();
+
+    Ok(QualityReport::new(
+        DataSource::File {
             path: file_path.display().to_string(),
-            total_rows: Some(total_rows),
-            total_columns: column_profiles.len(),
-            file_size_mb,
+            format: FileFormat::Parquet,
+            size_bytes: file_size_bytes,
+            modified_at: None,
             parquet_metadata,
         },
         column_profiles,
-        scan_info: ScanInfo {
-            rows_scanned: total_rows,
-            sampling_ratio: 1.0, // Parquet processes all data efficiently
-            scan_time_ms,
-        },
+        ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
         data_quality_metrics,
-    })
+    ))
 }
 
 #[cfg(test)]
@@ -315,8 +314,8 @@ mod tests {
         let report = analyze_parquet_with_quality(path)?;
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.file_info.total_rows, Some(3));
-        assert_eq!(report.file_info.total_columns, 3);
+        assert_eq!(report.scan_info.total_rows, 3);
+        assert_eq!(report.scan_info.total_columns, 3);
         assert_eq!(report.scan_info.rows_scanned, 3);
         assert_eq!(report.scan_info.sampling_ratio, 1.0);
 

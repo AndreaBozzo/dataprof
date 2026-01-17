@@ -71,20 +71,10 @@ pub fn show_engine_info() -> Result<()> {
         "TrueStreaming".green()
     );
 
-    #[cfg(feature = "arrow")]
-    {
-        println!(
-            "  ✅ {} - High-performance columnar processing (>500MB)",
-            "Arrow".green()
-        );
-    }
-    #[cfg(not(feature = "arrow"))]
-    {
-        println!(
-            "  ❌ {} - Not available (compile with --features arrow)",
-            "Arrow".red()
-        );
-    }
+    println!(
+        "  ✅ {} - High-performance columnar processing (>500MB)",
+        "Arrow".green()
+    );
 
     println!(
         "  🚀 {} - Intelligent automatic selection",
@@ -102,14 +92,6 @@ pub fn show_engine_info() -> Result<()> {
         "  • Use {} to compare engines on your data",
         "--benchmark".bright_cyan()
     );
-
-    #[cfg(not(feature = "arrow"))]
-    {
-        println!(
-            "  • Compile with {} for better large file performance",
-            "--features arrow".bright_yellow()
-        );
-    }
 
     if available_memory_gb < 2.0 {
         println!(

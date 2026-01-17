@@ -111,12 +111,17 @@ fn main() -> anyhow::Result<()> {
     let report = analyze_parquet_with_quality(path)?;
 
     println!("📊 Analysis Results:");
+    println!("   Total Rows: {}", report.scan_info.total_rows);
+    println!("   Total Columns: {}", report.scan_info.total_columns);
+    // For file size, extract from data_source if it's a File variant
+    let file_size_bytes = match &report.data_source {
+        dataprof::types::DataSource::File { size_bytes, .. } => *size_bytes,
+        _ => 0,
+    };
     println!(
-        "   Total Rows: {}",
-        report.file_info.total_rows.unwrap_or(0)
+        "   File Size: {:.2} MB",
+        file_size_bytes as f64 / 1_000_000.0
     );
-    println!("   Total Columns: {}", report.file_info.total_columns);
-    println!("   File Size: {:.2} MB", report.file_info.file_size_mb);
     println!("   Scan Time: {} ms\n", report.scan_info.scan_time_ms);
 
     // ========================================
@@ -200,7 +205,7 @@ fn main() -> anyhow::Result<()> {
     println!(" Automatic format detection works!");
     println!(
         "   Detected {} columns in Parquet file",
-        auto_report.file_info.total_columns
+        auto_report.scan_info.total_columns
     );
     println!("   Quality score: {:.1}%\n", auto_report.quality_score());
 

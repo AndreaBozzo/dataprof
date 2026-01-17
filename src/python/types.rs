@@ -88,9 +88,9 @@ pub struct PyQualityReport {
 impl From<&QualityReport> for PyQualityReport {
     fn from(report: &QualityReport) -> Self {
         Self {
-            file_path: report.file_info.path.clone(),
-            total_rows: report.file_info.total_rows,
-            total_columns: report.file_info.total_columns,
+            file_path: report.data_source.identifier(),
+            total_rows: Some(report.scan_info.total_rows),
+            total_columns: report.scan_info.total_columns,
             column_profiles: report
                 .column_profiles
                 .iter()

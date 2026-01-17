@@ -29,8 +29,7 @@ async fn postgresql_example() -> Result<()> {
 
     println!(
         "✅ Profiled {} rows across {} columns",
-        report.file_info.total_rows.unwrap_or(0),
-        report.file_info.total_columns
+        report.scan_info.total_rows, report.scan_info.total_columns
     );
 
     // Profile with custom query
