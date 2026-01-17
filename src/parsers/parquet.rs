@@ -185,7 +185,6 @@ pub fn analyze_parquet_with_config(
     let file = File::open(file_path)?;
     let metadata = file.metadata()?;
     let file_size_bytes = metadata.len();
-    let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
     // Create Parquet reader using Arrow
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)

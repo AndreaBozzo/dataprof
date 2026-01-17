@@ -48,7 +48,6 @@ impl DataProfiler {
     }
 
     /// Create an Arrow-based columnar profiler for high performance on large files
-
     pub fn columnar() -> crate::engines::columnar::ArrowProfiler {
         crate::engines::columnar::ArrowProfiler::new()
     }

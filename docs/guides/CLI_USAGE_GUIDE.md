@@ -305,7 +305,6 @@ dataprof table_name --database "..." --quality --ml-score
 - **PostgreSQL**: `postgresql://user:pass@host:port/database`
 - **MySQL**: `mysql://user:pass@host:port/database`
 - **SQLite**: `sqlite://path/to/database.db`
-- **DuckDB**: `duckdb://path/to/database.duckdb`
 
 ## Batch Processing
 

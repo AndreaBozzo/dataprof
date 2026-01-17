@@ -33,7 +33,7 @@ impl std::fmt::Display for FileFormat {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryEngine {
-    DuckDb,
+    DataFusion,
     Postgres,
     MySql,
     Sqlite,
@@ -46,7 +46,7 @@ pub enum QueryEngine {
 impl std::fmt::Display for QueryEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::DuckDb => write!(f, "duckdb"),
+            Self::DataFusion => write!(f, "datafusion"),
             Self::Postgres => write!(f, "postgres"),
             Self::MySql => write!(f, "mysql"),
             Self::Sqlite => write!(f, "sqlite"),
@@ -347,52 +347,6 @@ pub struct ParquetMetadata {
     pub compressed_size_bytes: u64,
     /// Estimated uncompressed size if available
     pub uncompressed_size_bytes: Option<u64>,
-}
-
-/// DEPRECATED: Use `DataSource::File` instead.
-///
-/// This struct is kept for backwards compatibility during migration.
-/// Will be removed in version 0.6.0.
-///
-/// # Migration
-/// Replace:
-/// ```ignore
-/// FileInfo { path, total_rows, total_columns, file_size_mb, parquet_metadata }
-/// ```
-/// With:
-/// ```ignore
-/// DataSource::File { path, format, size_bytes, modified_at, parquet_metadata }
-/// // Move total_rows and total_columns to ScanInfo
-/// ```
-#[deprecated(
-    since = "0.5.0",
-    note = "Use DataSource::File instead. FileInfo will be removed in 0.6.0"
-)]
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct FileInfo {
-    pub path: String,
-    pub total_rows: Option<usize>,
-    pub total_columns: usize,
-    pub file_size_mb: f64,
-    /// Parquet-specific metadata (only present for Parquet files)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parquet_metadata: Option<ParquetMetadata>,
-}
-
-#[allow(deprecated)]
-impl FileInfo {
-    /// Convert this FileInfo to a DataSource::File
-    ///
-    /// Note: `total_rows` and `total_columns` should be moved to `ScanInfo` separately.
-    pub fn to_data_source(&self, format: FileFormat) -> DataSource {
-        DataSource::File {
-            path: self.path.clone(),
-            format,
-            size_bytes: (self.file_size_mb * 1_048_576.0) as u64,
-            modified_at: None,
-            parquet_metadata: self.parquet_metadata.clone(),
-        }
-    }
 }
 
 /// Metadata about the scanning/profiling operation

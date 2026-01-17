@@ -39,11 +39,14 @@ pub use core::validation::{InputValidator, ValidationError};
 pub use engines::streaming::ProgressInfo;
 pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
+#[cfg(feature = "datafusion")]
+pub use engines::DataFusionLoader;
+
 // Public API exports - Core types and functionality
 pub use output::html::generate_html_report;
 pub use types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataType, FileInfo, OutputFormat, Pattern,
-    QualityReport, ScanInfo,
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, FileFormat, OutputFormat,
+    Pattern, QualityReport, QueryEngine, ScanInfo,
 };
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 

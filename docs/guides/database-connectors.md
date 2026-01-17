@@ -20,7 +20,6 @@ cargo install dataprof --features all-db          # All databases
 - **PostgreSQL** - Production databases with connection pooling (✅ **Default**)
 - **MySQL/MariaDB** - MySQL-compatible databases (✅ **Default**)
 - **SQLite** - Embedded databases and file-based storage (✅ **Default**)
-- **DuckDB** - Analytical databases and data warehousing (Optional feature)
 
 ## 🚀 Enhanced Features
 
@@ -143,16 +142,6 @@ sqlite:///path/to/database.db
 - `/var/data/app.sqlite`
 - `:memory:` (in-memory database)
 
-### DuckDB
-```
-/path/to/database.duckdb
-data.duckdb
-```
-
-**Examples:**
-- `/analytics/warehouse.duckdb`
-- `sales_data.duckdb`
-
 ## Streaming for Large Datasets
 
 DataProfiler automatically uses streaming for large result sets to handle datasets with millions of rows without memory issues.
@@ -195,12 +184,6 @@ The system automatically:
 - **File-based** databases
 - **Single connection** optimized for embedded use
 
-### DuckDB
-- **Analytical workloads** optimized
-- **Columnar storage** benefits
-- **Complex queries** support
-- **Thread-safe** operations
-
 ## Query Examples
 
 ### Basic Table Profiling
@@ -215,7 +198,7 @@ dataprof --database "mysql://root:pass@localhost/shop" --query "SELECT * FROM or
 ### Advanced Queries
 ```bash
 # Time-based filtering
-dataprof --database "analytics.duckdb" --query "
+dataprof --database "postgresql://user:pass@host/analytics" --query "
   SELECT customer_id, order_total, order_date
   FROM sales
   WHERE order_date >= '2024-01-01'
@@ -419,9 +402,9 @@ SECURITY WARNING: No SSL/TLS configuration detected. Database traffic may be une
    - Set appropriate `max_connections`
    - Reuse connections when possible
 
-4. **Use columnar formats**
-   - DuckDB for analytical workloads
-   - PostgreSQL for transactional data
+4. **Choose the right database**
+   - PostgreSQL for transactional and analytical workloads
+   - SQLite for embedded/local databases
 
 ## Integration Examples
 
@@ -432,8 +415,7 @@ use dataprof::{DatabaseConfig, analyze_database};
 async fn profile_daily_data() -> anyhow::Result<()> {
     let databases = vec![
         ("Production", "postgresql://user:pass@prod-db/app"),
-        ("Analytics", "analytics.duckdb"),
-        ("Cache", "redis://localhost:6379"),
+        ("Analytics", "postgresql://user:pass@analytics-db/warehouse"),
     ];
 
     for (name, conn_str) in databases {
