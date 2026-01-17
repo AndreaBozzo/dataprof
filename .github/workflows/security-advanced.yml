@@ -126,7 +126,7 @@ jobs:
 
       # TruffleHog for verified secrets only (latest v3.92.4 - Jan 2026)
       - name: TruffleHog OSS secrets scan
-        uses: trufflesecurity/trufflehog@v3.92.4
+        uses: trufflesecurity/trufflehog@v3.92.5
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}
