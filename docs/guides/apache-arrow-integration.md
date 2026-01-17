@@ -11,34 +11,32 @@ Apache Arrow provides:
 - **Batch processing** for large datasets
 - **Memory efficiency** through columnar organization
 
-### ⚠️ Important: Feature Flag Required
+### Arrow is Always Available
 
-The Arrow integration is an **optional feature** that must be enabled at compile time:
+As of v0.4.85, Arrow is a **core dependency** and always available. No feature flag is needed.
 
 ```bash
-# Enable Arrow support
-cargo build --release --features arrow
+# Arrow is included by default
+cargo build --release
 
-# Or install with arrow support
-cargo install dataprof --features arrow
+# Or install
+cargo install dataprof
 ```
 
-**When to enable Arrow:**
+**Arrow excels at:**
 - Processing files > 100MB regularly
 - Working with wide datasets (>20 columns)
-- Need maximum throughput for production pipelines
-- Data has uniform columnar structure
+- Maximum throughput for production pipelines
+- Data with uniform columnar structure
 
-**When to skip Arrow:**
-- Only working with small files (<10MB)
+**Other engines may be preferred for:**
+- Small files (<10MB) where startup overhead matters
 - Primarily analyzing messy/mixed data
-- Want faster compilation times (~30% faster without Arrow)
-- Limited build environment (CI/CD optimization)
+- Memory-constrained environments
 
 ### Engine Selection
 
 - **🎯 Intelligent Selection**: Automatic engine choice based on file characteristics, system resources, and processing context
-- **🔄 Runtime Detection**: Arrow availability detected at runtime without compile-time dependencies
 - **⚡ Transparent Fallback**: Automatic fallback to alternative engines with detailed logging
 - **📊 Performance Comparison**: Built-in benchmarking to compare engine performance on your data
 - **🛡️ Zero Breaking Changes**: Full backward compatibility with existing APIs
@@ -48,7 +46,7 @@ cargo install dataprof --features arrow
 ### Command Line Usage
 
 ```bash
-# 🚀 NEW: Intelligent automatic selection (RECOMMENDED)
+# 🚀 Intelligent automatic selection (RECOMMENDED)
 dataprof --engine auto large_dataset.csv  # Default in v0.4.0
 
 # Show available engines and system information
@@ -57,7 +55,7 @@ dataprof --engine-info
 # Benchmark all engines on your data
 dataprof --benchmark data.csv
 
-# Legacy: Manual engine selection
+# Manual engine selection
 dataprof --engine arrow data.csv         # Force Arrow
 dataprof --engine streaming data.csv     # Force streaming
 dataprof --engine memory-efficient data.csv  # Force memory-efficient

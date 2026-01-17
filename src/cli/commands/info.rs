@@ -98,11 +98,7 @@ fn show_engine_info(detailed: bool) -> Result<()> {
         #[cfg(feature = "database")]
         println!("    - database");
 
-        #[cfg(not(any(
-            feature = "parquet",
-            feature = "python",
-            feature = "database"
-        )))]
+        #[cfg(not(any(feature = "parquet", feature = "python", feature = "database")))]
         println!("    - minimal (no optional features except arrow)");
     }
 

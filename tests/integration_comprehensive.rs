@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 use dataprof::core::sampling::strategies::SamplingStrategy;
-#[cfg(feature = "arrow")]
 use dataprof::engines::columnar::ArrowProfiler;
 use dataprof::engines::streaming::incremental::IncrementalProfiler;
 use dataprof::engines::streaming::mapped::MappedProfiler;
@@ -95,7 +94,6 @@ fn test_simd_acceleration() -> Result<()> {
 
 /// Test columnar processing
 #[test]
-#[cfg(feature = "arrow")]
 fn test_columnar_processing() -> Result<()> {
     let test_file = Path::new("examples/sales_data_problematic.csv");
     if !test_file.exists() {
@@ -195,7 +193,6 @@ fn test_sampling_strategies() -> Result<()> {
 
 /// Comprehensive integration test with real data
 #[test]
-#[cfg(feature = "arrow")]
 fn test_full_integration() -> Result<()> {
     let test_files = [
         "examples/sales_data_problematic.csv",
@@ -235,7 +232,6 @@ fn test_full_integration() -> Result<()> {
 
 /// Performance benchmark with generated data
 #[test]
-#[cfg(feature = "arrow")]
 fn test_performance_benchmark() -> Result<()> {
     use std::fs::File;
     use std::io::{BufWriter, Write};

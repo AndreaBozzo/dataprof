@@ -162,14 +162,13 @@ fn test_dataprof_auto_api() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Test runtime Arrow detection without requiring Arrow feature
+/// Test runtime Arrow detection
 #[test]
 fn test_runtime_arrow_detection() -> Result<(), Box<dyn std::error::Error>> {
     use dataprof::engines::EngineSelector;
 
     let selector = EngineSelector::new();
 
-    // Should not crash regardless of Arrow availability
     let mut test_file = NamedTempFile::new()?;
     writeln!(test_file, "id,name")?;
     writeln!(test_file, "1,test")?;
@@ -187,10 +186,7 @@ fn test_runtime_arrow_detection() -> Result<(), Box<dyn std::error::Error>> {
     assert!(recommendation.confidence >= 0.0 && recommendation.confidence <= 1.0);
     assert!(!recommendation.reasoning.is_empty());
 
-    println!(
-        "✓ Runtime Arrow detection works (Arrow available: {})",
-        cfg!(feature = "arrow")
-    );
+    println!("✓ Runtime engine detection works (Arrow is always available)");
     Ok(())
 }
 
@@ -214,12 +210,9 @@ fn test_backward_compatibility() -> Result<(), Box<dyn std::error::Error>> {
     let streaming_report = streaming_profiler.analyze_file(test_file.path())?;
     assert_eq!(streaming_report.column_profiles.len(), 2);
 
-    #[cfg(feature = "arrow")]
-    {
-        let arrow_profiler = DataProfiler::columnar();
-        let arrow_report = arrow_profiler.analyze_csv_file(test_file.path())?;
-        assert_eq!(arrow_report.column_profiles.len(), 2);
-    }
+    let arrow_profiler = DataProfiler::columnar();
+    let arrow_report = arrow_profiler.analyze_csv_file(test_file.path())?;
+    assert_eq!(arrow_report.column_profiles.len(), 2);
 
     println!("✓ Backward compatibility maintained");
     Ok(())
@@ -278,7 +271,6 @@ fn test_performance_improvement() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(feature = "arrow")]
 /// Test Arrow integration with intelligent selection
 #[test]
 fn test_arrow_intelligent_selection() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,12 +1,9 @@
-#[cfg(feature = "arrow")]
 use dataprof::DataProfiler;
 use std::io::Write;
-#[cfg(feature = "arrow")]
 use std::time::Instant;
 use tempfile::NamedTempFile;
 
 /// Generate a large CSV file for testing Arrow performance
-#[allow(dead_code)]
 fn generate_large_csv(rows: usize) -> Result<NamedTempFile, Box<dyn std::error::Error>> {
     let mut temp_file = NamedTempFile::new()?;
 
@@ -38,7 +35,6 @@ fn generate_large_csv(rows: usize) -> Result<NamedTempFile, Box<dyn std::error::
     Ok(temp_file)
 }
 
-#[cfg(feature = "arrow")]
 #[test]
 fn test_arrow_vs_streaming_performance() -> Result<(), Box<dyn std::error::Error>> {
     // Generate a moderately large file (~50MB, ~500k rows)
@@ -110,7 +106,6 @@ fn test_arrow_vs_streaming_performance() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-#[cfg(feature = "arrow")]
 #[test]
 fn test_arrow_memory_efficiency() -> Result<(), Box<dyn std::error::Error>> {
     // Test with a smaller but still meaningful dataset
@@ -139,11 +134,4 @@ fn test_arrow_memory_efficiency() -> Result<(), Box<dyn std::error::Error>> {
     assert!(duration.as_secs() < 30); // Should complete in reasonable time
 
     Ok(())
-}
-
-#[cfg(not(feature = "arrow"))]
-#[test]
-fn test_large_file_performance_fallback() {
-    // When arrow feature is disabled, we can still test that performance tests compile
-    println!("✓ Arrow feature disabled - performance tests would use streaming fallback");
 }

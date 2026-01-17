@@ -33,8 +33,7 @@ impl DuckDbLoader {
         println!("🦆 DuckDB: Preparing query...");
 
         // 1. Setup DuckDB (In-Memory)
-        let conn =
-            Connection::open_in_memory().context("Failed to open DuckDB connection")?;
+        let conn = Connection::open_in_memory().context("Failed to open DuckDB connection")?;
 
         // 2. Prepara lo statement
         let mut stmt = conn

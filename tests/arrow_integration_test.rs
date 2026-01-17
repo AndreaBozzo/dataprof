@@ -1,4 +1,3 @@
-#[cfg(feature = "arrow")]
 #[test]
 fn test_arrow_api_integration() -> Result<(), Box<dyn std::error::Error>> {
     use dataprof::DataProfiler;
@@ -24,7 +23,6 @@ fn test_arrow_api_integration() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(feature = "arrow")]
 #[test]
 fn test_arrow_with_adaptive_selection() -> Result<(), Box<dyn std::error::Error>> {
     use dataprof::{AdaptiveProfiler, DataProfiler};
@@ -95,7 +93,6 @@ fn test_arrow_with_adaptive_selection() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-#[cfg(feature = "arrow")]
 #[test]
 fn test_arrow_fallback_behavior() -> Result<(), Box<dyn std::error::Error>> {
     use dataprof::{AdaptiveProfiler, ProcessingType, engines::EngineSelector};
@@ -130,13 +127,12 @@ fn test_arrow_fallback_behavior() -> Result<(), Box<dyn std::error::Error>> {
     let characteristics = selector.analyze_file_characteristics(temp_file.path())?;
     let recommendation = selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
-    // Should have Arrow as either primary or fallback (when feature is enabled)
+    // Arrow should be available as either primary or fallback
     let has_arrow = recommendation.primary_engine == dataprof::engines::EngineType::Arrow
         || recommendation
             .fallback_engines
             .contains(&dataprof::engines::EngineType::Arrow);
 
-    // Note: Arrow might not always be selected depending on file size and system resources
     println!(
         "✓ Arrow fallback test - Arrow included in recommendation: {}",
         has_arrow
@@ -145,7 +141,7 @@ fn test_arrow_fallback_behavior() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Fallback engines: {:?}", recommendation.fallback_engines);
     println!("  Reasoning: {}", recommendation.reasoning);
 
-    // Test that adaptive profiler works regardless
+    // Test that adaptive profiler works
     let profiler = AdaptiveProfiler::new().with_logging(false);
     let report = profiler.analyze_file(temp_file.path())?;
 
@@ -154,12 +150,4 @@ fn test_arrow_fallback_behavior() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✓ Arrow fallback behavior verified");
     Ok(())
-}
-
-#[cfg(not(feature = "arrow"))]
-#[test]
-fn test_arrow_feature_disabled() {
-    // When arrow feature is disabled, compilation should still work
-    // but columnar() method should not be available
-    println!("✓ Arrow feature disabled - test passes by compilation");
 }
