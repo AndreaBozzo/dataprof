@@ -158,9 +158,9 @@ jobs:
         export RUSTFLAGS="-C target-cpu=x86-64"
 
         if [ "${{ matrix.cross }}" = "true" ]; then
-          cross build --release --target ${{ matrix.target }} --bin dataprof-cli --features="arrow"
+          cross build --release --target ${{ matrix.target }} --bin dataprof-cli
         else
-          cargo build --release --target ${{ matrix.target }} --bin dataprof-cli --features="arrow"
+          cargo build --release --target ${{ matrix.target }} --bin dataprof-cli
         fi
       shell: bash
 
