@@ -119,7 +119,7 @@ futures = "0.3.31"
 
 [dev-dependencies]
 tempfile = "3.24"
-
+anyhow = "1.0"
 
 proptest = "1.9"  # Updated: 1.8.0 -> 1.9.0 (minor bump, backward compatible)
 
@@ -202,4 +202,4 @@ all-db = ["postgres", "mysql", "sqlite"]
 # cdylib is added automatically by maturin when building Python bindings
 [lib]
 name = "dataprof"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
