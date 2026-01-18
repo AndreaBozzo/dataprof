@@ -202,4 +202,4 @@ all-db = ["postgres", "mysql", "sqlite"]
 # cdylib is added automatically by maturin when building Python bindings
 [lib]
 name = "dataprof"
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
