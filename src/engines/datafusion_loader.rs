@@ -8,9 +8,9 @@ use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, S
 
 use anyhow::{Context, Result};
 use datafusion::prelude::*;
-use log::{debug, info};
-use std::time::Instant;
 use futures::stream::{Stream, StreamExt};
+use log::info;
+use std::time::Instant;
 
 /// DataFusion loader for profiling SQL queries using Arrow integration
 pub struct DataFusionLoader {
@@ -158,7 +158,10 @@ impl DataFusionLoader {
     }
 
     /// Execute a SQL query and profile the results using Arrow (streaming version)
-    pub async fn profile_query_streaming(&self, query: &str) -> Result<impl Stream<Item=Result<QualityReport>>> {
+    pub async fn profile_query_streaming(
+        &self,
+        query: &str,
+    ) -> Result<impl Stream<Item = Result<QualityReport>>> {
         let start = Instant::now();
         info!("DataFusion: Preparing query (streaming)...");
 
@@ -190,7 +193,9 @@ impl DataFusionLoader {
                 // Calculate quality metrics
                 let data_quality_metrics =
                     DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-                        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
+                        .map_err(|e| {
+                            anyhow::anyhow!("Quality metrics calculation failed: {}", e)
+                        })?;
 
                 let scan_time_ms = start.elapsed().as_millis();
                 let num_columns = column_profiles.len();
