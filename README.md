@@ -25,9 +25,7 @@ DataProf is built for Data Scientists and Engineers who need to understand their
 | **Speed** | 15+ minutes | **45 seconds** |
 | **Implementation** | Python (Slow) | **Rust (Blazing Fast)** |
 
-**🔒 Privacy First:** 100% local processing, no telemetry. [See what dataprof analyzes →](docs/WHAT_DATAPROF_DOES.md)
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -95,7 +93,6 @@ dataprof-cli report huge_data.csv -o report.html
 
 - **[Python API Reference](docs/python/README.md)**
 - **[CLI Guide](docs/guides/CLI_USAGE_GUIDE.md)**
-- **[Performance & Benchmarks](docs/guides/performance-guide.md)**
 
 ### Advanced Examples
 
@@ -141,8 +138,6 @@ cargo bench         # Benchmarks
 cargo clippy        # Linting
 ```
 
-**[Performance Guide](docs/guides/performance-guide.md)**
-
 ### Feature Flags
 
 ```bash
@@ -172,10 +167,8 @@ cargo build --release --all-features
 ## Documentation
 
 **User Guides:**
-[CLI Reference](docs/guides/CLI_USAGE_GUIDE.md) | [Python API](docs/python/API_REFERENCE.md) | [Python Integrations](docs/python/INTEGRATIONS.md) | [Database Connectors](docs/guides/database-connectors.md) | [Apache Arrow](docs/guides/apache-arrow-integration.md) | [Performance Guide](docs/guides/performance-guide.md)
-
-**Privacy:**
-[What DataProf Does](docs/WHAT_DATAPROF_DOES.md) - Complete transparency with source verification
+[CLI Reference](docs/guides/CLI_USAGE_GUIDE.md)
+[Database Connectors](docs/guides/database-connectors.md) 
 
 ## 🤝 Contributing
 
