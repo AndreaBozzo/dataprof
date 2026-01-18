@@ -9,7 +9,6 @@ use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, S
 use anyhow::{Context, Result};
 use datafusion::prelude::*;
 use futures::stream::{Stream, StreamExt};
-use log::info;
 use std::time::Instant;
 
 /// DataFusion loader for profiling SQL queries using Arrow integration
@@ -89,7 +88,7 @@ impl DataFusionLoader {
     /// Execute a SQL query and profile the results using Arrow
     pub async fn profile_query(&self, query: &str) -> Result<QualityReport> {
         let start = Instant::now();
-        info!("DataFusion: Preparing query...");
+        log::info!("DataFusion: Preparing query");
 
         // Execute query and get DataFrame
         let df = self
@@ -117,7 +116,7 @@ impl DataFusionLoader {
         }
 
         let total_rows = analyzer.total_rows();
-        info!(
+        log::info!(
             "DataFusion: Processed {} rows in {} batches",
             total_rows, batch_count
         );
@@ -163,7 +162,7 @@ impl DataFusionLoader {
         query: &str,
     ) -> Result<impl Stream<Item = Result<QualityReport>>> {
         let start = Instant::now();
-        info!("DataFusion: Preparing query (streaming)...");
+        log::info!("DataFusion: Preparing query (streaming)");
 
         // Execute query and get DataFrame
         let df = self
