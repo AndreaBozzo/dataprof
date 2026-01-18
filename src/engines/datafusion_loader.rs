@@ -118,7 +118,8 @@ impl DataFusionLoader {
         let total_rows = analyzer.total_rows();
         log::info!(
             "DataFusion: Processed {} rows in {} batches",
-            total_rows, batch_count
+            total_rows,
+            batch_count
         );
 
         // Build the report
