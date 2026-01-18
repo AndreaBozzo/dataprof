@@ -1,0 +1,108 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE*'
+  schedule:
+    - cron: '0 2 * * 0'
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.8.1
+        with:
+          prefix-key: security
+
+      - name: Run cargo audit
+        run: |
+          cargo install --locked cargo-audit
+          cargo audit
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: false
+
+      - name: Run cargo deny
+        run: |
+          cargo install --locked cargo-deny
+          cargo deny check
+
+  trivy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.0
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.26.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3.25.0
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.8.1
+
+      - name: Run cargo tree
+        run: cargo tree --depth 1
+
+      - name: Check for outdated dependencies
+        run: |
+          cargo install --locked cargo-outdated
+          cargo outdated --exit-code 0
+        continue-on-error: true
