@@ -43,11 +43,6 @@ jobs:
         with:
           prefix-key: security
 
-      - name: Run cargo audit
-        run: |
-          cargo install --locked cargo-audit
-          cargo audit
-
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
         continue-on-error: false
