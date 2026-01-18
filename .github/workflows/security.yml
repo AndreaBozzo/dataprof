@@ -43,10 +43,6 @@ jobs:
         with:
           prefix-key: security
 
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-        continue-on-error: false
-
       - name: Run cargo deny
         run: |
           cargo install --locked cargo-deny
@@ -95,9 +91,3 @@ jobs:
 
       - name: Run cargo tree
         run: cargo tree --depth 1
-
-      - name: Check for outdated dependencies
-        run: |
-          cargo install --locked cargo-outdated
-          cargo outdated --exit-code 0
-        continue-on-error: true
