@@ -3,7 +3,10 @@ use pyo3::prelude::*;
 use std::path::Path;
 
 use crate::analyze_json_with_quality as analyze_json_quality_rust;
-use crate::{analyze_csv, analyze_csv_robust, analyze_json};
+use crate::engines::AdaptiveProfiler;
+#[cfg(feature = "datafusion")]
+use crate::engines::DataFusionLoader;
+use crate::{analyze_csv_robust, analyze_json};
 
 #[cfg(feature = "parquet")]
 use crate::analyze_parquet_with_quality as analyze_parquet_quality_rust;
@@ -12,23 +15,80 @@ use super::types::{PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
 
 /// Analyze a single CSV file
 #[pyfunction]
-pub fn analyze_csv_file(path: &str) -> PyResult<Vec<PyColumnProfile>> {
-    let profiles = analyze_csv(Path::new(path))
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
-
-    Ok(profiles.iter().map(PyColumnProfile::from).collect())
+#[pyo3(signature = (path, engine=None))]
+pub fn analyze_csv_file(path: &str, engine: Option<String>) -> PyResult<Vec<PyColumnProfile>> {
+    let report = analyze_csv_internal(path, engine)?;
+    Ok(report
+        .column_profiles
+        .iter()
+        .map(PyColumnProfile::from)
+        .collect())
 }
 
 /// Analyze a single CSV file with quality assessment
 #[pyfunction]
-pub fn analyze_csv_with_quality(path: &str) -> PyResult<PyQualityReport> {
-    let quality_report = analyze_csv_robust(Path::new(path)).map_err(|e| {
-        PyRuntimeError::new_err(format!("Failed to analyze CSV with quality: {}", e))
-    })?;
+#[pyo3(signature = (path, engine=None))]
+pub fn analyze_csv_with_quality(path: &str, engine: Option<String>) -> PyResult<PyQualityReport> {
+    let report = analyze_csv_internal(path, engine)?;
+    Ok(PyQualityReport::from(&report))
+}
 
-    let py_quality = PyQualityReport::from(&quality_report);
+fn analyze_csv_internal(
+    path: &str,
+    engine: Option<String>,
+) -> PyResult<crate::types::QualityReport> {
+    let path_obj = Path::new(path);
 
-    Ok(py_quality)
+    if let Some(engine_name) = engine {
+        match engine_name.to_lowercase().as_str() {
+            "arrow" => {
+                let profiler = crate::engines::columnar::ArrowProfiler::new();
+                profiler
+                    .analyze_csv_file(path_obj)
+                    .map_err(|e| PyRuntimeError::new_err(format!("Arrow analysis failed: {}", e)))
+            }
+            #[cfg(feature = "datafusion")]
+            "datafusion" => {
+                // Create runtime for async DataFusion execution
+                let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to create runtime: {}", e))
+                })?;
+
+                rt.block_on(async {
+                    let loader = DataFusionLoader::new();
+                    let table_name = "analysis_target";
+
+                    // Register the CSV file as a temporary table
+                    loader
+                        .register_csv(table_name, path)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to register CSV: {}", e))?;
+
+                    // Profile the table content
+                    let query = format!("SELECT * FROM {}", table_name);
+                    loader.profile_query(&query).await
+                })
+                .map_err(|e| PyRuntimeError::new_err(format!("DataFusion analysis failed: {}", e)))
+            }
+            "auto" | "adaptive" => {
+                let profiler = AdaptiveProfiler::new();
+                profiler.analyze_file(path_obj).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Adaptive analysis failed: {}", e))
+                })
+            }
+            _ => {
+                // Fallback to standard robust analysis for unknown engines (or maybe raise error?)
+                // For backward compatibility, maybe just log warning and use robust?
+                // Or better, standard logic:
+                analyze_csv_robust(path_obj)
+                    .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))
+            }
+        }
+    } else {
+        // Default behavior - currently robust csv
+        analyze_csv_robust(path_obj)
+            .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))
+    }
 }
 
 /// Analyze a JSON file

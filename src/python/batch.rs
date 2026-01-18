@@ -128,8 +128,8 @@ impl PyBatchAnalyzer {
             "parquet" => Err(PyRuntimeError::new_err(
                 "Parquet support not enabled. Rebuild with --features parquet",
             )),
-            "csv" => analyze_csv_file(path),
-            _ => analyze_csv_file(path), // Default to CSV for unknown extensions
+            "csv" => analyze_csv_file(path, None),
+            _ => analyze_csv_file(path, None), // Default to CSV for unknown extensions
         }?;
 
         self.results.push(result.into_pyobject(py)?.into());
@@ -169,8 +169,8 @@ impl PyBatchAnalyzer {
                 "parquet" => Err(PyRuntimeError::new_err(
                     "Parquet support not enabled. Rebuild with --features parquet",
                 )),
-                "csv" => analyze_csv_file(&path),
-                _ => analyze_csv_file(&path), // Default to CSV for unknown extensions
+                "csv" => analyze_csv_file(&path, None),
+                _ => analyze_csv_file(&path, None), // Default to CSV for unknown extensions
             };
 
             match result {

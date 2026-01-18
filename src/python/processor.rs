@@ -93,7 +93,7 @@ impl PyCsvProcessor {
             self.temp_files.push(temp_path.clone());
 
             // Analyze the chunk
-            let chunk_result = analyze_csv_file(&temp_path)?;
+            let chunk_result = analyze_csv_file(&temp_path, None)?;
             chunk_results.push(chunk_result.into_pyobject(py)?.into());
 
             self.processed_rows += chunk.len();

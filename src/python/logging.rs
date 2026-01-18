@@ -112,7 +112,7 @@ pub fn analyze_csv_with_logging(
 
     // Perform the actual analysis
     let start_time = std::time::Instant::now();
-    let result = analyze_csv_file(&file_path);
+    let result = analyze_csv_file(&file_path, None);
     let duration = start_time.elapsed();
 
     match result {
