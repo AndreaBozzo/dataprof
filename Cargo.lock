@@ -1625,6 +1625,7 @@ dependencies = [
  "csv",
  "datafusion",
  "env_logger",
+ "futures",
  "glob",
  "glob-match",
  "handlebars",

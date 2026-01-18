@@ -8,7 +8,9 @@ use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, S
 
 use anyhow::{Context, Result};
 use datafusion::prelude::*;
+use log::{debug, info};
 use std::time::Instant;
+use futures::stream::{Stream, StreamExt};
 
 /// DataFusion loader for profiling SQL queries using Arrow integration
 pub struct DataFusionLoader {
@@ -87,7 +89,7 @@ impl DataFusionLoader {
     /// Execute a SQL query and profile the results using Arrow
     pub async fn profile_query(&self, query: &str) -> Result<QualityReport> {
         let start = Instant::now();
-        println!("🔥 DataFusion: Preparing query...");
+        info!("DataFusion: Preparing query...");
 
         // Execute query and get DataFrame
         let df = self
@@ -115,8 +117,8 @@ impl DataFusionLoader {
         }
 
         let total_rows = analyzer.total_rows();
-        println!(
-            "🔥 DataFusion: Processed {} rows in {} batches",
+        info!(
+            "DataFusion: Processed {} rows in {} batches",
             total_rows, batch_count
         );
 
@@ -147,8 +149,66 @@ impl DataFusionLoader {
 
     /// Profile a registered table directly
     pub async fn profile_table(&self, table_name: &str) -> Result<QualityReport> {
+        if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(anyhow::anyhow!("Invalid table name: {}", table_name));
+        }
+
         let query = format!("SELECT * FROM {}", table_name);
         self.profile_query(&query).await
+    }
+
+    /// Execute a SQL query and profile the results using Arrow (streaming version)
+    pub async fn profile_query_streaming(&self, query: &str) -> Result<impl Stream<Item=Result<QualityReport>>> {
+        let start = Instant::now();
+        info!("DataFusion: Preparing query (streaming)...");
+
+        // Execute query and get DataFrame
+        let df = self
+            .ctx
+            .sql(query)
+            .await
+            .context(format!("Failed to execute query: '{}'", query))?;
+
+        // Initialize the RecordBatchAnalyzer
+        let mut analyzer = RecordBatchAnalyzer::new();
+
+        // Stream batches and process each one
+        let stream = df
+            .execute_stream()
+            .await
+            .context("Failed to execute query stream")?
+            .map(move |batch| {
+                let batch = batch.context("Failed to fetch batch")?;
+                if batch.num_rows() > 0 {
+                    analyzer.process_batch(&batch)?;
+                }
+                let column_profiles = analyzer.to_profiles();
+                let sample_columns = analyzer.create_sample_columns();
+
+                let total_rows = analyzer.total_rows();
+
+                // Calculate quality metrics
+                let data_quality_metrics =
+                    DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
+                        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
+
+                let scan_time_ms = start.elapsed().as_millis();
+                let num_columns = column_profiles.len();
+
+                Ok(QualityReport::new(
+                    DataSource::Query {
+                        engine: QueryEngine::DataFusion,
+                        statement: query.to_string(),
+                        database: None,
+                        execution_id: None,
+                    },
+                    column_profiles,
+                    ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
+                    data_quality_metrics,
+                ))
+            });
+
+        Ok(stream)
     }
 }
 
@@ -156,11 +216,11 @@ impl DataFusionLoader {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::Builder;
 
     #[tokio::test]
     async fn test_datafusion_csv_profiling() -> Result<()> {
-        let mut temp_file = NamedTempFile::new()?;
+        let mut temp_file = Builder::new().suffix(".csv").tempfile()?;
         writeln!(temp_file, "name,age,salary")?;
         writeln!(temp_file, "Alice,25,50000.0")?;
         writeln!(temp_file, "Bob,30,60000.5")?;
@@ -182,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_datafusion_sql_aggregation() -> Result<()> {
-        let mut temp_file = NamedTempFile::new()?;
+        let mut temp_file = Builder::new().suffix(".csv").tempfile()?;
         writeln!(temp_file, "category,value")?;
         writeln!(temp_file, "A,10")?;
         writeln!(temp_file, "B,20")?;
@@ -202,6 +262,14 @@ mod tests {
         assert_eq!(report.column_profiles.len(), 2);
         assert_eq!(report.scan_info.total_rows, 2); // 2 groups
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_invalid_table_name() -> Result<()> {
+        let loader = DataFusionLoader::new();
+        let result = loader.profile_table("invalid-table-name").await;
+        assert!(result.is_err());
         Ok(())
     }
 }
