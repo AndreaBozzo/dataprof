@@ -117,6 +117,10 @@ parquet = { version = "57.2.0", features = ["arrow"], optional = true }
 datafusion = { version = "52.0.0", optional = true }
 futures = "0.3.31"
 
+# ConnectorX for high-performance database loading to Arrow
+# Note: connectorx has its own sqlite3 linking, so connectorx-sqlite and sqlite features are mutually exclusive
+connectorx = { version = "0.4", optional = true, default-features = false }
+
 [dev-dependencies]
 tempfile = "3.24"
 anyhow = "1.0"
@@ -192,10 +196,21 @@ postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 
+# ConnectorX-based connectors (faster, Arrow-native output)
+# Note: connectorx-sqlite conflicts with sqlx/sqlite due to libsqlite3-sys version mismatch
+# Use one or the other, not both simultaneously
+# fptr feature is required for dispatcher (alternative: branch)
+connectorx-postgres = ["dep:connectorx", "connectorx/src_postgres", "connectorx/dst_arrow", "connectorx/fptr"]
+connectorx-mysql = ["dep:connectorx", "connectorx/src_mysql", "connectorx/dst_arrow", "connectorx/fptr"]
+# connectorx-sqlite temporarily disabled due to libsqlite3-sys conflict with sqlx
+# connectorx-sqlite = ["dep:connectorx", "connectorx/src_sqlite", "connectorx/dst_arrow", "connectorx/fptr"]
+connectorx-all = ["connectorx-postgres", "connectorx-mysql"]
+
 # Sensible feature combinations
 minimal = []                             # Just CSV processing - fastest builds
 production = ["postgres", "mysql"]       
-all-db = ["postgres", "mysql", "sqlite"] 
+all-db = ["postgres", "mysql", "sqlite"]
+production-cx = ["connectorx-postgres", "connectorx-mysql"]  # ConnectorX version 
 
 
 # Library configuration - rlib only for Rust use
