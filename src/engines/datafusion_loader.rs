@@ -157,13 +157,32 @@ impl DataFusionLoader {
         self.profile_query(&query).await
     }
 
-    /// Execute a SQL query and profile the results using Arrow (streaming version)
-    pub async fn profile_query_streaming(
+    /// Execute a SQL query and emit incremental profiling reports.
+    ///
+    /// This method is designed for real-time monitoring of data streams.
+    /// It emits a [`QualityReport`] after processing each batch, where each
+    /// report contains **cumulative** statistics from all batches processed
+    /// so far.
+    ///
+    /// For batch processing where you only need the final result,
+    /// use [`profile_query`] instead.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use futures::StreamExt;
+    ///
+    /// let mut stream = loader.profile_query_incremental("SELECT * FROM data").await?;
+    /// while let Some(report) = stream.next().await {
+    ///     let report = report?;
+    ///     println!("Processed {} rows so far", report.scan_info.total_rows);
+    /// }
+    /// ```
+    pub async fn profile_query_incremental(
         &self,
         query: &str,
     ) -> Result<impl Stream<Item = Result<QualityReport>>> {
         let start = Instant::now();
-        log::info!("DataFusion: Preparing query (streaming)");
+        log::info!("DataFusion: Preparing query (incremental)");
 
         // Execute query and get DataFrame
         let df = self
@@ -175,7 +194,10 @@ impl DataFusionLoader {
         // Initialize the RecordBatchAnalyzer
         let mut analyzer = RecordBatchAnalyzer::new();
 
-        // Stream batches and process each one
+        // Own the query string for the closure
+        let query_owned = query.to_string();
+
+        // Stream batches and process each one, emitting cumulative reports
         let stream = df
             .execute_stream()
             .await
@@ -203,7 +225,7 @@ impl DataFusionLoader {
                 Ok(QualityReport::new(
                     DataSource::Query {
                         engine: QueryEngine::DataFusion,
-                        statement: query.to_string(),
+                        statement: query_owned.clone(),
                         database: None,
                         execution_id: None,
                     },
