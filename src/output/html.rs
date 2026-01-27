@@ -88,9 +88,8 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
 
     // Build Parquet metadata if available
     let parquet_meta_json = parquet_metadata.as_ref().map(|meta| {
-        let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
-            let uncompressed = meta.uncompressed_size_bytes.unwrap();
-            if uncompressed > 0 {
+        let compression_ratio = if let Some(uncompressed) = meta.uncompressed_size_bytes {
+            if meta.compressed_size_bytes > 0 && uncompressed > 0 {
                 Some(format!("{:.1}x", uncompressed as f64 / meta.compressed_size_bytes as f64))
             } else {
                 None
@@ -458,9 +457,8 @@ fn build_files_context(
             // Build Parquet metadata if available (same as single report)
             let parquet_metadata = match &report.data_source {
                 DataSource::File { parquet_metadata: Some(meta), .. } => {
-                    let compression_ratio = if meta.uncompressed_size_bytes.is_some() && meta.compressed_size_bytes > 0 {
-                        let uncompressed = meta.uncompressed_size_bytes.unwrap();
-                        if uncompressed > 0 {
+                    let compression_ratio = if let Some(uncompressed) = meta.uncompressed_size_bytes {
+                        if meta.compressed_size_bytes > 0 && uncompressed > 0 {
                             Some(format!("{:.1}x", uncompressed as f64 / meta.compressed_size_bytes as f64))
                         } else {
                             None
