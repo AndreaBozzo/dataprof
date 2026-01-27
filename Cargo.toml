@@ -69,7 +69,7 @@ indicatif = "0.18"
 
 
 # System info for adaptive chunking
-sysinfo = "0.37"
+sysinfo = "0.38"
 
 # Rayon for parallel processing
 rayon = "1.8"
