@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/images/logo.png" alt="dataprof logo" width="400" height="auto" />
+  <img src="assets/images/logo.png" alt="dataprof logo" width="800" height="auto" />
   <h1>dataprof</h1>
   <p>
     <strong>The High-Performance Profiler for Large Datasets</strong>
