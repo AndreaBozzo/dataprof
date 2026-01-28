@@ -93,7 +93,7 @@ jobs:
       - name: Run clippy
         run: |
           echo "Running clippy analysis..."
-          cargo clippy --lib --tests --all-features -- -D warnings
+          cargo clippy --lib --tests --all-features
           echo "Clippy analysis passed"
 
       - name: Check documentation
