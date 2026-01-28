@@ -1,6 +1,7 @@
 #![allow(clippy::useless_conversion)]
 
 pub mod analysis;
+pub mod arrow_export;
 pub mod batch;
 pub mod dataframe;
 pub mod logging;
@@ -26,6 +27,11 @@ pub use logging::{
 };
 pub use processor::PyCsvProcessor;
 pub use types::{PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
+
+// Arrow/PyCapsule exports
+#[cfg(feature = "parquet")]
+pub use arrow_export::analyze_parquet_to_arrow;
+pub use arrow_export::{PyRecordBatch, analyze_csv_to_arrow, profile_dataframe};
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -79,6 +85,14 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Enhanced analysis functions with logging
     m.add_function(wrap_pyfunction!(analyze_csv_with_logging, m)?)?;
+
+    // Arrow/PyCapsule interface for zero-copy data exchange
+    m.add_class::<PyRecordBatch>()?;
+    m.add_function(wrap_pyfunction!(analyze_csv_to_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;
+
+    #[cfg(feature = "parquet")]
+    m.add_function(wrap_pyfunction!(analyze_parquet_to_arrow, m)?)?;
 
     // Async database functions (available with python-async and database features)
     #[cfg(all(feature = "python-async", feature = "database"))]

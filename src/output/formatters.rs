@@ -578,6 +578,7 @@ impl OutputFormatter for InteractiveFormatter {
         let (source_label, source_emoji) = match &report.data_source {
             DataSource::File { .. } => ("File:", "📁"),
             DataSource::Query { .. } => ("Query:", "🔍"),
+            DataSource::DataFrame { .. } => ("DataFrame:", "🐼"),
         };
 
         // Enhanced source info section with colors and emojis

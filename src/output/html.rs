@@ -75,6 +75,16 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
             let name = format!("{} Query", engine);
             (name, statement.clone(), 0.0, None)
         }
+        DataSource::DataFrame {
+            name,
+            source_library,
+            memory_bytes,
+            ..
+        } => {
+            let display_name = format!("{} DataFrame: {}", source_library, name);
+            let size_mb = memory_bytes.map(|b| b as f64 / 1_048_576.0).unwrap_or(0.0);
+            (display_name.clone(), display_name, size_mb, None)
+        }
     };
 
     let sampling_info = if report.scan_info.sampling_ratio < 1.0 {

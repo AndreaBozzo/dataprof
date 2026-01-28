@@ -105,6 +105,21 @@ pub enum DataSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         execution_id: Option<String>,
     },
+    /// In-memory DataFrame source (pandas/polars via PyCapsule)
+    #[serde(rename = "dataframe")]
+    DataFrame {
+        /// User-provided name for identification
+        name: String,
+        /// Source library (pandas, polars, pyarrow)
+        source_library: String,
+        /// Number of rows at profiling time
+        row_count: usize,
+        /// Number of columns
+        column_count: usize,
+        /// Memory usage in bytes (if available)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        memory_bytes: Option<u64>,
+    },
 }
 
 impl DataSource {
@@ -113,6 +128,7 @@ impl DataSource {
     /// Returns:
     /// - For files: the file path
     /// - For queries: "engine: truncated_statement"
+    /// - For dataframes: "library[name]"
     pub fn identifier(&self) -> String {
         match self {
             Self::File { path, .. } => path.clone(),
@@ -126,13 +142,19 @@ impl DataSource {
                 };
                 format!("{}: {}", engine, truncated)
             }
+            Self::DataFrame {
+                name,
+                source_library,
+                ..
+            } => format!("{}[{}]", source_library, name),
         }
     }
 
-    /// Get file size in megabytes if this is a file-based source
+    /// Get file size in megabytes if this is a file-based source or dataframe
     pub fn size_mb(&self) -> Option<f64> {
         match self {
             Self::File { size_bytes, .. } => Some(*size_bytes as f64 / 1_048_576.0),
+            Self::DataFrame { memory_bytes, .. } => memory_bytes.map(|b| b as f64 / 1_048_576.0),
             Self::Query { .. } => None,
         }
     }
@@ -147,11 +169,16 @@ impl DataSource {
         matches!(self, Self::Query { .. })
     }
 
+    /// Check if this is a DataFrame-based source
+    pub fn is_dataframe(&self) -> bool {
+        matches!(self, Self::DataFrame { .. })
+    }
+
     /// Get the file path if this is a file-based source
     pub fn file_path(&self) -> Option<&str> {
         match self {
             Self::File { path, .. } => Some(path),
-            Self::Query { .. } => None,
+            Self::Query { .. } | Self::DataFrame { .. } => None,
         }
     }
 }
