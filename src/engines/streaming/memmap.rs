@@ -22,7 +22,9 @@ impl MemoryMappedCsvReader {
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
 
-        // Memory map the file
+        // Safety: The file is opened read-only and we hold the File handle for the
+        // lifetime of the Mmap. The file must not be concurrently modified.
+        #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         let resource_id = format!("mmap_{}", path.display());

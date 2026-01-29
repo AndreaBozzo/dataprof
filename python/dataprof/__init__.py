@@ -24,6 +24,11 @@ __all__ = [
     # Enhanced analysis with logging
     "analyze_csv_with_logging",
 
+    # Arrow/PyCapsule interface
+    "analyze_csv_to_arrow",
+    "profile_dataframe",
+    "RecordBatch",
+
     # Core classes
     "PyColumnProfile",
     "PyQualityReport",
@@ -38,6 +43,14 @@ __all__ = [
     "profile",
     "ProfileReport",
 ]
+
+# Conditionally add parquet support if available
+try:
+    from ._dataprof import analyze_parquet_to_arrow
+    __all__.append("analyze_parquet_to_arrow")
+except ImportError:
+    # Parquet support is optional; skip if not available in this build.
+    pass
 
 import json
 import os

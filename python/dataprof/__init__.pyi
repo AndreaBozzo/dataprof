@@ -5,7 +5,7 @@ This module provides data profiling and quality assessment functionality
 implemented in Rust with Python bindings via PyO3.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Self
 
 try:
@@ -13,6 +13,22 @@ try:
     _PANDAS_AVAILABLE = True
 except ImportError:
     _PANDAS_AVAILABLE = False
+
+try:
+    import polars as pl
+    _POLARS_AVAILABLE = True
+except ImportError:
+    _POLARS_AVAILABLE = False
+
+# Type alias for Arrow-compatible DataFrames
+if _PANDAS_AVAILABLE and _POLARS_AVAILABLE:
+    ArrowDataFrame = Union[pd.DataFrame, pl.DataFrame, "RecordBatch"]
+elif _PANDAS_AVAILABLE:
+    ArrowDataFrame = Union[pd.DataFrame, "RecordBatch"]
+elif _POLARS_AVAILABLE:
+    ArrowDataFrame = Union[pl.DataFrame, "RecordBatch"]
+else:
+    ArrowDataFrame = "RecordBatch"
 
 # Version is imported from Rust binary module (_dataprof)
 __version__: str
@@ -61,6 +77,19 @@ if _PANDAS_AVAILABLE:
     def analyze_csv_dataframe(file_path: str) -> pd.DataFrame: ...
 else:
     def analyze_csv_dataframe(file_path: str) -> Any: ...
+
+# Arrow/PyCapsule interface functions
+def analyze_csv_to_arrow(path: str) -> "RecordBatch":
+    """Analyze CSV file and return results as Arrow RecordBatch."""
+    ...
+
+def analyze_parquet_to_arrow(path: str) -> "RecordBatch":
+    """Analyze Parquet file and return results as Arrow RecordBatch."""
+    ...
+
+def profile_dataframe(df: "ArrowDataFrame", name: str = "dataframe") -> PyQualityReport:
+    """Profile a pandas or polars DataFrame directly via Arrow PyCapsule protocol."""
+    ...
 
 # Core profiling classes exported from Rust
 class PyColumnProfile:
@@ -173,6 +202,52 @@ class PyCsvProcessor:
     def process_chunks(self) -> List[Any]: ...
     def get_processing_info(self) -> Dict[str, Any]: ...
 
+class RecordBatch:
+    """Arrow RecordBatch with PyCapsule interface support for zero-copy exchange.
+
+    This class implements the Arrow PyCapsule Interface, enabling efficient
+    zero-copy data transfer between Rust and Python (pandas, polars, pyarrow).
+    """
+
+    @property
+    def num_rows(self) -> int:
+        """Number of rows in the batch."""
+        ...
+
+    @property
+    def num_columns(self) -> int:
+        """Number of columns in the batch."""
+        ...
+
+    @property
+    def column_names(self) -> List[str]:
+        """Column names as a list."""
+        ...
+
+    def to_pandas(self) -> "pd.DataFrame":
+        """Convert to pandas DataFrame (zero-copy if pyarrow available).
+
+        Requires pyarrow to be installed.
+        """
+        ...
+
+    def to_polars(self) -> "pl.DataFrame":
+        """Convert to polars DataFrame (zero-copy).
+
+        Requires polars and pyarrow to be installed.
+        """
+        ...
+
+    def __arrow_c_schema__(self) -> object:
+        """Arrow PyCapsule Interface: export schema as PyCapsule."""
+        ...
+
+    def __arrow_c_array__(self, requested_schema: Optional[object] = None) -> Tuple[object, object]:
+        """Arrow PyCapsule Interface: export array as (schema_capsule, array_capsule)."""
+        ...
+
+    def __repr__(self) -> str: ...
+
 # Export all public classes and functions
 __all__ = [
     # Core analysis functions
@@ -199,6 +274,12 @@ __all__ = [
 
     # Pandas integration
     "analyze_csv_dataframe",
+
+    # Arrow/PyCapsule interface
+    "analyze_csv_to_arrow",
+    "analyze_parquet_to_arrow",
+    "profile_dataframe",
+    "RecordBatch",
 
     # Core classes
     "PyColumnProfile",
