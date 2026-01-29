@@ -23,10 +23,7 @@ impl std::fmt::Debug for ConnectionInfo {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("username", &self.username)
-            .field(
-                "password",
-                &self.password.as_ref().map(|_| "<REDACTED>"),
-            )
+            .field("password", &self.password.as_ref().map(|_| "<REDACTED>"))
             .field("database", &self.database)
             .field("path", &self.path)
             .field("query_params", &self.query_params)
