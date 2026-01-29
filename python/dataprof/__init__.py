@@ -49,6 +49,7 @@ try:
     from ._dataprof import analyze_parquet_to_arrow
     __all__.append("analyze_parquet_to_arrow")
 except ImportError:
+    # Parquet support is optional; skip if not available in this build.
     pass
 
 import json

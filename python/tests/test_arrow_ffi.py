@@ -6,7 +6,6 @@ Tests the zero-copy data exchange between Rust and Python via the Arrow C Data I
 """
 
 import pytest
-import tempfile
 from pathlib import Path
 
 # Import dataprof - skip all tests if not available
@@ -301,8 +300,8 @@ class TestParquetArrow:
     def sample_parquet_file(self, tmp_path: Path, sample_csv_file: str):
         """Create a sample Parquet file from CSV."""
         pd = pytest.importorskip("pandas")
-        pyarrow = pytest.importorskip("pyarrow")
-        pq = pytest.importorskip("pyarrow.parquet")
+        pytest.importorskip("pyarrow")
+        pytest.importorskip("pyarrow.parquet")
 
         df = pd.read_csv(sample_csv_file)
         parquet_path = tmp_path / "sample.parquet"
@@ -313,7 +312,7 @@ class TestParquetArrow:
         """Test Parquet analysis returning RecordBatch."""
         try:
             batch = dataprof.analyze_parquet_to_arrow(sample_parquet_file)
-            assert isinstance(batch, dataprof.PyRecordBatch)
+            assert isinstance(batch, dataprof.RecordBatch)
             assert batch.num_rows > 0
         except AttributeError:
             pytest.skip("Parquet feature not enabled")

@@ -22,13 +22,13 @@ except ImportError:
 
 # Type alias for Arrow-compatible DataFrames
 if _PANDAS_AVAILABLE and _POLARS_AVAILABLE:
-    ArrowDataFrame = Union[pd.DataFrame, pl.DataFrame, "PyRecordBatch"]
+    ArrowDataFrame = Union[pd.DataFrame, pl.DataFrame, "RecordBatch"]
 elif _PANDAS_AVAILABLE:
-    ArrowDataFrame = Union[pd.DataFrame, "PyRecordBatch"]
+    ArrowDataFrame = Union[pd.DataFrame, "RecordBatch"]
 elif _POLARS_AVAILABLE:
-    ArrowDataFrame = Union[pl.DataFrame, "PyRecordBatch"]
+    ArrowDataFrame = Union[pl.DataFrame, "RecordBatch"]
 else:
-    ArrowDataFrame = "PyRecordBatch"
+    ArrowDataFrame = "RecordBatch"
 
 # Version is imported from Rust binary module (_dataprof)
 __version__: str
@@ -79,15 +79,15 @@ else:
     def analyze_csv_dataframe(file_path: str) -> Any: ...
 
 # Arrow/PyCapsule interface functions
-def analyze_csv_to_arrow(path: str) -> PyRecordBatch:
+def analyze_csv_to_arrow(path: str) -> "RecordBatch":
     """Analyze CSV file and return results as Arrow RecordBatch."""
     ...
 
-def analyze_parquet_to_arrow(path: str) -> PyRecordBatch:
+def analyze_parquet_to_arrow(path: str) -> "RecordBatch":
     """Analyze Parquet file and return results as Arrow RecordBatch."""
     ...
 
-def profile_dataframe(df: ArrowDataFrame, name: str = "dataframe") -> PyQualityReport:
+def profile_dataframe(df: "ArrowDataFrame", name: str = "dataframe") -> PyQualityReport:
     """Profile a pandas or polars DataFrame directly via Arrow PyCapsule protocol."""
     ...
 
@@ -202,7 +202,7 @@ class PyCsvProcessor:
     def process_chunks(self) -> List[Any]: ...
     def get_processing_info(self) -> Dict[str, Any]: ...
 
-class PyRecordBatch:
+class RecordBatch:
     """Arrow RecordBatch with PyCapsule interface support for zero-copy exchange.
 
     This class implements the Arrow PyCapsule Interface, enabling efficient
@@ -279,7 +279,7 @@ __all__ = [
     "analyze_csv_to_arrow",
     "analyze_parquet_to_arrow",
     "profile_dataframe",
-    "PyRecordBatch",
+    "RecordBatch",
 
     # Core classes
     "PyColumnProfile",

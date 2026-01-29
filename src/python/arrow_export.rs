@@ -1,3 +1,6 @@
+// FFI module: unsafe is required for Arrow C Data Interface PyCapsule operations.
+#![allow(unsafe_code)]
+
 //! Arrow PyCapsule Interface for zero-copy data exchange between Rust and Python.
 //!
 //! This module implements the Arrow C Data Interface PyCapsule protocol, enabling
@@ -15,7 +18,6 @@
 //! - [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
 //! - [Arrow PyCapsule Interface](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html)
 
-use std::ffi::c_void;
 use std::sync::Arc;
 
 use arrow::array::{Array, Float64Array, RecordBatch, StringArray, UInt64Array};
@@ -46,11 +48,13 @@ unsafe extern "C" fn pycapsule_schema_destructor(capsule: *mut pyo3::ffi::PyObje
     if capsule.is_null() {
         return;
     }
-    let ptr = pyo3::ffi::PyCapsule_GetPointer(capsule, ARROW_SCHEMA_NAME.as_ptr().cast());
+    // Safety: capsule is non-null and was created by PyCapsule_New with ARROW_SCHEMA_NAME
+    let ptr =
+        unsafe { pyo3::ffi::PyCapsule_GetPointer(capsule, ARROW_SCHEMA_NAME.as_ptr().cast()) };
     if !ptr.is_null() {
         let schema_ptr = ptr as *mut FFI_ArrowSchema;
-        // Drop the boxed schema, which will call its release callback if not null
-        let _ = Box::from_raw(schema_ptr);
+        // Safety: schema_ptr was heap-allocated via Box::into_raw in __arrow_c_schema__
+        unsafe { drop(Box::from_raw(schema_ptr)) };
     }
 }
 
@@ -63,11 +67,12 @@ unsafe extern "C" fn pycapsule_array_destructor(capsule: *mut pyo3::ffi::PyObjec
     if capsule.is_null() {
         return;
     }
-    let ptr = pyo3::ffi::PyCapsule_GetPointer(capsule, ARROW_ARRAY_NAME.as_ptr().cast());
+    // Safety: capsule is non-null and was created by PyCapsule_New with ARROW_ARRAY_NAME
+    let ptr = unsafe { pyo3::ffi::PyCapsule_GetPointer(capsule, ARROW_ARRAY_NAME.as_ptr().cast()) };
     if !ptr.is_null() {
         let array_ptr = ptr as *mut FFI_ArrowArray;
-        // Drop the boxed array, which will call its release callback if not null
-        let _ = Box::from_raw(array_ptr);
+        // Safety: array_ptr was heap-allocated via Box::into_raw in __arrow_c_array__
+        unsafe { drop(Box::from_raw(array_ptr)) };
     }
 }
 
@@ -143,7 +148,7 @@ impl PyRecordBatch {
                 return Err(PyRuntimeError::new_err("Failed to create schema PyCapsule"));
             }
             Bound::from_owned_ptr(py, cap)
-                .downcast_into::<PyCapsule>()
+                .cast_into::<PyCapsule>()
                 .map_err(|_| PyRuntimeError::new_err("PyCapsule downcast failed"))?
         };
 
@@ -196,7 +201,7 @@ impl PyRecordBatch {
                 return Err(PyRuntimeError::new_err("Failed to create schema PyCapsule"));
             }
             Bound::from_owned_ptr(py, cap)
-                .downcast_into::<PyCapsule>()
+                .cast_into::<PyCapsule>()
                 .map_err(|e| {
                     drop(Box::from_raw(schema_ptr));
                     drop(Box::from_raw(array_ptr));
@@ -216,7 +221,7 @@ impl PyRecordBatch {
                 return Err(PyRuntimeError::new_err("Failed to create array PyCapsule"));
             }
             Bound::from_owned_ptr(py, cap)
-                .downcast_into::<PyCapsule>()
+                .cast_into::<PyCapsule>()
                 .map_err(|e| {
                     drop(Box::from_raw(array_ptr));
                     PyRuntimeError::new_err(format!("Array PyCapsule downcast failed: {}", e))
