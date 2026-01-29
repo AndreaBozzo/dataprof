@@ -18,12 +18,16 @@ pub struct ConnectionInfo {
 
 impl std::fmt::Debug for ConnectionInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_password: Option<&'static str> = match self.password {
+            Some(_) => Some("<REDACTED>"),
+            None => None,
+        };
         f.debug_struct("ConnectionInfo")
             .field("scheme", &self.scheme)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("username", &self.username)
-            .field("password", &self.password.as_ref().map(|_| "<REDACTED>"))
+            .field("password", &redacted_password)
             .field("database", &self.database)
             .field("path", &self.path)
             .field("query_params", &self.query_params)

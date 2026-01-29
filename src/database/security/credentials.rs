@@ -23,9 +23,13 @@ pub struct DatabaseCredentials {
 
 impl std::fmt::Debug for DatabaseCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_password: Option<&'static str> = match self.password {
+            Some(_) => Some("<REDACTED>"),
+            None => None,
+        };
         f.debug_struct("DatabaseCredentials")
             .field("username", &self.username)
-            .field("password", &self.password.as_ref().map(|_| "<REDACTED>"))
+            .field("password", &redacted_password)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("database", &self.database)
