@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::env;
 
 /// Database credentials management with environment variable support
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct DatabaseCredentials {
     /// Database username
     pub username: Option<String>,
@@ -19,6 +19,23 @@ pub struct DatabaseCredentials {
     pub database: Option<String>,
     /// Additional connection parameters
     pub extra_params: HashMap<String, String>,
+}
+
+impl std::fmt::Debug for DatabaseCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_password: Option<&'static str> = match self.password {
+            Some(_) => Some("<REDACTED>"),
+            None => None,
+        };
+        f.debug_struct("DatabaseCredentials")
+            .field("username", &self.username)
+            .field("password", &redacted_password)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database", &self.database)
+            .field("extra_params", &self.extra_params)
+            .finish()
+    }
 }
 
 impl DatabaseCredentials {
