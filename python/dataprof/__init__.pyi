@@ -91,6 +91,10 @@ def profile_dataframe(df: "ArrowDataFrame", name: str = "dataframe") -> PyQualit
     """Profile a pandas or polars DataFrame directly via Arrow PyCapsule protocol."""
     ...
 
+def profile_arrow(table: Any, name: str = "arrow_table") -> PyQualityReport:
+    """Profile a PyArrow Table or RecordBatch directly (no auto-detection overhead)."""
+    ...
+
 # Core profiling classes exported from Rust
 class PyColumnProfile:
     """Column profiling information from Rust."""
@@ -279,6 +283,7 @@ __all__ = [
     "analyze_csv_to_arrow",
     "analyze_parquet_to_arrow",
     "profile_dataframe",
+    "profile_arrow",
     "RecordBatch",
 
     # Core classes

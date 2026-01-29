@@ -57,23 +57,46 @@ impl std::fmt::Display for QueryEngine {
     }
 }
 
+/// Source library for in-memory DataFrame profiling
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataFrameLibrary {
+    Pandas,
+    Polars,
+    PyArrow,
+    #[serde(untagged)]
+    Custom(String),
+}
+
+impl std::fmt::Display for DataFrameLibrary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pandas => write!(f, "pandas"),
+            Self::Polars => write!(f, "polars"),
+            Self::PyArrow => write!(f, "pyarrow"),
+            Self::Custom(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 /// Source-agnostic data source metadata
 ///
 /// Supports multiple data source types with proper semantics:
 /// - Files: CSV, JSON, Parquet with path, size, and format metadata
 /// - Queries: SQL queries with engine, statement, and execution metadata
+/// - DataFrames: In-memory pandas/polars/pyarrow via PyCapsule
 ///
 /// # JSON Serialization
 /// Uses tagged enum format for clean API output:
 /// ```json
 /// { "type": "file", "path": "/data/users.csv", "format": "csv", ... }
 /// { "type": "query", "engine": "duckdb", "statement": "SELECT ...", ... }
+/// { "type": "dataframe", "name": "sales", "source_library": "pandas", ... }
 /// ```
 ///
 /// # Future Extensions
 /// TODO: Implement when needed:
 /// - Stream { topic, batch_id, partition } - for Kafka, Kinesis, etc.
-/// - DataFrame { name, source_library } - for pandas, polars integration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DataSource {
@@ -111,7 +134,7 @@ pub enum DataSource {
         /// User-provided name for identification
         name: String,
         /// Source library (pandas, polars, pyarrow)
-        source_library: String,
+        source_library: DataFrameLibrary,
         /// Number of rows at profiling time
         row_count: usize,
         /// Number of columns

@@ -27,6 +27,7 @@ __all__ = [
     # Arrow/PyCapsule interface
     "analyze_csv_to_arrow",
     "profile_dataframe",
+    "profile_arrow",
     "RecordBatch",
 
     # Core classes
