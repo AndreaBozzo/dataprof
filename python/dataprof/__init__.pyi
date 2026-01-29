@@ -120,6 +120,9 @@ class PyQualityReport:
     sampling_ratio: float
     scan_time_ms: int
     data_quality_metrics: PyDataQualityMetrics
+    source_type: str
+    source_library: Optional[str]
+    memory_bytes: Optional[int]
 
     def __new__(cls) -> Self: ...
     def quality_score(self) -> float: ...

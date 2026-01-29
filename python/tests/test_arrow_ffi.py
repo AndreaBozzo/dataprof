@@ -347,9 +347,15 @@ class TestMemoryEstimation:
         report = dataprof.profile_dataframe(df, name="mem_test")
 
         assert isinstance(report, dataprof.PyQualityReport)
-        # Memory info flows through DataSource into the JSON output
-        json_str = report.to_json()
-        assert "mem_test" in report.file_path
+        assert report.source_type == "dataframe"
+        assert report.source_library == "pandas"
+        assert report.memory_bytes is not None
+        assert report.memory_bytes > 0
+        # Verify memory_bytes appears in JSON output
+        import json
+        data = json.loads(report.to_json())
+        assert data["data_source"]["memory_bytes"] is not None
+        assert data["data_source"]["memory_bytes"] > 0
 
     def test_polars_memory_estimated(self):
         """Test that polars DataFrame profiling estimates memory."""
@@ -359,7 +365,10 @@ class TestMemoryEstimation:
         report = dataprof.profile_dataframe(df, name="polars_mem_test")
 
         assert isinstance(report, dataprof.PyQualityReport)
-        assert "polars_mem_test" in report.file_path
+        assert report.source_type == "dataframe"
+        assert report.source_library == "polars"
+        assert report.memory_bytes is not None
+        assert report.memory_bytes > 0
 
     def test_pyarrow_memory_estimated(self):
         """Test that PyArrow Table profiling estimates memory via nbytes."""
@@ -369,7 +378,18 @@ class TestMemoryEstimation:
         report = dataprof.profile_arrow(table, name="arrow_mem_test")
 
         assert isinstance(report, dataprof.PyQualityReport)
-        assert "arrow_mem_test" in report.file_path
+        assert report.source_type == "dataframe"
+        assert report.source_library == "pyarrow"
+        assert report.memory_bytes is not None
+        assert report.memory_bytes > 0
+
+    def test_file_source_no_memory_bytes(self, sample_csv_file: str):
+        """Test that file-based reports have no memory_bytes."""
+        report = dataprof.analyze_csv_with_quality(sample_csv_file)
+
+        assert report.source_type == "file"
+        assert report.source_library is None
+        assert report.memory_bytes is None
 
 
 # ============================================================================
