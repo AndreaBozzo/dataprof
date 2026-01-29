@@ -4,7 +4,7 @@ use anyhow::Result;
 use url::Url;
 
 /// Parse database connection string and extract components
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectionInfo {
     pub scheme: String,
     pub host: Option<String>,
@@ -14,6 +14,24 @@ pub struct ConnectionInfo {
     pub database: Option<String>,
     pub path: Option<String>,
     pub query_params: std::collections::HashMap<String, String>,
+}
+
+impl std::fmt::Debug for ConnectionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionInfo")
+            .field("scheme", &self.scheme)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field(
+                "password",
+                &self.password.as_ref().map(|_| "<REDACTED>"),
+            )
+            .field("database", &self.database)
+            .field("path", &self.path)
+            .field("query_params", &self.query_params)
+            .finish()
+    }
 }
 
 impl ConnectionInfo {
