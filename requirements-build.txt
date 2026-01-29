@@ -1,3 +1,0 @@
-setuptools-rust>=1.8.0
-wheel>=0.37.0
-maturin>=1.4.0
