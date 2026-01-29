@@ -23,7 +23,7 @@ DataProf is built for Data Scientists and Engineers who need to understand their
 |---------|--------------------------|----------|
 | **Memory Usage** | 12GB+ (Crashes) | **< 100MB (Streaming)** |
 | **Speed** | 15+ minutes | **45 seconds** |
-| **Implementation** | Python (Slow) | **Rust (Blazing Fast)** |
+| **Implementation** | Python (Slow) | **Rust (Fast)** |
 
 ## Quick Start
 
