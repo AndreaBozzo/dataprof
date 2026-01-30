@@ -28,7 +28,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 
 use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{ColumnProfile, DataQualityMetrics, DataSource, QualityReport, ScanInfo};
+use crate::types::{
+    ColumnProfile, DataFrameLibrary, DataQualityMetrics, DataSource, QualityReport, ScanInfo,
+};
 
 /// PyCapsule name for Arrow schema (null-terminated for C compatibility)
 const ARROW_SCHEMA_NAME: &[u8] = b"arrow_schema\0";
@@ -380,6 +382,9 @@ pub fn profile_dataframe(
 
     let scan_time_ms = start.elapsed().as_millis();
 
+    // Estimate memory usage before consuming the source library value
+    let memory_bytes = estimate_memory_bytes(py, &df, &source_library);
+
     // Create report with DataFrame data source
     let report = QualityReport::new(
         DataSource::DataFrame {
@@ -387,7 +392,73 @@ pub fn profile_dataframe(
             source_library,
             row_count: num_rows,
             column_count: num_cols,
-            memory_bytes: None,
+            memory_bytes,
+        },
+        column_profiles,
+        ScanInfo::new(num_rows, num_cols, num_rows, 1.0, scan_time_ms),
+        data_quality_metrics,
+    );
+
+    Ok(super::types::PyQualityReport::from(&report))
+}
+
+/// Profile a PyArrow Table or RecordBatch directly.
+///
+/// This function is optimized for PyArrow objects and avoids the library
+/// detection overhead of `profile_dataframe()`.
+///
+/// # Arguments
+/// * `table` - A pyarrow.Table or pyarrow.RecordBatch
+/// * `name` - Optional name for identification in reports (default: "arrow_table")
+///
+/// # Returns
+/// A PyQualityReport with comprehensive data quality metrics
+#[pyfunction]
+#[pyo3(signature = (table, name = "arrow_table".to_string()))]
+pub fn profile_arrow(
+    py: Python<'_>,
+    table: Py<PyAny>,
+    name: String,
+) -> PyResult<super::types::PyQualityReport> {
+    let start = std::time::Instant::now();
+
+    let bound = table.bind(py);
+
+    // Import directly as PyArrow data (no library detection needed)
+    let batch = import_from_pyarrow(py, bound)?;
+
+    let num_rows = batch.num_rows();
+    let num_cols = batch.num_columns();
+
+    // Estimate memory from pyarrow's nbytes
+    let memory_bytes: Option<u64> = bound
+        .getattr("nbytes")
+        .and_then(|v| v.extract::<u64>())
+        .ok();
+
+    // Process using existing RecordBatchAnalyzer
+    let mut analyzer = RecordBatchAnalyzer::new();
+    analyzer
+        .process_batch(&batch)
+        .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
+
+    let column_profiles = analyzer.to_profiles();
+    let sample_columns = analyzer.create_sample_columns();
+
+    // Calculate quality metrics
+    let data_quality_metrics =
+        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
+            .map_err(|e| PyRuntimeError::new_err(format!("Quality metrics failed: {}", e)))?;
+
+    let scan_time_ms = start.elapsed().as_millis();
+
+    let report = QualityReport::new(
+        DataSource::DataFrame {
+            name,
+            source_library: DataFrameLibrary::PyArrow,
+            row_count: num_rows,
+            column_count: num_cols,
+            memory_bytes,
         },
         column_profiles,
         ScanInfo::new(num_rows, num_cols, num_rows, 1.0, scan_time_ms),
@@ -465,7 +536,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
 }
 
 /// Detect which DataFrame library the object comes from.
-fn detect_dataframe_library(py: Python<'_>, df: &Py<PyAny>) -> PyResult<String> {
+fn detect_dataframe_library(py: Python<'_>, df: &Py<PyAny>) -> PyResult<DataFrameLibrary> {
     let bound = df.bind(py);
     let type_name = bound.get_type().name()?.to_string();
     let module = bound
@@ -475,13 +546,55 @@ fn detect_dataframe_library(py: Python<'_>, df: &Py<PyAny>) -> PyResult<String> 
         .unwrap_or_default();
 
     if module.starts_with("pandas") || (type_name == "DataFrame" && module.contains("pandas")) {
-        Ok("pandas".to_string())
+        Ok(DataFrameLibrary::Pandas)
     } else if module.starts_with("polars") {
-        Ok("polars".to_string())
+        Ok(DataFrameLibrary::Polars)
     } else if module.starts_with("pyarrow") {
-        Ok("pyarrow".to_string())
+        Ok(DataFrameLibrary::PyArrow)
     } else {
-        Ok(format!("{}:{}", module, type_name))
+        Ok(DataFrameLibrary::Custom(format!(
+            "{}:{}",
+            module, type_name
+        )))
+    }
+}
+
+/// Estimate memory usage of a DataFrame using library-specific methods.
+///
+/// Returns None if estimation fails (non-critical).
+fn estimate_memory_bytes(
+    py: Python<'_>,
+    df: &Py<PyAny>,
+    library: &DataFrameLibrary,
+) -> Option<u64> {
+    let bound = df.bind(py);
+
+    match library {
+        DataFrameLibrary::Pandas => {
+            // pandas: df.memory_usage(deep=True).sum()
+            let kwargs = pyo3::types::PyDict::new(py);
+            kwargs.set_item("deep", true).ok()?;
+            bound
+                .call_method("memory_usage", (), Some(&kwargs))
+                .ok()
+                .and_then(|usage| usage.call_method0("sum").ok())
+                .and_then(|val| val.extract::<u64>().ok())
+        }
+        DataFrameLibrary::Polars => {
+            // polars: df.estimated_size()
+            bound
+                .call_method0("estimated_size")
+                .ok()
+                .and_then(|val| val.extract::<u64>().ok())
+        }
+        DataFrameLibrary::PyArrow => {
+            // pyarrow: table.nbytes
+            bound
+                .getattr("nbytes")
+                .ok()
+                .and_then(|val| val.extract::<u64>().ok())
+        }
+        DataFrameLibrary::Custom(_) => None,
     }
 }
 
@@ -489,15 +602,15 @@ fn detect_dataframe_library(py: Python<'_>, df: &Py<PyAny>) -> PyResult<String> 
 fn convert_dataframe_to_batch(
     py: Python<'_>,
     df: &Py<PyAny>,
-    source_library: &str,
+    source_library: &DataFrameLibrary,
 ) -> PyResult<RecordBatch> {
     let bound = df.bind(py);
 
     match source_library {
-        "pandas" => convert_pandas_to_batch(py, bound),
-        "polars" => convert_polars_to_batch(py, bound),
-        "pyarrow" => import_from_pyarrow(py, bound),
-        _ => {
+        DataFrameLibrary::Pandas => convert_pandas_to_batch(py, bound),
+        DataFrameLibrary::Polars => convert_polars_to_batch(py, bound),
+        DataFrameLibrary::PyArrow => import_from_pyarrow(py, bound),
+        DataFrameLibrary::Custom(_) => {
             // Try generic PyCapsule import
             if bound.hasattr("__arrow_c_array__")? {
                 import_via_pycapsule(py, bound)

@@ -265,6 +265,134 @@ class TestProfileDataFrame:
 
 
 # ============================================================================
+# profile_arrow Tests
+# ============================================================================
+
+
+class TestProfileArrow:
+    """Test profile_arrow function for direct PyArrow input."""
+
+    def test_profile_pyarrow_table(self):
+        """Test profiling a PyArrow Table."""
+        pa = pytest.importorskip("pyarrow")
+
+        table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        report = dataprof.profile_arrow(table, name="test_arrow")
+
+        assert isinstance(report, dataprof.PyQualityReport)
+        assert report.total_columns == 2
+        assert report.total_rows == 3
+
+    def test_profile_pyarrow_record_batch(self):
+        """Test profiling a PyArrow RecordBatch."""
+        pa = pytest.importorskip("pyarrow")
+
+        batch = pa.record_batch({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        report = dataprof.profile_arrow(batch, name="test_batch")
+
+        assert isinstance(report, dataprof.PyQualityReport)
+        assert report.total_columns == 2
+        assert report.total_rows == 3
+
+    def test_profile_arrow_default_name(self):
+        """Test profiling with default name."""
+        pa = pytest.importorskip("pyarrow")
+
+        table = pa.table({"col": [1, 2, 3]})
+        report = dataprof.profile_arrow(table)
+
+        assert isinstance(report, dataprof.PyQualityReport)
+        assert "arrow_table" in report.file_path
+
+    def test_profile_arrow_quality_metrics(self):
+        """Test that quality metrics are calculated for Arrow input."""
+        pa = pytest.importorskip("pyarrow")
+
+        table = pa.table({
+            "id": [1, 2, 3, 4, 5],
+            "value": [10.5, 20.3, None, 40.1, 50.8],
+            "label": ["a", "b", "c", "d", "e"],
+        })
+        report = dataprof.profile_arrow(table, name="metrics_test")
+
+        score = report.quality_score()
+        assert 0.0 <= score <= 100.0
+        assert report.data_quality_metrics is not None
+
+    def test_profile_arrow_invalid_input(self):
+        """Test error when passing non-Arrow object."""
+        with pytest.raises(Exception):
+            dataprof.profile_arrow("not a table")
+
+    def test_profile_arrow_invalid_dict(self):
+        """Test error when passing dict instead of Arrow object."""
+        with pytest.raises(Exception):
+            dataprof.profile_arrow({"a": [1, 2, 3]})
+
+
+# ============================================================================
+# Memory Estimation Tests
+# ============================================================================
+
+
+class TestMemoryEstimation:
+    """Test that memory_bytes is populated in reports."""
+
+    def test_pandas_memory_estimated(self):
+        """Test that pandas DataFrame profiling estimates memory."""
+        pd = pytest.importorskip("pandas")
+        pytest.importorskip("pyarrow")
+
+        df = pd.DataFrame({"a": range(100), "b": ["text"] * 100})
+        report = dataprof.profile_dataframe(df, name="mem_test")
+
+        assert isinstance(report, dataprof.PyQualityReport)
+        assert report.source_type == "dataframe"
+        assert report.source_library == "pandas"
+        assert report.memory_bytes is not None
+        assert report.memory_bytes > 0
+        # Verify memory_bytes appears in JSON output
+        import json
+        data = json.loads(report.to_json())
+        assert data["data_source"]["memory_bytes"] is not None
+        assert data["data_source"]["memory_bytes"] > 0
+
+    def test_polars_memory_estimated(self):
+        """Test that polars DataFrame profiling estimates memory."""
+        pl = pytest.importorskip("polars")
+
+        df = pl.DataFrame({"a": range(100), "b": ["text"] * 100})
+        report = dataprof.profile_dataframe(df, name="polars_mem_test")
+
+        assert isinstance(report, dataprof.PyQualityReport)
+        assert report.source_type == "dataframe"
+        assert report.source_library == "polars"
+        assert report.memory_bytes is not None
+        assert report.memory_bytes > 0
+
+    def test_pyarrow_memory_estimated(self):
+        """Test that PyArrow Table profiling estimates memory via nbytes."""
+        pa = pytest.importorskip("pyarrow")
+
+        table = pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        report = dataprof.profile_arrow(table, name="arrow_mem_test")
+
+        assert isinstance(report, dataprof.PyQualityReport)
+        assert report.source_type == "dataframe"
+        assert report.source_library == "pyarrow"
+        assert report.memory_bytes is not None
+        assert report.memory_bytes > 0
+
+    def test_file_source_no_memory_bytes(self, sample_csv_file: str):
+        """Test that file-based reports have no memory_bytes."""
+        report = dataprof.analyze_csv_with_quality(sample_csv_file)
+
+        assert report.source_type == "file"
+        assert report.source_library is None
+        assert report.memory_bytes is None
+
+
+# ============================================================================
 # Error Handling Tests
 # ============================================================================
 

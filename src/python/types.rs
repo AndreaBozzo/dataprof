@@ -4,7 +4,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use crate::core::batch::BatchResult;
-use crate::types::{ColumnProfile, DataQualityMetrics, DataType, QualityReport};
+use crate::types::{ColumnProfile, DataQualityMetrics, DataSource, DataType, QualityReport};
 
 /// Python wrapper for ColumnProfile
 #[pyclass]
@@ -83,10 +83,33 @@ pub struct PyQualityReport {
     pub scan_time_ms: u128,
     #[pyo3(get)]
     pub data_quality_metrics: PyDataQualityMetrics,
+    /// Data source type: "file", "query", or "dataframe"
+    #[pyo3(get)]
+    pub source_type: String,
+    /// Source library for DataFrame sources (e.g. "pandas", "polars", "pyarrow")
+    #[pyo3(get)]
+    pub source_library: Option<String>,
+    /// Memory usage in bytes for DataFrame sources
+    #[pyo3(get)]
+    pub memory_bytes: Option<u64>,
 }
 
 impl From<&QualityReport> for PyQualityReport {
     fn from(report: &QualityReport) -> Self {
+        let (source_type, source_library, memory_bytes) = match &report.data_source {
+            DataSource::File { .. } => ("file".to_string(), None, None),
+            DataSource::Query { .. } => ("query".to_string(), None, None),
+            DataSource::DataFrame {
+                source_library,
+                memory_bytes,
+                ..
+            } => (
+                "dataframe".to_string(),
+                Some(source_library.to_string()),
+                *memory_bytes,
+            ),
+        };
+
         Self {
             file_path: report.data_source.identifier(),
             total_rows: Some(report.scan_info.total_rows),
@@ -100,6 +123,9 @@ impl From<&QualityReport> for PyQualityReport {
             sampling_ratio: report.scan_info.sampling_ratio,
             scan_time_ms: report.scan_info.scan_time_ms,
             data_quality_metrics: PyDataQualityMetrics::from(&report.data_quality_metrics),
+            source_type,
+            source_library,
+            memory_bytes,
         }
     }
 }
@@ -126,6 +152,11 @@ impl PyQualityReport {
                     "rows_scanned": self.rows_scanned,
                     "sampling_ratio": self.sampling_ratio,
                     "scan_time_ms": self.scan_time_ms as u64,
+                },
+                "data_source": {
+                    "type": self.source_type,
+                    "source_library": self.source_library,
+                    "memory_bytes": self.memory_bytes,
                 },
                 "data_quality_metrics": {
                     "overall_quality_score": self.data_quality_metrics.overall_quality_score,
