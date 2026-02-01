@@ -5,6 +5,38 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.10] - 2026-02-01
+
+### Added
+
+- Add profile_arrow function for PyArrow Table and RecordBatch profiling (#199) by @AndreaBozzo
+
+- Implement Arrow PyCapsule interface for zero-copy data exchange (#196) by @AndreaBozzo
+
+### Changed
+
+- Autofix n.26 (#198) by @AndreaBozzo
+
+- Removed legacy req build txt and moved social docs to docs/ folder by @AndreaBozzo
+
+- **Pages**: Add workflow to deploy benchmark reports to GitHub Pages (#195) by @AndreaBozzo
+
+### Dependencies
+
+- **Deps**: Bump thiserror from 2.0.17 to 2.0.18 (#184) by @dependabot[bot]
+
+### Documentation
+
+- Update readme by @AndreaBozzo
+
+- Logo width 800 by @AndreaBozzo
+
+### Fixed
+
+- **Html**: Simplify compression ratio calculation in report context for clippy by @AndreaBozzo
+
+- **Build**: Add anyhow to dev-dependencies, revert crate-type to rlib only by @AndreaBozzo
+
 ## [0.5.0] - 2026-01-18
 
 ### Added
