@@ -39,7 +39,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2.8.1
+        uses: Swatinem/rust-cache@v2.8.2
         with:
           prefix-key: security
 
@@ -87,7 +87,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2.8.1
+        uses: Swatinem/rust-cache@v2.8.2
 
       - name: Run cargo tree
         run: cargo tree --depth 1
