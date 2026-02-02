@@ -7,10 +7,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::analysis::patterns::looks_like_date;
+use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::DataQualityMetrics;
 use crate::types::{
     ColumnProfile, ColumnStats, DataSource, DataType, FileFormat, QualityReport, ScanInfo,
 };
+
+/// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
+const NUMERIC_SAMPLE_CAP: usize = 10_000;
 
 /// Columnar profiler using Apache Arrow for efficient column-oriented processing
 pub struct ArrowProfiler {
@@ -280,7 +284,7 @@ impl ColumnAnalyzer {
                 }
 
                 // Keep samples for pattern detection
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -298,7 +302,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -316,7 +320,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -334,7 +338,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -352,7 +356,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -370,7 +374,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -387,7 +391,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value_str);
                 }
             }
@@ -406,7 +410,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(date_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
                 }
             }
@@ -425,7 +429,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(date_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
                 }
             }
@@ -443,7 +447,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(ts_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
                 }
             }
@@ -461,7 +465,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(ts_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
                 }
             }
@@ -479,7 +483,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(ts_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
                 }
             }
@@ -497,7 +501,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(ts_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
                 }
             }
@@ -524,7 +528,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(hex_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(hex_str);
                 }
             }
@@ -551,7 +555,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(hex_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(hex_str);
                 }
             }
@@ -570,7 +574,7 @@ impl ColumnAnalyzer {
                     .unwrap_or_else(|_| format!("<type:{}>", array.data_type()));
                 self.update_text_stats(&value);
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.clone());
                 }
 
@@ -608,24 +612,7 @@ impl ColumnAnalyzer {
         let data_type = self.infer_data_type();
 
         let stats = match data_type {
-            DataType::Integer | DataType::Float => ColumnStats::Numeric {
-                min: self.min_value.unwrap_or(0.0),
-                max: self.max_value.unwrap_or(0.0),
-                mean: if self.total_count > self.null_count {
-                    self.sum / (self.total_count - self.null_count) as f64
-                } else {
-                    0.0
-                },
-                std_dev: 0.0,
-                variance: 0.0,
-                median: None,
-                quartiles: None,
-                mode: None,
-                coefficient_of_variation: None,
-                skewness: None,
-                kurtosis: None,
-                is_approximate: None,
-            },
+            DataType::Integer | DataType::Float => calculate_numeric_stats(&self.sample_values),
             DataType::String | DataType::Date => {
                 let avg_length = if self.total_count > self.null_count {
                     self.total_length as f64 / (self.total_count - self.null_count) as f64
@@ -731,6 +718,48 @@ mod tests {
 
         // With Arrow's type inference, this should be detected as integer
         assert_eq!(age_column.total_count, 3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_csv_with_mixed_columns() -> Result<()> {
+        use crate::types::ColumnStats;
+
+        // The Arrow CSV profiler reads all columns as Utf8 and then infers types.
+        // Numeric-looking Utf8 columns that also have float-typed Arrow data
+        // get properly typed. Test with a mixed CSV.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,score")?;
+        for i in 1..=20 {
+            writeln!(temp_file, "Person{},{}", i, i * 10)?;
+        }
+        temp_file.flush()?;
+
+        let profiler = ArrowProfiler::new();
+        let report = profiler.analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.column_profiles.len(), 2);
+
+        // Arrow CSV profiler reads columns as Utf8; numeric inference depends
+        // on the Arrow schema. Verify the pipeline runs without errors.
+        let score_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "score")
+            .expect("score column should exist");
+
+        // Regardless of whether it's detected as numeric or text, the profile should exist
+        assert_eq!(score_col.total_count, 20);
+
+        // If it's detected as numeric, verify advanced stats
+        if let ColumnStats::Numeric {
+            skewness, kurtosis, ..
+        } = &score_col.stats
+        {
+            assert!(skewness.is_some(), "skewness should be computed");
+            assert!(kurtosis.is_some(), "kurtosis should be computed");
+        }
 
         Ok(())
     }

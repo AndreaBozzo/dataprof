@@ -4,7 +4,9 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use crate::core::batch::BatchResult;
-use crate::types::{ColumnProfile, DataQualityMetrics, DataSource, DataType, QualityReport};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, QualityReport,
+};
 
 /// Python wrapper for ColumnProfile
 #[pyclass]
@@ -24,6 +26,31 @@ pub struct PyColumnProfile {
     pub null_percentage: f64,
     #[pyo3(get)]
     pub uniqueness_ratio: f64,
+    // Numeric statistics (None for non-numeric columns)
+    #[pyo3(get)]
+    pub min: Option<f64>,
+    #[pyo3(get)]
+    pub max: Option<f64>,
+    #[pyo3(get)]
+    pub mean: Option<f64>,
+    #[pyo3(get)]
+    pub std_dev: Option<f64>,
+    #[pyo3(get)]
+    pub variance: Option<f64>,
+    #[pyo3(get)]
+    pub median: Option<f64>,
+    #[pyo3(get)]
+    pub mode: Option<f64>,
+    #[pyo3(get)]
+    pub skewness: Option<f64>,
+    #[pyo3(get)]
+    pub kurtosis: Option<f64>,
+    #[pyo3(get)]
+    pub coefficient_of_variation: Option<f64>,
+    #[pyo3(get)]
+    pub quartiles: Option<std::collections::HashMap<String, f64>>,
+    #[pyo3(get)]
+    pub is_approximate: Option<bool>,
 }
 
 impl From<&ColumnProfile> for PyColumnProfile {
@@ -44,6 +71,63 @@ impl From<&ColumnProfile> for PyColumnProfile {
             0.0
         };
 
+        // Extract numeric statistics from ColumnStats
+        let (
+            min,
+            max,
+            mean,
+            std_dev,
+            variance,
+            median,
+            mode,
+            skewness,
+            kurtosis,
+            coefficient_of_variation,
+            quartiles,
+            is_approximate,
+        ) = match &profile.stats {
+            ColumnStats::Numeric {
+                min,
+                max,
+                mean,
+                std_dev,
+                variance,
+                median,
+                mode,
+                skewness,
+                kurtosis,
+                coefficient_of_variation,
+                quartiles,
+                is_approximate,
+            } => {
+                let q_map = quartiles.as_ref().map(|q| {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("q1".to_string(), q.q1);
+                    m.insert("q2".to_string(), q.q2);
+                    m.insert("q3".to_string(), q.q3);
+                    m.insert("iqr".to_string(), q.iqr);
+                    m
+                });
+                (
+                    Some(*min),
+                    Some(*max),
+                    Some(*mean),
+                    Some(*std_dev),
+                    Some(*variance),
+                    *median,
+                    *mode,
+                    *skewness,
+                    *kurtosis,
+                    *coefficient_of_variation,
+                    q_map,
+                    *is_approximate,
+                )
+            }
+            _ => (
+                None, None, None, None, None, None, None, None, None, None, None, None,
+            ),
+        };
+
         Self {
             name: profile.name.clone(),
             data_type: match profile.data_type {
@@ -57,6 +141,18 @@ impl From<&ColumnProfile> for PyColumnProfile {
             unique_count: profile.unique_count,
             null_percentage,
             uniqueness_ratio,
+            min,
+            max,
+            mean,
+            std_dev,
+            variance,
+            median,
+            mode,
+            skewness,
+            kurtosis,
+            coefficient_of_variation,
+            quartiles,
+            is_approximate,
         }
     }
 }
@@ -187,7 +283,7 @@ impl PyQualityReport {
                     }
                 },
                 "column_profiles": self.column_profiles.iter().map(|p| {
-                    serde_json::json!({
+                    let mut col = serde_json::json!({
                         "name": p.name,
                         "data_type": p.data_type,
                         "total_count": p.total_count,
@@ -195,7 +291,20 @@ impl PyQualityReport {
                         "null_percentage": p.null_percentage,
                         "unique_count": p.unique_count,
                         "uniqueness_ratio": p.uniqueness_ratio,
-                    })
+                    });
+                    if let Some(v) = p.min { col["min"] = serde_json::json!(v); }
+                    if let Some(v) = p.max { col["max"] = serde_json::json!(v); }
+                    if let Some(v) = p.mean { col["mean"] = serde_json::json!(v); }
+                    if let Some(v) = p.std_dev { col["std_dev"] = serde_json::json!(v); }
+                    if let Some(v) = p.variance { col["variance"] = serde_json::json!(v); }
+                    if let Some(v) = p.median { col["median"] = serde_json::json!(v); }
+                    if let Some(v) = p.mode { col["mode"] = serde_json::json!(v); }
+                    if let Some(v) = p.skewness { col["skewness"] = serde_json::json!(v); }
+                    if let Some(v) = p.kurtosis { col["kurtosis"] = serde_json::json!(v); }
+                    if let Some(v) = p.coefficient_of_variation { col["coefficient_of_variation"] = serde_json::json!(v); }
+                    if let Some(ref v) = p.quartiles { col["quartiles"] = serde_json::json!(v); }
+                    if let Some(v) = p.is_approximate { col["is_approximate"] = serde_json::json!(v); }
+                    col
                 }).collect::<Vec<_>>()
             });
 

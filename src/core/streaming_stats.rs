@@ -43,7 +43,7 @@ impl StreamingStatistics {
             sample_values: Vec::new(),
             text_lengths: Vec::new(),
             max_unique_values: 10_000,
-            max_sample_size: 1_000,
+            max_sample_size: 10_000,
         }
     }
 

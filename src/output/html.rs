@@ -577,19 +577,49 @@ fn format_column_stats_json(stats: &ColumnStats) -> serde_json::Value {
             max,
             mean,
             std_dev,
+            variance,
             median,
-            ..
+            quartiles,
+            mode,
+            coefficient_of_variation,
+            skewness,
+            kurtosis,
+            is_approximate,
         } => {
             let mut stats_json = json!({
                 "type": "numeric",
                 "min": format!("{:.2}", min),
                 "max": format!("{:.2}", max),
-                "mean": format!("{:.2}", mean),
-                "std_dev": format!("{:.2}", std_dev)
+                "mean": format!("{:.4}", mean),
+                "std_dev": format!("{:.4}", std_dev),
+                "variance": format!("{:.4}", variance)
             });
 
             if let Some(med) = median {
                 stats_json["median"] = json!(format!("{:.2}", med));
+            }
+            if let Some(q) = quartiles {
+                stats_json["quartiles"] = json!({
+                    "q1": format!("{:.2}", q.q1),
+                    "q2": format!("{:.2}", q.q2),
+                    "q3": format!("{:.2}", q.q3),
+                    "iqr": format!("{:.2}", q.iqr),
+                });
+            }
+            if let Some(m) = mode {
+                stats_json["mode"] = json!(format!("{:.2}", m));
+            }
+            if let Some(cv) = coefficient_of_variation {
+                stats_json["coefficient_of_variation"] = json!(format!("{:.2}", cv));
+            }
+            if let Some(sk) = skewness {
+                stats_json["skewness"] = json!(format!("{:.4}", sk));
+            }
+            if let Some(ku) = kurtosis {
+                stats_json["kurtosis"] = json!(format!("{:.4}", ku));
+            }
+            if let Some(approx) = is_approximate {
+                stats_json["is_approximate"] = json!(approx);
             }
 
             stats_json

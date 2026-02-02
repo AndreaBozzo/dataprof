@@ -206,20 +206,10 @@ impl IncrementalProfiler {
 
         // Convert to appropriate column stats
         let column_stats = match data_type {
-            DataType::Integer | DataType::Float => ColumnStats::Numeric {
-                min: stats.min,
-                max: stats.max,
-                mean: stats.mean(),
-                std_dev: stats.std_dev(),
-                variance: stats.variance(),
-                median: None,
-                quartiles: None,
-                mode: None,
-                coefficient_of_variation: None,
-                skewness: None,
-                kurtosis: None,
-                is_approximate: None,
-            },
+            DataType::Integer | DataType::Float => {
+                let sample_strs: Vec<String> = stats.sample_values().to_vec();
+                crate::stats::numeric::calculate_numeric_stats(&sample_strs)
+            }
             DataType::String | DataType::Date => {
                 let text_stats = stats.text_length_stats();
                 ColumnStats::Text {
@@ -348,6 +338,25 @@ mod tests {
 
         assert_eq!(age_column.data_type, DataType::Integer);
         assert_eq!(age_column.total_count, 1000);
+
+        // Verify advanced numeric stats are computed
+        match &age_column.stats {
+            crate::types::ColumnStats::Numeric {
+                std_dev,
+                median,
+                skewness,
+                kurtosis,
+                coefficient_of_variation,
+                ..
+            } => {
+                assert!(*std_dev > 0.0, "std_dev should be positive");
+                assert!(median.is_some(), "median should be computed");
+                assert!(skewness.is_some(), "skewness should be computed");
+                assert!(kurtosis.is_some(), "kurtosis should be computed");
+                assert!(coefficient_of_variation.is_some(), "CV should be computed");
+            }
+            _ => panic!("Expected Numeric stats for age column"),
+        }
 
         Ok(())
     }

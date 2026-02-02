@@ -92,11 +92,38 @@ class ProfileReport:
             "columns": []
         }
         for col in self.report.column_profiles:
-            data["columns"].append({
+            col_data = {
                 "name": col.name,
                 "type": col.data_type,
-                "null_percentage": col.null_percentage
-            })
+                "total_count": col.total_count,
+                "null_count": col.null_count,
+                "null_percentage": col.null_percentage,
+                "unique_count": col.unique_count,
+            }
+            if col.min is not None:
+                stats = {
+                    "min": col.min,
+                    "max": col.max,
+                    "mean": col.mean,
+                    "std_dev": col.std_dev,
+                    "variance": col.variance,
+                }
+                if col.median is not None:
+                    stats["median"] = col.median
+                if col.mode is not None:
+                    stats["mode"] = col.mode
+                if col.skewness is not None:
+                    stats["skewness"] = col.skewness
+                if col.kurtosis is not None:
+                    stats["kurtosis"] = col.kurtosis
+                if col.coefficient_of_variation is not None:
+                    stats["coefficient_of_variation"] = col.coefficient_of_variation
+                if col.quartiles is not None:
+                    stats["quartiles"] = col.quartiles
+                if col.is_approximate is not None:
+                    stats["is_approximate"] = col.is_approximate
+                col_data["stats"] = stats
+            data["columns"].append(col_data)
         return json.dumps(data, indent=2)
 
     def _to_html(self):
@@ -115,6 +142,59 @@ class ProfileReport:
             elif col.data_type.lower() in ['date', 'datetime']:
                 type_badge_color = "bg-purple-100 text-purple-800"
             
+            # Build stats section for numeric columns
+            stats_html = ""
+            if col.data_type.lower() in ['integer', 'float'] and col.min is not None:
+                stats_html = f"""
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-100">
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Min</span>
+                                <span class="text-sm font-medium text-gray-900">{col.min:.2f}</span>
+                            </div>
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Max</span>
+                                <span class="text-sm font-medium text-gray-900">{col.max:.2f}</span>
+                            </div>
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Mean</span>
+                                <span class="text-sm font-medium text-gray-900">{col.mean:.4f}</span>
+                            </div>
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Std Dev</span>
+                                <span class="text-sm font-medium text-gray-900">{col.std_dev:.4f}</span>
+                            </div>
+                        </div>"""
+                # Advanced stats row
+                adv_items = ""
+                if col.median is not None:
+                    adv_items += f"""
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Median</span>
+                                <span class="text-sm font-medium text-gray-900">{col.median:.2f}</span>
+                            </div>"""
+                if col.skewness is not None:
+                    adv_items += f"""
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Skewness</span>
+                                <span class="text-sm font-medium text-gray-900">{col.skewness:.4f}</span>
+                            </div>"""
+                if col.kurtosis is not None:
+                    adv_items += f"""
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Kurtosis</span>
+                                <span class="text-sm font-medium text-gray-900">{col.kurtosis:.4f}</span>
+                            </div>"""
+                if col.coefficient_of_variation is not None:
+                    adv_items += f"""
+                            <div class="flex flex-col">
+                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">CV</span>
+                                <span class="text-sm font-medium text-gray-900">{col.coefficient_of_variation:.2f}%</span>
+                            </div>"""
+                if adv_items:
+                    stats_html += f"""
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-2">{adv_items}
+                        </div>"""
+
             variables_html += f"""
             <div class="variable-card bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200" data-name="{col.name.lower()}">
                 <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -123,14 +203,14 @@ class ProfileReport:
                             <h3 class="text-lg font-bold text-gray-900 font-mono">{col.name}</h3>
                             <span class="px-2.5 py-0.5 rounded-full text-xs font-medium {type_badge_color} border border-opacity-20">{col.data_type}</span>
                         </div>
-                        
+
                         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
                             <!-- Valid -->
                             <div class="flex flex-col">
                                 <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Count</span>
                                 <span class="text-sm font-medium text-gray-900">{col.total_count:,}</span>
                             </div>
-                            
+
                             <!-- Missing -->
                             <div class="flex flex-col">
                                 <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Missing</span>
@@ -148,12 +228,13 @@ class ProfileReport:
                                 <span class="text-sm font-medium text-gray-900">{unique_display}</span>
                             </div>
 
-                            <!-- Memory/Other (Placeholder) -->
+                            <!-- Uniqueness -->
                             <div class="flex flex-col">
                                 <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Uniqueness</span>
                                 <span class="text-sm font-medium text-gray-900">{col.uniqueness_ratio * 100:.1f}%</span>
                             </div>
                         </div>
+                        {stats_html}
                     </div>
 
                     <!-- Mini Visualization Bars -->
