@@ -171,6 +171,54 @@
                                             <span class="text-sm font-medium text-gray-900">{{uniqueness_ratio}}%</span>
                                         </div>
                                     </div>
+
+                                        {{#if stats.min}}
+                                        <!-- Numeric Statistics -->
+                                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-100">
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Min</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.min}}</span>
+                                            </div>
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Max</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.max}}</span>
+                                            </div>
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Mean</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.mean}}</span>
+                                            </div>
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Std Dev</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.std_dev}}</span>
+                                            </div>
+                                        </div>
+                                        {{#if stats.median}}
+                                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-2">
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Median</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.median}}</span>
+                                            </div>
+                                            {{#if stats.skewness}}
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Skewness</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.skewness}}</span>
+                                            </div>
+                                            {{/if}}
+                                            {{#if stats.kurtosis}}
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">Kurtosis</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.kurtosis}}</span>
+                                            </div>
+                                            {{/if}}
+                                            {{#if stats.coefficient_of_variation}}
+                                            <div class="flex flex-col">
+                                                <span class="text-xs text-gray-500 uppercase tracking-wider font-semibold">CV</span>
+                                                <span class="text-sm font-medium text-gray-900">{{stats.coefficient_of_variation}}%</span>
+                                            </div>
+                                            {{/if}}
+                                        </div>
+                                        {{/if}}
+                                        {{/if}}
                                 </div>
 
                                 <!-- Mini Visualization Bars -->

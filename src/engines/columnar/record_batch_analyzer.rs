@@ -9,7 +9,11 @@ use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 
 use crate::analysis::patterns::looks_like_date;
+use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::{ColumnProfile, ColumnStats, DataType};
+
+/// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
+const NUMERIC_SAMPLE_CAP: usize = 10_000;
 
 // Additional Arrow utilities for display formatting
 use arrow::util::display::ArrayFormatter;
@@ -291,7 +295,7 @@ impl ColumnAnalyzer {
                 }
 
                 // Keep samples for pattern detection
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -309,7 +313,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -327,7 +331,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -345,7 +349,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -363,7 +367,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -381,7 +385,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -399,7 +403,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -417,7 +421,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -435,7 +439,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -453,7 +457,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -471,7 +475,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -489,7 +493,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value.to_string());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
             }
@@ -508,7 +512,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(value_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value_str);
                 }
             }
@@ -531,7 +535,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(date_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
                 }
             }
@@ -553,7 +557,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(datetime_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(datetime_str);
                 }
             }
@@ -581,7 +585,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(ts_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
                 }
@@ -601,7 +605,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(ts_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
                 }
@@ -621,7 +625,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(ts_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
                 }
@@ -641,7 +645,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(ts_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
                 }
@@ -663,7 +667,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(format!("len:{}", len));
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
             }
@@ -682,7 +686,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(format!("len:{}", len));
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
             }
@@ -704,7 +708,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(decimal_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(decimal_str);
                 }
             }
@@ -724,7 +728,7 @@ impl ColumnAnalyzer {
                     self.unique_values.insert(decimal_str.clone());
                 }
 
-                if self.sample_values.len() < 100 {
+                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(decimal_str);
                 }
             }
@@ -751,7 +755,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(dur_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
                 }
@@ -771,7 +775,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(dur_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
                 }
@@ -791,7 +795,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(dur_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
                 }
@@ -811,7 +815,7 @@ impl ColumnAnalyzer {
                         self.unique_values.insert(dur_str.clone());
                     }
 
-                    if self.sample_values.len() < 100 {
+                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
                 }
@@ -832,7 +836,7 @@ impl ColumnAnalyzer {
                         let value_str = formatter.value(i).to_string();
                         self.update_text_stats(&value_str);
 
-                        if self.sample_values.len() < 100 {
+                        if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
 
@@ -849,7 +853,7 @@ impl ColumnAnalyzer {
                         let value_str = format!("<{}:value_{}>", array.data_type(), i);
                         self.update_text_stats(&value_str);
 
-                        if self.sample_values.len() < 100 {
+                        if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
 
@@ -889,24 +893,7 @@ impl ColumnAnalyzer {
         let data_type = self.infer_data_type();
 
         let stats = match data_type {
-            DataType::Integer | DataType::Float => ColumnStats::Numeric {
-                min: self.min_value.unwrap_or(0.0),
-                max: self.max_value.unwrap_or(0.0),
-                mean: if self.total_count > self.null_count {
-                    self.sum / (self.total_count - self.null_count) as f64
-                } else {
-                    0.0
-                },
-                std_dev: 0.0,
-                variance: 0.0,
-                median: None,
-                quartiles: None,
-                mode: None,
-                coefficient_of_variation: None,
-                skewness: None,
-                kurtosis: None,
-                is_approximate: None,
-            },
+            DataType::Integer | DataType::Float => calculate_numeric_stats(&self.sample_values),
             DataType::String | DataType::Date => {
                 let avg_length = if self.total_count > self.null_count {
                     self.total_length as f64 / (self.total_count - self.null_count) as f64
@@ -989,6 +976,87 @@ impl ColumnAnalyzer {
             }
             // Binary types and complex types - treat as String
             _ => DataType::String,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::{Float64Array, Int64Array, StringArray};
+    use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
+    use arrow::record_batch::RecordBatch;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_record_batch_analyzer_numeric_stats() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("score", ArrowDataType::Float64, false),
+            Field::new("rank", ArrowDataType::Int64, false),
+            Field::new("label", ArrowDataType::Utf8, false),
+        ]));
+
+        let scores = Float64Array::from(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
+        let ranks = Int64Array::from(vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let labels = StringArray::from(vec!["a", "b", "c", "d", "e", "f", "g", "h"]);
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(scores), Arc::new(ranks), Arc::new(labels)],
+        )
+        .unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+
+        let profiles = analyzer.to_profiles();
+        assert_eq!(profiles.len(), 3);
+
+        // Check score column
+        let score_col = profiles.iter().find(|p| p.name == "score").unwrap();
+        match &score_col.stats {
+            crate::types::ColumnStats::Numeric {
+                min,
+                max,
+                mean,
+                std_dev,
+                median,
+                skewness,
+                kurtosis,
+                coefficient_of_variation,
+                ..
+            } => {
+                assert!((min - 10.0).abs() < 0.01);
+                assert!((max - 80.0).abs() < 0.01);
+                assert!((mean - 45.0).abs() < 0.01);
+                assert!(*std_dev > 0.0);
+                assert!(median.is_some());
+                assert!(skewness.is_some());
+                assert!(kurtosis.is_some());
+                assert!(coefficient_of_variation.is_some());
+                // Linear data should have near-zero skewness
+                assert!(skewness.unwrap().abs() < 0.5);
+            }
+            _ => panic!("Expected Numeric stats for score column"),
+        }
+
+        // Check rank column also has advanced stats
+        let rank_col = profiles.iter().find(|p| p.name == "rank").unwrap();
+        match &rank_col.stats {
+            crate::types::ColumnStats::Numeric {
+                skewness, kurtosis, ..
+            } => {
+                assert!(skewness.is_some(), "rank should have skewness");
+                assert!(kurtosis.is_some(), "rank should have kurtosis");
+            }
+            _ => panic!("Expected Numeric stats for rank column"),
+        }
+
+        // Check label column is text (no numeric stats)
+        let label_col = profiles.iter().find(|p| p.name == "label").unwrap();
+        match &label_col.stats {
+            crate::types::ColumnStats::Text { .. } => {}
+            _ => panic!("Expected Text stats for label column"),
         }
     }
 }
