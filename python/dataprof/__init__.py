@@ -101,20 +101,28 @@ class ProfileReport:
                 "unique_count": col.unique_count,
             }
             if col.min is not None:
-                col_data["stats"] = {
+                stats = {
                     "min": col.min,
                     "max": col.max,
                     "mean": col.mean,
                     "std_dev": col.std_dev,
                     "variance": col.variance,
-                    "median": col.median,
-                    "mode": col.mode,
-                    "skewness": col.skewness,
-                    "kurtosis": col.kurtosis,
-                    "coefficient_of_variation": col.coefficient_of_variation,
-                    "quartiles": col.quartiles,
-                    "is_approximate": col.is_approximate,
                 }
+                if col.median is not None:
+                    stats["median"] = col.median
+                if col.mode is not None:
+                    stats["mode"] = col.mode
+                if col.skewness is not None:
+                    stats["skewness"] = col.skewness
+                if col.kurtosis is not None:
+                    stats["kurtosis"] = col.kurtosis
+                if col.coefficient_of_variation is not None:
+                    stats["coefficient_of_variation"] = col.coefficient_of_variation
+                if col.quartiles is not None:
+                    stats["quartiles"] = col.quartiles
+                if col.is_approximate is not None:
+                    stats["is_approximate"] = col.is_approximate
+                col_data["stats"] = stats
             data["columns"].append(col_data)
         return json.dumps(data, indent=2)
 
