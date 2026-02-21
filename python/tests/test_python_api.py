@@ -477,6 +477,102 @@ class TestJSONAnalysis:
         assert isinstance(report.data_quality_metrics, dataprof.PyDataQualityMetrics)
 
 
+class TestAdvancedNumericStats:
+    """Test that all advanced numeric stats fields are exposed and correct."""
+
+    @pytest.mark.api
+    def test_numeric_column_has_all_stats(self, sample_csv_file):
+        """Numeric columns should have all advanced stats populated."""
+        profiles = dataprof.analyze_csv_file(sample_csv_file)
+        numeric_profiles = [
+            p for p in profiles if p.data_type in ("integer", "float")
+        ]
+        assert len(numeric_profiles) > 0, "Should detect at least one numeric column"
+
+        for p in numeric_profiles:
+            assert p.min is not None, f"{p.name}: min should not be None"
+            assert p.max is not None, f"{p.name}: max should not be None"
+            assert p.mean is not None, f"{p.name}: mean should not be None"
+            assert p.std_dev is not None, f"{p.name}: std_dev should not be None"
+            assert p.variance is not None, f"{p.name}: variance should not be None"
+            assert p.skewness is not None, f"{p.name}: skewness should not be None"
+            assert p.kurtosis is not None, f"{p.name}: kurtosis should not be None"
+            assert p.coefficient_of_variation is not None, (
+                f"{p.name}: coefficient_of_variation should not be None"
+            )
+
+    @pytest.mark.api
+    def test_numeric_column_has_quartiles(self, sample_csv_file):
+        """Numeric columns should have quartiles with expected keys."""
+        profiles = dataprof.analyze_csv_file(sample_csv_file)
+        numeric_profiles = [
+            p for p in profiles if p.data_type in ("integer", "float")
+        ]
+
+        for p in numeric_profiles:
+            if p.median is not None:
+                assert isinstance(p.median, float), f"{p.name}: median should be float"
+            if p.quartiles is not None:
+                assert "q1" in p.quartiles, f"{p.name}: quartiles missing q1"
+                assert "q2" in p.quartiles, f"{p.name}: quartiles missing q2"
+                assert "q3" in p.quartiles, f"{p.name}: quartiles missing q3"
+                assert "iqr" in p.quartiles, f"{p.name}: quartiles missing iqr"
+
+    @pytest.mark.api
+    def test_non_numeric_column_stats_are_none(self, sample_csv_file):
+        """Non-numeric columns should have None for all numeric stats."""
+        profiles = dataprof.analyze_csv_file(sample_csv_file)
+        string_profiles = [p for p in profiles if p.data_type == "string"]
+        assert len(string_profiles) > 0, "Should have at least one string column"
+
+        for p in string_profiles:
+            assert p.min is None, f"{p.name}: min should be None for string"
+            assert p.max is None, f"{p.name}: max should be None for string"
+            assert p.skewness is None, f"{p.name}: skewness should be None"
+            assert p.kurtosis is None, f"{p.name}: kurtosis should be None"
+            assert p.coefficient_of_variation is None, f"{p.name}: CV should be None"
+            assert p.quartiles is None, f"{p.name}: quartiles should be None"
+            assert p.is_approximate is None, f"{p.name}: is_approximate should be None"
+
+    @pytest.mark.api
+    def test_quartiles_ordering(self, sample_csv_file):
+        """Quartiles should be properly ordered: q1 <= q2 <= q3."""
+        profiles = dataprof.analyze_csv_file(sample_csv_file)
+        numeric_profiles = [
+            p for p in profiles if p.data_type in ("integer", "float")
+        ]
+
+        for p in numeric_profiles:
+            if p.quartiles is not None:
+                assert p.quartiles["q1"] <= p.quartiles["q2"], (
+                    f"{p.name}: q1 should be <= q2"
+                )
+                assert p.quartiles["q2"] <= p.quartiles["q3"], (
+                    f"{p.name}: q2 should be <= q3"
+                )
+                expected_iqr = p.quartiles["q3"] - p.quartiles["q1"]
+                assert abs(p.quartiles["iqr"] - expected_iqr) < 0.01, (
+                    f"{p.name}: iqr should equal q3 - q1"
+                )
+
+    @pytest.mark.api
+    def test_variance_std_dev_consistency(self, sample_csv_file):
+        """std_dev should be sqrt(variance)."""
+        import math
+
+        profiles = dataprof.analyze_csv_file(sample_csv_file)
+        numeric_profiles = [
+            p for p in profiles if p.data_type in ("integer", "float")
+        ]
+
+        for p in numeric_profiles:
+            if p.variance is not None and p.std_dev is not None:
+                expected_std_dev = math.sqrt(p.variance)
+                assert abs(p.std_dev - expected_std_dev) < 0.01, (
+                    f"{p.name}: std_dev ({p.std_dev}) should be sqrt(variance) ({expected_std_dev})"
+                )
+
+
 # ============================================================================
 # FIXTURES
 # ============================================================================

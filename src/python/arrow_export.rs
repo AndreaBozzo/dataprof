@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use arrow::array::{Array, Float64Array, RecordBatch, StringArray, UInt64Array};
+use arrow::array::{Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array};
 use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema, to_ffi};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -29,7 +29,8 @@ use pyo3::types::PyCapsule;
 
 use crate::engines::columnar::RecordBatchAnalyzer;
 use crate::types::{
-    ColumnProfile, DataFrameLibrary, DataQualityMetrics, DataSource, QualityReport, ScanInfo,
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataQualityMetrics, DataSource, QualityReport,
+    ScanInfo,
 };
 
 /// PyCapsule name for Arrow schema (null-terminated for C compatibility)
@@ -482,6 +483,22 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
         Field::new("null_percentage", ArrowDataType::Float64, false),
         Field::new("unique_count", ArrowDataType::UInt64, true),
         Field::new("uniqueness_ratio", ArrowDataType::Float64, false),
+        // Numeric stats (nullable — None for non-numeric columns)
+        Field::new("min", ArrowDataType::Float64, true),
+        Field::new("max", ArrowDataType::Float64, true),
+        Field::new("mean", ArrowDataType::Float64, true),
+        Field::new("std_dev", ArrowDataType::Float64, true),
+        Field::new("variance", ArrowDataType::Float64, true),
+        Field::new("median", ArrowDataType::Float64, true),
+        Field::new("mode", ArrowDataType::Float64, true),
+        Field::new("skewness", ArrowDataType::Float64, true),
+        Field::new("kurtosis", ArrowDataType::Float64, true),
+        Field::new("coefficient_of_variation", ArrowDataType::Float64, true),
+        Field::new("q1", ArrowDataType::Float64, true),
+        Field::new("q2", ArrowDataType::Float64, true),
+        Field::new("q3", ArrowDataType::Float64, true),
+        Field::new("iqr", ArrowDataType::Float64, true),
+        Field::new("is_approximate", ArrowDataType::Boolean, true),
     ]));
 
     let names: StringArray = profiles.iter().map(|p| Some(p.name.as_str())).collect();
@@ -520,6 +537,87 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
         })
         .collect();
 
+    // Helper: extract a field from ColumnStats::Numeric, or None for non-numeric columns.
+    macro_rules! numeric_field {
+        ($profiles:expr, $field:ident) => {
+            $profiles
+                .iter()
+                .map(|p| match &p.stats {
+                    ColumnStats::Numeric { $field, .. } => Some(*$field),
+                    _ => None,
+                })
+                .collect::<Float64Array>()
+        };
+    }
+
+    macro_rules! numeric_opt_field {
+        ($profiles:expr, $field:ident) => {
+            $profiles
+                .iter()
+                .map(|p| match &p.stats {
+                    ColumnStats::Numeric { $field, .. } => *$field,
+                    _ => None,
+                })
+                .collect::<Float64Array>()
+        };
+    }
+
+    let mins = numeric_field!(profiles, min);
+    let maxs = numeric_field!(profiles, max);
+    let means = numeric_field!(profiles, mean);
+    let std_devs = numeric_field!(profiles, std_dev);
+    let variances = numeric_field!(profiles, variance);
+    let medians = numeric_opt_field!(profiles, median);
+    let modes = numeric_opt_field!(profiles, mode);
+    let skewnesses = numeric_opt_field!(profiles, skewness);
+    let kurtoses = numeric_opt_field!(profiles, kurtosis);
+    let cvs = numeric_opt_field!(profiles, coefficient_of_variation);
+
+    let q1s: Float64Array = profiles
+        .iter()
+        .map(|p| match &p.stats {
+            ColumnStats::Numeric {
+                quartiles: Some(q), ..
+            } => Some(q.q1),
+            _ => None,
+        })
+        .collect();
+    let q2s: Float64Array = profiles
+        .iter()
+        .map(|p| match &p.stats {
+            ColumnStats::Numeric {
+                quartiles: Some(q), ..
+            } => Some(q.q2),
+            _ => None,
+        })
+        .collect();
+    let q3s: Float64Array = profiles
+        .iter()
+        .map(|p| match &p.stats {
+            ColumnStats::Numeric {
+                quartiles: Some(q), ..
+            } => Some(q.q3),
+            _ => None,
+        })
+        .collect();
+    let iqrs: Float64Array = profiles
+        .iter()
+        .map(|p| match &p.stats {
+            ColumnStats::Numeric {
+                quartiles: Some(q), ..
+            } => Some(q.iqr),
+            _ => None,
+        })
+        .collect();
+
+    let is_approx: BooleanArray = profiles
+        .iter()
+        .map(|p| match &p.stats {
+            ColumnStats::Numeric { is_approximate, .. } => *is_approximate,
+            _ => None,
+        })
+        .collect();
+
     RecordBatch::try_new(
         schema,
         vec![
@@ -530,6 +628,21 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
             Arc::new(null_pcts),
             Arc::new(uniques),
             Arc::new(unique_ratios),
+            Arc::new(mins),
+            Arc::new(maxs),
+            Arc::new(means),
+            Arc::new(std_devs),
+            Arc::new(variances),
+            Arc::new(medians),
+            Arc::new(modes),
+            Arc::new(skewnesses),
+            Arc::new(kurtoses),
+            Arc::new(cvs),
+            Arc::new(q1s),
+            Arc::new(q2s),
+            Arc::new(q3s),
+            Arc::new(iqrs),
+            Arc::new(is_approx),
         ],
     )
     .map_err(|e| anyhow::anyhow!("Failed to create RecordBatch: {}", e))
