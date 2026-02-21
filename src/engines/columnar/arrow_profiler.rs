@@ -6,7 +6,6 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::analysis::patterns::looks_like_date;
 use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::DataQualityMetrics;
 use crate::types::{
@@ -658,24 +657,9 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Int16
             | arrow::datatypes::DataType::Int8 => DataType::Integer,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                // Check if it looks like dates
-                let sample_size = self.sample_values.len().min(50);
-                if sample_size > 0 {
-                    let date_like_count = self
-                        .sample_values
-                        .iter()
-                        .take(sample_size)
-                        .filter(|s| looks_like_date(s))
-                        .count();
-
-                    if date_like_count as f64 / sample_size as f64 > 0.7 {
-                        DataType::Date
-                    } else {
-                        DataType::String
-                    }
-                } else {
-                    DataType::String
-                }
+                // Reuse the shared inference logic for consistent type detection
+                // across all engines (dates before numerics, 100% match threshold)
+                crate::analysis::inference::infer_type(&self.sample_values)
             }
             _ => DataType::String,
         }
@@ -709,15 +693,19 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 4);
 
-        // Find age column and verify it's detected correctly
+        // Find age column and verify it's detected as numeric
         let age_column = report
             .column_profiles
             .iter()
             .find(|p| p.name == "age")
             .expect("Age column should exist");
 
-        // With Arrow's type inference, this should be detected as integer
         assert_eq!(age_column.total_count, 3);
+        assert_eq!(
+            age_column.data_type,
+            DataType::Integer,
+            "age column should be detected as Integer"
+        );
 
         Ok(())
     }
@@ -741,25 +729,80 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 2);
 
-        // Arrow CSV profiler reads columns as Utf8; numeric inference depends
-        // on the Arrow schema. Verify the pipeline runs without errors.
         let score_col = report
             .column_profiles
             .iter()
             .find(|p| p.name == "score")
             .expect("score column should exist");
 
-        // Regardless of whether it's detected as numeric or text, the profile should exist
         assert_eq!(score_col.total_count, 20);
 
-        // If it's detected as numeric, verify advanced stats
-        if let ColumnStats::Numeric {
-            skewness, kurtosis, ..
-        } = &score_col.stats
-        {
-            assert!(skewness.is_some(), "skewness should be computed");
-            assert!(kurtosis.is_some(), "kurtosis should be computed");
+        // Numeric Utf8 columns should now be detected as Integer
+        assert_eq!(
+            score_col.data_type,
+            DataType::Integer,
+            "score column should be detected as Integer"
+        );
+
+        // Verify numeric stats are computed
+        match &score_col.stats {
+            ColumnStats::Numeric {
+                min,
+                max,
+                mean,
+                skewness,
+                kurtosis,
+                ..
+            } => {
+                assert!((min - 10.0).abs() < 0.01, "min should be 10");
+                assert!((max - 200.0).abs() < 0.01, "max should be 200");
+                assert!((mean - 105.0).abs() < 0.01, "mean should be 105");
+                assert!(skewness.is_some(), "skewness should be computed");
+                assert!(kurtosis.is_some(), "kurtosis should be computed");
+            }
+            other => panic!("score column should have Numeric stats, got {:?}", other),
         }
+
+        // Verify name column is still String
+        let name_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "name")
+            .expect("name column should exist");
+        assert_eq!(name_col.data_type, DataType::String);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_numeric_inference_float() -> Result<()> {
+        use crate::types::ColumnStats;
+
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "label,value")?;
+        for i in 1..=20 {
+            writeln!(temp_file, "item{},{:.2}", i, i as f64 * 1.5)?;
+        }
+        temp_file.flush()?;
+
+        let profiler = ArrowProfiler::new();
+        let report = profiler.analyze_csv_file(temp_file.path())?;
+
+        let value_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "value")
+            .expect("value column should exist");
+
+        assert_eq!(
+            value_col.data_type,
+            DataType::Float,
+            "value column with decimals should be detected as Float"
+        );
+        assert!(
+            matches!(&value_col.stats, ColumnStats::Numeric { .. }),
+            "Float column should have Numeric stats"
+        );
 
         Ok(())
     }

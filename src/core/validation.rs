@@ -412,3 +412,177 @@ pub mod exit_codes {
     pub const DATABASE_ERROR: i32 = 68;
     pub const NETWORK_ERROR: i32 = 69;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // -- chunk size validation --
+
+    #[test]
+    fn test_chunk_size_zero_rejected() {
+        assert!(InputValidator::validate_chunk_size(0).is_err());
+    }
+
+    #[test]
+    fn test_chunk_size_too_small_rejected() {
+        assert!(InputValidator::validate_chunk_size(5).is_err());
+    }
+
+    #[test]
+    fn test_chunk_size_too_large_rejected() {
+        assert!(InputValidator::validate_chunk_size(20_000_000).is_err());
+    }
+
+    #[test]
+    fn test_chunk_size_valid() {
+        assert!(InputValidator::validate_chunk_size(1000).is_ok());
+        assert!(InputValidator::validate_chunk_size(10).is_ok());
+        assert!(InputValidator::validate_chunk_size(10_000_000).is_ok());
+    }
+
+    // -- sample size validation --
+
+    #[test]
+    fn test_sample_size_zero_rejected() {
+        assert!(InputValidator::validate_sample_size(0).is_err());
+    }
+
+    #[test]
+    fn test_sample_size_too_small_rejected() {
+        assert!(InputValidator::validate_sample_size(50).is_err());
+    }
+
+    #[test]
+    fn test_sample_size_valid() {
+        assert!(InputValidator::validate_sample_size(100).is_ok());
+        assert!(InputValidator::validate_sample_size(10_000).is_ok());
+    }
+
+    // -- argument combinations --
+
+    #[test]
+    fn test_progress_without_streaming_rejected() {
+        let result = InputValidator::validate_argument_combinations(false, None, true, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_benchmark_with_streaming_rejected() {
+        let result = InputValidator::validate_argument_combinations(true, None, false, true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_benchmark_with_sample_rejected() {
+        let result = InputValidator::validate_argument_combinations(false, Some(1000), false, true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_valid_argument_combinations() {
+        // streaming + progress: OK
+        assert!(InputValidator::validate_argument_combinations(true, None, true, false).is_ok());
+        // no flags: OK
+        assert!(InputValidator::validate_argument_combinations(false, None, false, false).is_ok());
+        // benchmark alone: OK
+        assert!(InputValidator::validate_argument_combinations(false, None, false, true).is_ok());
+    }
+
+    // -- file validation --
+
+    #[test]
+    fn test_validate_file_nonexistent() {
+        let result = InputValidator::validate_file_input(Path::new("/nonexistent/file.csv"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.error_code, 2); // ENOENT
+    }
+
+    #[test]
+    fn test_validate_file_directory_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = InputValidator::validate_file_input(dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.error_code, 21); // EISDIR
+    }
+
+    #[test]
+    fn test_validate_file_unsupported_extension() {
+        let mut f = NamedTempFile::with_suffix(".xlsx").unwrap();
+        write!(f, "data").unwrap();
+        f.flush().unwrap();
+        let result = InputValidator::validate_file_input(f.path());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().error_code, 22); // EINVAL
+    }
+
+    #[test]
+    fn test_validate_file_valid_csv() {
+        let mut f = NamedTempFile::with_suffix(".csv").unwrap();
+        write!(f, "a,b\n1,2\n").unwrap();
+        f.flush().unwrap();
+        assert!(InputValidator::validate_file_input(f.path()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_file_valid_json() {
+        let mut f = NamedTempFile::with_suffix(".json").unwrap();
+        write!(f, "[]").unwrap();
+        f.flush().unwrap();
+        assert!(InputValidator::validate_file_input(f.path()).is_ok());
+    }
+
+    // -- glob pattern validation --
+
+    #[test]
+    fn test_glob_pattern_empty_rejected() {
+        assert!(InputValidator::validate_glob_pattern("").is_err());
+    }
+
+    #[test]
+    fn test_glob_pattern_valid() {
+        assert!(InputValidator::validate_glob_pattern("*.csv").is_ok());
+        assert!(InputValidator::validate_glob_pattern("data/**/*.json").is_ok());
+    }
+
+    // -- output directory validation --
+
+    #[test]
+    fn test_output_directory_current_dir_ok() {
+        assert!(InputValidator::validate_output_directory(Path::new("report.html")).is_ok());
+    }
+
+    #[test]
+    fn test_output_directory_nonexistent_parent() {
+        let result =
+            InputValidator::validate_output_directory(Path::new("/no/such/dir/report.html"));
+        assert!(result.is_err());
+    }
+
+    // -- config file validation --
+
+    #[test]
+    fn test_config_file_nonexistent() {
+        assert!(InputValidator::validate_config_file(Path::new("/no/config.toml")).is_err());
+    }
+
+    #[test]
+    fn test_config_file_wrong_extension() {
+        let mut f = NamedTempFile::with_suffix(".yaml").unwrap();
+        write!(f, "key: value").unwrap();
+        f.flush().unwrap();
+        assert!(InputValidator::validate_config_file(f.path()).is_err());
+    }
+
+    #[test]
+    fn test_config_file_valid_toml() {
+        let mut f = NamedTempFile::with_suffix(".toml").unwrap();
+        write!(f, "[settings]").unwrap();
+        f.flush().unwrap();
+        assert!(InputValidator::validate_config_file(f.path()).is_ok());
+    }
+}

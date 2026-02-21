@@ -335,3 +335,142 @@ pub fn try_strict_csv_parsing_fast(file_path: &Path) -> Result<Vec<ColumnProfile
     // Analyze in fast mode using helper function
     Ok(analyze_columns_fast(columns))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DataType;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn write_csv(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "{}", content).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn test_analyze_csv_basic() {
+        let csv = write_csv("name,age\nAlice,25\nBob,30\n");
+        let profiles = analyze_csv(csv.path()).unwrap();
+        assert_eq!(profiles.len(), 2);
+
+        let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"name"));
+        assert!(names.contains(&"age"));
+
+        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        assert_eq!(age.total_count, 2);
+        assert_eq!(age.null_count, 0);
+    }
+
+    #[test]
+    fn test_analyze_csv_with_nulls() {
+        let csv = write_csv("name,age,email\nAlice,25,a@b.com\nBob,,\nCharlie,30,c@d.com\n");
+        let profiles = analyze_csv(csv.path()).unwrap();
+
+        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        assert_eq!(age.total_count, 3);
+        assert_eq!(age.null_count, 1);
+
+        let email = profiles.iter().find(|p| p.name == "email").unwrap();
+        assert_eq!(email.null_count, 1);
+    }
+
+    #[test]
+    fn test_analyze_csv_robust_returns_quality_report() {
+        let csv = write_csv("x,y\n1,a\n2,b\n3,c\n");
+        let report = analyze_csv_robust(csv.path()).unwrap();
+
+        assert_eq!(report.column_profiles.len(), 2);
+        assert_eq!(report.scan_info.total_rows, 3);
+        assert_eq!(report.scan_info.total_columns, 2);
+        // Quality score should be computable
+        assert!(report.quality_score() >= 0.0);
+        assert!(report.quality_score() <= 100.0);
+    }
+
+    #[test]
+    fn test_analyze_csv_robust_empty_file() {
+        let csv = write_csv("name,age\n");
+        let report = analyze_csv_robust(csv.path()).unwrap();
+
+        assert_eq!(report.column_profiles.len(), 0);
+        assert_eq!(report.scan_info.total_rows, 0);
+    }
+
+    #[test]
+    fn test_analyze_csv_fast_produces_profiles() {
+        let csv = write_csv("a,b,c\n1,x,true\n2,y,false\n3,z,true\n");
+        let profiles = analyze_csv_fast(csv.path()).unwrap();
+        assert_eq!(profiles.len(), 3);
+
+        for p in &profiles {
+            assert_eq!(p.total_count, 3);
+        }
+    }
+
+    #[test]
+    fn test_analyze_csv_with_sampling_small_file() {
+        // Small files should not be sampled — all rows processed
+        let csv = write_csv("val\n1\n2\n3\n4\n5\n");
+        let report = analyze_csv_with_sampling(csv.path()).unwrap();
+
+        assert_eq!(report.scan_info.total_rows, 5);
+        assert_eq!(report.scan_info.rows_scanned, 5);
+        assert!((report.scan_info.sampling_ratio - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_analyze_csv_numeric_types_detected() {
+        let csv = write_csv("int_col,float_col,str_col\n1,1.5,hello\n2,2.5,world\n3,3.5,foo\n");
+        let profiles = analyze_csv(csv.path()).unwrap();
+
+        let int_col = profiles.iter().find(|p| p.name == "int_col").unwrap();
+        assert!(
+            matches!(int_col.data_type, DataType::Integer),
+            "Expected Integer, got {:?}",
+            int_col.data_type
+        );
+
+        let float_col = profiles.iter().find(|p| p.name == "float_col").unwrap();
+        assert!(
+            matches!(float_col.data_type, DataType::Float),
+            "Expected Float, got {:?}",
+            float_col.data_type
+        );
+
+        let str_col = profiles.iter().find(|p| p.name == "str_col").unwrap();
+        assert!(
+            matches!(str_col.data_type, DataType::String),
+            "Expected String, got {:?}",
+            str_col.data_type
+        );
+    }
+
+    #[test]
+    fn test_analyze_csv_strict_rejects_ragged_rows() {
+        // Strict parsing should fail on rows with inconsistent column counts
+        let csv = write_csv("a,b\n1,2\n3,4,5\n");
+        assert!(try_strict_csv_parsing(csv.path()).is_err());
+    }
+
+    #[test]
+    fn test_analyze_csv_robust_handles_ragged_rows() {
+        // Robust parsing should handle rows with inconsistent column counts
+        let csv = write_csv("a,b\n1,2\n3,4,5\n6\n");
+        let report = analyze_csv_robust(csv.path()).unwrap();
+        assert!(!report.column_profiles.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_csv_with_quality_metrics() {
+        let csv = write_csv("name,age\nAlice,25\nBob,\nCharlie,30\n");
+        let report = analyze_csv_robust(csv.path()).unwrap();
+
+        // Missing values should affect completeness
+        assert!(report.data_quality_metrics.missing_values_ratio > 0.0);
+        assert!(report.data_quality_metrics.complete_records_ratio < 100.0);
+    }
+}
