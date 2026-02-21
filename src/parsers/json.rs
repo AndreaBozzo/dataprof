@@ -168,3 +168,113 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
         data_quality_metrics,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn write_file(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "{}", content).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn test_analyze_json_array() {
+        let json = write_file(r#"[{"name":"Alice","age":25},{"name":"Bob","age":30}]"#);
+        let profiles = analyze_json(json.path()).unwrap();
+
+        assert_eq!(profiles.len(), 2);
+        let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"name"));
+        assert!(names.contains(&"age"));
+
+        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        assert_eq!(age.total_count, 2);
+        assert_eq!(age.null_count, 0);
+    }
+
+    #[test]
+    fn test_analyze_jsonl() {
+        let jsonl = write_file("{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n");
+        let profiles = analyze_json(jsonl.path()).unwrap();
+
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "x");
+        assert_eq!(profiles[0].total_count, 3);
+    }
+
+    #[test]
+    fn test_analyze_json_with_nulls() {
+        let json = write_file(
+            r#"[{"a":"hello","b":1},{"a":null,"b":2},{"a":"world","b":null}]"#,
+        );
+        let profiles = analyze_json(json.path()).unwrap();
+
+        let col_a = profiles.iter().find(|p| p.name == "a").unwrap();
+        assert_eq!(col_a.null_count, 1);
+
+        let col_b = profiles.iter().find(|p| p.name == "b").unwrap();
+        assert_eq!(col_b.null_count, 1);
+    }
+
+    #[test]
+    fn test_analyze_json_with_missing_fields() {
+        // Second record is missing "b" — should be padded with empty string
+        let json = write_file(r#"[{"a":1,"b":2},{"a":3}]"#);
+        let profiles = analyze_json(json.path()).unwrap();
+
+        let col_b = profiles.iter().find(|p| p.name == "b").unwrap();
+        assert_eq!(col_b.total_count, 2); // padded to match record count
+    }
+
+    #[test]
+    fn test_analyze_json_empty_array() {
+        let json = write_file("[]");
+        let profiles = analyze_json(json.path()).unwrap();
+        assert!(profiles.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_json_with_quality_detects_format() {
+        let json_array = write_file(r#"[{"x":1}]"#);
+        let report = analyze_json_with_quality(json_array.path()).unwrap();
+        assert!(matches!(
+            report.data_source,
+            DataSource::File { format: FileFormat::Json, .. }
+        ));
+
+        let jsonl = write_file("{\"x\":1}\n{\"x\":2}\n");
+        let report = analyze_json_with_quality(jsonl.path()).unwrap();
+        assert!(matches!(
+            report.data_source,
+            DataSource::File { format: FileFormat::Jsonl, .. }
+        ));
+    }
+
+    #[test]
+    fn test_analyze_json_with_quality_empty() {
+        let json = write_file("[]");
+        let report = analyze_json_with_quality(json.path()).unwrap();
+        assert_eq!(report.scan_info.total_rows, 0);
+        assert!(report.column_profiles.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_json_boolean_and_nested() {
+        let json = write_file(
+            r#"[{"flag":true,"nested":{"a":1}},{"flag":false,"nested":{"b":2}}]"#,
+        );
+        let profiles = analyze_json(json.path()).unwrap();
+
+        let flag = profiles.iter().find(|p| p.name == "flag").unwrap();
+        assert_eq!(flag.total_count, 2);
+
+        // Nested objects are serialized as JSON strings
+        let nested = profiles.iter().find(|p| p.name == "nested").unwrap();
+        assert_eq!(nested.total_count, 2);
+    }
+}

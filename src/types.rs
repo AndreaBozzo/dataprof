@@ -592,3 +592,191 @@ pub enum OutputFormat {
     /// Plain text without formatting for scripting
     Plain,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- Quality score calculation --
+
+    #[test]
+    fn test_empty_metrics_perfect_score() {
+        let metrics = DataQualityMetrics::empty();
+        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quality_score_weights_sum_to_100() {
+        // With all dimensions at 100%, score should be 100
+        let metrics = DataQualityMetrics {
+            complete_records_ratio: 100.0,
+            data_type_consistency: 100.0,
+            key_uniqueness: 100.0,
+            outlier_ratio: 0.0,
+            stale_data_ratio: 0.0,
+            ..DataQualityMetrics::empty()
+        };
+        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quality_score_completeness_weight() {
+        // Zero completeness, everything else perfect
+        let mut metrics = DataQualityMetrics::empty();
+        metrics.complete_records_ratio = 0.0;
+        // Score drops by 30% (completeness weight)
+        assert!((metrics.overall_score() - 70.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quality_score_all_bad() {
+        let metrics = DataQualityMetrics {
+            complete_records_ratio: 0.0,
+            data_type_consistency: 0.0,
+            key_uniqueness: 0.0,
+            outlier_ratio: 100.0,
+            stale_data_ratio: 100.0,
+            ..DataQualityMetrics::empty()
+        };
+        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+    }
+
+    // -- JSON serialization roundtrip --
+
+    #[test]
+    fn test_column_profile_json_roundtrip() {
+        let profile = ColumnProfile {
+            name: "test_col".to_string(),
+            data_type: DataType::Integer,
+            null_count: 2,
+            total_count: 10,
+            unique_count: Some(8),
+            stats: ColumnStats::Numeric {
+                min: 1.0,
+                max: 100.0,
+                mean: 50.5,
+                std_dev: 28.87,
+                variance: 833.25,
+                median: Some(50.0),
+                quartiles: Some(Quartiles {
+                    q1: 25.0,
+                    q2: 50.0,
+                    q3: 75.0,
+                    iqr: 50.0,
+                }),
+                mode: Some(42.0),
+                coefficient_of_variation: Some(57.17),
+                skewness: Some(0.0),
+                kurtosis: Some(-1.2),
+                is_approximate: Some(false),
+            },
+            patterns: vec![],
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        let deserialized: ColumnProfile = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.name, "test_col");
+        assert_eq!(deserialized.data_type, DataType::Integer);
+        assert_eq!(deserialized.total_count, 10);
+        assert_eq!(deserialized.null_count, 2);
+
+        if let ColumnStats::Numeric { min, max, mean, median, quartiles, .. } =
+            &deserialized.stats
+        {
+            assert!((min - 1.0).abs() < 0.01);
+            assert!((max - 100.0).abs() < 0.01);
+            assert!((mean - 50.5).abs() < 0.01);
+            assert!(median.is_some());
+            assert!(quartiles.is_some());
+        } else {
+            panic!("Expected Numeric stats after roundtrip");
+        }
+    }
+
+    #[test]
+    fn test_text_stats_json_roundtrip() {
+        let profile = ColumnProfile {
+            name: "name".to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 3,
+            unique_count: Some(3),
+            stats: ColumnStats::Text {
+                min_length: 3,
+                max_length: 7,
+                avg_length: 5.0,
+                most_frequent: None,
+                least_frequent: None,
+            },
+            patterns: vec![],
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        let deserialized: ColumnProfile = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.data_type, DataType::String);
+        if let ColumnStats::Text { min_length, max_length, .. } = &deserialized.stats {
+            assert_eq!(*min_length, 3);
+            assert_eq!(*max_length, 7);
+        } else {
+            panic!("Expected Text stats after roundtrip");
+        }
+    }
+
+    #[test]
+    fn test_quality_report_json_roundtrip() {
+        let report = QualityReport::new(
+            DataSource::File {
+                path: "test.csv".to_string(),
+                format: FileFormat::Csv,
+                size_bytes: 1024,
+                modified_at: None,
+                parquet_metadata: None,
+            },
+            vec![],
+            ScanInfo::new(100, 5, 100, 1.0, 50),
+            DataQualityMetrics::empty(),
+        );
+
+        let json = serde_json::to_string(&report).unwrap();
+        let deserialized: QualityReport = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.scan_info.total_rows, 100);
+        assert_eq!(deserialized.scan_info.total_columns, 5);
+        assert!((deserialized.quality_score() - 100.0).abs() < 0.01);
+    }
+
+    // -- ScanInfo --
+
+    #[test]
+    fn test_scan_info_throughput_calculation() {
+        let info = ScanInfo::new(1000, 5, 1000, 1.0, 500); // 500ms
+        // 1000 rows / 0.5s = 2000 rows/sec
+        assert!(info.throughput_rows_sec.is_some());
+        assert!((info.throughput_rows_sec.unwrap() - 2000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_scan_info_zero_time_no_throughput() {
+        let info = ScanInfo::new(100, 3, 100, 1.0, 0);
+        assert!(info.throughput_rows_sec.is_none());
+    }
+
+    // -- DataSource --
+
+    #[test]
+    fn test_data_source_file_identifier() {
+        let ds = DataSource::File {
+            path: "/path/to/data.csv".to_string(),
+            format: FileFormat::Csv,
+            size_bytes: 0,
+            modified_at: None,
+            parquet_metadata: None,
+        };
+        assert_eq!(ds.identifier(), "/path/to/data.csv");
+        assert!(ds.is_file());
+        assert!(!ds.is_query());
+        assert!(!ds.is_dataframe());
+    }
+}
