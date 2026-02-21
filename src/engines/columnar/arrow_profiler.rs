@@ -683,10 +683,14 @@ impl ColumnAnalyzer {
                     }
                 }
 
+                let integer_ratio = integer_count as f64 / sample_size as f64;
+                let float_ratio = float_count as f64 / sample_size as f64;
                 let numeric_threshold = 0.9;
-                if integer_count as f64 / sample_size as f64 >= numeric_threshold {
+
+                // Treat as Integer only when all numeric values are integers
+                if float_count == integer_count && integer_ratio >= numeric_threshold {
                     DataType::Integer
-                } else if float_count as f64 / sample_size as f64 >= numeric_threshold {
+                } else if float_ratio >= numeric_threshold {
                     DataType::Float
                 } else {
                     // Check dates
