@@ -681,8 +681,14 @@ mod tests {
         assert_eq!(deserialized.total_count, 10);
         assert_eq!(deserialized.null_count, 2);
 
-        if let ColumnStats::Numeric { min, max, mean, median, quartiles, .. } =
-            &deserialized.stats
+        if let ColumnStats::Numeric {
+            min,
+            max,
+            mean,
+            median,
+            quartiles,
+            ..
+        } = &deserialized.stats
         {
             assert!((min - 1.0).abs() < 0.01);
             assert!((max - 100.0).abs() < 0.01);
@@ -716,7 +722,12 @@ mod tests {
         let deserialized: ColumnProfile = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.data_type, DataType::String);
-        if let ColumnStats::Text { min_length, max_length, .. } = &deserialized.stats {
+        if let ColumnStats::Text {
+            min_length,
+            max_length,
+            ..
+        } = &deserialized.stats
+        {
             assert_eq!(*min_length, 3);
             assert_eq!(*max_length, 7);
         } else {

@@ -209,9 +209,7 @@ mod tests {
 
     #[test]
     fn test_analyze_json_with_nulls() {
-        let json = write_file(
-            r#"[{"a":"hello","b":1},{"a":null,"b":2},{"a":"world","b":null}]"#,
-        );
+        let json = write_file(r#"[{"a":"hello","b":1},{"a":null,"b":2},{"a":"world","b":null}]"#);
         let profiles = analyze_json(json.path()).unwrap();
 
         let col_a = profiles.iter().find(|p| p.name == "a").unwrap();
@@ -244,14 +242,20 @@ mod tests {
         let report = analyze_json_with_quality(json_array.path()).unwrap();
         assert!(matches!(
             report.data_source,
-            DataSource::File { format: FileFormat::Json, .. }
+            DataSource::File {
+                format: FileFormat::Json,
+                ..
+            }
         ));
 
         let jsonl = write_file("{\"x\":1}\n{\"x\":2}\n");
         let report = analyze_json_with_quality(jsonl.path()).unwrap();
         assert!(matches!(
             report.data_source,
-            DataSource::File { format: FileFormat::Jsonl, .. }
+            DataSource::File {
+                format: FileFormat::Jsonl,
+                ..
+            }
         ));
     }
 
@@ -265,9 +269,8 @@ mod tests {
 
     #[test]
     fn test_analyze_json_boolean_and_nested() {
-        let json = write_file(
-            r#"[{"flag":true,"nested":{"a":1}},{"flag":false,"nested":{"b":2}}]"#,
-        );
+        let json =
+            write_file(r#"[{"flag":true,"nested":{"a":1}},{"flag":false,"nested":{"b":2}}]"#);
         let profiles = analyze_json(json.path()).unwrap();
 
         let flag = profiles.iter().find(|p| p.name == "flag").unwrap();

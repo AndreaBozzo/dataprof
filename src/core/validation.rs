@@ -465,22 +465,19 @@ mod tests {
 
     #[test]
     fn test_progress_without_streaming_rejected() {
-        let result =
-            InputValidator::validate_argument_combinations(false, None, true, false);
+        let result = InputValidator::validate_argument_combinations(false, None, true, false);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_benchmark_with_streaming_rejected() {
-        let result =
-            InputValidator::validate_argument_combinations(true, None, false, true);
+        let result = InputValidator::validate_argument_combinations(true, None, false, true);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_benchmark_with_sample_rejected() {
-        let result =
-            InputValidator::validate_argument_combinations(false, Some(1000), false, true);
+        let result = InputValidator::validate_argument_combinations(false, Some(1000), false, true);
         assert!(result.is_err());
     }
 
