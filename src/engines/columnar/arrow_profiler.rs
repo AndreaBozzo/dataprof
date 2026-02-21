@@ -6,7 +6,6 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::analysis::patterns::looks_like_date;
 use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::DataQualityMetrics;
 use crate::types::{
@@ -658,54 +657,9 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Int16
             | arrow::datatypes::DataType::Int8 => DataType::Integer,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                let non_empty: Vec<&String> = self
-                    .sample_values
-                    .iter()
-                    .filter(|s| !s.trim().is_empty())
-                    .collect();
-
-                if non_empty.is_empty() {
-                    return DataType::String;
-                }
-
-                let sample_size = non_empty.len().min(50);
-
-                // Check numeric first (most common for CSV data)
-                let mut integer_count = 0usize;
-                let mut float_count = 0usize;
-                for s in non_empty.iter().take(sample_size) {
-                    let trimmed = s.trim();
-                    if trimmed.parse::<i64>().is_ok() {
-                        integer_count += 1;
-                        float_count += 1; // integers are also valid floats
-                    } else if trimmed.parse::<f64>().is_ok() {
-                        float_count += 1;
-                    }
-                }
-
-                let integer_ratio = integer_count as f64 / sample_size as f64;
-                let float_ratio = float_count as f64 / sample_size as f64;
-                let numeric_threshold = 0.9;
-
-                // Treat as Integer only when all numeric values are integers
-                if float_count == integer_count && integer_ratio >= numeric_threshold {
-                    DataType::Integer
-                } else if float_ratio >= numeric_threshold {
-                    DataType::Float
-                } else {
-                    // Check dates
-                    let date_like_count = non_empty
-                        .iter()
-                        .take(sample_size)
-                        .filter(|s| looks_like_date(s))
-                        .count();
-
-                    if date_like_count as f64 / sample_size as f64 > 0.7 {
-                        DataType::Date
-                    } else {
-                        DataType::String
-                    }
-                }
+                // Reuse the shared inference logic for consistent type detection
+                // across all engines (dates before numerics, 100% match threshold)
+                crate::analysis::inference::infer_type(&self.sample_values)
             }
             _ => DataType::String,
         }

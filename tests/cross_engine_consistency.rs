@@ -174,3 +174,35 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
         }
     }
 }
+
+#[test]
+fn test_mixed_data_column_type_consistency() {
+    // A column with one non-numeric value should be String in both engines
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,value,date_col").unwrap();
+    writeln!(f, "1,100,2024-01-01").unwrap();
+    writeln!(f, "2,200,2024-01-02").unwrap();
+    writeln!(f, "3,N/A,2024-01-03").unwrap();
+    writeln!(f, "4,400,2024-01-04").unwrap();
+    writeln!(f, "5,500,2024-01-05").unwrap();
+    f.flush().unwrap();
+
+    let std_report = analyze_csv_robust(f.path()).expect("standard CSV should succeed");
+    let arrow_report = ArrowProfiler::new()
+        .analyze_csv_file(f.path())
+        .expect("Arrow CSV should succeed");
+
+    for std_col in &std_report.column_profiles {
+        let arrow_col = arrow_report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == std_col.name)
+            .unwrap_or_else(|| panic!("Column '{}' missing from Arrow report", std_col.name));
+
+        assert_eq!(
+            std_col.data_type, arrow_col.data_type,
+            "Type mismatch for column '{}': std={:?}, arrow={:?}",
+            std_col.name, std_col.data_type, arrow_col.data_type
+        );
+    }
+}
