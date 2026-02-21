@@ -85,6 +85,14 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
             let size_mb = memory_bytes.map(|b| b as f64 / 1_048_576.0).unwrap_or(0.0);
             (display_name.clone(), display_name, size_mb, None)
         }
+        DataSource::Stream {
+            topic,
+            source_system,
+            ..
+        } => {
+            let display_name = format!("{} Stream: {}", source_system, topic);
+            (display_name.clone(), display_name, 0.0, None)
+        }
     };
 
     let sampling_info = if report.scan_info.sampling_ratio < 1.0 {

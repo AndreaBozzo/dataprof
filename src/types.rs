@@ -79,12 +79,39 @@ impl std::fmt::Display for DataFrameLibrary {
     }
 }
 
+/// Supported stream source systems
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamSourceSystem {
+    Kafka,
+    Kinesis,
+    Pulsar,
+    Http,      // For REST API ingestion
+    WebSocket, // For WS ingestion
+    #[serde(untagged)]
+    Custom(String),
+}
+
+impl std::fmt::Display for StreamSourceSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Kafka => write!(f, "kafka"),
+            Self::Kinesis => write!(f, "kinesis"),
+            Self::Pulsar => write!(f, "pulsar"),
+            Self::Http => write!(f, "http"),
+            Self::WebSocket => write!(f, "websocket"),
+            Self::Custom(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 /// Source-agnostic data source metadata
 ///
 /// Supports multiple data source types with proper semantics:
 /// - Files: CSV, JSON, Parquet with path, size, and format metadata
 /// - Queries: SQL queries with engine, statement, and execution metadata
 /// - DataFrames: In-memory pandas/polars/pyarrow via PyCapsule
+/// - Streams: Streaming sources with topic, partition, and batch tracking
 ///
 /// # JSON Serialization
 /// Uses tagged enum format for clean API output:
@@ -92,11 +119,8 @@ impl std::fmt::Display for DataFrameLibrary {
 /// { "type": "file", "path": "/data/users.csv", "format": "csv", ... }
 /// { "type": "query", "engine": "duckdb", "statement": "SELECT ...", ... }
 /// { "type": "dataframe", "name": "sales", "source_library": "pandas", ... }
+/// { "type": "stream", "topic": "events", "batch_id": "b1", "source_system": "kafka", ... }
 /// ```
-///
-/// # Future Extensions
-/// TODO: Implement when needed:
-/// - Stream { topic, batch_id, partition } - for Kafka, Kinesis, etc.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DataSource {
@@ -143,6 +167,30 @@ pub enum DataSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         memory_bytes: Option<u64>,
     },
+    /// Streaming data source
+    Stream {
+        /// Stream identifier (e.g., Kafka topic, Kinesis stream name)
+        topic: String,
+        /// Batch identifier for ordering and deduplication
+        batch_id: String,
+        /// Partition for parallel processing (optional)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        partition: Option<u32>,
+        /// Consumer group for Kafka-style coordination (optional)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        consumer_group: Option<String>,
+        /// Source system identifier (kafka, kinesis, pulsar, http, etc.)
+        source_system: StreamSourceSystem,
+        /// Session ID for multi-tenant scenarios
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        /// Timestamp of first record in batch (ISO 8601)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        first_record_at: Option<String>,
+        /// Timestamp of last record in batch (ISO 8601)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_record_at: Option<String>,
+    },
 }
 
 impl DataSource {
@@ -152,6 +200,7 @@ impl DataSource {
     /// - For files: the file path
     /// - For queries: "engine: truncated_statement"
     /// - For dataframes: "library[name]"
+    /// - For streams: "system[topic]-batch:id"
     pub fn identifier(&self) -> String {
         match self {
             Self::File { path, .. } => path.clone(),
@@ -170,6 +219,12 @@ impl DataSource {
                 source_library,
                 ..
             } => format!("{}[{}]", source_library, name),
+            Self::Stream {
+                source_system,
+                topic,
+                batch_id,
+                ..
+            } => format!("{}[{}]-batch:{}", source_system, topic, batch_id),
         }
     }
 
@@ -178,7 +233,7 @@ impl DataSource {
         match self {
             Self::File { size_bytes, .. } => Some(*size_bytes as f64 / 1_048_576.0),
             Self::DataFrame { memory_bytes, .. } => memory_bytes.map(|b| b as f64 / 1_048_576.0),
-            Self::Query { .. } => None,
+            Self::Query { .. } | Self::Stream { .. } => None,
         }
     }
 
@@ -197,11 +252,32 @@ impl DataSource {
         matches!(self, Self::DataFrame { .. })
     }
 
+    /// Check if this is a Stream-based source
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Self::Stream { .. })
+    }
+
     /// Get the file path if this is a file-based source
     pub fn file_path(&self) -> Option<&str> {
         match self {
             Self::File { path, .. } => Some(path),
-            Self::Query { .. } | Self::DataFrame { .. } => None,
+            _ => None,
+        }
+    }
+
+    /// Get the stream topic if this is a stream-based source
+    pub fn stream_topic(&self) -> Option<&str> {
+        match self {
+            Self::Stream { topic, .. } => Some(topic),
+            _ => None,
+        }
+    }
+
+    /// Get the batch ID if this is a stream-based source
+    pub fn batch_id(&self) -> Option<&str> {
+        match self {
+            Self::Stream { batch_id, .. } => Some(batch_id),
+            _ => None,
         }
     }
 }
@@ -789,5 +865,51 @@ mod tests {
         assert!(ds.is_file());
         assert!(!ds.is_query());
         assert!(!ds.is_dataframe());
+        assert!(!ds.is_stream());
+    }
+
+    #[test]
+    fn test_data_source_stream_identifier_and_helpers() {
+        let ds = DataSource::Stream {
+            topic: "events".to_string(),
+            batch_id: "b1".to_string(),
+            partition: Some(0),
+            consumer_group: None,
+            source_system: StreamSourceSystem::Kafka,
+            session_id: None,
+            first_record_at: None,
+            last_record_at: None,
+        };
+
+        assert_eq!(ds.identifier(), "kafka[events]-batch:b1");
+        assert!(ds.is_stream());
+        assert_eq!(ds.stream_topic(), Some("events"));
+        assert_eq!(ds.batch_id(), Some("b1"));
+        assert!(!ds.is_file());
+        assert!(!ds.is_query());
+        assert!(ds.size_mb().is_none());
+    }
+
+    #[test]
+    fn test_stream_json_serialization() {
+        let ds = DataSource::Stream {
+            topic: "sensor-data".to_string(),
+            batch_id: "batch-789".to_string(),
+            partition: Some(2),
+            consumer_group: Some("processing-group".to_string()),
+            source_system: StreamSourceSystem::Kinesis,
+            session_id: Some("session-1".to_string()),
+            first_record_at: Some("2023-01-01T10:00:00Z".to_string()),
+            last_record_at: Some("2023-01-01T10:05:00Z".to_string()),
+        };
+
+        let json = serde_json::to_string(&ds).unwrap();
+        assert!(json.contains(r#""type":"stream""#));
+        assert!(json.contains(r#""source_system":"kinesis""#));
+        assert!(json.contains(r#""topic":"sensor-data""#));
+
+        let deserialized: DataSource = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.is_stream());
+        assert_eq!(deserialized.stream_topic(), Some("sensor-data"));
     }
 }
