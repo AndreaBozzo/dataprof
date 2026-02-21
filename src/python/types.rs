@@ -204,6 +204,7 @@ impl From<&QualityReport> for PyQualityReport {
                 Some(source_library.to_string()),
                 *memory_bytes,
             ),
+            DataSource::Stream { .. } => ("stream".to_string(), None, None),
         };
 
         Self {

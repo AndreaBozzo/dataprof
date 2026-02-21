@@ -579,6 +579,7 @@ impl OutputFormatter for InteractiveFormatter {
             DataSource::File { .. } => ("File:", "📁"),
             DataSource::Query { .. } => ("Query:", "🔍"),
             DataSource::DataFrame { .. } => ("DataFrame:", "🐼"),
+            DataSource::Stream { .. } => ("Stream:", "📡"),
         };
 
         // Enhanced source info section with colors and emojis
