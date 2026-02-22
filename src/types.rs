@@ -447,6 +447,18 @@ impl QualityReport {
         }
     }
 
+    /// Override the auto-generated ID (useful for deterministic caching/testing)
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = id.into();
+        self
+    }
+
+    /// Override the auto-generated timestamp
+    pub fn with_timestamp(mut self, timestamp: impl Into<String>) -> Self {
+        self.timestamp = timestamp.into();
+        self
+    }
+
     /// Calculate overall quality score using ISO 8000/25012 metrics
     pub fn quality_score(&self) -> f64 {
         self.data_quality_metrics.overall_score()

@@ -1,7 +1,7 @@
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::{BufferedProfiler, ProgressInfo};
 use crate::engines::{AdaptiveProfiler, ProcessingType};
-use crate::types::QualityReport;
+use crate::types::{DataSource, QualityReport};
 use anyhow::Result;
 use std::path::Path;
 
@@ -16,17 +16,20 @@ pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
     Ok(report.quality_score())
 }
 
-/// Stream profiling with intelligent engine selection and progress logging
-pub fn stream_profile<P, F>(file_path: P, _callback: F) -> Result<QualityReport>
-where
-    P: AsRef<Path>,
-    F: Fn(QualityReport) + Send + Sync + 'static,
-{
-    let profiler = AdaptiveProfiler::new()
-        .with_logging(true) // Enable progress logging
-        .with_performance_logging(true);
+/// One-liner API for quick profiling from a DataSource
+pub fn quick_quality_check_source(source: &DataSource) -> Result<f64> {
+    let profiler = AdaptiveProfiler::new().with_logging(false);
 
-    profiler.analyze_file_with_context(file_path.as_ref(), ProcessingType::StreamingRequired)
+    let report = match source {
+        DataSource::File { path, .. } => {
+            profiler.analyze_file_with_context(Path::new(path), ProcessingType::QualityFocused)?
+        }
+        _ => anyhow::bail!(
+            "Only File DataSource is currently supported in synchronous API. Use async API for streams."
+        ),
+    };
+
+    Ok(report.quality_score())
 }
 
 /// Simple builder API for profiling with flexible configuration
@@ -56,6 +59,16 @@ impl DataProfiler {
     pub fn from_path<P: AsRef<Path>>(path: P) -> DataProfilerBuilder<P> {
         DataProfilerBuilder {
             path,
+            chunk_size: ChunkSize::Adaptive,
+            sampling: SamplingStrategy::None,
+            progress_callback: None,
+        }
+    }
+
+    /// Create from DataSource with builder pattern
+    pub fn from_data_source(source: DataSource) -> DataProfilerBuilder<DataSource> {
+        DataProfilerBuilder {
+            path: source,
             chunk_size: ChunkSize::Adaptive,
             sampling: SamplingStrategy::None,
             progress_callback: None,
@@ -99,6 +112,15 @@ impl DataProfiler {
     pub fn analyze_file<P: AsRef<Path>>(&mut self, file_path: P) -> Result<QualityReport> {
         self.inner.analyze_file(file_path.as_ref())
     }
+
+    pub fn analyze_source(&mut self, source: &DataSource) -> Result<QualityReport> {
+        match source {
+            DataSource::File { path, .. } => self.inner.analyze_file(Path::new(path)),
+            _ => anyhow::bail!(
+                "Only File DataSource is currently supported in synchronous API. Use async API for streams."
+            ),
+        }
+    }
 }
 
 /// Builder for flexible profiler configuration
@@ -120,5 +142,24 @@ impl<P: AsRef<Path>> DataProfilerBuilder<P> {
         }
 
         profiler.analyze_file(self.path.as_ref())
+    }
+}
+
+impl DataProfilerBuilder<DataSource> {
+    pub fn analyze_source(self) -> Result<QualityReport> {
+        let mut profiler = BufferedProfiler::new()
+            .chunk_size(self.chunk_size)
+            .sampling(self.sampling);
+
+        if let Some(callback) = self.progress_callback {
+            profiler = profiler.progress_callback(callback);
+        }
+
+        match &self.path {
+            DataSource::File { path, .. } => profiler.analyze_file(Path::new(path)),
+            _ => anyhow::bail!(
+                "Only File DataSource is currently supported in synchronous API. Use async API for streams."
+            ),
+        }
     }
 }

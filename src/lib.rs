@@ -24,7 +24,7 @@ pub mod python;
 pub use engines::columnar::ArrowProfiler;
 
 // v0.3.0 public API - main exports
-pub use api::{DataProfiler, quick_quality_check, stream_profile};
+pub use api::{DataProfiler, quick_quality_check, quick_quality_check_source};
 pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
