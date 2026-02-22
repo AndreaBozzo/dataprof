@@ -7,8 +7,10 @@ use crate::engines::columnar::RecordBatchAnalyzer;
 use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, ScanInfo};
 
 use anyhow::{Context, Result};
-use datafusion::prelude::*;
+pub use arrow::record_batch::RecordBatch;
+pub use datafusion::prelude::*;
 use futures::stream::{Stream, StreamExt};
+use std::path::Path;
 use std::time::Instant;
 
 /// DataFusion loader for profiling SQL queries using Arrow integration
@@ -51,8 +53,35 @@ impl DataFusionLoader {
 
     /// Register a CSV file as a table for querying
     pub async fn register_csv(&self, table_name: &str, path: &str) -> Result<()> {
+        self.register_csv_with_options(table_name, path, CsvReadOptions::default())
+            .await
+    }
+
+    /// Register a CSV file with custom read options (delimiter, header, schema, etc.)
+    ///
+    /// # Example: semicolon-delimited file without headers (1BRC format)
+    /// ```ignore
+    /// let options = CsvReadOptions::default()
+    ///     .delimiter(b';')
+    ///     .has_header(false);
+    /// loader.register_csv_with_options("measurements", "measurements.txt", options).await?;
+    /// ```
+    pub async fn register_csv_with_options(
+        &self,
+        table_name: &str,
+        path: &str,
+        options: CsvReadOptions<'_>,
+    ) -> Result<()> {
+        // Auto-detect file extension so non-.csv files (e.g. .txt) are accepted
+        let ext = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e))
+            .unwrap_or_else(|| ".csv".to_string());
+        let options = options.file_extension(&ext);
+
         self.ctx
-            .register_csv(table_name, path, CsvReadOptions::default())
+            .register_csv(table_name, path, options)
             .await
             .context(format!(
                 "Failed to register CSV file '{}' as '{}'",
@@ -145,6 +174,31 @@ impl DataFusionLoader {
             ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
             data_quality_metrics,
         ))
+    }
+
+    /// Execute a SQL query and return raw Arrow RecordBatches.
+    ///
+    /// Unlike [`profile_query`], this returns the actual query results
+    /// rather than profiling metadata — useful when you need the data
+    /// itself (e.g., for the 1BRC output format).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let batches = loader.execute_sql("SELECT station, MIN(temp) FROM data GROUP BY station").await?;
+    /// for batch in &batches {
+    ///     println!("Got {} rows", batch.num_rows());
+    /// }
+    /// ```
+    pub async fn execute_sql(&self, query: &str) -> Result<Vec<RecordBatch>> {
+        let df = self
+            .ctx
+            .sql(query)
+            .await
+            .context(format!("Failed to execute query: '{}'", query))?;
+
+        df.collect()
+            .await
+            .context("Failed to collect query results")
     }
 
     /// Profile a registered table directly
