@@ -121,7 +121,7 @@ futures = "0.3.31"
 tempfile = "3.24"
 anyhow = "1.0"
 
-proptest = "1.9"  # Updated: 1.8.0 -> 1.9.0 (minor bump, backward compatible)
+proptest = "1.9"  # Updated: 1.8.0 -> 1.10.0 (minor bump, backward compatible)
 
 
 criterion = { version = "0.8", features = ["html_reports"] }
