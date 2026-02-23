@@ -127,7 +127,7 @@ proptest = "1.9"  # Updated: 1.8.0 -> 1.9.0 (minor bump, backward compatible)
 criterion = { version = "0.8", features = ["html_reports"] }
 serde_json = "1.0"
 
-serial_test = "3.3.1"
+serial_test = "3.4.0"
 predicates = "3.1"
 
 [[bin]]
