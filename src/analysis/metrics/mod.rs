@@ -71,8 +71,8 @@ use timeliness::TimelinessCalculator;
 use uniqueness::UniquenessCalculator;
 
 use crate::core::config::IsoQualityConfig;
+use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataQualityMetrics};
-use anyhow::Result;
 use std::collections::HashMap;
 
 /// Engine for calculating comprehensive data quality metrics
@@ -145,7 +145,7 @@ impl MetricsCalculator {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<DataQualityMetrics> {
+    ) -> Result<DataQualityMetrics, DataProfilerError> {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset());
         }
@@ -227,10 +227,13 @@ impl MetricsCalculator {
     }
 
     /// Calculate total number of rows from data
-    fn calculate_total_rows(data: &HashMap<String, Vec<String>>) -> Result<usize> {
-        data.values()
-            .next()
-            .map(|v| v.len())
-            .ok_or_else(|| anyhow::anyhow!("No data columns found"))
+    fn calculate_total_rows(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
+        data.values().next().map(|v| v.len()).ok_or_else(|| {
+            DataProfilerError::MetricsCalculationError {
+                message: "No data columns found".to_string(),
+            }
+        })
     }
 }

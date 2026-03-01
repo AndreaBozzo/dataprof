@@ -1,9 +1,9 @@
-use anyhow::Result;
 use csv::ReaderBuilder;
 use std::collections::HashMap;
 use std::path::Path;
 
 use crate::analysis::{analyze_column, analyze_column_fast};
+use crate::core::errors::DataProfilerError;
 use crate::core::sampling::SamplingStrategy;
 use crate::parsers::robust_csv::RobustCsvParser;
 use crate::types::{
@@ -12,6 +12,17 @@ use crate::types::{
 
 // Default verbosity level for CSV analysis (1 = normal, suppresses fallback messages)
 const DEFAULT_VERBOSITY: u8 = 1;
+
+/// Map I/O errors to DataProfilerError with the actual file path context
+fn map_io_error(file_path: &Path, e: std::io::Error) -> DataProfilerError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        DataProfilerError::FileNotFound {
+            path: file_path.display().to_string(),
+        }
+    } else {
+        DataProfilerError::from(e)
+    }
+}
 
 // ============================================================================
 // HELPER FUNCTIONS - Reusable components to eliminate duplication
@@ -83,8 +94,8 @@ fn process_csv_record(
 }
 
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
-pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
-    let metadata = std::fs::metadata(file_path)?;
+pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
     let start = std::time::Instant::now();
 
@@ -118,8 +129,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
     let column_profiles = analyze_columns(&columns);
 
     // Calculate comprehensive quality metrics using ISO 8000/25012 standards
-    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
-        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)?;
     let scan_time_ms = start.elapsed().as_millis();
     let num_rows = records.len();
     let num_columns = column_profiles.len();
@@ -142,8 +152,8 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport> {
 ///
 /// This function now uses the modern sampling system from `core::sampling`
 /// instead of the legacy `utils::sampler` module.
-pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
-    let metadata = std::fs::metadata(file_path)?;
+pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let file_size_mb = metadata.len() as f64 / 1_048_576.0;
     let start = std::time::Instant::now();
 
@@ -199,8 +209,7 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
     let column_profiles = analyze_columns(&columns);
 
     // Calculate comprehensive quality metrics using ISO 8000/25012 standards
-    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
-        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = if total_rows > 0 {
@@ -231,7 +240,7 @@ pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport> {
 }
 
 // Enhanced original function with robust parsing fallback for compatibility
-pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>, DataProfilerError> {
     analyze_csv_with_verbosity(file_path, DEFAULT_VERBOSITY)
 }
 
@@ -241,7 +250,10 @@ pub fn analyze_csv(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 /// - 0: quiet (no fallback messages)
 /// - 1: normal (no fallback messages)
 /// - 2+: verbose/debug (show fallback info)
-pub fn analyze_csv_with_verbosity(file_path: &Path, verbosity: u8) -> Result<Vec<ColumnProfile>> {
+pub fn analyze_csv_with_verbosity(
+    file_path: &Path,
+    verbosity: u8,
+) -> Result<Vec<ColumnProfile>, DataProfilerError> {
     // First try strict CSV parsing
     match try_strict_csv_parsing(file_path) {
         Ok(profiles) => return Ok(profiles),
@@ -270,7 +282,7 @@ pub fn analyze_csv_with_verbosity(file_path: &Path, verbosity: u8) -> Result<Vec
 }
 
 // Fast version optimized for benchmarks - skips pattern detection and unique counts
-pub fn analyze_csv_fast(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+pub fn analyze_csv_fast(file_path: &Path) -> Result<Vec<ColumnProfile>, DataProfilerError> {
     // Use only strict parsing for speed
     match try_strict_csv_parsing_fast(file_path) {
         Ok(profiles) => Ok(profiles),
@@ -295,7 +307,7 @@ pub fn analyze_csv_fast(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 }
 
 // Helper function for strict CSV parsing
-pub fn try_strict_csv_parsing(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+pub fn try_strict_csv_parsing(file_path: &Path) -> Result<Vec<ColumnProfile>, DataProfilerError> {
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
         .flexible(false) // Strict parsing
@@ -316,7 +328,9 @@ pub fn try_strict_csv_parsing(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 }
 
 // Fast version of strict CSV parsing for benchmarks
-pub fn try_strict_csv_parsing_fast(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+pub fn try_strict_csv_parsing_fast(
+    file_path: &Path,
+) -> Result<Vec<ColumnProfile>, DataProfilerError> {
     let mut reader = ReaderBuilder::new()
         .has_headers(true)
         .flexible(false) // Strict parsing

@@ -3,7 +3,6 @@
 //! Provides clean, DRY architecture for processing directories and file patterns
 //! with parallel/sequential execution and comprehensive quality reporting.
 
-use anyhow::{Context, Result};
 use glob::glob;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -11,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "parquet")]
 use crate::analyze_parquet_with_quality;
+use crate::core::errors::DataProfilerError;
 use crate::output::progress::ProgressManager;
 use crate::types::{DataQualityMetrics, QualityReport};
 use crate::{analyze_csv_robust, analyze_json_with_quality};
@@ -116,7 +116,7 @@ impl BatchProcessor {
     }
 
     /// Process files matching a glob pattern
-    pub fn process_glob(&self, pattern: &str) -> Result<BatchResult> {
+    pub fn process_glob(&self, pattern: &str) -> Result<BatchResult, DataProfilerError> {
         let start_time = std::time::Instant::now();
         let paths = self.collect_glob_paths(pattern)?;
 
@@ -126,7 +126,7 @@ impl BatchProcessor {
     }
 
     /// Process all supported files in a directory
-    pub fn process_directory(&self, dir_path: &Path) -> Result<BatchResult> {
+    pub fn process_directory(&self, dir_path: &Path) -> Result<BatchResult, DataProfilerError> {
         let start_time = std::time::Instant::now();
         let paths = self.collect_directory_paths(dir_path)?;
 
@@ -140,7 +140,7 @@ impl BatchProcessor {
     }
 
     /// Process a specific list of file paths
-    pub fn process_files(&self, file_paths: &[PathBuf]) -> Result<BatchResult> {
+    pub fn process_files(&self, file_paths: &[PathBuf]) -> Result<BatchResult, DataProfilerError> {
         let start_time = std::time::Instant::now();
         let paths: Vec<PathBuf> = file_paths
             .iter()
@@ -156,10 +156,10 @@ impl BatchProcessor {
     // ===== Internal Methods =====
 
     /// Collect file paths from glob pattern
-    fn collect_glob_paths(&self, pattern: &str) -> Result<Vec<PathBuf>> {
+    fn collect_glob_paths(&self, pattern: &str) -> Result<Vec<PathBuf>, DataProfilerError> {
         let mut paths = Vec::new();
 
-        for entry in glob(pattern).context("Failed to parse glob pattern")? {
+        for entry in glob(pattern)? {
             match entry {
                 Ok(path) => {
                     if path.is_file() && self.should_include_file(&path) {
@@ -175,7 +175,7 @@ impl BatchProcessor {
     }
 
     /// Collect file paths from directory (recursive or single level)
-    fn collect_directory_paths(&self, dir_path: &Path) -> Result<Vec<PathBuf>> {
+    fn collect_directory_paths(&self, dir_path: &Path) -> Result<Vec<PathBuf>, DataProfilerError> {
         let mut paths = Vec::new();
 
         if self.config.recursive {
@@ -189,7 +189,11 @@ impl BatchProcessor {
     }
 
     /// Recursively collect file paths
-    fn collect_recursive(&self, paths: &mut Vec<PathBuf>, dir_path: &Path) -> Result<()> {
+    fn collect_recursive(
+        &self,
+        paths: &mut Vec<PathBuf>,
+        dir_path: &Path,
+    ) -> Result<(), DataProfilerError> {
         for entry in std::fs::read_dir(dir_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -204,7 +208,11 @@ impl BatchProcessor {
     }
 
     /// Collect files from single directory
-    fn collect_single_dir(&self, paths: &mut Vec<PathBuf>, dir_path: &Path) -> Result<()> {
+    fn collect_single_dir(
+        &self,
+        paths: &mut Vec<PathBuf>,
+        dir_path: &Path,
+    ) -> Result<(), DataProfilerError> {
         for entry in std::fs::read_dir(dir_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -244,7 +252,7 @@ impl BatchProcessor {
         &self,
         paths: &[PathBuf],
         start_time: std::time::Instant,
-    ) -> Result<BatchResult> {
+    ) -> Result<BatchResult, DataProfilerError> {
         if paths.is_empty() {
             return Ok(Self::empty_result());
         }
@@ -262,7 +270,9 @@ impl BatchProcessor {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.config.max_concurrent)
                 .build()
-                .context("Failed to configure thread pool")?;
+                .map_err(|e| DataProfilerError::ConfigValidationError {
+                    message: format!("Failed to configure thread pool: {}", e),
+                })?;
 
             // Execute processing within the pool's scope
             pool.install(|| self.process_parallel(paths, &progress_bar))
@@ -542,6 +552,7 @@ impl Default for BatchProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
 
     #[test]
     fn test_batch_config_default() {

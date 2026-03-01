@@ -1,9 +1,9 @@
-use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::analysis::patterns::looks_like_date;
+use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingStatistics;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
@@ -77,7 +77,7 @@ impl MappedProfiler {
         self
     }
 
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport> {
+    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         let file_size_bytes = std::fs::metadata(file_path)?.len();
         let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
@@ -90,7 +90,10 @@ impl MappedProfiler {
         }
     }
 
-    fn analyze_with_memory_mapping(&self, file_path: &Path) -> Result<QualityReport> {
+    fn analyze_with_memory_mapping(
+        &self,
+        file_path: &Path,
+    ) -> Result<QualityReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let reader = MemoryMappedCsvReader::new(file_path)?;
 
@@ -210,7 +213,7 @@ impl MappedProfiler {
         ))
     }
 
-    fn analyze_small_file(&self, file_path: &Path) -> Result<QualityReport> {
+    fn analyze_small_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         // For small files, fall back to the buffered profiler
         let profiler = super::BufferedProfiler::new()
             .chunk_size(self.chunk_size.clone())

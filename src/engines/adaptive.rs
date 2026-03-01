@@ -1,7 +1,7 @@
-use anyhow::Result;
 use std::path::Path;
 use std::time::Instant;
 
+use crate::core::errors::DataProfilerError;
 use crate::engines::selection::{EngineSelector, EngineType, ProcessingType};
 use crate::engines::streaming::{BufferedProfiler, IncrementalProfiler, MappedProfiler};
 use crate::types::QualityReport;
@@ -124,7 +124,7 @@ impl AdaptiveProfiler {
     }
 
     /// Select the best engine for a file without running benchmarks
-    pub fn select_engine(&self, file_path: &Path) -> Result<EngineType> {
+    pub fn select_engine(&self, file_path: &Path) -> Result<EngineType, DataProfilerError> {
         let characteristics = self.selector.analyze_file_characteristics(file_path)?;
         let recommendation = self
             .selector
@@ -133,7 +133,7 @@ impl AdaptiveProfiler {
     }
 
     /// Analyze file with automatic engine selection and fallback
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport> {
+    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         self.analyze_file_with_context(file_path, ProcessingType::BatchAnalysis)
     }
 
@@ -142,7 +142,7 @@ impl AdaptiveProfiler {
         &self,
         file_path: &Path,
         processing_type: ProcessingType,
-    ) -> Result<QualityReport> {
+    ) -> Result<QualityReport, DataProfilerError> {
         // Check if this is a Parquet file - handle separately as it's a binary format
         // Use both extension check (fast) and magic number check (robust)
         let is_parquet = file_path
@@ -163,10 +163,12 @@ impl AdaptiveProfiler {
             }
             #[cfg(not(feature = "parquet"))]
             {
-                return Err(anyhow::anyhow!(
-                    "Parquet file detected but parquet feature is not enabled. \
-                     Recompile with --features parquet"
-                ));
+                return Err(DataProfilerError::FeatureNotEnabled {
+                    feature: "parquet".to_string(),
+                    message: "Parquet file detected but parquet feature is not enabled. \
+                              Recompile with --features parquet"
+                        .to_string(),
+                });
             }
         }
 
@@ -232,17 +234,23 @@ impl AdaptiveProfiler {
                 }
 
                 // All engines failed
-                Err(anyhow::anyhow!(
-                    "All engines failed. Primary: {}. Tried {} fallbacks.",
-                    primary_error,
-                    recommendation.fallback_engines.len()
-                ))
+                Err(DataProfilerError::AllEnginesFailed {
+                    message: format!(
+                        "All engines failed. Primary: {}. Tried {} fallbacks.",
+                        primary_error,
+                        recommendation.fallback_engines.len()
+                    ),
+                })
             }
         }
     }
 
     /// Try to execute analysis with a specific engine
-    fn try_engine(&self, engine_type: &EngineType, file_path: &Path) -> Result<QualityReport> {
+    fn try_engine(
+        &self,
+        engine_type: &EngineType,
+        file_path: &Path,
+    ) -> Result<QualityReport, DataProfilerError> {
         let start = Instant::now();
 
         let result = match engine_type {
@@ -298,7 +306,10 @@ impl AdaptiveProfiler {
     }
 
     /// Benchmark multiple engines and return performance comparison
-    pub fn benchmark_engines(&self, file_path: &Path) -> Result<Vec<EnginePerformance>> {
+    pub fn benchmark_engines(
+        &self,
+        file_path: &Path,
+    ) -> Result<Vec<EnginePerformance>, DataProfilerError> {
         let characteristics = self.selector.analyze_file_characteristics(file_path)?;
         let recommendation = self
             .selector
@@ -354,6 +365,7 @@ impl Default for AdaptiveProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use std::io::Write;
     use tempfile::NamedTempFile;
 

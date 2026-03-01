@@ -50,4 +50,3 @@ module-name = "dataprof._dataprof"
 python-source = "python"
 # Exclude CLI binary from Python builds - only build the library
 bindings = "pyo3"
-strip = true

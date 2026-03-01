@@ -322,5 +322,5 @@ fn analyze_csv(path: &std::path::Path) -> Result<QualityReport> {
     // Progress output disabilitato: istanza base senza logger
     let mut profiler = BufferedProfiler::new();
 
-    profiler.analyze_file(path)
+    Ok(profiler.analyze_file(path)?)
 }

@@ -1,12 +1,12 @@
+use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::{BufferedProfiler, ProgressInfo};
 use crate::engines::{AdaptiveProfiler, ProcessingType};
 use crate::types::{DataSource, QualityReport};
-use anyhow::Result;
 use std::path::Path;
 
 /// One-liner API for quick profiling with intelligent engine selection
-pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
+pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64, DataProfilerError> {
     let profiler = AdaptiveProfiler::new().with_logging(false); // Disable logging for quick checks
 
     let report =
@@ -17,16 +17,18 @@ pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64> {
 }
 
 /// One-liner API for quick profiling from a DataSource
-pub fn quick_quality_check_source(source: &DataSource) -> Result<f64> {
+pub fn quick_quality_check_source(source: &DataSource) -> Result<f64, DataProfilerError> {
     let profiler = AdaptiveProfiler::new().with_logging(false);
 
     let report = match source {
         DataSource::File { path, .. } => {
             profiler.analyze_file_with_context(Path::new(path), ProcessingType::QualityFocused)?
         }
-        _ => anyhow::bail!(
-            "Only File DataSource is currently supported in synchronous API. Use async API for streams."
-        ),
+        _ => {
+            return Err(DataProfilerError::UnsupportedDataSource {
+                message: "Only File DataSource is currently supported in synchronous API. Use async API for streams.".to_string(),
+            })
+        }
     };
 
     Ok(report.quality_score())
@@ -109,16 +111,22 @@ impl DataProfiler {
         self
     }
 
-    pub fn analyze_file<P: AsRef<Path>>(&mut self, file_path: P) -> Result<QualityReport> {
+    pub fn analyze_file<P: AsRef<Path>>(
+        &mut self,
+        file_path: P,
+    ) -> Result<QualityReport, DataProfilerError> {
         self.inner.analyze_file(file_path.as_ref())
     }
 
-    pub fn analyze_source(&mut self, source: &DataSource) -> Result<QualityReport> {
+    pub fn analyze_source(
+        &mut self,
+        source: &DataSource,
+    ) -> Result<QualityReport, DataProfilerError> {
         match source {
             DataSource::File { path, .. } => self.inner.analyze_file(Path::new(path)),
-            _ => anyhow::bail!(
-                "Only File DataSource is currently supported in synchronous API. Use async API for streams."
-            ),
+            _ => Err(DataProfilerError::UnsupportedDataSource {
+                message: "Only File DataSource is currently supported in synchronous API. Use async API for streams.".to_string(),
+            }),
         }
     }
 }
@@ -132,7 +140,7 @@ pub struct DataProfilerBuilder<P> {
 }
 
 impl<P: AsRef<Path>> DataProfilerBuilder<P> {
-    pub fn analyze(self) -> Result<QualityReport> {
+    pub fn analyze(self) -> Result<QualityReport, DataProfilerError> {
         let mut profiler = BufferedProfiler::new()
             .chunk_size(self.chunk_size)
             .sampling(self.sampling);
@@ -146,7 +154,7 @@ impl<P: AsRef<Path>> DataProfilerBuilder<P> {
 }
 
 impl DataProfilerBuilder<DataSource> {
-    pub fn analyze_source(self) -> Result<QualityReport> {
+    pub fn analyze_source(self) -> Result<QualityReport, DataProfilerError> {
         let mut profiler = BufferedProfiler::new()
             .chunk_size(self.chunk_size)
             .sampling(self.sampling);
@@ -157,9 +165,9 @@ impl DataProfilerBuilder<DataSource> {
 
         match &self.path {
             DataSource::File { path, .. } => profiler.analyze_file(Path::new(path)),
-            _ => anyhow::bail!(
-                "Only File DataSource is currently supported in synchronous API. Use async API for streams."
-            ),
+            _ => Err(DataProfilerError::UnsupportedDataSource {
+                message: "Only File DataSource is currently supported in synchronous API. Use async API for streams.".to_string(),
+            }),
         }
     }
 }

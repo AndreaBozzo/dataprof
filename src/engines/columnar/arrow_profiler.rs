@@ -1,4 +1,3 @@
-use anyhow::Result;
 use arrow::array::*;
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
@@ -6,6 +5,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::core::errors::DataProfilerError;
 use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::DataQualityMetrics;
 use crate::types::{
@@ -39,7 +39,7 @@ impl ArrowProfiler {
         self
     }
 
-    pub fn analyze_csv_file(&self, file_path: &Path) -> Result<QualityReport> {
+    pub fn analyze_csv_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let file = File::open(file_path)?;
         let file_size_bytes = file.metadata()?.len();
@@ -103,9 +103,7 @@ impl ArrowProfiler {
 
         // Calculate data quality metrics using ISO 8000/25012 standards
         let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles).map_err(
-                |e| anyhow::anyhow!("Quality metrics calculation failed for Arrow data: {}", e),
-            )?;
+            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)?;
 
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
@@ -168,7 +166,7 @@ impl ColumnAnalyzer {
         }
     }
 
-    fn process_array(&mut self, array: &dyn Array) -> Result<()> {
+    fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
         self.total_count += array.len();
         self.null_count += array.null_count();
 
@@ -177,63 +175,81 @@ impl ColumnAnalyzer {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to Float64Array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to Float64Array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Float32 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float32Array>() {
                     self.process_float32_array(float_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to Float32Array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to Float32Array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Int64 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
                     self.process_int64_array(int_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to Int64Array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to Int64Array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Int32 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<Int32Array>() {
                     self.process_int32_array(int_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to Int32Array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to Int32Array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Utf8 => {
                 if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
                     self.process_string_array(string_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to StringArray"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to StringArray".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::LargeUtf8 => {
                 if let Some(string_array) = array.as_any().downcast_ref::<LargeStringArray>() {
                     self.process_large_string_array(string_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to LargeStringArray"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to LargeStringArray".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Boolean => {
                 if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
                     self.process_boolean_array(bool_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to BooleanArray"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to BooleanArray".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Date32 => {
                 if let Some(date_array) = array.as_any().downcast_ref::<Date32Array>() {
                     self.process_date32_array(date_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to Date32Array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to Date32Array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Date64 => {
                 if let Some(date_array) = array.as_any().downcast_ref::<Date64Array>() {
                     self.process_date64_array(date_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast to Date64Array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast to Date64Array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Timestamp(_, _) => {
@@ -251,7 +267,9 @@ impl ColumnAnalyzer {
                 {
                     self.process_timestamp_second_array(ts_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast Timestamp array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast Timestamp array".to_string(),
+                    });
                 }
             }
             arrow::datatypes::DataType::Binary | arrow::datatypes::DataType::LargeBinary => {
@@ -260,7 +278,9 @@ impl ColumnAnalyzer {
                 } else if let Some(bin_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
                     self.process_large_binary_array(bin_array)?;
                 } else {
-                    return Err(anyhow::anyhow!("Failed to downcast Binary array"));
+                    return Err(DataProfilerError::ArrowError {
+                        message: "Failed to downcast Binary array".to_string(),
+                    });
                 }
             }
             _ => {
@@ -272,7 +292,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_float64_array(&mut self, array: &Float64Array) -> Result<()> {
+    fn process_float64_array(&mut self, array: &Float64Array) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 self.update_numeric_stats(value);
@@ -291,7 +311,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_float32_array(&mut self, array: &Float32Array) -> Result<()> {
+    fn process_float32_array(&mut self, array: &Float32Array) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let value_f64 = value as f64;
@@ -309,7 +329,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_int64_array(&mut self, array: &Int64Array) -> Result<()> {
+    fn process_int64_array(&mut self, array: &Int64Array) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let value_f64 = value as f64;
@@ -327,7 +347,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_int32_array(&mut self, array: &Int32Array) -> Result<()> {
+    fn process_int32_array(&mut self, array: &Int32Array) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let value_f64 = value as f64;
@@ -345,7 +365,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_string_array(&mut self, array: &StringArray) -> Result<()> {
+    fn process_string_array(&mut self, array: &StringArray) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
@@ -363,7 +383,10 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_large_string_array(&mut self, array: &LargeStringArray) -> Result<()> {
+    fn process_large_string_array(
+        &mut self,
+        array: &LargeStringArray,
+    ) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
@@ -381,7 +404,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_boolean_array(&mut self, array: &BooleanArray) -> Result<()> {
+    fn process_boolean_array(&mut self, array: &BooleanArray) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let value_str = value.to_string();
@@ -398,7 +421,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_date32_array(&mut self, array: &Date32Array) -> Result<()> {
+    fn process_date32_array(&mut self, array: &Date32Array) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 // Date32 represents days since epoch
@@ -417,7 +440,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_date64_array(&mut self, array: &Date64Array) -> Result<()> {
+    fn process_date64_array(&mut self, array: &Date64Array) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 // Date64 represents milliseconds since epoch
@@ -436,7 +459,10 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_timestamp_array(&mut self, array: &TimestampNanosecondArray) -> Result<()> {
+    fn process_timestamp_array(
+        &mut self,
+        array: &TimestampNanosecondArray,
+    ) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let ts_str = format!("timestamp_ns:{}", value);
@@ -454,7 +480,10 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_timestamp_micro_array(&mut self, array: &TimestampMicrosecondArray) -> Result<()> {
+    fn process_timestamp_micro_array(
+        &mut self,
+        array: &TimestampMicrosecondArray,
+    ) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let ts_str = format!("timestamp_us:{}", value);
@@ -472,7 +501,10 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_timestamp_milli_array(&mut self, array: &TimestampMillisecondArray) -> Result<()> {
+    fn process_timestamp_milli_array(
+        &mut self,
+        array: &TimestampMillisecondArray,
+    ) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let ts_str = format!("timestamp_ms:{}", value);
@@ -490,7 +522,10 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_timestamp_second_array(&mut self, array: &TimestampSecondArray) -> Result<()> {
+    fn process_timestamp_second_array(
+        &mut self,
+        array: &TimestampSecondArray,
+    ) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if let Some(value) = array.value(i).into() {
                 let ts_str = format!("timestamp_s:{}", value);
@@ -508,7 +543,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_binary_array(&mut self, array: &BinaryArray) -> Result<()> {
+    fn process_binary_array(&mut self, array: &BinaryArray) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
@@ -535,7 +570,10 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_large_binary_array(&mut self, array: &LargeBinaryArray) -> Result<()> {
+    fn process_large_binary_array(
+        &mut self,
+        array: &LargeBinaryArray,
+    ) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
@@ -562,7 +600,7 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
-    fn process_as_string_array(&mut self, array: &dyn Array) -> Result<()> {
+    fn process_as_string_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
         // Convert any array type to string for processing using Arrow's display functionality
         use arrow::util::display::array_value_to_string;
 
@@ -678,7 +716,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_arrow_profiler() -> Result<()> {
+    fn test_arrow_profiler() -> Result<(), DataProfilerError> {
         // Create a test CSV file
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,age,salary,active")?;
@@ -711,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arrow_profiler_csv_with_mixed_columns() -> Result<()> {
+    fn test_arrow_profiler_csv_with_mixed_columns() -> Result<(), DataProfilerError> {
         use crate::types::ColumnStats;
 
         // The Arrow CSV profiler reads all columns as Utf8 and then infers types.
@@ -775,7 +813,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arrow_profiler_numeric_inference_float() -> Result<()> {
+    fn test_arrow_profiler_numeric_inference_float() -> Result<(), DataProfilerError> {
         use crate::types::ColumnStats;
 
         let mut temp_file = NamedTempFile::new()?;

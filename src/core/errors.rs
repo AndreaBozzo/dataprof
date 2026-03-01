@@ -120,6 +120,27 @@ pub enum DataProfilerError {
         recovery_log: String,
         original_error: String,
     },
+
+    #[error("Parquet processing failed: {message}")]
+    ParquetError { message: String },
+
+    #[error("Arrow processing failed: {message}")]
+    ArrowError { message: String },
+
+    #[error("Unsupported data source: {message}")]
+    UnsupportedDataSource { message: String },
+
+    #[error("All engines failed: {message}")]
+    AllEnginesFailed { message: String },
+
+    #[error("Required feature not enabled: {feature}\n💡 {message}")]
+    FeatureNotEnabled { feature: String, message: String },
+
+    #[error("Metrics calculation failed: {message}")]
+    MetricsCalculationError { message: String },
+
+    #[error("Configuration validation failed: {message}")]
+    ConfigValidationError { message: String },
 }
 
 impl DataProfilerError {
@@ -342,6 +363,13 @@ impl DataProfilerError {
             DataProfilerError::HtmlReportError { .. } => "html_report",
             DataProfilerError::RecoverableError { .. } => "recoverable",
             DataProfilerError::RecoveryFailed { .. } => "recovery_failed",
+            DataProfilerError::ParquetError { .. } => "parquet",
+            DataProfilerError::ArrowError { .. } => "arrow",
+            DataProfilerError::UnsupportedDataSource { .. } => "unsupported_data_source",
+            DataProfilerError::AllEnginesFailed { .. } => "all_engines_failed",
+            DataProfilerError::FeatureNotEnabled { .. } => "feature_not_enabled",
+            DataProfilerError::MetricsCalculationError { .. } => "metrics_calculation",
+            DataProfilerError::ConfigValidationError { .. } => "config_validation",
         }
     }
 
@@ -363,6 +391,13 @@ impl DataProfilerError {
             DataProfilerError::SimdUnavailable { .. } => ErrorSeverity::Info,
             DataProfilerError::RecoverableError { .. } => ErrorSeverity::Medium,
             DataProfilerError::RecoveryFailed { .. } => ErrorSeverity::High,
+            DataProfilerError::ParquetError { .. } => ErrorSeverity::High,
+            DataProfilerError::ArrowError { .. } => ErrorSeverity::High,
+            DataProfilerError::UnsupportedDataSource { .. } => ErrorSeverity::Critical,
+            DataProfilerError::AllEnginesFailed { .. } => ErrorSeverity::Critical,
+            DataProfilerError::FeatureNotEnabled { .. } => ErrorSeverity::Critical,
+            DataProfilerError::MetricsCalculationError { .. } => ErrorSeverity::Medium,
+            DataProfilerError::ConfigValidationError { .. } => ErrorSeverity::Medium,
         }
     }
 }
@@ -440,6 +475,72 @@ impl From<std::io::Error> for DataProfilerError {
 impl From<csv::Error> for DataProfilerError {
     fn from(err: csv::Error) -> Self {
         DataProfilerError::csv_parsing(&err.to_string(), "unknown")
+    }
+}
+
+/// Convert from arrow::error::ArrowError to DataProfilerError
+impl From<arrow::error::ArrowError> for DataProfilerError {
+    fn from(err: arrow::error::ArrowError) -> Self {
+        DataProfilerError::ArrowError {
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Convert from serde_json::Error to DataProfilerError
+impl From<serde_json::Error> for DataProfilerError {
+    fn from(err: serde_json::Error) -> Self {
+        DataProfilerError::JsonParsingError {
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Convert from glob::PatternError to DataProfilerError
+impl From<glob::PatternError> for DataProfilerError {
+    fn from(err: glob::PatternError) -> Self {
+        DataProfilerError::InvalidConfiguration {
+            message: format!("Invalid glob pattern: {}", err),
+            suggestion: "Check the glob pattern syntax".to_string(),
+        }
+    }
+}
+
+/// Convert from toml::de::Error to DataProfilerError
+impl From<toml::de::Error> for DataProfilerError {
+    fn from(err: toml::de::Error) -> Self {
+        DataProfilerError::InvalidConfiguration {
+            message: format!("Failed to parse TOML configuration: {}", err),
+            suggestion: "Check your configuration file syntax".to_string(),
+        }
+    }
+}
+
+/// Convert from toml::ser::Error to DataProfilerError
+impl From<toml::ser::Error> for DataProfilerError {
+    fn from(err: toml::ser::Error) -> Self {
+        DataProfilerError::InvalidConfiguration {
+            message: format!("Failed to serialize configuration: {}", err),
+            suggestion: "Check configuration values for serialization issues".to_string(),
+        }
+    }
+}
+
+/// Convert from handlebars::RenderError to DataProfilerError
+impl From<handlebars::RenderError> for DataProfilerError {
+    fn from(err: handlebars::RenderError) -> Self {
+        DataProfilerError::HtmlReportError {
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Convert from handlebars::TemplateError to DataProfilerError
+impl From<handlebars::TemplateError> for DataProfilerError {
+    fn from(err: handlebars::TemplateError) -> Self {
+        DataProfilerError::HtmlReportError {
+            message: format!("Template error: {}", err),
+        }
     }
 }
 

@@ -1,6 +1,7 @@
-use anyhow::Result;
 use std::path::Path;
 use sysinfo::System;
+
+use crate::core::errors::DataProfilerError;
 
 /// Characteristics analyzed for intelligent engine selection
 #[derive(Debug, Clone)]
@@ -87,7 +88,10 @@ impl EngineSelector {
     }
 
     /// Analyze file characteristics for intelligent selection
-    pub fn analyze_file_characteristics(&self, file_path: &Path) -> Result<FileCharacteristics> {
+    pub fn analyze_file_characteristics(
+        &self,
+        file_path: &Path,
+    ) -> Result<FileCharacteristics, DataProfilerError> {
         let metadata = std::fs::metadata(file_path)?;
         let file_size_mb = metadata.len() as f64 / 1_048_576.0;
 
@@ -117,7 +121,7 @@ impl EngineSelector {
         &self,
         file_path: &Path,
         metadata: &std::fs::Metadata,
-    ) -> Result<(Option<usize>, Option<usize>, bool, bool)> {
+    ) -> Result<(Option<usize>, Option<usize>, bool, bool), DataProfilerError> {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
 
@@ -418,6 +422,7 @@ impl Default for EngineSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
