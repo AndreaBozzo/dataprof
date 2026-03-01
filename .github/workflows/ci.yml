@@ -53,7 +53,7 @@ jobs:
             skip-on-draft: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -74,7 +74,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -105,7 +105,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -141,7 +141,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
