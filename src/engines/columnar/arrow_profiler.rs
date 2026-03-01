@@ -712,7 +712,6 @@ impl ColumnAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use std::io::Write;
     use tempfile::NamedTempFile;
 

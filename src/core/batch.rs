@@ -270,7 +270,7 @@ impl BatchProcessor {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(self.config.max_concurrent)
                 .build()
-                .map_err(|e| DataProfilerError::IoError {
+                .map_err(|e| DataProfilerError::ConfigValidationError {
                     message: format!("Failed to configure thread pool: {}", e),
                 })?;
 

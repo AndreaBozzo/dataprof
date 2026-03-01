@@ -182,7 +182,15 @@ pub fn analyze_parquet_with_config(
     let start = std::time::Instant::now();
 
     // Open the Parquet file
-    let file = File::open(file_path)?;
+    let file = File::open(file_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            DataProfilerError::FileNotFound {
+                path: file_path.display().to_string(),
+            }
+        } else {
+            DataProfilerError::from(e)
+        }
+    })?;
     let metadata = file.metadata()?;
     let file_size_bytes = metadata.len();
 

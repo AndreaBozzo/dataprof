@@ -13,6 +13,17 @@ use crate::types::{
 // Default verbosity level for CSV analysis (1 = normal, suppresses fallback messages)
 const DEFAULT_VERBOSITY: u8 = 1;
 
+/// Map I/O errors to DataProfilerError with the actual file path context
+fn map_io_error(file_path: &Path, e: std::io::Error) -> DataProfilerError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        DataProfilerError::FileNotFound {
+            path: file_path.display().to_string(),
+        }
+    } else {
+        DataProfilerError::from(e)
+    }
+}
+
 // ============================================================================
 // HELPER FUNCTIONS - Reusable components to eliminate duplication
 // ============================================================================
@@ -84,7 +95,7 @@ fn process_csv_record(
 
 // v0.3.0 Robust CSV analysis function - handles edge cases and malformed data
 pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-    let metadata = std::fs::metadata(file_path)?;
+    let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
     let start = std::time::Instant::now();
 
@@ -142,7 +153,7 @@ pub fn analyze_csv_robust(file_path: &Path) -> Result<QualityReport, DataProfile
 /// This function now uses the modern sampling system from `core::sampling`
 /// instead of the legacy `utils::sampler` module.
 pub fn analyze_csv_with_sampling(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-    let metadata = std::fs::metadata(file_path)?;
+    let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let file_size_mb = metadata.len() as f64 / 1_048_576.0;
     let start = std::time::Instant::now();
 
