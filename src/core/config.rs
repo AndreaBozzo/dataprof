@@ -1,7 +1,8 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::core::errors::DataProfilerError;
 
 // ============================================================================
 // Configuration Constants
@@ -402,14 +403,14 @@ impl Default for DatabaseSamplingConfig {
 
 impl DataprofConfig {
     /// Load configuration from file, with fallback to default
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, DataProfilerError> {
         let content = fs::read_to_string(path)?;
         let config: DataprofConfig = toml::from_str(&content)?;
         Ok(config)
     }
 
     /// Save configuration to file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), DataProfilerError> {
         let content = toml::to_string_pretty(self)?;
         fs::write(path, content)?;
         Ok(())
@@ -531,7 +532,7 @@ impl DataprofConfig {
     }
 
     /// Create a sample configuration file for users
-    pub fn create_sample_config<P: AsRef<Path>>(path: P) -> Result<()> {
+    pub fn create_sample_config<P: AsRef<Path>>(path: P) -> Result<(), DataProfilerError> {
         let sample_config = Self::default();
         sample_config.save_to_file(path)?;
         Ok(())
@@ -550,180 +551,213 @@ impl DataprofConfig {
     /// - Engine validity
     /// - Memory configuration sanity
     /// - Chunk size validity
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), DataProfilerError> {
         // Validate output format
         let valid_formats = ["text", "json", "csv", "plain"];
         if !valid_formats.contains(&self.output.default_format.as_str()) {
-            return Err(anyhow::anyhow!(
-                "Invalid output format '{}'. Valid formats: {}\n\
-                 → Fix: Set output.default_format to one of the valid formats in your config file.",
-                self.output.default_format,
-                valid_formats.join(", ")
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Invalid output format '{}'. Valid formats: {}\n\
+                     → Fix: Set output.default_format to one of the valid formats in your config file.",
+                    self.output.default_format,
+                    valid_formats.join(", ")
+                ),
+            });
         }
 
         // Validate verbosity level
         if self.output.verbosity > 3 {
-            return Err(anyhow::anyhow!(
-                "Invalid verbosity level {}. Must be between 0 (quiet) and 3 (debug).\n\
-                 → Fix: Set output.verbosity to 0, 1, 2, or 3 in your config file.",
-                self.output.verbosity
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Invalid verbosity level {}. Must be between 0 (quiet) and 3 (debug).\n\
+                     → Fix: Set output.verbosity to 0, 1, 2, or 3 in your config file.",
+                    self.output.verbosity
+                ),
+            });
         }
 
         // Validate ISO thresholds
         let iso = &self.quality.iso_thresholds;
 
         if iso.outlier_iqr_multiplier <= 0.0 {
-            return Err(anyhow::anyhow!(
-                "IQR multiplier must be positive (standard value: 1.5), got {}.\n\
-                 → Fix: Set quality.iso_thresholds.outlier_iqr_multiplier to a positive value.\n\
-                 → Recommended: Use 1.5 (ISO standard) for normal cases, 3.0 for lenient detection.",
-                iso.outlier_iqr_multiplier
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "IQR multiplier must be positive (standard value: 1.5), got {}.\n\
+                     → Fix: Set quality.iso_thresholds.outlier_iqr_multiplier to a positive value.\n\
+                     → Recommended: Use 1.5 (ISO standard) for normal cases, 3.0 for lenient detection.",
+                    iso.outlier_iqr_multiplier
+                ),
+            });
         }
 
         if iso.max_null_percentage < 0.0 || iso.max_null_percentage > 100.0 {
-            return Err(anyhow::anyhow!(
-                "Max null percentage must be between 0 and 100, got {}.\n\
-                 → Fix: Set quality.iso_thresholds.max_null_percentage to a value between 0.0 and 100.0.",
-                iso.max_null_percentage
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Max null percentage must be between 0 and 100, got {}.\n\
+                     → Fix: Set quality.iso_thresholds.max_null_percentage to a value between 0.0 and 100.0.",
+                    iso.max_null_percentage
+                ),
+            });
         }
 
         if iso.null_report_threshold < 0.0 || iso.null_report_threshold > 100.0 {
-            return Err(anyhow::anyhow!(
-                "Null report threshold must be between 0 and 100, got {}.\n\
-                 → Fix: Set quality.iso_thresholds.null_report_threshold to a value between 0.0 and 100.0.",
-                iso.null_report_threshold
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Null report threshold must be between 0 and 100, got {}.\n\
+                     → Fix: Set quality.iso_thresholds.null_report_threshold to a value between 0.0 and 100.0.",
+                    iso.null_report_threshold
+                ),
+            });
         }
 
         if iso.min_type_consistency < 0.0 || iso.min_type_consistency > 100.0 {
-            return Err(anyhow::anyhow!(
-                "Min type consistency must be between 0 and 100, got {}.\n\
-                 → Fix: Set quality.iso_thresholds.min_type_consistency to a value between 0.0 and 100.0.",
-                iso.min_type_consistency
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Min type consistency must be between 0 and 100, got {}.\n\
+                     → Fix: Set quality.iso_thresholds.min_type_consistency to a value between 0.0 and 100.0.",
+                    iso.min_type_consistency
+                ),
+            });
         }
 
         if iso.high_cardinality_threshold < 0.0 || iso.high_cardinality_threshold > 100.0 {
-            return Err(anyhow::anyhow!(
-                "High cardinality threshold must be between 0 and 100, got {}.\n\
-                 → Fix: Set quality.iso_thresholds.high_cardinality_threshold to a value between 0.0 and 100.0.",
-                iso.high_cardinality_threshold
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "High cardinality threshold must be between 0 and 100, got {}.\n\
+                     → Fix: Set quality.iso_thresholds.high_cardinality_threshold to a value between 0.0 and 100.0.",
+                    iso.high_cardinality_threshold
+                ),
+            });
         }
 
         if iso.duplicate_report_threshold < 0.0 || iso.duplicate_report_threshold > 100.0 {
-            return Err(anyhow::anyhow!(
-                "Duplicate report threshold must be between 0 and 100, got {}.\n\
-                 → Fix: Set quality.iso_thresholds.duplicate_report_threshold to a value between 0.0 and 100.0.",
-                iso.duplicate_report_threshold
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Duplicate report threshold must be between 0 and 100, got {}.\n\
+                     → Fix: Set quality.iso_thresholds.duplicate_report_threshold to a value between 0.0 and 100.0.",
+                    iso.duplicate_report_threshold
+                ),
+            });
         }
 
         if iso.max_data_age_years < 0.0 {
-            return Err(anyhow::anyhow!(
-                "Max data age must be non-negative, got {} years.\n\
-                 → Fix: Set quality.iso_thresholds.max_data_age_years to a positive value.",
-                iso.max_data_age_years
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Max data age must be non-negative, got {} years.\n\
+                     → Fix: Set quality.iso_thresholds.max_data_age_years to a positive value.",
+                    iso.max_data_age_years
+                ),
+            });
         }
 
         if iso.stale_data_threshold < 0.0 || iso.stale_data_threshold > 100.0 {
-            return Err(anyhow::anyhow!(
-                "Stale data threshold must be between 0 and 100, got {}.\n\
-                 → Fix: Set quality.iso_thresholds.stale_data_threshold to a value between 0.0 and 100.0.",
-                iso.stale_data_threshold
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Stale data threshold must be between 0 and 100, got {}.\n\
+                     → Fix: Set quality.iso_thresholds.stale_data_threshold to a value between 0.0 and 100.0.",
+                    iso.stale_data_threshold
+                ),
+            });
         }
 
         // Validate engine
         let valid_engines = ["auto", "streaming", "memory_efficient", "true_streaming"];
         if !valid_engines.contains(&self.engine.default_engine.as_str()) {
-            return Err(anyhow::anyhow!(
-                "Invalid engine '{}'. Valid engines: {}\n\
-                 → Fix: Set engine.default_engine to one of the valid engines in your config file.\n\
-                 → Recommended: Use 'auto' for automatic selection based on file size.",
-                self.engine.default_engine,
-                valid_engines.join(", ")
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Invalid engine '{}'. Valid engines: {}\n\
+                     → Fix: Set engine.default_engine to one of the valid engines in your config file.\n\
+                     → Recommended: Use 'auto' for automatic selection based on file size.",
+                    self.engine.default_engine,
+                    valid_engines.join(", ")
+                ),
+            });
         }
 
         // Validate memory configuration
         if self.engine.memory.auto_streaming_threshold_mb < 0.0 {
-            return Err(anyhow::anyhow!(
-                "Auto-streaming threshold must be non-negative, got {} MB.\n\
-                 → Fix: Set engine.memory.auto_streaming_threshold_mb to a positive value.\n\
-                 → Recommended: 100.0 MB is a good default for most systems.",
-                self.engine.memory.auto_streaming_threshold_mb
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: format!(
+                    "Auto-streaming threshold must be non-negative, got {} MB.\n\
+                     → Fix: Set engine.memory.auto_streaming_threshold_mb to a positive value.\n\
+                     → Recommended: 100.0 MB is a good default for most systems.",
+                    self.engine.memory.auto_streaming_threshold_mb
+                ),
+            });
         }
 
         // Validate chunk size if specified
         if let Some(chunk_size) = self.engine.default_chunk_size {
             if chunk_size == 0 {
-                return Err(anyhow::anyhow!(
-                    "Chunk size must be greater than 0, got {}.\n\
-                     → Fix: Set engine.default_chunk_size to a positive value or null for adaptive sizing.\n\
-                     → Recommended: 8192-65536 rows for most CSV files.",
-                    chunk_size
-                ));
+                return Err(DataProfilerError::ConfigValidationError {
+                    message: format!(
+                        "Chunk size must be greater than 0, got {}.\n\
+                         → Fix: Set engine.default_chunk_size to a positive value or null for adaptive sizing.\n\
+                         → Recommended: 8192-65536 rows for most CSV files.",
+                        chunk_size
+                    ),
+                });
             }
 
             if chunk_size > 1_000_000 {
-                return Err(anyhow::anyhow!(
-                    "Chunk size {} is very large and may cause memory issues.\n\
-                     → Fix: Set engine.default_chunk_size to a smaller value.\n\
-                     → Recommended: 8192-65536 rows for most CSV files.",
-                    chunk_size
-                ));
+                return Err(DataProfilerError::ConfigValidationError {
+                    message: format!(
+                        "Chunk size {} is very large and may cause memory issues.\n\
+                         → Fix: Set engine.default_chunk_size to a smaller value.\n\
+                         → Recommended: 8192-65536 rows for most CSV files.",
+                        chunk_size
+                    ),
+                });
             }
         }
 
         // Validate max concurrent operations
         if self.engine.max_concurrent == 0 {
-            return Err(anyhow::anyhow!(
-                "Max concurrent operations must be greater than 0.\n\
-                 → Fix: Set engine.max_concurrent to a positive value.\n\
-                 → Recommended: Use num_cpus::get() or leave unspecified for automatic detection.",
-            ));
+            return Err(DataProfilerError::ConfigValidationError {
+                message: "Max concurrent operations must be greater than 0.\n\
+                     → Fix: Set engine.max_concurrent to a positive value.\n\
+                     → Recommended: Use num_cpus::get() or leave unspecified for automatic detection."
+                    .to_string(),
+            });
         }
 
         // Validate database settings if present
         #[cfg(feature = "database")]
         if let Some(ref db) = self.database {
             if db.connection_timeout == 0 {
-                return Err(anyhow::anyhow!(
-                    "Database connection timeout must be greater than 0 seconds.\n\
-                     → Fix: Set database.connection_timeout to a positive value.\n\
-                     → Recommended: 30 seconds for most network conditions.",
-                ));
+                return Err(DataProfilerError::ConfigValidationError {
+                    message: "Database connection timeout must be greater than 0 seconds.\n\
+                         → Fix: Set database.connection_timeout to a positive value.\n\
+                         → Recommended: 30 seconds for most network conditions."
+                        .to_string(),
+                });
             }
 
             if db.batch_size == 0 {
-                return Err(anyhow::anyhow!(
-                    "Database batch size must be greater than 0.\n\
-                     → Fix: Set database.batch_size to a positive value.\n\
-                     → Recommended: 10000 rows for most databases.",
-                ));
+                return Err(DataProfilerError::ConfigValidationError {
+                    message: "Database batch size must be greater than 0.\n\
+                         → Fix: Set database.batch_size to a positive value.\n\
+                         → Recommended: 10000 rows for most databases."
+                        .to_string(),
+                });
             }
 
             if db.max_connections == 0 {
-                return Err(anyhow::anyhow!(
-                    "Database max connections must be greater than 0.\n\
-                     → Fix: Set database.max_connections to a positive value.\n\
-                     → Recommended: 10 connections for most use cases.",
-                ));
+                return Err(DataProfilerError::ConfigValidationError {
+                    message: "Database max connections must be greater than 0.\n\
+                         → Fix: Set database.max_connections to a positive value.\n\
+                         → Recommended: 10 connections for most use cases."
+                        .to_string(),
+                });
             }
 
             if db.sampling.default_sample_size == 0 {
-                return Err(anyhow::anyhow!(
-                    "Database sample size must be greater than 0.\n\
-                     → Fix: Set database.sampling.default_sample_size to a positive value.\n\
-                     → Recommended: 100000 rows for statistical significance.",
-                ));
+                return Err(DataProfilerError::ConfigValidationError {
+                    message: "Database sample size must be greater than 0.\n\
+                         → Fix: Set database.sampling.default_sample_size to a positive value.\n\
+                         → Recommended: 100000 rows for statistical significance."
+                        .to_string(),
+                });
             }
         }
 
@@ -1002,7 +1036,7 @@ impl DataprofConfigBuilder {
     /// Build the configuration and validate it.
     ///
     /// Returns an error if the configuration is invalid.
-    pub fn build(self) -> Result<DataprofConfig> {
+    pub fn build(self) -> Result<DataprofConfig, DataProfilerError> {
         let config = DataprofConfig {
             output: self.output,
             quality: self.quality,

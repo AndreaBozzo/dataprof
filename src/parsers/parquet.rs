@@ -12,12 +12,12 @@
 //! println!("Quality score: {:.1}%", report.quality_score());
 //! ```
 
-use anyhow::Result;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
+use crate::core::errors::DataProfilerError;
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
 use crate::types::{
     DataQualityMetrics, DataSource, FileFormat, ParquetMetadata, QualityReport, ScanInfo,
@@ -149,9 +149,9 @@ impl ParquetConfig {
 /// println!("Analyzed {} rows in {} columns",
 ///          report.scan_info.total_rows,
 ///          report.scan_info.total_columns);
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), dataprof::DataProfilerError>(())
 /// ```
-pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
+pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
     analyze_parquet_with_config(file_path, &ParquetConfig::default())
 }
 
@@ -173,12 +173,12 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport> {
 ///
 /// let config = ParquetConfig::batch_size(16384);
 /// let report = analyze_parquet_with_config(Path::new("data.parquet"), &config)?;
-/// # Ok::<(), anyhow::Error>(())
+/// # Ok::<(), dataprof::DataProfilerError>(())
 /// ```
 pub fn analyze_parquet_with_config(
     file_path: &Path,
     config: &ParquetConfig,
-) -> Result<QualityReport> {
+) -> Result<QualityReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
     // Open the Parquet file
@@ -187,8 +187,11 @@ pub fn analyze_parquet_with_config(
     let file_size_bytes = metadata.len();
 
     // Create Parquet reader using Arrow
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
-        .map_err(|e| anyhow::anyhow!("Failed to create Parquet reader: {}", e))?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+        DataProfilerError::ParquetError {
+            message: format!("Failed to create Parquet reader: {}", e),
+        }
+    })?;
 
     // Extract Parquet metadata before consuming the builder
     let parquet_meta = builder.metadata();
@@ -218,15 +221,18 @@ pub fn analyze_parquet_with_config(
     let reader = builder
         .with_batch_size(config.batch_size)
         .build()
-        .map_err(|e| anyhow::anyhow!("Failed to build Parquet reader: {}", e))?;
+        .map_err(|e| DataProfilerError::ParquetError {
+            message: format!("Failed to build Parquet reader: {}", e),
+        })?;
 
     // Use RecordBatchAnalyzer to process batches
     let mut analyzer = RecordBatchAnalyzer::new();
 
     // Process all record batches
     for batch_result in reader {
-        let batch =
-            batch_result.map_err(|e| anyhow::anyhow!("Failed to read Parquet batch: {}", e))?;
+        let batch = batch_result.map_err(|e| DataProfilerError::ParquetError {
+            message: format!("Failed to read Parquet batch: {}", e),
+        })?;
         analyzer.process_batch(&batch)?;
     }
 
@@ -237,9 +243,7 @@ pub fn analyze_parquet_with_config(
     // Calculate comprehensive quality metrics using ISO 8000/25012 standards
     let sample_columns = analyzer.create_sample_columns();
     let data_quality_metrics =
-        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles).map_err(
-            |e| anyhow::anyhow!("Quality metrics calculation failed for Parquet data: {}", e),
-        )?;
+        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)?;
 
     let scan_time_ms = start.elapsed().as_millis();
 
@@ -272,6 +276,7 @@ pub fn analyze_parquet_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use arrow::array::{Float64Array, Int32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;

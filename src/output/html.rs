@@ -2,12 +2,13 @@ use crate::core::batch::{BatchResult, BatchSummary};
 use crate::types::{
     ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, QualityReport,
 };
-use anyhow::Result;
 use handlebars::Handlebars;
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::core::errors::DataProfilerError;
 
 // Embed templates at compile time
 const SINGLE_REPORT_TEMPLATE: &str = include_str!("../../templates/single_report.hbs");
@@ -19,7 +20,7 @@ const BATCH_CSS: &str = include_str!("../../templates/assets/batch.css");
 const DASHBOARD_JS: &str = include_str!("../../templates/assets/dashboard.js");
 
 /// Initialize Handlebars registry with templates
-fn init_handlebars() -> Result<Handlebars<'static>> {
+fn init_handlebars() -> Result<Handlebars<'static>, DataProfilerError> {
     let mut handlebars = Handlebars::new();
     handlebars.register_template_string("single_report", SINGLE_REPORT_TEMPLATE)?;
     handlebars.register_template_string("batch_dashboard", BATCH_DASHBOARD_TEMPLATE)?;
@@ -27,7 +28,10 @@ fn init_handlebars() -> Result<Handlebars<'static>> {
 }
 
 /// Generate HTML report for a single file
-pub fn generate_html_report(report: &QualityReport, output_path: &Path) -> Result<()> {
+pub fn generate_html_report(
+    report: &QualityReport,
+    output_path: &Path,
+) -> Result<(), DataProfilerError> {
     let handlebars = init_handlebars()?;
     let mut context = build_report_context(report);
 
@@ -261,7 +265,10 @@ fn build_column_profiles_context(columns: &[ColumnProfile]) -> Vec<serde_json::V
 }
 
 /// Generate an aggregated HTML report for batch processing results
-pub fn generate_batch_html_report(batch_result: &BatchResult, output_path: &Path) -> Result<()> {
+pub fn generate_batch_html_report(
+    batch_result: &BatchResult,
+    output_path: &Path,
+) -> Result<(), DataProfilerError> {
     let handlebars = init_handlebars()?;
     let mut context = build_batch_context(batch_result);
 

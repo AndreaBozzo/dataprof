@@ -1,15 +1,15 @@
-use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
 use crate::analysis::analyze_column;
+use crate::core::errors::DataProfilerError;
 use crate::types::{
     ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
 };
 
 // Simple JSON/JSONL support
-pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
+pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>, DataProfilerError> {
     let content = std::fs::read_to_string(file_path)?;
 
     // Try to detect format: JSON array vs JSONL
@@ -71,7 +71,7 @@ pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>> {
 }
 
 // JSON analysis with quality checking
-pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
+pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path)?;
     let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
 
@@ -148,8 +148,7 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport> {
     }
 
     // Calculate comprehensive ISO 8000/25012 quality metrics
-    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
-        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
+    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let num_rows = records.len();

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use std::collections::HashMap;
 
 // ============================================================================
@@ -381,7 +381,7 @@ impl DataQualityMetrics {
     pub fn calculate_from_data(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<Self> {
+    ) -> Result<Self, DataProfilerError> {
         // Delegate to the specialized metrics calculator module with default ISO thresholds
         // This follows the Single Responsibility Principle
         let calculator = crate::analysis::MetricsCalculator::new();

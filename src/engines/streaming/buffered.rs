@@ -10,12 +10,12 @@
 //!
 //! REFACTORED: Eliminated God Object pattern (was 350 lines doing everything)
 
-use anyhow::Result;
 use csv::{ByteRecord, ReaderBuilder};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::core::errors::DataProfilerError;
 use crate::core::performance::PerformanceIntelligence;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::chunk_processor::ChunkProcessor;
@@ -84,7 +84,7 @@ impl BufferedProfiler {
     /// Analyze a file using streaming approach
     ///
     /// REFACTORED: From 224 lines to ~80 lines by delegating to specialized modules
-    pub fn analyze_file(&mut self, file_path: &Path) -> Result<QualityReport> {
+    pub fn analyze_file(&mut self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         let metadata = std::fs::metadata(file_path)?;
         let file_size_bytes = metadata.len();
         let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
@@ -193,7 +193,7 @@ impl BufferedProfiler {
 
         // Build report - ReportBuilder handles all report construction
         let report_builder = ReportBuilder::new(file_path, file_size_mb, estimated_total_rows);
-        report_builder.build(all_column_data, chunk_processor.stats())
+        Ok(report_builder.build(all_column_data, chunk_processor.stats())?)
     }
 
     /// Setup progress tracking - delegates to ProgressManager
@@ -284,7 +284,7 @@ impl BufferedProfiler {
     }
 
     /// Estimate total rows by sampling first 1000 lines
-    fn estimate_total_rows(&self, path: &Path) -> Result<Option<usize>> {
+    fn estimate_total_rows(&self, path: &Path) -> Result<Option<usize>, DataProfilerError> {
         use std::fs::File;
         use std::io::{BufRead, BufReader};
 

@@ -1,8 +1,8 @@
-use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::analysis::patterns::looks_like_date;
+use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
@@ -54,7 +54,7 @@ impl IncrementalProfiler {
         self
     }
 
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport> {
+    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let reader = MemoryMappedCsvReader::new(file_path)?;
 
@@ -309,6 +309,7 @@ impl Default for IncrementalProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
