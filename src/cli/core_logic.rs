@@ -10,7 +10,7 @@ use anyhow::Result;
 use std::path::Path;
 
 use dataprof::{
-    ChunkSize, DataProfiler, ProgressInfo,
+    ChunkSize, EngineType, Profiler, ProgressInfo,
     core::{DataprofConfig, sampling::SamplingStrategy},
     types::QualityReport,
 };
@@ -43,9 +43,12 @@ impl ProfilerBuilder {
         Self { options, config }
     }
 
-    /// Build a configured streaming profiler with all enhancements
-    pub fn build_streaming(&self, _file_path: &Path) -> Result<DataProfiler> {
-        let mut profiler = DataProfiler::streaming();
+    /// Build a configured profiler with all enhancements
+    ///
+    /// Uses Incremental engine to ensure chunk_size, sampling, and progress
+    /// callbacks are properly forwarded.
+    pub fn build_streaming(&self, _file_path: &Path) -> Result<Profiler> {
+        let mut profiler = Profiler::new().engine(EngineType::Incremental);
 
         // Configure chunk size (from CLI arg or config)
         let chunk_size = if let Some(size) = self.options.chunk_size {
@@ -148,7 +151,7 @@ pub fn analyze_file_with_options(
 
         // Try streaming profiler first
         match builder.build_streaming(file_path) {
-            Ok(mut profiler) => {
+            Ok(profiler) => {
                 match profiler.analyze_file(file_path) {
                     Ok(report) => {
                         // Clear progress line if it was shown

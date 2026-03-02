@@ -32,14 +32,14 @@ pub struct ReportArgs {
     pub threshold_profile: String,
 }
 use anyhow::{Context, Result};
-use dataprof::{DataProfiler, generate_html_report};
+use dataprof::{Profiler, generate_html_report};
 use std::fs;
 
 pub fn execute(args: &ReportArgs) -> Result<()> {
     log::info!("Generating Report...");
 
-    // Use auto() to support CSV, JSON, and Parquet files automatically
-    let profiler = DataProfiler::auto();
+    // Use Profiler with Auto engine to support CSV, Parquet, and JSON files automatically
+    let profiler = Profiler::new();
     let report = profiler.analyze_file(&args.file)?;
 
     let output_path = args.output.clone().unwrap_or_else(|| {
