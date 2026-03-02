@@ -157,7 +157,7 @@ jobs:
       - name: Generate coverage
         run: |
           echo "Generating code coverage..."
-          cargo tarpaulin --out Lcov --output-dir coverage --timeout 600 --all-features --exclude-files target/* tests/* benches/* examples/* src/main.rs
+          cargo tarpaulin --out Lcov --output-dir coverage --timeout 900 --all-features --exclude-files target/* tests/* benches/* examples/* src/main.rs
           echo "Coverage generated"
 
       - name: Upload coverage (Codecov)
