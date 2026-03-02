@@ -2,14 +2,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::core::errors::DataProfilerError;
-use crate::engines::selection::{EngineSelector, EngineType, ProcessingType};
+use crate::engines::selection::{EngineSelector, InternalEngineType, ProcessingType};
 use crate::engines::streaming::{BufferedProfiler, IncrementalProfiler, MappedProfiler};
 use crate::types::QualityReport;
 
 /// Performance metrics for engine execution
 #[derive(Debug, Clone)]
 pub struct EnginePerformance {
-    pub engine_type: EngineType,
+    pub engine_type: InternalEngineType,
     pub execution_time_ms: u128,
     pub memory_usage_mb: f64,
     pub rows_per_second: f64,
@@ -27,13 +27,13 @@ impl EngineLogger {
         Self { enabled }
     }
 
-    pub fn log_selection(&self, engine: &EngineType, reasoning: &str) {
+    pub fn log_selection(&self, engine: &InternalEngineType, reasoning: &str) {
         if self.enabled {
             log::info!("Engine selected: {:?} - {}", engine, reasoning);
         }
     }
 
-    pub fn log_fallback(&self, from: &EngineType, to: &EngineType, reason: &str) {
+    pub fn log_fallback(&self, from: &InternalEngineType, to: &InternalEngineType, reason: &str) {
         if self.enabled {
             log::warn!("Fallback: {:?} → {:?} - {}", from, to, reason);
         }
@@ -124,7 +124,7 @@ impl AdaptiveProfiler {
     }
 
     /// Select the best engine for a file without running benchmarks
-    pub fn select_engine(&self, file_path: &Path) -> Result<EngineType, DataProfilerError> {
+    pub fn select_engine(&self, file_path: &Path) -> Result<InternalEngineType, DataProfilerError> {
         let characteristics = self.selector.analyze_file_characteristics(file_path)?;
         let recommendation = self
             .selector
@@ -248,26 +248,26 @@ impl AdaptiveProfiler {
     /// Try to execute analysis with a specific engine
     fn try_engine(
         &self,
-        engine_type: &EngineType,
+        engine_type: &InternalEngineType,
         file_path: &Path,
     ) -> Result<QualityReport, DataProfilerError> {
         let start = Instant::now();
 
         let result = match engine_type {
-            EngineType::Arrow => {
+            InternalEngineType::Arrow => {
                 use crate::engines::columnar::ArrowProfiler;
                 let profiler = ArrowProfiler::new();
                 profiler.analyze_csv_file(file_path)
             }
-            EngineType::Incremental => {
+            InternalEngineType::Incremental => {
                 let profiler = IncrementalProfiler::new();
                 profiler.analyze_file(file_path)
             }
-            EngineType::MemoryMapped => {
+            InternalEngineType::MemoryMapped => {
                 let profiler = MappedProfiler::new();
                 profiler.analyze_file(file_path)
             }
-            EngineType::Buffered => {
+            InternalEngineType::Buffered => {
                 let mut profiler = BufferedProfiler::new();
                 profiler.analyze_file(file_path)
             }

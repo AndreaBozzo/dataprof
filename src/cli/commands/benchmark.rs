@@ -4,7 +4,7 @@ use colored::*;
 use std::path::{Path, PathBuf};
 use sysinfo::System;
 
-use dataprof::AdaptiveProfiler;
+use dataprof::engines::AdaptiveProfiler;
 
 /// Benchmark arguments
 #[derive(Debug, Args)]

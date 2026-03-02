@@ -20,11 +20,12 @@ pub mod database;
 #[cfg(feature = "python")]
 pub mod python;
 
-// Apache Arrow integration (always enabled)
-pub use engines::columnar::ArrowProfiler;
-
-// v0.3.0 public API - main exports
-pub use api::{DataProfiler, quick_quality_check, quick_quality_check_source};
+// v0.6.0 unified public API
+#[allow(deprecated)]
+pub use api::DataProfiler;
+pub use api::{
+    EngineType, Profiler, ProfilerConfig, quick_quality_check, quick_quality_check_source,
+};
 pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
@@ -35,9 +36,8 @@ pub use core::config::{DataprofConfig, DataprofConfigBuilder};
 pub use core::exit_codes;
 pub use core::validation::{InputValidator, ValidationError};
 
-// Engine exports
+// Progress tracking (needed for progress callbacks)
 pub use engines::streaming::ProgressInfo;
-pub use engines::{AdaptiveProfiler, EnginePerformance, ProcessingType};
 
 #[cfg(feature = "datafusion")]
 pub use engines::DataFusionLoader;

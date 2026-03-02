@@ -34,14 +34,14 @@ pub enum ProcessingType {
 /// Engine selection recommendation with confidence score
 #[derive(Debug, Clone)]
 pub struct EngineRecommendation {
-    pub primary_engine: EngineType,
-    pub fallback_engines: Vec<EngineType>,
+    pub primary_engine: InternalEngineType,
+    pub fallback_engines: Vec<InternalEngineType>,
     pub confidence: f64, // 0.0 = low, 1.0 = high
     pub reasoning: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum EngineType {
+pub enum InternalEngineType {
     Arrow,
     Incremental,
     MemoryMapped,
@@ -222,19 +222,19 @@ impl EngineSelector {
 
         // Score each engine type
         scores.insert(
-            EngineType::Arrow,
+            InternalEngineType::Arrow,
             self.score_arrow(characteristics, &processing_type),
         );
         scores.insert(
-            EngineType::Incremental,
+            InternalEngineType::Incremental,
             self.score_incremental(characteristics, &processing_type),
         );
         scores.insert(
-            EngineType::MemoryMapped,
+            InternalEngineType::MemoryMapped,
             self.score_memory_mapped(characteristics, &processing_type),
         );
         scores.insert(
-            EngineType::Buffered,
+            InternalEngineType::Buffered,
             self.score_buffered(characteristics, &processing_type),
         );
 
@@ -387,25 +387,25 @@ impl EngineSelector {
 
     fn generate_reasoning(
         &self,
-        engine: &EngineType,
+        engine: &InternalEngineType,
         characteristics: &FileCharacteristics,
         _processing_type: &ProcessingType,
     ) -> String {
         match engine {
-            EngineType::Arrow => format!(
+            InternalEngineType::Arrow => format!(
                 "Arrow selected for {:.1}MB file with {} columns. Optimal for columnar processing and aggregations.",
                 characteristics.file_size_mb,
                 characteristics.estimated_columns.unwrap_or(0)
             ),
-            EngineType::Incremental => format!(
+            InternalEngineType::Incremental => format!(
                 "Incremental profiler selected for {:.1}MB file due to memory constraints (pressure: {:.1}) or streaming requirements.",
                 characteristics.file_size_mb, self.system_resources.memory_pressure
             ),
-            EngineType::MemoryMapped => format!(
+            InternalEngineType::MemoryMapped => format!(
                 "Memory-mapped profiler selected for {:.1}MB file with moderate complexity ({:.2}).",
                 characteristics.file_size_mb, characteristics.complexity_score
             ),
-            EngineType::Buffered => format!(
+            InternalEngineType::Buffered => format!(
                 "Buffered profiler selected for {:.1}MB file with low complexity ({:.2}).",
                 characteristics.file_size_mb, characteristics.complexity_score
             ),
@@ -449,7 +449,7 @@ mod tests {
         // Small files should prefer buffered profiler
         assert!(matches!(
             recommendation.primary_engine,
-            EngineType::Buffered
+            InternalEngineType::Buffered
         ));
 
         Ok(())
@@ -478,7 +478,10 @@ mod tests {
             selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
         // Large files with many numeric columns should prefer Arrow
-        assert!(matches!(recommendation.primary_engine, EngineType::Arrow));
+        assert!(matches!(
+            recommendation.primary_engine,
+            InternalEngineType::Arrow
+        ));
     }
 
     #[test]
@@ -505,7 +508,7 @@ mod tests {
         // Memory constrained + streaming should prefer Incremental
         assert!(matches!(
             recommendation.primary_engine,
-            EngineType::Incremental
+            InternalEngineType::Incremental
         ));
     }
 }
