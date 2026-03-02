@@ -38,7 +38,7 @@ use std::fs;
 pub fn execute(args: &ReportArgs) -> Result<()> {
     log::info!("Generating Report...");
 
-    // Use Profiler with Auto engine to support CSV, JSON, and Parquet files automatically
+    // Use Profiler with Auto engine to support CSV, Parquet, and JSON files automatically
     let profiler = Profiler::new();
     let report = profiler.analyze_file(&args.file)?;
 

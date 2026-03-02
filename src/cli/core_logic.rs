@@ -10,7 +10,7 @@ use anyhow::Result;
 use std::path::Path;
 
 use dataprof::{
-    ChunkSize, Profiler, ProgressInfo,
+    ChunkSize, EngineType, Profiler, ProgressInfo,
     core::{DataprofConfig, sampling::SamplingStrategy},
     types::QualityReport,
 };
@@ -44,8 +44,11 @@ impl ProfilerBuilder {
     }
 
     /// Build a configured profiler with all enhancements
+    ///
+    /// Uses Incremental engine to ensure chunk_size, sampling, and progress
+    /// callbacks are properly forwarded.
     pub fn build_streaming(&self, _file_path: &Path) -> Result<Profiler> {
-        let mut profiler = Profiler::new();
+        let mut profiler = Profiler::new().engine(EngineType::Incremental);
 
         // Configure chunk size (from CLI arg or config)
         let chunk_size = if let Some(size) = self.options.chunk_size {

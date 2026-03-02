@@ -5,7 +5,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::ProgressInfo;
 use crate::engines::{AdaptiveProfiler, ProcessingType};
-use crate::types::{DataSource, QualityReport};
+use crate::types::{DataSource, FileFormat, QualityReport};
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub struct ProfilerConfig {
     pub engine: EngineType,
     pub chunk_size: ChunkSize,
     pub sampling: SamplingStrategy,
+    pub memory_limit_mb: Option<usize>,
 }
 
 impl Default for ProfilerConfig {
@@ -33,6 +34,7 @@ impl Default for ProfilerConfig {
             engine: EngineType::Auto,
             chunk_size: ChunkSize::Adaptive,
             sampling: SamplingStrategy::None,
+            memory_limit_mb: None,
         }
     }
 }
@@ -99,10 +101,17 @@ impl Profiler {
         self
     }
 
+    /// Set the memory limit in megabytes (applies to Incremental and Columnar engines)
+    pub fn memory_limit_mb(mut self, mb: usize) -> Self {
+        self.config.memory_limit_mb = Some(mb);
+        self
+    }
+
     /// Set a progress callback for real-time updates
     ///
-    /// Note: Progress callbacks are effective with `EngineType::Incremental`.
-    /// With `EngineType::Auto`, callbacks may not be forwarded to all engines.
+    /// Note: Progress callbacks are only effective with `EngineType::Incremental`.
+    /// With `EngineType::Auto` and `EngineType::Columnar`, progress callbacks are
+    /// ignored and will not be invoked.
     pub fn progress_callback<F>(mut self, callback: F) -> Self
     where
         F: Fn(ProgressInfo) + Send + Sync + 'static,
@@ -112,12 +121,16 @@ impl Profiler {
     }
 
     /// Enable enhanced progress tracking with memory monitoring
+    ///
+    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
     pub fn with_enhanced_progress(mut self, leak_threshold_mb: usize) -> Self {
         self.enhanced_progress = Some(leak_threshold_mb);
         self
     }
 
     /// Enable enhanced progress with smart defaults based on terminal context
+    ///
+    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
     pub fn with_smart_progress(mut self) -> Self {
         use crate::output::supports_enhanced_output;
 
@@ -135,10 +148,7 @@ impl Profiler {
         let path = file_path.as_ref();
 
         match self.config.engine {
-            EngineType::Auto => {
-                let profiler = AdaptiveProfiler::new().with_logging(false);
-                profiler.analyze_file_with_context(path, ProcessingType::QualityFocused)
-            }
+            EngineType::Auto => self.run_auto(path),
             EngineType::Incremental => self.run_incremental(path),
             EngineType::Columnar => self.run_columnar(path),
         }
@@ -156,8 +166,64 @@ impl Profiler {
         }
     }
 
+    /// Detect file format from extension
+    fn detect_format(file_path: &Path) -> FileFormat {
+        file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| match ext.to_ascii_lowercase().as_str() {
+                "csv" | "tsv" | "txt" => FileFormat::Csv,
+                "json" => FileFormat::Json,
+                "jsonl" | "ndjson" => FileFormat::Jsonl,
+                "parquet" => FileFormat::Parquet,
+                other => FileFormat::Unknown(other.to_string()),
+            })
+            .unwrap_or(FileFormat::Csv) // default to CSV for extensionless files
+    }
+
+    /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON
+    fn run_auto(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+        let format = Self::detect_format(file_path);
+
+        // AdaptiveProfiler handles Parquet and CSV natively, but not JSON
+        match format {
+            FileFormat::Json | FileFormat::Jsonl => {
+                crate::parsers::json::analyze_json_with_quality(file_path)
+            }
+            _ => {
+                let profiler = AdaptiveProfiler::new().with_logging(false);
+                profiler.analyze_file_with_context(file_path, ProcessingType::QualityFocused)
+            }
+        }
+    }
+
     /// Dispatch to IncrementalProfiler with all configured options
     fn run_incremental(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+        let format = Self::detect_format(file_path);
+
+        // IncrementalProfiler only supports CSV
+        match format {
+            FileFormat::Json | FileFormat::Jsonl => {
+                return crate::parsers::json::analyze_json_with_quality(file_path);
+            }
+            FileFormat::Parquet => {
+                #[cfg(feature = "parquet")]
+                {
+                    return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    return Err(DataProfilerError::FeatureNotEnabled {
+                        feature: "parquet".to_string(),
+                        message: "Parquet file detected but parquet feature is not enabled. \
+                                  Recompile with --features parquet"
+                            .to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+
         use crate::engines::streaming::IncrementalProfiler;
 
         let mut profiler = IncrementalProfiler::new()
@@ -174,40 +240,36 @@ impl Profiler {
 
     /// Dispatch to ArrowProfiler for CSV, or fall back to native parsers for other formats
     fn run_columnar(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-        // Check file format — ArrowProfiler currently only supports CSV
-        let is_parquet = file_path
-            .extension()
-            .map(|ext| ext.eq_ignore_ascii_case("parquet"))
-            .unwrap_or(false);
+        let format = Self::detect_format(file_path);
 
-        let is_json = file_path
-            .extension()
-            .map(|ext| ext.eq_ignore_ascii_case("json") || ext.eq_ignore_ascii_case("jsonl"))
-            .unwrap_or(false);
-
-        if is_parquet {
-            #[cfg(feature = "parquet")]
-            {
-                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+        match format {
+            FileFormat::Parquet => {
+                #[cfg(feature = "parquet")]
+                {
+                    return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    return Err(DataProfilerError::FeatureNotEnabled {
+                        feature: "parquet".to_string(),
+                        message: "Parquet file detected but parquet feature is not enabled. \
+                                  Recompile with --features parquet"
+                            .to_string(),
+                    });
+                }
             }
-            #[cfg(not(feature = "parquet"))]
-            {
-                return Err(DataProfilerError::FeatureNotEnabled {
-                    feature: "parquet".to_string(),
-                    message: "Parquet file detected but parquet feature is not enabled. \
-                              Recompile with --features parquet"
-                        .to_string(),
-                });
+            FileFormat::Json | FileFormat::Jsonl => {
+                return crate::parsers::json::analyze_json_with_quality(file_path);
             }
-        }
-
-        if is_json {
-            return crate::parsers::json::analyze_json_with_quality(file_path);
+            _ => {}
         }
 
         // CSV — use ArrowProfiler
         use crate::engines::columnar::ArrowProfiler;
-        let profiler = ArrowProfiler::new();
+        let mut profiler = ArrowProfiler::new();
+        if let Some(mb) = self.config.memory_limit_mb {
+            profiler = profiler.memory_limit_mb(mb);
+        }
         profiler.analyze_csv_file(file_path)
     }
 
