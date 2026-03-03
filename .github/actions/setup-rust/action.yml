@@ -31,7 +31,7 @@ runs:
       if: steps.rust-install.outcome == 'failure'
       shell: bash
       run: |
-        echo "⚠️ Primary Rust installation failed, trying manual installation..."
+        echo "Primary Rust installation failed, trying manual installation..."
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         source ~/.cargo/env
         if [ -n "${{ inputs.components }}" ]; then
@@ -57,7 +57,7 @@ runs:
     - name: Verify Rust installation
       shell: bash
       run: |
-        echo "🔍 Rust environment verification..."
+        echo "Rust environment verification..."
         rustc --version
         cargo --version
         echo "Components: $(rustup component list --installed)"

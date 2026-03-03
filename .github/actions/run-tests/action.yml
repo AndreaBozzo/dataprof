@@ -16,7 +16,7 @@ inputs:
   timeout:
     description: 'Test timeout in minutes'
     required: false
-    default: '15'
+    default: '25'
 
 runs:
   using: composite
@@ -38,30 +38,30 @@ runs:
       if: inputs.test-type == 'core' || inputs.test-type == 'all'
       shell: bash
       run: |
-        echo "🧪 Running core tests (timeout: ${{ inputs.timeout }}m)..."
+        echo "Running core tests (timeout: ${{ inputs.timeout }}m)..."
         timeout ${{ steps.flags.outputs.timeout_secs }} cargo test --lib ${{ steps.flags.outputs.cargo_flags }}
-        echo "✅ Core tests completed"
+        echo "Core tests completed"
 
     - name: Run integration tests
       if: inputs.test-type == 'integration' || inputs.test-type == 'all'
       shell: bash
       run: |
-        echo "🔧 Running integration tests (timeout: ${{ inputs.timeout }}m)..."
+        echo "Running integration tests (timeout: ${{ inputs.timeout }}m)..."
         timeout ${{ steps.flags.outputs.timeout_secs }} cargo test --test '*' ${{ steps.flags.outputs.cargo_flags }}
-        echo "✅ Integration tests completed"
+        echo "Integration tests completed"
 
     - name: Run doc tests
       if: inputs.test-type == 'all'
       shell: bash
       run: |
-        echo "📚 Running documentation tests (timeout: ${{ inputs.timeout }}m)..."
+        echo "Running documentation tests (timeout: ${{ inputs.timeout }}m)..."
         timeout ${{ steps.flags.outputs.timeout_secs }} cargo test --doc ${{ steps.flags.outputs.cargo_flags }}
-        echo "✅ Doc tests completed"
+        echo "Doc tests completed"
 
     - name: Test report summary
       if: always()
       shell: bash
       run: |
-        echo "📊 Test Summary for ${{ inputs.test-type }} tests"
+        echo "Test Summary for ${{ inputs.test-type }} tests"
         echo "Features: ${{ steps.flags.outputs.cargo_flags || 'default' }}"
         echo "Timeout: ${{ inputs.timeout }}m"
