@@ -26,7 +26,7 @@ where
     serializer.serialize_f64((value * 10000.0).round() / 10000.0)
 }
 
-/// Round Option<f64> to 2 decimal places
+/// Round `Option<f64>` to 2 decimal places
 /// Returns null for None or non-finite values
 pub fn round_2_opt<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -41,7 +41,7 @@ where
     }
 }
 
-/// Round Option<f64> to 4 decimal places
+/// Round `Option<f64>` to 4 decimal places
 /// Returns null for None or non-finite values
 pub fn round_4_opt<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
 where

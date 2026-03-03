@@ -199,8 +199,8 @@ impl DataSource {
     /// Returns:
     /// - For files: the file path
     /// - For queries: "engine: truncated_statement"
-    /// - For dataframes: "library[name]"
-    /// - For streams: "system[topic]-batch:id"
+    /// - For dataframes: `library[name]`
+    /// - For streams: `system[topic]-batch:id`
     pub fn identifier(&self) -> String {
         match self {
             Self::File { path, .. } => path.clone(),

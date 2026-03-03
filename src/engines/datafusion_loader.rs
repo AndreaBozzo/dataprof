@@ -165,7 +165,7 @@ impl DataFusionLoader {
     /// so far.
     ///
     /// For batch processing where you only need the final result,
-    /// use [`profile_query`] instead.
+    /// use [`DataFusionLoader::profile_query`] instead.
     ///
     /// # Example
     /// ```ignore
