@@ -51,7 +51,7 @@ jobs:
             test-type: all
             features: ""
             all-features: true
-            timeout: 15
+            timeout: 25
             skip-on-draft: true
     steps:
       - name: Checkout code
