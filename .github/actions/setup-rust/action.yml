@@ -6,31 +6,43 @@ inputs:
     required: false
     default: 'rust'
   components:
-    description: 'Additional rustup components'
+    description: 'Additional rustup components (comma-separated)'
     required: false
     default: 'rustfmt,clippy'
+  targets:
+    description: 'Additional Rust targets to install (e.g., "aarch64-unknown-linux-gnu")'
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
     - name: Install Rust toolchain
+      id: rust-install
       uses: dtolnay/rust-toolchain@stable
       with:
         components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+      continue-on-error: true
       env:
         RUSTUP_MAX_RETRIES: 3
 
     - name: Rust toolchain fallback
-      if: failure()
+      if: steps.rust-install.outcome == 'failure'
       shell: bash
       run: |
         echo "⚠️ Primary Rust installation failed, trying manual installation..."
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         source ~/.cargo/env
-        rustup component add $(echo "${{ inputs.components }}" | tr ',' ' ')
+        if [ -n "${{ inputs.components }}" ]; then
+          rustup component add $(echo "${{ inputs.components }}" | tr ',' ' ')
+        fi
+        if [ -n "${{ inputs.targets }}" ]; then
+          rustup target add $(echo "${{ inputs.targets }}" | tr ',' ' ')
+        fi
 
     - name: Cache Rust dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           ~/.cargo/registry/index
@@ -40,10 +52,6 @@ runs:
         key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-v3
         restore-keys: |
           ${{ inputs.cache-prefix }}-${{ runner.os }}-
-          rust-ci-${{ runner.os }}-
-          rust-dev-${{ runner.os }}-
-          rust-bench-${{ runner.os }}-
-          rust-security-${{ runner.os }}-
           rust-${{ runner.os }}-
 
     - name: Verify Rust installation

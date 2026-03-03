@@ -2,7 +2,7 @@ name: 'Run Tests'
 description: 'Execute DataProfiler test suite with configurable features'
 inputs:
   test-type:
-    description: 'Type of tests to run (core, features, integration, all)'
+    description: 'Type of tests to run (core, integration, all)'
     required: false
     default: 'core'
   features:
@@ -21,34 +21,47 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Run core tests
-      if: inputs.test-type == 'core' || inputs.test-type == 'all' || inputs.test-type == 'features'
+    - name: Compute cargo feature flags
+      id: flags
       shell: bash
       run: |
-        echo "🧪 Running core tests..."
-        cargo test --lib ${{ inputs.all-features == 'true' && '--all-features' || (inputs.features && format('--features {0}', inputs.features) || '') }}
+        if [ "${{ inputs.all-features }}" = "true" ]; then
+          echo "cargo_flags=--all-features" >> "$GITHUB_OUTPUT"
+        elif [ -n "${{ inputs.features }}" ]; then
+          echo "cargo_flags=--features ${{ inputs.features }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "cargo_flags=" >> "$GITHUB_OUTPUT"
+        fi
+        echo "timeout_secs=$((60 * ${{ inputs.timeout }}))" >> "$GITHUB_OUTPUT"
+
+    - name: Run core tests
+      if: inputs.test-type == 'core' || inputs.test-type == 'all'
+      shell: bash
+      run: |
+        echo "🧪 Running core tests (timeout: ${{ inputs.timeout }}m)..."
+        timeout ${{ steps.flags.outputs.timeout_secs }} cargo test --lib ${{ steps.flags.outputs.cargo_flags }}
         echo "✅ Core tests completed"
 
     - name: Run integration tests
       if: inputs.test-type == 'integration' || inputs.test-type == 'all'
       shell: bash
       run: |
-        echo "🔧 Running integration tests..."
-        cargo test --test '*' ${{ inputs.all-features == 'true' && '--all-features' || (inputs.features && format('--features {0}', inputs.features) || '') }}
+        echo "🔧 Running integration tests (timeout: ${{ inputs.timeout }}m)..."
+        timeout ${{ steps.flags.outputs.timeout_secs }} cargo test --test '*' ${{ steps.flags.outputs.cargo_flags }}
         echo "✅ Integration tests completed"
 
     - name: Run doc tests
       if: inputs.test-type == 'all'
       shell: bash
       run: |
-        echo "📚 Running documentation tests..."
-        cargo test --doc ${{ inputs.all-features == 'true' && '--all-features' || (inputs.features && format('--features {0}', inputs.features) || '') }}
+        echo "📚 Running documentation tests (timeout: ${{ inputs.timeout }}m)..."
+        timeout ${{ steps.flags.outputs.timeout_secs }} cargo test --doc ${{ steps.flags.outputs.cargo_flags }}
         echo "✅ Doc tests completed"
 
     - name: Test report summary
+      if: always()
       shell: bash
       run: |
         echo "📊 Test Summary for ${{ inputs.test-type }} tests"
-        echo "Features mode: ${{ inputs.all-features == 'true' && 'all-features' || (inputs.features || 'default') }}"
+        echo "Features: ${{ steps.flags.outputs.cargo_flags || 'default' }}"
         echo "Timeout: ${{ inputs.timeout }}m"
-        echo "✅ All tests passed successfully"

@@ -44,23 +44,10 @@ jobs:
         uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
+          cache-prefix: rust-bench
           components: rustfmt
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-bench-
-            ${{ runner.os }}-cargo-
 
       - name: Build benchmarks
         run: cargo bench --no-run

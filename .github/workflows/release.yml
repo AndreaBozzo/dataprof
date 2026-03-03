@@ -140,9 +140,11 @@ jobs:
     steps:
     - uses: actions/checkout@v6.0.2
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust
+      uses: ./.github/actions/setup-rust
       with:
+        cache-prefix: rust-release
+        components: ''
         targets: ${{ matrix.target }}
 
     - name: Install cross-compilation tools
@@ -215,7 +217,11 @@ jobs:
     needs: create-release
     steps:
     - uses: actions/checkout@v6.0.2
-    - uses: dtolnay/rust-toolchain@stable
+    - name: Setup Rust
+      uses: ./.github/actions/setup-rust
+      with:
+        cache-prefix: rust-publish
+        components: ''
 
     - name: Publish to crates.io
       run: |

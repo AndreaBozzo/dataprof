@@ -34,14 +34,10 @@ jobs:
         uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
-          components: rustfmt, clippy
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2.8.2
-        with:
-          prefix-key: security
+          cache-prefix: rust-security
+          components: rustfmt,clippy
 
       - name: Run cargo deny
         run: |
@@ -85,10 +81,10 @@ jobs:
         uses: actions/checkout@v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2.8.2
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-security
+          components: ''
 
       - name: Run cargo tree
         run: cargo tree --depth 1
