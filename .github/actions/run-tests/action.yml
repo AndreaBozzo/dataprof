@@ -2,13 +2,17 @@ name: 'Run Tests'
 description: 'Execute DataProfiler test suite with configurable features'
 inputs:
   test-type:
-    description: 'Type of tests to run (core, integration, all)'
+    description: 'Type of tests to run (core, features, integration, all)'
     required: false
     default: 'core'
   features:
     description: 'Cargo features to enable'
     required: false
     default: ''
+  all-features:
+    description: 'Enable all cargo features'
+    required: false
+    default: 'false'
   timeout:
     description: 'Test timeout in minutes'
     required: false
@@ -18,11 +22,11 @@ runs:
   using: composite
   steps:
     - name: Run core tests
-      if: inputs.test-type == 'core' || inputs.test-type == 'all'
+      if: inputs.test-type == 'core' || inputs.test-type == 'all' || inputs.test-type == 'features'
       shell: bash
       run: |
         echo "🧪 Running core tests..."
-        cargo test --lib ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        cargo test --lib ${{ inputs.all-features == 'true' && '--all-features' || (inputs.features && format('--features {0}', inputs.features) || '') }}
         echo "✅ Core tests completed"
 
     - name: Run integration tests
@@ -30,7 +34,7 @@ runs:
       shell: bash
       run: |
         echo "🔧 Running integration tests..."
-        cargo test --test '*' ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        cargo test --test '*' ${{ inputs.all-features == 'true' && '--all-features' || (inputs.features && format('--features {0}', inputs.features) || '') }}
         echo "✅ Integration tests completed"
 
     - name: Run doc tests
@@ -38,13 +42,13 @@ runs:
       shell: bash
       run: |
         echo "📚 Running documentation tests..."
-        cargo test --doc ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
+        cargo test --doc ${{ inputs.all-features == 'true' && '--all-features' || (inputs.features && format('--features {0}', inputs.features) || '') }}
         echo "✅ Doc tests completed"
 
     - name: Test report summary
       shell: bash
       run: |
         echo "📊 Test Summary for ${{ inputs.test-type }} tests"
-        echo "Features: ${{ inputs.features || 'default' }}"
+        echo "Features mode: ${{ inputs.all-features == 'true' && 'all-features' || (inputs.features || 'default') }}"
         echo "Timeout: ${{ inputs.timeout }}m"
         echo "✅ All tests passed successfully"
