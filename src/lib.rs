@@ -39,6 +39,12 @@ pub use core::validation::{InputValidator, ValidationError};
 // Progress tracking (needed for progress callbacks)
 pub use engines::streaming::ProgressInfo;
 
+// Async streaming engine (feature-gated)
+#[cfg(feature = "async-streaming")]
+pub use engines::streaming::{
+    AsyncDataSource, AsyncSourceInfo, AsyncStreamingProfiler, BytesSource,
+};
+
 #[cfg(feature = "datafusion")]
 pub use engines::DataFusionLoader;
 
