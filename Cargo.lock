@@ -1619,6 +1619,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
+ "bytes",
  "chrono",
  "clap",
  "colored",
