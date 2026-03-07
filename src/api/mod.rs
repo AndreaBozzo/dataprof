@@ -26,6 +26,7 @@ pub struct ProfilerConfig {
     pub chunk_size: ChunkSize,
     pub sampling: SamplingStrategy,
     pub memory_limit_mb: Option<usize>,
+    pub format_override: Option<FileFormat>,
 }
 
 impl Default for ProfilerConfig {
@@ -35,6 +36,7 @@ impl Default for ProfilerConfig {
             chunk_size: ChunkSize::Adaptive,
             sampling: SamplingStrategy::None,
             memory_limit_mb: None,
+            format_override: None,
         }
     }
 }
@@ -107,6 +109,15 @@ impl Profiler {
         self
     }
 
+    /// Override automatic format detection.
+    ///
+    /// By default the format is inferred from the file extension. Use this method
+    /// when the extension is missing or misleading (e.g. a CSV file named `.dat`).
+    pub fn format(mut self, format: FileFormat) -> Self {
+        self.config.format_override = Some(format);
+        self
+    }
+
     /// Set a progress callback for real-time updates
     ///
     /// Note: Progress callbacks are only effective with `EngineType::Incremental`.
@@ -146,11 +157,16 @@ impl Profiler {
         file_path: P,
     ) -> Result<QualityReport, DataProfilerError> {
         let path = file_path.as_ref();
+        let format = self
+            .config
+            .format_override
+            .clone()
+            .unwrap_or_else(|| Self::detect_format(path));
 
         match self.config.engine {
-            EngineType::Auto => self.run_auto(path),
-            EngineType::Incremental => self.run_incremental(path),
-            EngineType::Columnar => self.run_columnar(path),
+            EngineType::Auto => self.run_auto(path, format),
+            EngineType::Incremental => self.run_incremental(path, format),
+            EngineType::Columnar => self.run_columnar(path, format),
         }
     }
 
@@ -182,9 +198,11 @@ impl Profiler {
     }
 
     /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON
-    fn run_auto(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-        let format = Self::detect_format(file_path);
-
+    fn run_auto(
+        &self,
+        file_path: &Path,
+        format: FileFormat,
+    ) -> Result<QualityReport, DataProfilerError> {
         // AdaptiveProfiler handles Parquet and CSV natively, but not JSON
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
@@ -198,9 +216,11 @@ impl Profiler {
     }
 
     /// Dispatch to IncrementalProfiler with all configured options
-    fn run_incremental(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-        let format = Self::detect_format(file_path);
-
+    fn run_incremental(
+        &self,
+        file_path: &Path,
+        format: FileFormat,
+    ) -> Result<QualityReport, DataProfilerError> {
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
@@ -239,9 +259,11 @@ impl Profiler {
     }
 
     /// Dispatch to ArrowProfiler for CSV, or fall back to native parsers for other formats
-    fn run_columnar(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-        let format = Self::detect_format(file_path);
-
+    fn run_columnar(
+        &self,
+        file_path: &Path,
+        format: FileFormat,
+    ) -> Result<QualityReport, DataProfilerError> {
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
@@ -286,6 +308,14 @@ impl Profiler {
     )]
     pub fn streaming() -> Self {
         Self::new().engine(EngineType::Incremental)
+    }
+
+    #[deprecated(
+        since = "0.6.0",
+        note = "Use `Profiler::new().engine(EngineType::Columnar)`"
+    )]
+    pub fn columnar() -> Self {
+        Self::new().engine(EngineType::Columnar)
     }
 }
 

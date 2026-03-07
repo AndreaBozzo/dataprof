@@ -2,11 +2,10 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
+use crate::analyze_json;
 use crate::analyze_json_with_quality as analyze_json_quality_rust;
-use crate::engines::AdaptiveProfiler;
 #[cfg(feature = "datafusion")]
 use crate::engines::DataFusionLoader;
-use crate::{analyze_csv_robust, analyze_json};
 
 #[cfg(feature = "parquet")]
 use crate::analyze_parquet_with_quality as analyze_parquet_quality_rust;
@@ -41,12 +40,10 @@ fn analyze_csv_internal(
 
     if let Some(engine_name) = engine {
         match engine_name.to_lowercase().as_str() {
-            "arrow" => {
-                let profiler = crate::engines::columnar::ArrowProfiler::new();
-                profiler
-                    .analyze_csv_file(path_obj)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Arrow analysis failed: {}", e)))
-            }
+            "arrow" | "columnar" => crate::api::Profiler::new()
+                .engine(crate::api::EngineType::Columnar)
+                .analyze_file(path_obj)
+                .map_err(|e| PyRuntimeError::new_err(format!("Columnar analysis failed: {}", e))),
             #[cfg(feature = "datafusion")]
             "datafusion" => {
                 // Create runtime for async DataFusion execution
@@ -70,23 +67,13 @@ fn analyze_csv_internal(
                 })
                 .map_err(|e| PyRuntimeError::new_err(format!("DataFusion analysis failed: {}", e)))
             }
-            "auto" | "adaptive" => {
-                let profiler = AdaptiveProfiler::new();
-                profiler.analyze_file(path_obj).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Adaptive analysis failed: {}", e))
-                })
-            }
-            _ => {
-                // Fallback to standard robust analysis for unknown engines (or maybe raise error?)
-                // For backward compatibility, maybe just log warning and use robust?
-                // Or better, standard logic:
-                analyze_csv_robust(path_obj)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))
-            }
+            _ => crate::api::Profiler::new()
+                .analyze_file(path_obj)
+                .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e))),
         }
     } else {
-        // Default behavior - currently robust csv
-        analyze_csv_robust(path_obj)
+        crate::api::Profiler::new()
+            .analyze_file(path_obj)
             .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))
     }
 }
@@ -142,7 +129,7 @@ pub fn analyze_parquet_with_quality_py(path: &str) -> PyResult<PyQualityReport> 
 /// Calculate data quality metrics for a CSV file
 #[pyfunction]
 pub fn calculate_data_quality_metrics(path: &str) -> PyResult<Option<PyDataQualityMetrics>> {
-    let quality_report = analyze_csv_robust(Path::new(path))
+    let quality_report = analyze_csv_internal(path, None)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
 
     Ok(Some(PyDataQualityMetrics::from(
