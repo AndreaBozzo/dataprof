@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::analysis::patterns::looks_like_date;
@@ -25,16 +24,16 @@ struct ParsedChunk {
 
 /// Async streaming profiler that accepts [`AsyncDataSource`] instead of file paths.
 ///
-/// Uses a bounded channel between an async reader task and a sync processing loop
-/// to provide natural backpressure: when the processor falls behind, the reader
-/// pauses, which propagates TCP pressure back to the data source.
+/// Uses a bounded channel between a blocking CSV reader task and an async
+/// processing loop to provide natural backpressure: when the processor falls
+/// behind, the reader pauses, which propagates TCP pressure back to the source.
 ///
 /// # Architecture
 ///
 /// ```text
-/// AsyncDataSource ──► [tokio::spawn reader task] ──► bounded mpsc ──► [processor loop]
-///                          reads bytes, parses CSV       capacity N       StreamingColumnCollection
-///                                                                        ──► QualityReport
+/// AsyncDataSource ──► [spawn_blocking: csv::Reader] ──► bounded mpsc ──► [processor loop]
+///                       SyncIoBridge + csv crate           capacity N      StreamingColumnCollection
+///                       (RFC 4180 compliant)                               ──► QualityReport
 /// ```
 pub struct AsyncStreamingProfiler {
     chunk_size: ChunkSize,
@@ -85,7 +84,7 @@ impl AsyncStreamingProfiler {
 
     /// Profile data from an async source, returning a [`QualityReport`].
     ///
-    /// Only CSV format is supported in this issue; JSON/Parquet support is #218.
+    /// Only CSV format is supported at this time; JSON/Parquet support is tracked in #218.
     pub async fn analyze_stream(
         &self,
         source: impl AsyncDataSource,
@@ -93,29 +92,48 @@ impl AsyncStreamingProfiler {
         let source_info = source.source_info();
 
         if source_info.format != FileFormat::Csv {
-            return Err(DataProfilerError::UnsupportedFormat {
-                format: format!("{:?}", source_info.format),
+            return Err(DataProfilerError::StreamingError {
+                message: format!(
+                    "AsyncStreamingProfiler only supports CSV at this time, got {:?}",
+                    source_info.format
+                ),
             });
         }
 
         let start = std::time::Instant::now();
         let reader = source.into_async_read().await?;
-        let buf_reader = BufReader::new(reader);
 
         let rows_per_chunk = self.rows_per_chunk();
         let (tx, rx) = mpsc::channel::<ParsedChunk>(self.channel_capacity);
 
-        // Spawn the async reader task
-        let reader_handle = tokio::spawn(Self::reader_task(buf_reader, tx, rows_per_chunk));
+        // Bridge the AsyncRead into a sync Read for the csv crate (RFC 4180 compliant).
+        // SyncIoBridge lets the blocking csv::Reader pull bytes from the async stream.
+        let sync_reader = tokio_util::io::SyncIoBridge::new(reader);
+
+        // Spawn the CSV reader on a blocking thread so it doesn't block the tokio runtime.
+        let reader_handle =
+            tokio::task::spawn_blocking(move || Self::reader_task(sync_reader, tx, rows_per_chunk));
 
         // Process chunks on the current task
-        let (_headers, column_stats, processed_rows, _total_bytes) =
-            self.process_chunks(rx, source_info.size_hint).await?;
+        let process_result = self.process_chunks(rx, source_info.size_hint).await;
+
+        // If processing failed, abort the reader task to avoid leaking it
+        let (_headers, column_stats, total_rows, sampled_rows, _total_bytes) = match process_result
+        {
+            Ok(result) => result,
+            Err(e) => {
+                reader_handle.abort();
+                return Err(e);
+            }
+        };
 
         // Wait for the reader task to finish and propagate any errors
         match reader_handle.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(e),
+            Err(join_err) if join_err.is_cancelled() => {
+                // We cancelled it ourselves — fine
+            }
             Err(join_err) => {
                 return Err(DataProfilerError::StreamingError {
                     message: format!("Reader task panicked: {}", join_err),
@@ -138,25 +156,31 @@ impl AsyncStreamingProfiler {
             batch_id: uuid::Uuid::new_v4().to_string(),
             partition: None,
             consumer_group: None,
-            source_system: StreamSourceSystem::Http,
+            source_system: source_info
+                .source_system
+                .unwrap_or(StreamSourceSystem::Http),
             session_id: None,
             first_record_at: None,
             last_record_at: None,
         };
 
-        let sampling_ratio = if processed_rows > 0 { 1.0 } else { 0.0 };
+        let sampling_ratio = if total_rows > 0 {
+            sampled_rows as f64 / total_rows as f64
+        } else {
+            0.0
+        };
 
         Ok(QualityReport::new(
             data_source,
             column_profiles,
             ScanInfo {
-                total_rows: processed_rows,
+                total_rows,
                 total_columns: num_columns,
-                rows_scanned: processed_rows,
+                rows_scanned: sampled_rows,
                 sampling_ratio,
                 scan_time_ms,
                 throughput_rows_sec: if scan_time_ms > 0 {
-                    Some(processed_rows as f64 / (scan_time_ms as f64 / 1000.0))
+                    Some(total_rows as f64 / (scan_time_ms as f64 / 1000.0))
                 } else {
                     None
                 },
@@ -167,57 +191,50 @@ impl AsyncStreamingProfiler {
         ))
     }
 
-    /// Async reader task: reads lines from the `AsyncRead`, parses CSV, sends chunks.
-    async fn reader_task(
-        buf_reader: BufReader<std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>>,
+    /// Blocking reader task: uses the `csv` crate's RFC 4180-compliant parser
+    /// over a `SyncIoBridge` to correctly handle quoted fields with embedded newlines.
+    fn reader_task(
+        sync_reader: tokio_util::io::SyncIoBridge<
+            std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
+        >,
         tx: mpsc::Sender<ParsedChunk>,
         rows_per_chunk: usize,
     ) -> Result<(), DataProfilerError> {
-        let mut lines = buf_reader.lines();
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(sync_reader);
+
+        // Send headers as the first chunk
+        let headers = csv_reader
+            .headers()
+            .map_err(|e| DataProfilerError::CsvParsingError {
+                message: e.to_string(),
+                suggestion: "Check CSV formatting in the stream data".to_string(),
+            })?;
+
+        let header_fields: Vec<String> = headers.iter().map(|f| f.to_string()).collect();
+        let header_chunk = ParsedChunk {
+            records: vec![header_fields],
+            bytes_read: 0,
+        };
+        if tx.blocking_send(header_chunk).is_err() {
+            return Ok(());
+        }
+
+        // Read data records in chunks
         let mut current_chunk: Vec<Vec<String>> = Vec::with_capacity(rows_per_chunk);
         let mut bytes_in_chunk: u64 = 0;
-        let mut is_first_line = true;
 
-        while let Some(line) = lines
-            .next_line()
-            .await
-            .map_err(|e| DataProfilerError::IoError {
+        for result in csv_reader.records() {
+            let record = result.map_err(|e| DataProfilerError::CsvParsingError {
                 message: e.to_string(),
-            })?
-        {
-            let line_bytes = line.len() as u64 + 1; // +1 for the newline
-            bytes_in_chunk += line_bytes;
+                suggestion: "Check CSV formatting in the stream data".to_string(),
+            })?;
 
-            // Parse CSV fields from this line
-            let mut csv_reader = csv::ReaderBuilder::new()
-                .has_headers(false)
-                .from_reader(line.as_bytes());
-
-            if let Some(result) = csv_reader.records().next() {
-                let record = result.map_err(|e| DataProfilerError::CsvParsingError {
-                    message: e.to_string(),
-                    suggestion: "Check CSV formatting in the stream data".to_string(),
-                })?;
-
-                let fields: Vec<String> = record.iter().map(|f| f.to_string()).collect();
-
-                if is_first_line {
-                    // First line is sent as a single-record chunk (headers)
-                    let header_chunk = ParsedChunk {
-                        records: vec![fields],
-                        bytes_read: bytes_in_chunk,
-                    };
-                    if tx.send(header_chunk).await.is_err() {
-                        // Receiver dropped — processing stopped early
-                        return Ok(());
-                    }
-                    bytes_in_chunk = 0;
-                    is_first_line = false;
-                    continue;
-                }
-
-                current_chunk.push(fields);
-            }
+            bytes_in_chunk += record.as_slice().len() as u64 + 1;
+            let fields: Vec<String> = record.iter().map(|f| f.to_string()).collect();
+            current_chunk.push(fields);
 
             if current_chunk.len() >= rows_per_chunk {
                 let chunk = ParsedChunk {
@@ -229,7 +246,7 @@ impl AsyncStreamingProfiler {
                 };
                 bytes_in_chunk = 0;
 
-                if tx.send(chunk).await.is_err() {
+                if tx.blocking_send(chunk).is_err() {
                     return Ok(());
                 }
             }
@@ -241,7 +258,7 @@ impl AsyncStreamingProfiler {
                 records: current_chunk,
                 bytes_read: bytes_in_chunk,
             };
-            let _ = tx.send(chunk).await;
+            let _ = tx.blocking_send(chunk);
         }
 
         Ok(())
@@ -249,15 +266,17 @@ impl AsyncStreamingProfiler {
 
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
     ///
-    /// Returns (headers, column_stats, processed_rows, total_bytes_read).
+    /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read).
     async fn process_chunks(
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
         size_hint: Option<u64>,
-    ) -> Result<(Vec<String>, StreamingColumnCollection, usize, u64), DataProfilerError> {
+    ) -> Result<(Vec<String>, StreamingColumnCollection, usize, usize, u64), DataProfilerError>
+    {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb);
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
-        let mut processed_rows: usize = 0;
+        let mut total_rows: usize = 0;
+        let mut sampled_rows: usize = 0;
         let mut total_bytes: u64 = 0;
         let mut chunk_count: usize = 0;
 
@@ -285,10 +304,9 @@ impl AsyncStreamingProfiler {
             });
         }
 
-        // Estimate total rows for progress (if we know the total size and have seen some bytes)
+        // Estimate total rows for progress (if we know the total size)
         let estimated_total_rows = size_hint.map(|total| {
-            // Very rough estimate — will improve as we see more data
-            (total as usize) / 50 // assume ~50 bytes per row as starting guess
+            (total as usize) / 50 // rough estimate: ~50 bytes per row
         });
 
         // Process data chunks
@@ -298,7 +316,7 @@ impl AsyncStreamingProfiler {
             let chunk_rows = chunk.records.len();
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
-                let global_row_idx = processed_rows + row_idx;
+                let global_row_idx = total_rows + row_idx;
 
                 // Apply sampling strategy
                 if !self
@@ -309,9 +327,10 @@ impl AsyncStreamingProfiler {
                 }
 
                 column_stats.process_record(&headers, values);
+                sampled_rows += 1;
             }
 
-            processed_rows += chunk_rows;
+            total_rows += chunk_rows;
 
             // Check memory pressure
             if column_stats.is_memory_pressure() {
@@ -320,15 +339,15 @@ impl AsyncStreamingProfiler {
 
             // Update progress
             progress_tracker.update(
-                processed_rows,
-                estimated_total_rows.or(Some(processed_rows + 1000)),
+                total_rows,
+                estimated_total_rows.or(Some(total_rows + 1000)),
                 chunk_count,
             );
         }
 
-        progress_tracker.finish(processed_rows);
+        progress_tracker.finish(total_rows);
 
-        Ok((headers, column_stats, processed_rows, total_bytes))
+        Ok((headers, column_stats, total_rows, sampled_rows, total_bytes))
     }
 
     /// Calculate rows per chunk based on ChunkSize config.
@@ -475,6 +494,7 @@ mod tests {
                 label: "test".into(),
                 format: FileFormat::Csv,
                 size_hint: Some(data.len() as u64),
+                source_system: None,
             },
         )
     }
@@ -517,6 +537,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_quoted_newlines_rfc4180() {
+        // RFC 4180: fields with embedded newlines must be quoted
+        let source =
+            csv_source(b"name,bio,age\nAlice,\"likes\ncats\",30\nBob,\"no\nnewlines\njk\",25\n");
+        let profiler = AsyncStreamingProfiler::new();
+        let report = profiler.analyze_stream(source).await.unwrap();
+
+        assert_eq!(report.column_profiles.len(), 3);
+        assert_eq!(report.scan_info.rows_scanned, 2);
+
+        let bio_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "bio")
+            .expect("bio column");
+        assert_eq!(bio_col.total_count, 2);
+    }
+
+    #[tokio::test]
     async fn test_large_synthetic_stream() {
         let mut data = String::from("id,value,label\n");
         for i in 0..10_000 {
@@ -529,6 +568,7 @@ mod tests {
                 label: "large-test".into(),
                 format: FileFormat::Csv,
                 size_hint: None,
+                source_system: None,
             },
         );
 
@@ -570,6 +610,7 @@ mod tests {
                 label: "progress-test".into(),
                 format: FileFormat::Csv,
                 size_hint: None,
+                source_system: None,
             },
         );
 
@@ -578,7 +619,6 @@ mod tests {
         });
 
         let _report = profiler.analyze_stream(source).await.unwrap();
-        // Progress should have fired at least once (finish call)
         assert!(progress_count.load(std::sync::atomic::Ordering::Relaxed) >= 1);
     }
 
@@ -590,6 +630,7 @@ mod tests {
                 label: "json-test".into(),
                 format: FileFormat::Json,
                 size_hint: None,
+                source_system: None,
             },
         );
         let profiler = AsyncStreamingProfiler::new();

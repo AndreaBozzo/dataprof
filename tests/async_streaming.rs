@@ -29,6 +29,7 @@ async fn test_async_vs_sync_parity() {
         label: tmp.path().display().to_string(),
         format: FileFormat::Csv,
         size_hint: Some(meta.len()),
+        source_system: None,
     };
 
     let async_report = AsyncStreamingProfiler::new()
@@ -86,6 +87,7 @@ async fn test_bytes_source_end_to_end() {
             label: "colors".into(),
             format: FileFormat::Csv,
             size_hint: Some(csv.len() as u64),
+            source_system: None,
         },
     );
 

@@ -3,7 +3,7 @@ use std::pin::Pin;
 use tokio::io::AsyncRead;
 
 use crate::core::errors::DataProfilerError;
-use crate::types::FileFormat;
+use crate::types::{FileFormat, StreamSourceSystem};
 
 /// Metadata about an async data source for report construction and progress tracking.
 #[derive(Debug, Clone)]
@@ -14,6 +14,9 @@ pub struct AsyncSourceInfo {
     pub format: FileFormat,
     /// Optional total size in bytes — enables progress percentage calculation
     pub size_hint: Option<u64>,
+    /// Optional source system for the report's `DataSource::Stream` variant.
+    /// Defaults to `StreamSourceSystem::Http` when `None`.
+    pub source_system: Option<StreamSourceSystem>,
 }
 
 /// A source of raw bytes that can be consumed asynchronously.
@@ -42,8 +45,8 @@ pub trait AsyncDataSource: Send {
 
 /// An in-memory byte buffer that implements [`AsyncDataSource`].
 ///
-/// Useful for testing and for services (like Sindri) that already hold the
-/// request body in memory.
+/// Useful for testing and for services that already hold the request body in
+/// memory.
 #[derive(Debug, Clone)]
 pub struct BytesSource {
     data: bytes::Bytes,
@@ -101,6 +104,7 @@ mod tests {
                 label: "test-buffer".into(),
                 format: FileFormat::Csv,
                 size_hint: Some(csv_data.len() as u64),
+                source_system: None,
             },
         );
 
@@ -127,6 +131,7 @@ mod tests {
             label: tmp.path().display().to_string(),
             format: FileFormat::Csv,
             size_hint: Some(std::fs::metadata(tmp.path()).unwrap().len()),
+            source_system: None,
         };
 
         let source = (file, info);
