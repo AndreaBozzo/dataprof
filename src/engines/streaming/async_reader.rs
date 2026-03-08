@@ -300,9 +300,9 @@ impl AsyncStreamingProfiler {
         // New columns are only registered before headers are sent; once headers have
         // been emitted, the schema is frozen to keep rows aligned with the header set.
         let process_object = |obj: &serde_json::Map<String, Value>,
-                                  known_cols: &mut Vec<String>,
-                                  known_cols_set: &mut std::collections::HashSet<String>,
-                                  is_headers_sent: bool|
+                              known_cols: &mut Vec<String>,
+                              known_cols_set: &mut std::collections::HashSet<String>,
+                              is_headers_sent: bool|
          -> Vec<String> {
             // Register new columns only while headers have not been sent yet
             if !is_headers_sent {
