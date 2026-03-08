@@ -288,7 +288,7 @@ impl AsyncStreamingProfiler {
         use serde_json::Value;
         use std::io::BufRead;
 
-        let buf_reader = std::io::BufReader::new(sync_reader);
+        let mut buf_reader = std::io::BufReader::new(sync_reader);
         let mut known_columns: Vec<String> = Vec::new();
         let mut current_chunk: Vec<Vec<String>> = Vec::with_capacity(rows_per_chunk);
         let mut bytes_in_chunk: u64 = 0;
@@ -364,8 +364,10 @@ impl AsyncStreamingProfiler {
 
                     bytes_in_chunk += line.len() as u64 + 1;
 
-                    let value: Value =
-                        serde_json::from_str(trimmed).map_err(DataProfilerError::from)?;
+                    let value: Value = match serde_json::from_str(trimmed) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
                     if let Value::Object(obj) = &value {
                         let row = process_object(obj, &mut known_columns);
                         current_chunk.push(row);
@@ -385,31 +387,93 @@ impl AsyncStreamingProfiler {
                 }
             }
             _ => {
-                // JSON array: buffer entire content
-                let mut content = String::new();
-                std::io::Read::read_to_string(&mut buf_reader.into_inner(), &mut content)
-                    .map_err(DataProfilerError::from)?;
+                // JSON array: stream elements efficiently
+                let mut found_array = false;
+                loop {
+                    let mut consume = 0;
+                    {
+                        let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
+                        if buf.is_empty() {
+                            break;
+                        }
+                        for &b in buf {
+                            consume += 1;
+                            if b == b'[' {
+                                found_array = true;
+                                break;
+                            } else if !b.is_ascii_whitespace() {
+                                break;
+                            }
+                        }
+                    }
+                    buf_reader.consume(consume);
+                    bytes_in_chunk += consume as u64;
+                    if found_array || consume == 0 {
+                        break;
+                    }
+                }
 
-                let records: Vec<Value> =
-                    serde_json::from_str(&content).map_err(DataProfilerError::from)?;
-                let total_bytes = content.len() as u64;
-                bytes_in_chunk = total_bytes;
+                if found_array {
+                    loop {
+                        let mut consume = 0;
+                        let mut found_value = false;
+                        let mut end_of_array = false;
 
-                for record in &records {
-                    if let Value::Object(obj) = record {
-                        let row = process_object(obj, &mut known_columns);
-                        current_chunk.push(row);
-
-                        if current_chunk.len() >= rows_per_chunk
-                            && !send_chunk(
-                                &mut current_chunk,
-                                &mut bytes_in_chunk,
-                                &known_columns,
-                                &mut headers_sent,
-                                &tx,
-                            )?
                         {
-                            return Ok(());
+                            let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
+                            if buf.is_empty() {
+                                break;
+                            }
+                            for &b in buf {
+                                if b.is_ascii_whitespace() || b == b',' {
+                                    consume += 1;
+                                } else if b == b']' {
+                                    end_of_array = true;
+                                    consume += 1;
+                                    break;
+                                } else {
+                                    found_value = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        buf_reader.consume(consume);
+                        bytes_in_chunk += consume as u64;
+
+                        if end_of_array {
+                            break;
+                        }
+
+                        if found_value {
+                            let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
+                            match serde::Deserialize::deserialize(&mut de) {
+                                Ok(Value::Object(obj)) => {
+                                    let row = process_object(&obj, &mut known_columns);
+                                    bytes_in_chunk +=
+                                        row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
+                                    current_chunk.push(row);
+
+                                    if current_chunk.len() >= rows_per_chunk
+                                        && !send_chunk(
+                                            &mut current_chunk,
+                                            &mut bytes_in_chunk,
+                                            &known_columns,
+                                            &mut headers_sent,
+                                            &tx,
+                                        )?
+                                    {
+                                        return Ok(());
+                                    }
+                                }
+                                Ok(_) => {
+                                    // Skip non-object items, approximate 10 bytes progress
+                                    bytes_in_chunk += 10;
+                                }
+                                Err(_) => {
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

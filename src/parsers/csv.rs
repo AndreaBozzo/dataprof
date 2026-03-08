@@ -103,11 +103,85 @@ pub fn analyze_csv_from_reader<R: Read>(
     if config.trim_whitespace {
         csv_builder.trim(csv::Trim::All);
     }
-    if let Some(delim) = config.delimiter {
+    let mut actual_delimiter = config.delimiter;
+
+    let boxed_reader: Box<dyn std::io::Read + '_> = if config.delimiter.is_none() {
+        let mut preamble = Vec::new();
+        let mut take = reader.take(4096);
+        take.read_to_end(&mut preamble)?;
+
+        let preamble_str = String::from_utf8_lossy(&preamble);
+        let lines: Vec<String> = preamble_str.lines().map(|s| s.to_string()).collect();
+
+        let delimiters = [b',', b';', b'\t', b'|'];
+        let mut best_del = b',';
+        let mut max_consistency = 0;
+        let mut max_fields = 0;
+
+        let count_fields = |line: &str, del: char| -> usize {
+            let mut count = 1;
+            let mut in_quotes = false;
+            let mut chars = line.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '"' {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                } else if c == del && !in_quotes {
+                    count += 1;
+                }
+            }
+            count
+        };
+
+        for &d in &delimiters {
+            let del_char = d as char;
+            let mut counts = std::collections::HashMap::new();
+            let mut total_fields = 0;
+
+            let sample_lines = std::cmp::min(lines.len(), 5);
+            for line in lines.iter().take(sample_lines) {
+                let c = count_fields(line, del_char);
+                *counts.entry(c).or_insert(0) += 1;
+                total_fields += c;
+            }
+
+            let consistency = counts.values().max().copied().unwrap_or(0);
+            let avg_fields = if sample_lines > 0 {
+                total_fields / sample_lines
+            } else {
+                0
+            };
+
+            let should_update = if avg_fields > 1 && max_fields <= 1 {
+                true
+            } else if avg_fields <= 1 && max_fields > 1 {
+                false
+            } else {
+                consistency > max_consistency
+                    || (consistency == max_consistency && avg_fields > max_fields)
+            };
+
+            if should_update {
+                max_consistency = consistency;
+                max_fields = avg_fields;
+                best_del = d;
+            }
+        }
+
+        actual_delimiter = Some(best_del);
+        Box::new(std::io::Cursor::new(preamble).chain(take.into_inner()))
+    } else {
+        Box::new(reader)
+    };
+
+    if let Some(delim) = actual_delimiter {
         csv_builder.delimiter(delim);
     }
 
-    let mut csv_reader = csv_builder.from_reader(reader);
+    let mut csv_reader = csv_builder.from_reader(boxed_reader);
 
     let headers = csv_reader.headers()?.clone();
     let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
@@ -284,6 +358,20 @@ mod tests {
         assert_eq!(report.scan_info.total_rows, 3);
         assert!(report.quality_score() >= 0.0);
         assert!(report.quality_score() <= 100.0);
+    }
+
+    #[test]
+    fn test_csv_auto_detects_delimiter_from_reader() {
+        let data = b"name;age\nAlice;25\nBob;30\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = CsvParserConfig::default();
+
+        let (profiles, _stats, rows) = analyze_csv_from_reader(cursor, &config).unwrap();
+        assert_eq!(rows, 2);
+        assert_eq!(profiles.len(), 2);
+
+        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        assert_eq!(age.total_count, 2);
     }
 
     // --- Legacy API tests migrated to new API ---

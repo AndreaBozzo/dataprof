@@ -155,7 +155,10 @@ pub fn analyze_json_from_reader<R: BufRead>(
                     break;
                 }
 
-                let value: Value = serde_json::from_str(trimmed)?;
+                let value: Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
                 if let Value::Object(ref obj) = value {
                     feed_json_object(
                         obj,
@@ -168,29 +171,86 @@ pub fn analyze_json_from_reader<R: BufRead>(
             }
         }
         _ => {
-            // JSON array: must buffer to parse
-            let mut content = String::new();
-            reader
-                .read_to_string(&mut content)
-                .map_err(DataProfilerError::from)?;
-
-            let records: Vec<Value> = serde_json::from_str(&content)?;
-
-            for record in &records {
-                if let Some(max) = config.max_rows
-                    && rows_read >= max
+            // JSON array: stream elements efficiently
+            let mut found_array = false;
+            loop {
+                let mut consume = 0;
                 {
+                    let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+                    if buf.is_empty() {
+                        break;
+                    }
+                    for &b in buf {
+                        consume += 1;
+                        if b == b'[' {
+                            found_array = true;
+                            break;
+                        } else if !b.is_ascii_whitespace() {
+                            break;
+                        }
+                    }
+                }
+                reader.consume(consume);
+                if found_array || consume == 0 {
                     break;
                 }
+            }
 
-                if let Value::Object(obj) = record {
-                    feed_json_object(
-                        obj,
-                        &mut known_columns,
-                        &mut known_columns_set,
-                        &mut column_stats,
-                    );
-                    rows_read += 1;
+            if found_array {
+                loop {
+                    let mut consume = 0;
+                    let mut found_value = false;
+                    let mut end_of_array = false;
+
+                    {
+                        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+                        if buf.is_empty() {
+                            break;
+                        }
+                        for &b in buf {
+                            if b.is_ascii_whitespace() || b == b',' {
+                                consume += 1;
+                            } else if b == b']' {
+                                end_of_array = true;
+                                consume += 1;
+                                break;
+                            } else {
+                                found_value = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    reader.consume(consume);
+                    if end_of_array {
+                        break;
+                    }
+
+                    if found_value {
+                        if let Some(max) = config.max_rows
+                            && rows_read >= max
+                        {
+                            break;
+                        }
+
+                        let mut de = serde_json::Deserializer::from_reader(&mut reader);
+                        match serde::Deserialize::deserialize(&mut de) {
+                            Ok(Value::Object(obj)) => {
+                                feed_json_object(
+                                    &obj,
+                                    &mut known_columns,
+                                    &mut known_columns_set,
+                                    &mut column_stats,
+                                );
+                                rows_read += 1;
+                            }
+                            Ok(_) => { /* Skip non-object elements */ }
+                            Err(_) => {
+                                // If parsing fails (e.g., malformed object), stop array stream
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -333,6 +393,18 @@ mod tests {
         assert_eq!(report.scan_info.total_rows, 2);
         assert_eq!(report.column_profiles.len(), 1);
         assert!(report.quality_score() >= 0.0);
+    }
+
+    #[test]
+    fn test_jsonl_skips_malformed_lines() {
+        let data = b"{\"x\":1}\n{\"x\":,malformed}\n{\"x\":3}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::jsonl();
+
+        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Jsonl);
+        assert_eq!(rows, 2);
+        assert_eq!(profiles[0].total_count, 2);
     }
 
     // --- Legacy API tests migrated to new API ---
