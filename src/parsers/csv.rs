@@ -19,8 +19,6 @@ use crate::types::{
 /// Supports both file-based and reader-based (streaming) entry points.
 #[derive(Debug, Clone)]
 pub struct CsvParserConfig {
-    /// Skip pattern detection and unique counts for faster analysis.
-    pub fast_mode: bool,
     /// Allow ragged rows (flexible field counts).
     pub flexible: bool,
     /// Custom delimiter (None = comma).
@@ -31,29 +29,27 @@ pub struct CsvParserConfig {
     pub trim_whitespace: bool,
     /// Maximum rows to process (None = all rows).
     pub max_rows: Option<usize>,
-    /// Verbosity level (0=quiet, 1=normal, 2+=verbose).
-    pub verbosity: u8,
 }
 
 impl Default for CsvParserConfig {
     fn default() -> Self {
         Self {
-            fast_mode: false,
             flexible: true,
             delimiter: None,
             quote_char: b'"',
             trim_whitespace: false,
             max_rows: None,
-            verbosity: 1,
         }
     }
 }
 
 impl CsvParserConfig {
     /// Create a config optimized for speed (skips pattern detection).
+    #[deprecated(
+        note = "fast() is currently equivalent to default(). Feature will be removed or refactored."
+    )]
     pub fn fast() -> Self {
         Self {
-            fast_mode: true,
             ..Default::default()
         }
     }
@@ -72,15 +68,9 @@ impl CsvParserConfig {
         self
     }
 
-    /// Set the maximum number of rows to process.
-    pub fn with_max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = Some(max_rows);
-        self
-    }
-
-    /// Set verbosity level.
-    pub fn with_verbosity(mut self, verbosity: u8) -> Self {
-        self.verbosity = verbosity;
+    /// Set maximum number of rows to evaluate.
+    pub fn max_rows(mut self, max: Option<usize>) -> Self {
+        self.max_rows = max;
         self
     }
 }
@@ -95,7 +85,15 @@ impl CsvParserConfig {
 pub fn analyze_csv_from_reader<R: Read>(
     reader: R,
     config: &CsvParserConfig,
-) -> Result<(Vec<ColumnProfile>, StreamingColumnCollection, usize), DataProfilerError> {
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        Vec<String>,
+    ),
+    DataProfilerError,
+> {
     let mut csv_builder = ReaderBuilder::new();
     csv_builder.has_headers(true);
     csv_builder.flexible(config.flexible);
@@ -183,7 +181,7 @@ pub fn analyze_csv_from_reader<R: Read>(
 
     let mut csv_reader = csv_builder.from_reader(boxed_reader);
 
-    let headers = csv_reader.headers()?.clone();
+    let headers = csv_reader.headers()?;
     let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
 
     let mut column_stats = StreamingColumnCollection::new();
@@ -197,18 +195,23 @@ pub fn analyze_csv_from_reader<R: Read>(
         }
 
         let record = result?;
-        let values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+        let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+
+        // Ensure values align with headers, even when using flexible (ragged) rows.
+        let header_len = header_names.len();
+        if values.len() < header_len {
+            values.resize(header_len, String::new());
+        } else if values.len() > header_len {
+            values.truncate(header_len);
+        }
+
         column_stats.process_record(&header_names, values);
         rows_read += 1;
     }
 
-    // Note: fast_mode is currently equivalent to normal mode because
-    // streaming stats are already bounded by max_unique_values/max_sample_size
-    // limits. A future optimisation could skip unique/pattern tracking entirely
-    // by creating StreamingColumnCollection with limits(0, 0).
     let profiles = profile_builder::profiles_from_streaming(&column_stats);
 
-    Ok((profiles, column_stats, rows_read))
+    Ok((profiles, column_stats, rows_read, header_names))
 }
 
 /// Analyze a CSV file, returning a full [`QualityReport`].
@@ -225,10 +228,10 @@ pub fn analyze_csv_file(
     let file = std::fs::File::open(file_path).map_err(|e| map_io_error(file_path, e))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let (column_profiles, column_stats, rows_read) = analyze_csv_from_reader(buf_reader, config)?;
+    let (column_profiles, column_stats, rows_read, header_names) =
+        analyze_csv_from_reader(buf_reader, config)?;
 
     if column_profiles.is_empty() && rows_read == 0 {
-        let num_header_columns = column_stats.column_names().len();
         return Ok(QualityReport::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -238,7 +241,7 @@ pub fn analyze_csv_file(
                 parquet_metadata: None,
             },
             vec![],
-            ScanInfo::new(0, num_header_columns, 0, 1.0, start.elapsed().as_millis()),
+            ScanInfo::new(0, header_names.len(), 0, 1.0, start.elapsed().as_millis()),
             DataQualityMetrics::empty(),
         ));
     }
@@ -298,7 +301,7 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = CsvParserConfig::default();
 
-        let (profiles, _stats, rows) = analyze_csv_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _) = analyze_csv_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
 
@@ -311,9 +314,9 @@ mod tests {
     fn test_analyze_csv_from_reader_with_max_rows() {
         let data = b"val\n1\n2\n3\n4\n5\n";
         let cursor = Cursor::new(data.as_ref());
-        let config = CsvParserConfig::default().with_max_rows(3);
+        let config = CsvParserConfig::default().max_rows(Some(3));
 
-        let (_profiles, _stats, rows) = analyze_csv_from_reader(cursor, &config).unwrap();
+        let (_profiles, _stats, rows, _) = analyze_csv_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 3);
     }
 
@@ -332,7 +335,7 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = CsvParserConfig::default();
 
-        let (profiles, _stats, rows) = analyze_csv_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _) = analyze_csv_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 3);
         assert!(!profiles.is_empty());
     }
@@ -343,7 +346,7 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = CsvParserConfig::default().with_delimiter(b';');
 
-        let (profiles, _stats, rows) = analyze_csv_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _) = analyze_csv_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
     }
@@ -366,7 +369,7 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = CsvParserConfig::default();
 
-        let (profiles, _stats, rows) = analyze_csv_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _) = analyze_csv_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
 
@@ -432,6 +435,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_analyze_csv_fast_produces_profiles() {
         let csv = write_csv("a,b,c\n1,x,true\n2,y,false\n3,z,true\n");
         let config = CsvParserConfig::fast();

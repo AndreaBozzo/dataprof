@@ -1,5 +1,5 @@
+use std::io::Read;
 use std::sync::Arc;
-
 use tokio::sync::mpsc;
 
 use crate::core::errors::DataProfilerError;
@@ -89,7 +89,7 @@ impl AsyncStreamingProfiler {
         source: impl AsyncDataSource,
     ) -> Result<QualityReport, DataProfilerError> {
         let source_info = source.source_info();
-        let format = source_info.format;
+        let format = source_info.format.clone();
 
         match format {
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {}
@@ -291,35 +291,43 @@ impl AsyncStreamingProfiler {
         let mut buf_reader = std::io::BufReader::new(sync_reader);
         let mut known_columns: Vec<String> = Vec::new();
         let mut current_chunk: Vec<Vec<String>> = Vec::with_capacity(rows_per_chunk);
+        let mut known_columns_set: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut bytes_in_chunk: u64 = 0;
         let mut headers_sent = false;
 
-        // Helper closure: convert a JSON object into a row aligned to known_columns,
-        // registering any new columns discovered.
-        let process_object =
-            |obj: &serde_json::Map<String, Value>, known_cols: &mut Vec<String>| -> Vec<String> {
-                // Register new columns
+        // Helper closure: convert a JSON object into a row aligned to known_columns.
+        // New columns are only registered before headers are sent; once headers have
+        // been emitted, the schema is frozen to keep rows aligned with the header set.
+        let process_object = |obj: &serde_json::Map<String, Value>,
+                                  known_cols: &mut Vec<String>,
+                                  known_cols_set: &mut std::collections::HashSet<String>,
+                                  is_headers_sent: bool|
+         -> Vec<String> {
+            // Register new columns only while headers have not been sent yet
+            if !is_headers_sent {
                 for key in obj.keys() {
-                    if !known_cols.contains(key) {
+                    if known_cols_set.insert(key.clone()) {
                         known_cols.push(key.clone());
                     }
                 }
-                // Build row aligned to known_cols
-                known_cols
-                    .iter()
-                    .map(|col| {
-                        obj.get(col)
-                            .map(|v| match v {
-                                Value::Null => String::new(),
-                                Value::Bool(b) => b.to_string(),
-                                Value::Number(n) => n.to_string(),
-                                Value::String(s) => s.to_string(),
-                                _ => serde_json::to_string(v).unwrap_or_default(),
-                            })
-                            .unwrap_or_default()
-                    })
-                    .collect()
-            };
+            }
+            // Build row aligned to known_cols
+            known_cols
+                .iter()
+                .map(|col| {
+                    obj.get(col)
+                        .map(|v| match v {
+                            Value::Null => String::new(),
+                            Value::Bool(b) => b.to_string(),
+                            Value::Number(n) => n.to_string(),
+                            Value::String(s) => s.to_string(),
+                            _ => serde_json::to_string(v).unwrap_or_default(),
+                        })
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
 
         // Helper closure: send headers (first chunk) and flush accumulated rows.
         let send_chunk = |chunk: &mut Vec<Vec<String>>,
@@ -355,21 +363,21 @@ impl AsyncStreamingProfiler {
         match format {
             FileFormat::Jsonl => {
                 // True streaming: line-by-line
-                for line_result in buf_reader.lines() {
-                    let line = line_result.map_err(DataProfilerError::from)?;
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
+                let mut reader = buf_reader.take(u64::MAX); // Use take to get a Read trait object
+                let de = serde_json::Deserializer::from_reader(&mut reader);
+                for value in de.into_iter::<Value>() {
+                    let v = value.map_err(|e| DataProfilerError::JsonParsingError {
+                        message: e.to_string(),
+                    })?;
 
-                    bytes_in_chunk += line.len() as u64 + 1;
-
-                    let value: Value = match serde_json::from_str(trimmed) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    if let Value::Object(obj) = &value {
-                        let row = process_object(obj, &mut known_columns);
+                    if let Value::Object(obj) = v {
+                        let row = process_object(
+                            &obj,
+                            &mut known_columns,
+                            &mut known_columns_set,
+                            headers_sent,
+                        );
+                        bytes_in_chunk += row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                         current_chunk.push(row);
 
                         if current_chunk.len() >= rows_per_chunk
@@ -449,7 +457,12 @@ impl AsyncStreamingProfiler {
                             let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
                             match serde::Deserialize::deserialize(&mut de) {
                                 Ok(Value::Object(obj)) => {
-                                    let row = process_object(&obj, &mut known_columns);
+                                    let row = process_object(
+                                        &obj,
+                                        &mut known_columns,
+                                        &mut known_columns_set,
+                                        headers_sent,
+                                    );
                                     bytes_in_chunk +=
                                         row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                                     current_chunk.push(row);

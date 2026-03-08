@@ -96,8 +96,9 @@ fn feed_json_object(
 /// Analyze JSON/JSONL data from a buffered reader using streaming statistics.
 ///
 /// - **JSONL**: true streaming — reads line-by-line with bounded memory.
-/// - **JSON array**: must buffer the full content to parse (format limitation),
-///   but uses [`StreamingColumnCollection`] for the analysis phase.
+/// - **JSON array**: parsed as a streaming array of objects using
+///   `serde_json::Deserializer::from_reader`, processing each element with
+///   [`StreamingColumnCollection`] without buffering the entire array in memory.
 ///
 /// Returns `(column_profiles, streaming_stats, rows_read, detected_format)`.
 pub fn analyze_json_from_reader<R: BufRead>(

@@ -70,19 +70,33 @@ impl AsyncFileReader for HttpParquetReader {
             if range.start >= range.end {
                 return Ok(Bytes::new());
             }
-
-            // Important: HTTP Range end targets are *inclusive*, so subtract 1.
-            let range_header = format!("bytes={}-{}", range.start, range.end - 1);
-
-            let res = self
+            let req = self
                 .client
                 .get(&self.url)
-                .header(header::RANGE, range_header)
-                .send()
-                .await
+                .header(
+                    reqwest::header::RANGE,
+                    format!("bytes={}-{}", range.start, range.end - 1),
+                )
+                .build()
                 .map_err(|e| {
-                    parquet::errors::ParquetError::General(format!("network err: {}", e))
+                    parquet::errors::ParquetError::General(format!("invalid request: {}", e))
                 })?;
+
+            let res = self.client.execute(req).await.map_err(|e| {
+                parquet::errors::ParquetError::General(format!("network err: {}", e))
+            })?;
+
+            if res.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+                if res.status() == reqwest::StatusCode::OK {
+                    return Err(parquet::errors::ParquetError::General(
+                        "Server ignored Range header and returned 200 OK. Aborting to prevent full file download.".to_string(),
+                    ));
+                }
+                return Err(parquet::errors::ParquetError::General(format!(
+                    "Expected 206 Partial Content, got {}",
+                    res.status()
+                )));
+            }
 
             let bytes = res.bytes().await.map_err(|e| {
                 parquet::errors::ParquetError::General(format!(
