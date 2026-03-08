@@ -21,15 +21,13 @@ pub mod database;
 pub mod python;
 
 // v0.6.0 unified public API
-#[allow(deprecated)]
-pub use api::DataProfiler;
 pub use api::{
     EngineType, Profiler, ProfilerConfig, quick_quality_check, quick_quality_check_source,
 };
 pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
-pub use parsers::robust_csv::CsvDiagnostics;
+pub use parsers::CsvDiagnostics;
 
 // CLI-specific exports
 pub use core::config::{DataprofConfig, DataprofConfigBuilder};
@@ -56,12 +54,13 @@ pub use types::{
 };
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
-// Parser API - CSV, JSON, and Parquet analysis functions
-pub use parsers::csv::{
-    analyze_csv, analyze_csv_fast, analyze_csv_robust, analyze_csv_with_sampling,
-    analyze_csv_with_verbosity,
+// Parser API - New config-based CSV API (#181 + #218)
+pub use parsers::csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
+
+// Parser API - New config-based JSON API (#218)
+pub use parsers::json::{
+    JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader,
 };
-pub use parsers::json::{analyze_json, analyze_json_with_quality};
 #[cfg(feature = "parquet")]
 pub use parsers::parquet::{
     ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file,

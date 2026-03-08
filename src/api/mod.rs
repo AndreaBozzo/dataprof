@@ -205,9 +205,10 @@ impl Profiler {
     ) -> Result<QualityReport, DataProfilerError> {
         // AdaptiveProfiler handles Parquet and CSV natively, but not JSON
         match format {
-            FileFormat::Json | FileFormat::Jsonl => {
-                crate::parsers::json::analyze_json_with_quality(file_path)
-            }
+            FileFormat::Json | FileFormat::Jsonl => crate::parsers::json::analyze_json_file(
+                file_path,
+                &crate::parsers::json::JsonParserConfig::default(),
+            ),
             _ => {
                 let profiler = AdaptiveProfiler::new().with_logging(false);
                 profiler.analyze_file_with_context(file_path, ProcessingType::QualityFocused)
@@ -224,7 +225,10 @@ impl Profiler {
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                return crate::parsers::json::analyze_json_with_quality(file_path);
+                return crate::parsers::json::analyze_json_file(
+                    file_path,
+                    &crate::parsers::json::JsonParserConfig::default(),
+                );
             }
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
@@ -281,7 +285,10 @@ impl Profiler {
                 }
             }
             FileFormat::Json | FileFormat::Jsonl => {
-                return crate::parsers::json::analyze_json_with_quality(file_path);
+                return crate::parsers::json::analyze_json_file(
+                    file_path,
+                    &crate::parsers::json::JsonParserConfig::default(),
+                );
             }
             _ => {}
         }
@@ -294,29 +301,6 @@ impl Profiler {
         }
         profiler.analyze_csv_file(file_path)
     }
-
-    // --- Deprecated compatibility methods ---
-
-    #[deprecated(since = "0.6.0", note = "Use `Profiler::new()` which defaults to Auto")]
-    pub fn auto() -> Self {
-        Self::new()
-    }
-
-    #[deprecated(
-        since = "0.6.0",
-        note = "Use `Profiler::new().engine(EngineType::Incremental)`"
-    )]
-    pub fn streaming() -> Self {
-        Self::new().engine(EngineType::Incremental)
-    }
-
-    #[deprecated(
-        since = "0.6.0",
-        note = "Use `Profiler::new().engine(EngineType::Columnar)`"
-    )]
-    pub fn columnar() -> Self {
-        Self::new().engine(EngineType::Columnar)
-    }
 }
 
 impl Default for Profiler {
@@ -324,10 +308,6 @@ impl Default for Profiler {
         Self::new()
     }
 }
-
-/// Deprecated: Use [`Profiler`] instead.
-#[deprecated(since = "0.6.0", note = "Use `Profiler` instead")]
-pub type DataProfiler = Profiler;
 
 /// One-liner API for quick profiling with intelligent engine selection
 pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64, DataProfilerError> {

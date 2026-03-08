@@ -2,19 +2,18 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::analysis::patterns::looks_like_date;
 use crate::core::errors::DataProfilerError;
+use crate::core::profile_builder;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
+use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{ProgressCallback, ProgressTracker};
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, FileFormat,
-    QualityReport, ScanInfo, StreamSourceSystem,
+    DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo, StreamSourceSystem,
 };
 
 use super::async_source::AsyncDataSource;
 
-/// A chunk of parsed CSV records sent through the bounded channel.
+/// A chunk of parsed records sent through the bounded channel.
 struct ParsedChunk {
     /// Rows of field values (each inner Vec is one row).
     records: Vec<Vec<String>>,
@@ -84,20 +83,24 @@ impl AsyncStreamingProfiler {
 
     /// Profile data from an async source, returning a [`QualityReport`].
     ///
-    /// Only CSV format is supported at this time; JSON/Parquet support is tracked in #218.
+    /// Supports CSV, JSON, and JSONL formats. Parquet async support is tracked separately.
     pub async fn analyze_stream(
         &self,
         source: impl AsyncDataSource,
     ) -> Result<QualityReport, DataProfilerError> {
         let source_info = source.source_info();
+        let format = source_info.format;
 
-        if source_info.format != FileFormat::Csv {
-            return Err(DataProfilerError::StreamingError {
-                message: format!(
-                    "AsyncStreamingProfiler only supports CSV at this time, got {:?}",
-                    source_info.format
-                ),
-            });
+        match format {
+            FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {}
+            _ => {
+                return Err(DataProfilerError::StreamingError {
+                    message: format!(
+                        "AsyncStreamingProfiler does not support {:?} format",
+                        format
+                    ),
+                });
+            }
         }
 
         let start = std::time::Instant::now();
@@ -106,13 +109,17 @@ impl AsyncStreamingProfiler {
         let rows_per_chunk = self.rows_per_chunk();
         let (tx, rx) = mpsc::channel::<ParsedChunk>(self.channel_capacity);
 
-        // Bridge the AsyncRead into a sync Read for the csv crate (RFC 4180 compliant).
-        // SyncIoBridge lets the blocking csv::Reader pull bytes from the async stream.
+        // Bridge the AsyncRead into a sync Read for parsing.
         let sync_reader = tokio_util::io::SyncIoBridge::new(reader);
 
-        // Spawn the CSV reader on a blocking thread so it doesn't block the tokio runtime.
-        let reader_handle =
-            tokio::task::spawn_blocking(move || Self::reader_task(sync_reader, tx, rows_per_chunk));
+        // Spawn the reader on a blocking thread — format determines the parser.
+        let reader_handle = tokio::task::spawn_blocking(move || match format {
+            FileFormat::Csv => Self::reader_task(sync_reader, tx, rows_per_chunk),
+            FileFormat::Json | FileFormat::Jsonl => {
+                Self::json_reader_task(sync_reader, tx, rows_per_chunk, format)
+            }
+            _ => unreachable!(),
+        });
 
         // Process chunks on the current task
         let process_result = self.process_chunks(rx, source_info.size_hint).await;
@@ -142,8 +149,8 @@ impl AsyncStreamingProfiler {
         }
 
         // Build the report
-        let column_profiles = self.convert_to_profiles(&column_stats);
-        let sample_columns = self.create_quality_check_samples(&column_stats);
+        let column_profiles = profile_builder::profiles_from_streaming(&column_stats);
+        let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let data_quality_metrics =
             DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
                 .unwrap_or_else(|_| DataQualityMetrics::empty());
@@ -264,6 +271,165 @@ impl AsyncStreamingProfiler {
         Ok(())
     }
 
+    /// Blocking reader task for JSON/JSONL streams.
+    ///
+    /// For **JSONL**: reads line-by-line (true streaming, bounded memory).
+    /// For **JSON array**: buffers the entire content to parse, then sends in chunks.
+    ///
+    /// The first chunk sent contains column names (like the CSV reader task sends headers).
+    fn json_reader_task(
+        sync_reader: tokio_util::io::SyncIoBridge<
+            std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
+        >,
+        tx: mpsc::Sender<ParsedChunk>,
+        rows_per_chunk: usize,
+        format: FileFormat,
+    ) -> Result<(), DataProfilerError> {
+        use serde_json::Value;
+        use std::io::BufRead;
+
+        let buf_reader = std::io::BufReader::new(sync_reader);
+        let mut known_columns: Vec<String> = Vec::new();
+        let mut current_chunk: Vec<Vec<String>> = Vec::with_capacity(rows_per_chunk);
+        let mut bytes_in_chunk: u64 = 0;
+        let mut headers_sent = false;
+
+        // Helper closure: convert a JSON object into a row aligned to known_columns,
+        // registering any new columns discovered.
+        let process_object =
+            |obj: &serde_json::Map<String, Value>, known_cols: &mut Vec<String>| -> Vec<String> {
+                // Register new columns
+                for key in obj.keys() {
+                    if !known_cols.contains(key) {
+                        known_cols.push(key.clone());
+                    }
+                }
+                // Build row aligned to known_cols
+                known_cols
+                    .iter()
+                    .map(|col| {
+                        obj.get(col)
+                            .map(|v| match v {
+                                Value::Null => String::new(),
+                                Value::Bool(b) => b.to_string(),
+                                Value::Number(n) => n.to_string(),
+                                Value::String(s) => s.to_string(),
+                                _ => serde_json::to_string(v).unwrap_or_default(),
+                            })
+                            .unwrap_or_default()
+                    })
+                    .collect()
+            };
+
+        // Helper closure: send headers (first chunk) and flush accumulated rows.
+        let send_chunk = |chunk: &mut Vec<Vec<String>>,
+                          bytes: &mut u64,
+                          cols: &[String],
+                          headers_sent: &mut bool,
+                          tx: &mpsc::Sender<ParsedChunk>|
+         -> Result<bool, DataProfilerError> {
+            if !*headers_sent && !cols.is_empty() {
+                let header_chunk = ParsedChunk {
+                    records: vec![cols.to_vec()],
+                    bytes_read: 0,
+                };
+                if tx.blocking_send(header_chunk).is_err() {
+                    return Ok(false); // receiver dropped
+                }
+                *headers_sent = true;
+            }
+
+            if !chunk.is_empty() {
+                let data_chunk = ParsedChunk {
+                    records: std::mem::replace(chunk, Vec::with_capacity(rows_per_chunk)),
+                    bytes_read: *bytes,
+                };
+                *bytes = 0;
+                if tx.blocking_send(data_chunk).is_err() {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        };
+
+        match format {
+            FileFormat::Jsonl => {
+                // True streaming: line-by-line
+                for line_result in buf_reader.lines() {
+                    let line = line_result.map_err(DataProfilerError::from)?;
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
+                    bytes_in_chunk += line.len() as u64 + 1;
+
+                    let value: Value =
+                        serde_json::from_str(trimmed).map_err(DataProfilerError::from)?;
+                    if let Value::Object(obj) = &value {
+                        let row = process_object(obj, &mut known_columns);
+                        current_chunk.push(row);
+
+                        if current_chunk.len() >= rows_per_chunk
+                            && !send_chunk(
+                                &mut current_chunk,
+                                &mut bytes_in_chunk,
+                                &known_columns,
+                                &mut headers_sent,
+                                &tx,
+                            )?
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            _ => {
+                // JSON array: buffer entire content
+                let mut content = String::new();
+                std::io::Read::read_to_string(&mut buf_reader.into_inner(), &mut content)
+                    .map_err(DataProfilerError::from)?;
+
+                let records: Vec<Value> =
+                    serde_json::from_str(&content).map_err(DataProfilerError::from)?;
+                let total_bytes = content.len() as u64;
+                bytes_in_chunk = total_bytes;
+
+                for record in &records {
+                    if let Value::Object(obj) = record {
+                        let row = process_object(obj, &mut known_columns);
+                        current_chunk.push(row);
+
+                        if current_chunk.len() >= rows_per_chunk
+                            && !send_chunk(
+                                &mut current_chunk,
+                                &mut bytes_in_chunk,
+                                &known_columns,
+                                &mut headers_sent,
+                                &tx,
+                            )?
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Flush remaining
+        if !current_chunk.is_empty() || !headers_sent {
+            let _ = send_chunk(
+                &mut current_chunk,
+                &mut bytes_in_chunk,
+                &known_columns,
+                &mut headers_sent,
+                &tx,
+            );
+        }
+
+        Ok(())
+    }
+
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
     ///
     /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read).
@@ -364,116 +530,6 @@ impl AsyncStreamingProfiler {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Profile conversion methods — duplicated from IncrementalProfiler.
-    // TODO(#228): Extract to a shared module during engine dedup.
-    // -----------------------------------------------------------------------
-
-    fn convert_to_profiles(&self, column_stats: &StreamingColumnCollection) -> Vec<ColumnProfile> {
-        let mut profiles = Vec::new();
-
-        for column_name in column_stats.column_names() {
-            if let Some(stats) = column_stats.get_column_stats(&column_name) {
-                let profile = self.convert_single_column_profile(&column_name, stats);
-                profiles.push(profile);
-            }
-        }
-
-        profiles
-    }
-
-    fn convert_single_column_profile(
-        &self,
-        name: &str,
-        stats: &StreamingStatistics,
-    ) -> ColumnProfile {
-        let data_type = self.infer_data_type(stats);
-
-        let column_stats = match data_type {
-            DataType::Integer | DataType::Float => {
-                let sample_strs: Vec<String> = stats.sample_values().to_vec();
-                crate::stats::numeric::calculate_numeric_stats(&sample_strs)
-            }
-            DataType::String | DataType::Date => {
-                let text_stats = stats.text_length_stats();
-                ColumnStats::Text {
-                    min_length: text_stats.min_length,
-                    max_length: text_stats.max_length,
-                    avg_length: text_stats.avg_length,
-                    most_frequent: None,
-                    least_frequent: None,
-                }
-            }
-        };
-
-        let patterns = crate::detect_patterns(stats.sample_values());
-
-        ColumnProfile {
-            name: name.to_string(),
-            data_type,
-            null_count: stats.null_count,
-            total_count: stats.count,
-            unique_count: Some(stats.unique_count()),
-            stats: column_stats,
-            patterns,
-        }
-    }
-
-    fn infer_data_type(&self, stats: &StreamingStatistics) -> DataType {
-        if stats.min.is_finite() && stats.max.is_finite() && stats.sum.is_finite() {
-            let sample_values = stats.sample_values();
-            let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
-
-            if !non_empty.is_empty() {
-                let all_integers = non_empty.iter().all(|s| s.parse::<i64>().is_ok());
-                if all_integers {
-                    return DataType::Integer;
-                }
-
-                let numeric_count = non_empty
-                    .iter()
-                    .filter(|s| s.parse::<f64>().is_ok())
-                    .count();
-                if numeric_count as f64 / non_empty.len() as f64 > 0.8 {
-                    return DataType::Float;
-                }
-            }
-        }
-
-        let sample_values = stats.sample_values();
-        let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
-
-        if !non_empty.is_empty() {
-            let date_like_count = non_empty
-                .iter()
-                .take(100)
-                .filter(|s| looks_like_date(s))
-                .count();
-
-            if date_like_count as f64 / non_empty.len().min(100) as f64 > 0.7 {
-                return DataType::Date;
-            }
-        }
-
-        DataType::String
-    }
-
-    fn create_quality_check_samples(
-        &self,
-        column_stats: &StreamingColumnCollection,
-    ) -> std::collections::HashMap<String, Vec<String>> {
-        let mut samples = std::collections::HashMap::new();
-
-        for column_name in column_stats.column_names() {
-            if let Some(stats) = column_stats.get_column_stats(&column_name) {
-                let sample_values: Vec<String> = stats.sample_values().to_vec();
-                samples.insert(column_name, sample_values);
-            }
-        }
-
-        samples
-    }
 }
 
 impl Default for AsyncStreamingProfiler {
@@ -486,6 +542,7 @@ impl Default for AsyncStreamingProfiler {
 mod tests {
     use super::*;
     use crate::engines::streaming::async_source::{AsyncSourceInfo, BytesSource};
+    use crate::types::DataType;
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
