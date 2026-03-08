@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::HashSet;
 use std::io::BufRead;
 use std::path::Path;
 
@@ -73,11 +74,12 @@ fn json_value_to_string(value: &Value) -> String {
 fn feed_json_object(
     obj: &serde_json::Map<String, Value>,
     known_columns: &mut Vec<String>,
+    known_columns_set: &mut HashSet<String>,
     column_stats: &mut StreamingColumnCollection,
 ) {
-    // Register any new columns
+    // Register any new columns (HashSet for O(1) lookup, Vec for insertion order)
     for key in obj.keys() {
-        if !known_columns.contains(key) {
+        if known_columns_set.insert(key.clone()) {
             known_columns.push(key.clone());
         }
     }
@@ -126,6 +128,7 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
     let mut column_stats = StreamingColumnCollection::new();
     let mut known_columns: Vec<String> = Vec::new();
+    let mut known_columns_set: HashSet<String> = HashSet::new();
     let mut rows_read = 0;
 
     match format {
@@ -154,7 +157,12 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
                 let value: Value = serde_json::from_str(trimmed)?;
                 if let Value::Object(ref obj) = value {
-                    feed_json_object(obj, &mut known_columns, &mut column_stats);
+                    feed_json_object(
+                        obj,
+                        &mut known_columns,
+                        &mut known_columns_set,
+                        &mut column_stats,
+                    );
                     rows_read += 1;
                 }
             }
@@ -176,7 +184,12 @@ pub fn analyze_json_from_reader<R: BufRead>(
                 }
 
                 if let Value::Object(obj) = record {
-                    feed_json_object(obj, &mut known_columns, &mut column_stats);
+                    feed_json_object(
+                        obj,
+                        &mut known_columns,
+                        &mut known_columns_set,
+                        &mut column_stats,
+                    );
                     rows_read += 1;
                 }
             }

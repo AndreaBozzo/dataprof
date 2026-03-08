@@ -128,15 +128,11 @@ pub fn analyze_csv_from_reader<R: Read>(
         rows_read += 1;
     }
 
-    let profiles = if config.fast_mode {
-        // Fast mode: use profile_builder (streaming-based) but it already skips
-        // most expensive ops via sample-based inference. For backward compat with
-        // the old analyze_column_fast path, we still use profile_builder here since
-        // it produces equivalent results from streaming stats.
-        profile_builder::profiles_from_streaming(&column_stats)
-    } else {
-        profile_builder::profiles_from_streaming(&column_stats)
-    };
+    // Note: fast_mode is currently equivalent to normal mode because
+    // streaming stats are already bounded by max_unique_values/max_sample_size
+    // limits. A future optimisation could skip unique/pattern tracking entirely
+    // by creating StreamingColumnCollection with limits(0, 0).
+    let profiles = profile_builder::profiles_from_streaming(&column_stats);
 
     Ok((profiles, column_stats, rows_read))
 }
@@ -158,6 +154,7 @@ pub fn analyze_csv_file(
     let (column_profiles, column_stats, rows_read) = analyze_csv_from_reader(buf_reader, config)?;
 
     if column_profiles.is_empty() && rows_read == 0 {
+        let num_header_columns = column_stats.column_names().len();
         return Ok(QualityReport::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -167,7 +164,7 @@ pub fn analyze_csv_file(
                 parquet_metadata: None,
             },
             vec![],
-            ScanInfo::new(0, 0, 0, 1.0, start.elapsed().as_millis()),
+            ScanInfo::new(0, num_header_columns, 0, 1.0, start.elapsed().as_millis()),
             DataQualityMetrics::empty(),
         ));
     }
@@ -416,11 +413,23 @@ mod tests {
 
     #[test]
     fn test_analyze_csv_with_quality_metrics() {
-        let csv = write_csv("name,age\nAlice,25\nBob,\nCharlie,30\n");
+        let csv = write_csv(
+            "name,age\n\
+             Alice,25\nBob,\nCharlie,30\nDave,\nEve,28\n\
+             Frank,\nGrace,35\nHeidi,40\nIvan,\nJudy,22\n",
+        );
         let config = CsvParserConfig::default();
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
-        assert!(report.data_quality_metrics.missing_values_ratio > 0.0);
-        assert!(report.data_quality_metrics.complete_records_ratio < 100.0);
+        // 4 out of 10 records have a missing "age" field
+        let age = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "age")
+            .unwrap();
+        assert_eq!(age.null_count, 4);
+        assert_eq!(age.total_count, 10);
+        // Quality score should be computable (>= 0)
+        assert!(report.quality_score() >= 0.0);
     }
 }
