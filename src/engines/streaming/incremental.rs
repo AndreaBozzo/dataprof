@@ -1,15 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::analysis::patterns::looks_like_date;
 use crate::core::errors::DataProfilerError;
+use crate::core::profile_builder;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
+use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
-use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, FileFormat,
-    QualityReport, ScanInfo,
-};
+use crate::types::{DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo};
 
 /// Incremental profiler that processes data without loading everything into memory
 /// Uses online/streaming algorithms and memory mapping for maximum efficiency.
@@ -135,10 +132,10 @@ impl IncrementalProfiler {
         progress_tracker.finish(processed_rows);
 
         // Convert streaming statistics to column profiles
-        let column_profiles = self.convert_to_profiles(&column_stats);
+        let column_profiles = profile_builder::profiles_from_streaming(&column_stats);
 
         // Calculate quality metrics from sample data
-        let sample_columns = self.create_quality_check_samples(&column_stats);
+        let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let data_quality_metrics =
             DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
                 .unwrap_or_else(|_| DataQualityMetrics::empty());
@@ -182,122 +179,6 @@ impl IncrementalProfiler {
 
         chunk_size.min(max_chunk_from_file)
     }
-
-    fn convert_to_profiles(&self, column_stats: &StreamingColumnCollection) -> Vec<ColumnProfile> {
-        let mut profiles = Vec::new();
-
-        for column_name in column_stats.column_names() {
-            if let Some(stats) = column_stats.get_column_stats(&column_name) {
-                let profile = self.convert_single_column_profile(&column_name, stats);
-                profiles.push(profile);
-            }
-        }
-
-        profiles
-    }
-
-    fn convert_single_column_profile(
-        &self,
-        name: &str,
-        stats: &StreamingStatistics,
-    ) -> ColumnProfile {
-        // Infer data type from streaming statistics
-        let data_type = self.infer_data_type(stats);
-
-        // Convert to appropriate column stats
-        let column_stats = match data_type {
-            DataType::Integer | DataType::Float => {
-                let sample_strs: Vec<String> = stats.sample_values().to_vec();
-                crate::stats::numeric::calculate_numeric_stats(&sample_strs)
-            }
-            DataType::String | DataType::Date => {
-                let text_stats = stats.text_length_stats();
-                ColumnStats::Text {
-                    min_length: text_stats.min_length,
-                    max_length: text_stats.max_length,
-                    avg_length: text_stats.avg_length,
-                    most_frequent: None,
-                    least_frequent: None,
-                }
-            }
-        };
-
-        // Detect patterns using sample values
-        let patterns = crate::detect_patterns(stats.sample_values());
-
-        ColumnProfile {
-            name: name.to_string(),
-            data_type,
-            null_count: stats.null_count,
-            total_count: stats.count,
-            unique_count: Some(stats.unique_count()),
-            stats: column_stats,
-            patterns,
-        }
-    }
-
-    fn infer_data_type(&self, stats: &StreamingStatistics) -> DataType {
-        // If we have numeric statistics and they make sense, it's numeric
-        if stats.min.is_finite() && stats.max.is_finite() && stats.sum.is_finite() {
-            // Check if sample values are all integers
-            let sample_values = stats.sample_values();
-            let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
-
-            if !non_empty.is_empty() {
-                let all_integers = non_empty.iter().all(|s| s.parse::<i64>().is_ok());
-
-                if all_integers {
-                    return DataType::Integer;
-                } else {
-                    // Check if most are numeric
-                    let numeric_count = non_empty
-                        .iter()
-                        .filter(|s| s.parse::<f64>().is_ok())
-                        .count();
-
-                    if numeric_count as f64 / non_empty.len() as f64 > 0.8 {
-                        return DataType::Float;
-                    }
-                }
-            }
-        }
-
-        // Check for date patterns
-        let sample_values = stats.sample_values();
-        let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
-
-        if !non_empty.is_empty() {
-            let date_like_count = non_empty
-                .iter()
-                .take(100) // Only check first 100 samples
-                .filter(|s| looks_like_date(s))
-                .count();
-
-            if date_like_count as f64 / non_empty.len().min(100) as f64 > 0.7 {
-                return DataType::Date;
-            }
-        }
-
-        DataType::String
-    }
-
-    fn create_quality_check_samples(
-        &self,
-        column_stats: &StreamingColumnCollection,
-    ) -> std::collections::HashMap<String, Vec<String>> {
-        let mut samples = std::collections::HashMap::new();
-
-        for column_name in column_stats.column_names() {
-            if let Some(stats) = column_stats.get_column_stats(&column_name) {
-                // Use sample values from streaming stats for quality checking
-                let sample_values: Vec<String> = stats.sample_values().to_vec();
-
-                samples.insert(column_name, sample_values);
-            }
-        }
-
-        samples
-    }
 }
 
 impl Default for IncrementalProfiler {
@@ -309,6 +190,7 @@ impl Default for IncrementalProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DataType;
     use anyhow::Result;
     use std::io::Write;
     use tempfile::NamedTempFile;

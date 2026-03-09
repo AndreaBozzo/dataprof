@@ -2,10 +2,9 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
-use crate::analyze_json;
-use crate::analyze_json_with_quality as analyze_json_quality_rust;
 #[cfg(feature = "datafusion")]
 use crate::engines::DataFusionLoader;
+use crate::parsers::json::{JsonParserConfig, analyze_json_file as json_analyze_file_rust};
 
 #[cfg(feature = "parquet")]
 use crate::analyze_parquet_with_quality as analyze_parquet_quality_rust;
@@ -81,18 +80,23 @@ fn analyze_csv_internal(
 /// Analyze a JSON file
 #[pyfunction]
 pub fn analyze_json_file(path: &str) -> PyResult<Vec<PyColumnProfile>> {
-    let profiles = analyze_json(Path::new(path))
+    let report = json_analyze_file_rust(Path::new(path), &JsonParserConfig::default())
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze JSON: {}", e)))?;
 
-    Ok(profiles.iter().map(PyColumnProfile::from).collect())
+    Ok(report
+        .column_profiles
+        .iter()
+        .map(PyColumnProfile::from)
+        .collect())
 }
 
 /// Analyze a JSON file with quality assessment
 #[pyfunction]
 pub fn analyze_json_with_quality(path: &str) -> PyResult<PyQualityReport> {
-    let quality_report = analyze_json_quality_rust(Path::new(path)).map_err(|e| {
-        PyRuntimeError::new_err(format!("Failed to analyze JSON with quality: {}", e))
-    })?;
+    let quality_report = json_analyze_file_rust(Path::new(path), &JsonParserConfig::default())
+        .map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to analyze JSON with quality: {}", e))
+        })?;
 
     let py_quality = PyQualityReport::from(&quality_report);
 

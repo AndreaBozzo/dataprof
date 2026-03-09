@@ -1,120 +1,293 @@
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::HashSet;
+use std::io::BufRead;
 use std::path::Path;
 
-use crate::analysis::analyze_column;
 use crate::core::errors::DataProfilerError;
+use crate::core::profile_builder;
+use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::types::{
     ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
 };
 
-// Simple JSON/JSONL support
-pub fn analyze_json(file_path: &Path) -> Result<Vec<ColumnProfile>, DataProfilerError> {
-    let content = std::fs::read_to_string(file_path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            DataProfilerError::FileNotFound {
-                path: file_path.display().to_string(),
-            }
-        } else {
-            DataProfilerError::from(e)
-        }
-    })?;
+// ============================================================================
+// NEW CONFIG-BASED API (#218)
+// ============================================================================
 
-    // Try to detect format: JSON array vs JSONL
-    let records: Vec<Value> = if content.trim_start().starts_with('[') {
-        // JSON array
-        serde_json::from_str(&content)?
-    } else {
-        // JSONL - one JSON object per line
-        content
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(serde_json::from_str)
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    if records.is_empty() {
-        return Ok(vec![]);
-    }
-
-    // Convert JSON objects to flat string columns
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
-
-    for record in &records {
-        if let Value::Object(obj) = record {
-            for (key, value) in obj {
-                let column_data = columns.entry(key.to_string()).or_default();
-
-                // Convert JSON value to string representation
-                let string_value = match value {
-                    Value::Null => String::new(), // Treat as empty/null
-                    Value::Bool(b) => b.to_string(),
-                    Value::Number(n) => n.to_string(),
-                    Value::String(s) => s.to_string(),
-                    Value::Array(_) | Value::Object(_) => {
-                        // For complex types, serialize to JSON string
-                        serde_json::to_string(value).unwrap_or_default()
-                    }
-                };
-
-                column_data.push(string_value);
-            }
-        }
-    }
-
-    // Ensure all columns have the same length (fill missing with empty strings)
-    let max_len = records.len();
-    for values in columns.values_mut() {
-        values.resize(max_len, String::new());
-    }
-
-    // Analyze columns using existing logic
-    let mut profiles = Vec::new();
-    for (name, data) in columns {
-        let profile = analyze_column(&name, &data);
-        profiles.push(profile);
-    }
-
-    Ok(profiles)
+/// JSON/JSONL format hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonFormat {
+    /// Standard JSON array of objects (`[{...}, {...}]`).
+    JsonArray,
+    /// JSON Lines — one JSON object per line.
+    Jsonl,
 }
 
-// JSON analysis with quality checking
-pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
-    let map_io_err = |e: std::io::Error| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            DataProfilerError::FileNotFound {
-                path: file_path.display().to_string(),
+/// Configuration for JSON/JSONL parsing and analysis.
+#[derive(Debug, Clone, Default)]
+pub struct JsonParserConfig {
+    /// Force a specific format (None = auto-detect from content).
+    pub format: Option<JsonFormat>,
+    /// Maximum rows to process (None = all rows).
+    pub max_rows: Option<usize>,
+}
+
+impl JsonParserConfig {
+    /// Set the maximum number of rows to process.
+    pub fn with_max_rows(mut self, max_rows: usize) -> Self {
+        self.max_rows = Some(max_rows);
+        self
+    }
+
+    /// Force JSONL format.
+    pub fn jsonl() -> Self {
+        Self {
+            format: Some(JsonFormat::Jsonl),
+            ..Default::default()
+        }
+    }
+
+    /// Force JSON array format.
+    pub fn json_array() -> Self {
+        Self {
+            format: Some(JsonFormat::JsonArray),
+            ..Default::default()
+        }
+    }
+}
+
+/// Convert a JSON [`Value`] to a flat string for column storage.
+fn json_value_to_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.to_string(),
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+/// Feed a JSON object's fields into a [`StreamingColumnCollection`].
+///
+/// Tracks which columns have been seen so far in `known_columns` to maintain
+/// insertion order and fill missing fields with empty strings.
+fn feed_json_object(
+    obj: &serde_json::Map<String, Value>,
+    known_columns: &mut Vec<String>,
+    known_columns_set: &mut HashSet<String>,
+    column_stats: &mut StreamingColumnCollection,
+) {
+    // Register any new columns (HashSet for O(1) lookup, Vec for insertion order)
+    for key in obj.keys() {
+        if known_columns_set.insert(key.clone()) {
+            known_columns.push(key.clone());
+        }
+    }
+
+    // Build values aligned to known_columns
+    let values: Vec<String> = known_columns
+        .iter()
+        .map(|col| obj.get(col).map(json_value_to_string).unwrap_or_default())
+        .collect();
+
+    column_stats.process_record(known_columns, values);
+}
+
+/// Analyze JSON/JSONL data from a buffered reader using streaming statistics.
+///
+/// - **JSONL**: true streaming — reads line-by-line with bounded memory.
+/// - **JSON array**: parsed as a streaming array of objects using
+///   `serde_json::Deserializer::from_reader`, processing each element with
+///   [`StreamingColumnCollection`] without buffering the entire array in memory.
+///
+/// Returns `(column_profiles, streaming_stats, rows_read, detected_format)`.
+pub fn analyze_json_from_reader<R: BufRead>(
+    mut reader: R,
+    config: &JsonParserConfig,
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        FileFormat,
+    ),
+    DataProfilerError,
+> {
+    // Auto-detect format by peeking at the first non-whitespace byte
+    let format = match config.format {
+        Some(JsonFormat::JsonArray) => FileFormat::Json,
+        Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
+        None => {
+            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+            let first_char = buf.iter().find(|b| !b.is_ascii_whitespace());
+            match first_char {
+                Some(b'[') => FileFormat::Json,
+                _ => FileFormat::Jsonl,
             }
-        } else {
-            DataProfilerError::from(e)
         }
     };
-    let metadata = std::fs::metadata(file_path).map_err(&map_io_err)?;
-    let _file_size_mb = metadata.len() as f64 / 1_048_576.0;
 
+    let mut column_stats = StreamingColumnCollection::new();
+    let mut known_columns: Vec<String> = Vec::new();
+    let mut known_columns_set: HashSet<String> = HashSet::new();
+    let mut rows_read = 0;
+
+    match format {
+        FileFormat::Jsonl => {
+            // True streaming: read line-by-line
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let bytes = reader
+                    .read_line(&mut line)
+                    .map_err(DataProfilerError::from)?;
+                if bytes == 0 {
+                    break; // EOF
+                }
+
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                if let Some(max) = config.max_rows
+                    && rows_read >= max
+                {
+                    break;
+                }
+
+                let value: Value = match serde_json::from_str(trimmed) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Value::Object(ref obj) = value {
+                    feed_json_object(
+                        obj,
+                        &mut known_columns,
+                        &mut known_columns_set,
+                        &mut column_stats,
+                    );
+                    rows_read += 1;
+                }
+            }
+        }
+        _ => {
+            // JSON array: stream elements efficiently
+            let mut found_array = false;
+            loop {
+                let mut consume = 0;
+                {
+                    let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+                    if buf.is_empty() {
+                        break;
+                    }
+                    for &b in buf {
+                        consume += 1;
+                        if b == b'[' {
+                            found_array = true;
+                            break;
+                        } else if !b.is_ascii_whitespace() {
+                            break;
+                        }
+                    }
+                }
+                reader.consume(consume);
+                if found_array || consume == 0 {
+                    break;
+                }
+            }
+
+            if !found_array {
+                // Format was forced to JsonArray but no '[' was found
+                if config.format.is_some() {
+                    return Err(DataProfilerError::JsonParsingError {
+                        message: "Expected JSON array (starts with '[') but input does not match"
+                            .to_string(),
+                    });
+                }
+                // Auto-detected: fall through with 0 rows
+            }
+
+            if found_array {
+                loop {
+                    let mut consume = 0;
+                    let mut found_value = false;
+                    let mut end_of_array = false;
+
+                    {
+                        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+                        if buf.is_empty() {
+                            break;
+                        }
+                        for &b in buf {
+                            if b.is_ascii_whitespace() || b == b',' {
+                                consume += 1;
+                            } else if b == b']' {
+                                end_of_array = true;
+                                consume += 1;
+                                break;
+                            } else {
+                                found_value = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    reader.consume(consume);
+                    if end_of_array {
+                        break;
+                    }
+
+                    if found_value {
+                        if let Some(max) = config.max_rows
+                            && rows_read >= max
+                        {
+                            break;
+                        }
+
+                        let mut de = serde_json::Deserializer::from_reader(&mut reader);
+                        match serde::Deserialize::deserialize(&mut de) {
+                            Ok(Value::Object(obj)) => {
+                                feed_json_object(
+                                    &obj,
+                                    &mut known_columns,
+                                    &mut known_columns_set,
+                                    &mut column_stats,
+                                );
+                                rows_read += 1;
+                            }
+                            Ok(_) => { /* Skip non-object elements */ }
+                            Err(_) => {
+                                // If parsing fails (e.g., malformed object), stop array stream
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let profiles = profile_builder::profiles_from_streaming(&column_stats);
+
+    Ok((profiles, column_stats, rows_read, format))
+}
+
+/// Analyze a JSON/JSONL file, returning a full [`QualityReport`].
+pub fn analyze_json_file(
+    file_path: &Path,
+    config: &JsonParserConfig,
+) -> Result<QualityReport, DataProfilerError> {
+    let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let start = std::time::Instant::now();
 
-    // Use existing JSON parsing logic
-    let content = std::fs::read_to_string(file_path).map_err(&map_io_err)?;
+    let file = std::fs::File::open(file_path).map_err(|e| map_io_error(file_path, e))?;
+    let buf_reader = std::io::BufReader::new(file);
 
-    let records: Vec<Value> = if content.trim_start().starts_with('[') {
-        serde_json::from_str(&content)?
-    } else {
-        content
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(serde_json::from_str)
-            .collect::<Result<Vec<_>, _>>()?
-    };
+    let (column_profiles, column_stats, rows_read, format) =
+        analyze_json_from_reader(buf_reader, config)?;
 
-    // Detect format
-    let format = if content.trim_start().starts_with('[') {
-        FileFormat::Json
-    } else {
-        FileFormat::Jsonl
-    };
-
-    if records.is_empty() {
+    if rows_read == 0 {
         return Ok(QualityReport::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -129,46 +302,12 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport, Data
         ));
     }
 
-    // Convert to columns
-    let mut columns: HashMap<String, Vec<String>> = HashMap::new();
-
-    for record in &records {
-        if let Value::Object(obj) = record {
-            for (key, value) in obj {
-                let column_data = columns.entry(key.to_string()).or_default();
-
-                let string_value = match value {
-                    Value::Null => String::new(),
-                    Value::Bool(b) => b.to_string(),
-                    Value::Number(n) => n.to_string(),
-                    Value::String(s) => s.to_string(),
-                    Value::Array(_) | Value::Object(_) => {
-                        serde_json::to_string(value).unwrap_or_default()
-                    }
-                };
-
-                column_data.push(string_value);
-            }
-        }
-    }
-
-    let max_len = records.len();
-    for values in columns.values_mut() {
-        values.resize(max_len, String::new());
-    }
-
-    // Analyze columns
-    let mut column_profiles = Vec::new();
-    for (name, data) in &columns {
-        let profile = analyze_column(name, data);
-        column_profiles.push(profile);
-    }
-
-    // Calculate comprehensive ISO 8000/25012 quality metrics
-    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)?;
+    let sample_columns = profile_builder::quality_check_samples(&column_stats);
+    let data_quality_metrics =
+        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
+            .unwrap_or_else(|_| DataQualityMetrics::empty());
 
     let scan_time_ms = start.elapsed().as_millis();
-    let num_rows = records.len();
     let num_columns = column_profiles.len();
 
     Ok(QualityReport::new(
@@ -180,15 +319,25 @@ pub fn analyze_json_with_quality(file_path: &Path) -> Result<QualityReport, Data
             parquet_metadata: None,
         },
         column_profiles,
-        ScanInfo::new(num_rows, num_columns, num_rows, 1.0, scan_time_ms),
+        ScanInfo::new(rows_read, num_columns, rows_read, 1.0, scan_time_ms),
         data_quality_metrics,
     ))
+}
+
+fn map_io_error(file_path: &Path, e: std::io::Error) -> DataProfilerError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        DataProfilerError::FileNotFound {
+            path: file_path.display().to_string(),
+        }
+    } else {
+        DataProfilerError::from(e)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Cursor, Write};
     use tempfile::NamedTempFile;
 
     fn write_file(content: &str) -> NamedTempFile {
@@ -198,10 +347,86 @@ mod tests {
         f
     }
 
+    // --- New API tests ---
+
+    #[test]
+    fn test_analyze_json_from_reader_jsonl_streaming() {
+        let data = b"{\"x\":1,\"y\":\"a\"}\n{\"x\":2,\"y\":\"b\"}\n{\"x\":3,\"y\":\"c\"}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::default();
+
+        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Jsonl);
+        assert_eq!(rows, 3);
+        assert_eq!(profiles.len(), 2);
+    }
+
+    #[test]
+    fn test_analyze_json_from_reader_json_array() {
+        let data = br#"[{"name":"Alice","age":25},{"name":"Bob","age":30}]"#;
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::default();
+
+        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Json);
+        assert_eq!(rows, 2);
+        assert_eq!(profiles.len(), 2);
+    }
+
+    #[test]
+    fn test_analyze_json_from_reader_max_rows() {
+        let data = b"{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n{\"x\":4}\n{\"x\":5}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::default().with_max_rows(3);
+
+        let (_profiles, _stats, rows, _format) = analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(rows, 3);
+    }
+
+    #[test]
+    fn test_analyze_json_from_reader_missing_fields() {
+        let data = b"{\"a\":1,\"b\":2}\n{\"a\":3}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::jsonl();
+
+        let (profiles, _stats, rows, _format) = analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(rows, 2);
+
+        let col_b = profiles.iter().find(|p| p.name == "b").unwrap();
+        assert_eq!(col_b.total_count, 2); // 1 real + 1 empty fill
+    }
+
+    #[test]
+    fn test_analyze_json_file_quality_report() {
+        let f = write_file(r#"[{"x":1},{"x":2}]"#);
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(f.path(), &config).unwrap();
+
+        assert_eq!(report.scan_info.total_rows, 2);
+        assert_eq!(report.column_profiles.len(), 1);
+        assert!(report.quality_score() >= 0.0);
+    }
+
+    #[test]
+    fn test_jsonl_skips_malformed_lines() {
+        let data = b"{\"x\":1}\n{\"x\":,malformed}\n{\"x\":3}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::jsonl();
+
+        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Jsonl);
+        assert_eq!(rows, 2);
+        assert_eq!(profiles[0].total_count, 2);
+    }
+
+    // --- Legacy API tests migrated to new API ---
+
     #[test]
     fn test_analyze_json_array() {
         let json = write_file(r#"[{"name":"Alice","age":25},{"name":"Bob","age":30}]"#);
-        let profiles = analyze_json(json.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
+        let profiles = &report.column_profiles;
 
         assert_eq!(profiles.len(), 2);
         let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
@@ -216,7 +441,9 @@ mod tests {
     #[test]
     fn test_analyze_jsonl() {
         let jsonl = write_file("{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n");
-        let profiles = analyze_json(jsonl.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(jsonl.path(), &config).unwrap();
+        let profiles = &report.column_profiles;
 
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].name, "x");
@@ -226,7 +453,9 @@ mod tests {
     #[test]
     fn test_analyze_json_with_nulls() {
         let json = write_file(r#"[{"a":"hello","b":1},{"a":null,"b":2},{"a":"world","b":null}]"#);
-        let profiles = analyze_json(json.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
+        let profiles = &report.column_profiles;
 
         let col_a = profiles.iter().find(|p| p.name == "a").unwrap();
         assert_eq!(col_a.null_count, 1);
@@ -237,25 +466,28 @@ mod tests {
 
     #[test]
     fn test_analyze_json_with_missing_fields() {
-        // Second record is missing "b" — should be padded with empty string
         let json = write_file(r#"[{"a":1,"b":2},{"a":3}]"#);
-        let profiles = analyze_json(json.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
+        let profiles = &report.column_profiles;
 
         let col_b = profiles.iter().find(|p| p.name == "b").unwrap();
-        assert_eq!(col_b.total_count, 2); // padded to match record count
+        assert_eq!(col_b.total_count, 2);
     }
 
     #[test]
     fn test_analyze_json_empty_array() {
         let json = write_file("[]");
-        let profiles = analyze_json(json.path()).unwrap();
-        assert!(profiles.is_empty());
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
+        assert!(report.column_profiles.is_empty());
     }
 
     #[test]
-    fn test_analyze_json_with_quality_detects_format() {
+    fn test_analyze_json_file_detects_format() {
         let json_array = write_file(r#"[{"x":1}]"#);
-        let report = analyze_json_with_quality(json_array.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json_array.path(), &config).unwrap();
         assert!(matches!(
             report.data_source,
             DataSource::File {
@@ -265,7 +497,7 @@ mod tests {
         ));
 
         let jsonl = write_file("{\"x\":1}\n{\"x\":2}\n");
-        let report = analyze_json_with_quality(jsonl.path()).unwrap();
+        let report = analyze_json_file(jsonl.path(), &config).unwrap();
         assert!(matches!(
             report.data_source,
             DataSource::File {
@@ -276,9 +508,10 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_json_with_quality_empty() {
+    fn test_analyze_json_file_empty() {
         let json = write_file("[]");
-        let report = analyze_json_with_quality(json.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
         assert_eq!(report.scan_info.total_rows, 0);
         assert!(report.column_profiles.is_empty());
     }
@@ -287,12 +520,13 @@ mod tests {
     fn test_analyze_json_boolean_and_nested() {
         let json =
             write_file(r#"[{"flag":true,"nested":{"a":1}},{"flag":false,"nested":{"b":2}}]"#);
-        let profiles = analyze_json(json.path()).unwrap();
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
+        let profiles = &report.column_profiles;
 
         let flag = profiles.iter().find(|p| p.name == "flag").unwrap();
         assert_eq!(flag.total_count, 2);
 
-        // Nested objects are serialized as JSON strings
         let nested = profiles.iter().find(|p| p.name == "nested").unwrap();
         assert_eq!(nested.total_count, 2);
     }

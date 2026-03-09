@@ -2,7 +2,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
-use crate::analyze_csv;
+use crate::parsers::csv::{CsvParserConfig, analyze_csv_file};
 
 use super::types::PyColumnProfile;
 
@@ -10,8 +10,9 @@ use super::types::PyColumnProfile;
 #[pyfunction]
 pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<Py<PyAny>> {
     // Get column profiles
-    let profiles = analyze_csv(Path::new(path))
+    let report = analyze_csv_file(Path::new(path), &CsvParserConfig::default())
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
+    let profiles = &report.column_profiles;
 
     // Try to import pandas
     let pandas = match py.import("pandas") {
@@ -34,7 +35,7 @@ pub fn analyze_csv_dataframe(py: Python, path: &str) -> PyResult<Py<PyAny>> {
     data.insert("unique_count", Vec::new());
     data.insert("uniqueness_ratio", Vec::new());
 
-    for profile in &profiles {
+    for profile in profiles {
         let py_profile = PyColumnProfile::from(profile);
         if let Some(vec) = data.get_mut("column_name") {
             vec.push(py_profile.name.into_pyobject(py)?.into());

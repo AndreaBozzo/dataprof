@@ -133,7 +133,10 @@ pub fn analyze_file_with_options(
 
     if super::commands::is_json_file(file_path) {
         // JSON files: use specialized JSON parser
-        Ok(dataprof::analyze_json_with_quality(file_path)?)
+        Ok(dataprof::parsers::json::analyze_json_file(
+            file_path,
+            &dataprof::parsers::json::JsonParserConfig::default(),
+        )?)
     } else if is_parquet {
         // Parquet files: use Parquet parser
         #[cfg(feature = "parquet")]
@@ -166,7 +169,10 @@ pub fn analyze_file_with_options(
                         if verbosity >= 2 {
                             eprintln!("Streaming analysis failed: {}. Trying robust parser...", e);
                         }
-                        Ok(dataprof::analyze_csv_robust(file_path)?)
+                        Ok(dataprof::parsers::csv::analyze_csv_file(
+                            file_path,
+                            &dataprof::parsers::csv::CsvParserConfig::default(),
+                        )?)
                     }
                 }
             }
@@ -179,7 +185,10 @@ pub fn analyze_file_with_options(
                         e
                     );
                 }
-                Ok(dataprof::analyze_csv_robust(file_path)?)
+                Ok(dataprof::parsers::csv::analyze_csv_file(
+                    file_path,
+                    &dataprof::parsers::csv::CsvParserConfig::default(),
+                )?)
             }
         }
     }

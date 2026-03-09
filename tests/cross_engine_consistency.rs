@@ -6,7 +6,7 @@
 use std::io::Write;
 
 use dataprof::engines::columnar::ArrowProfiler;
-use dataprof::parsers::csv::analyze_csv_robust;
+use dataprof::parsers::csv::{CsvParserConfig, analyze_csv_file};
 use dataprof::types::{ColumnStats, DataType};
 use tempfile::NamedTempFile;
 
@@ -34,7 +34,8 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
     let path = csv.path();
 
     // Standard CSV engine
-    let std_report = analyze_csv_robust(path).expect("standard CSV analysis should succeed");
+    let std_report = analyze_csv_file(path, &CsvParserConfig::default())
+        .expect("standard CSV analysis should succeed");
 
     // Arrow CSV engine
     let arrow_profiler = ArrowProfiler::new();
@@ -187,7 +188,8 @@ fn test_mixed_data_column_type_consistency() {
     writeln!(f, "5,500,2024-01-05").unwrap();
     f.flush().unwrap();
 
-    let std_report = analyze_csv_robust(f.path()).expect("standard CSV should succeed");
+    let std_report = analyze_csv_file(f.path(), &CsvParserConfig::default())
+        .expect("standard CSV should succeed");
     let arrow_report = ArrowProfiler::new()
         .analyze_csv_file(f.path())
         .expect("Arrow CSV should succeed");

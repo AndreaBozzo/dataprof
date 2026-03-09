@@ -2,10 +2,20 @@ pub mod csv;
 pub mod json;
 #[cfg(feature = "parquet")]
 pub mod parquet;
-pub mod robust_csv;
+#[cfg(feature = "parquet-async")]
+pub mod parquet_async;
+#[allow(dead_code)]
+pub(crate) mod robust_csv;
 
-pub use csv::{analyze_csv, analyze_csv_robust, analyze_csv_with_sampling, try_strict_csv_parsing};
-pub use json::{analyze_json, analyze_json_with_quality};
+// New config-based API (#181 + #218)
+pub use csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
+
+// New config-based JSON API (#218)
+pub use json::{JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader};
 #[cfg(feature = "parquet")]
 pub use parquet::{ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality};
-pub use robust_csv::{CsvDiagnostics, RobustCsvParser};
+#[cfg(feature = "parquet-async")]
+pub use parquet_async::{HttpParquetReader, analyze_parquet_async_http};
+
+// CsvDiagnostics remains public even though RobustCsvParser is now pub(crate)
+pub use robust_csv::CsvDiagnostics;

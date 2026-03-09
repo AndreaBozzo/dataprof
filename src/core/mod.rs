@@ -4,6 +4,7 @@ pub mod config;
 pub mod errors;
 pub mod memory_tracker;
 pub mod performance;
+pub mod profile_builder;
 pub mod sampling;
 pub mod streaming_stats;
 pub mod validation;

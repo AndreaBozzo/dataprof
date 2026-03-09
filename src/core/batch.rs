@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use crate::analyze_parquet_with_quality;
 use crate::core::errors::DataProfilerError;
 use crate::output::progress::ProgressManager;
+use crate::parsers::csv::{CsvParserConfig, analyze_csv_file};
+use crate::parsers::json::{JsonParserConfig, analyze_json_file};
 use crate::types::{DataQualityMetrics, QualityReport};
-use crate::{analyze_csv_robust, analyze_json_with_quality};
 
 /// Configuration for batch processing operations
 #[derive(Debug, Clone)]
@@ -385,8 +386,9 @@ impl BatchProcessor {
             .ok_or_else(|| "File has no extension".to_string())?;
 
         match ext.to_lowercase().as_str() {
-            "csv" => analyze_csv_robust(path).map_err(|e| format!("CSV processing failed: {}", e)),
-            "json" | "jsonl" => analyze_json_with_quality(path)
+            "csv" => analyze_csv_file(path, &CsvParserConfig::default())
+                .map_err(|e| format!("CSV processing failed: {}", e)),
+            "json" | "jsonl" => analyze_json_file(path, &JsonParserConfig::default())
                 .map_err(|e| format!("JSON processing failed: {}", e)),
             "parquet" => {
                 #[cfg(feature = "parquet")]
