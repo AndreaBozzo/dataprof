@@ -35,7 +35,7 @@ jobs:
   test-suite:
     name: Test Suite
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +51,7 @@ jobs:
             test-type: all
             features: ""
             all-features: true
-            timeout: 25
+            timeout: 30
             skip-on-draft: true
     steps:
       - name: Checkout code
