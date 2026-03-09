@@ -126,10 +126,14 @@ impl AsyncFileReader for HttpParquetReader {
             let metadata_opts = options.map(|o| o.metadata_options().clone());
             let metadata_reader = ParquetMetaDataReader::new()
                 .with_column_index_policy(
-                    options.map(|o| o.column_index_policy()).unwrap_or(PageIndexPolicy::Skip)
+                    options
+                        .map(|o| o.column_index_policy())
+                        .unwrap_or(PageIndexPolicy::Skip),
                 )
                 .with_offset_index_policy(
-                    options.map(|o| o.offset_index_policy()).unwrap_or(PageIndexPolicy::Skip)
+                    options
+                        .map(|o| o.offset_index_policy())
+                        .unwrap_or(PageIndexPolicy::Skip),
                 )
                 .with_metadata_options(metadata_opts);
 
