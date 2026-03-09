@@ -11,6 +11,32 @@ use datafusion::prelude::*;
 use futures::stream::{Stream, StreamExt};
 use std::time::Instant;
 
+/// Helper to convert a DataFusion arrow 57 `RecordBatch` into our project's arrow 58 `RecordBatch`
+/// using Arrow IPC streams. This avoids FFI feature requirements and unsafe blocks.
+fn convert_batch(
+    batch: &datafusion::arrow::array::RecordBatch,
+) -> Result<arrow::array::RecordBatch> {
+    let mut buf = Vec::new();
+    
+    // Write using DataFusion's arrow (v57) IPC writer
+    {
+        let mut writer = datafusion::arrow::ipc::writer::StreamWriter::try_new(&mut buf, &batch.schema())
+            .map_err(|e| anyhow::anyhow!("IPC write error: {}", e))?;
+        writer.write(batch).map_err(|e| anyhow::anyhow!("IPC write error: {}", e))?;
+        writer.finish().map_err(|e| anyhow::anyhow!("IPC write error: {}", e))?;
+    }
+    
+    // Read using our arrow (v58) IPC reader
+    let mut reader = arrow::ipc::reader::StreamReader::try_new(std::io::Cursor::new(buf), None)
+        .map_err(|e| anyhow::anyhow!("IPC read error: {}", e))?;
+        
+    let imported_batch = reader.next()
+        .ok_or_else(|| anyhow::anyhow!("No batch found in IPC stream"))?
+        .map_err(|e| anyhow::anyhow!("IPC read error: {}", e))?;
+        
+    Ok(imported_batch)
+}
+
 /// DataFusion loader for profiling SQL queries using Arrow integration
 pub struct DataFusionLoader {
     batch_size: usize,
@@ -111,7 +137,8 @@ impl DataFusionLoader {
         for record_batch in batches {
             if record_batch.num_rows() > 0 {
                 batch_count += 1;
-                analyzer.process_batch(&record_batch)?;
+                let converted = convert_batch(&record_batch)?;
+                analyzer.process_batch(&converted)?;
             }
         }
 
@@ -205,7 +232,8 @@ impl DataFusionLoader {
             .map(move |batch| {
                 let batch = batch.context("Failed to fetch batch")?;
                 if batch.num_rows() > 0 {
-                    analyzer.process_batch(&batch)?;
+                    let converted = convert_batch(&batch)?;
+                    analyzer.process_batch(&converted)?;
                 }
                 let column_profiles = analyzer.to_profiles();
                 let sample_columns = analyzer.create_sample_columns();
