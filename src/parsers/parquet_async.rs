@@ -20,6 +20,8 @@ impl HttpParquetReader {
     /// to ascertain the target file's size, returning the initialized reader.
     pub async fn try_new(url: &str) -> Result<Self, DataProfilerError> {
         let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| DataProfilerError::ParquetError {
                 message: format!("Reqwest client builder failed: {}", e),

@@ -274,7 +274,8 @@ impl AsyncStreamingProfiler {
     /// Blocking reader task for JSON/JSONL streams.
     ///
     /// For **JSONL**: reads line-by-line (true streaming, bounded memory).
-    /// For **JSON array**: buffers the entire content to parse, then sends in chunks.
+    /// For **JSON array**: streams elements incrementally using `serde_json::Deserializer`,
+    /// processing each object without buffering the entire array in memory.
     ///
     /// The first chunk sent contains column names (like the CSV reader task sends headers).
     fn json_reader_task(

@@ -198,6 +198,9 @@ pub fn analyze_csv_from_reader<R: Read>(
         let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
 
         // Ensure values align with headers, even when using flexible (ragged) rows.
+        // Note: missing fields are padded with empty strings, which downstream
+        // StreamingColumnCollection treats as nulls — this conflates "absent" with
+        // "explicitly empty", which is acceptable for profiling purposes.
         let header_len = header_names.len();
         if values.len() < header_len {
             values.resize(header_len, String::new());

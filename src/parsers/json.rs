@@ -197,6 +197,17 @@ pub fn analyze_json_from_reader<R: BufRead>(
                 }
             }
 
+            if !found_array {
+                // Format was forced to JsonArray but no '[' was found
+                if config.format.is_some() {
+                    return Err(DataProfilerError::JsonParsingError {
+                        message: "Expected JSON array (starts with '[') but input does not match"
+                            .to_string(),
+                    });
+                }
+                // Auto-detected: fall through with 0 rows
+            }
+
             if found_array {
                 loop {
                     let mut consume = 0;
