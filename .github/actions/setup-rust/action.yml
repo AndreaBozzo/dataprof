@@ -42,17 +42,10 @@ runs:
         fi
 
     - name: Cache Rust dependencies
-      uses: actions/cache@v5
+      uses: Swatinem/rust-cache@v2
       with:
-        path: |
-          ~/.cargo/registry/index
-          ~/.cargo/registry/cache
-          ~/.cargo/git/db
-          target/
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}-v3
-        restore-keys: |
-          ${{ inputs.cache-prefix }}-${{ runner.os }}-
-          rust-${{ runner.os }}-
+        prefix-key: ${{ inputs.cache-prefix }}
+        shared-key: "v4"
 
     - name: Verify Rust installation
       shell: bash

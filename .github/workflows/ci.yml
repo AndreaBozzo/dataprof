@@ -60,7 +60,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-prefix: rust-ci
+          cache-prefix: rust-ci-${{ matrix.test-scope }}
 
       - name: Run ${{ matrix.test-scope }} tests
         if: github.event_name == 'push' || matrix.skip-on-draft == false || github.event.pull_request.draft == false
