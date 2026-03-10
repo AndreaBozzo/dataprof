@@ -175,7 +175,7 @@ impl AsyncStreamingProfiler {
             .with_bytes_consumed(total_bytes);
         if total_rows > 0 && sampled_rows < total_rows {
             let ratio = sampled_rows as f64 / total_rows as f64;
-            execution = execution.with_sampling(ratio);
+            execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
         Ok(QualityReport::new(

@@ -110,7 +110,7 @@ impl MappedProfiler {
         let mut column_infos: HashMap<String, StreamingColumnInfo> = HashMap::new();
         let mut headers: Option<csv::StringRecord> = None;
 
-        let mut processed_rows = 0;
+        let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
         let mut chunk_count = 0;
         let mut offset = 0u64;
@@ -141,7 +141,7 @@ impl MappedProfiler {
 
             // Process records in this chunk
             for (row_idx, record) in records.iter().enumerate() {
-                let global_row_idx = processed_rows + row_idx;
+                let global_row_idx = iterated_rows + row_idx;
 
                 // Apply sampling strategy
                 if !self
@@ -163,11 +163,11 @@ impl MappedProfiler {
                 analyzed_rows += 1;
             }
 
-            processed_rows += records.len();
+            iterated_rows += records.len();
             chunk_count += 1;
             offset += chunk_size_bytes as u64;
 
-            progress_tracker.update(processed_rows, Some(estimated_total_rows), chunk_count);
+            progress_tracker.update(iterated_rows, Some(estimated_total_rows), chunk_count);
 
             // Break if we've read all data
             if records.len() < 100 {
@@ -176,7 +176,7 @@ impl MappedProfiler {
             }
         }
 
-        progress_tracker.finish(processed_rows);
+        progress_tracker.finish(iterated_rows);
 
         // Convert streaming stats to column profiles
         let mut column_profiles = Vec::new();
@@ -198,7 +198,7 @@ impl MappedProfiler {
             .with_bytes_consumed(file_size_bytes);
         if estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
             let ratio = analyzed_rows as f64 / estimated_total_rows as f64;
-            execution = execution.with_sampling(ratio);
+            execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
         Ok(QualityReport::new(

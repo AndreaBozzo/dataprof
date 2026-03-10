@@ -228,7 +228,9 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 if let Some(ref info) = sample_info
                     && info.sampling_ratio < 1.0
                 {
-                    exec = exec.with_sampling(info.sampling_ratio);
+                    exec = exec
+                        .with_sampling(info.sampling_ratio)
+                        .with_source_exhausted(false);
                 }
                 exec
             },
@@ -255,7 +257,9 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
 
     let mut execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms);
     if sampling_ratio < 1.0 {
-        execution = execution.with_sampling(sampling_ratio);
+        execution = execution
+            .with_sampling(sampling_ratio)
+            .with_source_exhausted(false);
     }
 
     let report = QualityReport::new(

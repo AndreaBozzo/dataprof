@@ -59,7 +59,7 @@ impl ReportBuilder {
             && stats.total_rows_processed < total
         {
             let ratio = stats.total_rows_processed as f64 / total as f64;
-            execution = execution.with_sampling(ratio);
+            execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
         Ok(QualityReport::new(

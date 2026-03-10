@@ -489,7 +489,7 @@ pub struct ParquetMetadata {
 }
 
 /// Reason why profiling was truncated before exhausting the source
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TruncationReason {
     /// Stopped after processing a maximum number of rows
     MaxRows(u64),
@@ -568,10 +568,20 @@ impl ExecutionMetadata {
     }
 
     /// Set sampling information.
+    ///
+    /// Note: this does **not** change `source_exhausted`. A file can be fully
+    /// read yet still sampled (e.g., skip every other row). Call
+    /// `.with_source_exhausted(false)` separately when the source was not
+    /// fully consumed.
     pub fn with_sampling(mut self, ratio: f64) -> Self {
         self.sampling_applied = true;
         self.sampling_ratio = Some(ratio);
-        self.source_exhausted = false;
+        self
+    }
+
+    /// Explicitly set whether the source was fully consumed.
+    pub fn with_source_exhausted(mut self, exhausted: bool) -> Self {
+        self.source_exhausted = exhausted;
         self
     }
 

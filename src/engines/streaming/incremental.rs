@@ -69,7 +69,7 @@ impl IncrementalProfiler {
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
 
         let mut headers: Option<csv::StringRecord> = None;
-        let mut processed_rows = 0;
+        let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
         let mut chunk_count = 0;
         let mut offset = 0u64;
@@ -94,7 +94,7 @@ impl IncrementalProfiler {
                     header_record.iter().map(|s| s.to_string()).collect();
 
                 for (row_idx, record) in records.iter().enumerate() {
-                    let global_row_idx = processed_rows + row_idx;
+                    let global_row_idx = iterated_rows + row_idx;
 
                     // Apply sampling strategy
                     if !self
@@ -113,12 +113,12 @@ impl IncrementalProfiler {
                 }
             }
 
-            processed_rows += records.len();
+            iterated_rows += records.len();
             chunk_count += 1;
             offset += chunk_size_bytes as u64;
 
             // Update progress
-            progress_tracker.update(processed_rows, Some(estimated_total_rows), chunk_count);
+            progress_tracker.update(iterated_rows, Some(estimated_total_rows), chunk_count);
 
             // Check memory pressure and reduce if needed
             if column_stats.is_memory_pressure() {
@@ -131,7 +131,7 @@ impl IncrementalProfiler {
             }
         }
 
-        progress_tracker.finish(processed_rows);
+        progress_tracker.finish(iterated_rows);
 
         // Convert streaming statistics to column profiles
         let column_profiles = profile_builder::profiles_from_streaming(&column_stats);
@@ -149,7 +149,7 @@ impl IncrementalProfiler {
             .with_bytes_consumed(file_size_bytes);
         if estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
             let ratio = analyzed_rows as f64 / estimated_total_rows as f64;
-            execution = execution.with_sampling(ratio);
+            execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
         Ok(QualityReport::new(
