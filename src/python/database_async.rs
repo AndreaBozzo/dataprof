@@ -110,7 +110,9 @@ async fn analyze_database_internal(
 
         // Convert execution metadata to a simple string representation
         let execution_info = format!("{:?}", quality_report.execution);
-        result.set_item("execution_info", execution_info)?;
+        result.set_item("execution_info", &execution_info)?;
+        // Backward compatibility: keep old key name as alias
+        result.set_item("scan_info", &execution_info)?;
 
         Ok(result.into())
     })

@@ -209,7 +209,11 @@ impl From<&QualityReport> for PyQualityReport {
 
         Self {
             file_path: report.data_source.identifier(),
-            total_rows: Some(report.execution.rows_processed),
+            total_rows: if report.execution.source_exhausted {
+                Some(report.execution.rows_processed)
+            } else {
+                None
+            },
             total_columns: report.execution.columns_detected,
             column_profiles: report
                 .column_profiles

@@ -57,6 +57,9 @@ pub use types::{
     ExecutionMetadata, FileFormat, OutputFormat, Pattern, QualityReport, QueryEngine,
     TruncationReason,
 };
+
+#[deprecated(since = "0.6.0", note = "Use ExecutionMetadata instead.")]
+pub type ScanInfo = ExecutionMetadata;
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
 // Parser API - New config-based CSV API (#181 + #218)

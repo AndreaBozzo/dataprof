@@ -126,8 +126,7 @@ impl AsyncStreamingProfiler {
         let process_result = self.process_chunks(rx, source_info.size_hint).await;
 
         // If processing failed, abort the reader task to avoid leaking it
-        let (_headers, column_stats, total_rows, sampled_rows, _total_bytes) = match process_result
-        {
+        let (_headers, column_stats, total_rows, sampled_rows, total_bytes) = match process_result {
             Ok(result) => result,
             Err(e) => {
                 reader_handle.abort();
@@ -172,7 +171,8 @@ impl AsyncStreamingProfiler {
             last_record_at: None,
         };
 
-        let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms);
+        let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms)
+            .with_bytes_consumed(total_bytes);
         if total_rows > 0 && sampled_rows < total_rows {
             let ratio = sampled_rows as f64 / total_rows as f64;
             execution = execution.with_sampling(ratio);

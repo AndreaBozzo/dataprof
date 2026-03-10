@@ -458,7 +458,7 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
         assert_eq!(report.execution.rows_processed, 5);
-        assert_eq!(report.execution.rows_processed, 5);
+        assert_eq!(report.execution.columns_detected, 1);
         assert!((report.execution.sampling_ratio.unwrap_or(1.0) - 1.0).abs() < 0.01);
     }
 

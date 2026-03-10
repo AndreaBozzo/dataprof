@@ -111,6 +111,7 @@ impl MappedProfiler {
         let mut headers: Option<csv::StringRecord> = None;
 
         let mut processed_rows = 0;
+        let mut analyzed_rows = 0;
         let mut chunk_count = 0;
         let mut offset = 0u64;
 
@@ -159,6 +160,7 @@ impl MappedProfiler {
                         column_info.process_value(field);
                     }
                 }
+                analyzed_rows += 1;
             }
 
             processed_rows += records.len();
@@ -192,9 +194,10 @@ impl MappedProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
-        let mut execution = ExecutionMetadata::new(processed_rows, num_columns, scan_time_ms);
-        if estimated_total_rows > 0 && processed_rows < estimated_total_rows {
-            let ratio = processed_rows as f64 / estimated_total_rows as f64;
+        let mut execution = ExecutionMetadata::new(analyzed_rows, num_columns, scan_time_ms)
+            .with_bytes_consumed(file_size_bytes);
+        if estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
+            let ratio = analyzed_rows as f64 / estimated_total_rows as f64;
             execution = execution.with_sampling(ratio);
         }
 

@@ -50,7 +50,8 @@ impl ReportBuilder {
         let num_columns = column_profiles.len();
 
         let mut execution =
-            ExecutionMetadata::new(stats.total_rows_processed, num_columns, scan_time_ms);
+            ExecutionMetadata::new(stats.total_rows_processed, num_columns, scan_time_ms)
+                .with_bytes_consumed(stats.bytes_processed);
 
         // If we have an estimated total and processed fewer rows, sampling was applied
         if let Some(total) = self.estimated_total_rows
@@ -110,6 +111,7 @@ mod tests {
 
         assert_eq!(report.execution.rows_processed, 2);
         assert_eq!(report.execution.columns_detected, 1);
+        assert_eq!(report.execution.bytes_consumed, Some(100));
         assert!(report.execution.source_exhausted);
         assert!(!report.execution.sampling_applied);
     }

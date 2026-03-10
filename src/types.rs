@@ -423,6 +423,7 @@ pub struct QualityReport {
     /// Column-level profiling results
     pub column_profiles: Vec<ColumnProfile>,
     /// Execution metadata (timing, rows processed, truncation info, etc.)
+    #[serde(alias = "scan_info")]
     pub execution: ExecutionMetadata,
     /// Data quality metrics following ISO 8000/25012 standards
     /// This is the single source of truth for data quality assessment
@@ -570,6 +571,7 @@ impl ExecutionMetadata {
     pub fn with_sampling(mut self, ratio: f64) -> Self {
         self.sampling_applied = true;
         self.sampling_ratio = Some(ratio);
+        self.source_exhausted = false;
         self
     }
 
