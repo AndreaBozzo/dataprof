@@ -109,16 +109,16 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
             .split('@')
             .next_back()
             .unwrap_or(connection_string),
-        report.scan_info.total_columns,
-        report.scan_info.total_rows
+        report.execution.columns_detected,
+        report.execution.rows_processed
     );
 
-    if report.scan_info.rows_scanned > 0 {
-        let scan_time_sec = report.scan_info.scan_time_ms as f64 / 1000.0;
-        let rows_per_sec = report.scan_info.rows_scanned as f64 / scan_time_sec;
+    if report.execution.rows_processed > 0 {
+        let scan_time_sec = report.execution.scan_time_ms as f64 / 1000.0;
+        let rows_per_sec = report.execution.rows_processed as f64 / scan_time_sec;
         println!(
             "⚡ Processed {} rows in {:.1}s ({:.0} rows/sec)",
-            report.scan_info.rows_scanned, scan_time_sec, rows_per_sec
+            report.execution.rows_processed, scan_time_sec, rows_per_sec
         );
     }
     println!();

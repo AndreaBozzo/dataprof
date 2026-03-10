@@ -2,7 +2,9 @@
 
 use std::io::Write;
 
-use dataprof::{AsyncSourceInfo, AsyncStreamingProfiler, BytesSource, FileFormat};
+use dataprof::{
+    AsyncSourceInfo, AsyncStreamingProfiler, BytesSource, EngineType, FileFormat, Profiler,
+};
 
 /// Compare async profiling of a CSV file against the sync IncrementalProfiler.
 /// Column counts and row counts must match; data types should agree.
@@ -16,9 +18,9 @@ async fn test_async_vs_sync_parity() {
     }
     tmp.flush().unwrap();
 
-    // --- Sync baseline ---
-    let sync_report = dataprof::engines::streaming::IncrementalProfiler::new()
-        .memory_limit_mb(16)
+    // --- Sync baseline via Profiler API ---
+    let sync_report = Profiler::new()
+        .engine(EngineType::Incremental)
         .analyze_file(tmp.path())
         .unwrap();
 
@@ -47,9 +49,9 @@ async fn test_async_vs_sync_parity() {
 
     // Row counts must match
     assert_eq!(
-        sync_report.scan_info.rows_scanned, async_report.scan_info.rows_scanned,
+        sync_report.execution.rows_processed, async_report.execution.rows_processed,
         "Row count mismatch: sync={} async={}",
-        sync_report.scan_info.rows_scanned, async_report.scan_info.rows_scanned,
+        sync_report.execution.rows_processed, async_report.execution.rows_processed,
     );
 
     // Data types should match for each column
@@ -97,7 +99,7 @@ async fn test_bytes_source_end_to_end() {
         .unwrap();
 
     assert_eq!(report.column_profiles.len(), 2);
-    assert_eq!(report.scan_info.rows_scanned, 3);
+    assert_eq!(report.execution.rows_processed, 3);
 
     let count_col = report
         .column_profiles

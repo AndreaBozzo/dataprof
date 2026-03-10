@@ -8,7 +8,8 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{ProgressCallback, ProgressTracker};
 use crate::types::{
-    DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo, StreamSourceSystem,
+    DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
+    StreamSourceSystem,
 };
 
 use super::async_source::AsyncDataSource;
@@ -171,29 +172,16 @@ impl AsyncStreamingProfiler {
             last_record_at: None,
         };
 
-        let sampling_ratio = if total_rows > 0 {
-            sampled_rows as f64 / total_rows as f64
-        } else {
-            0.0
-        };
+        let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms);
+        if total_rows > 0 && sampled_rows < total_rows {
+            let ratio = sampled_rows as f64 / total_rows as f64;
+            execution = execution.with_sampling(ratio);
+        }
 
         Ok(QualityReport::new(
             data_source,
             column_profiles,
-            ScanInfo {
-                total_rows,
-                total_columns: num_columns,
-                rows_scanned: sampled_rows,
-                sampling_ratio,
-                scan_time_ms,
-                throughput_rows_sec: if scan_time_ms > 0 {
-                    Some(total_rows as f64 / (scan_time_ms as f64 / 1000.0))
-                } else {
-                    None
-                },
-                memory_peak_mb: None,
-                error_count: 0,
-            },
+            execution,
             data_quality_metrics,
         ))
     }
@@ -641,7 +629,7 @@ mod tests {
         let report = profiler.analyze_stream(source).await.unwrap();
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.scan_info.total_columns, 3);
+        assert_eq!(report.execution.columns_detected, 3);
 
         let age_col = report
             .column_profiles
@@ -668,7 +656,7 @@ mod tests {
         let report = profiler.analyze_stream(source).await.unwrap();
 
         assert_eq!(report.column_profiles.len(), 0);
-        assert_eq!(report.scan_info.rows_scanned, 0);
+        assert_eq!(report.execution.rows_processed, 0);
     }
 
     #[tokio::test]
@@ -680,7 +668,7 @@ mod tests {
         let report = profiler.analyze_stream(source).await.unwrap();
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.scan_info.rows_scanned, 2);
+        assert_eq!(report.execution.rows_processed, 2);
 
         let bio_col = report
             .column_profiles

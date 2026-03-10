@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::analysis::analyze_column;
 use crate::engines::streaming::chunk_processor::ProcessingStats;
 use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
 };
 
 /// Builds quality reports from processed data
@@ -47,11 +47,19 @@ impl ReportBuilder {
 
         // Calculate metrics
         let scan_time_ms = self.start_time.elapsed().as_millis();
-        let sampling_ratio = self.calculate_sampling_ratio(stats.total_rows_processed);
         let num_columns = column_profiles.len();
-        let total_rows = self
-            .estimated_total_rows
-            .unwrap_or(stats.total_rows_processed);
+
+        let mut execution =
+            ExecutionMetadata::new(stats.total_rows_processed, num_columns, scan_time_ms);
+
+        // If we have an estimated total and processed fewer rows, sampling was applied
+        if let Some(total) = self.estimated_total_rows
+            && total > 0
+            && stats.total_rows_processed < total
+        {
+            let ratio = stats.total_rows_processed as f64 / total as f64;
+            execution = execution.with_sampling(ratio);
+        }
 
         Ok(QualityReport::new(
             DataSource::File {
@@ -62,13 +70,7 @@ impl ReportBuilder {
                 parquet_metadata: None,
             },
             column_profiles,
-            ScanInfo::new(
-                total_rows,
-                num_columns,
-                stats.total_rows_processed,
-                sampling_ratio,
-                scan_time_ms,
-            ),
+            execution,
             data_quality_metrics,
         ))
     }
@@ -81,16 +83,6 @@ impl ReportBuilder {
             profiles.push(profile);
         }
         profiles
-    }
-
-    /// Calculate sampling ratio
-    fn calculate_sampling_ratio(&self, rows_processed: usize) -> f64 {
-        if let Some(total) = self.estimated_total_rows
-            && total > 0
-        {
-            return rows_processed as f64 / total as f64;
-        }
-        1.0
     }
 }
 
@@ -116,8 +108,9 @@ mod tests {
 
         let report = builder.build(column_data, &stats).unwrap();
 
-        assert_eq!(report.scan_info.total_rows, 2);
-        assert_eq!(report.scan_info.total_columns, 1);
-        assert_eq!(report.scan_info.rows_scanned, 2);
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.columns_detected, 1);
+        assert!(report.execution.source_exhausted);
+        assert!(!report.execution.sampling_applied);
     }
 }

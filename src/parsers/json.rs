@@ -7,7 +7,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
 };
 
 // ============================================================================
@@ -297,7 +297,7 @@ pub fn analyze_json_file(
                 parquet_metadata: None,
             },
             vec![],
-            ScanInfo::new(0, 0, 0, 1.0, start.elapsed().as_millis()),
+            ExecutionMetadata::new(0, 0, start.elapsed().as_millis()),
             DataQualityMetrics::empty(),
         ));
     }
@@ -319,7 +319,7 @@ pub fn analyze_json_file(
             parquet_metadata: None,
         },
         column_profiles,
-        ScanInfo::new(rows_read, num_columns, rows_read, 1.0, scan_time_ms),
+        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
         data_quality_metrics,
     ))
 }
@@ -402,7 +402,7 @@ mod tests {
         let config = JsonParserConfig::default();
         let report = analyze_json_file(f.path(), &config).unwrap();
 
-        assert_eq!(report.scan_info.total_rows, 2);
+        assert_eq!(report.execution.rows_processed, 2);
         assert_eq!(report.column_profiles.len(), 1);
         assert!(report.quality_score() >= 0.0);
     }
@@ -512,7 +512,7 @@ mod tests {
         let json = write_file("[]");
         let config = JsonParserConfig::default();
         let report = analyze_json_file(json.path(), &config).unwrap();
-        assert_eq!(report.scan_info.total_rows, 0);
+        assert_eq!(report.execution.rows_processed, 0);
         assert!(report.column_profiles.is_empty());
     }
 

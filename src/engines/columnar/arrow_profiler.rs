@@ -9,7 +9,7 @@ use crate::core::errors::DataProfilerError;
 use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::DataQualityMetrics;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataSource, DataType, FileFormat, QualityReport, ScanInfo,
+    ColumnProfile, ColumnStats, DataSource, DataType, ExecutionMetadata, FileFormat, QualityReport,
 };
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
@@ -117,7 +117,7 @@ impl ArrowProfiler {
                 parquet_metadata: None,
             },
             column_profiles,
-            ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
+            ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
             data_quality_metrics,
         ))
     }

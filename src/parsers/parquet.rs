@@ -20,7 +20,7 @@ use std::path::Path;
 use crate::core::errors::DataProfilerError;
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
 use crate::types::{
-    DataQualityMetrics, DataSource, FileFormat, ParquetMetadata, QualityReport, ScanInfo,
+    DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityReport,
 };
 
 /// Check if a file is a valid Parquet file by examining its magic number
@@ -147,8 +147,8 @@ impl ParquetConfig {
 ///
 /// let report = analyze_parquet_with_quality(Path::new("data.parquet"))?;
 /// println!("Analyzed {} rows in {} columns",
-///          report.scan_info.total_rows,
-///          report.scan_info.total_columns);
+///          report.execution.rows_processed,
+///          report.execution.columns_detected);
 /// # Ok::<(), dataprof::DataProfilerError>(())
 /// ```
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
@@ -276,7 +276,7 @@ pub fn analyze_parquet_with_config(
             parquet_metadata,
         },
         column_profiles,
-        ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
+        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
         data_quality_metrics,
     ))
 }
@@ -327,10 +327,9 @@ mod tests {
         let report = analyze_parquet_with_quality(path)?;
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.scan_info.total_rows, 3);
-        assert_eq!(report.scan_info.total_columns, 3);
-        assert_eq!(report.scan_info.rows_scanned, 3);
-        assert_eq!(report.scan_info.sampling_ratio, 1.0);
+        assert_eq!(report.execution.rows_processed, 3);
+        assert_eq!(report.execution.columns_detected, 3);
+        assert!(!report.execution.sampling_applied);
 
         // Verify column names
         let column_names: Vec<_> = report

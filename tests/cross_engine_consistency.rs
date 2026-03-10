@@ -5,9 +5,9 @@
 
 use std::io::Write;
 
-use dataprof::engines::columnar::ArrowProfiler;
 use dataprof::parsers::csv::{CsvParserConfig, analyze_csv_file};
 use dataprof::types::{ColumnStats, DataType};
+use dataprof::{EngineType, Profiler};
 use tempfile::NamedTempFile;
 
 fn create_test_csv() -> NamedTempFile {
@@ -37,10 +37,10 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
     let std_report = analyze_csv_file(path, &CsvParserConfig::default())
         .expect("standard CSV analysis should succeed");
 
-    // Arrow CSV engine
-    let arrow_profiler = ArrowProfiler::new();
-    let arrow_report = arrow_profiler
-        .analyze_csv_file(path)
+    // Arrow CSV engine via the unified Profiler API
+    let arrow_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(path)
         .expect("Arrow CSV analysis should succeed");
 
     // Same number of columns
@@ -190,8 +190,9 @@ fn test_mixed_data_column_type_consistency() {
 
     let std_report = analyze_csv_file(f.path(), &CsvParserConfig::default())
         .expect("standard CSV should succeed");
-    let arrow_report = ArrowProfiler::new()
-        .analyze_csv_file(f.path())
+    let arrow_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(f.path())
         .expect("Arrow CSV should succeed");
 
     for std_col in &std_report.column_profiles {

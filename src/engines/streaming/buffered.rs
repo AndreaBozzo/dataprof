@@ -25,6 +25,10 @@ use crate::output::progress::{EnhancedProgressBar, ProgressManager};
 use crate::types::QualityReport;
 
 /// Streaming profiler - now a clean coordinator delegating to specialized modules
+#[deprecated(
+    since = "0.6.0",
+    note = "Use IncrementalProfiler instead. BufferedProfiler accumulates all data in memory and is not truly streaming."
+)]
 pub struct BufferedProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
@@ -33,6 +37,7 @@ pub struct BufferedProfiler {
     performance_intelligence: Option<PerformanceIntelligence>,
 }
 
+#[allow(deprecated)]
 impl BufferedProfiler {
     pub fn new() -> Self {
         Self {
@@ -322,6 +327,7 @@ impl BufferedProfiler {
     }
 }
 
+#[allow(deprecated)]
 impl Default for BufferedProfiler {
     fn default() -> Self {
         Self::new()
@@ -329,6 +335,7 @@ impl Default for BufferedProfiler {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -345,7 +352,7 @@ mod tests {
         let mut profiler = BufferedProfiler::new();
         let report = profiler.analyze_file(file.path()).unwrap();
 
-        assert_eq!(report.scan_info.total_rows, 2);
-        assert_eq!(report.scan_info.total_columns, 2);
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.columns_detected, 2);
     }
 }

@@ -209,16 +209,16 @@ impl From<&QualityReport> for PyQualityReport {
 
         Self {
             file_path: report.data_source.identifier(),
-            total_rows: Some(report.scan_info.total_rows),
-            total_columns: report.scan_info.total_columns,
+            total_rows: Some(report.execution.rows_processed),
+            total_columns: report.execution.columns_detected,
             column_profiles: report
                 .column_profiles
                 .iter()
                 .map(PyColumnProfile::from)
                 .collect(),
-            rows_scanned: report.scan_info.rows_scanned,
-            sampling_ratio: report.scan_info.sampling_ratio,
-            scan_time_ms: report.scan_info.scan_time_ms,
+            rows_scanned: report.execution.rows_processed,
+            sampling_ratio: report.execution.sampling_ratio.unwrap_or(1.0),
+            scan_time_ms: report.execution.scan_time_ms,
             data_quality_metrics: PyDataQualityMetrics::from(&report.data_quality_metrics),
             source_type,
             source_library,

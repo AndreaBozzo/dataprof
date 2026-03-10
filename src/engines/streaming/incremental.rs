@@ -6,7 +6,7 @@ use crate::core::profile_builder;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
-use crate::types::{DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport};
 
 /// Incremental profiler that processes data without loading everything into memory
 /// Uses online/streaming algorithms and memory mapping for maximum efficiency.
@@ -141,8 +141,13 @@ impl IncrementalProfiler {
                 .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
-        let sampling_ratio = processed_rows as f64 / estimated_total_rows as f64;
         let num_columns = column_profiles.len();
+
+        let mut execution = ExecutionMetadata::new(processed_rows, num_columns, scan_time_ms);
+        if estimated_total_rows > 0 && processed_rows < estimated_total_rows {
+            let ratio = processed_rows as f64 / estimated_total_rows as f64;
+            execution = execution.with_sampling(ratio);
+        }
 
         Ok(QualityReport::new(
             DataSource::File {
@@ -153,13 +158,7 @@ impl IncrementalProfiler {
                 parquet_metadata: None,
             },
             column_profiles,
-            ScanInfo::new(
-                estimated_total_rows,
-                num_columns,
-                processed_rows,
-                sampling_ratio,
-                scan_time_ms,
-            ),
+            execution,
             data_quality_metrics,
         ))
     }

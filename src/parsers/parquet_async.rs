@@ -147,7 +147,7 @@ impl AsyncFileReader for HttpParquetReader {
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
 use crate::parsers::parquet::ParquetConfig;
 use crate::types::{
-    DataQualityMetrics, DataSource, FileFormat, ParquetMetadata, QualityReport, ScanInfo,
+    DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityReport,
 };
 use futures::StreamExt;
 use parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
@@ -231,7 +231,7 @@ pub async fn analyze_parquet_async_http(
             parquet_metadata,
         },
         column_profiles,
-        ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
+        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
         data_quality_metrics,
     ))
 }

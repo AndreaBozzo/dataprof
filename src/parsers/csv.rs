@@ -6,7 +6,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
 };
 
 // ============================================================================
@@ -244,7 +244,7 @@ pub fn analyze_csv_file(
                 parquet_metadata: None,
             },
             vec![],
-            ScanInfo::new(0, header_names.len(), 0, 1.0, start.elapsed().as_millis()),
+            ExecutionMetadata::new(0, header_names.len(), start.elapsed().as_millis()),
             DataQualityMetrics::empty(),
         ));
     }
@@ -266,7 +266,7 @@ pub fn analyze_csv_file(
             parquet_metadata: None,
         },
         column_profiles,
-        ScanInfo::new(rows_read, num_columns, rows_read, 1.0, scan_time_ms),
+        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
         data_quality_metrics,
     ))
 }
@@ -361,7 +361,7 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
         assert_eq!(report.column_profiles.len(), 2);
-        assert_eq!(report.scan_info.total_rows, 3);
+        assert_eq!(report.execution.rows_processed, 3);
         assert!(report.quality_score() >= 0.0);
         assert!(report.quality_score() <= 100.0);
     }
@@ -421,8 +421,8 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
         assert_eq!(report.column_profiles.len(), 2);
-        assert_eq!(report.scan_info.total_rows, 3);
-        assert_eq!(report.scan_info.total_columns, 2);
+        assert_eq!(report.execution.rows_processed, 3);
+        assert_eq!(report.execution.columns_detected, 2);
         assert!(report.quality_score() >= 0.0);
         assert!(report.quality_score() <= 100.0);
     }
@@ -434,7 +434,7 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
         assert_eq!(report.column_profiles.len(), 0);
-        assert_eq!(report.scan_info.total_rows, 0);
+        assert_eq!(report.execution.rows_processed, 0);
     }
 
     #[test]
@@ -457,9 +457,9 @@ mod tests {
         let config = CsvParserConfig::default();
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
-        assert_eq!(report.scan_info.total_rows, 5);
-        assert_eq!(report.scan_info.rows_scanned, 5);
-        assert!((report.scan_info.sampling_ratio - 1.0).abs() < 0.01);
+        assert_eq!(report.execution.rows_processed, 5);
+        assert_eq!(report.execution.rows_processed, 5);
+        assert!((report.execution.sampling_ratio.unwrap_or(1.0) - 1.0).abs() < 0.01);
     }
 
     #[test]

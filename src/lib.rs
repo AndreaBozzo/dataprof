@@ -54,7 +54,8 @@ pub use engines::DataFusionLoader;
 pub use output::html::generate_html_report;
 pub use types::{
     ColumnProfile, ColumnStats, DataFrameLibrary, DataQualityMetrics, DataSource, DataType,
-    FileFormat, OutputFormat, Pattern, QualityReport, QueryEngine, ScanInfo,
+    ExecutionMetadata, FileFormat, OutputFormat, Pattern, QualityReport, QueryEngine,
+    TruncationReason,
 };
 // Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 

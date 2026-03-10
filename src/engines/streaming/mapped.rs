@@ -8,7 +8,7 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingStatistics;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
 use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
 };
 
 /// Column metadata for streaming aggregation
@@ -190,8 +190,13 @@ impl MappedProfiler {
                 .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
-        let sampling_ratio = processed_rows as f64 / estimated_total_rows as f64;
         let num_columns = column_profiles.len();
+
+        let mut execution = ExecutionMetadata::new(processed_rows, num_columns, scan_time_ms);
+        if estimated_total_rows > 0 && processed_rows < estimated_total_rows {
+            let ratio = processed_rows as f64 / estimated_total_rows as f64;
+            execution = execution.with_sampling(ratio);
+        }
 
         Ok(QualityReport::new(
             DataSource::File {
@@ -202,17 +207,12 @@ impl MappedProfiler {
                 parquet_metadata: None,
             },
             column_profiles,
-            ScanInfo::new(
-                estimated_total_rows,
-                num_columns,
-                processed_rows,
-                sampling_ratio,
-                scan_time_ms,
-            ),
+            execution,
             data_quality_metrics,
         ))
     }
 
+    #[allow(deprecated)]
     fn analyze_small_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         // For small files, fall back to the buffered profiler
         let profiler = super::BufferedProfiler::new()
