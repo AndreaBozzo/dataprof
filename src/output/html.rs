@@ -99,10 +99,10 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
         }
     };
 
-    let sampling_info = if report.scan_info.sampling_ratio < 1.0 {
+    let sampling_info = if report.execution.sampling_applied {
         Some(json!({
-            "rows_scanned": report.scan_info.rows_scanned,
-            "sampling_percentage": format!("{:.1}", report.scan_info.sampling_ratio * 100.0)
+            "rows_scanned": report.execution.rows_processed,
+            "sampling_percentage": format!("{:.1}", report.execution.sampling_ratio.unwrap_or(1.0) * 100.0)
         }))
     } else {
         None
@@ -137,9 +137,9 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
         "file_name": file_name,
         "file_path": file_path,
         "file_size_mb": format!("{:.1}", file_size_mb),
-        "total_rows": report.scan_info.total_rows.to_string(),
-        "total_columns": report.scan_info.total_columns,
-        "scan_time_ms": report.scan_info.scan_time_ms,
+        "total_rows": report.execution.rows_processed.to_string(),
+        "total_columns": report.execution.columns_detected,
+        "scan_time_ms": report.execution.scan_time_ms,
         "sampling_info": sampling_info,
         "parquet_metadata": parquet_meta_json,
         "data_quality_metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
@@ -512,8 +512,8 @@ fn build_files_context(
                 "file_path": path.display().to_string(),
                 "quality_score": format!("{:.0}", quality_score),
                 "quality_class": quality_class,
-                "columns": report.scan_info.total_columns,
-                "total_rows": report.scan_info.total_rows.to_string(),
+                "columns": report.execution.columns_detected,
+                "total_rows": report.execution.rows_processed.to_string(),
                 "error": false,
                 "metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
                 "parquet_metadata": parquet_metadata

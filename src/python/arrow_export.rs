@@ -29,8 +29,8 @@ use pyo3::types::PyCapsule;
 
 use crate::engines::columnar::RecordBatchAnalyzer;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataQualityMetrics, DataSource, QualityReport,
-    ScanInfo,
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataQualityMetrics, DataSource,
+    ExecutionMetadata, QualityReport,
 };
 
 /// PyCapsule name for Arrow schema (null-terminated for C compatibility)
@@ -396,7 +396,7 @@ pub fn profile_dataframe(
             memory_bytes,
         },
         column_profiles,
-        ScanInfo::new(num_rows, num_cols, num_rows, 1.0, scan_time_ms),
+        ExecutionMetadata::new(num_rows, num_cols, scan_time_ms),
         data_quality_metrics,
     );
 
@@ -462,7 +462,7 @@ pub fn profile_arrow(
             memory_bytes,
         },
         column_profiles,
-        ScanInfo::new(num_rows, num_cols, num_rows, 1.0, scan_time_ms),
+        ExecutionMetadata::new(num_rows, num_cols, scan_time_ms),
         data_quality_metrics,
     );
 

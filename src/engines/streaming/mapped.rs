@@ -8,7 +8,7 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingStatistics;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
 use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, FileFormat, QualityReport, ScanInfo,
+    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
 };
 
 /// Column metadata for streaming aggregation
@@ -110,7 +110,8 @@ impl MappedProfiler {
         let mut column_infos: HashMap<String, StreamingColumnInfo> = HashMap::new();
         let mut headers: Option<csv::StringRecord> = None;
 
-        let mut processed_rows = 0;
+        let mut iterated_rows = 0;
+        let mut analyzed_rows = 0;
         let mut chunk_count = 0;
         let mut offset = 0u64;
 
@@ -140,7 +141,7 @@ impl MappedProfiler {
 
             // Process records in this chunk
             for (row_idx, record) in records.iter().enumerate() {
-                let global_row_idx = processed_rows + row_idx;
+                let global_row_idx = iterated_rows + row_idx;
 
                 // Apply sampling strategy
                 if !self
@@ -159,13 +160,14 @@ impl MappedProfiler {
                         column_info.process_value(field);
                     }
                 }
+                analyzed_rows += 1;
             }
 
-            processed_rows += records.len();
+            iterated_rows += records.len();
             chunk_count += 1;
             offset += chunk_size_bytes as u64;
 
-            progress_tracker.update(processed_rows, Some(estimated_total_rows), chunk_count);
+            progress_tracker.update(iterated_rows, Some(estimated_total_rows), chunk_count);
 
             // Break if we've read all data
             if records.len() < 100 {
@@ -174,7 +176,7 @@ impl MappedProfiler {
             }
         }
 
-        progress_tracker.finish(processed_rows);
+        progress_tracker.finish(iterated_rows);
 
         // Convert streaming stats to column profiles
         let mut column_profiles = Vec::new();
@@ -190,8 +192,14 @@ impl MappedProfiler {
                 .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
-        let sampling_ratio = processed_rows as f64 / estimated_total_rows as f64;
         let num_columns = column_profiles.len();
+
+        let mut execution = ExecutionMetadata::new(analyzed_rows, num_columns, scan_time_ms)
+            .with_bytes_consumed(file_size_bytes);
+        if estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
+            let ratio = analyzed_rows as f64 / estimated_total_rows as f64;
+            execution = execution.with_sampling(ratio).with_source_exhausted(false);
+        }
 
         Ok(QualityReport::new(
             DataSource::File {
@@ -202,17 +210,12 @@ impl MappedProfiler {
                 parquet_metadata: None,
             },
             column_profiles,
-            ScanInfo::new(
-                estimated_total_rows,
-                num_columns,
-                processed_rows,
-                sampling_ratio,
-                scan_time_ms,
-            ),
+            execution,
             data_quality_metrics,
         ))
     }
 
+    #[allow(deprecated)]
     fn analyze_small_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
         // For small files, fall back to the buffered profiler
         let profiler = super::BufferedProfiler::new()

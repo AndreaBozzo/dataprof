@@ -106,11 +106,13 @@ async fn analyze_database_internal(
         )?;
 
         // Add metadata
-        result.set_item("row_count", quality_report.scan_info.total_rows)?;
+        result.set_item("row_count", quality_report.execution.rows_processed)?;
 
-        // Convert scan_info to a simple string representation
-        let scan_info = format!("{:?}", quality_report.scan_info);
-        result.set_item("scan_info", scan_info)?;
+        // Convert execution metadata to a simple string representation
+        let execution_info = format!("{:?}", quality_report.execution);
+        result.set_item("execution_info", &execution_info)?;
+        // Backward compatibility: keep old key name as alias
+        result.set_item("scan_info", &execution_info)?;
 
         Ok(result.into())
     })

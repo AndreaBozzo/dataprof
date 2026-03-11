@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::core::errors::DataProfilerError;
 use crate::engines::selection::{EngineSelector, InternalEngineType, ProcessingType};
-use crate::engines::streaming::{BufferedProfiler, IncrementalProfiler, MappedProfiler};
+use crate::engines::streaming::{IncrementalProfiler, MappedProfiler};
 use crate::types::QualityReport;
 
 /// Performance metrics for engine execution
@@ -267,10 +267,6 @@ impl AdaptiveProfiler {
                 let profiler = MappedProfiler::new();
                 profiler.analyze_file(file_path)
             }
-            InternalEngineType::Buffered => {
-                let mut profiler = BufferedProfiler::new();
-                profiler.analyze_file(file_path)
-            }
         };
 
         let execution_time = start.elapsed();
@@ -283,7 +279,7 @@ impl AdaptiveProfiler {
                     execution_time_ms: execution_time.as_millis(),
                     memory_usage_mb: 0.0, // Would need to measure this
                     rows_per_second: if execution_time.as_secs() > 0 {
-                        report.scan_info.rows_scanned as f64 / execution_time.as_secs_f64()
+                        report.execution.rows_processed as f64 / execution_time.as_secs_f64()
                     } else {
                         0.0
                     },
@@ -331,7 +327,7 @@ impl AdaptiveProfiler {
                     execution_time_ms: execution_time.as_millis(),
                     memory_usage_mb: 0.0, // Would need actual memory measurement
                     rows_per_second: if execution_time.as_secs() > 0 {
-                        report.scan_info.rows_scanned as f64 / execution_time.as_secs_f64()
+                        report.execution.rows_processed as f64 / execution_time.as_secs_f64()
                     } else {
                         0.0
                     },
@@ -383,7 +379,7 @@ mod tests {
         let report = profiler.analyze_file(temp_file.path())?;
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.scan_info.rows_scanned, 2);
+        assert_eq!(report.execution.rows_processed, 2);
 
         Ok(())
     }

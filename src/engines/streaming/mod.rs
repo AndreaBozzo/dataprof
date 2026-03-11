@@ -11,13 +11,12 @@ pub mod async_reader;
 #[cfg(feature = "async-streaming")]
 pub mod async_source;
 
-pub use buffered::*;
-pub use chunk_processor::*;
-pub use incremental::*;
-pub use mapped::*;
-pub use memmap::*;
+pub(crate) use buffered::*;
+pub(crate) use incremental::*;
+pub(crate) use mapped::*;
+pub(crate) use memmap::*;
+// ProgressInfo is re-exported in lib.rs for progress callbacks
 pub use progress::*;
-pub use report_builder::*;
 
 #[cfg(feature = "async-streaming")]
 pub use async_reader::*;

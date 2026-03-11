@@ -45,7 +45,6 @@ pub enum InternalEngineType {
     Arrow,
     Incremental,
     MemoryMapped,
-    Buffered,
 }
 
 /// Intelligent engine selector
@@ -233,11 +232,6 @@ impl EngineSelector {
             InternalEngineType::MemoryMapped,
             self.score_memory_mapped(characteristics, &processing_type),
         );
-        scores.insert(
-            InternalEngineType::Buffered,
-            self.score_buffered(characteristics, &processing_type),
-        );
-
         // Find the best engine
         let mut sorted_engines: Vec<_> = scores.into_iter().collect();
         sorted_engines.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -360,31 +354,6 @@ impl EngineSelector {
         score.min(1.0)
     }
 
-    fn score_buffered(
-        &self,
-        characteristics: &FileCharacteristics,
-        _processing_type: &ProcessingType,
-    ) -> f64 {
-        let mut score: f64 = 0.0;
-
-        // Good for smaller files
-        if characteristics.file_size_mb < 100.0 {
-            score += 0.4;
-        }
-
-        // Low complexity data
-        if characteristics.complexity_score < 0.5 {
-            score += 0.3;
-        }
-
-        // Plenty of memory available
-        if self.system_resources.memory_pressure < 0.3 {
-            score += 0.3;
-        }
-
-        score.min(1.0)
-    }
-
     fn generate_reasoning(
         &self,
         engine: &InternalEngineType,
@@ -403,10 +372,6 @@ impl EngineSelector {
             ),
             InternalEngineType::MemoryMapped => format!(
                 "Memory-mapped profiler selected for {:.1}MB file with moderate complexity ({:.2}).",
-                characteristics.file_size_mb, characteristics.complexity_score
-            ),
-            InternalEngineType::Buffered => format!(
-                "Buffered profiler selected for {:.1}MB file with low complexity ({:.2}).",
                 characteristics.file_size_mb, characteristics.complexity_score
             ),
         }
@@ -446,10 +411,12 @@ mod tests {
         let recommendation =
             selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
-        // Small files should prefer buffered profiler
+        // Small files should select one of the remaining engines (not Buffered, which is deprecated)
         assert!(matches!(
             recommendation.primary_engine,
-            InternalEngineType::Buffered
+            InternalEngineType::Arrow
+                | InternalEngineType::Incremental
+                | InternalEngineType::MemoryMapped
         ));
 
         Ok(())

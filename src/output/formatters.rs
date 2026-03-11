@@ -261,13 +261,13 @@ impl OutputFormatter for JsonFormatter {
             metadata: JsonMetadata {
                 file_path: report.data_source.identifier(),
                 file_size_mb: report.data_source.size_mb().unwrap_or(0.0),
-                total_rows: Some(report.scan_info.total_rows),
-                total_columns: report.scan_info.total_columns,
-                scan_time_ms: report.scan_info.scan_time_ms,
-                sampling_info: if report.scan_info.sampling_ratio < 1.0 {
+                total_rows: Some(report.execution.rows_processed),
+                total_columns: report.execution.columns_detected,
+                scan_time_ms: report.execution.scan_time_ms,
+                sampling_info: if report.execution.sampling_applied {
                     Some(JsonSampling {
-                        rows_scanned: report.scan_info.rows_scanned,
-                        sampling_ratio: report.scan_info.sampling_ratio,
+                        rows_scanned: report.execution.rows_processed,
+                        sampling_ratio: report.execution.sampling_ratio.unwrap_or(1.0),
                         was_sampled: true,
                     })
                 } else {
@@ -449,11 +449,11 @@ impl OutputFormatter for PlainFormatter {
         if let Some(size_mb) = report.data_source.size_mb() {
             output.push_str(&format!("Size: {:.1} MB\n", size_mb));
         }
-        output.push_str(&format!("Columns: {}\n", report.scan_info.total_columns));
-        output.push_str(&format!("Rows: {}\n", report.scan_info.total_rows));
+        output.push_str(&format!("Columns: {}\n", report.execution.columns_detected));
+        output.push_str(&format!("Rows: {}\n", report.execution.rows_processed));
         output.push_str(&format!(
             "Scan time: {} ms\n\n",
-            report.scan_info.scan_time_ms
+            report.execution.scan_time_ms
         ));
 
         // Data Quality Metrics (ISO 8000/25012)
@@ -601,7 +601,7 @@ impl OutputFormatter for InteractiveFormatter {
             output.push_str(&format!(
                 "📊 {} {}\n",
                 "Columns:".bright_blue().bold(),
-                report.scan_info.total_columns
+                report.execution.columns_detected
             ));
         } else {
             output.push_str(&format!(
@@ -612,17 +612,17 @@ impl OutputFormatter for InteractiveFormatter {
             if size_mb > 0.0 {
                 output.push_str(&format!("Size: {:.1} MB\n", size_mb));
             }
-            output.push_str(&format!("Columns: {}\n", report.scan_info.total_columns));
+            output.push_str(&format!("Columns: {}\n", report.execution.columns_detected));
         }
 
         if self.context.supports_unicode {
             output.push_str(&format!(
                 "📈 {} {}\n",
                 "Rows:".bright_blue().bold(),
-                report.scan_info.total_rows
+                report.execution.rows_processed
             ));
         } else {
-            output.push_str(&format!("Rows: {}\n", report.scan_info.total_rows));
+            output.push_str(&format!("Rows: {}\n", report.execution.rows_processed));
         }
 
         // Performance info
@@ -630,12 +630,12 @@ impl OutputFormatter for InteractiveFormatter {
             output.push_str(&format!(
                 "⏱️  {} {} ms\n\n",
                 "Scan time:".bright_blue().bold(),
-                report.scan_info.scan_time_ms
+                report.execution.scan_time_ms
             ));
         } else {
             output.push_str(&format!(
                 "Scan time: {} ms\n\n",
-                report.scan_info.scan_time_ms
+                report.execution.scan_time_ms
             ));
         }
 
@@ -788,8 +788,8 @@ pub fn format_batch_as_json(batch_result: &crate::core::batch::BatchResult) -> R
         .map(|(path, report)| JsonFileReport {
             file_path: path.to_string_lossy().to_string(),
             quality_score: report.quality_score(),
-            total_rows: Some(report.scan_info.total_rows),
-            total_columns: report.scan_info.total_columns,
+            total_rows: Some(report.execution.rows_processed),
+            total_columns: report.execution.columns_detected,
             data_quality_metrics: formatter
                 .format_data_quality_metrics(&report.data_quality_metrics),
         })

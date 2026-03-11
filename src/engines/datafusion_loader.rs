@@ -4,7 +4,7 @@
 //! DataFusion is a fast, extensible query engine built on Apache Arrow.
 
 use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, ExecutionMetadata, QualityReport, QueryEngine};
 
 use anyhow::{Context, Result};
 use datafusion::prelude::*;
@@ -175,7 +175,7 @@ impl DataFusionLoader {
                 execution_id: None,
             },
             column_profiles,
-            ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
+            ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
             data_quality_metrics,
         ))
     }
@@ -207,7 +207,7 @@ impl DataFusionLoader {
     /// let mut stream = loader.profile_query_incremental("SELECT * FROM data").await?;
     /// while let Some(report) = stream.next().await {
     ///     let report = report?;
-    ///     println!("Processed {} rows so far", report.scan_info.total_rows);
+    ///     println!("Processed {} rows so far", report.execution.rows_processed);
     /// }
     /// ```
     pub async fn profile_query_incremental(
@@ -264,7 +264,7 @@ impl DataFusionLoader {
                         execution_id: None,
                     },
                     column_profiles,
-                    ScanInfo::new(total_rows, num_columns, total_rows, 1.0, scan_time_ms),
+                    ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
                     data_quality_metrics,
                 ))
             });
@@ -296,7 +296,7 @@ mod tests {
         let report = loader.profile_query("SELECT * FROM test_table").await?;
 
         assert_eq!(report.column_profiles.len(), 3);
-        assert_eq!(report.scan_info.total_rows, 3);
+        assert_eq!(report.execution.rows_processed, 3);
 
         Ok(())
     }
@@ -321,7 +321,7 @@ mod tests {
             .await?;
 
         assert_eq!(report.column_profiles.len(), 2);
-        assert_eq!(report.scan_info.total_rows, 2); // 2 groups
+        assert_eq!(report.execution.rows_processed, 2); // 2 groups
 
         Ok(())
     }

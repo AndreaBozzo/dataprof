@@ -9,7 +9,7 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::types::{DataQualityMetrics, DataSource, QualityReport, QueryEngine, ScanInfo};
+use crate::types::{DataQualityMetrics, DataSource, ExecutionMetadata, QualityReport, QueryEngine};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -223,13 +223,17 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
                 execution_id: None,
             },
             vec![],
-            ScanInfo::new(
-                0,
-                0,
-                0,
-                sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0),
-                start.elapsed().as_millis(),
-            ),
+            {
+                let mut exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis());
+                if let Some(ref info) = sample_info
+                    && info.sampling_ratio < 1.0
+                {
+                    exec = exec
+                        .with_sampling(info.sampling_ratio)
+                        .with_source_exhausted(false);
+                }
+                exec
+            },
             DataQualityMetrics::empty(),
         ));
     }
@@ -237,11 +241,6 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
     // Use existing column analysis from lib.rs
     let mut column_profiles = Vec::new();
     let actual_rows_processed = columns.values().next().map(|v| v.len()).unwrap_or(0);
-    let effective_total_rows = if total_rows > 0 {
-        total_rows
-    } else {
-        actual_rows_processed as u64
-    };
 
     for (name, data) in &columns {
         let profile = analyze_column(name, data);
@@ -256,6 +255,13 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
     let num_columns = column_profiles.len();
 
+    let mut execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms);
+    if sampling_ratio < 1.0 {
+        execution = execution
+            .with_sampling(sampling_ratio)
+            .with_source_exhausted(false);
+    }
+
     let report = QualityReport::new(
         DataSource::Query {
             engine: query_engine,
@@ -264,13 +270,7 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
             execution_id: None,
         },
         column_profiles,
-        ScanInfo::new(
-            effective_total_rows as usize,
-            num_columns,
-            actual_rows_processed,
-            sampling_ratio,
-            scan_time_ms,
-        ),
+        execution,
         data_quality_metrics,
     );
 

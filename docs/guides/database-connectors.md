@@ -99,8 +99,8 @@ async fn main() -> anyhow::Result<()> {
     let report = analyze_database(config, "SELECT * FROM large_table").await?;
 
     println!("📊 Processed {} rows across {} columns",
-        report.scan_info.total_rows,
-        report.scan_info.total_columns
+        report.execution.rows_processed,
+        report.execution.columns_detected
     );
 
     println!("📈 Quality Score: {:.1}%", report.quality_score());
@@ -426,7 +426,7 @@ async fn profile_daily_data() -> anyhow::Result<()> {
         };
 
         let report = analyze_database(config, "daily_metrics").await?;
-        println!("{}: {} rows profiled", name, report.scan_info.rows_scanned);
+        println!("{}: {} rows profiled", name, report.execution.rows_processed);
     }
 
     Ok(())
