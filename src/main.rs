@@ -5,7 +5,6 @@ use std::io::Write;
 
 // Local modules
 mod cli;
-mod error;
 
 use cli::{Command, route_command};
 use dataprof::core::exit_codes;

@@ -1,3 +1,4 @@
+use crate::acceleration::simd::compute_stats_auto;
 use crate::types::{ColumnStats, NumericStats, Quartiles};
 use std::collections::HashMap;
 
@@ -19,15 +20,13 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
         return NumericStats::empty();
     }
 
-    // Always calculable statistics
-    let min = numbers.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let sum: f64 = numbers.iter().sum();
-    let mean = sum / numbers.len() as f64;
-
-    // Variance and std_dev (streaming-compatible)
-    let sum_squares: f64 = numbers.iter().map(|&x| x * x).sum();
-    let variance = calculate_variance(sum_squares, sum, numbers.len());
+    // Single SIMD-accelerated pass for base statistics (min, max, sum, sum_squares)
+    // Automatically falls back to scalar for small datasets (<64 elements)
+    let base = compute_stats_auto(&numbers);
+    let min = base.min;
+    let max = base.max;
+    let mean = base.mean();
+    let variance = calculate_variance(base.sum_squares, base.sum, numbers.len());
     let std_dev = variance.sqrt();
 
     // Determine if we need sampling for large datasets

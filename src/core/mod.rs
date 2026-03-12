@@ -1,4 +1,3 @@
-pub mod benchmark_stats;
 pub mod config;
 pub mod errors;
 pub mod memory_tracker;
@@ -10,7 +9,6 @@ pub mod streaming_stats;
 pub mod validation;
 
 // Re-export core types
-pub use benchmark_stats::*;
 pub use config::*;
 pub use errors::*;
 pub use memory_tracker::*;
