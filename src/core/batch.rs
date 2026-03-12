@@ -14,7 +14,7 @@ use crate::core::errors::DataProfilerError;
 use crate::output::progress::ProgressManager;
 use crate::parsers::csv::{CsvParserConfig, analyze_csv_file};
 use crate::parsers::json::{JsonParserConfig, analyze_json_file};
-use crate::types::{DataQualityMetrics, QualityReport};
+use crate::types::{ProfileReport, QualityMetrics};
 
 /// Configuration for batch processing operations
 #[derive(Debug, Clone)]
@@ -53,7 +53,7 @@ impl Default for BatchConfig {
 
 /// Result of aggregating batch processing results
 type AggregatedResults = (
-    HashMap<PathBuf, QualityReport>,
+    HashMap<PathBuf, ProfileReport>,
     HashMap<PathBuf, String>,
     Vec<f64>,
     usize,
@@ -69,7 +69,7 @@ pub struct BatchProcessor {
 #[derive(Debug, serde::Serialize)]
 pub struct BatchResult {
     /// Individual file reports
-    pub reports: HashMap<PathBuf, QualityReport>,
+    pub reports: HashMap<PathBuf, ProfileReport>,
     /// Processing errors by file
     pub errors: HashMap<PathBuf, String>,
     /// Summary statistics
@@ -88,7 +88,7 @@ pub struct BatchSummary {
     pub average_quality_score: f64,
     pub processing_time_seconds: f64,
     /// Aggregated data quality metrics across all processed files
-    pub aggregated_data_quality_metrics: Option<DataQualityMetrics>,
+    pub aggregated_data_quality_metrics: Option<QualityMetrics>,
 }
 
 impl BatchProcessor {
@@ -328,7 +328,7 @@ impl BatchProcessor {
         &self,
         paths: &[PathBuf],
         progress_bar: &Option<indicatif::ProgressBar>,
-    ) -> Vec<(PathBuf, Result<QualityReport, String>)> {
+    ) -> Vec<(PathBuf, Result<ProfileReport, String>)> {
         let progress_mutex = std::sync::Mutex::new(progress_bar);
 
         paths
@@ -357,7 +357,7 @@ impl BatchProcessor {
         &self,
         paths: &[PathBuf],
         progress_bar: &Option<indicatif::ProgressBar>,
-    ) -> Vec<(PathBuf, Result<QualityReport, String>)> {
+    ) -> Vec<(PathBuf, Result<ProfileReport, String>)> {
         paths
             .iter()
             .enumerate()
@@ -379,7 +379,7 @@ impl BatchProcessor {
     }
 
     /// Process a single file (CSV or JSON)
-    fn process_single_file(&self, path: &Path) -> Result<QualityReport, String> {
+    fn process_single_file(&self, path: &Path) -> Result<ProfileReport, String> {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -408,7 +408,7 @@ impl BatchProcessor {
     /// Aggregate processing results into structured data
     fn aggregate_results(
         &self,
-        results: Vec<(PathBuf, Result<QualityReport, String>)>,
+        results: Vec<(PathBuf, Result<ProfileReport, String>)>,
     ) -> AggregatedResults {
         let mut reports = HashMap::new();
         let mut errors = HashMap::new();
@@ -425,8 +425,9 @@ impl BatchProcessor {
                         .max()
                         .unwrap_or(0);
 
-                    let score = report.quality_score();
-                    quality_scores.push(score);
+                    if let Some(score) = report.quality_score() {
+                        quality_scores.push(score);
+                    }
 
                     reports.insert(path, report);
                 }
@@ -483,15 +484,15 @@ impl BatchProcessor {
 
     /// Calculate aggregated data quality metrics across all processed files
     fn calculate_aggregated_metrics(
-        reports: &HashMap<PathBuf, QualityReport>,
-    ) -> Option<DataQualityMetrics> {
+        reports: &HashMap<PathBuf, ProfileReport>,
+    ) -> Option<QualityMetrics> {
         if reports.is_empty() {
             return None;
         }
 
-        let all_metrics: Vec<&DataQualityMetrics> = reports
+        let all_metrics: Vec<&QualityMetrics> = reports
             .values()
-            .map(|report| &report.data_quality_metrics)
+            .filter_map(|report| report.quality.as_ref().map(|q| &q.metrics))
             .collect();
 
         if all_metrics.is_empty() {
@@ -501,12 +502,11 @@ impl BatchProcessor {
         let count = all_metrics.len() as f64;
 
         // Helper to compute average
-        let avg = |f: fn(&DataQualityMetrics) -> f64| {
-            all_metrics.iter().map(|m| f(m)).sum::<f64>() / count
-        };
+        let avg =
+            |f: fn(&QualityMetrics) -> f64| all_metrics.iter().map(|m| f(m)).sum::<f64>() / count;
 
         // Helper to compute sum
-        let sum = |f: fn(&DataQualityMetrics) -> usize| all_metrics.iter().map(|m| f(m)).sum();
+        let sum = |f: fn(&QualityMetrics) -> usize| all_metrics.iter().map(|m| f(m)).sum();
 
         // Aggregate null columns
         let mut all_null_columns = std::collections::HashSet::new();
@@ -516,7 +516,7 @@ impl BatchProcessor {
             }
         }
 
-        Some(DataQualityMetrics {
+        Some(QualityMetrics {
             // Completeness
             missing_values_ratio: avg(|m| m.missing_values_ratio),
             complete_records_ratio: avg(|m| m.complete_records_ratio),

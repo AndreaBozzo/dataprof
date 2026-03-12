@@ -8,10 +8,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::analysis::analyze_column;
+use crate::core::report_assembler::ReportAssembler;
 use crate::engines::streaming::chunk_processor::ProcessingStats;
-use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
-};
+use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
 /// Builds quality reports from processed data
 pub struct ReportBuilder {
@@ -31,19 +30,14 @@ impl ReportBuilder {
         }
     }
 
-    /// Build a complete quality report from column data
+    /// Build a complete profile report from column data
     pub fn build(
         &self,
         column_data: HashMap<String, Vec<String>>,
         stats: &ProcessingStats,
-    ) -> Result<QualityReport> {
+    ) -> Result<ProfileReport> {
         // Analyze columns
         let column_profiles = self.analyze_columns(&column_data);
-
-        // Calculate comprehensive ISO 8000/25012 quality metrics
-        let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&column_data, &column_profiles)
-                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         // Calculate metrics
         let scan_time_ms = self.start_time.elapsed().as_millis();
@@ -62,7 +56,7 @@ impl ReportBuilder {
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
-        Ok(QualityReport::new(
+        Ok(ReportAssembler::new(
             DataSource::File {
                 path: self.file_path.clone(),
                 format: FileFormat::Csv,
@@ -70,10 +64,11 @@ impl ReportBuilder {
                 modified_at: None,
                 parquet_metadata: None,
             },
-            column_profiles,
             execution,
-            data_quality_metrics,
-        ))
+        )
+        .columns(column_profiles)
+        .with_quality_data(column_data)
+        .build())
     }
 
     /// Analyze all columns and return profiles

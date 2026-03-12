@@ -53,10 +53,14 @@ pub use engines::DataFusionLoader;
 // Public API exports - Core types and functionality
 pub use output::html::generate_html_report;
 pub use types::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataQualityMetrics, DataSource, DataType,
-    ExecutionMetadata, FileFormat, OutputFormat, Pattern, QualityReport, QueryEngine,
-    TruncationReason,
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, ExecutionMetadata,
+    FileFormat, MetricConfidence, OutputFormat, Pattern, ProfileReport, QualityAssessment,
+    QualityMetrics, QueryEngine, TruncationReason,
 };
+
+// Deprecated aliases for backwards compatibility
+#[allow(deprecated)]
+pub use types::{DataQualityMetrics, QualityReport};
 
 #[deprecated(since = "0.6.0", note = "Use ExecutionMetadata instead.")]
 pub type ScanInfo = ExecutionMetadata;
@@ -68,7 +72,7 @@ pub use parsers::csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reade
 #[deprecated(note = "Use analyze_csv_file() with CsvParserConfig::default() instead.")]
 pub fn analyze_csv_robust(
     path: impl AsRef<std::path::Path>,
-) -> Result<QualityReport, DataProfilerError> {
+) -> Result<ProfileReport, DataProfilerError> {
     analyze_csv_file(path.as_ref(), &CsvParserConfig::default())
 }
 
@@ -80,7 +84,7 @@ pub use parsers::json::{
 #[deprecated(note = "Use analyze_json_file() instead.")]
 pub fn analyze_json_with_quality(
     path: impl AsRef<std::path::Path>,
-) -> Result<QualityReport, DataProfilerError> {
+) -> Result<ProfileReport, DataProfilerError> {
     analyze_json_file(path.as_ref(), &JsonParserConfig::default())
 }
 

@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 
 use crate::core::batch::BatchResult;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, QualityReport,
+    ColumnProfile, ColumnStats, DataSource, DataType, ProfileReport, QualityMetrics,
 };
 
 /// Python wrapper for ColumnProfile
@@ -157,7 +157,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
     }
 }
 
-// PyQualityIssue removed - use DataQualityMetrics instead
+// PyQualityIssue removed - use QualityMetrics instead
 
 /// Python wrapper for QualityReport
 #[pyclass]
@@ -190,8 +190,8 @@ pub struct PyQualityReport {
     pub memory_bytes: Option<u64>,
 }
 
-impl From<&QualityReport> for PyQualityReport {
-    fn from(report: &QualityReport) -> Self {
+impl From<&ProfileReport> for PyQualityReport {
+    fn from(report: &ProfileReport) -> Self {
         let (source_type, source_library, memory_bytes) = match &report.data_source {
             DataSource::File { .. } => ("file".to_string(), None, None),
             DataSource::Query { .. } => ("query".to_string(), None, None),
@@ -223,7 +223,11 @@ impl From<&QualityReport> for PyQualityReport {
             rows_scanned: report.execution.rows_processed,
             sampling_ratio: report.execution.sampling_ratio.unwrap_or(1.0),
             scan_time_ms: report.execution.scan_time_ms,
-            data_quality_metrics: PyDataQualityMetrics::from(&report.data_quality_metrics),
+            data_quality_metrics: report
+                .quality
+                .as_ref()
+                .map(|q| PyDataQualityMetrics::from(&q.metrics))
+                .unwrap_or_else(PyDataQualityMetrics::empty),
             source_type,
             source_library,
             memory_bytes,
@@ -368,8 +372,32 @@ pub struct PyDataQualityMetrics {
     pub temporal_violations: usize,
 }
 
-impl From<&DataQualityMetrics> for PyDataQualityMetrics {
-    fn from(metrics: &DataQualityMetrics) -> Self {
+impl PyDataQualityMetrics {
+    /// Create empty metrics when quality assessment is not available
+    fn empty() -> Self {
+        Self {
+            overall_quality_score: 0.0,
+            missing_values_ratio: 0.0,
+            complete_records_ratio: 100.0,
+            null_columns: vec![],
+            data_type_consistency: 100.0,
+            format_violations: 0,
+            encoding_issues: 0,
+            duplicate_rows: 0,
+            key_uniqueness: 100.0,
+            high_cardinality_warning: false,
+            outlier_ratio: 0.0,
+            range_violations: 0,
+            negative_values_in_positive: 0,
+            future_dates_count: 0,
+            stale_data_ratio: 0.0,
+            temporal_violations: 0,
+        }
+    }
+}
+
+impl From<&QualityMetrics> for PyDataQualityMetrics {
+    fn from(metrics: &QualityMetrics) -> Self {
         Self {
             overall_quality_score: metrics.overall_score(),
             missing_values_ratio: metrics.missing_values_ratio,

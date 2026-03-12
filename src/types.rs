@@ -285,7 +285,7 @@ impl DataSource {
 /// Comprehensive data quality metrics following industry standards
 /// Provides structured assessment across five key dimensions (ISO 8000/25012)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DataQualityMetrics {
+pub struct QualityMetrics {
     // Completeness (ISO 8000-8)
     /// Percentage of missing values across all cells
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
@@ -333,7 +333,7 @@ pub struct DataQualityMetrics {
     pub temporal_violations: usize,
 }
 
-impl DataQualityMetrics {
+impl QualityMetrics {
     /// Create metrics for an empty dataset (perfect quality, no data)
     pub fn empty() -> Self {
         Self {
@@ -374,7 +374,7 @@ impl DataQualityMetrics {
     /// * `column_profiles` - Vector of analyzed column profiles
     ///
     /// # Returns
-    /// * `Result<DataQualityMetrics>` - Comprehensive quality metrics or error
+    /// * `Result<QualityMetrics>` - Comprehensive quality metrics or error
     ///
     /// # Errors
     /// Returns error if data is malformed or calculation fails
@@ -411,9 +411,78 @@ impl DataQualityMetrics {
     }
 }
 
+/// Confidence level for quality metrics — indicates whether metrics were
+/// computed from the full dataset, a bounded sample, or a mix of both.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum MetricConfidence {
+    /// All metrics computed from the full dataset (exact)
+    Exact,
+    /// Metrics computed from a bounded sample (reservoir/HyperLogLog)
+    Approximate {
+        sample_size: usize,
+        population_size: Option<usize>,
+    },
+    /// Mix of exact stream counters (e.g., completeness from Welford)
+    /// and sampled metrics (e.g., uniqueness from HyperLogLog)
+    Mixed {
+        exact_dimensions: Vec<String>,
+        sampled_dimensions: Vec<String>,
+        sample_size: usize,
+    },
+}
+
+/// Wraps quality metrics with confidence information.
+///
+/// This replaces the former mandatory `DataQualityMetrics` field on reports,
+/// adding information about how trustworthy each metric dimension is.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QualityAssessment {
+    /// The underlying quality metrics (ISO 8000/25012)
+    pub metrics: QualityMetrics,
+    /// How the metrics were computed (exact, approximate, or mixed)
+    pub confidence: MetricConfidence,
+}
+
+impl QualityAssessment {
+    /// Create a new QualityAssessment with Exact confidence (full dataset)
+    pub fn exact(metrics: QualityMetrics) -> Self {
+        Self {
+            metrics,
+            confidence: MetricConfidence::Exact,
+        }
+    }
+
+    /// Create a new QualityAssessment with Approximate confidence (sampled)
+    pub fn approximate(
+        metrics: QualityMetrics,
+        sample_size: usize,
+        population_size: Option<usize>,
+    ) -> Self {
+        Self {
+            metrics,
+            confidence: MetricConfidence::Approximate {
+                sample_size,
+                population_size,
+            },
+        }
+    }
+
+    /// Calculate overall quality score (0-100) using ISO 8000/25012 dimensions
+    pub fn score(&self) -> f64 {
+        self.metrics.overall_score()
+    }
+}
+
+impl From<QualityMetrics> for QualityAssessment {
+    /// Convert bare metrics into an assessment assuming exact confidence.
+    fn from(metrics: QualityMetrics) -> Self {
+        Self::exact(metrics)
+    }
+}
+
 // Main report structure
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QualityReport {
+pub struct ProfileReport {
     /// Unique identifier for this report (UUID v4)
     pub id: String,
     /// Timestamp when the report was generated (ISO 8601 / RFC 3339)
@@ -425,18 +494,23 @@ pub struct QualityReport {
     /// Execution metadata (timing, rows processed, truncation info, etc.)
     #[serde(alias = "scan_info")]
     pub execution: ExecutionMetadata,
-    /// Data quality metrics following ISO 8000/25012 standards
-    /// This is the single source of truth for data quality assessment
-    pub data_quality_metrics: DataQualityMetrics,
+    /// Data quality assessment (optional — partial analysis may skip quality)
+    #[serde(
+        alias = "data_quality_metrics",
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_quality_compat"
+    )]
+    pub quality: Option<QualityAssessment>,
 }
 
-impl QualityReport {
-    /// Create a new QualityReport with auto-generated id and timestamp
+impl ProfileReport {
+    /// Create a new ProfileReport with auto-generated id and timestamp
     pub fn new(
         data_source: DataSource,
         column_profiles: Vec<ColumnProfile>,
         execution: ExecutionMetadata,
-        data_quality_metrics: DataQualityMetrics,
+        quality: Option<QualityAssessment>,
     ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -444,7 +518,7 @@ impl QualityReport {
             data_source,
             column_profiles,
             execution,
-            data_quality_metrics,
+            quality,
         }
     }
 
@@ -460,9 +534,10 @@ impl QualityReport {
         self
     }
 
-    /// Calculate overall quality score using ISO 8000/25012 metrics
-    pub fn quality_score(&self) -> f64 {
-        self.data_quality_metrics.overall_score()
+    /// Calculate overall quality score using ISO 8000/25012 metrics.
+    /// Returns `None` if quality metrics were not computed.
+    pub fn quality_score(&self) -> Option<f64> {
+        self.quality.as_ref().map(|q| q.score())
     }
 
     /// Get the data source identifier (for backwards compatibility)
@@ -470,6 +545,45 @@ impl QualityReport {
         self.data_source.identifier()
     }
 }
+
+/// Custom deserializer that handles both legacy `DataQualityMetrics` (flat)
+/// and new `QualityAssessment` (wrapped with confidence) JSON formats.
+fn deserialize_quality_compat<'de, D>(
+    deserializer: D,
+) -> Result<Option<QualityAssessment>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    // Try to deserialize as the new QualityAssessment first,
+    // then fall back to bare QualityMetrics (legacy format)
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(v) => {
+            // Try new format first (has "metrics" and "confidence" fields)
+            if v.get("metrics").is_some() && v.get("confidence").is_some() {
+                let assessment: QualityAssessment =
+                    serde_json::from_value(v).map_err(serde::de::Error::custom)?;
+                Ok(Some(assessment))
+            } else {
+                // Legacy format: bare QualityMetrics object
+                let metrics: QualityMetrics =
+                    serde_json::from_value(v).map_err(serde::de::Error::custom)?;
+                Ok(Some(QualityAssessment::exact(metrics)))
+            }
+        }
+    }
+}
+
+/// Deprecated: Use `ProfileReport` instead.
+#[deprecated(since = "0.7.0", note = "Renamed to ProfileReport")]
+pub type QualityReport = ProfileReport;
+
+/// Deprecated: Use `QualityMetrics` instead.
+#[deprecated(since = "0.7.0", note = "Renamed to QualityMetrics")]
+pub type DataQualityMetrics = QualityMetrics;
 
 /// Metadata specific to Parquet files
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -762,20 +876,20 @@ mod tests {
 
     #[test]
     fn test_empty_metrics_perfect_score() {
-        let metrics = DataQualityMetrics::empty();
+        let metrics = QualityMetrics::empty();
         assert!((metrics.overall_score() - 100.0).abs() < 0.01);
     }
 
     #[test]
     fn test_quality_score_weights_sum_to_100() {
         // With all dimensions at 100%, score should be 100
-        let metrics = DataQualityMetrics {
+        let metrics = QualityMetrics {
             complete_records_ratio: 100.0,
             data_type_consistency: 100.0,
             key_uniqueness: 100.0,
             outlier_ratio: 0.0,
             stale_data_ratio: 0.0,
-            ..DataQualityMetrics::empty()
+            ..QualityMetrics::empty()
         };
         assert!((metrics.overall_score() - 100.0).abs() < 0.01);
     }
@@ -783,7 +897,7 @@ mod tests {
     #[test]
     fn test_quality_score_completeness_weight() {
         // Zero completeness, everything else perfect
-        let mut metrics = DataQualityMetrics::empty();
+        let mut metrics = QualityMetrics::empty();
         metrics.complete_records_ratio = 0.0;
         // Score drops by 30% (completeness weight)
         assert!((metrics.overall_score() - 70.0).abs() < 0.01);
@@ -791,13 +905,13 @@ mod tests {
 
     #[test]
     fn test_quality_score_all_bad() {
-        let metrics = DataQualityMetrics {
+        let metrics = QualityMetrics {
             complete_records_ratio: 0.0,
             data_type_consistency: 0.0,
             key_uniqueness: 0.0,
             outlier_ratio: 100.0,
             stale_data_ratio: 100.0,
-            ..DataQualityMetrics::empty()
+            ..QualityMetrics::empty()
         };
         assert!((metrics.overall_score() - 0.0).abs() < 0.01);
     }
@@ -897,8 +1011,8 @@ mod tests {
     }
 
     #[test]
-    fn test_quality_report_json_roundtrip() {
-        let report = QualityReport::new(
+    fn test_profile_report_json_roundtrip() {
+        let report = ProfileReport::new(
             DataSource::File {
                 path: "test.csv".to_string(),
                 format: FileFormat::Csv,
@@ -908,15 +1022,62 @@ mod tests {
             },
             vec![],
             ExecutionMetadata::new(100, 5, 50),
-            DataQualityMetrics::empty(),
+            Some(QualityAssessment::exact(QualityMetrics::empty())),
         );
 
         let json = serde_json::to_string(&report).unwrap();
-        let deserialized: QualityReport = serde_json::from_str(&json).unwrap();
+        let deserialized: ProfileReport = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.execution.rows_processed, 100);
         assert_eq!(deserialized.execution.columns_detected, 5);
-        assert!((deserialized.quality_score() - 100.0).abs() < 0.01);
+        assert!((deserialized.quality_score().unwrap() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_profile_report_without_quality() {
+        let report = ProfileReport::new(
+            DataSource::File {
+                path: "test.csv".to_string(),
+                format: FileFormat::Csv,
+                size_bytes: 0,
+                modified_at: None,
+                parquet_metadata: None,
+            },
+            vec![],
+            ExecutionMetadata::new(0, 0, 0),
+            None,
+        );
+
+        assert!(report.quality_score().is_none());
+        assert!(report.quality.is_none());
+
+        // Roundtrip: None quality should survive
+        let json = serde_json::to_string(&report).unwrap();
+        let deserialized: ProfileReport = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.quality.is_none());
+    }
+
+    #[test]
+    fn test_legacy_json_deserialization() {
+        // Simulate legacy JSON with flat data_quality_metrics field
+        let legacy_json = r#"{
+            "id": "test-id",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "data_source": {"type": "file", "path": "test.csv", "format": "csv", "size_bytes": 0},
+            "column_profiles": [],
+            "execution": {"rows_processed": 10, "columns_detected": 2, "scan_time_ms": 5, "error_count": 0, "source_exhausted": true, "sampling_applied": false},
+            "data_quality_metrics": {
+                "missing_values_ratio": 0.0, "complete_records_ratio": 100.0, "null_columns": [],
+                "data_type_consistency": 100.0, "format_violations": 0, "encoding_issues": 0,
+                "duplicate_rows": 0, "key_uniqueness": 100.0, "high_cardinality_warning": false,
+                "outlier_ratio": 0.0, "range_violations": 0, "negative_values_in_positive": 0,
+                "future_dates_count": 0, "stale_data_ratio": 0.0, "temporal_violations": 0
+            }
+        }"#;
+
+        let report: ProfileReport = serde_json::from_str(legacy_json).unwrap();
+        assert!(report.quality.is_some());
+        assert!((report.quality_score().unwrap() - 100.0).abs() < 0.01);
     }
 
     // -- ExecutionMetadata --

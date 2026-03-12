@@ -3,8 +3,9 @@
 //! Provides SQL-based data profiling using Apache DataFusion.
 //! DataFusion is a fast, extensible query engine built on Apache Arrow.
 
+use crate::core::report_assembler::ReportAssembler;
 use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{DataQualityMetrics, DataSource, ExecutionMetadata, QualityReport, QueryEngine};
+use crate::types::{DataSource, ExecutionMetadata, ProfileReport, QueryEngine};
 
 use anyhow::{Context, Result};
 use datafusion::prelude::*;
@@ -118,7 +119,7 @@ impl DataFusionLoader {
     }
 
     /// Execute a SQL query and profile the results using Arrow
-    pub async fn profile_query(&self, query: &str) -> Result<QualityReport> {
+    pub async fn profile_query(&self, query: &str) -> Result<ProfileReport> {
         let start = Instant::now();
         log::info!("DataFusion: Preparing query");
 
@@ -159,29 +160,25 @@ impl DataFusionLoader {
         let column_profiles = analyzer.to_profiles();
         let sample_columns = analyzer.create_sample_columns();
 
-        // Calculate quality metrics
-        let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-                .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed: {}", e))?;
-
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
-        Ok(QualityReport::new(
+        Ok(ReportAssembler::new(
             DataSource::Query {
                 engine: QueryEngine::DataFusion,
                 statement: query.to_string(),
                 database: None,
                 execution_id: None,
             },
-            column_profiles,
             ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
-            data_quality_metrics,
-        ))
+        )
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .build())
     }
 
     /// Profile a registered table directly
-    pub async fn profile_table(&self, table_name: &str) -> Result<QualityReport> {
+    pub async fn profile_table(&self, table_name: &str) -> Result<ProfileReport> {
         if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Err(anyhow::anyhow!("Invalid table name: {}", table_name));
         }
@@ -193,7 +190,7 @@ impl DataFusionLoader {
     /// Execute a SQL query and emit incremental profiling reports.
     ///
     /// This method is designed for real-time monitoring of data streams.
-    /// It emits a [`QualityReport`] after processing each batch, where each
+    /// It emits a [`ProfileReport`] after processing each batch, where each
     /// report contains **cumulative** statistics from all batches processed
     /// so far.
     ///
@@ -213,7 +210,7 @@ impl DataFusionLoader {
     pub async fn profile_query_incremental(
         &self,
         query: &str,
-    ) -> Result<impl Stream<Item = Result<QualityReport>>> {
+    ) -> Result<impl Stream<Item = Result<ProfileReport>>> {
         let start = Instant::now();
         log::info!("DataFusion: Preparing query (incremental)");
 
@@ -246,27 +243,21 @@ impl DataFusionLoader {
 
                 let total_rows = analyzer.total_rows();
 
-                // Calculate quality metrics
-                let data_quality_metrics =
-                    DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-                        .map_err(|e| {
-                            anyhow::anyhow!("Quality metrics calculation failed: {}", e)
-                        })?;
-
                 let scan_time_ms = start.elapsed().as_millis();
                 let num_columns = column_profiles.len();
 
-                Ok(QualityReport::new(
+                Ok(ReportAssembler::new(
                     DataSource::Query {
                         engine: QueryEngine::DataFusion,
                         statement: query_owned.clone(),
                         database: None,
                         execution_id: None,
                     },
-                    column_profiles,
                     ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
-                    data_quality_metrics,
-                ))
+                )
+                .columns(column_profiles)
+                .with_quality_data(sample_columns)
+                .build())
             });
 
         Ok(stream)

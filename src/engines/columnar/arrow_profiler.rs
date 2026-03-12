@@ -6,10 +6,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::core::errors::DataProfilerError;
+use crate::core::report_assembler::ReportAssembler;
 use crate::stats::numeric::calculate_numeric_stats;
-use crate::types::DataQualityMetrics;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataSource, DataType, ExecutionMetadata, FileFormat, QualityReport,
+    ColumnProfile, ColumnStats, DataSource, DataType, ExecutionMetadata, FileFormat, ProfileReport,
 };
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
@@ -39,7 +39,7 @@ impl ArrowProfiler {
         self
     }
 
-    pub fn analyze_csv_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    pub fn analyze_csv_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let file = File::open(file_path)?;
         let file_size_bytes = file.metadata()?.len();
@@ -101,14 +101,10 @@ impl ArrowProfiler {
             sample_columns.insert(name.clone(), analyzer.get_sample_values());
         }
 
-        // Calculate data quality metrics using ISO 8000/25012 standards
-        let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)?;
-
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
-        Ok(QualityReport::new(
+        Ok(ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
                 format: FileFormat::Csv,
@@ -116,10 +112,11 @@ impl ArrowProfiler {
                 modified_at: None,
                 parquet_metadata: None,
             },
-            column_profiles,
             ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
-            data_quality_metrics,
-        ))
+        )
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .build())
     }
 }
 

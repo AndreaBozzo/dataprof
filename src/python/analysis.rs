@@ -34,7 +34,7 @@ pub fn analyze_csv_with_quality(path: &str, engine: Option<String>) -> PyResult<
 fn analyze_csv_internal(
     path: &str,
     engine: Option<String>,
-) -> PyResult<crate::types::QualityReport> {
+) -> PyResult<crate::types::ProfileReport> {
     let path_obj = Path::new(path);
 
     if let Some(engine_name) = engine {
@@ -136,7 +136,8 @@ pub fn calculate_data_quality_metrics(path: &str) -> PyResult<Option<PyDataQuali
     let quality_report = analyze_csv_internal(path, None)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
 
-    Ok(Some(PyDataQualityMetrics::from(
-        &quality_report.data_quality_metrics,
-    )))
+    Ok(quality_report
+        .quality
+        .as_ref()
+        .map(|q| PyDataQualityMetrics::from(&q.metrics)))
 }

@@ -1,5 +1,5 @@
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, OutputFormat, QualityReport,
+    ColumnProfile, ColumnStats, DataSource, OutputFormat, ProfileReport, QualityMetrics,
 };
 use anyhow::Result;
 use is_terminal::IsTerminal;
@@ -8,7 +8,7 @@ use std::io::{stderr, stdout};
 
 /// Trait for output formatting - enables modular output systems
 pub trait OutputFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String>;
+    fn format_report(&self, report: &ProfileReport) -> Result<String>;
     fn format_profiles(&self, profiles: &[ColumnProfile]) -> Result<String>;
     fn format_simple_summary(&self, profiles: &[ColumnProfile]) -> Result<String>;
 }
@@ -130,12 +130,13 @@ impl InteractiveFormatter {
 }
 
 /// Enhanced JSON structure for reports following separation of concerns
-/// All quality metrics are in data_quality_metrics (ISO 8000/25012)
+/// Quality metrics are optional (ISO 8000/25012)
 #[derive(Serialize)]
 pub struct JsonReport {
     pub metadata: JsonMetadata,
     pub columns: Vec<JsonColumn>,
-    pub data_quality_metrics: JsonDataQualityMetrics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_quality_metrics: Option<JsonDataQualityMetrics>,
 }
 
 /// Comprehensive data quality metrics following industry standards (ISO 8000/25012)
@@ -242,10 +243,11 @@ pub struct JsonBatchSummary {
 #[derive(Serialize)]
 pub struct JsonFileReport {
     pub file_path: String,
-    pub quality_score: f64,
+    pub quality_score: Option<f64>,
     pub total_rows: Option<usize>,
     pub total_columns: usize,
-    pub data_quality_metrics: JsonDataQualityMetrics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_quality_metrics: Option<JsonDataQualityMetrics>,
 }
 
 /// File processing error
@@ -256,7 +258,7 @@ pub struct JsonFileError {
 }
 
 impl OutputFormatter for JsonFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let json_report = JsonReport {
             metadata: JsonMetadata {
                 file_path: report.data_source.identifier(),
@@ -279,7 +281,10 @@ impl OutputFormatter for JsonFormatter {
                 .iter()
                 .map(|p| self.format_column(p))
                 .collect(),
-            data_quality_metrics: self.format_data_quality_metrics(&report.data_quality_metrics),
+            data_quality_metrics: report
+                .quality
+                .as_ref()
+                .map(|q| self.format_data_quality_metrics(&q.metrics)),
         };
 
         Ok(serde_json::to_string_pretty(&json_report)?)
@@ -361,7 +366,7 @@ impl JsonFormatter {
     }
 
     /// Format comprehensive data quality metrics for JSON output (ISO 8000/25012)
-    fn format_data_quality_metrics(&self, metrics: &DataQualityMetrics) -> JsonDataQualityMetrics {
+    fn format_data_quality_metrics(&self, metrics: &QualityMetrics) -> JsonDataQualityMetrics {
         JsonDataQualityMetrics {
             completeness: JsonCompletenessMetrics {
                 missing_values_ratio: metrics.missing_values_ratio,
@@ -393,7 +398,7 @@ impl JsonFormatter {
 }
 
 impl OutputFormatter for CsvFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let mut output = String::new();
 
         // Header
@@ -441,7 +446,7 @@ impl OutputFormatter for CsvFormatter {
 }
 
 impl OutputFormatter for PlainFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let mut output = String::new();
 
         // Source info
@@ -457,8 +462,8 @@ impl OutputFormatter for PlainFormatter {
         ));
 
         // Data Quality Metrics (ISO 8000/25012)
-        let metrics = &report.data_quality_metrics;
-        {
+        if let Some(ref quality) = report.quality {
+            let metrics = &quality.metrics;
             output.push_str("Data Quality Metrics\n");
             output.push_str(&format!(
                 "  Completeness: {:.1}% missing, {:.1}% complete\n",
@@ -570,7 +575,7 @@ impl OutputFormatter for PlainFormatter {
 }
 
 impl OutputFormatter for InteractiveFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         use colored::*;
         let mut output = String::new();
 
@@ -726,7 +731,7 @@ impl OutputFormatter for InteractiveFormatter {
 }
 
 impl OutputFormatter for AdaptiveFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let context = OutputContext::detect();
         let formatter = self.get_formatter(&context);
         formatter.format_report(report)
@@ -757,7 +762,7 @@ pub fn create_adaptive_formatter_with_format(format: OutputFormat) -> Box<dyn Ou
 
 /// Adaptive output that automatically selects best format based on terminal context
 pub fn output_with_adaptive_formatter(
-    report: &QualityReport,
+    report: &ProfileReport,
     force_format: Option<OutputFormat>,
 ) -> Result<()> {
     let formatter = if let Some(format) = force_format {
@@ -790,8 +795,10 @@ pub fn format_batch_as_json(batch_result: &crate::core::batch::BatchResult) -> R
             quality_score: report.quality_score(),
             total_rows: Some(report.execution.rows_processed),
             total_columns: report.execution.columns_detected,
-            data_quality_metrics: formatter
-                .format_data_quality_metrics(&report.data_quality_metrics),
+            data_quality_metrics: report
+                .quality
+                .as_ref()
+                .map(|q| formatter.format_data_quality_metrics(&q.metrics)),
         })
         .collect();
 

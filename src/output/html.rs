@@ -1,6 +1,6 @@
 use crate::core::batch::{BatchResult, BatchSummary};
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, QualityReport,
+    ColumnProfile, ColumnStats, DataSource, DataType, ProfileReport, QualityMetrics,
 };
 use handlebars::Handlebars;
 use serde_json::json;
@@ -29,7 +29,7 @@ fn init_handlebars() -> Result<Handlebars<'static>, DataProfilerError> {
 
 /// Generate HTML report for a single file
 pub fn generate_html_report(
-    report: &QualityReport,
+    report: &ProfileReport,
     output_path: &Path,
 ) -> Result<(), DataProfilerError> {
     let handlebars = init_handlebars()?;
@@ -52,7 +52,7 @@ pub fn generate_html_report(
 }
 
 /// Build context data for single report template
-fn build_report_context(report: &QualityReport) -> serde_json::Value {
+fn build_report_context(report: &ProfileReport) -> serde_json::Value {
     // Extract file name from data source
     let (file_name, file_path, file_size_mb, parquet_metadata) = match &report.data_source {
         DataSource::File {
@@ -142,13 +142,13 @@ fn build_report_context(report: &QualityReport) -> serde_json::Value {
         "scan_time_ms": report.execution.scan_time_ms,
         "sampling_info": sampling_info,
         "parquet_metadata": parquet_meta_json,
-        "data_quality_metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
+        "data_quality_metrics": report.quality.as_ref().map(|q| build_data_quality_metrics_context(&q.metrics)).unwrap_or_else(|| json!({})),
         "column_profiles": build_column_profiles_context(&report.column_profiles)
     })
 }
 
 /// Build context for data quality metrics
-fn build_data_quality_metrics_context(metrics: &DataQualityMetrics) -> serde_json::Value {
+fn build_data_quality_metrics_context(metrics: &QualityMetrics) -> serde_json::Value {
     // Use the official ISO 8000/25012 weighted calculation from types.rs
     let overall_score = metrics.overall_score();
     let assessment_class = get_assessment_class(overall_score);
@@ -345,7 +345,7 @@ fn build_batch_summary_context(summary: &BatchSummary) -> serde_json::Value {
 
 /// Build aggregated metrics context for batch
 fn build_batch_aggregated_metrics_context(
-    reports: &HashMap<PathBuf, QualityReport>,
+    reports: &HashMap<PathBuf, ProfileReport>,
 ) -> Option<serde_json::Value> {
     if reports.is_empty() {
         return None;
@@ -369,8 +369,8 @@ fn build_batch_aggregated_metrics_context(
     let mut total_temporal_violations = 0;
 
     for report in reports.values() {
-        let metrics = &report.data_quality_metrics;
-        {
+        if let Some(ref quality) = report.quality {
+            let metrics = &quality.metrics;
             total_missing_ratio += metrics.missing_values_ratio;
             total_type_consistency += metrics.data_type_consistency;
             total_key_uniqueness += metrics.key_uniqueness;
@@ -400,7 +400,7 @@ fn build_batch_aggregated_metrics_context(
     // Calculate average of each metric (all are already 0-100 percentages)
     let avg_complete_records = reports
         .values()
-        .map(|r| r.data_quality_metrics.complete_records_ratio)
+        .filter_map(|r| r.quality.as_ref().map(|q| q.metrics.complete_records_ratio))
         .sum::<f64>()
         / count as f64;
     let avg_type_consistency = total_type_consistency / count as f64;
@@ -463,13 +463,13 @@ fn build_batch_aggregated_metrics_context(
 
 /// Build files overview context
 fn build_files_context(
-    reports: &HashMap<PathBuf, QualityReport>,
+    reports: &HashMap<PathBuf, ProfileReport>,
     errors: &HashMap<PathBuf, String>,
 ) -> Vec<serde_json::Value> {
     let mut files: Vec<serde_json::Value> = reports
         .iter()
         .map(|(path, report)| {
-            let quality_score = report.data_quality_metrics.overall_score();
+            let quality_score = report.quality_score().unwrap_or(0.0);
 
             let quality_class = if quality_score >= 80.0 {
                 "success"
@@ -515,7 +515,7 @@ fn build_files_context(
                 "columns": report.execution.columns_detected,
                 "total_rows": report.execution.rows_processed.to_string(),
                 "error": false,
-                "metrics": build_data_quality_metrics_context(&report.data_quality_metrics),
+                "metrics": report.quality.as_ref().map(|q| build_data_quality_metrics_context(&q.metrics)).unwrap_or_else(|| json!({})),
                 "parquet_metadata": parquet_metadata
             })
         })

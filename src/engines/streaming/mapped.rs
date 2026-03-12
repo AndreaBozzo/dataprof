@@ -4,12 +4,11 @@ use std::sync::Arc;
 
 use crate::analysis::patterns::looks_like_date;
 use crate::core::errors::DataProfilerError;
+use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingStatistics;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
-use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
-};
+use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
 /// Column metadata for streaming aggregation
 /// Now uses the canonical StreamingStatistics from core module
@@ -77,7 +76,7 @@ impl MappedProfiler {
         self
     }
 
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let file_size_bytes = std::fs::metadata(file_path)?.len();
         let file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
@@ -93,7 +92,7 @@ impl MappedProfiler {
     fn analyze_with_memory_mapping(
         &self,
         file_path: &Path,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let reader = MemoryMappedCsvReader::new(file_path)?;
 
@@ -187,9 +186,6 @@ impl MappedProfiler {
 
         // Calculate quality metrics from sample data
         let sample_columns = self.create_sample_columns_for_quality_check(&column_profiles);
-        let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
@@ -201,7 +197,7 @@ impl MappedProfiler {
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
-        Ok(QualityReport::new(
+        Ok(ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
                 format: FileFormat::Csv,
@@ -209,14 +205,15 @@ impl MappedProfiler {
                 modified_at: None,
                 parquet_metadata: None,
             },
-            column_profiles,
             execution,
-            data_quality_metrics,
-        ))
+        )
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .build())
     }
 
     #[allow(deprecated)]
-    fn analyze_small_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    fn analyze_small_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         // For small files, fall back to the buffered profiler
         let profiler = super::BufferedProfiler::new()
             .chunk_size(self.chunk_size.clone())

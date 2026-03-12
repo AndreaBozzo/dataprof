@@ -99,7 +99,7 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
 }
 
 /// Build a sample `HashMap` from a [`StreamingColumnCollection`] suitable for
-/// [`DataQualityMetrics::calculate_from_data`].
+/// [`QualityMetrics::calculate_from_data`].
 pub fn quality_check_samples(
     column_stats: &StreamingColumnCollection,
 ) -> HashMap<String, Vec<String>> {

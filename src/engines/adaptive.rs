@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::core::errors::DataProfilerError;
 use crate::engines::selection::{EngineSelector, InternalEngineType, ProcessingType};
 use crate::engines::streaming::{IncrementalProfiler, MappedProfiler};
-use crate::types::QualityReport;
+use crate::types::ProfileReport;
 
 /// Performance metrics for engine execution
 #[derive(Debug, Clone)]
@@ -133,7 +133,7 @@ impl AdaptiveProfiler {
     }
 
     /// Analyze file with automatic engine selection and fallback
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         self.analyze_file_with_context(file_path, ProcessingType::BatchAnalysis)
     }
 
@@ -142,7 +142,7 @@ impl AdaptiveProfiler {
         &self,
         file_path: &Path,
         processing_type: ProcessingType,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         // Check if this is a Parquet file - handle separately as it's a binary format
         // Use both extension check (fast) and magic number check (robust)
         let is_parquet = file_path
@@ -250,7 +250,7 @@ impl AdaptiveProfiler {
         &self,
         engine_type: &InternalEngineType,
         file_path: &Path,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         let start = Instant::now();
 
         let result = match engine_type {

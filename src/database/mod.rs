@@ -9,7 +9,8 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
-use crate::types::{DataQualityMetrics, DataSource, ExecutionMetadata, QualityReport, QueryEngine};
+use crate::core::report_assembler::ReportAssembler;
+use crate::types::{DataSource, ExecutionMetadata, ProfileReport, QueryEngine};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -159,7 +160,7 @@ fn apply_environment_configuration(mut config: DatabaseConfig) -> Result<Databas
 }
 
 /// High-level function to analyze a database table or query
-pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<QualityReport> {
+pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<ProfileReport> {
     let mut connector = create_connector(config.clone())?;
 
     // Connect to database
@@ -215,27 +216,25 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
     let query_engine = detect_query_engine(&config.connection_string);
 
     if columns.is_empty() {
-        return Ok(QualityReport::new(
+        let mut exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis());
+        if let Some(ref info) = sample_info
+            && info.sampling_ratio < 1.0
+        {
+            exec = exec
+                .with_sampling(info.sampling_ratio)
+                .with_source_exhausted(false);
+        }
+        return Ok(ReportAssembler::new(
             DataSource::Query {
                 engine: query_engine.clone(),
                 statement: query.to_string(),
                 database: extract_database_name(&config.connection_string),
                 execution_id: None,
             },
-            vec![],
-            {
-                let mut exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis());
-                if let Some(ref info) = sample_info
-                    && info.sampling_ratio < 1.0
-                {
-                    exec = exec
-                        .with_sampling(info.sampling_ratio)
-                        .with_source_exhausted(false);
-                }
-                exec
-            },
-            DataQualityMetrics::empty(),
-        ));
+            exec,
+        )
+        .skip_quality()
+        .build());
     }
 
     // Use existing column analysis from lib.rs
@@ -246,10 +245,6 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
         let profile = analyze_column(name, data);
         column_profiles.push(profile);
     }
-
-    // Calculate data quality metrics using ISO 8000/25012 standards
-    let data_quality_metrics = DataQualityMetrics::calculate_from_data(&columns, &column_profiles)
-        .map_err(|e| anyhow::anyhow!("Quality metrics calculation failed for database: {}", e))?;
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
@@ -262,17 +257,18 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Qua
             .with_source_exhausted(false);
     }
 
-    let report = QualityReport::new(
+    let report = ReportAssembler::new(
         DataSource::Query {
             engine: query_engine,
             statement: query.to_string(),
             database: extract_database_name(&config.connection_string),
             execution_id: None,
         },
-        column_profiles,
         execution,
-        data_quality_metrics,
-    );
+    )
+    .columns(column_profiles)
+    .with_quality_data(columns)
+    .build();
 
     Ok(report)
 }

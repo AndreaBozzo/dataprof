@@ -126,7 +126,7 @@ pub fn execute(args: &BatchArgs) -> Result<()> {
         if args.detailed {
             log::info!("\nDetailed Results:");
             for (path, report) in &batch_result.reports {
-                let score = report.quality_score();
+                let score = report.quality_score().unwrap_or(0.0);
                 log::info!("  {} - Quality: {:.1}%", path.display(), score);
             }
         }
