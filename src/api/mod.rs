@@ -142,11 +142,15 @@ impl Profiler {
     /// Enable enhanced progress with smart defaults based on terminal context
     ///
     /// Only effective with `EngineType::Incremental`. Ignored for other engines.
+    /// Requires the `cli` feature for terminal detection; otherwise a no-op.
+    #[allow(unused_mut)]
     pub fn with_smart_progress(mut self) -> Self {
-        use crate::output::supports_enhanced_output;
-
-        if supports_enhanced_output() {
-            self.enhanced_progress = Some(100); // 100MB threshold
+        #[cfg(feature = "cli")]
+        {
+            use crate::output::supports_enhanced_output;
+            if supports_enhanced_output() {
+                self.enhanced_progress = Some(100); // 100MB threshold
+            }
         }
         self
     }

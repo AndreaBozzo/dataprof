@@ -21,6 +21,7 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::chunk_processor::ChunkProcessor;
 use crate::engines::streaming::progress::{ProgressCallback, ProgressTracker};
 use crate::engines::streaming::report_builder::ReportBuilder;
+#[cfg(feature = "cli")]
 use crate::output::progress::{EnhancedProgressBar, ProgressManager};
 use crate::types::ProfileReport;
 
@@ -33,6 +34,7 @@ pub struct BufferedProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
+    #[cfg(feature = "cli")]
     progress_manager: Option<ProgressManager>,
     performance_intelligence: Option<PerformanceIntelligence>,
 }
@@ -44,6 +46,7 @@ impl BufferedProfiler {
             chunk_size: ChunkSize::default(),
             sampling_strategy: SamplingStrategy::None,
             progress_callback: None,
+            #[cfg(feature = "cli")]
             progress_manager: None,
             performance_intelligence: None,
         }
@@ -51,13 +54,18 @@ impl BufferedProfiler {
 
     /// Enable enhanced progress tracking with memory monitoring
     ///
-    /// Now uses ProgressManager instead of manual setup
+    /// Now uses ProgressManager instead of manual setup.
+    /// Requires the `cli` feature; otherwise only enables performance intelligence.
     pub fn with_enhanced_progress(mut self, leak_threshold_mb: usize) -> Self {
-        self.progress_manager = Some(ProgressManager::with_memory_tracking(
-            true,
-            0,
-            leak_threshold_mb,
-        ));
+        #[cfg(feature = "cli")]
+        {
+            self.progress_manager = Some(ProgressManager::with_memory_tracking(
+                true,
+                0,
+                leak_threshold_mb,
+            ));
+        }
+        let _ = leak_threshold_mb;
         self.performance_intelligence = Some(PerformanceIntelligence::new());
         self
     }
@@ -100,9 +108,12 @@ impl BufferedProfiler {
         // Calculate optimal chunk size
         let chunk_size = self.chunk_size.calculate(file_size_bytes);
 
-        // Set up progress tracking - now delegated to ProgressManager
+        // Set up progress tracking
+        #[cfg(feature = "cli")]
         let (mut enhanced_progress, mut progress_tracker) =
             self.setup_progress(file_path, file_size_bytes);
+        #[cfg(not(feature = "cli"))]
+        let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
 
         // Initialize data storage
         let mut all_column_data: HashMap<String, Vec<String>> = HashMap::new();
@@ -167,6 +178,7 @@ impl BufferedProfiler {
                 chunk_processor.flush_chunk(&mut all_column_data);
 
                 // Update progress
+                #[cfg(feature = "cli")]
                 self.update_progress(
                     &mut enhanced_progress,
                     &mut progress_tracker,
@@ -175,6 +187,15 @@ impl BufferedProfiler {
                     file_size_mb,
                     &header_names,
                 );
+                #[cfg(not(feature = "cli"))]
+                {
+                    let stats = chunk_processor.stats();
+                    progress_tracker.update(
+                        stats.total_rows_processed,
+                        estimated_total_rows,
+                        stats.total_chunks,
+                    );
+                }
             }
 
             // 3. PULIZIA
@@ -189,9 +210,11 @@ impl BufferedProfiler {
         chunk_processor.flush_chunk(&mut all_column_data);
 
         // Finish progress tracking
+        #[cfg(feature = "cli")]
         self.finish_progress(enhanced_progress);
 
         // Clean up memory tracking
+        #[cfg(feature = "cli")]
         if let Some(ref manager) = self.progress_manager {
             manager.track_deallocation("main_column_data");
         }
@@ -201,6 +224,7 @@ impl BufferedProfiler {
         Ok(report_builder.build(all_column_data, chunk_processor.stats())?)
     }
 
+    #[cfg(feature = "cli")]
     /// Setup progress tracking - delegates to ProgressManager
     fn setup_progress(
         &self,
@@ -226,6 +250,7 @@ impl BufferedProfiler {
         (enhanced_progress, progress_tracker)
     }
 
+    #[cfg(feature = "cli")]
     /// Update progress tracking
     fn update_progress(
         &mut self,
@@ -273,6 +298,7 @@ impl BufferedProfiler {
         }
     }
 
+    #[cfg(feature = "cli")]
     /// Finish progress tracking and report memory leaks if any
     fn finish_progress(&self, enhanced_progress: Option<EnhancedProgressBar>) {
         if let Some(ref enhanced_pb) = enhanced_progress {

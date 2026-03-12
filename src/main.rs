@@ -7,7 +7,6 @@ use std::io::Write;
 mod cli;
 
 use cli::{Command, route_command};
-use dataprof::core::exit_codes;
 
 fn main() -> Result<()> {
     // Initialize logger with sensible default so log::info!/warn! are visible by default
@@ -31,10 +30,10 @@ fn main() -> Result<()> {
 
     // Route to appropriate command handler
     match route_command(cli.command) {
-        Ok(_) => std::process::exit(exit_codes::SUCCESS),
+        Ok(_) => std::process::exit(0),
         Err(e) => {
             eprintln!("Error: {}", e);
-            std::process::exit(exit_codes::GENERAL_ERROR);
+            std::process::exit(1);
         }
     }
 }

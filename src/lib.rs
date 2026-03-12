@@ -6,7 +6,8 @@ pub mod core;
 pub mod engines;
 pub mod parsers;
 
-// Organized modules
+// Terminal output (CLI-only: colored, indicatif, is-terminal)
+#[cfg(feature = "cli")]
 pub mod output;
 pub mod serde_helpers;
 pub mod stats;
@@ -32,9 +33,7 @@ pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use parsers::CsvDiagnostics;
 
-// CLI-specific exports
 pub use core::config::{DataprofConfig, DataprofConfigBuilder};
-pub use core::exit_codes;
 pub use core::validation::{InputValidator, ValidationError};
 
 // Progress tracking (needed for progress callbacks)
