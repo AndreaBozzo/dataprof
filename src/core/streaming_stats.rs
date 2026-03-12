@@ -9,7 +9,7 @@ use rand::{Rng, SeedableRng};
 ///   depends on the capacity and the length of sampled strings)
 /// - **Streaming text-length tracking** with min/max/mean/histogram (O(1) memory)
 use std::collections::HashMap;
-use std::hash::Hasher;
+use std::hash::{BuildHasher, Hasher};
 
 // ─── Welford accumulator ─────────────────────────────────────────────
 
@@ -33,6 +33,7 @@ impl WelfordAccumulator {
     }
 
     /// Add a single observation.
+    #[inline]
     pub fn update(&mut self, value: f64) {
         self.count += 1;
         let delta = value - self.mean;
@@ -96,8 +97,8 @@ impl Default for WelfordAccumulator {
 /// in the final sample, using O(`capacity`) memory.
 #[derive(Debug, Clone)]
 pub(crate) struct StreamReservoirSampler {
-    pub(crate) reservoir: Vec<String>,
-    pub(crate) capacity: usize,
+    reservoir: Vec<String>,
+    capacity: usize,
     count: u64,
     rng: SmallRng,
 }
@@ -124,6 +125,7 @@ impl StreamReservoirSampler {
     }
 
     /// Offer an item to the reservoir.
+    #[inline]
     pub fn offer(&mut self, value: String) {
         self.count += 1;
         if self.reservoir.len() < self.capacity {
@@ -136,9 +138,24 @@ impl StreamReservoirSampler {
         }
     }
 
+    /// Shrink the reservoir to a new (smaller) capacity, dropping excess items.
+    pub fn shrink_to(&mut self, new_capacity: usize) {
+        let new_capacity = new_capacity.max(1);
+        self.capacity = new_capacity;
+        self.reservoir.truncate(new_capacity);
+    }
+
     /// Current contents (unordered).
     pub fn samples(&self) -> &[String] {
         &self.reservoir
+    }
+
+    /// Estimated heap memory used by the reservoir contents.
+    pub fn memory_usage_bytes(&self) -> usize {
+        self.reservoir
+            .iter()
+            .map(|s| std::mem::size_of::<String>() + s.capacity())
+            .sum()
     }
 
     /// Merge by concatenating reservoirs, then re-sampling to capacity.
@@ -255,39 +272,19 @@ impl Default for TextLengthStats {
 
 // ─── Deterministic hasher for HLL ────────────────────────────────────
 
-/// A robust, deterministic hasher for HLL.
+/// Fixed-seed `BuildHasher` for HLL.
 ///
-/// All `HllCounter` instances share the same hashing scheme so that
-/// register merges are correct. We use a fixed-seed SipHash-like mix
-/// for good bit distribution.
-#[derive(Default)]
-struct DeterministicHasher {
-    state: u64,
-}
+/// All `HllCounter` instances must share the same hashing scheme so that
+/// register merges are correct.  We use `DefaultHasher` (SipHash-1-3)
+/// whose `new()` constructor always seeds with (0, 0), giving excellent
+/// avalanche properties and deterministic output.
+struct HllBuildHasher;
 
-impl Hasher for DeterministicHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        // Simple but effective bit mixer (Murmur3-style)
-        for &b in bytes {
-            let mut k = b as u64;
-            k = k.wrapping_mul(0xcc9e2d51);
-            k = k.rotate_left(15);
-            k = k.wrapping_mul(0x1b873593);
+impl BuildHasher for HllBuildHasher {
+    type Hasher = std::collections::hash_map::DefaultHasher;
 
-            self.state ^= k;
-            self.state = self.state.rotate_left(13);
-            self.state = self.state.wrapping_mul(5).wrapping_add(0xe6546b64);
-        }
-    }
-    fn finish(&self) -> u64 {
-        // Finalization mix
-        let mut x = self.state;
-        x ^= x >> 33;
-        x = x.wrapping_mul(0xff51afd7ed558ccd);
-        x ^= x >> 33;
-        x = x.wrapping_mul(0xc4ceb9fe1a85ec53);
-        x ^= x >> 33;
-        x
+    fn build_hasher(&self) -> Self::Hasher {
+        std::collections::hash_map::DefaultHasher::new()
     }
 }
 
@@ -324,18 +321,24 @@ impl HllCounter {
     }
 
     /// Add a value.
+    #[inline]
     fn insert(&mut self, value: &str) {
-        let mut hasher = DeterministicHasher::default();
+        let mut hasher = HllBuildHasher.build_hasher();
         hasher.write(value.as_bytes());
         let hash = hasher.finish();
 
         let index = (hash as usize) & (Self::NUM_REGISTERS - 1);
         let w = hash >> Self::PRECISION;
 
-        // ρ(w): position of the leftmost 1-bit + 1.
-        // We look at the bits NOT used for the index.
-        let rank =
-            (w.leading_zeros() - Self::PRECISION as u32 + 1).min(64 - Self::PRECISION as u32) as u8;
+        // ρ(w): number of leading zeros in the remaining bits, plus 1.
+        // `w` occupies the top (64 - PRECISION) bits of the original hash,
+        // so `w.leading_zeros()` includes PRECISION "extra" leading zeros
+        // from the shift.  We subtract those to get the true leading-zero
+        // count within the (64 - PRECISION)-bit window, then add 1.
+        //
+        // Maximum possible rank = (64 - PRECISION) + 1 = 51 when w == 0.
+        // This is a ~1-in-2^50 event and doesn't affect register size (u8).
+        let rank = (w.leading_zeros() - Self::PRECISION as u32 + 1) as u8;
 
         if rank > self.registers[index] {
             self.registers[index] = rank;
@@ -494,9 +497,11 @@ impl StreamingStatistics {
         self.hll.count() as usize
     }
 
-    /// Always `true` — HLL estimates are inherently approximate.
+    /// Returns `true` when the unique count is an HLL estimate rather than
+    /// an exact value.  For very small cardinalities (≤ 100) the HLL small-range
+    /// correction is near-exact, so we report `false`.
     pub fn unique_count_is_approximate(&self) -> bool {
-        true
+        self.hll.count() > 100
     }
 
     /// Unbiased sample values from reservoir sampling.
@@ -512,6 +517,11 @@ impl StreamingStatistics {
         self.text_length_tracker.clone()
     }
 
+    /// Halve the reservoir capacity to reduce memory pressure.
+    pub fn reduce_sample_capacity(&mut self) {
+        self.sampler.shrink_to(self.sampler.capacity / 2);
+    }
+
     /// Memory usage estimate in bytes.
     ///
     /// HLL registers are fixed at ~16 KB.  The reservoir is bounded by
@@ -520,12 +530,7 @@ impl StreamingStatistics {
     pub fn memory_usage_bytes(&self) -> usize {
         let struct_size = std::mem::size_of::<Self>();
         let hll_size = self.hll.registers.len(); // 16 KB
-        let reservoir_size: usize = self
-            .sampler
-            .reservoir
-            .iter()
-            .map(|s| std::mem::size_of::<String>() + s.capacity())
-            .sum();
+        let reservoir_size = self.sampler.memory_usage_bytes();
 
         struct_size + hll_size + reservoir_size
     }
@@ -597,9 +602,7 @@ impl StreamingColumnCollection {
     /// insertions do not immediately re-fill the reservoir.
     pub fn reduce_memory_usage(&mut self) {
         for stats in self.columns.values_mut() {
-            let half = stats.sampler.capacity / 2;
-            stats.sampler.capacity = half.max(1);
-            stats.sampler.reservoir.truncate(half.max(1));
+            stats.reduce_sample_capacity();
         }
     }
 
