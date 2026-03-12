@@ -27,19 +27,13 @@
 ```bash
 pip install dataprof
 ```
-```python
-import dataprof
-
-# Connect, profile, and export an HTML dashboard
-dataprof.profile("huge_dataset.csv").save("report.html")
-```
 
 **CLI (via cargo - Advanced/Rust users)**
 ```bash
 cargo install dataprof
 
 # Profile directly from your terminal
-dataprof-cli analyze huge_data.parquet --quality --output json
+dataprof-cli analyze huge_data.parquet --format json --output report.json  
 ```
 
 ## 📊 Profiling Output
@@ -50,9 +44,6 @@ dataprof-cli analyze huge_data.parquet --quality --output json
 
 **Interactive Demo**  
 <img src="assets/animations/dataprof_demo_minimal.gif" alt="DataProf Demo" width="100%" />
-
-**Single File Analysis**  
-<img src="assets/images/dataprofhtml2026.png" alt="Single Report Dashboard" width="100%" />
 
 </details>
 
