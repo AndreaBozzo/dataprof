@@ -46,9 +46,6 @@ dataprof-cli analyze huge_data.parquet --quality --output json
 
 `dataprof` focuses on fast profiling and quality assessment with machine-friendly outputs for pipelines and dashboards.
 
-<details>
-<summary>Click to view Report Dashboards</summary>
-
 <br/>
 
 **Interactive Demo**  

@@ -7,9 +7,8 @@ use std::sync::Arc;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::report_assembler::ReportAssembler;
-use crate::stats::numeric::calculate_numeric_stats;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataSource, DataType, ExecutionMetadata, FileFormat, ProfileReport,
+    ColumnProfile, DataSource, DataType, ExecutionMetadata, FileFormat, ProfileReport,
 };
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
@@ -644,42 +643,27 @@ impl ColumnAnalyzer {
 
     fn to_column_profile(&self, name: String) -> ColumnProfile {
         let data_type = self.infer_data_type();
-
-        let stats = match data_type {
-            DataType::Integer | DataType::Float => calculate_numeric_stats(&self.sample_values),
-            DataType::String | DataType::Date => {
-                let avg_length = if self.total_count > self.null_count {
-                    self.total_length as f64 / (self.total_count - self.null_count) as f64
-                } else {
-                    0.0
-                };
-
-                ColumnStats::Text {
-                    min_length: if self.min_length == usize::MAX {
-                        0
-                    } else {
-                        self.min_length
-                    },
-                    max_length: self.max_length,
-                    avg_length,
-                    most_frequent: None,
-                    least_frequent: None,
-                }
-            }
+        let avg_length = if self.total_count > self.null_count {
+            self.total_length as f64 / (self.total_count - self.null_count) as f64
+        } else {
+            0.0
         };
 
-        // Detect patterns using sample values
-        let patterns = crate::detect_patterns(&self.sample_values);
-
-        ColumnProfile {
-            name,
-            data_type,
-            null_count: self.null_count,
-            total_count: self.total_count,
-            unique_count: Some(self.unique_values.len()),
-            stats,
-            patterns,
-        }
+        crate::core::profile_builder::build_column_profile(
+            crate::core::profile_builder::ColumnProfileInput {
+                name,
+                data_type,
+                total_count: self.total_count,
+                null_count: self.null_count,
+                unique_count: Some(self.unique_values.len()),
+                sample_values: &self.sample_values,
+                text_lengths: Some(crate::core::profile_builder::TextLengths {
+                    min_length: self.min_length,
+                    max_length: self.max_length,
+                    avg_length,
+                }),
+            },
+        )
     }
 
     fn infer_data_type(&self) -> DataType {
@@ -781,19 +765,12 @@ mod tests {
 
         // Verify numeric stats are computed
         match &score_col.stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                skewness,
-                kurtosis,
-                ..
-            } => {
-                assert!((min - 10.0).abs() < 0.01, "min should be 10");
-                assert!((max - 200.0).abs() < 0.01, "max should be 200");
-                assert!((mean - 105.0).abs() < 0.01, "mean should be 105");
-                assert!(skewness.is_some(), "skewness should be computed");
-                assert!(kurtosis.is_some(), "kurtosis should be computed");
+            ColumnStats::Numeric(n) => {
+                assert!((n.min - 10.0).abs() < 0.01, "min should be 10");
+                assert!((n.max - 200.0).abs() < 0.01, "max should be 200");
+                assert!((n.mean - 105.0).abs() < 0.01, "mean should be 105");
+                assert!(n.skewness.is_some(), "skewness should be computed");
+                assert!(n.kurtosis.is_some(), "kurtosis should be computed");
             }
             other => panic!("score column should have Numeric stats, got {:?}", other),
         }
@@ -835,7 +812,7 @@ mod tests {
             "value column with decimals should be detected as Float"
         );
         assert!(
-            matches!(&value_col.stats, ColumnStats::Numeric { .. }),
+            matches!(&value_col.stats, ColumnStats::Numeric(..)),
             "Float column should have Numeric stats"
         );
 

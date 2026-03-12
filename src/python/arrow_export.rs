@@ -533,7 +533,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
             $profiles
                 .iter()
                 .map(|p| match &p.stats {
-                    ColumnStats::Numeric { $field, .. } => Some(*$field),
+                    ColumnStats::Numeric(n) => Some(n.$field),
                     _ => None,
                 })
                 .collect::<Float64Array>()
@@ -545,7 +545,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
             $profiles
                 .iter()
                 .map(|p| match &p.stats {
-                    ColumnStats::Numeric { $field, .. } => *$field,
+                    ColumnStats::Numeric(n) => n.$field,
                     _ => None,
                 })
                 .collect::<Float64Array>()
@@ -566,36 +566,28 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let q1s: Float64Array = profiles
         .iter()
         .map(|p| match &p.stats {
-            ColumnStats::Numeric {
-                quartiles: Some(q), ..
-            } => Some(q.q1),
+            ColumnStats::Numeric(n) => n.quartiles.as_ref().map(|q| q.q1),
             _ => None,
         })
         .collect();
     let q2s: Float64Array = profiles
         .iter()
         .map(|p| match &p.stats {
-            ColumnStats::Numeric {
-                quartiles: Some(q), ..
-            } => Some(q.q2),
+            ColumnStats::Numeric(n) => n.quartiles.as_ref().map(|q| q.q2),
             _ => None,
         })
         .collect();
     let q3s: Float64Array = profiles
         .iter()
         .map(|p| match &p.stats {
-            ColumnStats::Numeric {
-                quartiles: Some(q), ..
-            } => Some(q.q3),
+            ColumnStats::Numeric(n) => n.quartiles.as_ref().map(|q| q.q3),
             _ => None,
         })
         .collect();
     let iqrs: Float64Array = profiles
         .iter()
         .map(|p| match &p.stats {
-            ColumnStats::Numeric {
-                quartiles: Some(q), ..
-            } => Some(q.iqr),
+            ColumnStats::Numeric(n) => n.quartiles.as_ref().map(|q| q.iqr),
             _ => None,
         })
         .collect();
@@ -603,7 +595,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let is_approx: BooleanArray = profiles
         .iter()
         .map(|p| match &p.stats {
-            ColumnStats::Numeric { is_approximate, .. } => *is_approximate,
+            ColumnStats::Numeric(n) => n.is_approximate,
             _ => None,
         })
         .collect();

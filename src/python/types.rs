@@ -85,21 +85,8 @@ impl From<&ColumnProfile> for PyColumnProfile {
             quartiles,
             is_approximate,
         ) = match &profile.stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                std_dev,
-                variance,
-                median,
-                mode,
-                skewness,
-                kurtosis,
-                coefficient_of_variation,
-                quartiles,
-                is_approximate,
-            } => {
-                let q_map = quartiles.as_ref().map(|q| {
+            ColumnStats::Numeric(n) => {
+                let q_map = n.quartiles.as_ref().map(|q| {
                     let mut m = std::collections::HashMap::new();
                     m.insert("q1".to_string(), q.q1);
                     m.insert("q2".to_string(), q.q2);
@@ -108,18 +95,18 @@ impl From<&ColumnProfile> for PyColumnProfile {
                     m
                 });
                 (
-                    Some(*min),
-                    Some(*max),
-                    Some(*mean),
-                    Some(*std_dev),
-                    Some(*variance),
-                    *median,
-                    *mode,
-                    *skewness,
-                    *kurtosis,
-                    *coefficient_of_variation,
+                    Some(n.min),
+                    Some(n.max),
+                    Some(n.mean),
+                    Some(n.std_dev),
+                    Some(n.variance),
+                    n.median,
+                    n.mode,
+                    n.skewness,
+                    n.kurtosis,
+                    n.coefficient_of_variation,
                     q_map,
-                    *is_approximate,
+                    n.is_approximate,
                 )
             }
             _ => (

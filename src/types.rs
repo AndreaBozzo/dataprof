@@ -725,7 +725,6 @@ impl ExecutionMetadata {
     }
 }
 
-// MVP: CSV profiling with pattern detection
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColumnProfile {
     pub name: String,
@@ -761,90 +760,150 @@ pub struct FrequencyItem {
     pub percentage: f64,
 }
 
+// ── Extracted stat structs ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NumericStats {
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub min: f64,
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub max: f64,
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
+    pub mean: f64,
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
+    pub std_dev: f64,
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
+    pub variance: f64,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_helpers::round_2_opt"
+    )]
+    pub median: Option<f64>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_helpers::quartiles::serialize"
+    )]
+    pub quartiles: Option<Quartiles>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_helpers::round_2_opt"
+    )]
+    pub mode: Option<f64>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_helpers::round_2_opt"
+    )]
+    pub coefficient_of_variation: Option<f64>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_helpers::round_4_opt"
+    )]
+    pub skewness: Option<f64>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::serde_helpers::round_4_opt"
+    )]
+    pub kurtosis: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_approximate: Option<bool>,
+}
+
+impl NumericStats {
+    /// Empty/default numeric stats (all zeros, no optional fields).
+    pub fn empty() -> Self {
+        Self {
+            min: 0.0,
+            max: 0.0,
+            mean: 0.0,
+            std_dev: 0.0,
+            variance: 0.0,
+            median: None,
+            quartiles: None,
+            mode: None,
+            coefficient_of_variation: None,
+            skewness: None,
+            kurtosis: None,
+            is_approximate: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TextStats {
+    pub min_length: usize,
+    pub max_length: usize,
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub avg_length: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub most_frequent: Option<Vec<FrequencyItem>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub least_frequent: Option<Vec<FrequencyItem>>,
+}
+
+impl TextStats {
+    /// Empty/default text stats.
+    pub fn empty() -> Self {
+        Self {
+            min_length: 0,
+            max_length: 0,
+            avg_length: 0.0,
+            most_frequent: None,
+            least_frequent: None,
+        }
+    }
+
+    /// Build text stats from pre-computed lengths (streaming/columnar engines).
+    /// Handles the `usize::MAX` sentinel for `min_length`.
+    pub fn from_lengths(min_length: usize, max_length: usize, avg_length: f64) -> Self {
+        Self {
+            min_length: if min_length == usize::MAX {
+                0
+            } else {
+                min_length
+            },
+            max_length,
+            avg_length,
+            most_frequent: None,
+            least_frequent: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DateTimeStats {
+    pub min_datetime: String,
+    pub max_datetime: String,
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub duration_days: f64,
+    pub year_distribution: HashMap<i32, usize>,
+    pub month_distribution: HashMap<u32, usize>,
+    pub day_of_week_distribution: HashMap<String, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hour_distribution: Option<HashMap<u32, usize>>,
+}
+
+impl DateTimeStats {
+    /// Empty/default datetime stats.
+    pub fn empty() -> Self {
+        Self {
+            min_datetime: String::new(),
+            max_datetime: String::new(),
+            duration_days: 0.0,
+            year_distribution: HashMap::new(),
+            month_distribution: HashMap::new(),
+            day_of_week_distribution: HashMap::new(),
+            hour_distribution: None,
+        }
+    }
+}
+
+// ── ColumnStats enum (tuple variants wrapping extracted structs) ─────────
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ColumnStats {
-    Numeric {
-        // Existing (always present)
-        #[serde(serialize_with = "crate::serde_helpers::round_2")]
-        min: f64,
-        #[serde(serialize_with = "crate::serde_helpers::round_2")]
-        max: f64,
-        #[serde(serialize_with = "crate::serde_helpers::round_4")]
-        mean: f64,
-
-        // NEW - Streaming-compatible (always present)
-        #[serde(serialize_with = "crate::serde_helpers::round_4")]
-        std_dev: f64,
-        #[serde(serialize_with = "crate::serde_helpers::round_4")]
-        variance: f64,
-
-        // NEW - Require sorted data (Option for large datasets)
-        #[serde(
-            skip_serializing_if = "Option::is_none",
-            serialize_with = "crate::serde_helpers::round_2_opt"
-        )]
-        median: Option<f64>,
-        #[serde(
-            skip_serializing_if = "Option::is_none",
-            serialize_with = "crate::serde_helpers::quartiles::serialize"
-        )]
-        quartiles: Option<Quartiles>,
-        #[serde(
-            skip_serializing_if = "Option::is_none",
-            serialize_with = "crate::serde_helpers::round_2_opt"
-        )]
-        mode: Option<f64>,
-
-        // NEW - Advanced metrics (Option for large datasets)
-        #[serde(
-            skip_serializing_if = "Option::is_none",
-            serialize_with = "crate::serde_helpers::round_2_opt"
-        )]
-        coefficient_of_variation: Option<f64>,
-        #[serde(
-            skip_serializing_if = "Option::is_none",
-            serialize_with = "crate::serde_helpers::round_4_opt"
-        )]
-        skewness: Option<f64>,
-        #[serde(
-            skip_serializing_if = "Option::is_none",
-            serialize_with = "crate::serde_helpers::round_4_opt"
-        )]
-        kurtosis: Option<f64>,
-
-        // NEW - Approximation flag
-        #[serde(skip_serializing_if = "Option::is_none")]
-        is_approximate: Option<bool>,
-    },
-    Text {
-        // Existing
-        min_length: usize,
-        max_length: usize,
-        #[serde(serialize_with = "crate::serde_helpers::round_2")]
-        avg_length: f64,
-
-        // NEW - Frequency analysis
-        #[serde(skip_serializing_if = "Option::is_none")]
-        most_frequent: Option<Vec<FrequencyItem>>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        least_frequent: Option<Vec<FrequencyItem>>,
-    },
-    DateTime {
-        // Basic range
-        min_datetime: String, // ISO 8601 format
-        max_datetime: String,
-        #[serde(serialize_with = "crate::serde_helpers::round_2")]
-        duration_days: f64,
-
-        // Temporal distributions
-        year_distribution: HashMap<i32, usize>,
-        month_distribution: HashMap<u32, usize>,
-        day_of_week_distribution: HashMap<String, usize>,
-
-        // Optional: only if times are present
-        #[serde(skip_serializing_if = "Option::is_none")]
-        hour_distribution: Option<HashMap<u32, usize>>,
-    },
+    Numeric(NumericStats),
+    Text(TextStats),
+    DateTime(DateTimeStats),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -926,7 +985,7 @@ mod tests {
             null_count: 2,
             total_count: 10,
             unique_count: Some(8),
-            stats: ColumnStats::Numeric {
+            stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
                 mean: 50.5,
@@ -944,7 +1003,7 @@ mod tests {
                 skewness: Some(0.0),
                 kurtosis: Some(-1.2),
                 is_approximate: Some(false),
-            },
+            }),
             patterns: vec![],
         };
 
@@ -956,20 +1015,12 @@ mod tests {
         assert_eq!(deserialized.total_count, 10);
         assert_eq!(deserialized.null_count, 2);
 
-        if let ColumnStats::Numeric {
-            min,
-            max,
-            mean,
-            median,
-            quartiles,
-            ..
-        } = &deserialized.stats
-        {
-            assert!((min - 1.0).abs() < 0.01);
-            assert!((max - 100.0).abs() < 0.01);
-            assert!((mean - 50.5).abs() < 0.01);
-            assert!(median.is_some());
-            assert!(quartiles.is_some());
+        if let ColumnStats::Numeric(n) = &deserialized.stats {
+            assert!((n.min - 1.0).abs() < 0.01);
+            assert!((n.max - 100.0).abs() < 0.01);
+            assert!((n.mean - 50.5).abs() < 0.01);
+            assert!(n.median.is_some());
+            assert!(n.quartiles.is_some());
         } else {
             panic!("Expected Numeric stats after roundtrip");
         }
@@ -983,13 +1034,13 @@ mod tests {
             null_count: 0,
             total_count: 3,
             unique_count: Some(3),
-            stats: ColumnStats::Text {
+            stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,
                 avg_length: 5.0,
                 most_frequent: None,
                 least_frequent: None,
-            },
+            }),
             patterns: vec![],
         };
 
@@ -997,14 +1048,9 @@ mod tests {
         let deserialized: ColumnProfile = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.data_type, DataType::String);
-        if let ColumnStats::Text {
-            min_length,
-            max_length,
-            ..
-        } = &deserialized.stats
-        {
-            assert_eq!(*min_length, 3);
-            assert_eq!(*max_length, 7);
+        if let ColumnStats::Text(t) = &deserialized.stats {
+            assert_eq!(t.min_length, 3);
+            assert_eq!(t.max_length, 7);
         } else {
             panic!("Expected Text stats after roundtrip");
         }

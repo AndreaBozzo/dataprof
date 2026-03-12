@@ -77,70 +77,48 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
         );
 
         // Compare numeric stats within tolerance
-        if let (
-            ColumnStats::Numeric {
-                min: min1,
-                max: max1,
-                mean: mean1,
-                std_dev: sd1,
-                variance: var1,
-                median: med1,
-                skewness: sk1,
-                kurtosis: ku1,
-                ..
-            },
-            ColumnStats::Numeric {
-                min: min2,
-                max: max2,
-                mean: mean2,
-                std_dev: sd2,
-                variance: var2,
-                median: med2,
-                skewness: sk2,
-                kurtosis: ku2,
-                ..
-            },
-        ) = (&std_col.stats, &arrow_col.stats)
+        if let (ColumnStats::Numeric(n1), ColumnStats::Numeric(n2)) =
+            (&std_col.stats, &arrow_col.stats)
         {
             let tol = 0.01;
             assert!(
-                (min1 - min2).abs() < tol,
+                (n1.min - n2.min).abs() < tol,
                 "'{}' min: {} vs {}",
                 std_col.name,
-                min1,
-                min2
+                n1.min,
+                n2.min
             );
             assert!(
-                (max1 - max2).abs() < tol,
+                (n1.max - n2.max).abs() < tol,
                 "'{}' max: {} vs {}",
                 std_col.name,
-                max1,
-                max2
+                n1.max,
+                n2.max
             );
             assert!(
-                (mean1 - mean2).abs() < tol,
+                (n1.mean - n2.mean).abs() < tol,
                 "'{}' mean: {} vs {}",
                 std_col.name,
-                mean1,
-                mean2
+                n1.mean,
+                n2.mean
             );
             assert!(
-                (sd1 - sd2).abs() < tol,
+                (n1.std_dev - n2.std_dev).abs() < tol,
                 "'{}' std_dev: {} vs {}",
                 std_col.name,
-                sd1,
-                sd2
+                n1.std_dev,
+                n2.std_dev
             );
             assert!(
-                (var1 - var2).abs() < 0.1,
+                (n1.variance - n2.variance).abs() < 0.1,
                 "'{}' variance: {} vs {}",
                 std_col.name,
-                var1,
-                var2
+                n1.variance,
+                n2.variance
             );
 
             // Optional stats: only compare when both are Some
-            if let (Some(m1), Some(m2)) = (med1, med2) {
+            if let (Some(m1), Some(m2)) = (n1.median, n2.median) {
                 assert!(
                     (m1 - m2).abs() < 0.1,
                     "'{}' median: {} vs {}",
@@ -149,7 +127,7 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
                     m2
                 );
             }
-            if let (Some(s1), Some(s2)) = (sk1, sk2) {
+            if let (Some(s1), Some(s2)) = (n1.skewness, n2.skewness) {
                 assert!(
                     (s1 - s2).abs() < 0.1,
                     "'{}' skewness: {} vs {}",
@@ -158,7 +136,7 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
                     s2
                 );
             }
-            if let (Some(k1), Some(k2)) = (ku1, ku2) {
+            if let (Some(k1), Some(k2)) = (n1.kurtosis, n2.kurtosis) {
                 assert!(
                     (k1 - k2).abs() < 0.1,
                     "'{}' kurtosis: {} vs {}",

@@ -296,9 +296,9 @@ impl JsonFormatter {
 
         // Add type field
         let type_name = match &profile.stats {
-            ColumnStats::Numeric { .. } => "numeric",
-            ColumnStats::Text { .. } => "text",
-            ColumnStats::DateTime { .. } => "datetime",
+            ColumnStats::Numeric(..) => "numeric",
+            ColumnStats::Text(..) => "text",
+            ColumnStats::DateTime(..) => "datetime",
         };
 
         if let serde_json::Value::Object(ref mut map) = stats_json {
@@ -474,41 +474,24 @@ impl OutputFormatter for PlainFormatter {
             output.push_str(&format!("  Nulls: {}\n", profile.null_count));
 
             match &profile.stats {
-                ColumnStats::Numeric {
-                    min,
-                    max,
-                    mean,
-                    std_dev,
-                    median,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min: {:.2}\n", min));
-                    output.push_str(&format!("  Max: {:.2}\n", max));
-                    output.push_str(&format!("  Mean: {:.2}\n", mean));
-                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
-                    if let Some(med) = median {
+                ColumnStats::Numeric(n) => {
+                    output.push_str(&format!("  Min: {:.2}\n", n.min));
+                    output.push_str(&format!("  Max: {:.2}\n", n.max));
+                    output.push_str(&format!("  Mean: {:.2}\n", n.mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", n.std_dev));
+                    if let Some(med) = n.median {
                         output.push_str(&format!("  Median: {:.2}\n", med));
                     }
                 }
-                ColumnStats::Text {
-                    min_length,
-                    max_length,
-                    avg_length,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Length: {}\n", min_length));
-                    output.push_str(&format!("  Max Length: {}\n", max_length));
-                    output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                ColumnStats::Text(t) => {
+                    output.push_str(&format!("  Min Length: {}\n", t.min_length));
+                    output.push_str(&format!("  Max Length: {}\n", t.max_length));
+                    output.push_str(&format!("  Avg Length: {:.1}\n", t.avg_length));
                 }
-                ColumnStats::DateTime {
-                    min_datetime,
-                    max_datetime,
-                    duration_days,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
-                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
-                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
+                ColumnStats::DateTime(d) => {
+                    output.push_str(&format!("  Min Date: {}\n", d.min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", d.max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", d.duration_days));
                 }
             }
             output.push('\n');
@@ -629,41 +612,24 @@ impl OutputFormatter for InteractiveFormatter {
             }
 
             match &profile.stats {
-                ColumnStats::Numeric {
-                    min,
-                    max,
-                    mean,
-                    std_dev,
-                    median,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min: {:.2}\n", min));
-                    output.push_str(&format!("  Max: {:.2}\n", max));
-                    output.push_str(&format!("  Mean: {:.2}\n", mean));
-                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
-                    if let Some(med) = median {
+                ColumnStats::Numeric(n) => {
+                    output.push_str(&format!("  Min: {:.2}\n", n.min));
+                    output.push_str(&format!("  Max: {:.2}\n", n.max));
+                    output.push_str(&format!("  Mean: {:.2}\n", n.mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", n.std_dev));
+                    if let Some(med) = n.median {
                         output.push_str(&format!("  Median: {:.2}\n", med));
                     }
                 }
-                ColumnStats::Text {
-                    min_length,
-                    max_length,
-                    avg_length,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Length: {}\n", min_length));
-                    output.push_str(&format!("  Max Length: {}\n", max_length));
-                    output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                ColumnStats::Text(t) => {
+                    output.push_str(&format!("  Min Length: {}\n", t.min_length));
+                    output.push_str(&format!("  Max Length: {}\n", t.max_length));
+                    output.push_str(&format!("  Avg Length: {:.1}\n", t.avg_length));
                 }
-                ColumnStats::DateTime {
-                    min_datetime,
-                    max_datetime,
-                    duration_days,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
-                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
-                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
+                ColumnStats::DateTime(d) => {
+                    output.push_str(&format!("  Min Date: {}\n", d.min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", d.max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", d.duration_days));
                 }
             }
             output.push('\n');

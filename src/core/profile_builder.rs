@@ -1,14 +1,91 @@
 //! Shared conversion from [`StreamingColumnCollection`] / [`StreamingStatistics`]
 //! into [`ColumnProfile`] and quality-check sample maps.
 //!
-//! Extracted from `IncrementalProfiler` and `AsyncStreamingProfiler` to avoid
-//! duplication (see #228).
-
-use std::collections::HashMap;
+//! All engines that need to produce a [`ColumnProfile`] should call
+//! [`build_column_profile`] instead of constructing one manually.
+//! This ensures consistent stats calculation and pattern detection.
 
 use crate::analysis::patterns::looks_like_date;
 use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
-use crate::types::{ColumnProfile, ColumnStats, DataType};
+use crate::types::{ColumnProfile, ColumnStats, DataType, TextStats};
+
+use std::collections::HashMap;
+
+// ── Canonical builder ───────────────────────────────────────────────────
+
+/// Inputs that every engine can provide for centralized profile construction.
+pub struct ColumnProfileInput<'a> {
+    pub name: String,
+    pub data_type: DataType,
+    pub total_count: usize,
+    pub null_count: usize,
+    pub unique_count: Option<usize>,
+    pub sample_values: &'a [String],
+    /// Pre-computed text lengths for engines that track them incrementally.
+    /// When `Some`, text stats are built from these instead of re-scanning samples.
+    pub text_lengths: Option<TextLengths>,
+}
+
+/// Pre-computed text length stats from streaming/columnar engines.
+pub struct TextLengths {
+    pub min_length: usize,
+    pub max_length: usize,
+    pub avg_length: f64,
+}
+
+/// Build a [`ColumnProfile`] from engine-agnostic inputs.
+///
+/// This is the single canonical construction path. Engines provide
+/// pre-inferred `DataType`, counters, sample values, and optionally
+/// pre-computed text lengths; this function handles stats calculation
+/// and pattern detection.
+pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
+    let stats = match input.data_type {
+        DataType::Integer | DataType::Float => {
+            crate::stats::numeric::calculate_numeric_stats(input.sample_values)
+        }
+        DataType::Date => {
+            // Produce real datetime stats when sample values are available;
+            // fall back to text lengths for engines that only tracked lengths.
+            if !input.sample_values.is_empty() {
+                crate::stats::datetime::calculate_datetime_stats(input.sample_values)
+            } else if let Some(tl) = &input.text_lengths {
+                ColumnStats::Text(TextStats::from_lengths(
+                    tl.min_length,
+                    tl.max_length,
+                    tl.avg_length,
+                ))
+            } else {
+                ColumnStats::DateTime(crate::types::DateTimeStats::empty())
+            }
+        }
+        DataType::String => {
+            if let Some(tl) = &input.text_lengths {
+                ColumnStats::Text(TextStats::from_lengths(
+                    tl.min_length,
+                    tl.max_length,
+                    tl.avg_length,
+                ))
+            } else {
+                crate::stats::text::calculate_text_stats(input.sample_values)
+            }
+        }
+    };
+
+    let patterns = crate::detect_patterns(input.sample_values);
+
+    ColumnProfile {
+        name: input.name,
+        data_type: input.data_type,
+        null_count: input.null_count,
+        total_count: input.total_count,
+        unique_count: input.unique_count,
+        stats,
+        patterns,
+    }
+}
+
+// ── Streaming helpers ───────────────────────────────────────────────────
 
 /// Convert all columns in a [`StreamingColumnCollection`] into [`ColumnProfile`]s.
 pub fn profiles_from_streaming(column_stats: &StreamingColumnCollection) -> Vec<ColumnProfile> {
@@ -27,35 +104,21 @@ pub fn profiles_from_streaming(column_stats: &StreamingColumnCollection) -> Vec<
 /// Convert a single column's [`StreamingStatistics`] into a [`ColumnProfile`].
 pub fn profile_from_stats(name: &str, stats: &StreamingStatistics) -> ColumnProfile {
     let data_type = infer_data_type_streaming(stats);
+    let text_stats = stats.text_length_stats();
 
-    let column_stats = match data_type {
-        DataType::Integer | DataType::Float => {
-            let sample_strs: Vec<String> = stats.sample_values().to_vec();
-            crate::stats::numeric::calculate_numeric_stats(&sample_strs)
-        }
-        DataType::String | DataType::Date => {
-            let text_stats = stats.text_length_stats();
-            ColumnStats::Text {
-                min_length: text_stats.min_length,
-                max_length: text_stats.max_length,
-                avg_length: text_stats.avg_length,
-                most_frequent: None,
-                least_frequent: None,
-            }
-        }
-    };
-
-    let patterns = crate::detect_patterns(stats.sample_values());
-
-    ColumnProfile {
+    build_column_profile(ColumnProfileInput {
         name: name.to_string(),
         data_type,
-        null_count: stats.null_count,
         total_count: stats.count,
+        null_count: stats.null_count,
         unique_count: Some(stats.unique_count()),
-        stats: column_stats,
-        patterns,
-    }
+        sample_values: stats.sample_values(),
+        text_lengths: Some(TextLengths {
+            min_length: text_stats.min_length,
+            max_length: text_stats.max_length,
+            avg_length: text_stats.avg_length,
+        }),
+    })
 }
 
 /// Infer [`DataType`] from [`StreamingStatistics`] sample values.

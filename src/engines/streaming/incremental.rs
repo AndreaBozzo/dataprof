@@ -225,19 +225,15 @@ mod tests {
 
         // Verify advanced numeric stats are computed
         match &age_column.stats {
-            crate::types::ColumnStats::Numeric {
-                std_dev,
-                median,
-                skewness,
-                kurtosis,
-                coefficient_of_variation,
-                ..
-            } => {
-                assert!(*std_dev > 0.0, "std_dev should be positive");
-                assert!(median.is_some(), "median should be computed");
-                assert!(skewness.is_some(), "skewness should be computed");
-                assert!(kurtosis.is_some(), "kurtosis should be computed");
-                assert!(coefficient_of_variation.is_some(), "CV should be computed");
+            crate::types::ColumnStats::Numeric(n) => {
+                assert!(n.std_dev > 0.0, "std_dev should be positive");
+                assert!(n.median.is_some(), "median should be computed");
+                assert!(n.skewness.is_some(), "skewness should be computed");
+                assert!(n.kurtosis.is_some(), "kurtosis should be computed");
+                assert!(
+                    n.coefficient_of_variation.is_some(),
+                    "CV should be computed"
+                );
             }
             _ => panic!("Expected Numeric stats for age column"),
         }
