@@ -59,9 +59,6 @@ regex = "1.12"  # Updated: 1.11.3 -> 1.12.2 (minor bump, backward compatible)
 # JSON support
 serde_json = "1.0.149"
 
-# Template engine for HTML generation
-handlebars = "6.4"
-
 # Enhanced CLI features - Core functionality
 toml = "0.9.8"
 log = "0.4"
@@ -93,7 +90,6 @@ rand_chacha = "0.9"
 
 # Batch processing support
 glob = "0.3"
-glob-match = "0.2"
 num_cpus = "1.16"
 
 

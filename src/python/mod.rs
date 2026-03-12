@@ -2,7 +2,6 @@
 
 pub mod analysis;
 pub mod arrow_export;
-pub mod batch;
 pub mod dataframe;
 pub mod logging;
 pub mod processor;
@@ -19,14 +18,13 @@ pub use analysis::{
 
 #[cfg(feature = "parquet")]
 pub use analysis::{analyze_parquet_file, analyze_parquet_with_quality_py};
-pub use batch::{PyBatchAnalyzer, batch_analyze_directory, batch_analyze_glob};
 pub use dataframe::analyze_csv_dataframe;
 pub use logging::{
     analyze_csv_with_logging, configure_logging, get_logger, log_debug, log_error, log_info,
     log_warning,
 };
 pub use processor::PyCsvProcessor;
-pub use types::{PyBatchResult, PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
+pub use types::{PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
 
 // Arrow/PyCapsule exports
 #[cfg(feature = "parquet")]
@@ -48,10 +46,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyColumnProfile>()?;
     m.add_class::<PyQualityReport>()?;
     m.add_class::<PyDataQualityMetrics>()?;
-    m.add_class::<PyBatchResult>()?;
-
     // Context manager classes
-    m.add_class::<PyBatchAnalyzer>()?;
     m.add_class::<PyCsvProcessor>()?;
 
     // Single file analysis
@@ -70,10 +65,6 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Pandas integration (optional)
     m.add_function(wrap_pyfunction!(analyze_csv_dataframe, m)?)?;
-
-    // Batch processing
-    m.add_function(wrap_pyfunction!(batch_analyze_glob, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_analyze_directory, m)?)?;
 
     // Python logging integration
     m.add_function(wrap_pyfunction!(configure_logging, m)?)?;

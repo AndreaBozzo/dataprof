@@ -3,7 +3,6 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use crate::core::batch::BatchResult;
 use crate::types::{
     ColumnProfile, ColumnStats, DataSource, DataType, ProfileReport, QualityMetrics,
 };
@@ -701,30 +700,5 @@ impl PyDataQualityMetrics {
             100.0 - self.outlier_ratio,
             100.0 - self.stale_data_ratio
         )
-    }
-}
-
-/// Python wrapper for BatchResult
-#[pyclass]
-#[derive(Clone)]
-pub struct PyBatchResult {
-    #[pyo3(get)]
-    pub processed_files: usize,
-    #[pyo3(get)]
-    pub failed_files: usize,
-    #[pyo3(get)]
-    pub total_duration_secs: f64,
-    #[pyo3(get)]
-    pub average_quality_score: f64,
-}
-
-impl From<&BatchResult> for PyBatchResult {
-    fn from(result: &BatchResult) -> Self {
-        Self {
-            processed_files: result.summary.successful,
-            failed_files: result.summary.failed,
-            total_duration_secs: result.summary.processing_time_seconds,
-            average_quality_score: result.summary.average_quality_score,
-        }
     }
 }

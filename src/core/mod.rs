@@ -1,4 +1,3 @@
-pub mod batch;
 pub mod benchmark_stats;
 pub mod config;
 pub mod errors;
@@ -11,7 +10,6 @@ pub mod streaming_stats;
 pub mod validation;
 
 // Re-export core types
-pub use batch::*;
 pub use benchmark_stats::*;
 pub use config::*;
 pub use errors::*;

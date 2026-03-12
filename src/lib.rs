@@ -28,7 +28,6 @@ pub use api::{
 #[deprecated(note = "Use the unified Profiler builder instead.")]
 pub type DataProfiler = Profiler;
 
-pub use core::batch::{BatchConfig, BatchProcessor, BatchResult, BatchSummary};
 pub use core::errors::{DataProfilerError, ErrorSeverity};
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use parsers::CsvDiagnostics;
@@ -51,7 +50,6 @@ pub use engines::streaming::{
 pub use engines::DataFusionLoader;
 
 // Public API exports - Core types and functionality
-pub use output::html::generate_html_report;
 pub use types::{
     ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, ExecutionMetadata,
     FileFormat, MetricConfidence, OutputFormat, Pattern, ProfileReport, QualityAssessment,

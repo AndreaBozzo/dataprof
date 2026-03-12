@@ -10,8 +10,6 @@ __all__ = [
     "analyze_csv_with_quality",
     "analyze_json_file",
     "calculate_data_quality_metrics",
-    "batch_analyze_glob",
-    "batch_analyze_directory",
 
     # Python logging integration
     "configure_logging",
@@ -34,10 +32,8 @@ __all__ = [
     "PyColumnProfile",
     "PyQualityReport",
     "PyDataQualityMetrics",
-    "PyBatchResult",
 
     # Context managers
-    "PyBatchAnalyzer",
     "PyCsvProcessor",
 
     # High-level API

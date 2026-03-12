@@ -17,13 +17,11 @@ Comprehensive test suite for validating the Python bindings of DataProf.
 - `TestPyColumnProfile` - Tests column profiling functionality
 - `TestPyQualityReport` - Tests quality report generation
 - `TestPyDataQualityMetrics` - Tests ISO quality metrics
-- `TestPyBatchResult` - Tests batch processing
 - `TestErrorHandling` - Tests error cases
 - `TestJSONAnalysis` - Tests JSON/JSONL support
 
 ### 2. `test_context_managers.py` - Context Manager Tests
 **263 lines** of tests for resource management:
-- ✅ **PyBatchAnalyzer** - Batch analysis context manager
 - ✅ **PyCsvProcessor** - CSV processing context manager
 - ✅ **Resource Cleanup** - Ensures proper cleanup on exit
 - ✅ **Exception Handling** - Tests cleanup during exceptions

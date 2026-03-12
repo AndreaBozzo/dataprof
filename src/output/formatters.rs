@@ -219,44 +219,6 @@ pub struct JsonPattern {
     pub match_percentage: f64,
 }
 
-/// Batch processing results for JSON export
-#[derive(Serialize)]
-pub struct JsonBatchReport {
-    pub summary: JsonBatchSummary,
-    pub file_reports: Vec<JsonFileReport>,
-    pub errors: Vec<JsonFileError>,
-    pub aggregated_metrics: Option<JsonDataQualityMetrics>,
-}
-
-/// Batch summary statistics
-#[derive(Serialize)]
-pub struct JsonBatchSummary {
-    pub total_files: usize,
-    pub successful: usize,
-    pub failed: usize,
-    pub total_records: usize,
-    pub average_quality_score: f64,
-    pub processing_time_seconds: f64,
-}
-
-/// Individual file report in batch
-#[derive(Serialize)]
-pub struct JsonFileReport {
-    pub file_path: String,
-    pub quality_score: Option<f64>,
-    pub total_rows: Option<usize>,
-    pub total_columns: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_quality_metrics: Option<JsonDataQualityMetrics>,
-}
-
-/// File processing error
-#[derive(Serialize)]
-pub struct JsonFileError {
-    pub file_path: String,
-    pub error_message: String,
-}
-
 impl OutputFormatter for JsonFormatter {
     fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let json_report = JsonReport {
@@ -780,56 +742,4 @@ pub fn output_with_adaptive_formatter(
 pub fn supports_enhanced_output() -> bool {
     let context = OutputContext::detect();
     context.is_interactive && context.supports_color && context.supports_unicode
-}
-
-/// Format batch results as JSON
-pub fn format_batch_as_json(batch_result: &crate::core::batch::BatchResult) -> Result<String> {
-    let formatter = JsonFormatter;
-
-    // Convert file reports
-    let file_reports: Vec<JsonFileReport> = batch_result
-        .reports
-        .iter()
-        .map(|(path, report)| JsonFileReport {
-            file_path: path.to_string_lossy().to_string(),
-            quality_score: report.quality_score(),
-            total_rows: Some(report.execution.rows_processed),
-            total_columns: report.execution.columns_detected,
-            data_quality_metrics: report
-                .quality
-                .as_ref()
-                .map(|q| formatter.format_data_quality_metrics(&q.metrics)),
-        })
-        .collect();
-
-    // Convert errors
-    let errors: Vec<JsonFileError> = batch_result
-        .errors
-        .iter()
-        .map(|(path, error)| JsonFileError {
-            file_path: path.to_string_lossy().to_string(),
-            error_message: error.clone(),
-        })
-        .collect();
-
-    // Build batch report
-    let json_batch = JsonBatchReport {
-        summary: JsonBatchSummary {
-            total_files: batch_result.summary.total_files,
-            successful: batch_result.summary.successful,
-            failed: batch_result.summary.failed,
-            total_records: batch_result.summary.total_records,
-            average_quality_score: batch_result.summary.average_quality_score,
-            processing_time_seconds: batch_result.summary.processing_time_seconds,
-        },
-        file_reports,
-        errors,
-        aggregated_metrics: batch_result
-            .summary
-            .aggregated_data_quality_metrics
-            .as_ref()
-            .map(|m| formatter.format_data_quality_metrics(m)),
-    };
-
-    Ok(serde_json::to_string_pretty(&json_batch)?)
 }
