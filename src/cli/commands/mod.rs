@@ -1,11 +1,5 @@
-// Command modules (args + implementation)
+// Command modules
 pub mod analyze;
-pub mod batch;
-pub mod info;
-pub mod report;
-
-// Utility modules
-pub mod benchmark;
 
 #[cfg(feature = "database")]
 pub mod database;
@@ -45,24 +39,6 @@ pub enum Command {
     ///   dataprof analyze data.csv --detailed
     Analyze(analyze::AnalyzeArgs),
 
-    /// Generate comprehensive HTML/PDF reports
-    ///
-    /// Creates web-based reports with visualizations and metrics.
-    ///
-    /// Examples:
-    ///   dataprof report data.csv
-    ///   dataprof report data.csv -o custom_report.html
-    Report(report::ReportArgs),
-
-    /// Process multiple files in batch
-    ///
-    /// Efficiently process directories or file patterns.
-    ///
-    /// Examples:
-    ///   dataprof batch examples/
-    ///   dataprof batch examples/ --recursive --parallel
-    Batch(batch::BatchArgs),
-
     /// Analyze database tables or queries
     ///
     /// Profile data directly from databases (PostgreSQL, MySQL, SQLite, DuckDB).
@@ -72,24 +48,6 @@ pub enum Command {
     ///   dataprof database sqlite://data.db --query "SELECT * FROM users"
     #[cfg(feature = "database")]
     Database(database::DatabaseArgs),
-
-    /// Benchmark different engines on your data
-    ///
-    /// Compare streaming, memory-efficient, and Arrow engines.
-    ///
-    /// Examples:
-    ///   dataprof benchmark data.csv
-    ///   dataprof benchmark large_file.csv
-    Benchmark(benchmark::BenchmarkArgs),
-
-    /// Show engine information and system capabilities
-    ///
-    /// Display available processing engines, system resources, and recommendations.
-    ///
-    /// Examples:
-    ///   dataprof info
-    ///   dataprof info --detailed
-    Info(info::InfoArgs),
 }
 
 /// Common analysis options inherited by all commands

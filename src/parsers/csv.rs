@@ -4,10 +4,9 @@ use std::path::Path;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
+use crate::core::report_assembler::ReportAssembler;
 use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
-};
+use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
 // ============================================================================
 // NEW CONFIG-BASED API (#181 + #218)
@@ -217,14 +216,14 @@ pub fn analyze_csv_from_reader<R: Read>(
     Ok((profiles, column_stats, rows_read, header_names))
 }
 
-/// Analyze a CSV file, returning a full [`QualityReport`].
+/// Analyze a CSV file, returning a full [`ProfileReport`].
 ///
 /// Opens the file, delegates to [`analyze_csv_from_reader`], and wraps the
 /// result with file metadata and ISO 8000/25012 data quality metrics.
 pub fn analyze_csv_file(
     file_path: &Path,
     config: &CsvParserConfig,
-) -> Result<QualityReport, DataProfilerError> {
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let start = std::time::Instant::now();
 
@@ -234,41 +233,34 @@ pub fn analyze_csv_file(
     let (column_profiles, column_stats, rows_read, header_names) =
         analyze_csv_from_reader(buf_reader, config)?;
 
+    let file_source = DataSource::File {
+        path: file_path.display().to_string(),
+        format: FileFormat::Csv,
+        size_bytes: metadata.len(),
+        modified_at: None,
+        parquet_metadata: None,
+    };
+
     if column_profiles.is_empty() && rows_read == 0 {
-        return Ok(QualityReport::new(
-            DataSource::File {
-                path: file_path.display().to_string(),
-                format: FileFormat::Csv,
-                size_bytes: metadata.len(),
-                modified_at: None,
-                parquet_metadata: None,
-            },
-            vec![],
+        return Ok(ReportAssembler::new(
+            file_source,
             ExecutionMetadata::new(0, header_names.len(), start.elapsed().as_millis()),
-            DataQualityMetrics::empty(),
-        ));
+        )
+        .skip_quality()
+        .build());
     }
 
     let sample_columns = profile_builder::quality_check_samples(&column_stats);
-    let data_quality_metrics =
-        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-            .unwrap_or_else(|_| DataQualityMetrics::empty());
-
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    Ok(QualityReport::new(
-        DataSource::File {
-            path: file_path.display().to_string(),
-            format: FileFormat::Csv,
-            size_bytes: metadata.len(),
-            modified_at: None,
-            parquet_metadata: None,
-        },
-        column_profiles,
+    Ok(ReportAssembler::new(
+        file_source,
         ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
-        data_quality_metrics,
-    ))
+    )
+    .columns(column_profiles)
+    .with_quality_data(sample_columns)
+    .build())
 }
 
 /// Map I/O errors to DataProfilerError with the actual file path context
@@ -362,8 +354,8 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 2);
         assert_eq!(report.execution.rows_processed, 3);
-        assert!(report.quality_score() >= 0.0);
-        assert!(report.quality_score() <= 100.0);
+        assert!(report.quality_score().unwrap() >= 0.0);
+        assert!(report.quality_score().unwrap() <= 100.0);
     }
 
     #[test]
@@ -423,8 +415,8 @@ mod tests {
         assert_eq!(report.column_profiles.len(), 2);
         assert_eq!(report.execution.rows_processed, 3);
         assert_eq!(report.execution.columns_detected, 2);
-        assert!(report.quality_score() >= 0.0);
-        assert!(report.quality_score() <= 100.0);
+        assert!(report.quality_score().unwrap() >= 0.0);
+        assert!(report.quality_score().unwrap() <= 100.0);
     }
 
     #[test]
@@ -525,6 +517,6 @@ mod tests {
         assert_eq!(age.null_count, 4);
         assert_eq!(age.total_count, 10);
         // Quality score should be computable (>= 0)
-        assert!(report.quality_score() >= 0.0);
+        assert!(report.quality_score().unwrap() >= 0.0);
     }
 }

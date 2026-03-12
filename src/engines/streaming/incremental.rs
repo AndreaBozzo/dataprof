@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
+use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
-use crate::types::{DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport};
+use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
 /// Incremental profiler that processes data without loading everything into memory
 /// Uses online/streaming algorithms and memory mapping for maximum efficiency.
@@ -51,7 +52,7 @@ impl IncrementalProfiler {
         self
     }
 
-    pub fn analyze_file(&self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let reader = MemoryMappedCsvReader::new(file_path)?;
 
@@ -138,9 +139,6 @@ impl IncrementalProfiler {
 
         // Calculate quality metrics from sample data
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
-        let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
@@ -152,7 +150,7 @@ impl IncrementalProfiler {
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
-        Ok(QualityReport::new(
+        Ok(ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
                 format: FileFormat::Csv,
@@ -160,10 +158,11 @@ impl IncrementalProfiler {
                 modified_at: None,
                 parquet_metadata: None,
             },
-            column_profiles,
             execution,
-            data_quality_metrics,
-        ))
+        )
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .build())
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {
@@ -226,19 +225,15 @@ mod tests {
 
         // Verify advanced numeric stats are computed
         match &age_column.stats {
-            crate::types::ColumnStats::Numeric {
-                std_dev,
-                median,
-                skewness,
-                kurtosis,
-                coefficient_of_variation,
-                ..
-            } => {
-                assert!(*std_dev > 0.0, "std_dev should be positive");
-                assert!(median.is_some(), "median should be computed");
-                assert!(skewness.is_some(), "skewness should be computed");
-                assert!(kurtosis.is_some(), "kurtosis should be computed");
-                assert!(coefficient_of_variation.is_some(), "CV should be computed");
+            crate::types::ColumnStats::Numeric(n) => {
+                assert!(n.std_dev > 0.0, "std_dev should be positive");
+                assert!(n.median.is_some(), "median should be computed");
+                assert!(n.skewness.is_some(), "skewness should be computed");
+                assert!(n.kurtosis.is_some(), "kurtosis should be computed");
+                assert!(
+                    n.coefficient_of_variation.is_some(),
+                    "CV should be computed"
+                );
             }
             _ => panic!("Expected Numeric stats for age column"),
         }

@@ -5,10 +5,9 @@ use std::path::Path;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
+use crate::core::report_assembler::ReportAssembler;
 use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{
-    ColumnProfile, DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
-};
+use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
 // ============================================================================
 // NEW CONFIG-BASED API (#218)
@@ -273,11 +272,11 @@ pub fn analyze_json_from_reader<R: BufRead>(
     Ok((profiles, column_stats, rows_read, format))
 }
 
-/// Analyze a JSON/JSONL file, returning a full [`QualityReport`].
+/// Analyze a JSON/JSONL file, returning a full [`ProfileReport`].
 pub fn analyze_json_file(
     file_path: &Path,
     config: &JsonParserConfig,
-) -> Result<QualityReport, DataProfilerError> {
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let start = std::time::Instant::now();
 
@@ -287,41 +286,34 @@ pub fn analyze_json_file(
     let (column_profiles, column_stats, rows_read, format) =
         analyze_json_from_reader(buf_reader, config)?;
 
+    let file_source = DataSource::File {
+        path: file_path.display().to_string(),
+        format,
+        size_bytes: metadata.len(),
+        modified_at: None,
+        parquet_metadata: None,
+    };
+
     if rows_read == 0 {
-        return Ok(QualityReport::new(
-            DataSource::File {
-                path: file_path.display().to_string(),
-                format,
-                size_bytes: metadata.len(),
-                modified_at: None,
-                parquet_metadata: None,
-            },
-            vec![],
+        return Ok(ReportAssembler::new(
+            file_source,
             ExecutionMetadata::new(0, 0, start.elapsed().as_millis()),
-            DataQualityMetrics::empty(),
-        ));
+        )
+        .skip_quality()
+        .build());
     }
 
     let sample_columns = profile_builder::quality_check_samples(&column_stats);
-    let data_quality_metrics =
-        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-            .unwrap_or_else(|_| DataQualityMetrics::empty());
-
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    Ok(QualityReport::new(
-        DataSource::File {
-            path: file_path.display().to_string(),
-            format,
-            size_bytes: metadata.len(),
-            modified_at: None,
-            parquet_metadata: None,
-        },
-        column_profiles,
+    Ok(ReportAssembler::new(
+        file_source,
         ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
-        data_quality_metrics,
-    ))
+    )
+    .columns(column_profiles)
+    .with_quality_data(sample_columns)
+    .build())
 }
 
 fn map_io_error(file_path: &Path, e: std::io::Error) -> DataProfilerError {
@@ -404,7 +396,7 @@ mod tests {
 
         assert_eq!(report.execution.rows_processed, 2);
         assert_eq!(report.column_profiles.len(), 1);
-        assert!(report.quality_score() >= 0.0);
+        assert!(report.quality_score().unwrap() >= 0.0);
     }
 
     #[test]

@@ -4,13 +4,11 @@ use tokio::sync::mpsc;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
+use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{ProgressCallback, ProgressTracker};
-use crate::types::{
-    DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, QualityReport,
-    StreamSourceSystem,
-};
+use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, StreamSourceSystem};
 
 use super::async_source::AsyncDataSource;
 
@@ -88,7 +86,7 @@ impl AsyncStreamingProfiler {
     pub async fn analyze_stream(
         &self,
         source: impl AsyncDataSource,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         let source_info = source.source_info();
         let format = source_info.format.clone();
 
@@ -151,9 +149,6 @@ impl AsyncStreamingProfiler {
         // Build the report
         let column_profiles = profile_builder::profiles_from_streaming(&column_stats);
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
-        let data_quality_metrics =
-            DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)
-                .unwrap_or_else(|_| DataQualityMetrics::empty());
 
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
@@ -178,12 +173,10 @@ impl AsyncStreamingProfiler {
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
-        Ok(QualityReport::new(
-            data_source,
-            column_profiles,
-            execution,
-            data_quality_metrics,
-        ))
+        Ok(ReportAssembler::new(data_source, execution)
+            .columns(column_profiles)
+            .with_quality_data(sample_columns)
+            .build())
     }
 
     /// Blocking reader task: uses the `csv` crate's RFC 4180-compliant parser

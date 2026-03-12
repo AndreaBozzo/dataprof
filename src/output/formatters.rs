@@ -1,5 +1,5 @@
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, OutputFormat, QualityReport,
+    ColumnProfile, ColumnStats, DataSource, OutputFormat, ProfileReport, QualityMetrics,
 };
 use anyhow::Result;
 use is_terminal::IsTerminal;
@@ -8,7 +8,7 @@ use std::io::{stderr, stdout};
 
 /// Trait for output formatting - enables modular output systems
 pub trait OutputFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String>;
+    fn format_report(&self, report: &ProfileReport) -> Result<String>;
     fn format_profiles(&self, profiles: &[ColumnProfile]) -> Result<String>;
     fn format_simple_summary(&self, profiles: &[ColumnProfile]) -> Result<String>;
 }
@@ -130,12 +130,13 @@ impl InteractiveFormatter {
 }
 
 /// Enhanced JSON structure for reports following separation of concerns
-/// All quality metrics are in data_quality_metrics (ISO 8000/25012)
+/// Quality metrics are optional (ISO 8000/25012)
 #[derive(Serialize)]
 pub struct JsonReport {
     pub metadata: JsonMetadata,
     pub columns: Vec<JsonColumn>,
-    pub data_quality_metrics: JsonDataQualityMetrics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_quality_metrics: Option<JsonDataQualityMetrics>,
 }
 
 /// Comprehensive data quality metrics following industry standards (ISO 8000/25012)
@@ -218,45 +219,8 @@ pub struct JsonPattern {
     pub match_percentage: f64,
 }
 
-/// Batch processing results for JSON export
-#[derive(Serialize)]
-pub struct JsonBatchReport {
-    pub summary: JsonBatchSummary,
-    pub file_reports: Vec<JsonFileReport>,
-    pub errors: Vec<JsonFileError>,
-    pub aggregated_metrics: Option<JsonDataQualityMetrics>,
-}
-
-/// Batch summary statistics
-#[derive(Serialize)]
-pub struct JsonBatchSummary {
-    pub total_files: usize,
-    pub successful: usize,
-    pub failed: usize,
-    pub total_records: usize,
-    pub average_quality_score: f64,
-    pub processing_time_seconds: f64,
-}
-
-/// Individual file report in batch
-#[derive(Serialize)]
-pub struct JsonFileReport {
-    pub file_path: String,
-    pub quality_score: f64,
-    pub total_rows: Option<usize>,
-    pub total_columns: usize,
-    pub data_quality_metrics: JsonDataQualityMetrics,
-}
-
-/// File processing error
-#[derive(Serialize)]
-pub struct JsonFileError {
-    pub file_path: String,
-    pub error_message: String,
-}
-
 impl OutputFormatter for JsonFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let json_report = JsonReport {
             metadata: JsonMetadata {
                 file_path: report.data_source.identifier(),
@@ -279,7 +243,10 @@ impl OutputFormatter for JsonFormatter {
                 .iter()
                 .map(|p| self.format_column(p))
                 .collect(),
-            data_quality_metrics: self.format_data_quality_metrics(&report.data_quality_metrics),
+            data_quality_metrics: report
+                .quality
+                .as_ref()
+                .map(|q| self.format_data_quality_metrics(&q.metrics)),
         };
 
         Ok(serde_json::to_string_pretty(&json_report)?)
@@ -329,9 +296,9 @@ impl JsonFormatter {
 
         // Add type field
         let type_name = match &profile.stats {
-            ColumnStats::Numeric { .. } => "numeric",
-            ColumnStats::Text { .. } => "text",
-            ColumnStats::DateTime { .. } => "datetime",
+            ColumnStats::Numeric(..) => "numeric",
+            ColumnStats::Text(..) => "text",
+            ColumnStats::DateTime(..) => "datetime",
         };
 
         if let serde_json::Value::Object(ref mut map) = stats_json {
@@ -361,7 +328,7 @@ impl JsonFormatter {
     }
 
     /// Format comprehensive data quality metrics for JSON output (ISO 8000/25012)
-    fn format_data_quality_metrics(&self, metrics: &DataQualityMetrics) -> JsonDataQualityMetrics {
+    fn format_data_quality_metrics(&self, metrics: &QualityMetrics) -> JsonDataQualityMetrics {
         JsonDataQualityMetrics {
             completeness: JsonCompletenessMetrics {
                 missing_values_ratio: metrics.missing_values_ratio,
@@ -393,7 +360,7 @@ impl JsonFormatter {
 }
 
 impl OutputFormatter for CsvFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let mut output = String::new();
 
         // Header
@@ -441,7 +408,7 @@ impl OutputFormatter for CsvFormatter {
 }
 
 impl OutputFormatter for PlainFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let mut output = String::new();
 
         // Source info
@@ -457,8 +424,8 @@ impl OutputFormatter for PlainFormatter {
         ));
 
         // Data Quality Metrics (ISO 8000/25012)
-        let metrics = &report.data_quality_metrics;
-        {
+        if let Some(ref quality) = report.quality {
+            let metrics = &quality.metrics;
             output.push_str("Data Quality Metrics\n");
             output.push_str(&format!(
                 "  Completeness: {:.1}% missing, {:.1}% complete\n",
@@ -507,41 +474,24 @@ impl OutputFormatter for PlainFormatter {
             output.push_str(&format!("  Nulls: {}\n", profile.null_count));
 
             match &profile.stats {
-                ColumnStats::Numeric {
-                    min,
-                    max,
-                    mean,
-                    std_dev,
-                    median,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min: {:.2}\n", min));
-                    output.push_str(&format!("  Max: {:.2}\n", max));
-                    output.push_str(&format!("  Mean: {:.2}\n", mean));
-                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
-                    if let Some(med) = median {
+                ColumnStats::Numeric(n) => {
+                    output.push_str(&format!("  Min: {:.2}\n", n.min));
+                    output.push_str(&format!("  Max: {:.2}\n", n.max));
+                    output.push_str(&format!("  Mean: {:.2}\n", n.mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", n.std_dev));
+                    if let Some(med) = n.median {
                         output.push_str(&format!("  Median: {:.2}\n", med));
                     }
                 }
-                ColumnStats::Text {
-                    min_length,
-                    max_length,
-                    avg_length,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Length: {}\n", min_length));
-                    output.push_str(&format!("  Max Length: {}\n", max_length));
-                    output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                ColumnStats::Text(t) => {
+                    output.push_str(&format!("  Min Length: {}\n", t.min_length));
+                    output.push_str(&format!("  Max Length: {}\n", t.max_length));
+                    output.push_str(&format!("  Avg Length: {:.1}\n", t.avg_length));
                 }
-                ColumnStats::DateTime {
-                    min_datetime,
-                    max_datetime,
-                    duration_days,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
-                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
-                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
+                ColumnStats::DateTime(d) => {
+                    output.push_str(&format!("  Min Date: {}\n", d.min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", d.max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", d.duration_days));
                 }
             }
             output.push('\n');
@@ -570,7 +520,7 @@ impl OutputFormatter for PlainFormatter {
 }
 
 impl OutputFormatter for InteractiveFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         use colored::*;
         let mut output = String::new();
 
@@ -662,41 +612,24 @@ impl OutputFormatter for InteractiveFormatter {
             }
 
             match &profile.stats {
-                ColumnStats::Numeric {
-                    min,
-                    max,
-                    mean,
-                    std_dev,
-                    median,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min: {:.2}\n", min));
-                    output.push_str(&format!("  Max: {:.2}\n", max));
-                    output.push_str(&format!("  Mean: {:.2}\n", mean));
-                    output.push_str(&format!("  Std Dev: {:.2}\n", std_dev));
-                    if let Some(med) = median {
+                ColumnStats::Numeric(n) => {
+                    output.push_str(&format!("  Min: {:.2}\n", n.min));
+                    output.push_str(&format!("  Max: {:.2}\n", n.max));
+                    output.push_str(&format!("  Mean: {:.2}\n", n.mean));
+                    output.push_str(&format!("  Std Dev: {:.2}\n", n.std_dev));
+                    if let Some(med) = n.median {
                         output.push_str(&format!("  Median: {:.2}\n", med));
                     }
                 }
-                ColumnStats::Text {
-                    min_length,
-                    max_length,
-                    avg_length,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Length: {}\n", min_length));
-                    output.push_str(&format!("  Max Length: {}\n", max_length));
-                    output.push_str(&format!("  Avg Length: {:.1}\n", avg_length));
+                ColumnStats::Text(t) => {
+                    output.push_str(&format!("  Min Length: {}\n", t.min_length));
+                    output.push_str(&format!("  Max Length: {}\n", t.max_length));
+                    output.push_str(&format!("  Avg Length: {:.1}\n", t.avg_length));
                 }
-                ColumnStats::DateTime {
-                    min_datetime,
-                    max_datetime,
-                    duration_days,
-                    ..
-                } => {
-                    output.push_str(&format!("  Min Date: {}\n", min_datetime));
-                    output.push_str(&format!("  Max Date: {}\n", max_datetime));
-                    output.push_str(&format!("  Duration: {:.0} days\n", duration_days));
+                ColumnStats::DateTime(d) => {
+                    output.push_str(&format!("  Min Date: {}\n", d.min_datetime));
+                    output.push_str(&format!("  Max Date: {}\n", d.max_datetime));
+                    output.push_str(&format!("  Duration: {:.0} days\n", d.duration_days));
                 }
             }
             output.push('\n');
@@ -726,7 +659,7 @@ impl OutputFormatter for InteractiveFormatter {
 }
 
 impl OutputFormatter for AdaptiveFormatter {
-    fn format_report(&self, report: &QualityReport) -> Result<String> {
+    fn format_report(&self, report: &ProfileReport) -> Result<String> {
         let context = OutputContext::detect();
         let formatter = self.get_formatter(&context);
         formatter.format_report(report)
@@ -757,7 +690,7 @@ pub fn create_adaptive_formatter_with_format(format: OutputFormat) -> Box<dyn Ou
 
 /// Adaptive output that automatically selects best format based on terminal context
 pub fn output_with_adaptive_formatter(
-    report: &QualityReport,
+    report: &ProfileReport,
     force_format: Option<OutputFormat>,
 ) -> Result<()> {
     let formatter = if let Some(format) = force_format {
@@ -775,54 +708,4 @@ pub fn output_with_adaptive_formatter(
 pub fn supports_enhanced_output() -> bool {
     let context = OutputContext::detect();
     context.is_interactive && context.supports_color && context.supports_unicode
-}
-
-/// Format batch results as JSON
-pub fn format_batch_as_json(batch_result: &crate::core::batch::BatchResult) -> Result<String> {
-    let formatter = JsonFormatter;
-
-    // Convert file reports
-    let file_reports: Vec<JsonFileReport> = batch_result
-        .reports
-        .iter()
-        .map(|(path, report)| JsonFileReport {
-            file_path: path.to_string_lossy().to_string(),
-            quality_score: report.quality_score(),
-            total_rows: Some(report.execution.rows_processed),
-            total_columns: report.execution.columns_detected,
-            data_quality_metrics: formatter
-                .format_data_quality_metrics(&report.data_quality_metrics),
-        })
-        .collect();
-
-    // Convert errors
-    let errors: Vec<JsonFileError> = batch_result
-        .errors
-        .iter()
-        .map(|(path, error)| JsonFileError {
-            file_path: path.to_string_lossy().to_string(),
-            error_message: error.clone(),
-        })
-        .collect();
-
-    // Build batch report
-    let json_batch = JsonBatchReport {
-        summary: JsonBatchSummary {
-            total_files: batch_result.summary.total_files,
-            successful: batch_result.summary.successful,
-            failed: batch_result.summary.failed,
-            total_records: batch_result.summary.total_records,
-            average_quality_score: batch_result.summary.average_quality_score,
-            processing_time_seconds: batch_result.summary.processing_time_seconds,
-        },
-        file_reports,
-        errors,
-        aggregated_metrics: batch_result
-            .summary
-            .aggregated_data_quality_metrics
-            .as_ref()
-            .map(|m| formatter.format_data_quality_metrics(m)),
-    };
-
-    Ok(serde_json::to_string_pretty(&json_batch)?)
 }

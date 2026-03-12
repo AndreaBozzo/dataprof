@@ -12,7 +12,7 @@ use std::path::Path;
 use dataprof::{
     ChunkSize, EngineType, Profiler, ProgressInfo,
     core::{DataprofConfig, sampling::SamplingStrategy},
-    types::QualityReport,
+    types::ProfileReport,
 };
 
 /// Common options that all analysis commands should support
@@ -93,7 +93,7 @@ impl ProfilerBuilder {
 pub fn analyze_file_with_options(
     file_path: &Path,
     options: AnalysisOptions,
-) -> Result<QualityReport> {
+) -> Result<ProfileReport> {
     // Load config (from CLI arg, auto-discover, or use default)
     let config = if let Some(config_path) = &options.config {
         // Explicit config file path provided via CLI

@@ -3,7 +3,6 @@
 Test suite for DataProf context managers.
 
 Tests:
-- PyBatchAnalyzer context manager
 - PyCsvProcessor context manager
 - Resource cleanup
 - Error handling within context managers
@@ -15,75 +14,6 @@ import tempfile
 
 pytest.importorskip("dataprof")
 import dataprof
-
-
-class TestPyBatchAnalyzer:
-    """Test PyBatchAnalyzer context manager."""
-
-    def test_batch_analyzer_context_manager(self, sample_csv_files):
-        """Test PyBatchAnalyzer as context manager."""
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            assert analyzer is not None
-            assert hasattr(analyzer, 'add_file')
-            assert hasattr(analyzer, 'get_results')
-
-    def test_batch_analyzer_add_file(self, sample_csv_files):
-        """Test adding files to batch analyzer."""
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            for csv_file in sample_csv_files:
-                analyzer.add_file(csv_file)
-
-            results = analyzer.get_results()
-            assert isinstance(results, list)
-
-    def test_batch_analyzer_analyze_batch(self, sample_csv_files):
-        """Test analyze_batch method."""
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            results = analyzer.analyze_batch(sample_csv_files)
-            assert isinstance(results, list)
-            assert len(results) > 0
-
-    def test_batch_analyzer_auto_cleanup(self, sample_csv_files):
-        """Test that batch analyzer cleans up properly on exit."""
-        analyzer = dataprof.PyBatchAnalyzer()
-
-        with analyzer:
-            for csv_file in sample_csv_files:
-                analyzer.add_file(csv_file)
-            results = analyzer.get_results()
-
-        # After exiting context, should still have access to results
-        # but cleanup should have occurred
-        assert results is not None
-
-    def test_batch_analyzer_exception_handling(self, sample_csv_files):
-        """Test that batch analyzer handles exceptions properly."""
-        try:
-            with dataprof.PyBatchAnalyzer() as analyzer:
-                analyzer.add_file(sample_csv_files[0])
-                raise ValueError("Test exception")
-        except ValueError:
-            pass  # Expected
-
-        # Should have cleaned up despite exception
-
-    def test_batch_analyzer_temp_file_support(self, sample_csv_files):
-        """Test add_temp_file method for temporary file handling."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            f.write("col1,col2\n1,2\n3,4\n")
-            temp_file = f.name
-
-        try:
-            with dataprof.PyBatchAnalyzer() as analyzer:
-                # Add as temp file - should be automatically cleaned up
-                analyzer.add_temp_file(temp_file)
-                # Process the batch to get results
-                results = analyzer.analyze_batch([temp_file])
-                assert len(results) > 0
-        finally:
-            # Clean up if still exists
-            if os.path.exists(temp_file):
-                os.unlink(temp_file)
 
 
 class TestPyCsvProcessor:
@@ -135,22 +65,6 @@ class TestPyCsvProcessor:
 class TestContextManagerEdgeCases:
     """Test edge cases and error conditions for context managers."""
 
-    def test_batch_analyzer_empty_file_list(self):
-        """Test batch analyzer with no files added."""
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            results = analyzer.get_results()
-            assert isinstance(results, list)
-            assert len(results) == 0
-
-    def test_batch_analyzer_nonexistent_file(self):
-        """Test batch analyzer with non-existent file."""
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            # Should handle gracefully or raise clear error
-            try:
-                analyzer.add_file("/nonexistent/file.csv")
-            except Exception as e:
-                assert len(str(e)) > 0
-
     def test_csv_processor_without_opening_file(self):
         """Test processor without opening a file first."""
         with dataprof.PyCsvProcessor(chunk_size=1000) as processor:
@@ -174,40 +88,13 @@ class TestContextManagerEdgeCases:
 class TestContextManagerIntegration:
     """Integration tests for context managers."""
 
-    def test_batch_analyzer_with_quality_reports(self, sample_csv_files):
-        """Test that batch analyzer returns quality reports."""
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            results = analyzer.analyze_batch(sample_csv_files)
-
-            for result in results:
-                # Results should be quality reports or similar
-                assert result is not None
-
-    def test_multiple_context_managers_sequentially(self, sample_csv_files):
-        """Test using multiple context managers sequentially."""
-        # First analyzer
-        with dataprof.PyBatchAnalyzer() as analyzer1:
-            results1 = analyzer1.analyze_batch([sample_csv_files[0]])
-
-        # Second analyzer - should work independently
-        with dataprof.PyBatchAnalyzer() as analyzer2:
-            results2 = analyzer2.analyze_batch([sample_csv_files[1]])
-
-        assert len(results1) > 0
-        assert len(results2) > 0
-
     def test_nested_context_managers(self, sample_csv_file):
         """Test nesting different context managers."""
-        with dataprof.PyBatchAnalyzer() as batch_analyzer:
-            with dataprof.PyCsvProcessor(chunk_size=1000) as csv_processor:
-                csv_processor.open_file(sample_csv_file)
-                chunks = csv_processor.process_chunks()
-
-                batch_analyzer.add_file(sample_csv_file)
-                results = batch_analyzer.get_results()
+        with dataprof.PyCsvProcessor(chunk_size=1000) as csv_processor:
+            csv_processor.open_file(sample_csv_file)
+            chunks = csv_processor.process_chunks()
 
         assert chunks is not None
-        assert results is not None
 
 
 # ============================================================================

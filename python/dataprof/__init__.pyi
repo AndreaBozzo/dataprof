@@ -44,23 +44,6 @@ def calculate_data_quality_metrics(path: str) -> PyDataQualityMetrics: ...
 def analyze_parquet_file(path: str) -> List[PyColumnProfile]: ...
 def analyze_parquet_with_quality_py(path: str) -> PyQualityReport: ...
 
-# Batch processing functions
-# Supports CSV, JSON, JSONL, and Parquet files (Parquet requires parquet feature)
-def batch_analyze_glob(
-    pattern: str,
-    parallel: Optional[bool] = None,
-    max_concurrent: Optional[int] = None,
-    html_output: Optional[str] = None,
-) -> PyBatchResult: ...
-
-def batch_analyze_directory(
-    directory: str,
-    recursive: Optional[bool] = None,
-    parallel: Optional[bool] = None,
-    max_concurrent: Optional[int] = None,
-    html_output: Optional[str] = None,
-) -> PyBatchResult: ...
-
 # Python logging integration
 def configure_logging(level: Optional[str] = None, format: Optional[str] = None) -> None: ...
 def get_logger(name: Optional[str] = None) -> Any: ...
@@ -169,36 +152,7 @@ class PyDataQualityMetrics:
     def _repr_html_(self) -> str: ...
     def __str__(self) -> str: ...
 
-class PyBatchResult:
-    """Result of batch processing operation."""
-
-    processed_files: int
-    failed_files: int
-    total_duration_secs: float
-    average_quality_score: float
-
-    def __new__(cls) -> Self: ...
-
 # Context Manager Classes
-class PyBatchAnalyzer:
-    """Context manager for batch analysis with automatic cleanup.
-
-    Supports automatic format detection for CSV, JSON, JSONL, and Parquet files.
-    Files are analyzed using the appropriate parser based on file extension.
-    """
-
-    def __new__(cls) -> Self: ...
-    def __enter__(self) -> Self: ...
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool: ...
-    def add_file(self, path: str) -> None:
-        """Add a file to analysis queue (auto-detects CSV/JSON/Parquet format)."""
-        ...
-    def add_temp_file(self, path: str) -> None: ...
-    def get_results(self) -> List[Any]: ...
-    def analyze_batch(self, paths: List[str]) -> List[Any]:
-        """Analyze multiple files in batch (auto-detects CSV/JSON/Parquet format)."""
-        ...
-
 class PyCsvProcessor:
     """Context manager for CSV file processing with automatic handling."""
 
@@ -265,8 +219,6 @@ __all__ = [
     "analyze_parquet_file",
     "analyze_parquet_with_quality_py",
     "calculate_data_quality_metrics",
-    "batch_analyze_glob",
-    "batch_analyze_directory",
 
     # Python logging integration
     "configure_logging",
@@ -293,9 +245,7 @@ __all__ = [
     "PyColumnProfile",
     "PyQualityReport",
     "PyDataQualityMetrics",
-    "PyBatchResult",
 
     # Context managers
-    "PyBatchAnalyzer",
     "PyCsvProcessor",
 ]

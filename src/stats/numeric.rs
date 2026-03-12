@@ -1,9 +1,14 @@
-use crate::types::{ColumnStats, Quartiles};
+use crate::types::{ColumnStats, NumericStats, Quartiles};
 use std::collections::HashMap;
 
 const SAMPLE_THRESHOLD: usize = 10_000;
 
 pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
+    ColumnStats::Numeric(compute_numeric_stats(data))
+}
+
+/// Compute numeric stats and return the inner struct directly.
+pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
     let numbers: Vec<f64> = data
         .iter()
         .filter_map(|s| s.parse::<f64>().ok())
@@ -11,20 +16,7 @@ pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
         .collect();
 
     if numbers.is_empty() {
-        return ColumnStats::Numeric {
-            min: 0.0,
-            max: 0.0,
-            mean: 0.0,
-            std_dev: 0.0,
-            variance: 0.0,
-            median: None,
-            quartiles: None,
-            mode: None,
-            coefficient_of_variation: None,
-            skewness: None,
-            kurtosis: None,
-            is_approximate: None,
-        };
+        return NumericStats::empty();
     }
 
     // Always calculable statistics
@@ -58,7 +50,7 @@ pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
     let skewness = calculate_skewness(&sample_data, mean, std_dev);
     let kurtosis = calculate_kurtosis(&sample_data, mean, std_dev);
 
-    ColumnStats::Numeric {
+    NumericStats {
         min,
         max,
         mean,
@@ -349,19 +341,12 @@ mod tests {
         let stats = calculate_numeric_stats(&data);
 
         match stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                std_dev,
-                median,
-                ..
-            } => {
-                assert_eq!(min, 10.0);
-                assert_eq!(max, 30.0);
-                assert_eq!(mean, 20.0);
-                assert!(std_dev > 0.0);
-                assert_eq!(median, Some(20.0));
+            ColumnStats::Numeric(n) => {
+                assert_eq!(n.min, 10.0);
+                assert_eq!(n.max, 30.0);
+                assert_eq!(n.mean, 20.0);
+                assert!(n.std_dev > 0.0);
+                assert_eq!(n.median, Some(20.0));
             }
             _ => panic!("Expected Numeric stats"),
         }
@@ -373,17 +358,11 @@ mod tests {
         let stats = calculate_numeric_stats(&data);
 
         match stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                median,
-                ..
-            } => {
-                assert_eq!(min, 0.0);
-                assert_eq!(max, 0.0);
-                assert_eq!(mean, 0.0);
-                assert_eq!(median, None);
+            ColumnStats::Numeric(n) => {
+                assert_eq!(n.min, 0.0);
+                assert_eq!(n.max, 0.0);
+                assert_eq!(n.mean, 0.0);
+                assert_eq!(n.median, None);
             }
             _ => panic!("Expected Numeric stats"),
         }
@@ -395,10 +374,10 @@ mod tests {
         let stats = calculate_numeric_stats(&data);
 
         match stats {
-            ColumnStats::Numeric { min, max, mean, .. } => {
-                assert_eq!(min, 1.0);
-                assert_eq!(max, 3.0);
-                assert_eq!(mean, 2.0);
+            ColumnStats::Numeric(n) => {
+                assert_eq!(n.min, 1.0);
+                assert_eq!(n.max, 3.0);
+                assert_eq!(n.mean, 2.0);
             }
             _ => panic!("Expected Numeric stats"),
         }
@@ -415,10 +394,10 @@ mod tests {
         let stats = calculate_numeric_stats(&data);
 
         match stats {
-            ColumnStats::Numeric { min, max, mean, .. } => {
-                assert_eq!(min, 1.0);
-                assert_eq!(max, 3.0);
-                assert_eq!(mean, 2.0);
+            ColumnStats::Numeric(n) => {
+                assert_eq!(n.min, 1.0);
+                assert_eq!(n.max, 3.0);
+                assert_eq!(n.mean, 2.0);
             }
             _ => panic!("Expected Numeric stats"),
         }
@@ -430,18 +409,11 @@ mod tests {
         let stats = calculate_numeric_stats(&data);
 
         match stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                median,
-                ..
-            } => {
-                // Should return empty stats when all values are non-finite
-                assert_eq!(min, 0.0);
-                assert_eq!(max, 0.0);
-                assert_eq!(mean, 0.0);
-                assert_eq!(median, None);
+            ColumnStats::Numeric(n) => {
+                assert_eq!(n.min, 0.0);
+                assert_eq!(n.max, 0.0);
+                assert_eq!(n.mean, 0.0);
+                assert_eq!(n.median, None);
             }
             _ => panic!("Expected Numeric stats"),
         }

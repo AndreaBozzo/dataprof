@@ -128,25 +128,6 @@ class TestAPIContract:
         assert isinstance(metrics.stale_data_ratio, float)
         assert isinstance(metrics.temporal_violations, int)
 
-    def test_pybatch_result_has_all_declared_fields(self, sample_csv_directory):
-        """Verify PyBatchResult has all fields declared in type stubs."""
-        result = dataprof.batch_analyze_directory(sample_csv_directory, recursive=False)
-
-        # Check all required attributes exist
-        assert hasattr(result, 'processed_files'), "Missing 'processed_files' attribute"
-        assert hasattr(result, 'failed_files'), "Missing 'failed_files' attribute"
-        assert hasattr(result, 'total_duration_secs'), "Missing 'total_duration_secs' attribute"
-        assert hasattr(result, 'average_quality_score'), "Missing 'average_quality_score' attribute"
-
-        # CRITICAL: Verify removed field does NOT exist
-        assert not hasattr(result, 'total_quality_issues'), "BREAKING: 'total_quality_issues' should not exist"
-
-        # Verify types
-        assert isinstance(result.processed_files, int)
-        assert isinstance(result.failed_files, int)
-        assert isinstance(result.total_duration_secs, float)
-        assert isinstance(result.average_quality_score, float)
-
 
 class TestPyColumnProfile:
     """Test PyColumnProfile functionality."""
@@ -364,46 +345,6 @@ class TestPyDataQualityMetrics:
         assert isinstance(str_repr, str)
         assert len(str_repr) > 0
         assert 'DataQualityMetrics' in str_repr
-
-
-class TestPyBatchResult:
-    """Test batch processing functionality."""
-
-    def test_batch_analyze_directory(self, sample_csv_directory):
-        """Test batch directory analysis."""
-        result = dataprof.batch_analyze_directory(sample_csv_directory, recursive=False)
-
-        assert isinstance(result, dataprof.PyBatchResult)
-        assert result.processed_files >= 0
-        assert result.failed_files >= 0
-        assert result.total_duration_secs >= 0.0
-
-    def test_batch_analyze_glob(self, sample_csv_directory):
-        """Test batch glob pattern analysis."""
-        import os
-        pattern = os.path.join(sample_csv_directory, "*.csv")
-        result = dataprof.batch_analyze_glob(pattern)
-
-        assert isinstance(result, dataprof.PyBatchResult)
-        assert result.processed_files > 0
-
-    def test_batch_parallel_processing(self, sample_csv_directory):
-        """Test parallel batch processing."""
-        result = dataprof.batch_analyze_directory(
-            sample_csv_directory,
-            recursive=False,
-            parallel=True,
-            max_concurrent=2
-        )
-
-        assert result.processed_files > 0
-
-    def test_average_quality_score_valid(self, sample_csv_directory):
-        """Test average quality score is in valid range."""
-        result = dataprof.batch_analyze_directory(sample_csv_directory)
-
-        if result.processed_files > 0:
-            assert 0.0 <= result.average_quality_score <= 100.0
 
 
 class TestErrorHandling:

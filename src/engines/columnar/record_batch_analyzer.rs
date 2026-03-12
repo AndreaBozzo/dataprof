@@ -9,8 +9,7 @@ use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 
 use crate::analysis::patterns::looks_like_date;
-use crate::stats::numeric::calculate_numeric_stats;
-use crate::types::{ColumnProfile, ColumnStats, DataType};
+use crate::types::{ColumnProfile, DataType};
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
@@ -891,42 +890,27 @@ impl ColumnAnalyzer {
 
     pub fn to_column_profile(&self, name: String) -> ColumnProfile {
         let data_type = self.infer_data_type();
-
-        let stats = match data_type {
-            DataType::Integer | DataType::Float => calculate_numeric_stats(&self.sample_values),
-            DataType::String | DataType::Date => {
-                let avg_length = if self.total_count > self.null_count {
-                    self.total_length as f64 / (self.total_count - self.null_count) as f64
-                } else {
-                    0.0
-                };
-
-                ColumnStats::Text {
-                    min_length: if self.min_length == usize::MAX {
-                        0
-                    } else {
-                        self.min_length
-                    },
-                    max_length: self.max_length,
-                    avg_length,
-                    most_frequent: None,
-                    least_frequent: None,
-                }
-            }
+        let avg_length = if self.total_count > self.null_count {
+            self.total_length as f64 / (self.total_count - self.null_count) as f64
+        } else {
+            0.0
         };
 
-        // Detect patterns using sample values
-        let patterns = crate::detect_patterns(&self.sample_values);
-
-        ColumnProfile {
-            name,
-            data_type,
-            null_count: self.null_count,
-            total_count: self.total_count,
-            unique_count: Some(self.unique_values.len()),
-            stats,
-            patterns,
-        }
+        crate::core::profile_builder::build_column_profile(
+            crate::core::profile_builder::ColumnProfileInput {
+                name,
+                data_type,
+                total_count: self.total_count,
+                null_count: self.null_count,
+                unique_count: Some(self.unique_values.len()),
+                sample_values: &self.sample_values,
+                text_lengths: Some(crate::core::profile_builder::TextLengths {
+                    min_length: self.min_length,
+                    max_length: self.max_length,
+                    avg_length,
+                }),
+            },
+        )
     }
 
     fn infer_data_type(&self) -> DataType {
@@ -1015,27 +999,17 @@ mod tests {
         // Check score column
         let score_col = profiles.iter().find(|p| p.name == "score").unwrap();
         match &score_col.stats {
-            crate::types::ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                std_dev,
-                median,
-                skewness,
-                kurtosis,
-                coefficient_of_variation,
-                ..
-            } => {
-                assert!((min - 10.0).abs() < 0.01);
-                assert!((max - 80.0).abs() < 0.01);
-                assert!((mean - 45.0).abs() < 0.01);
-                assert!(*std_dev > 0.0);
-                assert!(median.is_some());
-                assert!(skewness.is_some());
-                assert!(kurtosis.is_some());
-                assert!(coefficient_of_variation.is_some());
+            crate::types::ColumnStats::Numeric(n) => {
+                assert!((n.min - 10.0).abs() < 0.01);
+                assert!((n.max - 80.0).abs() < 0.01);
+                assert!((n.mean - 45.0).abs() < 0.01);
+                assert!(n.std_dev > 0.0);
+                assert!(n.median.is_some());
+                assert!(n.skewness.is_some());
+                assert!(n.kurtosis.is_some());
+                assert!(n.coefficient_of_variation.is_some());
                 // Linear data should have near-zero skewness
-                assert!(skewness.unwrap().abs() < 0.5);
+                assert!(n.skewness.unwrap().abs() < 0.5);
             }
             _ => panic!("Expected Numeric stats for score column"),
         }
@@ -1043,11 +1017,9 @@ mod tests {
         // Check rank column also has advanced stats
         let rank_col = profiles.iter().find(|p| p.name == "rank").unwrap();
         match &rank_col.stats {
-            crate::types::ColumnStats::Numeric {
-                skewness, kurtosis, ..
-            } => {
-                assert!(skewness.is_some(), "rank should have skewness");
-                assert!(kurtosis.is_some(), "rank should have kurtosis");
+            crate::types::ColumnStats::Numeric(n) => {
+                assert!(n.skewness.is_some(), "rank should have skewness");
+                assert!(n.kurtosis.is_some(), "rank should have kurtosis");
             }
             _ => panic!("Expected Numeric stats for rank column"),
         }
@@ -1055,7 +1027,7 @@ mod tests {
         // Check label column is text (no numeric stats)
         let label_col = profiles.iter().find(|p| p.name == "label").unwrap();
         match &label_col.stats {
-            crate::types::ColumnStats::Text { .. } => {}
+            crate::types::ColumnStats::Text(..) => {}
             _ => panic!("Expected Text stats for label column"),
         }
     }

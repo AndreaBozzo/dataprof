@@ -3,9 +3,8 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use crate::core::batch::BatchResult;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataQualityMetrics, DataSource, DataType, QualityReport,
+    ColumnProfile, ColumnStats, DataSource, DataType, ProfileReport, QualityMetrics,
 };
 
 /// Python wrapper for ColumnProfile
@@ -86,21 +85,8 @@ impl From<&ColumnProfile> for PyColumnProfile {
             quartiles,
             is_approximate,
         ) = match &profile.stats {
-            ColumnStats::Numeric {
-                min,
-                max,
-                mean,
-                std_dev,
-                variance,
-                median,
-                mode,
-                skewness,
-                kurtosis,
-                coefficient_of_variation,
-                quartiles,
-                is_approximate,
-            } => {
-                let q_map = quartiles.as_ref().map(|q| {
+            ColumnStats::Numeric(n) => {
+                let q_map = n.quartiles.as_ref().map(|q| {
                     let mut m = std::collections::HashMap::new();
                     m.insert("q1".to_string(), q.q1);
                     m.insert("q2".to_string(), q.q2);
@@ -109,18 +95,18 @@ impl From<&ColumnProfile> for PyColumnProfile {
                     m
                 });
                 (
-                    Some(*min),
-                    Some(*max),
-                    Some(*mean),
-                    Some(*std_dev),
-                    Some(*variance),
-                    *median,
-                    *mode,
-                    *skewness,
-                    *kurtosis,
-                    *coefficient_of_variation,
+                    Some(n.min),
+                    Some(n.max),
+                    Some(n.mean),
+                    Some(n.std_dev),
+                    Some(n.variance),
+                    n.median,
+                    n.mode,
+                    n.skewness,
+                    n.kurtosis,
+                    n.coefficient_of_variation,
                     q_map,
-                    *is_approximate,
+                    n.is_approximate,
                 )
             }
             _ => (
@@ -157,9 +143,9 @@ impl From<&ColumnProfile> for PyColumnProfile {
     }
 }
 
-// PyQualityIssue removed - use DataQualityMetrics instead
+// PyQualityIssue removed - use QualityMetrics instead
 
-/// Python wrapper for QualityReport
+/// Python wrapper for ProfileReport
 #[pyclass]
 #[derive(Clone)]
 pub struct PyQualityReport {
@@ -190,8 +176,8 @@ pub struct PyQualityReport {
     pub memory_bytes: Option<u64>,
 }
 
-impl From<&QualityReport> for PyQualityReport {
-    fn from(report: &QualityReport) -> Self {
+impl From<&ProfileReport> for PyQualityReport {
+    fn from(report: &ProfileReport) -> Self {
         let (source_type, source_library, memory_bytes) = match &report.data_source {
             DataSource::File { .. } => ("file".to_string(), None, None),
             DataSource::Query { .. } => ("query".to_string(), None, None),
@@ -223,7 +209,11 @@ impl From<&QualityReport> for PyQualityReport {
             rows_scanned: report.execution.rows_processed,
             sampling_ratio: report.execution.sampling_ratio.unwrap_or(1.0),
             scan_time_ms: report.execution.scan_time_ms,
-            data_quality_metrics: PyDataQualityMetrics::from(&report.data_quality_metrics),
+            data_quality_metrics: report
+                .quality
+                .as_ref()
+                .map(|q| PyDataQualityMetrics::from(&q.metrics))
+                .unwrap_or_else(PyDataQualityMetrics::empty),
             source_type,
             source_library,
             memory_bytes,
@@ -233,7 +223,10 @@ impl From<&QualityReport> for PyQualityReport {
 
 #[pymethods]
 impl PyQualityReport {
-    /// Calculate overall quality score (0-100) using DataQualityMetrics
+    /// Calculate overall quality score (0-100) using QualityMetrics.
+    ///
+    /// Returns 0.0 if quality assessment was not computed for this report
+    /// (i.e. the underlying `ProfileReport` had `quality: None`).
     fn quality_score(&self) -> PyResult<f64> {
         Ok(self.data_quality_metrics.overall_quality_score)
     }
@@ -319,7 +312,12 @@ impl PyQualityReport {
     }
 }
 
-/// Python wrapper for DataQualityMetrics
+/// Python wrapper for QualityMetrics
+///
+/// When quality assessment is not available in the underlying `ProfileReport`,
+/// this struct is populated with neutral defaults (100% completeness, 0 violations, etc.)
+/// via `PyDataQualityMetrics::empty()`. Check `PyQualityReport.quality_score()` — a
+/// score of 0.0 may indicate quality was not computed rather than genuinely poor data.
 #[pyclass]
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
@@ -368,8 +366,32 @@ pub struct PyDataQualityMetrics {
     pub temporal_violations: usize,
 }
 
-impl From<&DataQualityMetrics> for PyDataQualityMetrics {
-    fn from(metrics: &DataQualityMetrics) -> Self {
+impl PyDataQualityMetrics {
+    /// Create empty metrics when quality assessment is not available
+    pub(crate) fn empty() -> Self {
+        Self {
+            overall_quality_score: 0.0,
+            missing_values_ratio: 0.0,
+            complete_records_ratio: 100.0,
+            null_columns: vec![],
+            data_type_consistency: 100.0,
+            format_violations: 0,
+            encoding_issues: 0,
+            duplicate_rows: 0,
+            key_uniqueness: 100.0,
+            high_cardinality_warning: false,
+            outlier_ratio: 0.0,
+            range_violations: 0,
+            negative_values_in_positive: 0,
+            future_dates_count: 0,
+            stale_data_ratio: 0.0,
+            temporal_violations: 0,
+        }
+    }
+}
+
+impl From<&QualityMetrics> for PyDataQualityMetrics {
+    fn from(metrics: &QualityMetrics) -> Self {
         Self {
             overall_quality_score: metrics.overall_score(),
             missing_values_ratio: metrics.missing_values_ratio,
@@ -665,30 +687,5 @@ impl PyDataQualityMetrics {
             100.0 - self.outlier_ratio,
             100.0 - self.stale_data_ratio
         )
-    }
-}
-
-/// Python wrapper for BatchResult
-#[pyclass]
-#[derive(Clone)]
-pub struct PyBatchResult {
-    #[pyo3(get)]
-    pub processed_files: usize,
-    #[pyo3(get)]
-    pub failed_files: usize,
-    #[pyo3(get)]
-    pub total_duration_secs: f64,
-    #[pyo3(get)]
-    pub average_quality_score: f64,
-}
-
-impl From<&BatchResult> for PyBatchResult {
-    fn from(result: &BatchResult) -> Self {
-        Self {
-            processed_files: result.summary.successful,
-            failed_files: result.summary.failed,
-            total_duration_secs: result.summary.processing_time_seconds,
-            average_quality_score: result.summary.average_quality_score,
-        }
     }
 }

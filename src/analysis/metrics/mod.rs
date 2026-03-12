@@ -72,7 +72,7 @@ use uniqueness::UniquenessCalculator;
 
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use crate::types::{ColumnProfile, DataQualityMetrics};
+use crate::types::{ColumnProfile, QualityMetrics};
 use std::collections::HashMap;
 
 /// Engine for calculating comprehensive data quality metrics
@@ -137,7 +137,7 @@ impl MetricsCalculator {
     /// * `column_profiles` - Vector of analyzed column profiles
     ///
     /// # Returns
-    /// * `Result<DataQualityMetrics>` - Comprehensive quality metrics or error
+    /// * `Result<QualityMetrics>` - Comprehensive quality metrics or error
     ///
     /// # Errors
     /// Returns error if data is malformed or calculation fails
@@ -145,7 +145,7 @@ impl MetricsCalculator {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<DataQualityMetrics, DataProfilerError> {
+    ) -> Result<QualityMetrics, DataProfilerError> {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset());
         }
@@ -186,7 +186,7 @@ impl MetricsCalculator {
         let timeliness =
             TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
 
-        Ok(DataQualityMetrics {
+        Ok(QualityMetrics {
             missing_values_ratio: completeness.missing_values_ratio,
             complete_records_ratio: completeness.complete_records_ratio,
             null_columns: completeness.null_columns,
@@ -206,8 +206,8 @@ impl MetricsCalculator {
     }
 
     /// Create default metrics for empty dataset
-    fn default_metrics_for_empty_dataset() -> DataQualityMetrics {
-        DataQualityMetrics {
+    fn default_metrics_for_empty_dataset() -> QualityMetrics {
+        QualityMetrics {
             missing_values_ratio: 0.0,
             complete_records_ratio: 100.0,
             null_columns: vec![],

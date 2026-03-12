@@ -1,20 +1,19 @@
-use crate::types::{ColumnStats, FrequencyItem};
+use crate::types::{ColumnStats, FrequencyItem, TextStats};
 use std::collections::HashMap;
 
 const TOP_N_DEFAULT: usize = 10;
 const BOTTOM_N_DEFAULT: usize = 10;
 
 pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
+    ColumnStats::Text(compute_text_stats(data))
+}
+
+/// Compute text stats and return the inner struct directly.
+pub fn compute_text_stats(data: &[String]) -> TextStats {
     let non_empty: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
 
     if non_empty.is_empty() {
-        return ColumnStats::Text {
-            min_length: 0,
-            max_length: 0,
-            avg_length: 0.0,
-            most_frequent: None,
-            least_frequent: None,
-        };
+        return TextStats::empty();
     }
 
     // Existing length calculations
@@ -31,7 +30,7 @@ pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     let most_frequent = calculate_most_frequent(&non_empty, TOP_N_DEFAULT);
     let least_frequent = calculate_least_frequent(&non_empty, BOTTOM_N_DEFAULT);
 
-    ColumnStats::Text {
+    TextStats {
         min_length,
         max_length,
         avg_length,
@@ -146,8 +145,8 @@ mod tests {
         let stats = calculate_text_stats(&data);
 
         match stats {
-            ColumnStats::Text { most_frequent, .. } => {
-                let freq = most_frequent.unwrap();
+            ColumnStats::Text(t) => {
+                let freq = t.most_frequent.unwrap();
                 assert_eq!(freq.len(), 1);
                 assert_eq!(freq[0].value, "value");
             }
@@ -161,17 +160,11 @@ mod tests {
         let stats = calculate_text_stats(&data);
 
         match stats {
-            ColumnStats::Text {
-                min_length,
-                max_length,
-                avg_length,
-                most_frequent,
-                ..
-            } => {
-                assert_eq!(min_length, 0);
-                assert_eq!(max_length, 0);
-                assert_eq!(avg_length, 0.0);
-                assert_eq!(most_frequent, None);
+            ColumnStats::Text(t) => {
+                assert_eq!(t.min_length, 0);
+                assert_eq!(t.max_length, 0);
+                assert_eq!(t.avg_length, 0.0);
+                assert_eq!(t.most_frequent, None);
             }
             _ => panic!("Expected Text stats"),
         }
@@ -183,17 +176,11 @@ mod tests {
         let stats = calculate_text_stats(&data);
 
         match stats {
-            ColumnStats::Text {
-                min_length,
-                max_length,
-                avg_length,
-                most_frequent,
-                ..
-            } => {
-                assert_eq!(min_length, 4); // "test"
-                assert_eq!(max_length, 5); // "hello"/"world"
-                assert!((avg_length - 4.666666).abs() < 0.01);
-                assert!(most_frequent.is_some());
+            ColumnStats::Text(t) => {
+                assert_eq!(t.min_length, 4); // "test"
+                assert_eq!(t.max_length, 5); // "hello"/"world"
+                assert!((t.avg_length - 4.666666).abs() < 0.01);
+                assert!(t.most_frequent.is_some());
             }
             _ => panic!("Expected Text stats"),
         }

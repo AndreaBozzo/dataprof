@@ -96,11 +96,6 @@ pub enum DataProfilerError {
     },
 
     #[error(
-        "HTML report generation failed: {message}\n💡 Check output directory permissions and available disk space"
-    )]
-    HtmlReportError { message: String },
-
-    #[error(
         "Recoverable error (attempt {attempt}/{max_attempts}): {message}\n💡 {recovery_suggestion}"
     )]
     RecoverableError {
@@ -242,13 +237,6 @@ impl DataProfilerError {
         }
     }
 
-    /// Create HTML report generation error
-    pub fn html_report_error(message: &str) -> Self {
-        DataProfilerError::HtmlReportError {
-            message: message.to_string(),
-        }
-    }
-
     /// Create a recoverable error that can be auto-retried
     pub fn recoverable_error(
         message: &str,
@@ -360,7 +348,6 @@ impl DataProfilerError {
             DataProfilerError::IoError { .. } => "io",
             DataProfilerError::JsonParsingError { .. } => "json_parsing",
             DataProfilerError::ColumnAnalysisError { .. } => "column_analysis",
-            DataProfilerError::HtmlReportError { .. } => "html_report",
             DataProfilerError::RecoverableError { .. } => "recoverable",
             DataProfilerError::RecoveryFailed { .. } => "recovery_failed",
             DataProfilerError::ParquetError { .. } => "parquet",
@@ -385,7 +372,6 @@ impl DataProfilerError {
             DataProfilerError::InvalidConfiguration { .. } => ErrorSeverity::Medium,
             DataProfilerError::StreamingError { .. } => ErrorSeverity::Medium,
             DataProfilerError::ColumnAnalysisError { .. } => ErrorSeverity::Medium,
-            DataProfilerError::HtmlReportError { .. } => ErrorSeverity::Medium,
             DataProfilerError::SamplingError { .. } => ErrorSeverity::Low,
             DataProfilerError::DataQualityIssue { .. } => ErrorSeverity::Info,
             DataProfilerError::SimdUnavailable { .. } => ErrorSeverity::Info,
@@ -522,24 +508,6 @@ impl From<toml::ser::Error> for DataProfilerError {
         DataProfilerError::InvalidConfiguration {
             message: format!("Failed to serialize configuration: {}", err),
             suggestion: "Check configuration values for serialization issues".to_string(),
-        }
-    }
-}
-
-/// Convert from handlebars::RenderError to DataProfilerError
-impl From<handlebars::RenderError> for DataProfilerError {
-    fn from(err: handlebars::RenderError) -> Self {
-        DataProfilerError::HtmlReportError {
-            message: err.to_string(),
-        }
-    }
-}
-
-/// Convert from handlebars::TemplateError to DataProfilerError
-impl From<handlebars::TemplateError> for DataProfilerError {
-    fn from(err: handlebars::TemplateError) -> Self {
-        DataProfilerError::HtmlReportError {
-            message: format!("Template error: {}", err),
         }
     }
 }

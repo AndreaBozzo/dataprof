@@ -56,32 +56,6 @@ def quality_assessment():
     else:
         print("\n✅ No major quality issues detected!")
 
-def batch_processing():
-    """Batch processing example"""
-    print("🔍 Batch Processing")
-    print("=" * 30)
-
-    # Process entire directory
-    result = dataprof.batch_analyze_directory(
-        "/data/warehouse",
-        recursive=True,
-        parallel=True,
-        max_concurrent=8
-    )
-
-    print(f"📊 Processed {result.processed_files} files")
-    print(f"⏱️ Duration: {result.total_duration_secs:.2f} seconds")
-    print(f"📈 Average Quality: {result.average_quality_score:.1f}%")
-    print(f"❌ Failed: {result.failed_files}")
-
-    # Process with glob pattern
-    result = dataprof.batch_analyze_glob(
-        "/data/**/*_staging_*.csv",
-        parallel=True
-    )
-
-    print(f"📂 Staging files processed: {result.processed_files}")
-
 def airflow_integration():
     """Example Airflow DAG task"""
     from airflow import DAG
@@ -176,7 +150,6 @@ if __name__ == "__main__":
     # Run examples (commented out as they require actual data files)
     # basic_usage()
     # quality_assessment()
-    # batch_processing()
     # pandas_comparison()
 
     print("💡 See function definitions for usage examples!")

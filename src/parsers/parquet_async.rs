@@ -144,11 +144,10 @@ impl AsyncFileReader for HttpParquetReader {
     }
 }
 
+use crate::core::report_assembler::ReportAssembler;
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
 use crate::parsers::parquet::ParquetConfig;
-use crate::types::{
-    DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityReport,
-};
+use crate::types::{DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, ProfileReport};
 use futures::StreamExt;
 use parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
 
@@ -156,7 +155,7 @@ use parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
 pub async fn analyze_parquet_async_http(
     url: &str,
     config: &ParquetConfig,
-) -> Result<QualityReport, DataProfilerError> {
+) -> Result<ProfileReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
     let reader = HttpParquetReader::try_new(url).await?;
@@ -206,8 +205,6 @@ pub async fn analyze_parquet_async_http(
     let total_rows = analyzer.total_rows();
 
     let sample_columns = analyzer.create_sample_columns();
-    let data_quality_metrics =
-        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)?;
 
     let scan_time_ms = start.elapsed().as_millis();
 
@@ -222,7 +219,7 @@ pub async fn analyze_parquet_async_http(
 
     let num_columns = column_profiles.len();
 
-    Ok(QualityReport::new(
+    Ok(ReportAssembler::new(
         DataSource::File {
             path: url.to_string(),
             format: FileFormat::Parquet,
@@ -230,10 +227,11 @@ pub async fn analyze_parquet_async_http(
             modified_at: None,
             parquet_metadata,
         },
-        column_profiles,
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
-        data_quality_metrics,
-    ))
+    )
+    .columns(column_profiles)
+    .with_quality_data(sample_columns)
+    .build())
 }
 
 #[cfg(test)]

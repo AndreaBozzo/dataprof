@@ -9,7 +9,7 @@
 //! use std::path::Path;
 //!
 //! let report = analyze_parquet_with_quality(Path::new("data.parquet")).unwrap();
-//! println!("Quality score: {:.1}%", report.quality_score());
+//! println!("Quality score: {:.1}%", report.quality_score().unwrap_or(0.0));
 //! ```
 
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -18,10 +18,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::core::errors::DataProfilerError;
+use crate::core::report_assembler::ReportAssembler;
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::types::{
-    DataQualityMetrics, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityReport,
-};
+use crate::types::{DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, ProfileReport};
 
 /// Check if a file is a valid Parquet file by examining its magic number
 ///
@@ -151,7 +150,7 @@ impl ParquetConfig {
 ///          report.execution.columns_detected);
 /// # Ok::<(), dataprof::DataProfilerError>(())
 /// ```
-pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
     analyze_parquet_with_config(file_path, &ParquetConfig::default())
 }
 
@@ -178,7 +177,7 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<QualityReport, D
 pub fn analyze_parquet_with_config(
     file_path: &Path,
     config: &ParquetConfig,
-) -> Result<QualityReport, DataProfilerError> {
+) -> Result<ProfileReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
     // Open the Parquet file
@@ -250,8 +249,6 @@ pub fn analyze_parquet_with_config(
 
     // Calculate comprehensive quality metrics using ISO 8000/25012 standards
     let sample_columns = analyzer.create_sample_columns();
-    let data_quality_metrics =
-        DataQualityMetrics::calculate_from_data(&sample_columns, &column_profiles)?;
 
     let scan_time_ms = start.elapsed().as_millis();
 
@@ -267,7 +264,7 @@ pub fn analyze_parquet_with_config(
 
     let num_columns = column_profiles.len();
 
-    Ok(QualityReport::new(
+    Ok(ReportAssembler::new(
         DataSource::File {
             path: file_path.display().to_string(),
             format: FileFormat::Parquet,
@@ -275,10 +272,11 @@ pub fn analyze_parquet_with_config(
             modified_at: None,
             parquet_metadata,
         },
-        column_profiles,
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
-        data_quality_metrics,
-    ))
+    )
+    .columns(column_profiles)
+    .with_quality_data(sample_columns)
+    .build())
 }
 
 #[cfg(test)]
@@ -420,11 +418,12 @@ mod tests {
         let report = analyze_parquet_with_quality(path)?;
 
         // Should have quality metrics calculated
-        assert!(report.data_quality_metrics.complete_records_ratio >= 0.0);
-        assert!(report.data_quality_metrics.complete_records_ratio <= 100.0);
+        let quality = report.quality.as_ref().expect("Quality should be present");
+        assert!(quality.metrics.complete_records_ratio >= 0.0);
+        assert!(quality.metrics.complete_records_ratio <= 100.0);
 
         // Quality score should be reasonable
-        let quality_score = report.quality_score();
+        let quality_score = report.quality_score().unwrap();
         assert!((0.0..=100.0).contains(&quality_score));
 
         Ok(())

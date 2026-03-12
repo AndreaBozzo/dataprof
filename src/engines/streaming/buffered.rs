@@ -22,7 +22,7 @@ use crate::engines::streaming::chunk_processor::ChunkProcessor;
 use crate::engines::streaming::progress::{ProgressCallback, ProgressTracker};
 use crate::engines::streaming::report_builder::ReportBuilder;
 use crate::output::progress::{EnhancedProgressBar, ProgressManager};
-use crate::types::QualityReport;
+use crate::types::ProfileReport;
 
 /// Streaming profiler - now a clean coordinator delegating to specialized modules
 #[deprecated(
@@ -89,7 +89,7 @@ impl BufferedProfiler {
     /// Analyze a file using streaming approach
     ///
     /// REFACTORED: From 224 lines to ~80 lines by delegating to specialized modules
-    pub fn analyze_file(&mut self, file_path: &Path) -> Result<QualityReport, DataProfilerError> {
+    pub fn analyze_file(&mut self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let metadata = std::fs::metadata(file_path)?;
         let file_size_bytes = metadata.len();
         let file_size_mb = file_size_bytes as f64 / 1_048_576.0;

@@ -100,10 +100,9 @@ async fn analyze_database_internal(
         result.set_item("columns", py_profiles)?;
 
         // Add quality metrics
-        result.set_item(
-            "quality",
-            PyDataQualityMetrics::from(&quality_report.data_quality_metrics),
-        )?;
+        if let Some(ref quality) = quality_report.quality {
+            result.set_item("quality", PyDataQualityMetrics::from(&quality.metrics))?;
+        }
 
         // Add metadata
         result.set_item("row_count", quality_report.execution.rows_processed)?;

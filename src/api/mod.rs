@@ -5,7 +5,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::engines::streaming::ProgressInfo;
 use crate::engines::{AdaptiveProfiler, ProcessingType};
-use crate::types::{DataSource, FileFormat, QualityReport};
+use crate::types::{DataSource, FileFormat, ProfileReport};
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -155,7 +155,7 @@ impl Profiler {
     pub fn analyze_file<P: AsRef<Path>>(
         &self,
         file_path: P,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         let path = file_path.as_ref();
         let format = self
             .config
@@ -171,7 +171,7 @@ impl Profiler {
     }
 
     /// Analyze a DataSource and return a quality report
-    pub fn analyze_source(&self, source: &DataSource) -> Result<QualityReport, DataProfilerError> {
+    pub fn analyze_source(&self, source: &DataSource) -> Result<ProfileReport, DataProfilerError> {
         match source {
             DataSource::File { path, .. } => self.analyze_file(Path::new(path)),
             _ => Err(DataProfilerError::UnsupportedDataSource {
@@ -202,7 +202,7 @@ impl Profiler {
         &self,
         file_path: &Path,
         format: FileFormat,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         // AdaptiveProfiler handles Parquet and CSV natively, but not JSON
         match format {
             FileFormat::Json | FileFormat::Jsonl => crate::parsers::json::analyze_json_file(
@@ -221,7 +221,7 @@ impl Profiler {
         &self,
         file_path: &Path,
         format: FileFormat,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
@@ -267,7 +267,7 @@ impl Profiler {
         &self,
         file_path: &Path,
         format: FileFormat,
-    ) -> Result<QualityReport, DataProfilerError> {
+    ) -> Result<ProfileReport, DataProfilerError> {
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
@@ -313,12 +313,12 @@ impl Default for Profiler {
 pub fn quick_quality_check<P: AsRef<Path>>(file_path: P) -> Result<f64, DataProfilerError> {
     let profiler = Profiler::new();
     let report = profiler.analyze_file(file_path)?;
-    Ok(report.quality_score())
+    Ok(report.quality_score().unwrap_or(0.0))
 }
 
 /// One-liner API for quick profiling from a DataSource
 pub fn quick_quality_check_source(source: &DataSource) -> Result<f64, DataProfilerError> {
     let profiler = Profiler::new();
     let report = profiler.analyze_source(source)?;
-    Ok(report.quality_score())
+    Ok(report.quality_score().unwrap_or(0.0))
 }

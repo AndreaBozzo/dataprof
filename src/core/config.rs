@@ -28,15 +28,6 @@ const DEFAULT_VERBOSITY: u8 = 1;
 /// Progress feedback is important for long-running operations.
 const DEFAULT_SHOW_PROGRESS: bool = true;
 
-// HTML Report Defaults
-/// Don't auto-generate HTML reports by default.
-/// Users should opt-in to HTML generation to avoid unexpected file creation.
-const DEFAULT_HTML_AUTO_GENERATE: bool = false;
-
-/// Include detailed statistics in HTML reports when generated.
-/// Detailed stats provide more value for quality analysis.
-const DEFAULT_HTML_DETAILED_STATS: bool = true;
-
 // Quality Configuration Defaults
 /// Enable quality checking by default.
 /// Quality analysis is a core feature of DataProf.
@@ -133,21 +124,6 @@ pub struct OutputConfig {
 
     /// Show progress bars by default
     pub show_progress: bool,
-
-    /// Default HTML report settings
-    pub html: HtmlConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HtmlConfig {
-    /// Auto-generate HTML reports for quality analysis
-    pub auto_generate: bool,
-
-    /// Default output directory for HTML reports
-    pub output_dir: Option<PathBuf>,
-
-    /// Include detailed statistics in HTML reports
-    pub include_detailed_stats: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,17 +307,6 @@ impl Default for OutputConfig {
             colored: DEFAULT_COLORED_OUTPUT,
             verbosity: DEFAULT_VERBOSITY,
             show_progress: DEFAULT_SHOW_PROGRESS,
-            html: HtmlConfig::default(),
-        }
-    }
-}
-
-impl Default for HtmlConfig {
-    fn default() -> Self {
-        Self {
-            auto_generate: DEFAULT_HTML_AUTO_GENERATE,
-            output_dir: None,
-            include_detailed_stats: DEFAULT_HTML_DETAILED_STATS,
         }
     }
 }
@@ -849,18 +814,6 @@ impl DataprofConfigBuilder {
     /// Enable or disable progress bars.
     pub fn show_progress(mut self, enabled: bool) -> Self {
         self.output.show_progress = enabled;
-        self
-    }
-
-    /// Enable HTML report auto-generation.
-    pub fn html_auto_generate(mut self, enabled: bool) -> Self {
-        self.output.html.auto_generate = enabled;
-        self
-    }
-
-    /// Set HTML report output directory.
-    pub fn html_output_dir(mut self, dir: PathBuf) -> Self {
-        self.output.html.output_dir = Some(dir);
         self
     }
 

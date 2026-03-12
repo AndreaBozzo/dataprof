@@ -75,7 +75,7 @@ pub fn execute(args: &AnalyzeArgs) -> Result<()> {
 /// Save formatted output to a file
 fn save_output_to_file(
     path: &std::path::Path,
-    report: &dataprof::types::QualityReport,
+    report: &dataprof::types::ProfileReport,
     format: &str,
 ) -> Result<()> {
     // Convert format string to OutputFormat

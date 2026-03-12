@@ -15,7 +15,7 @@
 //!
 //! For unambiguous parsing, use ISO 8601 format (YYYY-MM-DD).
 
-use crate::types::ColumnStats;
+use crate::types::{ColumnStats, DateTimeStats};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use std::collections::HashMap;
 
@@ -26,11 +26,15 @@ struct ParsedDateTime {
 }
 
 pub fn calculate_datetime_stats(data: &[String]) -> ColumnStats {
-    // Parse once, store both date and optional datetime
+    ColumnStats::DateTime(compute_datetime_stats(data))
+}
+
+/// Compute datetime stats and return the inner struct directly.
+pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
     let parsed: Vec<ParsedDateTime> = data.iter().filter_map(|s| parse_flexible_full(s)).collect();
 
     if parsed.is_empty() {
-        return empty_datetime_stats();
+        return DateTimeStats::empty();
     }
 
     // Extract dates for date-based calculations
@@ -55,7 +59,7 @@ pub fn calculate_datetime_stats(data: &[String]) -> ColumnStats {
         Some(build_hour_distribution(&datetimes))
     };
 
-    ColumnStats::DateTime {
+    DateTimeStats {
         min_datetime: min_date.format("%Y-%m-%d").to_string(),
         max_datetime: max_date.format("%Y-%m-%d").to_string(),
         duration_days,
@@ -63,18 +67,6 @@ pub fn calculate_datetime_stats(data: &[String]) -> ColumnStats {
         month_distribution,
         day_of_week_distribution,
         hour_distribution,
-    }
-}
-
-fn empty_datetime_stats() -> ColumnStats {
-    ColumnStats::DateTime {
-        min_datetime: String::new(),
-        max_datetime: String::new(),
-        duration_days: 0.0,
-        year_distribution: HashMap::new(),
-        month_distribution: HashMap::new(),
-        day_of_week_distribution: HashMap::new(),
-        hour_distribution: None,
     }
 }
 
@@ -261,8 +253,8 @@ mod tests {
         let stats = calculate_datetime_stats(&data);
 
         match stats {
-            ColumnStats::DateTime { duration_days, .. } => {
-                assert_eq!(duration_days, 30.0);
+            ColumnStats::DateTime(d) => {
+                assert_eq!(d.duration_days, 30.0);
             }
             _ => panic!("Expected DateTime stats"),
         }
@@ -278,10 +270,8 @@ mod tests {
         let stats = calculate_datetime_stats(&data);
 
         match stats {
-            ColumnStats::DateTime {
-                hour_distribution, ..
-            } => {
-                let dist = hour_distribution.unwrap();
+            ColumnStats::DateTime(d) => {
+                let dist = d.hour_distribution.unwrap();
                 assert_eq!(dist.get(&10), Some(&2));
                 assert_eq!(dist.get(&14), Some(&1));
             }
@@ -295,15 +285,10 @@ mod tests {
         let stats = calculate_datetime_stats(&data);
 
         match stats {
-            ColumnStats::DateTime {
-                min_datetime,
-                max_datetime,
-                duration_days,
-                ..
-            } => {
-                assert!(min_datetime.is_empty());
-                assert!(max_datetime.is_empty());
-                assert_eq!(duration_days, 0.0);
+            ColumnStats::DateTime(d) => {
+                assert!(d.min_datetime.is_empty());
+                assert!(d.max_datetime.is_empty());
+                assert_eq!(d.duration_days, 0.0);
             }
             _ => panic!("Expected DateTime stats"),
         }

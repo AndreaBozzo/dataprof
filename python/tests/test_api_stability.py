@@ -39,7 +39,8 @@ class TestExportedAPI:
             pytest.skip("Module does not define __all__")
 
         # These symbols were REMOVED and should NOT be in __all__
-        removed_symbols = ['PyQualityIssue']
+        removed_symbols = ['PyQualityIssue', 'PyBatchResult', 'PyBatchAnalyzer',
+                           'batch_analyze_glob', 'batch_analyze_directory']
 
         for symbol in removed_symbols:
             assert symbol not in dataprof.__all__, \
@@ -51,8 +52,6 @@ class TestExportedAPI:
             'PyColumnProfile',
             'PyQualityReport',
             'PyDataQualityMetrics',
-            'PyBatchResult',
-            'PyBatchAnalyzer',
             'PyCsvProcessor',
         ]
 
@@ -72,8 +71,6 @@ class TestExportedAPI:
             'analyze_json_file',
             'analyze_json_with_quality',
             'calculate_data_quality_metrics',
-            'batch_analyze_glob',
-            'batch_analyze_directory',
         ]
 
         for func_name in expected_functions:
@@ -111,13 +108,6 @@ class TestAPIBreakingChanges:
 
         assert isinstance(report.data_quality_metrics, dataprof.PyDataQualityMetrics), \
             "data_quality_metrics must be PyDataQualityMetrics instance"
-
-    def test_pybatch_result_no_total_quality_issues(self, sample_csv_directory):
-        """CRITICAL: Ensure 'total_quality_issues' field does NOT exist."""
-        result = dataprof.batch_analyze_directory(sample_csv_directory)
-
-        assert not hasattr(result, 'total_quality_issues'), \
-            "BREAKING: PyBatchResult should NOT have 'total_quality_issues' field (removed)"
 
     def test_pyquality_issue_class_not_exported(self):
         """CRITICAL: Ensure PyQualityIssue class is NOT exported."""
@@ -164,13 +154,6 @@ class TestRequiredMethods:
 
     def test_context_managers_have_required_methods(self):
         """Test context managers implement required protocol."""
-        # PyBatchAnalyzer
-        analyzer = dataprof.PyBatchAnalyzer()
-        assert hasattr(analyzer, '__enter__'), "PyBatchAnalyzer missing __enter__"
-        assert hasattr(analyzer, '__exit__'), "PyBatchAnalyzer missing __exit__"
-        assert callable(analyzer.__enter__)
-        assert callable(analyzer.__exit__)
-
         # PyCsvProcessor (requires chunk_size parameter)
         processor = dataprof.PyCsvProcessor(chunk_size=1000)
         assert hasattr(processor, '__enter__'), "PyCsvProcessor missing __enter__"
@@ -241,23 +224,7 @@ class TestTypeStubAccuracy:
             assert hasattr(metrics, attr), \
                 f"Type stub declares '{attr}' but not present in PyDataQualityMetrics"
 
-    def test_pybatch_result_stub_accuracy(self, sample_csv_directory):
-        """Test PyBatchResult attributes match type stub."""
-        result = dataprof.batch_analyze_directory(sample_csv_directory)
 
-        # Attributes in current stub
-        stub_attributes = [
-            'processed_files', 'failed_files',
-            'total_duration_secs', 'average_quality_score'
-        ]
-
-        for attr in stub_attributes:
-            assert hasattr(result, attr), \
-                f"Type stub declares '{attr}' but not present in PyBatchResult"
-
-        # Removed attributes
-        assert not hasattr(result, 'total_quality_issues'), \
-            "Removed attribute 'total_quality_issues' still exists"
 
 
 class TestReturnTypeConsistency:

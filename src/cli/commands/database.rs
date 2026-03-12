@@ -1,12 +1,9 @@
 use anyhow::Result;
 use clap::Args;
 use colored::*;
-use std::path::PathBuf;
 
 use dataprof::output::output_with_adaptive_formatter;
-use dataprof::{
-    ColumnProfile, DatabaseConfig, OutputFormat, analyze_database, generate_html_report,
-};
+use dataprof::{ColumnProfile, DatabaseConfig, OutputFormat, analyze_database};
 
 /// Database analysis arguments
 #[derive(Debug, Args)]
@@ -28,10 +25,6 @@ pub struct DatabaseArgs {
     /// Show quality metrics
     #[arg(long)]
     pub quality: bool,
-
-    /// Generate HTML report
-    #[arg(long)]
-    pub html: Option<PathBuf>,
 }
 
 /// Execute the database analysis command
@@ -126,24 +119,6 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     if args.quality {
         // Use modern adaptive formatter for quality output
         output_with_adaptive_formatter(&report, Some(OutputFormat::Text))?;
-    }
-
-    if args.quality {
-        // Generate HTML report if requested
-        if let Some(html_path) = &args.html {
-            match generate_html_report(&report, html_path) {
-                Ok(_) => {
-                    println!(
-                        "📄 HTML report saved to: {}",
-                        html_path.display().to_string().bright_green()
-                    );
-                    println!();
-                }
-                Err(e) => {
-                    eprintln!("Failed to generate HTML report: {}", e);
-                }
-            }
-        }
     }
 
     // Show column profiles
