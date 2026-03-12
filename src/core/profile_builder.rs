@@ -60,7 +60,7 @@ pub fn profile_from_stats(name: &str, stats: &StreamingStatistics) -> ColumnProf
 
 /// Infer [`DataType`] from [`StreamingStatistics`] sample values.
 pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
-    if stats.min.is_finite() && stats.max.is_finite() && stats.sum.is_finite() {
+    if stats.min.is_finite() && stats.max.is_finite() {
         let sample_values = stats.sample_values();
         let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
 

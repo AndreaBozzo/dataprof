@@ -247,7 +247,6 @@ impl MappedProfiler {
 
         // Get sample values from StreamingStatistics
         let sample_values = column_info.stats.sample_values();
-        let text_lengths = column_info.stats.text_lengths();
 
         // Infer data type - check if numeric data was collected
         let has_numeric = column_info.stats.min < f64::INFINITY;
@@ -286,18 +285,12 @@ impl MappedProfiler {
                 crate::stats::numeric::calculate_numeric_stats(&sample_strs)
             }
             DataType::String | DataType::Date => {
-                let min_length = text_lengths.iter().min().copied().unwrap_or(0);
-                let max_length = text_lengths.iter().max().copied().unwrap_or(0);
-                let avg_length = if !text_lengths.is_empty() {
-                    text_lengths.iter().sum::<usize>() as f64 / text_lengths.len() as f64
-                } else {
-                    0.0
-                };
+                let text_stats = column_info.stats.text_length_stats();
 
                 ColumnStats::Text {
-                    min_length,
-                    max_length,
-                    avg_length,
+                    min_length: text_stats.min_length,
+                    max_length: text_stats.max_length,
+                    avg_length: text_stats.avg_length,
                     most_frequent: None,
                     least_frequent: None,
                 }
