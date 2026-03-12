@@ -70,56 +70,6 @@ def create_large_dataset():
         os.close(fd)
         raise
 
-def test_batch_analyzer_context_manager():
-    """Test PyBatchAnalyzer context manager"""
-    print("\n📦 Test 1: Batch Analyzer Context Manager")
-    print("=" * 55)
-
-    try:
-        import dataprof
-        if not hasattr(dataprof, 'PyBatchAnalyzer'):
-            print("❌ PyBatchAnalyzer not available")
-            return False
-    except ImportError:
-        print("❌ dataprof module not available")
-        return False
-
-    datasets = create_sample_datasets(3)
-
-    try:
-        print(f"📚 Testing batch analysis with {len(datasets)} datasets...")
-
-        # Test context manager usage
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            print("✅ Context manager entered successfully")
-
-            # Analyze files one by one
-            for i, dataset in enumerate(datasets):
-                analyzer.add_file(dataset)
-                print(f"  • Added dataset {i+1}: {Path(dataset).name}")
-
-            # Get results
-            results = analyzer.get_results()
-            print(f"📊 Retrieved {len(results)} analysis results")
-
-            # Test batch analysis
-            batch_results = analyzer.analyze_batch(datasets)
-            print(f"📈 Batch analysis completed: {len(batch_results)} results")
-
-        print("✅ Context manager exited successfully with automatic cleanup")
-        return True
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
-    finally:
-        # Manual cleanup of test files
-        for dataset in datasets:
-            try:
-                os.unlink(dataset)
-            except:
-                pass
-
 def test_quality_metrics_batch():
     """Test batch quality metrics calculation"""
     print("\n📊 Test 2: Batch Quality Metrics")
@@ -233,7 +183,7 @@ def test_context_manager_error_handling():
 
     try:
         import dataprof
-        if not hasattr(dataprof, 'PyBatchAnalyzer'):
+        if not hasattr(dataprof, 'PyCsvProcessor'):
             print("❌ Context managers not available")
             return False
     except ImportError:
@@ -242,24 +192,6 @@ def test_context_manager_error_handling():
 
     try:
         print("🧪 Testing error handling and cleanup...")
-
-        # Test error handling with invalid file
-        with dataprof.PyBatchAnalyzer() as analyzer:
-            print("✅ Batch analyzer entered")
-
-            # Add some temporary files to track cleanup
-            analyzer.add_temp_file("fake_temp_file_1.csv")
-            analyzer.add_temp_file("fake_temp_file_2.csv")
-
-            try:
-                # This should fail
-                analyzer.add_file("non_existent_file.csv")
-                print("❌ Should have failed with non-existent file")
-                return False
-            except Exception as e:
-                print(f"✅ Correctly handled error: {type(e).__name__}")
-
-        print("✅ Context manager properly exited even after error")
 
         # Test CSV processor error handling
         with dataprof.PyCsvProcessor(chunk_size=None) as processor:
@@ -281,77 +213,15 @@ def test_context_manager_error_handling():
         print(f"❌ Unexpected error: {e}")
         return False
 
-def test_nested_context_managers():
-    """Test nested context managers"""
-    print("\n🔗 Test 5: Nested Context Managers")
-    print("=" * 55)
-
-    try:
-        import dataprof
-        if not hasattr(dataprof, 'PyBatchAnalyzer') or not hasattr(dataprof, 'PyCsvProcessor'):
-            print("❌ Context managers not available")
-            return False
-    except ImportError:
-        print("❌ dataprof module not available")
-        return False
-
-    datasets = create_sample_datasets(2)
-
-    try:
-        print("🔄 Testing nested context managers...")
-
-        # Nested context managers: batch + CSV processor
-        with dataprof.PyBatchAnalyzer() as batch_analyzer:
-            print("✅ Outer context (batch analyzer) entered")
-
-            # Use batch analyzer for multiple files
-            for dataset in datasets:
-                batch_analyzer.add_file(dataset)
-                dataset_name = Path(dataset).name
-                print(f"  • Added {dataset_name} to batch")
-
-            # Get batch results
-            batch_results = batch_analyzer.get_results()
-            print(f"📦 Batch results: {len(batch_results)} analyses completed")
-
-            # Use CSV processor on first dataset
-            with dataprof.PyCsvProcessor(chunk_size=100) as processor:
-                print("✅ Inner context (CSV processor) entered")
-
-                processor.open_file(datasets[0])
-                chunk_results = processor.process_chunks()
-                print(f"  • Processed {len(chunk_results)} chunks from {Path(datasets[0]).name}")
-
-                print("✅ Inner context (CSV processor) exited")
-
-        print("✅ Outer context (batch analyzer) exited")
-        print("🎉 Nested context managers completed successfully")
-
-        return True
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-    finally:
-        for dataset in datasets:
-            try:
-                os.unlink(dataset)
-            except:
-                pass
-
 def main():
     """Run all context manager tests"""
     print("🔬 DataProf Context Managers Test Suite")
     print("=" * 65)
 
     tests = [
-        test_batch_analyzer_context_manager,
         test_quality_metrics_batch,
         test_csv_processor_context_manager,
         test_context_manager_error_handling,
-        test_nested_context_managers,
     ]
 
     passed = 0
@@ -368,11 +238,9 @@ def main():
         print("🎉 All context manager functionality works perfectly!")
         print("\n✨ DataProf context manager features:")
         print("  • Automatic resource cleanup with __enter__/__exit__")
-        print("  • Batch analysis with temporary file management")
         print("  • Quality metrics calculation with ISO 8000/25012 standards")
         print("  • CSV chunked processing with temp file cleanup")
         print("  • Robust error handling and cleanup")
-        print("  • Support for nested context managers")
     else:
         print("❌ Some context manager tests failed")
 

@@ -39,12 +39,12 @@ dataprof.profile("huge_dataset.csv").save("report.html")
 cargo install dataprof
 
 # Profile directly from your terminal
-dataprof-cli report huge_data.parquet -o report.html
+dataprof-cli analyze huge_data.parquet --quality --output json
 ```
 
-## 📊 Visual Reports
+## 📊 Profiling Output
 
-`dataprof` generates rich, interactive HTML reports for single files or batches, visualizing data quality distributions, anomalies, and insights.
+`dataprof` focuses on fast profiling and quality assessment with machine-friendly outputs for pipelines and dashboards.
 
 <details>
 <summary>Click to view Report Dashboards</summary>
@@ -57,9 +57,6 @@ dataprof-cli report huge_data.parquet -o report.html
 **Single File Analysis**  
 <img src="assets/images/dataprofhtml2026.png" alt="Single Report Dashboard" width="100%" />
 
-**Batch Processing Dashboard**  
-<img src="assets/images/dataprofbatch2026.png" alt="Batch Dashboard" width="100%" />
-
 </details>
 
 ## 📚 Documentation
@@ -69,13 +66,6 @@ dataprof-cli report huge_data.parquet -o report.html
 - [Database Connectors](docs/guides/database-connectors.md)
 
 ## 🛠️ Advanced Usage (Python)
-
-**Batch Processing**
-```python
-# Process an entire folder natively in parallel
-result = dataprof.batch_analyze_directory("/data_folder", recursive=True)
-print(f"Processed at {result.files_per_second:.1f} files/sec")
-```
 
 **Database Integration (Async)**
 ```python

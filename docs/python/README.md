@@ -15,11 +15,9 @@ The easiest way to use DataProf is via the high-level `profile` function:
 ```python
 import dataprof
 
-# generate a comprehensive HTML report
-dataprof.profile("large_file.csv").save("report.html")
-
-# or save as JSON
-dataprof.profile("large_file.csv").save("report.json")
+# generate a quality report object
+report = dataprof.analyze_csv_with_quality("large_file.csv")
+print(f"Quality Score: {report.quality_score():.1f}%")
 ```
 
 ### Advanced Usage
@@ -44,7 +42,6 @@ for col in report.column_profiles:
 - **📊 Comprehensive Profiling**: Data types, nulls, distributions, quality issues
 - **📏 ISO 8000/25012 Compliant**: Industry-standard quality assessment across 5 dimensions
 - **🐼 Pandas Integration**: Native DataFrame support when pandas is available
-- **⚡ Batch Processing**: Parallel processing for multiple files (CSV, JSON/JSONL, Parquet)
 - **📱 Jupyter Support**: Rich HTML displays in notebooks
 - **🔍 Quality Assessment**: Automated data quality issue detection
 - **🎯 Type Safety**: Complete type hints with mypy compatibility
@@ -78,17 +75,6 @@ print(f"Uniqueness: {metrics.uniqueness_summary()}")
 print(f"Accuracy: {metrics.accuracy_summary()}")
 ```
 
-### Batch File Analysis
-```python
-# Process multiple files in parallel (CSV, JSON/JSONL, Parquet)
-result = dataprof.batch_analyze_directory("/data", recursive=True)
-print(f"Processed {result.processed_files} files at {result.files_per_second:.1f} files/sec")
-print(f"Average quality: {result.average_quality_score:.1f}%")
-
-# Process specific format with glob pattern
-result = dataprof.batch_analyze_glob("/data/**/*.parquet")
-```
-
 ### Pandas Integration
 ```python
 import pandas as pd
@@ -109,7 +95,6 @@ print(f"Columns with >20% nulls: {len(high_null_cols)}")
 - `analyze_csv_file()` - Basic column profiling
 - `analyze_csv_with_quality()` - Quality assessment with ISO 8000/25012 metrics
 - `calculate_data_quality_metrics()` - Dedicated quality metrics calculation
-- `batch_analyze_directory()` - High-performance batch processing
 - `analyze_csv_dataframe()` - Pandas DataFrame integration
 
 ## ⚡ Performance
@@ -135,12 +120,6 @@ File Size    | Files/sec | Throughput
 
 ### Context Managers
 ```python
-# Batch processing with automatic cleanup
-with dataprof.PyBatchAnalyzer() as batch:
-    batch.add_file("file1.csv")
-    batch.add_file("file2.csv")
-    results = batch.get_results()
-
 # CSV processing with chunk handling
 with dataprof.PyCsvProcessor(chunk_size=10000) as processor:
     processor.open_file("large_file.csv")

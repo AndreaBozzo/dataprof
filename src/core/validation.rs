@@ -82,43 +82,6 @@ impl InputValidator {
         Ok(())
     }
 
-    /// Validate output directory for HTML reports
-    pub fn validate_output_directory(output_path: &Path) -> Result<(), ValidationError> {
-        if let Some(parent) = output_path.parent() {
-            // Skip validation if parent is current directory or empty
-            if parent.as_os_str().is_empty() || parent == Path::new(".") {
-                return Ok(());
-            }
-
-            if !parent.exists() {
-                return Err(ValidationError {
-                    message: format!("Output directory does not exist: {}", parent.display()),
-                    suggestion: format!(
-                        "Create the directory first: mkdir -p \"{}\"",
-                        parent.display()
-                    ),
-                    error_code: 2,
-                });
-            }
-
-            // Check write permissions on parent directory
-            if parent
-                .metadata()
-                .map(|m| m.permissions().readonly())
-                .unwrap_or(true)
-            {
-                return Err(ValidationError {
-                    message: format!("Cannot write to directory: {}", parent.display()),
-                    suggestion: "Check directory permissions or choose a different output location"
-                        .to_string(),
-                    error_code: 13, // EACCES
-                });
-            }
-        }
-
-        Ok(())
-    }
-
     /// Validate chunk size parameter
     pub fn validate_chunk_size(chunk_size: usize) -> Result<(), ValidationError> {
         if chunk_size == 0 {
@@ -547,20 +510,6 @@ mod tests {
     fn test_glob_pattern_valid() {
         assert!(InputValidator::validate_glob_pattern("*.csv").is_ok());
         assert!(InputValidator::validate_glob_pattern("data/**/*.json").is_ok());
-    }
-
-    // -- output directory validation --
-
-    #[test]
-    fn test_output_directory_current_dir_ok() {
-        assert!(InputValidator::validate_output_directory(Path::new("report.html")).is_ok());
-    }
-
-    #[test]
-    fn test_output_directory_nonexistent_parent() {
-        let result =
-            InputValidator::validate_output_directory(Path::new("/no/such/dir/report.html"));
-        assert!(result.is_err());
     }
 
     // -- config file validation --

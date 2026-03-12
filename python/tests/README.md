@@ -111,13 +111,12 @@ pytest tests/ -n auto
 
 The test suite covers:
 
-- ✅ **All 4 core classes** (PyColumnProfile, PyQualityReport, PyDataQualityMetrics, PyBatchResult)
+- ✅ **All 3 core classes** (PyColumnProfile, PyQualityReport, PyDataQualityMetrics)
 - ✅ **All 7 core functions** (analyze_csv_file, analyze_csv_with_quality, etc.)
-- ✅ **Both context managers** (PyBatchAnalyzer, PyCsvProcessor)
+- ✅ **Context manager support** (PyCsvProcessor)
 - ✅ **All ISO 8000/25012 dimensions** (Completeness, Consistency, Uniqueness, Accuracy, Timeliness)
 - ✅ **Error handling** and edge cases
 - ✅ **JSON/JSONL** analysis
-- ✅ **Batch processing** (directory and glob patterns)
 
 ## What These Tests Would Have Caught
 
@@ -126,7 +125,6 @@ The comprehensive test suite would have **immediately detected** the following i
 1. **Missing `issues` field** - `test_pyquality_report_has_all_declared_fields()` checks all fields exist
 2. **Removed `PyQualityIssue` class** - `test_pyquality_issue_class_not_exported()` ensures it's not exported
 3. **Type stub inaccuracies** - `test_pyquality_report_stub_accuracy()` validates stubs match implementation
-4. **Missing `total_quality_issues`** - `test_pybatch_result_stub_accuracy()` validates all fields
 
 ## CI/CD Integration
 

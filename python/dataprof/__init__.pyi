@@ -219,8 +219,6 @@ __all__ = [
     "analyze_parquet_file",
     "analyze_parquet_with_quality_py",
     "calculate_data_quality_metrics",
-    "batch_analyze_glob",
-    "batch_analyze_directory",
 
     # Python logging integration
     "configure_logging",
@@ -247,9 +245,7 @@ __all__ = [
     "PyColumnProfile",
     "PyQualityReport",
     "PyDataQualityMetrics",
-    "PyBatchResult",
 
     # Context managers
-    "PyBatchAnalyzer",
     "PyCsvProcessor",
 ]
