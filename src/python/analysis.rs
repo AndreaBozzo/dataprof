@@ -136,8 +136,13 @@ pub fn calculate_data_quality_metrics(path: &str) -> PyResult<Option<PyDataQuali
     let quality_report = analyze_csv_internal(path, None)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to analyze CSV: {}", e)))?;
 
-    Ok(quality_report
-        .quality
-        .as_ref()
-        .map(|q| PyDataQualityMetrics::from(&q.metrics)))
+    // Always return a value to preserve the existing Python API contract.
+    // When quality is not computed, return neutral/empty metrics.
+    Ok(Some(
+        quality_report
+            .quality
+            .as_ref()
+            .map(|q| PyDataQualityMetrics::from(&q.metrics))
+            .unwrap_or_else(PyDataQualityMetrics::empty),
+    ))
 }

@@ -95,7 +95,10 @@ impl ReportAssembler {
                         confidence,
                     })
                 }
-                Err(_) => None,
+                Err(e) => {
+                    log::warn!("Quality metrics calculation failed: {e}");
+                    None
+                }
             }
         } else {
             None
@@ -106,8 +109,13 @@ impl ReportAssembler {
 
     /// Determine default confidence from execution metadata and data size.
     fn default_confidence(&self, data: &HashMap<String, Vec<String>>) -> MetricConfidence {
-        if self.execution.sampling_applied {
-            let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
+        let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
+
+        // If sampling was applied or quality data is clearly smaller than
+        // the processed row count, treat the metrics as approximate.
+        if self.execution.sampling_applied
+            || (sample_size > 0 && sample_size < self.execution.rows_processed)
+        {
             let population_size = if self.execution.source_exhausted {
                 Some(self.execution.rows_processed)
             } else {

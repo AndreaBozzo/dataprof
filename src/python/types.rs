@@ -159,7 +159,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
 
 // PyQualityIssue removed - use QualityMetrics instead
 
-/// Python wrapper for QualityReport
+/// Python wrapper for ProfileReport
 #[pyclass]
 #[derive(Clone)]
 pub struct PyQualityReport {
@@ -237,7 +237,10 @@ impl From<&ProfileReport> for PyQualityReport {
 
 #[pymethods]
 impl PyQualityReport {
-    /// Calculate overall quality score (0-100) using DataQualityMetrics
+    /// Calculate overall quality score (0-100) using QualityMetrics.
+    ///
+    /// Returns 0.0 if quality assessment was not computed for this report
+    /// (i.e. the underlying `ProfileReport` had `quality: None`).
     fn quality_score(&self) -> PyResult<f64> {
         Ok(self.data_quality_metrics.overall_quality_score)
     }
@@ -323,7 +326,12 @@ impl PyQualityReport {
     }
 }
 
-/// Python wrapper for DataQualityMetrics
+/// Python wrapper for QualityMetrics
+///
+/// When quality assessment is not available in the underlying `ProfileReport`,
+/// this struct is populated with neutral defaults (100% completeness, 0 violations, etc.)
+/// via `PyDataQualityMetrics::empty()`. Check `PyQualityReport.quality_score()` — a
+/// score of 0.0 may indicate quality was not computed rather than genuinely poor data.
 #[pyclass]
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
@@ -374,7 +382,7 @@ pub struct PyDataQualityMetrics {
 
 impl PyDataQualityMetrics {
     /// Create empty metrics when quality assessment is not available
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             overall_quality_score: 0.0,
             missing_values_ratio: 0.0,
