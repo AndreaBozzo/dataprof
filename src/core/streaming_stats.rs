@@ -1,15 +1,15 @@
-/// Incremental statistics computation for streaming data processing.
-///
-/// This module provides truly bounded-memory statistical computation using:
-/// - **Welford's algorithm** for numerically stable variance/stddev (O(1) memory)
-/// - **HyperLogLog++** for approximate distinct counts (~16 KB fixed)
-/// - **Reservoir sampling** for unbiased samples (fixed capacity)
-/// - **Streaming text-length tracking** with min/max/mean/histogram (O(1) memory)
-use std::collections::HashMap;
-use std::hash::{BuildHasher, RandomState};
-
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+/// Incremental statistics computation for streaming data processing.
+///
+/// This module provides bounded-memory statistical computation using:
+/// - **Welford's algorithm** for numerically stable variance/stddev (O(1) memory)
+/// - **HyperLogLog** for approximate distinct counts (~16 KB fixed registers)
+/// - **Reservoir sampling** for unbiased samples (fixed capacity; total memory
+///   depends on the capacity and the length of sampled strings)
+/// - **Streaming text-length tracking** with min/max/mean/histogram (O(1) memory)
+use std::collections::HashMap;
+use std::hash::Hasher;
 
 // ─── Welford accumulator ─────────────────────────────────────────────
 
@@ -112,6 +112,17 @@ impl StreamReservoirSampler {
         }
     }
 
+    /// Create a sampler with a fixed seed for deterministic / reproducible results.
+    #[cfg(test)]
+    pub fn seed(capacity: usize, seed: u64) -> Self {
+        Self {
+            reservoir: Vec::with_capacity(capacity.min(1024)),
+            capacity,
+            count: 0,
+            rng: SmallRng::seed_from_u64(seed),
+        }
+    }
+
     /// Offer an item to the reservoir.
     pub fn offer(&mut self, value: String) {
         self.count += 1;
@@ -131,6 +142,11 @@ impl StreamReservoirSampler {
     }
 
     /// Merge by concatenating reservoirs, then re-sampling to capacity.
+    ///
+    /// **Note:** This is an *approximate* merge — it produces a uniform
+    /// random subset of the union of the two reservoirs, but does *not*
+    /// guarantee a true uniform sample over the original combined stream.
+    /// For most profiling use-cases this is acceptable.
     pub fn merge(&mut self, other: &StreamReservoirSampler) {
         if other.count == 0 {
             return;
@@ -237,15 +253,55 @@ impl Default for TextLengthStats {
     }
 }
 
+// ─── Deterministic hasher for HLL ────────────────────────────────────
+
+/// A robust, deterministic hasher for HLL.
+///
+/// All `HllCounter` instances share the same hashing scheme so that
+/// register merges are correct. We use a fixed-seed SipHash-like mix
+/// for good bit distribution.
+#[derive(Default)]
+struct DeterministicHasher {
+    state: u64,
+}
+
+impl Hasher for DeterministicHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        // Simple but effective bit mixer (Murmur3-style)
+        for &b in bytes {
+            let mut k = b as u64;
+            k = k.wrapping_mul(0xcc9e2d51);
+            k = k.rotate_left(15);
+            k = k.wrapping_mul(0x1b873593);
+
+            self.state ^= k;
+            self.state = self.state.rotate_left(13);
+            self.state = self.state.wrapping_mul(5).wrapping_add(0xe6546b64);
+        }
+    }
+    fn finish(&self) -> u64 {
+        // Finalization mix
+        let mut x = self.state;
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xff51afd7ed558ccd);
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xc4ceb9fe1a85ec53);
+        x ^= x >> 33;
+        x
+    }
+}
+
 // ─── HyperLogLog wrapper ─────────────────────────────────────────────
 
-/// Thin wrapper around `HyperLogLogPlus` with a fixed hasher so we can
-/// implement `Debug` / `Clone` without leaking generics.
+/// HyperLogLog cardinality estimator with 14-bit precision.
+///
+/// Uses a deterministic hasher so that different `HllCounter` instances
+/// produce identical hashes for the same input — a prerequisite for
+/// correct register-level merging.
 #[derive(Clone)]
 struct HllCounter {
-    /// Raw HLL registers (14-bit precision → 2^14 = 16 384 registers).
+    /// Raw HLL registers (2^14 = 16 384 registers).
     registers: Vec<u8>,
-    hasher_state: RandomState,
 }
 
 impl std::fmt::Debug for HllCounter {
@@ -264,17 +320,23 @@ impl HllCounter {
     fn new() -> Self {
         Self {
             registers: vec![0u8; Self::NUM_REGISTERS],
-            hasher_state: RandomState::new(),
         }
     }
 
     /// Add a value.
     fn insert(&mut self, value: &str) {
-        let hash = self.hasher_state.hash_one(value);
+        let mut hasher = DeterministicHasher::default();
+        hasher.write(value.as_bytes());
+        let hash = hasher.finish();
 
         let index = (hash as usize) & (Self::NUM_REGISTERS - 1);
-        let remaining = hash >> Self::PRECISION;
-        let rank = (remaining.trailing_zeros() + 1) as u8;
+        let w = hash >> Self::PRECISION;
+
+        // ρ(w): position of the leftmost 1-bit + 1.
+        // We look at the bits NOT used for the index.
+        let rank =
+            (w.leading_zeros() - Self::PRECISION as u32 + 1).min(64 - Self::PRECISION as u32) as u8;
+
         if rank > self.registers[index] {
             self.registers[index] = rank;
         }
@@ -360,7 +422,8 @@ impl StreamingStatistics {
         }
     }
 
-    pub fn limits(_max_unique: usize, max_sample: usize) -> Self {
+    /// Create a `StreamingStatistics` with a custom reservoir capacity.
+    pub fn with_sample_capacity(max_sample: usize) -> Self {
         Self {
             sampler: StreamReservoirSampler::new(max_sample),
             ..Self::new()
@@ -385,8 +448,8 @@ impl StreamingStatistics {
         // Text length tracking (O(1))
         self.text_length_tracker.update(value.len());
 
-        // Numeric statistics via Welford
-        if let Ok(num_val) = value.parse::<f64>() {
+        // Numeric statistics via Welford (skip NaN / ±Inf)
+        if let Some(num_val) = value.parse::<f64>().ok().filter(|v| v.is_finite()) {
             self.welford.update(num_val);
             self.min = self.min.min(num_val);
             self.max = self.max.max(num_val);
@@ -449,7 +512,11 @@ impl StreamingStatistics {
         self.text_length_tracker.clone()
     }
 
-    /// Memory usage estimate in bytes (now ~constant).
+    /// Memory usage estimate in bytes.
+    ///
+    /// HLL registers are fixed at ~16 KB.  The reservoir is bounded by
+    /// `capacity` items, but each item is a heap-allocated `String` whose
+    /// length depends on the data.
     pub fn memory_usage_bytes(&self) -> usize {
         let struct_size = std::mem::size_of::<Self>();
         let hll_size = self.hll.registers.len(); // 16 KB
@@ -457,7 +524,7 @@ impl StreamingStatistics {
             .sampler
             .reservoir
             .iter()
-            .map(|s| std::mem::size_of::<String>() + s.len())
+            .map(|s| std::mem::size_of::<String>() + s.capacity())
             .sum();
 
         struct_size + hll_size + reservoir_size
@@ -524,13 +591,15 @@ impl StreamingColumnCollection {
         self.memory_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
     }
 
-    /// Reduce memory usage by truncating reservoir samples.
+    /// Reduce memory usage by halving the reservoir capacity.
     ///
-    /// With bounded accumulators the main knob is the reservoir size.
+    /// Lowers both the stored samples *and* the capacity so that future
+    /// insertions do not immediately re-fill the reservoir.
     pub fn reduce_memory_usage(&mut self) {
         for stats in self.columns.values_mut() {
             let half = stats.sampler.capacity / 2;
-            stats.sampler.reservoir.truncate(half);
+            stats.sampler.capacity = half.max(1);
+            stats.sampler.reservoir.truncate(half.max(1));
         }
     }
 
@@ -687,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_reservoir_uniformity() {
-        let mut sampler = StreamReservoirSampler::new(1000);
+        let mut sampler = StreamReservoirSampler::seed(1000, 42);
         let n = 100_000;
         for i in 0..n {
             sampler.offer(i.to_string());
