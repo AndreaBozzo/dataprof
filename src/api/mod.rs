@@ -235,19 +235,7 @@ impl Profiler {
                 );
             }
             FileFormat::Parquet => {
-                #[cfg(feature = "parquet")]
-                {
-                    return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
-                }
-                #[cfg(not(feature = "parquet"))]
-                {
-                    return Err(DataProfilerError::FeatureNotEnabled {
-                        feature: "parquet".to_string(),
-                        message: "Parquet file detected but parquet feature is not enabled. \
-                                  Recompile with --features parquet"
-                            .to_string(),
-                    });
-                }
+                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
             }
             _ => {}
         }
@@ -274,19 +262,7 @@ impl Profiler {
     ) -> Result<ProfileReport, DataProfilerError> {
         match format {
             FileFormat::Parquet => {
-                #[cfg(feature = "parquet")]
-                {
-                    return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
-                }
-                #[cfg(not(feature = "parquet"))]
-                {
-                    return Err(DataProfilerError::FeatureNotEnabled {
-                        feature: "parquet".to_string(),
-                        message: "Parquet file detected but parquet feature is not enabled. \
-                                  Recompile with --features parquet"
-                            .to_string(),
-                    });
-                }
+                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
             }
             FileFormat::Json | FileFormat::Jsonl => {
                 return crate::parsers::json::analyze_json_file(

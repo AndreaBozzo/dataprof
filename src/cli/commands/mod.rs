@@ -17,7 +17,6 @@ pub fn is_json_file(path: &Path) -> bool {
 }
 
 /// Helper to detect Parquet files
-#[cfg(feature = "parquet")]
 pub fn is_parquet_file(path: &Path) -> bool {
     if let Some(extension) = path.extension() {
         matches!(extension.to_str(), Some("parquet"))

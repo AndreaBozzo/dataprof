@@ -6,6 +6,7 @@ use crate::core::profile_builder;
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingColumnCollection;
+use crate::engines::common::MemoryConfig;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
 use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
@@ -16,7 +17,7 @@ pub struct IncrementalProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
-    memory_limit_mb: usize,
+    memory: MemoryConfig,
 }
 
 impl IncrementalProfiler {
@@ -25,7 +26,7 @@ impl IncrementalProfiler {
             chunk_size: ChunkSize::default(),
             sampling_strategy: SamplingStrategy::None,
             progress_callback: None,
-            memory_limit_mb: 256, // Default 256MB memory limit
+            memory: MemoryConfig::default(),
         }
     }
 
@@ -48,7 +49,7 @@ impl IncrementalProfiler {
     }
 
     pub fn memory_limit_mb(mut self, limit: usize) -> Self {
-        self.memory_limit_mb = limit;
+        self.memory = MemoryConfig::new(limit);
         self
     }
 
@@ -66,7 +67,7 @@ impl IncrementalProfiler {
         let chunk_size_bytes = self.calculate_optimal_chunk_size(file_size_bytes);
 
         // Initialize streaming statistics collection
-        let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb);
+        let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb);
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
 
         let mut headers: Option<csv::StringRecord> = None;
@@ -166,7 +167,7 @@ impl IncrementalProfiler {
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {
-        let max_memory_bytes = self.memory_limit_mb * 1024 * 1024;
+        let max_memory_bytes = self.memory.limit_mb * 1024 * 1024;
 
         // Reserve memory for statistics (estimate)
         let reserved_for_stats = max_memory_bytes / 4;

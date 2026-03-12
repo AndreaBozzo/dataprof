@@ -6,7 +6,6 @@ use std::path::Path;
 use crate::engines::DataFusionLoader;
 use crate::parsers::json::{JsonParserConfig, analyze_json_file as json_analyze_file_rust};
 
-#[cfg(feature = "parquet")]
 use crate::analyze_parquet_with_quality as analyze_parquet_quality_rust;
 
 use super::types::{PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
@@ -103,8 +102,7 @@ pub fn analyze_json_with_quality(path: &str) -> PyResult<PyQualityReport> {
     Ok(py_quality)
 }
 
-/// Analyze a Parquet file (only available with parquet feature)
-#[cfg(feature = "parquet")]
+/// Analyze a Parquet file
 #[pyfunction]
 pub fn analyze_parquet_file(path: &str) -> PyResult<Vec<PyColumnProfile>> {
     let quality_report = analyze_parquet_quality_rust(Path::new(path))
@@ -117,8 +115,7 @@ pub fn analyze_parquet_file(path: &str) -> PyResult<Vec<PyColumnProfile>> {
         .collect())
 }
 
-/// Analyze a Parquet file with quality assessment (only available with parquet feature)
-#[cfg(feature = "parquet")]
+/// Analyze a Parquet file with quality assessment
 #[pyfunction]
 pub fn analyze_parquet_with_quality_py(path: &str) -> PyResult<PyQualityReport> {
     let quality_report = analyze_parquet_quality_rust(Path::new(path)).map_err(|e| {

@@ -1,5 +1,6 @@
 pub mod adaptive;
 pub mod columnar;
+pub(crate) mod common;
 pub mod selection;
 pub mod streaming;
 

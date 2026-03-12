@@ -85,7 +85,6 @@ pub fn analyze_json_with_quality(
     analyze_json_file(path.as_ref(), &JsonParserConfig::default())
 }
 
-#[cfg(feature = "parquet")]
 pub use parsers::parquet::{
     ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file,
 };

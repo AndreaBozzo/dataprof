@@ -148,28 +148,14 @@ impl AdaptiveProfiler {
         let is_parquet = file_path
             .extension()
             .map(|ext| ext.eq_ignore_ascii_case("parquet"))
-            .unwrap_or(false);
-
-        #[cfg(feature = "parquet")]
-        let is_parquet = is_parquet || crate::parsers::parquet::is_parquet_file(file_path);
+            .unwrap_or(false)
+            || crate::parsers::parquet::is_parquet_file(file_path);
 
         if is_parquet {
-            #[cfg(feature = "parquet")]
-            {
-                if self.logger.enabled {
-                    log::info!("Parquet file detected - using native Parquet parser");
-                }
-                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+            if self.logger.enabled {
+                log::info!("Parquet file detected - using native Parquet parser");
             }
-            #[cfg(not(feature = "parquet"))]
-            {
-                return Err(DataProfilerError::FeatureNotEnabled {
-                    feature: "parquet".to_string(),
-                    message: "Parquet file detected but parquet feature is not enabled. \
-                              Recompile with --features parquet"
-                        .to_string(),
-                });
-            }
+            return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
         }
 
         // Analyze file characteristics

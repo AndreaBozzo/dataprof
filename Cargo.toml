@@ -110,7 +110,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 
 arrow = { version = "58.0.0", features = ["ffi"] }
-parquet = { version = "58.0.0", features = ["arrow"], optional = true }
+parquet = { version = "58.0.0", features = ["arrow"] }
 datafusion = { version = "52.2.0", optional = true }
 futures = "0.3.31"
 
@@ -188,17 +188,16 @@ cli = ["dep:clap", "dep:colored", "dep:is-terminal", "dep:indicatif", "dep:env_l
 python = ["dep:pyo3"]
 python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
-parquet = ["dep:parquet"]
 datafusion = ["dep:datafusion", "dep:tokio"]
 async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util"]
-parquet-async = ["parquet", "parquet/async", "dep:reqwest", "async-streaming"]
+parquet-async = ["parquet/async", "dep:reqwest", "async-streaming"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 
 # Sensible feature combinations
 minimal = []                             # Just CSV processing - fastest builds
-full-cli = ["cli", "parquet", "all-db"]  # CLI with all format + DB support
+full-cli = ["cli", "all-db"]  # CLI with all format + DB support
 production = ["postgres", "mysql"]       
 all-db = ["postgres", "mysql", "sqlite"] 
 

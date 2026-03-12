@@ -321,7 +321,6 @@ pub fn analyze_csv_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
 }
 
 /// Analyze Parquet file and return results as Arrow RecordBatch.
-#[cfg(feature = "parquet")]
 #[pyfunction]
 pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
     use crate::analyze_parquet_with_quality;

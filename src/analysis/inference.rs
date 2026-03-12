@@ -32,18 +32,6 @@ pub fn infer_type(data: &[String]) -> DataType {
         return DataType::String;
     }
 
-    // Check dates first (before numeric to catch date-like numbers)
-    for regex in DATE_REGEXES.iter() {
-        let date_matches = non_empty
-            .iter()
-            .filter(|s| regex.is_match(s.trim()))
-            .count();
-
-        if date_matches as f64 / non_empty.len() as f64 > 0.8 {
-            return DataType::Date;
-        }
-    }
-
     // Single pass for numeric type checking (optimization)
     // Since all integers are valid floats, we can check both in one iteration
     let mut integer_count = 0;
@@ -63,8 +51,21 @@ pub fn infer_type(data: &[String]) -> DataType {
         return DataType::Integer;
     }
 
-    if float_count == non_empty.len() {
+    // 80% threshold: tolerates a few non-numeric values (e.g. "N/A", missing)
+    if float_count as f64 / non_empty.len() as f64 > 0.8 {
         return DataType::Float;
+    }
+
+    // Check dates after numeric (70% threshold, consistent with streaming inference)
+    for regex in DATE_REGEXES.iter() {
+        let date_matches = non_empty
+            .iter()
+            .filter(|s| regex.is_match(s.trim()))
+            .count();
+
+        if date_matches as f64 / non_empty.len() as f64 > 0.7 {
+            return DataType::Date;
+        }
     }
 
     DataType::String
@@ -135,14 +136,15 @@ mod tests {
 
     #[test]
     fn test_infer_date_threshold() {
-        // 83.3% dates (5 out of 6), should still be detected as Date (threshold > 80%)
+        // 71.4% dates (5 out of 7), should still be detected as Date (threshold > 70%)
         let data = vec![
             "2023-01-15".to_string(),
             "2023-02-20".to_string(),
             "2023-03-25".to_string(),
             "2023-04-30".to_string(),
             "2023-05-15".to_string(),
-            "not a date".to_string(), // 16.7% non-date
+            "not a date".to_string(),
+            "also not".to_string(),
         ];
         assert!(matches!(infer_type(&data), DataType::Date));
     }

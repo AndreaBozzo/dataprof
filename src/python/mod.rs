@@ -16,7 +16,6 @@ pub use analysis::{
     calculate_data_quality_metrics,
 };
 
-#[cfg(feature = "parquet")]
 pub use analysis::{analyze_parquet_file, analyze_parquet_with_quality_py};
 pub use dataframe::analyze_csv_dataframe;
 pub use logging::{
@@ -27,9 +26,9 @@ pub use processor::PyCsvProcessor;
 pub use types::{PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
 
 // Arrow/PyCapsule exports
-#[cfg(feature = "parquet")]
-pub use arrow_export::analyze_parquet_to_arrow;
-pub use arrow_export::{PyRecordBatch, analyze_csv_to_arrow, profile_arrow, profile_dataframe};
+pub use arrow_export::{
+    PyRecordBatch, analyze_csv_to_arrow, analyze_parquet_to_arrow, profile_arrow, profile_dataframe,
+};
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -56,12 +55,9 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(analyze_json_with_quality, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_data_quality_metrics, m)?)?;
 
-    // Parquet analysis (only available with parquet feature)
-    #[cfg(feature = "parquet")]
-    {
-        m.add_function(wrap_pyfunction!(analyze_parquet_file, m)?)?;
-        m.add_function(wrap_pyfunction!(analyze_parquet_with_quality_py, m)?)?;
-    }
+    // Parquet analysis
+    m.add_function(wrap_pyfunction!(analyze_parquet_file, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_parquet_with_quality_py, m)?)?;
 
     // Pandas integration (optional)
     m.add_function(wrap_pyfunction!(analyze_csv_dataframe, m)?)?;
@@ -83,7 +79,6 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;
     m.add_function(wrap_pyfunction!(profile_arrow, m)?)?;
 
-    #[cfg(feature = "parquet")]
     m.add_function(wrap_pyfunction!(analyze_parquet_to_arrow, m)?)?;
 
     // Async database functions (available with python-async and database features)

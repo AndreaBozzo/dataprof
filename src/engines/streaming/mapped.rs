@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::analysis::patterns::looks_like_date;
 use crate::core::errors::DataProfilerError;
+use crate::core::profile_builder;
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::streaming_stats::StreamingStatistics;
+use crate::engines::common::MemoryConfig;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
 use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
@@ -34,13 +35,13 @@ impl StreamingColumnInfo {
     }
 }
 
-/// Memory-mapped profiler that uses mmap for large files
-/// Falls back to BufferedProfiler for files under 10MB.
+/// Memory-mapped profiler that uses mmap for large files.
+/// Falls back to IncrementalProfiler for files under 10MB.
 pub struct MappedProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
-    max_memory_mb: usize,
+    memory: MemoryConfig,
 }
 
 impl MappedProfiler {
@@ -49,7 +50,7 @@ impl MappedProfiler {
             chunk_size: ChunkSize::default(),
             sampling_strategy: SamplingStrategy::None,
             progress_callback: None,
-            max_memory_mb: 512, // Default 512MB memory limit
+            memory: MemoryConfig::new(512),
         }
     }
 
@@ -72,7 +73,7 @@ impl MappedProfiler {
     }
 
     pub fn memory_limit_mb(mut self, limit: usize) -> Self {
-        self.max_memory_mb = limit;
+        self.memory = MemoryConfig::new(limit);
         self
     }
 
@@ -177,10 +178,11 @@ impl MappedProfiler {
 
         progress_tracker.finish(iterated_rows);
 
-        // Convert streaming stats to column profiles
+        // Convert streaming stats to column profiles using canonical builder
         let mut column_profiles = Vec::new();
         for (_, column_info) in column_infos.into_iter() {
-            let profile = self.convert_to_column_profile(column_info);
+            let profile =
+                profile_builder::profile_from_stats(&column_info.name, &column_info.stats);
             column_profiles.push(profile);
         }
 
@@ -212,14 +214,13 @@ impl MappedProfiler {
         .build())
     }
 
-    #[allow(deprecated)]
     fn analyze_small_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
-        // For small files, fall back to the buffered profiler
-        let profiler = super::BufferedProfiler::new()
+        // For small files, delegate to the incremental profiler
+        let profiler = super::IncrementalProfiler::new()
             .chunk_size(self.chunk_size.clone())
             .sampling(self.sampling_strategy.clone());
 
-        let mut profiler = if let Some(callback) = &self.progress_callback {
+        let profiler = if let Some(callback) = &self.progress_callback {
             let cb = callback.clone();
             profiler.progress_callback(move |info| cb(info))
         } else {
@@ -230,66 +231,13 @@ impl MappedProfiler {
     }
 
     fn calculate_memory_efficient_chunk_size(&self, file_size: u64) -> usize {
-        let max_memory_bytes = self.max_memory_mb * 1_048_576;
+        let max_memory_bytes = self.memory.limit_mb * 1_048_576;
         let suggested_chunk = (max_memory_bytes / 4).max(64 * 1024); // At least 64KB chunks
 
         // Don't make chunks larger than 10% of file size
         let max_chunk_from_file = (file_size / 10).max(64 * 1024) as usize;
 
         suggested_chunk.min(max_chunk_from_file)
-    }
-
-    fn convert_to_column_profile(&self, column_info: StreamingColumnInfo) -> ColumnProfile {
-        use crate::types::DataType;
-
-        // Get sample values from StreamingStatistics
-        let sample_values = column_info.stats.sample_values();
-
-        // Infer data type - check if numeric data was collected
-        let has_numeric = column_info.stats.min < f64::INFINITY;
-        let data_type = if has_numeric {
-            let all_integers = sample_values
-                .iter()
-                .filter(|s| !s.is_empty())
-                .all(|s| s.parse::<i64>().is_ok());
-
-            if all_integers {
-                DataType::Integer
-            } else {
-                DataType::Float
-            }
-        } else {
-            let date_like = sample_values
-                .iter()
-                .filter(|s| !s.is_empty())
-                .take(100)
-                .filter(|s| looks_like_date(s))
-                .count();
-
-            if date_like > sample_values.len() / 2 {
-                DataType::Date
-            } else {
-                DataType::String
-            }
-        };
-
-        let text_stats = column_info.stats.text_length_stats();
-
-        crate::core::profile_builder::build_column_profile(
-            crate::core::profile_builder::ColumnProfileInput {
-                name: column_info.name,
-                data_type,
-                total_count: column_info.stats.count,
-                null_count: column_info.stats.null_count,
-                unique_count: Some(column_info.stats.unique_count()),
-                sample_values,
-                text_lengths: Some(crate::core::profile_builder::TextLengths {
-                    min_length: text_stats.min_length,
-                    max_length: text_stats.max_length,
-                    avg_length: text_stats.avg_length,
-                }),
-            },
-        )
     }
 
     fn create_sample_columns_for_quality_check(

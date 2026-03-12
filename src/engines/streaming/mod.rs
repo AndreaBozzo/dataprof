@@ -11,7 +11,6 @@ pub mod async_reader;
 #[cfg(feature = "async-streaming")]
 pub mod async_source;
 
-pub(crate) use buffered::*;
 pub(crate) use incremental::*;
 pub(crate) use mapped::*;
 pub(crate) use memmap::*;

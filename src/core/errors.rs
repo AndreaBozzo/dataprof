@@ -128,9 +128,6 @@ pub enum DataProfilerError {
     #[error("All engines failed: {message}")]
     AllEnginesFailed { message: String },
 
-    #[error("Required feature not enabled: {feature}\n💡 {message}")]
-    FeatureNotEnabled { feature: String, message: String },
-
     #[error("Metrics calculation failed: {message}")]
     MetricsCalculationError { message: String },
 
@@ -354,7 +351,6 @@ impl DataProfilerError {
             DataProfilerError::ArrowError { .. } => "arrow",
             DataProfilerError::UnsupportedDataSource { .. } => "unsupported_data_source",
             DataProfilerError::AllEnginesFailed { .. } => "all_engines_failed",
-            DataProfilerError::FeatureNotEnabled { .. } => "feature_not_enabled",
             DataProfilerError::MetricsCalculationError { .. } => "metrics_calculation",
             DataProfilerError::ConfigValidationError { .. } => "config_validation",
         }
@@ -381,7 +377,6 @@ impl DataProfilerError {
             DataProfilerError::ArrowError { .. } => ErrorSeverity::High,
             DataProfilerError::UnsupportedDataSource { .. } => ErrorSeverity::Critical,
             DataProfilerError::AllEnginesFailed { .. } => ErrorSeverity::Critical,
-            DataProfilerError::FeatureNotEnabled { .. } => ErrorSeverity::Critical,
             DataProfilerError::MetricsCalculationError { .. } => ErrorSeverity::Medium,
             DataProfilerError::ConfigValidationError { .. } => ErrorSeverity::Medium,
         }
