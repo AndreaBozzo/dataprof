@@ -409,7 +409,7 @@ impl Profiler {
                     label: path.display().to_string(),
                     format,
                     size_hint: Some(metadata.len()),
-                    source_system: None,
+                    source_system: Some(crate::types::StreamSourceSystem::Custom("file".into())),
                 };
                 self.profile_stream((file, info)).await
             }
@@ -450,14 +450,13 @@ impl Profiler {
         use crate::engines::streaming::async_source::{AsyncSourceInfo, ReqwestSource};
 
         // Detect format from URL path, respecting format_override.
-        // Extract path from URL without requiring the `url` crate.
+        // Extract the last path segment to avoid OS-specific Path parsing issues
+        // (e.g., Windows treating "https:" as a drive prefix).
         let format = self.config.format_override.clone().unwrap_or_else(|| {
-            let path_part = url
-                .split('?')
-                .next()
-                .and_then(|before_query| before_query.split('#').next())
-                .unwrap_or(url);
-            Self::detect_format(Path::new(path_part))
+            let without_query = url.split('?').next().unwrap_or(url);
+            let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+            let last_segment = without_fragment.rsplit('/').next().unwrap_or("");
+            Self::detect_format(Path::new(last_segment))
         });
 
         match format {
