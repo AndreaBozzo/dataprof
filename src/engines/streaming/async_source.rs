@@ -90,6 +90,47 @@ impl AsyncDataSource for (tokio::fs::File, AsyncSourceInfo) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// HTTP response body adapter (requires parquet-async → reqwest)
+// ---------------------------------------------------------------------------
+
+/// An HTTP response body that implements [`AsyncDataSource`].
+///
+/// Wraps a [`reqwest::Response`] so that remote CSV, JSON, and JSONL streams
+/// can be profiled via [`Profiler::profile_url`](crate::api::Profiler::profile_url).
+#[cfg(feature = "parquet-async")]
+pub struct ReqwestSource {
+    response: reqwest::Response,
+    info: AsyncSourceInfo,
+}
+
+#[cfg(feature = "parquet-async")]
+impl ReqwestSource {
+    /// Create a new source from an HTTP response and its metadata.
+    pub fn new(response: reqwest::Response, info: AsyncSourceInfo) -> Self {
+        Self { response, info }
+    }
+}
+
+#[cfg(feature = "parquet-async")]
+#[async_trait::async_trait]
+impl AsyncDataSource for ReqwestSource {
+    async fn into_async_read(
+        self,
+    ) -> Result<Pin<Box<dyn AsyncRead + Send + Unpin>>, DataProfilerError> {
+        use futures::TryStreamExt;
+        use tokio_util::io::StreamReader;
+
+        let byte_stream = self.response.bytes_stream().map_err(std::io::Error::other);
+
+        Ok(Box::pin(StreamReader::new(byte_stream)))
+    }
+
+    fn source_info(&self) -> AsyncSourceInfo {
+        self.info.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

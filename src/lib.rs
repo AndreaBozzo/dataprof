@@ -46,6 +46,9 @@ pub use engines::streaming::{
     AsyncDataSource, AsyncSourceInfo, AsyncStreamingProfiler, BytesSource,
 };
 
+#[cfg(feature = "parquet-async")]
+pub use engines::streaming::ReqwestSource;
+
 #[cfg(feature = "datafusion")]
 pub use engines::DataFusionLoader;
 

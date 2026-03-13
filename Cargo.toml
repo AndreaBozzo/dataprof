@@ -106,7 +106,7 @@ sqlx = { version = "0.8.1", features = [
     "uuid",
 ], optional = true, default-features = false }
 url = { version = "2.5.8", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
 
 
 arrow = { version = "58.0.0", features = ["ffi"] }
