@@ -1,343 +1,142 @@
 use std::path::Path;
-use std::time::Instant;
 
 use crate::core::errors::DataProfilerError;
-use crate::engines::selection::{EngineSelector, InternalEngineType, ProcessingType};
 use crate::engines::streaming::IncrementalProfiler;
 use crate::types::ProfileReport;
 
-/// Performance metrics for engine execution
-#[derive(Debug, Clone)]
-pub struct EnginePerformance {
-    pub engine_type: InternalEngineType,
-    pub execution_time_ms: u128,
-    pub memory_usage_mb: f64,
-    pub rows_per_second: f64,
-    pub success: bool,
-    pub error_message: Option<String>,
+/// Internal engine type for adaptive selection.
+///
+/// Not part of the public API — users interact via `EngineType` in `api/mod.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InternalEngineType {
+    Arrow,
+    Incremental,
 }
 
-/// Logger for engine selection and performance
-pub struct EngineLogger {
-    pub(crate) enabled: bool,
-}
-
-impl EngineLogger {
-    pub fn new(enabled: bool) -> Self {
-        Self { enabled }
-    }
-
-    pub fn log_selection(&self, engine: &InternalEngineType, reasoning: &str) {
-        if self.enabled {
-            log::info!("Engine selected: {:?} - {}", engine, reasoning);
-        }
-    }
-
-    pub fn log_fallback(&self, from: &InternalEngineType, to: &InternalEngineType, reason: &str) {
-        if self.enabled {
-            log::warn!("Fallback: {:?} → {:?} - {}", from, to, reason);
-        }
-    }
-
-    pub fn log_performance(&self, performance: &EnginePerformance) {
-        if self.enabled {
-            if performance.success {
-                log::info!(
-                    "{:?}: {:.1}s, {:.0} rows/sec, {:.1}MB memory",
-                    performance.engine_type,
-                    performance.execution_time_ms as f64 / 1000.0,
-                    performance.rows_per_second,
-                    performance.memory_usage_mb
-                );
-            } else {
-                log::warn!(
-                    "{:?}: Failed - {}",
-                    performance.engine_type,
-                    performance
-                        .error_message
-                        .as_deref()
-                        .unwrap_or("Unknown error")
-                );
-            }
-        }
-    }
-
-    pub fn log_comparison(&self, performances: &[EnginePerformance]) {
-        if !self.enabled || performances.len() < 2 {
-            return;
-        }
-
-        log::info!("Engine Performance Comparison:");
-        let mut sorted = performances.to_vec();
-        sorted.sort_by(|a, b| a.execution_time_ms.cmp(&b.execution_time_ms));
-
-        for (i, perf) in sorted.iter().enumerate() {
-            let icon = if i == 0 {
-                "🥇"
-            } else if i == 1 {
-                "🥈"
-            } else {
-                "🥉"
-            };
-            log::info!(
-                "  {} {:?}: {:.2}s ({:.0} rows/sec)",
-                icon,
-                perf.engine_type,
-                perf.execution_time_ms as f64 / 1000.0,
-                perf.rows_per_second
-            );
-        }
-    }
-}
-
-/// Adaptive profiler that automatically selects the best engine and handles fallbacks
-pub struct AdaptiveProfiler {
-    selector: EngineSelector,
-    logger: EngineLogger,
-    enable_fallback: bool,
-    enable_performance_logging: bool,
-}
+/// Adaptive profiler that selects the best engine for a given file.
+///
+/// Simple heuristic: Incremental is the default (streaming, memory-bounded).
+/// Arrow is selected when the file has many numeric columns and enough memory.
+pub(crate) struct AdaptiveProfiler;
 
 impl AdaptiveProfiler {
     pub fn new() -> Self {
-        Self {
-            selector: EngineSelector::new(),
-            logger: EngineLogger::new(true), // Enable logging by default
-            enable_fallback: true,
-            enable_performance_logging: false,
-        }
+        Self
     }
 
-    pub fn with_logging(mut self, enabled: bool) -> Self {
-        self.logger = EngineLogger::new(enabled);
-        self
-    }
-
-    pub fn with_fallback(mut self, enabled: bool) -> Self {
-        self.enable_fallback = enabled;
-        self
-    }
-
-    pub fn with_performance_logging(mut self, enabled: bool) -> Self {
-        self.enable_performance_logging = enabled;
-        self
-    }
-
-    /// Select the best engine for a file without running benchmarks
-    pub fn select_engine(&self, file_path: &Path) -> Result<InternalEngineType, DataProfilerError> {
-        let characteristics = self.selector.analyze_file_characteristics(file_path)?;
-        let recommendation = self
-            .selector
-            .select_engine(&characteristics, ProcessingType::BatchAnalysis);
-        Ok(recommendation.primary_engine)
-    }
-
-    /// Analyze file with automatic engine selection and fallback
+    /// Analyze a file, auto-selecting the best engine.
+    ///
+    /// Parquet files bypass engine selection entirely (native parser).
     pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
-        self.analyze_file_with_context(file_path, ProcessingType::BatchAnalysis)
-    }
-
-    /// Analyze file with specific processing context
-    pub fn analyze_file_with_context(
-        &self,
-        file_path: &Path,
-        processing_type: ProcessingType,
-    ) -> Result<ProfileReport, DataProfilerError> {
-        // Check if this is a Parquet file - handle separately as it's a binary format
-        // Use both extension check (fast) and magic number check (robust)
-        let is_parquet = file_path
-            .extension()
-            .map(|ext| ext.eq_ignore_ascii_case("parquet"))
-            .unwrap_or(false)
-            || crate::parsers::parquet::is_parquet_file(file_path);
-
-        if is_parquet {
-            if self.logger.enabled {
-                log::info!("Parquet file detected - using native Parquet parser");
-            }
+        // Parquet has its own parser — short-circuit
+        if is_parquet(file_path) {
             return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
         }
 
-        // Analyze file characteristics
-        let characteristics = self.selector.analyze_file_characteristics(file_path)?;
+        let engine = self.select_engine(file_path);
+        log::info!("Engine selected: {:?}", engine);
 
-        // Get engine recommendation
-        let recommendation = self
-            .selector
-            .select_engine(&characteristics, processing_type);
+        let result = self.try_engine(&engine, file_path);
 
-        self.logger
-            .log_selection(&recommendation.primary_engine, &recommendation.reasoning);
-
-        // Try primary engine first
-        let primary_result = self.try_engine(&recommendation.primary_engine, file_path);
-
-        match primary_result {
-            Ok(report) => {
-                if self.enable_performance_logging {
-                    // For successful execution, we'd collect performance data here
-                    // This would require modifying the engine implementations to return metrics
-                }
-                Ok(report)
-            }
-            Err(primary_error) => {
-                if !self.enable_fallback || recommendation.fallback_engines.is_empty() {
-                    return Err(primary_error);
-                }
-
-                // Try fallback engines
-                for fallback_engine in &recommendation.fallback_engines {
-                    self.logger.log_fallback(
-                        &recommendation.primary_engine,
-                        fallback_engine,
-                        &format!("Primary engine failed: {}", primary_error),
-                    );
-
-                    match self.try_engine(fallback_engine, file_path) {
-                        Ok(report) => {
-                            self.logger.log_performance(&EnginePerformance {
-                                engine_type: fallback_engine.clone(),
-                                execution_time_ms: 0, // Would need to measure this
-                                memory_usage_mb: 0.0,
-                                rows_per_second: 0.0,
-                                success: true,
-                                error_message: None,
-                            });
-                            return Ok(report);
-                        }
-                        Err(fallback_error) => {
-                            self.logger.log_performance(&EnginePerformance {
-                                engine_type: fallback_engine.clone(),
-                                execution_time_ms: 0,
-                                memory_usage_mb: 0.0,
-                                rows_per_second: 0.0,
-                                success: false,
-                                error_message: Some(fallback_error.to_string()),
-                            });
-                            continue;
-                        }
+        // On failure, try the other engine as fallback
+        match result {
+            Ok(report) => Ok(report),
+            Err(primary_err) => {
+                let fallback = match engine {
+                    InternalEngineType::Arrow => InternalEngineType::Incremental,
+                    InternalEngineType::Incremental => InternalEngineType::Arrow,
+                };
+                log::warn!(
+                    "Fallback: {:?} → {:?} — {}",
+                    engine,
+                    fallback,
+                    primary_err
+                );
+                self.try_engine(&fallback, file_path).map_err(|fallback_err| {
+                    DataProfilerError::AllEnginesFailed {
+                        message: format!(
+                            "All engines failed. Primary ({:?}): {}. Fallback ({:?}): {}.",
+                            engine, primary_err, fallback, fallback_err
+                        ),
                     }
-                }
-
-                // All engines failed
-                Err(DataProfilerError::AllEnginesFailed {
-                    message: format!(
-                        "All engines failed. Primary: {}. Tried {} fallbacks.",
-                        primary_error,
-                        recommendation.fallback_engines.len()
-                    ),
                 })
             }
         }
     }
 
-    /// Try to execute analysis with a specific engine
+    /// Simple heuristic: prefer Arrow for wide, numeric-heavy CSVs with enough memory.
+    fn select_engine(&self, file_path: &Path) -> InternalEngineType {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let Ok(file) = File::open(file_path) else {
+            return InternalEngineType::Incremental;
+        };
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        // Read header to count columns
+        let header = match lines.next() {
+            Some(Ok(line)) => line,
+            _ => return InternalEngineType::Incremental,
+        };
+        let num_columns = header.split(',').count();
+
+        // Arrow needs many columns to outperform Incremental
+        if num_columns < 20 {
+            return InternalEngineType::Incremental;
+        }
+
+        // Sample first few data rows to check if numeric-heavy
+        let mut numeric_count = 0usize;
+        let mut total_fields = 0usize;
+        for line in lines.take(10) {
+            let Ok(line) = line else { break };
+            for val in line.split(',') {
+                total_fields += 1;
+                if val.trim().parse::<f64>().is_ok() {
+                    numeric_count += 1;
+                }
+            }
+        }
+
+        let numeric_ratio = if total_fields > 0 {
+            numeric_count as f64 / total_fields as f64
+        } else {
+            0.0
+        };
+
+        // Arrow for wide + numeric datasets
+        if numeric_ratio > 0.5 {
+            InternalEngineType::Arrow
+        } else {
+            InternalEngineType::Incremental
+        }
+    }
+
     fn try_engine(
         &self,
         engine_type: &InternalEngineType,
         file_path: &Path,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let start = Instant::now();
-
-        let result = match engine_type {
+        match engine_type {
             InternalEngineType::Arrow => {
                 use crate::engines::columnar::ArrowProfiler;
-                let profiler = ArrowProfiler::new();
-                profiler.analyze_csv_file(file_path)
+                ArrowProfiler::new().analyze_csv_file(file_path)
             }
             InternalEngineType::Incremental => {
-                let profiler = IncrementalProfiler::new();
-                profiler.analyze_file(file_path)
+                IncrementalProfiler::new().analyze_file(file_path)
             }
-        };
-
-        let execution_time = start.elapsed();
-
-        // Log performance if enabled
-        if self.enable_performance_logging {
-            let performance = match &result {
-                Ok(report) => EnginePerformance {
-                    engine_type: engine_type.clone(),
-                    execution_time_ms: execution_time.as_millis(),
-                    memory_usage_mb: 0.0, // Would need to measure this
-                    rows_per_second: if execution_time.as_secs() > 0 {
-                        report.execution.rows_processed as f64 / execution_time.as_secs_f64()
-                    } else {
-                        0.0
-                    },
-                    success: true,
-                    error_message: None,
-                },
-                Err(e) => EnginePerformance {
-                    engine_type: engine_type.clone(),
-                    execution_time_ms: execution_time.as_millis(),
-                    memory_usage_mb: 0.0,
-                    rows_per_second: 0.0,
-                    success: false,
-                    error_message: Some(e.to_string()),
-                },
-            };
-            self.logger.log_performance(&performance);
         }
-
-        result
-    }
-
-    /// Benchmark multiple engines and return performance comparison
-    pub fn benchmark_engines(
-        &self,
-        file_path: &Path,
-    ) -> Result<Vec<EnginePerformance>, DataProfilerError> {
-        let characteristics = self.selector.analyze_file_characteristics(file_path)?;
-        let recommendation = self
-            .selector
-            .select_engine(&characteristics, ProcessingType::BatchAnalysis);
-
-        let mut performances = Vec::new();
-        let engines_to_test = std::iter::once(&recommendation.primary_engine)
-            .chain(recommendation.fallback_engines.iter())
-            .collect::<std::collections::HashSet<_>>(); // Remove duplicates
-
-        for engine_type in engines_to_test {
-            let start = Instant::now();
-            let result = self.try_engine(engine_type, file_path);
-            let execution_time = start.elapsed();
-
-            let performance = match result {
-                Ok(report) => EnginePerformance {
-                    engine_type: engine_type.clone(),
-                    execution_time_ms: execution_time.as_millis(),
-                    memory_usage_mb: 0.0, // Would need actual memory measurement
-                    rows_per_second: if execution_time.as_secs() > 0 {
-                        report.execution.rows_processed as f64 / execution_time.as_secs_f64()
-                    } else {
-                        0.0
-                    },
-                    success: true,
-                    error_message: None,
-                },
-                Err(e) => EnginePerformance {
-                    engine_type: engine_type.clone(),
-                    execution_time_ms: execution_time.as_millis(),
-                    memory_usage_mb: 0.0,
-                    rows_per_second: 0.0,
-                    success: false,
-                    error_message: Some(e.to_string()),
-                },
-            };
-
-            performances.push(performance);
-        }
-
-        self.logger.log_comparison(&performances);
-        Ok(performances)
     }
 }
 
-impl Default for AdaptiveProfiler {
-    fn default() -> Self {
-        Self::new()
-    }
+fn is_parquet(file_path: &Path) -> bool {
+    file_path
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("parquet"))
+        .unwrap_or(false)
+        || crate::parsers::parquet::is_parquet_file(file_path)
 }
 
 #[cfg(test)]
@@ -349,9 +148,8 @@ mod tests {
 
     #[test]
     fn test_adaptive_profiler_basic() -> Result<()> {
-        let profiler = AdaptiveProfiler::new().with_logging(false);
+        let profiler = AdaptiveProfiler::new();
 
-        // Create test file
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,age,salary")?;
         writeln!(temp_file, "Alice,25,50000")?;
@@ -368,20 +166,28 @@ mod tests {
 
     #[test]
     fn test_fallback_mechanism() -> Result<()> {
-        let profiler = AdaptiveProfiler::new()
-            .with_logging(false)
-            .with_fallback(true);
+        let profiler = AdaptiveProfiler::new();
 
-        // Create test file that might cause some engines to fail
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,data")?;
         writeln!(temp_file, "test,\"complex,data\"with\"quotes\"")?;
         temp_file.flush()?;
 
-        // Should still succeed due to fallback
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_select_engine_few_columns() {
+        let profiler = AdaptiveProfiler::new();
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "a,b,c").unwrap();
+        writeln!(temp_file, "1,2,3").unwrap();
+        temp_file.flush().unwrap();
+
+        let engine = profiler.select_engine(temp_file.path());
+        assert_eq!(engine, InternalEngineType::Incremental);
     }
 }

@@ -5,7 +5,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::StopCondition;
 use crate::engines::streaming::ProgressInfo;
-use crate::engines::{AdaptiveProfiler, ProcessingType};
+use crate::engines::adaptive::AdaptiveProfiler;
 use crate::types::{DataSource, FileFormat, ProfileReport};
 
 /// Which engine to use for profiling
@@ -224,10 +224,7 @@ impl Profiler {
                 file_path,
                 &crate::parsers::json::JsonParserConfig::default(),
             ),
-            _ => {
-                let profiler = AdaptiveProfiler::new().with_logging(false);
-                profiler.analyze_file_with_context(file_path, ProcessingType::QualityFocused)
-            }
+            _ => AdaptiveProfiler::new().analyze_file(file_path),
         }
     }
 
