@@ -609,8 +609,8 @@ impl AsyncStreamingProfiler {
 
             // Check schema stability
             if let Some(ref mut tracker) = schema_tracker {
-                let snapshot = column_stats.column_type_snapshot();
-                if tracker.update(snapshot) {
+                let fingerprint = column_stats.column_type_fingerprint();
+                if tracker.update(fingerprint, chunk_rows as u64) {
                     truncation_reason = Some(tracker.truncation_reason());
                     drop(rx);
                     break;

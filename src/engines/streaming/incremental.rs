@@ -149,19 +149,20 @@ impl IncrementalProfiler {
                 0.0
             };
 
-            if stop_eval.update(
-                records.len() as u64,
+            let actual_chunk_bytes = std::cmp::min(
                 chunk_size_bytes as u64,
-                memory_fraction,
-            ) {
+                file_size_bytes.saturating_sub(offset),
+            );
+
+            if stop_eval.update(records.len() as u64, actual_chunk_bytes, memory_fraction) {
                 source_exhausted = false;
                 break;
             }
 
             // Check schema stability (separate from main evaluator)
             if let Some(ref mut tracker) = schema_tracker {
-                let snapshot = column_stats.column_type_snapshot();
-                if tracker.update(snapshot) {
+                let fingerprint = column_stats.column_type_fingerprint();
+                if tracker.update(fingerprint, records.len() as u64) {
                     stop_eval = StopEvaluator::new(StopCondition::Never); // prevent double-reason
                     source_exhausted = false;
                     break;
@@ -185,8 +186,14 @@ impl IncrementalProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
+        let bytes_consumed = if source_exhausted {
+            file_size_bytes
+        } else {
+            stop_eval.bytes_consumed()
+        };
+
         let mut execution = ExecutionMetadata::new(analyzed_rows, num_columns, scan_time_ms)
-            .with_bytes_consumed(file_size_bytes);
+            .with_bytes_consumed(bytes_consumed);
 
         // Apply stop condition truncation reason
         if let Some(reason) = stop_eval.truncation_reason() {

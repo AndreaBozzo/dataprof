@@ -16,9 +16,12 @@ pub enum StopCondition {
     MaxRows(u64),
     /// Stop after consuming this many bytes from the source.
     MaxBytes(u64),
-    /// Stop when column types have not changed for N consecutive rows.
+    /// Stop when column types have not changed for approximately N rows
+    /// (accumulated across chunks).
     SchemaStable {
-        /// Number of consecutive rows with no type changes before stopping.
+        /// Approximate number of rows with no type changes before stopping.
+        /// Rows are accumulated per-chunk, so the actual count depends on
+        /// chunk granularity.
         consecutive_stable_rows: u64,
     },
     /// Stop when `rows_processed / estimated_total >= threshold`.
@@ -75,12 +78,31 @@ pub struct StopEvaluator {
 
 impl StopEvaluator {
     pub fn new(condition: StopCondition) -> Self {
+        let condition = Self::clamp_thresholds(condition);
         Self {
             condition,
             rows_processed: 0,
             bytes_consumed: 0,
             estimated_total_rows: None,
             triggered_reason: None,
+        }
+    }
+
+    /// Clamp `ConfidenceThreshold` and `MemoryPressure` values to `0.0..=1.0`,
+    /// recursing into `Any`/`All` composites.
+    fn clamp_thresholds(condition: StopCondition) -> StopCondition {
+        match condition {
+            StopCondition::ConfidenceThreshold(t) => {
+                StopCondition::ConfidenceThreshold(t.clamp(0.0, 1.0))
+            }
+            StopCondition::MemoryPressure(t) => StopCondition::MemoryPressure(t.clamp(0.0, 1.0)),
+            StopCondition::Any(cs) => {
+                StopCondition::Any(cs.into_iter().map(Self::clamp_thresholds).collect())
+            }
+            StopCondition::All(cs) => {
+                StopCondition::All(cs.into_iter().map(Self::clamp_thresholds).collect())
+            }
+            other => other,
         }
     }
 
@@ -168,9 +190,8 @@ fn evaluate(
         }
         StopCondition::SchemaStable { .. } => {
             // SchemaStable requires column type tracking which is handled
-            // at the engine level. The evaluator alone cannot detect schema
-            // changes — engines must call `notify_schema_stable()` when
-            // the stable streak is reached.
+            // at the engine level via `SchemaStabilityTracker`. The evaluator
+            // alone cannot detect schema changes.
             // See: IncrementalProfiler and AsyncStreamingProfiler integration.
             None
         }
@@ -242,10 +263,14 @@ pub fn schema_stable_threshold(condition: &StopCondition) -> Option<u64> {
 
 /// Tracks consecutive rows where the schema (column types) has not changed.
 /// Used by engines to implement `SchemaStable` stop conditions.
+///
+/// Accepts a fingerprint (hash) of the column types and accumulates rows
+/// across chunks. When the accumulated stable-row count reaches the
+/// threshold, the tracker signals that profiling may stop.
 pub struct SchemaStabilityTracker {
     threshold: u64,
     consecutive_stable: u64,
-    last_snapshot: Option<Vec<String>>,
+    last_fingerprint: Option<u64>,
 }
 
 impl SchemaStabilityTracker {
@@ -255,20 +280,21 @@ impl SchemaStabilityTracker {
         schema_stable_threshold(condition).map(|threshold| Self {
             threshold,
             consecutive_stable: 0,
-            last_snapshot: None,
+            last_fingerprint: None,
         })
     }
 
-    /// Update with the current schema snapshot (sorted list of "column:type" strings).
-    /// Returns `true` when the stability threshold has been reached.
-    pub fn update(&mut self, snapshot: Vec<String>) -> bool {
-        match &self.last_snapshot {
-            Some(prev) if *prev == snapshot => {
-                self.consecutive_stable += 1;
+    /// Update with the current schema fingerprint and the number of rows in
+    /// the chunk. Returns `true` when the accumulated stable-row count reaches
+    /// the threshold.
+    pub fn update(&mut self, fingerprint: u64, chunk_rows: u64) -> bool {
+        match self.last_fingerprint {
+            Some(prev) if prev == fingerprint => {
+                self.consecutive_stable += chunk_rows;
             }
             _ => {
-                self.consecutive_stable = 0;
-                self.last_snapshot = Some(snapshot);
+                self.consecutive_stable = chunk_rows;
+                self.last_fingerprint = Some(fingerprint);
             }
         }
         self.consecutive_stable >= self.threshold
@@ -429,12 +455,10 @@ mod tests {
         };
         let mut tracker = SchemaStabilityTracker::from_condition(&condition).unwrap();
 
-        let snap = vec!["col1:Integer".into(), "col2:String".into()];
-        assert!(!tracker.update(snap.clone()));
-        assert!(!tracker.update(snap.clone()));
-        assert!(!tracker.update(snap.clone()));
-        // 3 consecutive stable updates (after the initial baseline)
-        assert!(tracker.update(snap.clone()));
+        let fp: u64 = 0xABCD;
+        assert!(!tracker.update(fp, 1)); // consecutive = 1
+        assert!(!tracker.update(fp, 1)); // consecutive = 2
+        assert!(tracker.update(fp, 1)); // consecutive = 3 → triggers
     }
 
     #[test]
@@ -444,16 +468,15 @@ mod tests {
         };
         let mut tracker = SchemaStabilityTracker::from_condition(&condition).unwrap();
 
-        let snap1 = vec!["col1:Integer".into()];
-        let snap2 = vec!["col1:Float".into()];
+        let fp1: u64 = 0x1111;
+        let fp2: u64 = 0x2222;
 
-        assert!(!tracker.update(snap1.clone()));
-        assert!(!tracker.update(snap1.clone()));
+        assert!(!tracker.update(fp1, 1)); // consecutive = 1
+        assert!(!tracker.update(fp1, 1)); // consecutive = 2
         // Schema changes — counter resets
-        assert!(!tracker.update(snap2.clone()));
-        assert!(!tracker.update(snap2.clone()));
-        assert!(!tracker.update(snap2.clone()));
-        assert!(tracker.update(snap2.clone()));
+        assert!(!tracker.update(fp2, 1)); // consecutive = 1
+        assert!(!tracker.update(fp2, 1)); // consecutive = 2
+        assert!(tracker.update(fp2, 1)); // consecutive = 3 → triggers
     }
 
     #[test]

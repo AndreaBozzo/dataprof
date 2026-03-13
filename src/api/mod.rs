@@ -114,8 +114,7 @@ impl Profiler {
 
     /// Set a stop condition for early termination.
     ///
-    /// Only effective with `EngineType::Incremental` (sync) and the async
-    /// streaming profiler. Ignored for other engines.
+    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
     pub fn stop_when(mut self, condition: StopCondition) -> Self {
         self.config.stop_condition = condition;
         self
