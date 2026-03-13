@@ -5,6 +5,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
+use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::common::MemoryConfig;
 use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
@@ -18,6 +19,7 @@ pub struct IncrementalProfiler {
     sampling_strategy: SamplingStrategy,
     progress_callback: Option<ProgressCallback>,
     memory: MemoryConfig,
+    stop_condition: StopCondition,
 }
 
 impl IncrementalProfiler {
@@ -27,6 +29,7 @@ impl IncrementalProfiler {
             sampling_strategy: SamplingStrategy::None,
             progress_callback: None,
             memory: MemoryConfig::default(),
+            stop_condition: StopCondition::Never,
         }
     }
 
@@ -53,6 +56,11 @@ impl IncrementalProfiler {
         self
     }
 
+    pub fn stop_condition(mut self, condition: StopCondition) -> Self {
+        self.stop_condition = condition;
+        self
+    }
+
     pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let reader = MemoryMappedCsvReader::new(file_path)?;
@@ -70,11 +78,17 @@ impl IncrementalProfiler {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb);
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
 
+        // Initialize stop condition evaluator
+        let mut stop_eval = StopEvaluator::new(self.stop_condition.clone())
+            .with_estimated_total(estimated_total_rows as u64);
+        let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
+
         let mut headers: Option<csv::StringRecord> = None;
         let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
         let mut chunk_count = 0;
         let mut offset = 0u64;
+        let mut source_exhausted = true;
 
         // Process file in chunks using true streaming
         loop {
@@ -127,6 +141,34 @@ impl IncrementalProfiler {
                 column_stats.reduce_memory_usage();
             }
 
+            // Evaluate stop condition
+            let memory_fraction = if self.memory.limit_mb > 0 {
+                column_stats.memory_usage_bytes() as f64
+                    / (self.memory.limit_mb * 1024 * 1024) as f64
+            } else {
+                0.0
+            };
+
+            let actual_chunk_bytes = std::cmp::min(
+                chunk_size_bytes as u64,
+                file_size_bytes.saturating_sub(offset),
+            );
+
+            if stop_eval.update(records.len() as u64, actual_chunk_bytes, memory_fraction) {
+                source_exhausted = false;
+                break;
+            }
+
+            // Check schema stability (separate from main evaluator)
+            if let Some(ref mut tracker) = schema_tracker {
+                let fingerprint = column_stats.column_type_fingerprint();
+                if tracker.update(fingerprint, records.len() as u64) {
+                    stop_eval = StopEvaluator::new(StopCondition::Never); // prevent double-reason
+                    source_exhausted = false;
+                    break;
+                }
+            }
+
             // Break if we've read all data (small chunk indicates EOF)
             if records.len() < 100 {
                 break;
@@ -144,11 +186,29 @@ impl IncrementalProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
+        let bytes_consumed = if source_exhausted {
+            file_size_bytes
+        } else {
+            stop_eval.bytes_consumed()
+        };
+
         let mut execution = ExecutionMetadata::new(analyzed_rows, num_columns, scan_time_ms)
-            .with_bytes_consumed(file_size_bytes);
-        if estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
+            .with_bytes_consumed(bytes_consumed);
+
+        // Apply stop condition truncation reason
+        if let Some(reason) = stop_eval.truncation_reason() {
+            execution = execution.with_truncation(reason);
+        } else if let Some(ref tracker) = schema_tracker
+            && !source_exhausted
+        {
+            execution = execution.with_truncation(tracker.truncation_reason());
+        }
+
+        if source_exhausted && estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
             let ratio = analyzed_rows as f64 / estimated_total_rows as f64;
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
+        } else if !source_exhausted {
+            execution = execution.with_source_exhausted(false);
         }
 
         Ok(ReportAssembler::new(
@@ -257,6 +317,57 @@ mod tests {
 
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_early_stop_max_rows() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,value")?;
+        for i in 1..=5000 {
+            writeln!(temp_file, "{},val_{}", i, i)?;
+        }
+        temp_file.flush()?;
+
+        let profiler = IncrementalProfiler::new()
+            .memory_limit_mb(10)
+            .stop_condition(StopCondition::MaxRows(100));
+
+        let report = profiler.analyze_file(temp_file.path())?;
+
+        // Should have stopped early (chunk granularity — may exceed 100 slightly)
+        assert!(
+            report.execution.rows_processed < 5000,
+            "Should stop before processing all 5000 rows, got {}",
+            report.execution.rows_processed
+        );
+        assert!(!report.execution.source_exhausted);
+        assert!(matches!(
+            report.execution.truncation_reason,
+            Some(crate::types::TruncationReason::MaxRows(100))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_stop_condition_never_processes_all() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,value")?;
+        for i in 1..=500 {
+            writeln!(temp_file, "{},val_{}", i, i)?;
+        }
+        temp_file.flush()?;
+
+        let profiler = IncrementalProfiler::new()
+            .memory_limit_mb(10)
+            .stop_condition(StopCondition::Never);
+
+        let report = profiler.analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 500);
+        assert!(report.execution.truncation_reason.is_none());
 
         Ok(())
     }

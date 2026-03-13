@@ -1,15 +1,11 @@
-pub mod adaptive;
+pub(crate) mod adaptive;
 pub mod columnar;
 pub(crate) mod common;
-pub mod selection;
 pub mod streaming;
 
 #[cfg(feature = "datafusion")]
 pub mod datafusion_loader;
 
-// AdaptiveProfiler + EngineSelector are used by the CLI benchmark command
-pub use adaptive::*;
-pub use selection::*;
 pub use streaming::*;
 
 #[cfg(feature = "datafusion")]

@@ -606,6 +606,28 @@ impl StreamingColumnCollection {
         }
     }
 
+    /// Fingerprint of each column's currently inferred data type.
+    ///
+    /// Returns a `u64` hash suitable for cheap comparison in
+    /// [`SchemaStabilityTracker`](crate::core::stop_condition::SchemaStabilityTracker).
+    pub fn column_type_fingerprint(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        use crate::core::profile_builder::infer_data_type_streaming;
+
+        let mut hasher = DefaultHasher::new();
+        let mut names: Vec<&String> = self.columns.keys().collect();
+        names.sort();
+        for name in names {
+            let stats = &self.columns[name];
+            let dt = infer_data_type_streaming(stats);
+            name.hash(&mut hasher);
+            std::mem::discriminant(&dt).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
     /// Merge another collection into this one.
     pub fn merge(&mut self, other: StreamingColumnCollection) {
         for (column_name, other_stats) in other.columns {
