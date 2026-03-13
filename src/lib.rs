@@ -37,8 +37,8 @@ pub use core::config::{DataprofConfig, DataprofConfigBuilder};
 pub use core::stop_condition::{StopCondition, StopEvaluator};
 pub use core::validation::{InputValidator, ValidationError};
 
-// Progress tracking (needed for progress callbacks)
-pub use engines::streaming::ProgressInfo;
+// Progress tracking (structured event-based, #223)
+pub use core::progress::{ProgressEvent, ProgressSink};
 
 // Async streaming engine (feature-gated)
 #[cfg(feature = "async-streaming")]
