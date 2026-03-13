@@ -1,14 +1,15 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::time::Duration;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
+use crate::core::progress::{ProgressSink, ProgressTracker};
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::common::MemoryConfig;
-use crate::engines::streaming::{MemoryMappedCsvReader, ProgressCallback, ProgressTracker};
+use crate::engines::streaming::MemoryMappedCsvReader;
 use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 
 /// Incremental profiler that processes data without loading everything into memory
@@ -17,7 +18,8 @@ use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport};
 pub struct IncrementalProfiler {
     chunk_size: ChunkSize,
     sampling_strategy: SamplingStrategy,
-    progress_callback: Option<ProgressCallback>,
+    progress_sink: ProgressSink,
+    progress_interval: Duration,
     memory: MemoryConfig,
     stop_condition: StopCondition,
 }
@@ -27,7 +29,8 @@ impl IncrementalProfiler {
         Self {
             chunk_size: ChunkSize::default(),
             sampling_strategy: SamplingStrategy::None,
-            progress_callback: None,
+            progress_sink: ProgressSink::None,
+            progress_interval: Duration::from_millis(500),
             memory: MemoryConfig::default(),
             stop_condition: StopCondition::Never,
         }
@@ -43,11 +46,9 @@ impl IncrementalProfiler {
         self
     }
 
-    pub fn progress_callback<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(super::ProgressInfo) + Send + Sync + 'static,
-    {
-        self.progress_callback = Some(Arc::new(callback));
+    pub fn progress(mut self, sink: ProgressSink, interval: Duration) -> Self {
+        self.progress_sink = sink;
+        self.progress_interval = interval;
         self
     }
 
@@ -76,17 +77,20 @@ impl IncrementalProfiler {
 
         // Initialize streaming statistics collection
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb);
-        let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
+
+        let mut progress_tracker =
+            ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
 
         // Initialize stop condition evaluator
         let mut stop_eval = StopEvaluator::new(self.stop_condition.clone())
             .with_estimated_total(estimated_total_rows as u64);
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
 
+        progress_tracker.emit_started(Some(estimated_total_rows), Some(file_size_bytes));
+
         let mut headers: Option<csv::StringRecord> = None;
         let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
-        let mut chunk_count = 0;
         let mut offset = 0u64;
         let mut source_exhausted = true;
 
@@ -102,6 +106,10 @@ impl IncrementalProfiler {
             // Store headers from first chunk
             if headers.is_none() && chunk_headers.is_some() {
                 headers = chunk_headers;
+                if let Some(ref h) = headers {
+                    let names: Vec<String> = h.iter().map(|s| s.to_string()).collect();
+                    progress_tracker.emit_schema(names);
+                }
             }
 
             // Process this chunk incrementally
@@ -130,11 +138,18 @@ impl IncrementalProfiler {
             }
 
             iterated_rows += records.len();
-            chunk_count += 1;
             offset += chunk_size_bytes as u64;
 
             // Update progress
-            progress_tracker.update(iterated_rows, Some(estimated_total_rows), chunk_count);
+            let actual_chunk_bytes_for_progress = std::cmp::min(
+                chunk_size_bytes as u64,
+                file_size_bytes.saturating_sub(offset.saturating_sub(chunk_size_bytes as u64)),
+            );
+            progress_tracker.emit_chunk(
+                records.len(),
+                actual_chunk_bytes_for_progress,
+                Some(estimated_total_rows),
+            );
 
             // Check memory pressure and reduce if needed
             if column_stats.is_memory_pressure() {
@@ -175,7 +190,7 @@ impl IncrementalProfiler {
             }
         }
 
-        progress_tracker.finish(iterated_rows);
+        progress_tracker.emit_finished(!source_exhausted);
 
         // Convert streaming statistics to column profiles
         let column_profiles = profile_builder::profiles_from_streaming(&column_stats);

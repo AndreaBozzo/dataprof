@@ -9,8 +9,10 @@
 use anyhow::Result;
 use std::path::Path;
 
+use std::sync::Arc;
+
 use dataprof::{
-    ChunkSize, EngineType, Profiler, ProgressInfo,
+    ChunkSize, EngineType, Profiler, ProgressEvent, ProgressSink,
     core::{DataprofConfig, sampling::SamplingStrategy},
     types::ProfileReport,
 };
@@ -63,19 +65,26 @@ impl ProfilerBuilder {
             profiler = profiler.sampling(SamplingStrategy::Random { size: sample_size });
         }
 
-        // Enable enhanced progress if requested
+        // Enable progress if requested
         if self.options.progress {
-            // Smart progress with memory tracking
-            profiler = profiler.with_enhanced_progress(100); // 100MB leak threshold
-
-            // Add progress callback for real-time stats
-            profiler = profiler.progress_callback(|progress: ProgressInfo| {
-                print!(
-                    "\rProcessing: {:.1}% ({} rows, {:.1} rows/sec)",
-                    progress.percentage, progress.rows_processed, progress.processing_speed
-                );
-                let _ = std::io::Write::flush(&mut std::io::stdout());
-            });
+            let sink = ProgressSink::Callback(Arc::new(|event: ProgressEvent| {
+                if let ProgressEvent::ChunkProcessed {
+                    rows_processed,
+                    percentage,
+                    processing_speed,
+                    ..
+                } = event
+                {
+                    print!(
+                        "\rProcessing: {:.1}% ({} rows, {:.1} rows/sec)",
+                        percentage.unwrap_or(0.0),
+                        rows_processed,
+                        processing_speed
+                    );
+                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                }
+            }));
+            profiler = profiler.progress_sink(sink);
         }
 
         Ok(profiler)

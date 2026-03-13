@@ -1,14 +1,14 @@
 use std::io::Read;
-use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
+use crate::core::progress::{ProgressSink, ProgressTracker};
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
 use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::engines::streaming::{ProgressCallback, ProgressTracker};
 use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, StreamSourceSystem};
 
 use super::async_source::AsyncDataSource;
@@ -39,7 +39,8 @@ pub struct AsyncStreamingProfiler {
     sampling_strategy: SamplingStrategy,
     memory_limit_mb: usize,
     channel_capacity: usize,
-    progress_callback: Option<ProgressCallback>,
+    progress_sink: ProgressSink,
+    progress_interval: Duration,
     stop_condition: StopCondition,
 }
 
@@ -50,7 +51,8 @@ impl AsyncStreamingProfiler {
             sampling_strategy: SamplingStrategy::None,
             memory_limit_mb: 256,
             channel_capacity: 4,
-            progress_callback: None,
+            progress_sink: ProgressSink::None,
+            progress_interval: Duration::from_millis(500),
             stop_condition: StopCondition::Never,
         }
     }
@@ -75,11 +77,9 @@ impl AsyncStreamingProfiler {
         self
     }
 
-    pub fn progress_callback<F>(mut self, callback: F) -> Self
-    where
-        F: Fn(super::ProgressInfo) + Send + Sync + 'static,
-    {
-        self.progress_callback = Some(Arc::new(callback));
+    pub fn progress(mut self, sink: ProgressSink, interval: Duration) -> Self {
+        self.progress_sink = sink;
+        self.progress_interval = interval;
         self
     }
 
@@ -520,11 +520,11 @@ impl AsyncStreamingProfiler {
         DataProfilerError,
     > {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb);
-        let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
+        let mut progress_tracker =
+            ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
         let mut total_rows: usize = 0;
         let mut sampled_rows: usize = 0;
         let mut total_bytes: u64 = 0;
-        let mut chunk_count: usize = 0;
 
         // Initialize stop condition evaluator
         let estimated_total = size_hint.map(|total| total / 50); // ~50 bytes per row
@@ -564,10 +564,12 @@ impl AsyncStreamingProfiler {
             (total as usize) / 50 // rough estimate: ~50 bytes per row
         });
 
+        progress_tracker.emit_started(estimated_total_rows, size_hint);
+        progress_tracker.emit_schema(headers.clone());
+
         // Process data chunks
         while let Some(chunk) = rx.recv().await {
             total_bytes += chunk.bytes_read;
-            chunk_count += 1;
             let chunk_rows = chunk.records.len();
             let chunk_bytes = chunk.bytes_read;
 
@@ -618,14 +620,10 @@ impl AsyncStreamingProfiler {
             }
 
             // Update progress
-            progress_tracker.update(
-                total_rows,
-                estimated_total_rows.or(Some(total_rows + 1000)),
-                chunk_count,
-            );
+            progress_tracker.emit_chunk(chunk_rows, chunk_bytes, estimated_total_rows);
         }
 
-        progress_tracker.finish(total_rows);
+        progress_tracker.emit_finished(truncation_reason.is_some());
 
         Ok((
             headers,
@@ -774,6 +772,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_progress_callback_fires() {
+        use crate::core::progress::{ProgressEvent, ProgressSink};
+        use std::sync::Arc;
+
         let progress_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count_clone = progress_count.clone();
 
@@ -792,12 +793,16 @@ mod tests {
             },
         );
 
-        let profiler = AsyncStreamingProfiler::new().progress_callback(move |_info| {
+        let sink = ProgressSink::Callback(Arc::new(move |_event: ProgressEvent| {
             count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        });
+        }));
+
+        let profiler =
+            AsyncStreamingProfiler::new().progress(sink, std::time::Duration::from_millis(0));
 
         let _report = profiler.analyze_stream(source).await.unwrap();
-        assert!(progress_count.load(std::sync::atomic::Ordering::Relaxed) >= 1);
+        // Should have at least Started + Finished
+        assert!(progress_count.load(std::sync::atomic::Ordering::Relaxed) >= 2);
     }
 
     #[tokio::test]

@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::core::errors::DataProfilerError;
+use crate::core::progress::{ProgressEvent, ProgressSink};
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::StopCondition;
 use crate::engines::adaptive::AdaptiveProfiler;
-use crate::engines::streaming::ProgressInfo;
 use crate::types::{DataSource, FileFormat, ProfileReport};
 
 /// Which engine to use for profiling
@@ -29,6 +30,7 @@ pub struct ProfilerConfig {
     pub memory_limit_mb: Option<usize>,
     pub format_override: Option<FileFormat>,
     pub stop_condition: StopCondition,
+    pub progress_interval: Duration,
 }
 
 impl Default for ProfilerConfig {
@@ -40,6 +42,7 @@ impl Default for ProfilerConfig {
             memory_limit_mb: None,
             format_override: None,
             stop_condition: StopCondition::Never,
+            progress_interval: Duration::from_millis(500),
         }
     }
 }
@@ -65,8 +68,7 @@ impl Default for ProfilerConfig {
 /// ```
 pub struct Profiler {
     config: ProfilerConfig,
-    progress_callback: Option<Arc<dyn Fn(ProgressInfo) + Send + Sync>>,
-    enhanced_progress: Option<usize>,
+    progress_sink: ProgressSink,
 }
 
 impl Profiler {
@@ -74,8 +76,7 @@ impl Profiler {
     pub fn new() -> Self {
         Self {
             config: ProfilerConfig::default(),
-            progress_callback: None,
-            enhanced_progress: None,
+            progress_sink: ProgressSink::None,
         }
     }
 
@@ -83,8 +84,7 @@ impl Profiler {
     pub fn with_config(config: ProfilerConfig) -> Self {
         Self {
             config,
-            progress_callback: None,
-            enhanced_progress: None,
+            progress_sink: ProgressSink::None,
         }
     }
 
@@ -129,40 +129,36 @@ impl Profiler {
         self
     }
 
-    /// Set a progress callback for real-time updates
+    /// Set the progress update interval (default: 500ms)
+    pub fn progress_interval(mut self, interval: Duration) -> Self {
+        self.config.progress_interval = interval;
+        self
+    }
+
+    /// Set a progress sink for receiving structured progress events.
     ///
-    /// Note: Progress callbacks are only effective with `EngineType::Incremental`.
-    /// With `EngineType::Auto` and `EngineType::Columnar`, progress callbacks are
-    /// ignored and will not be invoked.
-    pub fn progress_callback<F>(mut self, callback: F) -> Self
+    /// Note: Progress events are only emitted by `EngineType::Incremental`.
+    /// With `EngineType::Auto` and `EngineType::Columnar`, the sink is ignored.
+    pub fn progress_sink(mut self, sink: ProgressSink) -> Self {
+        self.progress_sink = sink;
+        self
+    }
+
+    /// Set a synchronous callback for progress events (convenience method).
+    ///
+    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
+    pub fn on_progress<F>(mut self, callback: F) -> Self
     where
-        F: Fn(ProgressInfo) + Send + Sync + 'static,
+        F: Fn(ProgressEvent) + Send + Sync + 'static,
     {
-        self.progress_callback = Some(Arc::new(callback));
+        self.progress_sink = ProgressSink::Callback(Arc::new(callback));
         self
     }
 
-    /// Enable enhanced progress tracking with memory monitoring
-    ///
-    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
-    pub fn with_enhanced_progress(mut self, leak_threshold_mb: usize) -> Self {
-        self.enhanced_progress = Some(leak_threshold_mb);
-        self
-    }
-
-    /// Enable enhanced progress with smart defaults based on terminal context
-    ///
-    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
-    /// Requires the `cli` feature for terminal detection; otherwise a no-op.
-    #[allow(unused_mut)]
-    pub fn with_smart_progress(mut self) -> Self {
-        #[cfg(feature = "cli")]
-        {
-            use crate::output::supports_enhanced_output;
-            if supports_enhanced_output() {
-                self.enhanced_progress = Some(100); // 100MB threshold
-            }
-        }
+    /// Set an async channel for progress events (requires `async-streaming` feature).
+    #[cfg(feature = "async-streaming")]
+    pub fn progress_channel(mut self, tx: tokio::sync::mpsc::Sender<ProgressEvent>) -> Self {
+        self.progress_sink = ProgressSink::Channel(tx);
         self
     }
 
@@ -250,15 +246,11 @@ impl Profiler {
 
         use crate::engines::streaming::IncrementalProfiler;
 
-        let mut profiler = IncrementalProfiler::new()
+        let profiler = IncrementalProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
             .sampling(self.config.sampling.clone())
-            .stop_condition(self.config.stop_condition.clone());
-
-        if let Some(ref callback) = self.progress_callback {
-            let cb = Arc::clone(callback);
-            profiler = profiler.progress_callback(move |info| cb(info));
-        }
+            .stop_condition(self.config.stop_condition.clone())
+            .progress(self.progress_sink.clone(), self.config.progress_interval);
 
         profiler.analyze_file(file_path)
     }
