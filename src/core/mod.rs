@@ -5,6 +5,7 @@ pub mod performance;
 pub mod profile_builder;
 pub mod report_assembler;
 pub mod sampling;
+pub mod stop_condition;
 pub mod streaming_stats;
 pub mod validation;
 
@@ -15,6 +16,7 @@ pub use memory_tracker::*;
 pub use performance::*;
 pub use report_assembler::*;
 pub use sampling::*;
+pub use stop_condition::*;
 pub use streaming_stats::*;
 pub use validation::*;
 

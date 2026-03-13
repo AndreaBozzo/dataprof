@@ -606,6 +606,24 @@ impl StreamingColumnCollection {
         }
     }
 
+    /// Snapshot of each column's currently inferred data type.
+    ///
+    /// Returns a sorted list of `"column_name:DataType"` strings suitable for
+    /// comparison in [`SchemaStabilityTracker`](crate::core::stop_condition::SchemaStabilityTracker).
+    pub fn column_type_snapshot(&self) -> Vec<String> {
+        use crate::core::profile_builder::infer_data_type_streaming;
+        let mut snapshot: Vec<String> = self
+            .columns
+            .iter()
+            .map(|(name, stats)| {
+                let dt = infer_data_type_streaming(stats);
+                format!("{}:{:?}", name, dt)
+            })
+            .collect();
+        snapshot.sort();
+        snapshot
+    }
+
     /// Merge another collection into this one.
     pub fn merge(&mut self, other: StreamingColumnCollection) {
         for (column_name, other_stats) in other.columns {

@@ -34,6 +34,7 @@ pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use parsers::CsvDiagnostics;
 
 pub use core::config::{DataprofConfig, DataprofConfigBuilder};
+pub use core::stop_condition::{StopCondition, StopEvaluator};
 pub use core::validation::{InputValidator, ValidationError};
 
 // Progress tracking (needed for progress callbacks)

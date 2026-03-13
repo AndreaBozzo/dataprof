@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
+use crate::core::stop_condition::StopCondition;
 use crate::engines::streaming::ProgressInfo;
 use crate::engines::{AdaptiveProfiler, ProcessingType};
 use crate::types::{DataSource, FileFormat, ProfileReport};
@@ -27,6 +28,7 @@ pub struct ProfilerConfig {
     pub sampling: SamplingStrategy,
     pub memory_limit_mb: Option<usize>,
     pub format_override: Option<FileFormat>,
+    pub stop_condition: StopCondition,
 }
 
 impl Default for ProfilerConfig {
@@ -37,6 +39,7 @@ impl Default for ProfilerConfig {
             sampling: SamplingStrategy::None,
             memory_limit_mb: None,
             format_override: None,
+            stop_condition: StopCondition::Never,
         }
     }
 }
@@ -106,6 +109,15 @@ impl Profiler {
     /// Set the memory limit in megabytes (applies to Incremental and Columnar engines)
     pub fn memory_limit_mb(mut self, mb: usize) -> Self {
         self.config.memory_limit_mb = Some(mb);
+        self
+    }
+
+    /// Set a stop condition for early termination.
+    ///
+    /// Only effective with `EngineType::Incremental` (sync) and the async
+    /// streaming profiler. Ignored for other engines.
+    pub fn stop_when(mut self, condition: StopCondition) -> Self {
+        self.config.stop_condition = condition;
         self
     }
 
@@ -244,7 +256,8 @@ impl Profiler {
 
         let mut profiler = IncrementalProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
-            .sampling(self.config.sampling.clone());
+            .sampling(self.config.sampling.clone())
+            .stop_condition(self.config.stop_condition.clone());
 
         if let Some(ref callback) = self.progress_callback {
             let cb = Arc::clone(callback);

@@ -6,6 +6,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
+use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::streaming::{ProgressCallback, ProgressTracker};
 use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, StreamSourceSystem};
@@ -39,6 +40,7 @@ pub struct AsyncStreamingProfiler {
     memory_limit_mb: usize,
     channel_capacity: usize,
     progress_callback: Option<ProgressCallback>,
+    stop_condition: StopCondition,
 }
 
 impl AsyncStreamingProfiler {
@@ -49,6 +51,7 @@ impl AsyncStreamingProfiler {
             memory_limit_mb: 256,
             channel_capacity: 4,
             progress_callback: None,
+            stop_condition: StopCondition::Never,
         }
     }
 
@@ -77,6 +80,11 @@ impl AsyncStreamingProfiler {
         F: Fn(super::ProgressInfo) + Send + Sync + 'static,
     {
         self.progress_callback = Some(Arc::new(callback));
+        self
+    }
+
+    pub fn stop_condition(mut self, condition: StopCondition) -> Self {
+        self.stop_condition = condition;
         self
     }
 
@@ -124,13 +132,14 @@ impl AsyncStreamingProfiler {
         let process_result = self.process_chunks(rx, source_info.size_hint).await;
 
         // If processing failed, abort the reader task to avoid leaking it
-        let (_headers, column_stats, total_rows, sampled_rows, total_bytes) = match process_result {
-            Ok(result) => result,
-            Err(e) => {
-                reader_handle.abort();
-                return Err(e);
-            }
-        };
+        let (_headers, column_stats, total_rows, sampled_rows, total_bytes, truncation_reason) =
+            match process_result {
+                Ok(result) => result,
+                Err(e) => {
+                    reader_handle.abort();
+                    return Err(e);
+                }
+            };
 
         // Wait for the reader task to finish and propagate any errors
         match reader_handle.await {
@@ -168,7 +177,10 @@ impl AsyncStreamingProfiler {
 
         let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms)
             .with_bytes_consumed(total_bytes);
-        if total_rows > 0 && sampled_rows < total_rows {
+
+        if let Some(reason) = truncation_reason {
+            execution = execution.with_truncation(reason);
+        } else if total_rows > 0 && sampled_rows < total_rows {
             let ratio = sampled_rows as f64 / total_rows as f64;
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
@@ -491,19 +503,37 @@ impl AsyncStreamingProfiler {
 
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
     ///
-    /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read).
+    /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read, truncation_reason).
     async fn process_chunks(
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
         size_hint: Option<u64>,
-    ) -> Result<(Vec<String>, StreamingColumnCollection, usize, usize, u64), DataProfilerError>
-    {
+    ) -> Result<
+        (
+            Vec<String>,
+            StreamingColumnCollection,
+            usize,
+            usize,
+            u64,
+            Option<crate::types::TruncationReason>,
+        ),
+        DataProfilerError,
+    > {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb);
         let mut progress_tracker = ProgressTracker::new(self.progress_callback.clone());
         let mut total_rows: usize = 0;
         let mut sampled_rows: usize = 0;
         let mut total_bytes: u64 = 0;
         let mut chunk_count: usize = 0;
+
+        // Initialize stop condition evaluator
+        let estimated_total = size_hint.map(|total| total / 50); // ~50 bytes per row
+        let mut stop_eval = StopEvaluator::new(self.stop_condition.clone());
+        if let Some(est) = estimated_total {
+            stop_eval = stop_eval.with_estimated_total(est);
+        }
+        let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
+        let mut truncation_reason: Option<crate::types::TruncationReason> = None;
 
         // First chunk is always headers
         let header_chunk = rx
@@ -539,6 +569,7 @@ impl AsyncStreamingProfiler {
             total_bytes += chunk.bytes_read;
             chunk_count += 1;
             let chunk_rows = chunk.records.len();
+            let chunk_bytes = chunk.bytes_read;
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
                 let global_row_idx = total_rows + row_idx;
@@ -562,6 +593,30 @@ impl AsyncStreamingProfiler {
                 column_stats.reduce_memory_usage();
             }
 
+            // Evaluate stop condition
+            let memory_fraction = if self.memory_limit_mb > 0 {
+                column_stats.memory_usage_bytes() as f64
+                    / (self.memory_limit_mb * 1024 * 1024) as f64
+            } else {
+                0.0
+            };
+
+            if stop_eval.update(chunk_rows as u64, chunk_bytes, memory_fraction) {
+                truncation_reason = stop_eval.truncation_reason();
+                drop(rx); // signal reader task to stop
+                break;
+            }
+
+            // Check schema stability
+            if let Some(ref mut tracker) = schema_tracker {
+                let snapshot = column_stats.column_type_snapshot();
+                if tracker.update(snapshot) {
+                    truncation_reason = Some(tracker.truncation_reason());
+                    drop(rx);
+                    break;
+                }
+            }
+
             // Update progress
             progress_tracker.update(
                 total_rows,
@@ -572,7 +627,14 @@ impl AsyncStreamingProfiler {
 
         progress_tracker.finish(total_rows);
 
-        Ok((headers, column_stats, total_rows, sampled_rows, total_bytes))
+        Ok((
+            headers,
+            column_stats,
+            total_rows,
+            sampled_rows,
+            total_bytes,
+            truncation_reason,
+        ))
     }
 
     /// Calculate rows per chunk based on ChunkSize config.
@@ -752,5 +814,37 @@ mod tests {
         let profiler = AsyncStreamingProfiler::new();
         let result = profiler.analyze_stream(source).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_early_stop_max_rows() {
+        let mut data = String::from("id,value\n");
+        for i in 0..10_000 {
+            data.push_str(&format!("{},val_{}\n", i, i));
+        }
+
+        let source = BytesSource::new(
+            bytes::Bytes::from(data),
+            AsyncSourceInfo {
+                label: "stop-test".into(),
+                format: FileFormat::Csv,
+                size_hint: None,
+                source_system: None,
+            },
+        );
+
+        let profiler = AsyncStreamingProfiler::new().stop_condition(StopCondition::MaxRows(100));
+        let report = profiler.analyze_stream(source).await.unwrap();
+
+        assert!(
+            report.execution.rows_processed < 10_000,
+            "Should stop before processing all rows, got {}",
+            report.execution.rows_processed
+        );
+        assert!(!report.execution.source_exhausted);
+        assert!(matches!(
+            report.execution.truncation_reason,
+            Some(crate::types::TruncationReason::MaxRows(100))
+        ));
     }
 }
