@@ -46,20 +46,14 @@ impl AdaptiveProfiler {
                     InternalEngineType::Arrow => InternalEngineType::Incremental,
                     InternalEngineType::Incremental => InternalEngineType::Arrow,
                 };
-                log::warn!(
-                    "Fallback: {:?} → {:?} — {}",
-                    engine,
-                    fallback,
-                    primary_err
-                );
-                self.try_engine(&fallback, file_path).map_err(|fallback_err| {
-                    DataProfilerError::AllEnginesFailed {
+                log::warn!("Fallback: {:?} → {:?} — {}", engine, fallback, primary_err);
+                self.try_engine(&fallback, file_path)
+                    .map_err(|fallback_err| DataProfilerError::AllEnginesFailed {
                         message: format!(
                             "All engines failed. Primary ({:?}): {}. Fallback ({:?}): {}.",
                             engine, primary_err, fallback, fallback_err
                         ),
-                    }
-                })
+                    })
             }
         }
     }
@@ -124,9 +118,7 @@ impl AdaptiveProfiler {
                 use crate::engines::columnar::ArrowProfiler;
                 ArrowProfiler::new().analyze_csv_file(file_path)
             }
-            InternalEngineType::Incremental => {
-                IncrementalProfiler::new().analyze_file(file_path)
-            }
+            InternalEngineType::Incremental => IncrementalProfiler::new().analyze_file(file_path),
         }
     }
 }
