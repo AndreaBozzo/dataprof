@@ -195,7 +195,7 @@ impl Profiler {
     }
 
     /// Detect file format from extension
-    fn detect_format(file_path: &Path) -> FileFormat {
+    pub(crate) fn detect_format(file_path: &Path) -> FileFormat {
         file_path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -288,6 +288,218 @@ impl Profiler {
 impl Default for Profiler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Async streaming API (feature-gated)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "async-streaming")]
+impl Profiler {
+    /// Profile data from any async byte stream.
+    ///
+    /// This is the primary async entry point for embedding dataprof in async
+    /// services. The stream is consumed incrementally — memory usage is bounded
+    /// regardless of total data size.
+    ///
+    /// Supports CSV, JSON, and JSONL formats. For Parquet, use [`profile_file`](Self::profile_file)
+    /// or [`profile_url`](Self::profile_url) (requires `parquet-async` feature) since Parquet
+    /// requires seeking to the file footer.
+    ///
+    /// Note: `EngineType` is ignored — async profiling always uses the streaming
+    /// pipeline internally.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use dataprof::{Profiler, AsyncSourceInfo, BytesSource, FileFormat};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let csv_data = b"name,age\nAlice,30\nBob,25\n";
+    /// let source = BytesSource::new(
+    ///     bytes::Bytes::from_static(csv_data),
+    ///     AsyncSourceInfo {
+    ///         label: "request-body".into(),
+    ///         format: FileFormat::Csv,
+    ///         size_hint: Some(csv_data.len() as u64),
+    ///         source_system: None,
+    ///     },
+    /// );
+    ///
+    /// let report = Profiler::new().profile_stream(source).await?;
+    /// println!("Columns: {}", report.execution.columns_detected);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn profile_stream(
+        &self,
+        source: impl crate::engines::streaming::AsyncDataSource,
+    ) -> Result<ProfileReport, DataProfilerError> {
+        use crate::engines::streaming::AsyncStreamingProfiler;
+
+        let mut profiler = AsyncStreamingProfiler::new()
+            .chunk_size(self.config.chunk_size.clone())
+            .sampling(self.config.sampling.clone())
+            .stop_condition(self.config.stop_condition.clone())
+            .progress(self.progress_sink.clone(), self.config.progress_interval);
+
+        if let Some(mb) = self.config.memory_limit_mb {
+            profiler = profiler.memory_limit_mb(mb);
+        }
+
+        profiler.analyze_stream(source).await
+    }
+
+    /// Profile a local file asynchronously.
+    ///
+    /// Detects the format from the file extension (override with [`.format()`](Self::format)).
+    /// All formats are supported, including Parquet (handled via `spawn_blocking`).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use dataprof::Profiler;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let report = Profiler::new().profile_file("data.csv").await?;
+    /// println!("Rows: {}", report.execution.rows_processed);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn profile_file<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+    ) -> Result<ProfileReport, DataProfilerError> {
+        use crate::engines::streaming::async_source::AsyncSourceInfo;
+
+        let path = file_path.as_ref();
+        let format = self
+            .config
+            .format_override
+            .clone()
+            .unwrap_or_else(|| Self::detect_format(path));
+
+        match format {
+            FileFormat::Parquet => {
+                // Parquet requires seeking — delegate to sync parser on a blocking thread.
+                let path = path.to_path_buf();
+                tokio::task::spawn_blocking(move || {
+                    crate::parsers::parquet::analyze_parquet_with_quality(&path)
+                })
+                .await
+                .map_err(|e| DataProfilerError::StreamingError {
+                    message: format!("Blocking task failed: {e}"),
+                })?
+            }
+            FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
+                let metadata =
+                    tokio::fs::metadata(path)
+                        .await
+                        .map_err(|e| DataProfilerError::IoError {
+                            message: format!("{}: {e}", path.display()),
+                        })?;
+                let file =
+                    tokio::fs::File::open(path)
+                        .await
+                        .map_err(|e| DataProfilerError::IoError {
+                            message: format!("{}: {e}", path.display()),
+                        })?;
+                let info = AsyncSourceInfo {
+                    label: path.display().to_string(),
+                    format,
+                    size_hint: Some(metadata.len()),
+                    source_system: Some(crate::types::StreamSourceSystem::Custom("file".into())),
+                };
+                self.profile_stream((file, info)).await
+            }
+            FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedDataSource {
+                message: format!(
+                    "Unknown file format '.{ext}'. Use .format() to override detection."
+                ),
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "parquet-async")]
+impl Profiler {
+    /// Profile data from a remote URL.
+    ///
+    /// Supports all formats. For Parquet, HTTP Range requests are used to read
+    /// the footer without downloading the entire file. For CSV/JSON/JSONL, the
+    /// response body is streamed incrementally.
+    ///
+    /// Format is detected from the URL path extension. Use [`.format()`](Self::format)
+    /// to override when the URL has no extension (e.g., API endpoints).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use dataprof::{Profiler, FileFormat};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let report = Profiler::new()
+    ///     .format(FileFormat::Csv)
+    ///     .profile_url("https://example.com/api/data")
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn profile_url(&self, url: &str) -> Result<ProfileReport, DataProfilerError> {
+        use crate::engines::streaming::async_source::{AsyncSourceInfo, ReqwestSource};
+
+        // Detect format from URL path, respecting format_override.
+        // Extract the last path segment to avoid OS-specific Path parsing issues
+        // (e.g., Windows treating "https:" as a drive prefix).
+        let format = self.config.format_override.clone().unwrap_or_else(|| {
+            let without_query = url.split('?').next().unwrap_or(url);
+            let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+            let last_segment = without_fragment.rsplit('/').next().unwrap_or("");
+            Self::detect_format(Path::new(last_segment))
+        });
+
+        match format {
+            FileFormat::Parquet => {
+                crate::parsers::parquet_async::analyze_parquet_async_http(
+                    url,
+                    &crate::parsers::parquet::ParquetConfig::default(),
+                )
+                .await
+            }
+            FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
+                let response =
+                    reqwest::get(url)
+                        .await
+                        .map_err(|e| DataProfilerError::StreamingError {
+                            message: format!("HTTP request failed: {e}"),
+                        })?;
+
+                let status = response.status();
+                if !status.is_success() {
+                    return Err(DataProfilerError::StreamingError {
+                        message: format!("HTTP {status} for {url}"),
+                    });
+                }
+
+                let size_hint = response.content_length();
+                let source = ReqwestSource::new(
+                    response,
+                    AsyncSourceInfo {
+                        label: url.to_string(),
+                        format,
+                        size_hint,
+                        source_system: Some(crate::types::StreamSourceSystem::Http),
+                    },
+                );
+                self.profile_stream(source).await
+            }
+            FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedDataSource {
+                message: format!(
+                    "Unknown format '.{ext}' in URL. Use .format() to specify the data format."
+                ),
+            }),
+        }
     }
 }
 
