@@ -45,13 +45,16 @@ impl MemoryMappedCsvReader {
         self.file_size
     }
 
-    /// Read a chunk of the file starting at the given byte offset
-    pub fn read_chunk(&self, offset: u64, chunk_size: usize) -> Result<Vec<String>> {
+    /// Read a chunk of the file starting at the given byte offset.
+    ///
+    /// Returns `(lines, actual_bytes_consumed)` where `actual_bytes_consumed`
+    /// accounts for line-boundary trimming and may be less than `chunk_size`.
+    pub fn read_chunk(&self, offset: u64, chunk_size: usize) -> Result<(Vec<String>, usize)> {
         let start = offset as usize;
         let end = std::cmp::min(start + chunk_size, self.mmap.len());
 
         if start >= self.mmap.len() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
 
         // Get the chunk data
@@ -59,6 +62,7 @@ impl MemoryMappedCsvReader {
 
         // Find line boundaries to avoid cutting lines in half
         let adjusted_chunk = self.find_line_boundary(chunk_data, start > 0);
+        let actual_bytes = adjusted_chunk.len();
 
         // Parse lines from the chunk
         let cursor = Cursor::new(adjusted_chunk);
@@ -69,20 +73,22 @@ impl MemoryMappedCsvReader {
             lines.push(line?);
         }
 
-        Ok(lines)
+        Ok((lines, actual_bytes))
     }
 
-    /// Parse CSV records from memory-mapped data in chunks
+    /// Parse CSV records from memory-mapped data in chunks.
+    ///
+    /// Returns `(headers, records, actual_bytes_consumed)`.
     pub fn read_csv_chunk(
         &self,
         offset: u64,
         chunk_size: usize,
         has_headers: bool,
-    ) -> Result<(Option<csv::StringRecord>, Vec<csv::StringRecord>)> {
-        let lines = self.read_chunk(offset, chunk_size)?;
+    ) -> Result<(Option<csv::StringRecord>, Vec<csv::StringRecord>, usize)> {
+        let (lines, actual_bytes) = self.read_chunk(offset, chunk_size)?;
 
         if lines.is_empty() {
-            return Ok((None, Vec::new()));
+            return Ok((None, Vec::new(), 0));
         }
 
         // Create a CSV reader from the chunk data
@@ -102,7 +108,7 @@ impl MemoryMappedCsvReader {
             records.push(result?);
         }
 
-        Ok((headers, records))
+        Ok((headers, records, actual_bytes))
     }
 
     /// Find the next line boundary to avoid cutting CSV records in half
@@ -203,7 +209,7 @@ mod tests {
         assert!(reader.file_size() > 0);
 
         // Read the entire file as one chunk
-        let (headers, records) = reader.read_csv_chunk(0, 1024, true)?;
+        let (headers, records, _bytes) = reader.read_csv_chunk(0, 1024, true)?;
 
         assert!(headers.is_some());
         assert_eq!(records.len(), 3);

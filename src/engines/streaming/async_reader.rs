@@ -771,7 +771,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_progress_callback_fires() {
+    async fn test_progress_events_fire() {
         use crate::core::progress::{ProgressEvent, ProgressSink};
         use std::sync::Arc;
 

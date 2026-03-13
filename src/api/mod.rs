@@ -23,6 +23,7 @@ pub enum EngineType {
 
 /// Plain-data configuration for a profiler
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ProfilerConfig {
     pub engine: EngineType,
     pub chunk_size: ChunkSize,

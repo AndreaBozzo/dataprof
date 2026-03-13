@@ -86,7 +86,10 @@ impl IncrementalProfiler {
             .with_estimated_total(estimated_total_rows as u64);
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
 
-        progress_tracker.emit_started(Some(estimated_total_rows), Some(file_size_bytes));
+        // estimate_row_count includes the header line; subtract 1 for data-only count
+        let estimated_data_rows = estimated_total_rows.saturating_sub(1);
+
+        progress_tracker.emit_started(Some(estimated_data_rows), Some(file_size_bytes));
 
         let mut headers: Option<csv::StringRecord> = None;
         let mut iterated_rows = 0;
@@ -96,10 +99,10 @@ impl IncrementalProfiler {
 
         // Process file in chunks using true streaming
         loop {
-            let (chunk_headers, records) =
+            let (chunk_headers, records, actual_bytes) =
                 reader.read_csv_chunk(offset, chunk_size_bytes, headers.is_none())?;
 
-            if records.is_empty() {
+            if records.is_empty() && actual_bytes == 0 {
                 break;
             }
 
@@ -138,17 +141,13 @@ impl IncrementalProfiler {
             }
 
             iterated_rows += records.len();
-            offset += chunk_size_bytes as u64;
+            offset += actual_bytes as u64;
 
             // Update progress
-            let actual_chunk_bytes_for_progress = std::cmp::min(
-                chunk_size_bytes as u64,
-                file_size_bytes.saturating_sub(offset.saturating_sub(chunk_size_bytes as u64)),
-            );
             progress_tracker.emit_chunk(
                 records.len(),
-                actual_chunk_bytes_for_progress,
-                Some(estimated_total_rows),
+                actual_bytes as u64,
+                Some(estimated_data_rows),
             );
 
             // Check memory pressure and reduce if needed
@@ -164,12 +163,7 @@ impl IncrementalProfiler {
                 0.0
             };
 
-            let actual_chunk_bytes = std::cmp::min(
-                chunk_size_bytes as u64,
-                file_size_bytes.saturating_sub(offset),
-            );
-
-            if stop_eval.update(records.len() as u64, actual_chunk_bytes, memory_fraction) {
+            if stop_eval.update(records.len() as u64, actual_bytes as u64, memory_fraction) {
                 source_exhausted = false;
                 break;
             }
@@ -184,8 +178,8 @@ impl IncrementalProfiler {
                 }
             }
 
-            // Break if we've read all data (small chunk indicates EOF)
-            if records.len() < 100 {
+            // Break if we've consumed the entire file
+            if offset >= file_size_bytes {
                 break;
             }
         }
