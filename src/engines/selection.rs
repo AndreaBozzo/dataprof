@@ -44,7 +44,6 @@ pub struct EngineRecommendation {
 pub enum InternalEngineType {
     Arrow,
     Incremental,
-    MemoryMapped,
 }
 
 /// Intelligent engine selector
@@ -228,10 +227,7 @@ impl EngineSelector {
             InternalEngineType::Incremental,
             self.score_incremental(characteristics, &processing_type),
         );
-        scores.insert(
-            InternalEngineType::MemoryMapped,
-            self.score_memory_mapped(characteristics, &processing_type),
-        );
+
         // Find the best engine
         let mut sorted_engines: Vec<_> = scores.into_iter().collect();
         sorted_engines.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -327,33 +323,6 @@ impl EngineSelector {
         score.min(1.0)
     }
 
-    fn score_memory_mapped(
-        &self,
-        characteristics: &FileCharacteristics,
-        _processing_type: &ProcessingType,
-    ) -> f64 {
-        let mut score: f64 = 0.0;
-
-        // Good for medium-sized files
-        if characteristics.file_size_mb > 50.0 && characteristics.file_size_mb < 500.0 {
-            score += 0.4;
-        }
-
-        // Good balance of memory and performance
-        if self.system_resources.memory_pressure > 0.3
-            && self.system_resources.memory_pressure < 0.7
-        {
-            score += 0.3;
-        }
-
-        // Moderate complexity
-        if characteristics.complexity_score > 0.3 && characteristics.complexity_score < 0.7 {
-            score += 0.3;
-        }
-
-        score.min(1.0)
-    }
-
     fn generate_reasoning(
         &self,
         engine: &InternalEngineType,
@@ -369,10 +338,6 @@ impl EngineSelector {
             InternalEngineType::Incremental => format!(
                 "Incremental profiler selected for {:.1}MB file due to memory constraints (pressure: {:.1}) or streaming requirements.",
                 characteristics.file_size_mb, self.system_resources.memory_pressure
-            ),
-            InternalEngineType::MemoryMapped => format!(
-                "Memory-mapped profiler selected for {:.1}MB file with moderate complexity ({:.2}).",
-                characteristics.file_size_mb, characteristics.complexity_score
             ),
         }
     }
@@ -411,12 +376,10 @@ mod tests {
         let recommendation =
             selector.select_engine(&characteristics, ProcessingType::BatchAnalysis);
 
-        // Small files should select one of the remaining engines (not Buffered, which is deprecated)
+        // Small files should select one of the available engines
         assert!(matches!(
             recommendation.primary_engine,
-            InternalEngineType::Arrow
-                | InternalEngineType::Incremental
-                | InternalEngineType::MemoryMapped
+            InternalEngineType::Arrow | InternalEngineType::Incremental
         ));
 
         Ok(())

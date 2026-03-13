@@ -28,7 +28,7 @@ use anyhow::Result;
 use criterion::{
     BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
 };
-use dataprof::{engines::streaming::buffered::BufferedProfiler, types::ProfileReport};
+use dataprof::types::ProfileReport;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;
@@ -319,8 +319,8 @@ criterion_main!(quick_benches, full_benches);
 // ============================================================================
 
 fn analyze_csv(path: &std::path::Path) -> Result<ProfileReport> {
-    // Progress output disabilitato: istanza base senza logger
-    let mut profiler = BufferedProfiler::new();
+    use dataprof::Profiler;
 
-    Ok(profiler.analyze_file(path)?)
+    let report = Profiler::new().analyze_file(path)?;
+    Ok(report)
 }

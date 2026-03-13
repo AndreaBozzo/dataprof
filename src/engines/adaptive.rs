@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::core::errors::DataProfilerError;
 use crate::engines::selection::{EngineSelector, InternalEngineType, ProcessingType};
-use crate::engines::streaming::{IncrementalProfiler, MappedProfiler};
+use crate::engines::streaming::IncrementalProfiler;
 use crate::types::ProfileReport;
 
 /// Performance metrics for engine execution
@@ -247,10 +247,6 @@ impl AdaptiveProfiler {
             }
             InternalEngineType::Incremental => {
                 let profiler = IncrementalProfiler::new();
-                profiler.analyze_file(file_path)
-            }
-            InternalEngineType::MemoryMapped => {
-                let profiler = MappedProfiler::new();
                 profiler.analyze_file(file_path)
             }
         };

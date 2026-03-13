@@ -1,7 +1,6 @@
 pub mod config;
 pub mod errors;
 pub mod memory_tracker;
-pub mod performance;
 pub mod profile_builder;
 pub mod report_assembler;
 pub mod sampling;
@@ -13,7 +12,6 @@ pub mod validation;
 pub use config::*;
 pub use errors::*;
 pub use memory_tracker::*;
-pub use performance::*;
 pub use report_assembler::*;
 pub use sampling::*;
 pub use stop_condition::*;
