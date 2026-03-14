@@ -1,14 +1,12 @@
-#![allow(clippy::useless_conversion)]
-
-use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use crate::types::{
     ColumnProfile, ColumnStats, DataSource, DataType, ProfileReport, QualityMetrics,
+    TruncationReason,
 };
 
-/// Python wrapper for ColumnProfile
-#[pyclass]
+/// Python wrapper for ColumnProfile — column-level statistics.
+#[pyclass(name = "ColumnProfile")]
 #[derive(Clone)]
 pub struct PyColumnProfile {
     #[pyo3(get)]
@@ -70,7 +68,6 @@ impl From<&ColumnProfile> for PyColumnProfile {
             0.0
         };
 
-        // Extract numeric statistics from ColumnStats
         let (
             min,
             max,
@@ -143,221 +140,34 @@ impl From<&ColumnProfile> for PyColumnProfile {
     }
 }
 
-// PyQualityIssue removed - use QualityMetrics instead
-
-/// Python wrapper for ProfileReport
-#[pyclass]
-#[derive(Clone)]
-pub struct PyQualityReport {
-    #[pyo3(get)]
-    pub file_path: String,
-    #[pyo3(get)]
-    pub total_rows: Option<usize>,
-    #[pyo3(get)]
-    pub total_columns: usize,
-    #[pyo3(get)]
-    pub column_profiles: Vec<PyColumnProfile>,
-    #[pyo3(get)]
-    pub rows_scanned: usize,
-    #[pyo3(get)]
-    pub sampling_ratio: f64,
-    #[pyo3(get)]
-    pub scan_time_ms: u128,
-    #[pyo3(get)]
-    pub data_quality_metrics: PyDataQualityMetrics,
-    /// Data source type: "file", "query", or "dataframe"
-    #[pyo3(get)]
-    pub source_type: String,
-    /// Source library for DataFrame sources (e.g. "pandas", "polars", "pyarrow")
-    #[pyo3(get)]
-    pub source_library: Option<String>,
-    /// Memory usage in bytes for DataFrame sources
-    #[pyo3(get)]
-    pub memory_bytes: Option<u64>,
-}
-
-impl From<&ProfileReport> for PyQualityReport {
-    fn from(report: &ProfileReport) -> Self {
-        let (source_type, source_library, memory_bytes) = match &report.data_source {
-            DataSource::File { .. } => ("file".to_string(), None, None),
-            DataSource::Query { .. } => ("query".to_string(), None, None),
-            DataSource::DataFrame {
-                source_library,
-                memory_bytes,
-                ..
-            } => (
-                "dataframe".to_string(),
-                Some(source_library.to_string()),
-                *memory_bytes,
-            ),
-            DataSource::Stream { .. } => ("stream".to_string(), None, None),
-        };
-
-        Self {
-            file_path: report.data_source.identifier(),
-            total_rows: if report.execution.source_exhausted {
-                Some(report.execution.rows_processed)
-            } else {
-                None
-            },
-            total_columns: report.execution.columns_detected,
-            column_profiles: report
-                .column_profiles
-                .iter()
-                .map(PyColumnProfile::from)
-                .collect(),
-            rows_scanned: report.execution.rows_processed,
-            sampling_ratio: report.execution.sampling_ratio.unwrap_or(1.0),
-            scan_time_ms: report.execution.scan_time_ms,
-            data_quality_metrics: report
-                .quality
-                .as_ref()
-                .map(|q| PyDataQualityMetrics::from(&q.metrics))
-                .unwrap_or_else(PyDataQualityMetrics::empty),
-            source_type,
-            source_library,
-            memory_bytes,
-        }
-    }
-}
-
-#[pymethods]
-impl PyQualityReport {
-    /// Calculate overall quality score (0-100) using QualityMetrics.
-    ///
-    /// Returns 0.0 if quality assessment was not computed for this report
-    /// (i.e. the underlying `ProfileReport` had `quality: None`).
-    fn quality_score(&self) -> PyResult<f64> {
-        Ok(self.data_quality_metrics.overall_quality_score)
-    }
-
-    /// Export the quality report as JSON string
-    fn to_json(&self, py: Python) -> PyResult<String> {
-        // Convert PyQualityReport back to QualityReport for formatting
-        // This is a workaround since we need the full report structure
-        py.detach(|| {
-            // We need to serialize using serde_json directly since we don't have access
-            // to the original QualityReport here
-            let json_value = serde_json::json!({
-                "metadata": {
-                    "file_path": self.file_path,
-                    "total_rows": self.total_rows,
-                    "total_columns": self.total_columns,
-                    "rows_scanned": self.rows_scanned,
-                    "sampling_ratio": self.sampling_ratio,
-                    "scan_time_ms": self.scan_time_ms as u64,
-                },
-                "data_source": {
-                    "type": self.source_type,
-                    "source_library": self.source_library,
-                    "memory_bytes": self.memory_bytes,
-                },
-                "data_quality_metrics": {
-                    "overall_quality_score": self.data_quality_metrics.overall_quality_score,
-                    "completeness": {
-                        "missing_values_ratio": self.data_quality_metrics.missing_values_ratio,
-                        "complete_records_ratio": self.data_quality_metrics.complete_records_ratio,
-                        "null_columns": self.data_quality_metrics.null_columns,
-                    },
-                    "consistency": {
-                        "data_type_consistency": self.data_quality_metrics.data_type_consistency,
-                        "format_violations": self.data_quality_metrics.format_violations,
-                        "encoding_issues": self.data_quality_metrics.encoding_issues,
-                    },
-                    "uniqueness": {
-                        "duplicate_rows": self.data_quality_metrics.duplicate_rows,
-                        "key_uniqueness": self.data_quality_metrics.key_uniqueness,
-                        "high_cardinality_warning": self.data_quality_metrics.high_cardinality_warning,
-                    },
-                    "accuracy": {
-                        "outlier_ratio": self.data_quality_metrics.outlier_ratio,
-                        "range_violations": self.data_quality_metrics.range_violations,
-                        "negative_values_in_positive": self.data_quality_metrics.negative_values_in_positive,
-                    },
-                    "timeliness": {
-                        "future_dates_count": self.data_quality_metrics.future_dates_count,
-                        "stale_data_ratio": self.data_quality_metrics.stale_data_ratio,
-                        "temporal_violations": self.data_quality_metrics.temporal_violations,
-                    }
-                },
-                "column_profiles": self.column_profiles.iter().map(|p| {
-                    let mut col = serde_json::json!({
-                        "name": p.name,
-                        "data_type": p.data_type,
-                        "total_count": p.total_count,
-                        "null_count": p.null_count,
-                        "null_percentage": p.null_percentage,
-                        "unique_count": p.unique_count,
-                        "uniqueness_ratio": p.uniqueness_ratio,
-                    });
-                    if let Some(v) = p.min { col["min"] = serde_json::json!(v); }
-                    if let Some(v) = p.max { col["max"] = serde_json::json!(v); }
-                    if let Some(v) = p.mean { col["mean"] = serde_json::json!(v); }
-                    if let Some(v) = p.std_dev { col["std_dev"] = serde_json::json!(v); }
-                    if let Some(v) = p.variance { col["variance"] = serde_json::json!(v); }
-                    if let Some(v) = p.median { col["median"] = serde_json::json!(v); }
-                    if let Some(v) = p.mode { col["mode"] = serde_json::json!(v); }
-                    if let Some(v) = p.skewness { col["skewness"] = serde_json::json!(v); }
-                    if let Some(v) = p.kurtosis { col["kurtosis"] = serde_json::json!(v); }
-                    if let Some(v) = p.coefficient_of_variation { col["coefficient_of_variation"] = serde_json::json!(v); }
-                    if let Some(ref v) = p.quartiles { col["quartiles"] = serde_json::json!(v); }
-                    if let Some(v) = p.is_approximate { col["is_approximate"] = serde_json::json!(v); }
-                    col
-                }).collect::<Vec<_>>()
-            });
-
-            serde_json::to_string_pretty(&json_value)
-                .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize to JSON: {}", e)))
-        })
-    }
-}
-
-/// Python wrapper for QualityMetrics
-///
-/// When quality assessment is not available in the underlying `ProfileReport`,
-/// this struct is populated with neutral defaults (100% completeness, 0 violations, etc.)
-/// via `PyDataQualityMetrics::empty()`. Check `PyQualityReport.quality_score()` — a
-/// score of 0.0 may indicate quality was not computed rather than genuinely poor data.
-#[pyclass]
+/// Python wrapper for QualityMetrics — ISO 8000/25012 quality dimensions.
+#[pyclass(name = "DataQualityMetrics")]
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
-    // Overall Score
-    #[pyo3(get)]
-    pub overall_quality_score: f64,
-
-    // Completeness
     #[pyo3(get)]
     pub missing_values_ratio: f64,
     #[pyo3(get)]
     pub complete_records_ratio: f64,
     #[pyo3(get)]
     pub null_columns: Vec<String>,
-
-    // Consistency
     #[pyo3(get)]
     pub data_type_consistency: f64,
     #[pyo3(get)]
     pub format_violations: usize,
     #[pyo3(get)]
     pub encoding_issues: usize,
-
-    // Uniqueness
     #[pyo3(get)]
     pub duplicate_rows: usize,
     #[pyo3(get)]
     pub key_uniqueness: f64,
     #[pyo3(get)]
     pub high_cardinality_warning: bool,
-
-    // Accuracy
     #[pyo3(get)]
     pub outlier_ratio: f64,
     #[pyo3(get)]
     pub range_violations: usize,
     #[pyo3(get)]
     pub negative_values_in_positive: usize,
-
-    // Timeliness (ISO 8000-8)
     #[pyo3(get)]
     pub future_dates_count: usize,
     #[pyo3(get)]
@@ -366,326 +176,224 @@ pub struct PyDataQualityMetrics {
     pub temporal_violations: usize,
 }
 
-impl PyDataQualityMetrics {
-    /// Create empty metrics when quality assessment is not available
-    pub(crate) fn empty() -> Self {
-        Self {
-            overall_quality_score: 0.0,
-            missing_values_ratio: 0.0,
-            complete_records_ratio: 100.0,
-            null_columns: vec![],
-            data_type_consistency: 100.0,
-            format_violations: 0,
-            encoding_issues: 0,
-            duplicate_rows: 0,
-            key_uniqueness: 100.0,
-            high_cardinality_warning: false,
-            outlier_ratio: 0.0,
-            range_violations: 0,
-            negative_values_in_positive: 0,
-            future_dates_count: 0,
-            stale_data_ratio: 0.0,
-            temporal_violations: 0,
-        }
-    }
-}
-
 impl From<&QualityMetrics> for PyDataQualityMetrics {
-    fn from(metrics: &QualityMetrics) -> Self {
+    fn from(m: &QualityMetrics) -> Self {
         Self {
-            overall_quality_score: metrics.overall_score(),
-            missing_values_ratio: metrics.missing_values_ratio,
-            complete_records_ratio: metrics.complete_records_ratio,
-            null_columns: metrics.null_columns.clone(),
-            data_type_consistency: metrics.data_type_consistency,
-            format_violations: metrics.format_violations,
-            encoding_issues: metrics.encoding_issues,
-            duplicate_rows: metrics.duplicate_rows,
-            key_uniqueness: metrics.key_uniqueness,
-            high_cardinality_warning: metrics.high_cardinality_warning,
-            outlier_ratio: metrics.outlier_ratio,
-            range_violations: metrics.range_violations,
-            negative_values_in_positive: metrics.negative_values_in_positive,
-            future_dates_count: metrics.future_dates_count,
-            stale_data_ratio: metrics.stale_data_ratio,
-            temporal_violations: metrics.temporal_violations,
+            missing_values_ratio: m.missing_values_ratio,
+            complete_records_ratio: m.complete_records_ratio,
+            null_columns: m.null_columns.clone(),
+            data_type_consistency: m.data_type_consistency,
+            format_violations: m.format_violations,
+            encoding_issues: m.encoding_issues,
+            duplicate_rows: m.duplicate_rows,
+            key_uniqueness: m.key_uniqueness,
+            high_cardinality_warning: m.high_cardinality_warning,
+            outlier_ratio: m.outlier_ratio,
+            range_violations: m.range_violations,
+            negative_values_in_positive: m.negative_values_in_positive,
+            future_dates_count: m.future_dates_count,
+            stale_data_ratio: m.stale_data_ratio,
+            temporal_violations: m.temporal_violations,
         }
     }
 }
 
 #[pymethods]
 impl PyDataQualityMetrics {
-    /// Calculate overall data quality score (0-100) based on ISO 8000/25012 dimensions
-    ///
-    /// Uses the same weighted formula as the core Rust implementation:
-    /// - Completeness: 30% (complete_records_ratio - already percentage 0-100)
-    /// - Consistency: 25% (data_type_consistency - already percentage 0-100)
-    /// - Uniqueness: 20% (key_uniqueness - already percentage 0-100)
-    /// - Accuracy: 15% (100 - outlier_ratio) - outlier_ratio is already percentage 0-100
-    /// - Timeliness: 10% (100 - stale_data_ratio) - stale_data_ratio is already percentage 0-100
-    fn overall_quality_score(&self) -> PyResult<f64> {
+    /// Overall quality score (0-100) using ISO 8000/25012 weighted formula.
+    fn overall_quality_score(&self) -> f64 {
         let completeness = self.complete_records_ratio * 0.3;
         let consistency = self.data_type_consistency * 0.25;
         let uniqueness = self.key_uniqueness * 0.2;
-
-        // Both outlier_ratio and stale_data_ratio are ALREADY percentages (0-100)
         let accuracy = (100.0 - self.outlier_ratio) * 0.15;
         let timeliness = (100.0 - self.stale_data_ratio) * 0.1;
-
-        Ok(completeness + consistency + uniqueness + accuracy + timeliness)
+        completeness + consistency + uniqueness + accuracy + timeliness
     }
 
-    /// Get completeness summary
-    fn completeness_summary(&self) -> String {
-        format!(
-            "Missing values: {:.1}% | Complete records: {:.1}% | Null columns: {}",
-            self.missing_values_ratio,
-            self.complete_records_ratio,
-            self.null_columns.len()
-        )
-    }
-
-    /// Get consistency summary
-    fn consistency_summary(&self) -> String {
-        format!(
-            "Type consistency: {:.1}% | Format violations: {} | Encoding issues: {}",
-            self.data_type_consistency, self.format_violations, self.encoding_issues
-        )
-    }
-
-    /// Get uniqueness summary
-    fn uniqueness_summary(&self) -> String {
-        format!(
-            "Duplicate rows: {} | Key uniqueness: {:.1}% | High cardinality warning: {}",
-            self.duplicate_rows, self.key_uniqueness, self.high_cardinality_warning
-        )
-    }
-
-    /// Get accuracy summary
-    fn accuracy_summary(&self) -> String {
-        format!(
-            "Outlier ratio: {:.1}% | Range violations: {} | Negative values in positive fields: {}",
-            self.outlier_ratio, self.range_violations, self.negative_values_in_positive
-        )
-    }
-
-    /// Get timeliness summary
-    fn timeliness_summary(&self) -> String {
-        format!(
-            "Future dates: {} | Stale data: {:.1}% | Temporal violations: {}",
-            self.future_dates_count, self.stale_data_ratio, self.temporal_violations
-        )
-    }
-
-    /// Get detailed report as string summary (simplified due to PyO3 type constraints)
-    fn summary_dict(&self) -> std::collections::HashMap<String, String> {
-        let mut dict = std::collections::HashMap::new();
-
-        // Completeness
-        dict.insert(
-            "missing_values_ratio".to_string(),
-            format!("{:.2}", self.missing_values_ratio),
-        );
-        dict.insert(
-            "complete_records_ratio".to_string(),
-            format!("{:.2}", self.complete_records_ratio),
-        );
-        dict.insert(
-            "null_columns_count".to_string(),
-            self.null_columns.len().to_string(),
-        );
-
-        // Consistency
-        dict.insert(
-            "data_type_consistency".to_string(),
-            format!("{:.2}", self.data_type_consistency),
-        );
-        dict.insert(
-            "format_violations".to_string(),
-            self.format_violations.to_string(),
-        );
-        dict.insert(
-            "encoding_issues".to_string(),
-            self.encoding_issues.to_string(),
-        );
-
-        // Uniqueness
-        dict.insert(
-            "duplicate_rows".to_string(),
-            self.duplicate_rows.to_string(),
-        );
-        dict.insert(
-            "key_uniqueness".to_string(),
-            format!("{:.2}", self.key_uniqueness),
-        );
-        dict.insert(
-            "high_cardinality_warning".to_string(),
-            self.high_cardinality_warning.to_string(),
-        );
-
-        // Accuracy
-        dict.insert(
-            "outlier_ratio".to_string(),
-            format!("{:.2}", self.outlier_ratio),
-        );
-        dict.insert(
-            "range_violations".to_string(),
-            self.range_violations.to_string(),
-        );
-        dict.insert(
-            "negative_values_in_positive".to_string(),
-            self.negative_values_in_positive.to_string(),
-        );
-
-        // Timeliness
-        dict.insert(
-            "future_dates_count".to_string(),
-            self.future_dates_count.to_string(),
-        );
-        dict.insert(
-            "stale_data_ratio".to_string(),
-            format!("{:.2}", self.stale_data_ratio),
-        );
-        dict.insert(
-            "temporal_violations".to_string(),
-            self.temporal_violations.to_string(),
-        );
-
-        dict
-    }
-
-    /// Rich HTML representation for Jupyter notebooks
-    fn _repr_html_(&self) -> String {
-        let overall_score = self.overall_quality_score().unwrap_or(0.0);
-        let score_color = if overall_score >= 80.0 {
-            "#4CAF50"
-        } else if overall_score >= 60.0 {
-            "#FF9800"
-        } else {
-            "#F44336"
-        };
-
-        format!(
-            r#"
-<div style="font-family: Arial, sans-serif; border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 8px 0;">
-    <h3 style="margin: 0 0 16px 0; color: #333;">
-        📊 Data Quality Metrics
-        <span style="background-color: {}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.9em; margin-left: 8px;">
-            {:.1}%
-        </span>
-    </h3>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px;">
-
-        <!-- Completeness -->
-        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
-            <h4 style="margin: 0 0 8px 0; color: #4CAF50;">📋 Completeness</h4>
-            <div style="margin-bottom: 8px;">
-                <strong>Missing Values:</strong> {:.1}%
-                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
-                    <div style="background-color: #F44336; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
-                </div>
-            </div>
-            <div style="margin-bottom: 8px;">
-                <strong>Complete Records:</strong> {:.1}%
-                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
-                    <div style="background-color: #4CAF50; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
-                </div>
-            </div>
-            <div><strong>Null Columns:</strong> {}</div>
-        </div>
-
-        <!-- Consistency -->
-        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
-            <h4 style="margin: 0 0 8px 0; color: #2196F3;">🔧 Consistency</h4>
-            <div style="margin-bottom: 8px;">
-                <strong>Type Consistency:</strong> {:.1}%
-                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
-                    <div style="background-color: #2196F3; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
-                </div>
-            </div>
-            <div style="margin-bottom: 4px;"><strong>Format Violations:</strong> {}</div>
-            <div><strong>Encoding Issues:</strong> {}</div>
-        </div>
-
-        <!-- Uniqueness -->
-        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
-            <h4 style="margin: 0 0 8px 0; color: #FF9800;">🔑 Uniqueness</h4>
-            <div style="margin-bottom: 8px;">
-                <strong>Key Uniqueness:</strong> {:.1}%
-                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
-                    <div style="background-color: #FF9800; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
-                </div>
-            </div>
-            <div style="margin-bottom: 4px;"><strong>Duplicate Rows:</strong> {}</div>
-            <div><strong>High Cardinality Warning:</strong> {}</div>
-        </div>
-
-        <!-- Accuracy -->
-        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
-            <h4 style="margin: 0 0 8px 0; color: #9C27B0;">🎯 Accuracy</h4>
-            <div style="margin-bottom: 8px;">
-                <strong>Outlier Ratio:</strong> {:.1}%
-                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
-                    <div style="background-color: #9C27B0; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
-                </div>
-            </div>
-            <div style="margin-bottom: 4px;"><strong>Range Violations:</strong> {}</div>
-            <div><strong>Negative in Positive:</strong> {}</div>
-        </div>
-
-        <!-- Timeliness -->
-        <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px;">
-            <h4 style="margin: 0 0 8px 0; color: #607D8B;">⏱️ Timeliness</h4>
-            <div style="margin-bottom: 8px;">
-                <strong>Stale Data Ratio:</strong> {:.1}%
-                <div style="background-color: #e0e0e0; border-radius: 4px; height: 6px; margin: 2px 0;">
-                    <div style="background-color: #607D8B; height: 100%; border-radius: 4px; width: {:.1}%;"></div>
-                </div>
-            </div>
-            <div style="margin-bottom: 4px;"><strong>Future Dates:</strong> {}</div>
-            <div><strong>Temporal Violations:</strong> {}</div>
-        </div>
-
-    </div>
-</div>
-"#,
-            score_color,
-            overall_score,
-            self.missing_values_ratio,
-            self.missing_values_ratio.min(100.0),
-            self.complete_records_ratio,
-            self.complete_records_ratio.min(100.0),
-            self.null_columns.len(),
-            self.data_type_consistency,
-            self.data_type_consistency.min(100.0),
-            self.format_violations,
-            self.encoding_issues,
-            self.key_uniqueness,
-            self.key_uniqueness.min(100.0),
-            self.duplicate_rows,
-            self.high_cardinality_warning,
-            self.outlier_ratio,
-            self.outlier_ratio.min(100.0),
-            self.range_violations,
-            self.negative_values_in_positive,
-            self.stale_data_ratio,
-            self.stale_data_ratio.min(100.0),
-            self.future_dates_count,
-            self.temporal_violations
-        )
-    }
-
-    /// Summary string representation
     fn __str__(&self) -> String {
         format!(
-            "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, uniqueness={:.1}%, accuracy={:.1}%, timeliness={:.1}%)",
-            self.overall_quality_score().unwrap_or(0.0),
+            "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, uniqueness={:.1}%)",
+            self.overall_quality_score(),
             self.complete_records_ratio,
             self.data_type_consistency,
             self.key_uniqueness,
-            100.0 - self.outlier_ratio,
-            100.0 - self.stale_data_ratio
+        )
+    }
+}
+
+/// Python wrapper for the full ProfileReport.
+///
+/// Wraps the Rust `ProfileReport` directly, exposing all `ExecutionMetadata`
+/// fields and lazy-converting column profiles on access.
+#[pyclass(name = "ProfileReport")]
+pub struct PyProfileReport {
+    pub(crate) inner: ProfileReport,
+}
+
+impl PyProfileReport {
+    pub fn new(report: ProfileReport) -> Self {
+        Self { inner: report }
+    }
+}
+
+#[pymethods]
+impl PyProfileReport {
+    /// Data source identifier (file path, dataframe name, etc.)
+    #[getter]
+    fn source(&self) -> String {
+        self.inner.data_source.identifier()
+    }
+
+    /// Source type: "file", "dataframe", "stream", "query"
+    #[getter]
+    fn source_type(&self) -> &str {
+        match &self.inner.data_source {
+            DataSource::File { .. } => "file",
+            DataSource::DataFrame { .. } => "dataframe",
+            DataSource::Stream { .. } => "stream",
+            DataSource::Query { .. } => "query",
+        }
+    }
+
+    /// Source library for DataFrame sources (e.g. "pandas", "polars")
+    #[getter]
+    fn source_library(&self) -> Option<String> {
+        match &self.inner.data_source {
+            DataSource::DataFrame { source_library, .. } => Some(source_library.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Memory usage in bytes for DataFrame sources
+    #[getter]
+    fn memory_bytes(&self) -> Option<u64> {
+        match &self.inner.data_source {
+            DataSource::DataFrame { memory_bytes, .. } => *memory_bytes,
+            _ => None,
+        }
+    }
+
+    // -- ExecutionMetadata fields --
+
+    /// Number of rows processed
+    #[getter]
+    fn rows_processed(&self) -> usize {
+        self.inner.execution.rows_processed
+    }
+
+    /// Number of columns detected
+    #[getter]
+    fn columns_detected(&self) -> usize {
+        self.inner.execution.columns_detected
+    }
+
+    /// Execution time in milliseconds
+    #[getter]
+    fn scan_time_ms(&self) -> u128 {
+        self.inner.execution.scan_time_ms
+    }
+
+    /// Whether the entire source was consumed
+    #[getter]
+    fn source_exhausted(&self) -> bool {
+        self.inner.execution.source_exhausted
+    }
+
+    /// Why processing stopped early (None if source was fully consumed)
+    #[getter]
+    fn truncation_reason(&self) -> Option<String> {
+        self.inner
+            .execution
+            .truncation_reason
+            .as_ref()
+            .map(|r| match r {
+                TruncationReason::MaxRows(n) => format!("max_rows({})", n),
+                TruncationReason::MaxBytes(n) => format!("max_bytes({})", n),
+                TruncationReason::MemoryPressure => "memory_pressure".to_string(),
+                TruncationReason::StopCondition(s) => format!("stop_condition({})", s),
+                TruncationReason::StreamClosed => "stream_closed".to_string(),
+                TruncationReason::Timeout => "timeout".to_string(),
+            })
+    }
+
+    /// Bytes consumed from source (if known)
+    #[getter]
+    fn bytes_consumed(&self) -> Option<u64> {
+        self.inner.execution.bytes_consumed
+    }
+
+    /// Throughput in rows per second
+    #[getter]
+    fn throughput_rows_sec(&self) -> Option<f64> {
+        self.inner.execution.throughput_rows_sec
+    }
+
+    /// Peak memory usage in MB
+    #[getter]
+    fn memory_peak_mb(&self) -> Option<f64> {
+        self.inner.execution.memory_peak_mb
+    }
+
+    /// Number of errors encountered during profiling
+    #[getter]
+    fn error_count(&self) -> usize {
+        self.inner.execution.error_count
+    }
+
+    /// Whether sampling was applied
+    #[getter]
+    fn sampling_applied(&self) -> bool {
+        self.inner.execution.sampling_applied
+    }
+
+    /// Sampling ratio (1.0 = all rows analyzed)
+    #[getter]
+    fn sampling_ratio(&self) -> Option<f64> {
+        self.inner.execution.sampling_ratio
+    }
+
+    // -- Profile data --
+
+    /// Column-level statistics
+    #[getter]
+    fn column_profiles(&self) -> Vec<PyColumnProfile> {
+        self.inner
+            .column_profiles
+            .iter()
+            .map(PyColumnProfile::from)
+            .collect()
+    }
+
+    /// Data quality metrics (None if quality assessment was skipped)
+    #[getter]
+    fn quality(&self) -> Option<PyDataQualityMetrics> {
+        self.inner
+            .quality
+            .as_ref()
+            .map(|q| PyDataQualityMetrics::from(&q.metrics))
+    }
+
+    /// Overall quality score (None if quality assessment was skipped)
+    #[getter]
+    fn quality_score(&self) -> Option<f64> {
+        self.inner.quality_score()
+    }
+
+    /// Export as JSON string
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string_pretty(&self.inner).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {}", e))
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ProfileReport(source='{}', rows={}, columns={}, time={}ms, quality={:?})",
+            self.inner.data_source.identifier(),
+            self.inner.execution.rows_processed,
+            self.inner.execution.columns_detected,
+            self.inner.execution.scan_time_ms,
+            self.inner.quality_score(),
         )
     }
 }

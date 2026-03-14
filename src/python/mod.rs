@@ -2,33 +2,21 @@
 
 pub mod analysis;
 pub mod arrow_export;
-pub mod dataframe;
-pub mod logging;
-pub mod processor;
+pub mod config;
+pub mod partial;
 pub mod types;
 
 #[cfg(all(feature = "python-async", feature = "database"))]
 pub mod database_async;
 
-// Re-export all public types and functions
-pub use analysis::{
-    analyze_csv_file, analyze_csv_with_quality, analyze_json_file, analyze_json_with_quality,
-    calculate_data_quality_metrics,
-};
-
-pub use analysis::{analyze_parquet_file, analyze_parquet_with_quality_py};
-pub use dataframe::analyze_csv_dataframe;
-pub use logging::{
-    analyze_csv_with_logging, configure_logging, get_logger, log_debug, log_error, log_info,
-    log_warning,
-};
-pub use processor::PyCsvProcessor;
-pub use types::{PyColumnProfile, PyDataQualityMetrics, PyQualityReport};
-
-// Arrow/PyCapsule exports
+// Re-exports for module registration
+pub use analysis::analyze_file;
 pub use arrow_export::{
     PyRecordBatch, analyze_csv_to_arrow, analyze_parquet_to_arrow, profile_arrow, profile_dataframe,
 };
+pub use config::PyProfilerConfig;
+pub use partial::{PyRowCountEstimate, PySchemaResult, infer_schema, quick_row_count};
+pub use types::{PyColumnProfile, PyDataQualityMetrics, PyProfileReport};
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -38,50 +26,40 @@ use pyo3::wrap_pyfunction;
 #[pymodule]
 #[pyo3(name = "_dataprof")]
 pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Add version information from Cargo.toml
+    // Version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
-    // Core data profiling classes
+    // Configuration
+    m.add_class::<PyProfilerConfig>()?;
+
+    // Result types
+    m.add_class::<PyProfileReport>()?;
     m.add_class::<PyColumnProfile>()?;
-    m.add_class::<PyQualityReport>()?;
     m.add_class::<PyDataQualityMetrics>()?;
-    // Context manager classes
-    m.add_class::<PyCsvProcessor>()?;
 
-    // Single file analysis
-    m.add_function(wrap_pyfunction!(analyze_csv_file, m)?)?;
-    m.add_function(wrap_pyfunction!(analyze_csv_with_quality, m)?)?;
-    m.add_function(wrap_pyfunction!(analyze_json_file, m)?)?;
-    m.add_function(wrap_pyfunction!(analyze_json_with_quality, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_data_quality_metrics, m)?)?;
-
-    // Parquet analysis
-    m.add_function(wrap_pyfunction!(analyze_parquet_file, m)?)?;
-    m.add_function(wrap_pyfunction!(analyze_parquet_with_quality_py, m)?)?;
-
-    // Pandas integration (optional)
-    m.add_function(wrap_pyfunction!(analyze_csv_dataframe, m)?)?;
-
-    // Python logging integration
-    m.add_function(wrap_pyfunction!(configure_logging, m)?)?;
-    m.add_function(wrap_pyfunction!(get_logger, m)?)?;
-    m.add_function(wrap_pyfunction!(log_info, m)?)?;
-    m.add_function(wrap_pyfunction!(log_debug, m)?)?;
-    m.add_function(wrap_pyfunction!(log_warning, m)?)?;
-    m.add_function(wrap_pyfunction!(log_error, m)?)?;
-
-    // Enhanced analysis functions with logging
-    m.add_function(wrap_pyfunction!(analyze_csv_with_logging, m)?)?;
-
-    // Arrow/PyCapsule interface for zero-copy data exchange
+    // Arrow interop
     m.add_class::<PyRecordBatch>()?;
-    m.add_function(wrap_pyfunction!(analyze_csv_to_arrow, m)?)?;
+
+    // Partial analysis types
+    m.add_class::<PySchemaResult>()?;
+    m.add_class::<PyRowCountEstimate>()?;
+
+    // Core analysis
+    m.add_function(wrap_pyfunction!(analyze_file, m)?)?;
+
+    // DataFrame/Arrow profiling
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;
     m.add_function(wrap_pyfunction!(profile_arrow, m)?)?;
 
+    // Arrow export
+    m.add_function(wrap_pyfunction!(analyze_csv_to_arrow, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_parquet_to_arrow, m)?)?;
 
-    // Async database functions (available with python-async and database features)
+    // Partial analysis
+    m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
+    m.add_function(wrap_pyfunction!(quick_row_count, m)?)?;
+
+    // Async database functions (feature-gated)
     #[cfg(all(feature = "python-async", feature = "database"))]
     {
         m.add_function(wrap_pyfunction!(database_async::analyze_database_async, m)?)?;

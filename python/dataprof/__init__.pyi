@@ -1,86 +1,99 @@
-"""
-Type stubs for dataprof Python bindings.
+"""Type stubs for dataprof."""
 
-This module provides data profiling and quality assessment functionality
-implemented in Rust with Python bindings via PyO3.
-"""
+from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, Union
-from typing_extensions import Self
 
-try:
-    import pandas as pd
-    _PANDAS_AVAILABLE = True
-except ImportError:
-    _PANDAS_AVAILABLE = False
-
-try:
-    import polars as pl
-    _POLARS_AVAILABLE = True
-except ImportError:
-    _POLARS_AVAILABLE = False
-
-# Type alias for Arrow-compatible DataFrames
-if _PANDAS_AVAILABLE and _POLARS_AVAILABLE:
-    ArrowDataFrame = Union[pd.DataFrame, pl.DataFrame, "RecordBatch"]
-elif _PANDAS_AVAILABLE:
-    ArrowDataFrame = Union[pd.DataFrame, "RecordBatch"]
-elif _POLARS_AVAILABLE:
-    ArrowDataFrame = Union[pl.DataFrame, "RecordBatch"]
-else:
-    ArrowDataFrame = "RecordBatch"
-
-# Version is imported from Rust binary module (_dataprof)
+# Version
 __version__: str
 
-# Core analysis functions
-def analyze_csv_file(path: str) -> List[PyColumnProfile]: ...
-def analyze_csv_with_quality(path: str) -> PyQualityReport: ...
-def analyze_json_file(path: str) -> List[PyColumnProfile]: ...
-def analyze_json_with_quality(path: str) -> PyQualityReport: ...
-def calculate_data_quality_metrics(path: str) -> PyDataQualityMetrics: ...
+# --- Configuration ---
 
-# Parquet analysis functions (available with parquet feature)
-def analyze_parquet_file(path: str) -> List[PyColumnProfile]: ...
-def analyze_parquet_with_quality_py(path: str) -> PyQualityReport: ...
+class ProfilerConfig:
+    """Profiler configuration with Python-friendly kwargs."""
 
-# Python logging integration
-def configure_logging(level: Optional[str] = None, format: Optional[str] = None) -> None: ...
-def get_logger(name: Optional[str] = None) -> Any: ...
-def log_info(message: str, logger_name: Optional[str] = None) -> None: ...
-def log_debug(message: str, logger_name: Optional[str] = None) -> None: ...
-def log_warning(message: str, logger_name: Optional[str] = None) -> None: ...
-def log_error(message: str, logger_name: Optional[str] = None) -> None: ...
+    def __init__(
+        self,
+        engine: str = "auto",
+        chunk_size: Optional[int] = None,
+        memory_limit_mb: Optional[int] = None,
+        format: Optional[str] = None,
+        max_rows: Optional[int] = None,
+        csv_delimiter: Optional[str] = None,
+        csv_flexible: Optional[bool] = None,
+    ) -> None: ...
 
-# Enhanced analysis functions with logging
-def analyze_csv_with_logging(file_path: str, log_level: Optional[str] = None) -> List[PyColumnProfile]: ...
+    @property
+    def engine(self) -> str: ...
+    @property
+    def chunk_size(self) -> Optional[int]: ...
+    @property
+    def memory_limit_mb(self) -> Optional[int]: ...
+    @property
+    def format(self) -> Optional[str]: ...
+    @property
+    def max_rows(self) -> Optional[int]: ...
 
-# Pandas integration (conditional)
-if _PANDAS_AVAILABLE:
-    def analyze_csv_dataframe(file_path: str) -> pd.DataFrame: ...
-else:
-    def analyze_csv_dataframe(file_path: str) -> Any: ...
+# --- Primary API ---
 
-# Arrow/PyCapsule interface functions
-def analyze_csv_to_arrow(path: str) -> "RecordBatch":
-    """Analyze CSV file and return results as Arrow RecordBatch."""
+def profile(
+    source: Any,
+    *,
+    engine: str = "auto",
+    chunk_size: Optional[int] = None,
+    memory_limit_mb: Optional[int] = None,
+    format: Optional[str] = None,
+    max_rows: Optional[int] = None,
+    name: Optional[str] = None,
+    csv_delimiter: Optional[str] = None,
+    csv_flexible: Optional[bool] = None,
+) -> ProfileReport:
+    """Profile a data source (file path, DataFrame, or Arrow object)."""
     ...
 
-def analyze_parquet_to_arrow(path: str) -> "RecordBatch":
-    """Analyze Parquet file and return results as Arrow RecordBatch."""
-    ...
+# --- Result Types ---
 
-def profile_dataframe(df: "ArrowDataFrame", name: str = "dataframe") -> PyQualityReport:
-    """Profile a pandas or polars DataFrame directly via Arrow PyCapsule protocol."""
-    ...
+class ProfileReport:
+    """High-level profiling report with export methods."""
 
-def profile_arrow(table: Any, name: str = "arrow_table") -> PyQualityReport:
-    """Profile a PyArrow Table or RecordBatch directly (no auto-detection overhead)."""
-    ...
+    @property
+    def source(self) -> str: ...
+    @property
+    def source_type(self) -> str: ...
+    @property
+    def rows(self) -> int: ...
+    @property
+    def columns(self) -> int: ...
+    @property
+    def column_profiles(self) -> List[ColumnProfile]: ...
+    @property
+    def quality_score(self) -> Optional[float]: ...
+    @property
+    def quality(self) -> Optional[DataQualityMetrics]: ...
+    @property
+    def execution_time_ms(self) -> int: ...
+    @property
+    def throughput(self) -> Optional[float]: ...
+    @property
+    def memory_peak_mb(self) -> Optional[float]: ...
+    @property
+    def truncation_reason(self) -> Optional[str]: ...
+    @property
+    def source_exhausted(self) -> bool: ...
+    @property
+    def sampling_applied(self) -> bool: ...
+    @property
+    def sampling_ratio(self) -> Optional[float]: ...
 
-# Core profiling classes exported from Rust
-class PyColumnProfile:
-    """Column profiling information from Rust."""
+    def to_dict(self) -> Dict[str, Any]: ...
+    def to_json(self, indent: int = 2) -> str: ...
+    def to_dataframe(self) -> Any:
+        """Returns pandas.DataFrame. Requires pandas."""
+        ...
+    def save(self, path: str) -> ProfileReport: ...
+
+class ColumnProfile:
+    """Column-level profiling statistics."""
 
     name: str
     data_type: str
@@ -89,163 +102,107 @@ class PyColumnProfile:
     unique_count: Optional[int]
     null_percentage: float
     uniqueness_ratio: float
+    min: Optional[float]
+    max: Optional[float]
+    mean: Optional[float]
+    std_dev: Optional[float]
+    variance: Optional[float]
+    median: Optional[float]
+    mode: Optional[float]
+    skewness: Optional[float]
+    kurtosis: Optional[float]
+    coefficient_of_variation: Optional[float]
+    quartiles: Optional[Dict[str, float]]
+    is_approximate: Optional[bool]
 
-    def __new__(cls) -> Self: ...
+class DataQualityMetrics:
+    """ISO 8000/25012 data quality metrics."""
 
-class PyQualityReport:
-    """Complete quality report for a dataset."""
-
-    file_path: str
-    total_rows: Optional[int]
-    total_columns: int
-    column_profiles: List[PyColumnProfile]
-    rows_scanned: int
-    sampling_ratio: float
-    scan_time_ms: int
-    data_quality_metrics: PyDataQualityMetrics
-    source_type: str
-    source_library: Optional[str]
-    memory_bytes: Optional[int]
-
-    def __new__(cls) -> Self: ...
-    def quality_score(self) -> float: ...
-    def to_json(self) -> str: ...
-
-class PyDataQualityMetrics:
-    """ISO 8000/25012 compliant data quality metrics."""
-
-    # Overall Score
-    overall_quality_score: float
-
-    # Completeness
     missing_values_ratio: float
     complete_records_ratio: float
     null_columns: List[str]
-
-    # Consistency
     data_type_consistency: float
     format_violations: int
     encoding_issues: int
-
-    # Uniqueness
     duplicate_rows: int
     key_uniqueness: float
     high_cardinality_warning: bool
-
-    # Accuracy
     outlier_ratio: float
     range_violations: int
     negative_values_in_positive: int
-
-    # Timeliness (ISO 8000-8)
     future_dates_count: int
     stale_data_ratio: float
     temporal_violations: int
 
-    def __new__(cls) -> Self: ...
-    def completeness_summary(self) -> str: ...
-    def consistency_summary(self) -> str: ...
-    def uniqueness_summary(self) -> str: ...
-    def accuracy_summary(self) -> str: ...
-    def timeliness_summary(self) -> str: ...
-    def summary_dict(self) -> Dict[str, str]: ...
-    def _repr_html_(self) -> str: ...
-    def __str__(self) -> str: ...
+    def overall_quality_score(self) -> float: ...
 
-# Context Manager Classes
-class PyCsvProcessor:
-    """Context manager for CSV file processing with automatic handling."""
+# --- Partial Analysis ---
 
-    def __new__(cls, chunk_size: Optional[int] = None) -> Self: ...
-    def __enter__(self) -> Self: ...
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool: ...
-    def open_file(self, path: str) -> None: ...
-    def process_chunks(self) -> List[Any]: ...
-    def get_processing_info(self) -> Dict[str, Any]: ...
+class SchemaResult:
+    """Result of fast schema inference."""
+
+    @property
+    def columns(self) -> List[Dict[str, str]]: ...
+    @property
+    def rows_sampled(self) -> int: ...
+    @property
+    def inference_time_ms(self) -> int: ...
+    @property
+    def schema_stable(self) -> bool: ...
+    @property
+    def num_columns(self) -> int: ...
+    @property
+    def column_names(self) -> List[str]: ...
+
+class RowCountEstimate:
+    """Result of a quick row count."""
+
+    @property
+    def count(self) -> int: ...
+    @property
+    def exact(self) -> bool: ...
+    @property
+    def method(self) -> str: ...
+    @property
+    def count_time_ms(self) -> int: ...
+
+def infer_schema(path: str) -> SchemaResult:
+    """Infer the schema of a file (fast, reads only a small sample)."""
+    ...
+
+def quick_row_count(path: str) -> RowCountEstimate:
+    """Quick row count (exact for small files/Parquet, estimated for large files)."""
+    ...
+
+# --- Arrow Interop ---
 
 class RecordBatch:
-    """Arrow RecordBatch with PyCapsule interface support for zero-copy exchange.
-
-    This class implements the Arrow PyCapsule Interface, enabling efficient
-    zero-copy data transfer between Rust and Python (pandas, polars, pyarrow).
-    """
+    """Arrow RecordBatch with PyCapsule interface for zero-copy exchange."""
 
     @property
-    def num_rows(self) -> int:
-        """Number of rows in the batch."""
-        ...
-
+    def num_rows(self) -> int: ...
     @property
-    def num_columns(self) -> int:
-        """Number of columns in the batch."""
-        ...
-
+    def num_columns(self) -> int: ...
     @property
-    def column_names(self) -> List[str]:
-        """Column names as a list."""
-        ...
+    def column_names(self) -> List[str]: ...
 
-    def to_pandas(self) -> "pd.DataFrame":
-        """Convert to pandas DataFrame (zero-copy if pyarrow available).
+    def to_pandas(self) -> Any: ...
+    def to_polars(self) -> Any: ...
+    def __arrow_c_schema__(self) -> object: ...
+    def __arrow_c_array__(
+        self, requested_schema: Optional[object] = None
+    ) -> Tuple[object, object]: ...
 
-        Requires pyarrow to be installed.
-        """
-        ...
+# --- Exports ---
 
-    def to_polars(self) -> "pl.DataFrame":
-        """Convert to polars DataFrame (zero-copy).
-
-        Requires polars and pyarrow to be installed.
-        """
-        ...
-
-    def __arrow_c_schema__(self) -> object:
-        """Arrow PyCapsule Interface: export schema as PyCapsule."""
-        ...
-
-    def __arrow_c_array__(self, requested_schema: Optional[object] = None) -> Tuple[object, object]:
-        """Arrow PyCapsule Interface: export array as (schema_capsule, array_capsule)."""
-        ...
-
-    def __repr__(self) -> str: ...
-
-# Export all public classes and functions
 __all__ = [
-    # Core analysis functions
-    "analyze_csv_file",
-    "analyze_csv_with_quality",
-    "analyze_json_file",
-    "analyze_json_with_quality",
-    "analyze_parquet_file",
-    "analyze_parquet_with_quality_py",
-    "calculate_data_quality_metrics",
-
-    # Python logging integration
-    "configure_logging",
-    "get_logger",
-    "log_info",
-    "log_debug",
-    "log_warning",
-    "log_error",
-
-    # Enhanced analysis with logging
-    "analyze_csv_with_logging",
-
-    # Pandas integration
-    "analyze_csv_dataframe",
-
-    # Arrow/PyCapsule interface
-    "analyze_csv_to_arrow",
-    "analyze_parquet_to_arrow",
-    "profile_dataframe",
-    "profile_arrow",
+    "profile",
+    "ProfileReport",
+    "ProfilerConfig",
+    "infer_schema",
+    "quick_row_count",
+    "SchemaResult",
+    "RowCountEstimate",
     "RecordBatch",
-
-    # Core classes
-    "PyColumnProfile",
-    "PyQualityReport",
-    "PyDataQualityMetrics",
-
-    # Context managers
-    "PyCsvProcessor",
+    "__version__",
 ]
