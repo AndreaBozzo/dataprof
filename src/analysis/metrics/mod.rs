@@ -226,6 +226,107 @@ impl MetricsCalculator {
         }
     }
 
+    /// Calculate quality metrics with bifurcated computation for streaming.
+    ///
+    /// **Phase A (exact from global counters)**: Completeness metrics are computed
+    /// from `ColumnProfile` stats (`null_count`, `total_count`) which are exact
+    /// even for infinite streams. Key uniqueness already uses `ColumnProfile`.
+    ///
+    /// **Phase B (sampled)**: Consistency, Accuracy, Timeliness, and duplicate_rows
+    /// are computed from the bounded reservoir sample.
+    ///
+    /// Returns a [`BifurcatedResult`] containing the metrics plus provenance
+    /// for which dimensions are exact vs sampled.
+    pub fn calculate_bifurcated_metrics(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+    ) -> Result<BifurcatedResult, DataProfilerError> {
+        if data.is_empty() && column_profiles.is_empty() {
+            return Ok(BifurcatedResult {
+                metrics: Self::default_metrics_for_empty_dataset(),
+                exact_dimensions: vec![],
+                sampled_dimensions: vec![],
+                sample_size: 0,
+            });
+        }
+
+        let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
+
+        // Phase A: Completeness from exact global counters
+        let completeness = CompletenessCalculator::new(&self.thresholds)
+            .calculate_from_profiles(column_profiles)?;
+
+        // Phase B: Sampled dimensions from reservoir data
+        let sample_rows = Self::calculate_total_rows(data).unwrap_or(0);
+
+        let consistency = if !data.is_empty() {
+            ConsistencyCalculator::calculate(data, column_profiles)?
+        } else {
+            consistency::ConsistencyMetrics {
+                data_type_consistency: 100.0,
+                format_violations: 0,
+                encoding_issues: 0,
+            }
+        };
+
+        let uniqueness = UniquenessCalculator::new(&self.thresholds).calculate(
+            data,
+            column_profiles,
+            total_rows,
+        )?;
+
+        let accuracy = if !data.is_empty() {
+            AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+        } else {
+            accuracy::AccuracyMetrics {
+                outlier_ratio: 0.0,
+                range_violations: 0,
+                negative_values_in_positive: 0,
+            }
+        };
+
+        let timeliness = if !data.is_empty() {
+            TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+        } else {
+            timeliness::TimelinessMetrics {
+                future_dates_count: 0,
+                stale_data_ratio: 0.0,
+                temporal_violations: 0,
+            }
+        };
+
+        let metrics = QualityMetrics {
+            missing_values_ratio: completeness.missing_values_ratio,
+            complete_records_ratio: completeness.complete_records_ratio,
+            null_columns: completeness.null_columns,
+            data_type_consistency: consistency.data_type_consistency,
+            format_violations: consistency.format_violations,
+            encoding_issues: consistency.encoding_issues,
+            duplicate_rows: uniqueness.duplicate_rows,
+            key_uniqueness: uniqueness.key_uniqueness,
+            high_cardinality_warning: uniqueness.high_cardinality_warning,
+            outlier_ratio: accuracy.outlier_ratio,
+            range_violations: accuracy.range_violations,
+            negative_values_in_positive: accuracy.negative_values_in_positive,
+            future_dates_count: timeliness.future_dates_count,
+            stale_data_ratio: timeliness.stale_data_ratio,
+            temporal_violations: timeliness.temporal_violations,
+        };
+
+        Ok(BifurcatedResult {
+            metrics,
+            exact_dimensions: vec!["completeness".to_string(), "key_uniqueness".to_string()],
+            sampled_dimensions: vec![
+                "consistency".to_string(),
+                "accuracy".to_string(),
+                "timeliness".to_string(),
+                "duplicate_rows".to_string(),
+            ],
+            sample_size: sample_rows,
+        })
+    }
+
     /// Calculate total number of rows from data
     fn calculate_total_rows(
         data: &HashMap<String, Vec<String>>,
@@ -236,4 +337,20 @@ impl MetricsCalculator {
             }
         })
     }
+}
+
+/// Result of bifurcated quality metric calculation.
+///
+/// Contains the computed metrics plus provenance information about which
+/// dimensions were computed exactly (from global streaming counters) and
+/// which were computed from a bounded sample.
+pub struct BifurcatedResult {
+    /// The computed quality metrics
+    pub metrics: QualityMetrics,
+    /// Dimensions computed from exact global counters (e.g., "completeness", "key_uniqueness")
+    pub exact_dimensions: Vec<String>,
+    /// Dimensions computed from the bounded reservoir sample (e.g., "consistency", "accuracy")
+    pub sampled_dimensions: Vec<String>,
+    /// Number of sample rows used for Phase B dimensions
+    pub sample_size: usize,
 }

@@ -4,8 +4,8 @@
 //! Key metrics: missing values ratio, complete records ratio, null columns.
 
 use crate::core::config::IsoQualityConfig;
+use crate::core::errors::DataProfilerError;
 use crate::types::ColumnProfile;
-use anyhow::Result;
 use std::collections::HashMap;
 
 /// Completeness metrics container
@@ -32,7 +32,7 @@ impl<'a> CompletenessCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
         total_rows: usize,
-    ) -> Result<CompletenessMetrics> {
+    ) -> Result<CompletenessMetrics, DataProfilerError> {
         let missing_values_ratio = Self::calculate_missing_values_ratio(data)?;
         let complete_records_ratio = Self::calculate_complete_records_ratio(data, total_rows)?;
         let null_columns = self.identify_null_columns(column_profiles);
@@ -45,7 +45,9 @@ impl<'a> CompletenessCalculator<'a> {
     }
 
     /// Calculate percentage of missing values across all cells
-    fn calculate_missing_values_ratio(data: &HashMap<String, Vec<String>>) -> Result<f64> {
+    fn calculate_missing_values_ratio(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<f64, DataProfilerError> {
         let total_cells: usize = data.values().map(|v| v.len()).sum();
         let null_cells: usize = data
             .values()
@@ -63,7 +65,7 @@ impl<'a> CompletenessCalculator<'a> {
     fn calculate_complete_records_ratio(
         data: &HashMap<String, Vec<String>>,
         total_rows: usize,
-    ) -> Result<f64> {
+    ) -> Result<f64, DataProfilerError> {
         if total_rows == 0 {
             return Ok(100.0);
         }
@@ -79,6 +81,41 @@ impl<'a> CompletenessCalculator<'a> {
         }
 
         Ok((complete_rows as f64 / total_rows as f64) * 100.0)
+    }
+
+    /// Compute completeness from global [`ColumnProfile`] counters (exact for streaming).
+    ///
+    /// `missing_values_ratio` and `null_columns` are exact.
+    /// `complete_records_ratio` uses a pessimistic lower bound: it assumes nulls
+    /// are maximally spread across different rows. The bound is tight when nulls
+    /// are sparse and exact when no column has nulls.
+    pub fn calculate_from_profiles(
+        &self,
+        column_profiles: &[ColumnProfile],
+    ) -> Result<CompletenessMetrics, DataProfilerError> {
+        let total_cells: usize = column_profiles.iter().map(|p| p.total_count).sum();
+        let null_cells: usize = column_profiles.iter().map(|p| p.null_count).sum();
+
+        let missing_values_ratio = if total_cells == 0 {
+            0.0
+        } else {
+            (null_cells as f64 / total_cells as f64) * 100.0
+        };
+
+        let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
+        let complete_records_ratio = if total_rows == 0 {
+            100.0
+        } else {
+            (total_rows.saturating_sub(null_cells) as f64 / total_rows as f64 * 100.0).max(0.0)
+        };
+
+        let null_columns = self.identify_null_columns(column_profiles);
+
+        Ok(CompletenessMetrics {
+            missing_values_ratio,
+            complete_records_ratio,
+            null_columns,
+        })
     }
 
     /// Identify columns with null percentage above ISO threshold
@@ -97,5 +134,76 @@ impl<'a> CompletenessCalculator<'a> {
             })
             .map(|profile| profile.name.clone())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ColumnStats, DataType, TextStats};
+
+    fn make_profile(name: &str, total: usize, nulls: usize) -> ColumnProfile {
+        ColumnProfile {
+            name: name.to_string(),
+            data_type: DataType::String,
+            null_count: nulls,
+            total_count: total,
+            unique_count: Some(total - nulls),
+            stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
+            patterns: vec![],
+        }
+    }
+
+    #[test]
+    fn test_calculate_from_profiles_all_complete() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = CompletenessCalculator::new(&thresholds);
+        let profiles = vec![make_profile("a", 100, 0), make_profile("b", 100, 0)];
+
+        let result = calc.calculate_from_profiles(&profiles).unwrap();
+        assert_eq!(result.missing_values_ratio, 0.0);
+        assert_eq!(result.complete_records_ratio, 100.0);
+        assert!(result.null_columns.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_from_profiles_with_nulls() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = CompletenessCalculator::new(&thresholds);
+        let profiles = vec![
+            make_profile("a", 100, 10), // 10% null
+            make_profile("b", 100, 20), // 20% null
+        ];
+
+        let result = calc.calculate_from_profiles(&profiles).unwrap();
+        // 30 null cells out of 200 total = 15%
+        assert!((result.missing_values_ratio - 15.0).abs() < 0.01);
+        // Pessimistic bound: max(0, 100 - 30) / 100 = 70%
+        assert!((result.complete_records_ratio - 70.0).abs() < 0.01);
+        assert!(result.null_columns.is_empty()); // Neither exceeds 50% threshold
+    }
+
+    #[test]
+    fn test_calculate_from_profiles_null_column_detected() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = CompletenessCalculator::new(&thresholds);
+        let profiles = vec![
+            make_profile("good", 100, 0),
+            make_profile("bad", 100, 60), // 60% null → above 50% threshold
+        ];
+
+        let result = calc.calculate_from_profiles(&profiles).unwrap();
+        assert_eq!(result.null_columns, vec!["bad".to_string()]);
+    }
+
+    #[test]
+    fn test_calculate_from_profiles_empty() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = CompletenessCalculator::new(&thresholds);
+        let profiles: Vec<ColumnProfile> = vec![];
+
+        let result = calc.calculate_from_profiles(&profiles).unwrap();
+        assert_eq!(result.missing_values_ratio, 0.0);
+        assert_eq!(result.complete_records_ratio, 100.0);
     }
 }

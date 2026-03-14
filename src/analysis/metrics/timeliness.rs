@@ -5,8 +5,8 @@
 
 use super::utils::extract_year;
 use crate::core::config::IsoQualityConfig;
+use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
-use anyhow::Result;
 use chrono::Datelike;
 use std::collections::HashMap;
 
@@ -33,7 +33,7 @@ impl<'a> TimelinessCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<TimelinessMetrics> {
+    ) -> Result<TimelinessMetrics, DataProfilerError> {
         let future_dates_count = Self::count_future_dates(data, column_profiles)?;
         let stale_data_ratio = self.calculate_stale_data_ratio(data, column_profiles)?;
         let temporal_violations = Self::count_temporal_violations(data)?;
@@ -49,7 +49,7 @@ impl<'a> TimelinessCalculator<'a> {
     fn count_future_dates(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<usize> {
+    ) -> Result<usize, DataProfilerError> {
         let mut future_count = 0;
 
         // Get current year from system time
@@ -84,7 +84,7 @@ impl<'a> TimelinessCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64> {
+    ) -> Result<f64, DataProfilerError> {
         let mut total_dates = 0;
         let mut stale_dates = 0;
 
@@ -121,7 +121,9 @@ impl<'a> TimelinessCalculator<'a> {
     }
 
     /// Count temporal ordering violations (e.g., end_date < start_date)
-    fn count_temporal_violations(data: &HashMap<String, Vec<String>>) -> Result<usize> {
+    fn count_temporal_violations(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
         let mut violations = 0;
 
         // Look for column pairs like start_date/end_date, created_at/updated_at

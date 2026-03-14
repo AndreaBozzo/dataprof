@@ -5,8 +5,8 @@
 
 use super::utils::{calculate_percentile, validate_sample_size};
 use crate::core::config::IsoQualityConfig;
+use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
-use anyhow::Result;
 use std::collections::HashMap;
 
 /// Accuracy metrics container
@@ -32,7 +32,7 @@ impl<'a> AccuracyCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<AccuracyMetrics> {
+    ) -> Result<AccuracyMetrics, DataProfilerError> {
         let outlier_ratio = self.calculate_outlier_ratio(data, column_profiles)?;
         let range_violations = Self::count_range_violations(data)?;
         let negative_values_in_positive = Self::count_negative_in_positive_fields(data)?;
@@ -49,7 +49,7 @@ impl<'a> AccuracyCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64> {
+    ) -> Result<f64, DataProfilerError> {
         let mut total_numeric_values = 0;
         let mut total_outliers = 0;
 
@@ -135,7 +135,9 @@ impl<'a> AccuracyCalculator<'a> {
     }
 
     /// Count values outside expected ranges
-    fn count_range_violations(data: &HashMap<String, Vec<String>>) -> Result<usize> {
+    fn count_range_violations(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
         let mut violations = 0;
 
         for (column_name, values) in data {
@@ -184,7 +186,9 @@ impl<'a> AccuracyCalculator<'a> {
     }
 
     /// Count negative values in positive-only fields
-    fn count_negative_in_positive_fields(data: &HashMap<String, Vec<String>>) -> Result<usize> {
+    fn count_negative_in_positive_fields(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
         let positive_field_patterns = [
             "age", "price", "cost", "amount", "count", "quantity", "salary", "revenue", "profit",
             "distance", "weight", "height", "length", "width", "area", "volume",
