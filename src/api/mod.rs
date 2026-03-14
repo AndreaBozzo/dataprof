@@ -1,3 +1,5 @@
+pub mod partial;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,7 +9,7 @@ use crate::core::progress::{ProgressEvent, ProgressSink};
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::StopCondition;
 use crate::engines::adaptive::AdaptiveProfiler;
-use crate::types::{DataSource, FileFormat, ProfileReport};
+use crate::types::{DataSource, FileFormat, ProfileReport, RowCountEstimate, SchemaResult};
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -192,6 +194,37 @@ impl Profiler {
                     .to_string(),
             }),
         }
+    }
+
+    /// Infer the schema (column names + data types) of a file.
+    ///
+    /// Respects the builder's format override. This is much faster than a full
+    /// `analyze_file` — it reads only a small sample (or just metadata for Parquet).
+    pub fn infer_schema<P: AsRef<Path>>(&self, path: P) -> Result<SchemaResult, DataProfilerError> {
+        let path = path.as_ref();
+        let format = self
+            .config
+            .format_override
+            .clone()
+            .unwrap_or_else(|| Self::detect_format(path));
+        partial::infer_schema_with_format(path, format)
+    }
+
+    /// Quick row count (exact or estimated) for a file.
+    ///
+    /// Respects the builder's format override. Returns an exact count for small
+    /// files and Parquet; an estimate for large CSV/JSON files.
+    pub fn quick_row_count<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<RowCountEstimate, DataProfilerError> {
+        let path = path.as_ref();
+        let format = self
+            .config
+            .format_override
+            .clone()
+            .unwrap_or_else(|| Self::detect_format(path));
+        partial::quick_row_count_with_format(path, format)
     }
 
     /// Detect file format from extension
