@@ -31,7 +31,9 @@ pub use api::partial::{infer_schema, quick_row_count};
 pub use types::{ColumnSchema, CountMethod, RowCountEstimate, SchemaResult};
 
 #[cfg(feature = "async-streaming")]
-pub use api::partial::{infer_schema_async, quick_row_count_async};
+pub use api::partial::{
+    infer_schema_async, infer_schema_stream, quick_row_count_async, quick_row_count_stream,
+};
 
 #[deprecated(note = "Use the unified Profiler builder instead.")]
 pub type DataProfiler = Profiler;

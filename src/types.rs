@@ -976,6 +976,8 @@ pub enum CountMethod {
     FullScan,
     /// Sample-based estimation (approximate).
     Sampling,
+    /// Full scan of a streaming source (no file metadata available).
+    StreamFullScan,
 }
 
 #[cfg(test)]

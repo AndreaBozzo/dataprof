@@ -31,6 +31,7 @@ fn format_count_text(result: &dataprof::RowCountEstimate) -> String {
         dataprof::CountMethod::ParquetMetadata => "parquet metadata",
         dataprof::CountMethod::FullScan => "full scan",
         dataprof::CountMethod::Sampling => "sampling",
+        dataprof::CountMethod::StreamFullScan => "stream full scan",
     };
 
     let prefix = if result.exact { "" } else { "~" };
