@@ -1,5 +1,7 @@
 // Command modules
 pub mod analyze;
+pub mod count;
+pub mod schema;
 
 #[cfg(feature = "database")]
 pub mod database;
@@ -37,6 +39,25 @@ pub enum Command {
     ///   dataprof analyze data.csv
     ///   dataprof analyze data.csv --detailed
     Analyze(analyze::AnalyzeArgs),
+
+    /// Infer schema (column names and data types)
+    ///
+    /// Fast schema detection that reads only a small sample of rows.
+    /// For Parquet files, reads metadata only (zero row reading).
+    ///
+    /// Examples:
+    ///   dataprof schema data.csv
+    ///   dataprof schema data.parquet --format json
+    Schema(schema::SchemaArgs),
+
+    /// Quick row count (exact or estimated)
+    ///
+    /// Returns exact counts for small files and Parquet, estimates for large files.
+    ///
+    /// Examples:
+    ///   dataprof count data.csv
+    ///   dataprof count data.parquet
+    Count(count::CountArgs),
 
     /// Analyze database tables or queries
     ///

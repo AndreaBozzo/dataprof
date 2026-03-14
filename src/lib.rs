@@ -26,6 +26,13 @@ pub use api::{
     EngineType, Profiler, ProfilerConfig, quick_quality_check, quick_quality_check_source,
 };
 
+// Partial analysis APIs (#226)
+pub use api::partial::{infer_schema, quick_row_count};
+pub use types::{ColumnSchema, CountMethod, RowCountEstimate, SchemaResult};
+
+#[cfg(feature = "async-streaming")]
+pub use api::partial::{infer_schema_async, quick_row_count_async};
+
 #[deprecated(note = "Use the unified Profiler builder instead.")]
 pub type DataProfiler = Profiler;
 
