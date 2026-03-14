@@ -82,7 +82,7 @@ pub(crate) fn infer_schema_with_format(
     match format {
         FileFormat::Parquet => infer_schema_parquet(path, start),
         FileFormat::Csv => infer_schema_csv(path, start),
-        FileFormat::Json | FileFormat::Jsonl => infer_schema_json(path, start),
+        FileFormat::Json | FileFormat::Jsonl => infer_schema_json(path, &format, start),
         FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
         }),
@@ -143,6 +143,9 @@ fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataPro
         path: path.display().to_string(),
     })?;
 
+    // Note: analyze_csv_from_reader builds full ColumnProfiles (including pattern
+    // detection). For 1000 rows the overhead is negligible (~microseconds), so we
+    // reuse the existing parser rather than adding a stats-only code path.
     let config = CsvParserConfig::default().max_rows(Some(SCHEMA_SAMPLE_ROWS));
     let (_profiles, column_stats, rows_read, headers) =
         crate::parsers::csv::analyze_csv_from_reader(file, &config)?;
@@ -155,21 +158,29 @@ fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataPro
     ))
 }
 
-fn infer_schema_json(path: &Path, start: Instant) -> Result<SchemaResult, DataProfilerError> {
+fn infer_schema_json(
+    path: &Path,
+    format: &FileFormat,
+    start: Instant,
+) -> Result<SchemaResult, DataProfilerError> {
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
     let reader = BufReader::new(file);
 
-    let config = JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS);
-    let (_profiles, column_stats, rows_read, _format) =
+    // Respect format override so callers who force JSONL/JSON array get it.
+    let config = match format {
+        FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(SCHEMA_SAMPLE_ROWS),
+        FileFormat::Json => JsonParserConfig::json_array().with_max_rows(SCHEMA_SAMPLE_ROWS),
+        _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS),
+    };
+    let (_profiles, column_stats, rows_read, _detected_format) =
         crate::parsers::json::analyze_json_from_reader(reader, &config)?;
 
-    // JSON parser doesn't return headers in insertion order via a separate vec,
-    // but column_stats.column_names() gives us the keys. For JSON the "header"
-    // order is discovery order which column_names() preserves (HashMap iteration
-    // order is arbitrary, but we use what we have).
-    let names = column_stats.column_names();
+    // column_names() returns HashMap keys in arbitrary order. Sort
+    // alphabetically so the output is deterministic across runs.
+    let mut names = column_stats.column_names();
+    names.sort();
 
     Ok(schema_from_streaming_stats(
         &column_stats,
@@ -217,7 +228,11 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
 
     if file_size < FULL_SCAN_THRESHOLD {
         // Full scan — exact count (subtract 1 for header)
-        let line_count = reader.lines().count();
+        let mut line_count: usize = 0;
+        for line in reader.lines() {
+            let _line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+            line_count += 1;
+        }
         let count = if line_count > 0 { line_count - 1 } else { 0 };
 
         Ok(RowCountEstimate {
@@ -284,11 +299,13 @@ fn count_json(
 
             if file_size < FULL_SCAN_THRESHOLD {
                 // Full scan — count non-empty lines
-                let count = reader
-                    .lines()
-                    .map_while(Result::ok)
-                    .filter(|l| !l.trim().is_empty())
-                    .count() as u64;
+                let mut count: u64 = 0;
+                for line in reader.lines() {
+                    let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+                    if !line.trim().is_empty() {
+                        count += 1;
+                    }
+                }
 
                 Ok(RowCountEstimate {
                     count,
@@ -335,32 +352,18 @@ fn count_json(
             }
         }
         _ => {
-            // JSON array — full parse via serde streaming deserializer
+            // JSON array — streaming count. We deserialize each element as
+            // IgnoredAny which skips the value without allocating, keeping
+            // memory usage constant regardless of array size.
             let reader = BufReader::new(file);
-            let deserializer = serde_json::Deserializer::from_reader(reader);
-            let mut count: u64 = 0;
-
-            // Use StreamDeserializer to count top-level values in the array
-            // For a JSON array, we parse the outer structure
-            use serde_json::Value;
-            let value: Value =
-                serde_json::from_reader(BufReader::new(fs::File::open(path).map_err(|_| {
-                    DataProfilerError::FileNotFound {
-                        path: path.display().to_string(),
-                    }
-                })?))
-                .map_err(|e| DataProfilerError::JsonParsingError {
-                    message: format!("Failed to parse JSON: {}", e),
-                })?;
-
-            drop(deserializer); // unused, we use from_reader instead
-
-            if let Value::Array(arr) = value {
-                count = arr.len() as u64;
-            }
+            let arr: Vec<serde::de::IgnoredAny> = serde_json::from_reader(reader).map_err(|e| {
+                DataProfilerError::JsonParsingError {
+                    message: format!("Failed to parse JSON array: {}", e),
+                }
+            })?;
 
             Ok(RowCountEstimate {
-                count,
+                count: arr.len() as u64,
                 exact: true,
                 method: CountMethod::FullScan,
                 count_time_ms: start.elapsed().as_millis(),
@@ -391,11 +394,17 @@ fn schema_from_streaming_stats(
         })
         .collect();
 
+    // schema_stable is true when we read fewer rows than the sample cap
+    // (meaning we hit EOF — the entire file was consumed), or for Parquet
+    // (metadata-only). When we hit the SCHEMA_SAMPLE_ROWS cap, the schema
+    // may not have stabilized.
+    let schema_stable = rows_sampled < SCHEMA_SAMPLE_ROWS;
+
     SchemaResult {
         columns,
         rows_sampled,
         inference_time_ms: elapsed_ms,
-        schema_stable: true,
+        schema_stable,
     }
 }
 
@@ -518,10 +527,9 @@ mod tests {
         let result = infer_schema(f.path()).unwrap();
 
         assert_eq!(result.columns.len(), 2);
-        // JSON column order may vary — check by name
-        let names: Vec<&str> = result.columns.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"name"));
-        assert!(names.contains(&"age"));
+        // JSON columns are sorted alphabetically
+        assert_eq!(result.columns[0].name, "age");
+        assert_eq!(result.columns[1].name, "name");
     }
 
     #[test]
@@ -530,9 +538,9 @@ mod tests {
         let result = infer_schema(f.path()).unwrap();
 
         assert_eq!(result.columns.len(), 2);
-        let names: Vec<&str> = result.columns.iter().map(|c| c.name.as_str()).collect();
-        assert!(names.contains(&"x"));
-        assert!(names.contains(&"y"));
+        // JSON columns are sorted alphabetically
+        assert_eq!(result.columns[0].name, "x");
+        assert_eq!(result.columns[1].name, "y");
     }
 
     #[test]
