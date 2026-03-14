@@ -236,14 +236,18 @@ fn count_from_reader<R: Read>(
 
     match format {
         FileFormat::Csv => {
-            let mut line_count: usize = 0;
-            for line in buf_reader.lines() {
-                let _line = line.map_err(|e| DataProfilerError::io_error(&e))?;
-                line_count += 1;
+            // Use the csv crate to count records properly — handles RFC 4180
+            // quoted fields with embedded newlines, unlike raw line counting.
+            let mut csv_reader = csv::ReaderBuilder::new()
+                .has_headers(true)
+                .from_reader(buf_reader);
+            let mut count: u64 = 0;
+            for result in csv_reader.records() {
+                let _record = result?;
+                count += 1;
             }
-            let count = if line_count > 0 { line_count - 1 } else { 0 };
             Ok(RowCountEstimate {
-                count: count as u64,
+                count,
                 exact: true,
                 method: CountMethod::StreamFullScan,
                 count_time_ms: 0, // caller patches timing
@@ -265,14 +269,32 @@ fn count_from_reader<R: Read>(
             })
         }
         FileFormat::Json => {
-            let arr: Vec<serde::de::IgnoredAny> =
-                serde_json::from_reader(buf_reader).map_err(|e| {
-                    DataProfilerError::JsonParsingError {
-                        message: format!("Failed to parse JSON array: {}", e),
+            // Walk into the top-level array and count elements one-by-one
+            // with IgnoredAny, keeping memory O(1) instead of buffering
+            // the entire array into a Vec.
+            use serde::de::{Deserializer as _, SeqAccess, Visitor};
+            struct ArrayCountVisitor;
+            impl<'de> Visitor<'de> for ArrayCountVisitor {
+                type Value = u64;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a JSON array")
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<u64, A::Error> {
+                    let mut count = 0u64;
+                    while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                        count += 1;
                     }
-                })?;
+                    Ok(count)
+                }
+            }
+            let mut de = serde_json::Deserializer::from_reader(buf_reader);
+            let count = de.deserialize_seq(ArrayCountVisitor).map_err(|e| {
+                DataProfilerError::JsonParsingError {
+                    message: format!("Failed to parse JSON array: {}", e),
+                }
+            })?;
             Ok(RowCountEstimate {
-                count: arr.len() as u64,
+                count,
                 exact: true,
                 method: CountMethod::StreamFullScan,
                 count_time_ms: 0,
