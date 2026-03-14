@@ -188,11 +188,12 @@ fn test_mixed_data_column_type_consistency() {
     }
 }
 
-/// Test that streaming (IncrementalProfiler) and batch (ArrowProfiler) produce
-/// quality metrics with the correct confidence levels.
+/// Test that batch (ArrowProfiler) produces `MetricConfidence::Exact` and that
+/// streaming (IncrementalProfiler) detects nulls correctly for a small dataset.
 ///
-/// Streaming engines should produce `MetricConfidence::Mixed` (bifurcated)
-/// when sample < total rows, while batch engines should produce `MetricConfidence::Exact`.
+/// For small datasets where sample == total rows, both engines use the uniform
+/// (non-bifurcated) path. The structural Mixed-confidence test is in
+/// `test_streaming_bifurcation_with_large_dataset`.
 #[test]
 fn test_streaming_vs_batch_quality_confidence() {
     // CSV with known null pattern: empty fields in name/value columns

@@ -77,8 +77,8 @@ impl ReportAssembler {
     /// Override the default metric confidence level.
     ///
     /// By default, confidence is determined automatically:
-    /// - `Mixed` for streaming contexts (sample < total rows)
-    /// - `Exact` when sample covers the full dataset
+    /// - `Mixed` for streaming contexts (sample < total rows, or `sampling_applied`)
+    /// - `Exact` when sample covers the full dataset with no sampling
     pub fn with_confidence(mut self, confidence: MetricConfidence) -> Self {
         self.confidence = Some(confidence);
         self
@@ -123,6 +123,12 @@ impl ReportAssembler {
     }
 
     /// Detect whether this is a streaming context where bifurcation improves accuracy.
+    ///
+    /// Uses `sampling_applied` from execution metadata as the primary signal.
+    /// Falls back to comparing the largest sample column against `rows_processed`
+    /// (max is used because sample vectors may differ in length when engines
+    /// exclude nulls from samples — the longest column best represents the
+    /// true sample size).
     fn is_streaming_context(&self, sample_size: usize) -> bool {
         self.execution.sampling_applied
             || (sample_size > 0 && sample_size < self.execution.rows_processed)
