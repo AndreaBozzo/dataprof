@@ -4,8 +4,8 @@
 //! Key metrics: data type consistency, format violations, encoding issues.
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column, is_valid_date_format};
+use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
-use anyhow::Result;
 use std::collections::HashMap;
 
 /// Consistency metrics container
@@ -24,7 +24,7 @@ impl ConsistencyCalculator {
     pub fn calculate(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<ConsistencyMetrics> {
+    ) -> Result<ConsistencyMetrics, DataProfilerError> {
         let data_type_consistency = Self::calculate_type_consistency(data, column_profiles)?;
         let format_violations = Self::count_format_violations(data)?;
         let encoding_issues = Self::detect_encoding_issues(data)?;
@@ -40,7 +40,7 @@ impl ConsistencyCalculator {
     fn calculate_type_consistency(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64> {
+    ) -> Result<f64, DataProfilerError> {
         let mut total_values = 0;
         let mut consistent_values = 0;
 
@@ -76,7 +76,9 @@ impl ConsistencyCalculator {
     }
 
     /// Count format violations (malformed dates, inconsistent formats)
-    fn count_format_violations(data: &HashMap<String, Vec<String>>) -> Result<usize> {
+    fn count_format_violations(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
         let mut violations = 0;
 
         for (column_name, values) in data {
@@ -167,7 +169,9 @@ impl ConsistencyCalculator {
     }
 
     /// Detect UTF-8 encoding issues
-    fn detect_encoding_issues(data: &HashMap<String, Vec<String>>) -> Result<usize> {
+    fn detect_encoding_issues(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
         let mut issues = 0;
 
         for values in data.values() {

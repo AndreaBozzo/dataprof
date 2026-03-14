@@ -6,7 +6,7 @@
 use std::io::Write;
 
 use dataprof::parsers::csv::{CsvParserConfig, analyze_csv_file};
-use dataprof::types::{ColumnStats, DataType};
+use dataprof::types::{ColumnStats, DataType, MetricConfidence};
 use dataprof::{EngineType, Profiler};
 use tempfile::NamedTempFile;
 
@@ -186,4 +186,161 @@ fn test_mixed_data_column_type_consistency() {
             std_col.name, std_col.data_type, arrow_col.data_type
         );
     }
+}
+
+/// Test that streaming (IncrementalProfiler) and batch (ArrowProfiler) produce
+/// quality metrics with the correct confidence levels.
+///
+/// Streaming engines should produce `MetricConfidence::Mixed` (bifurcated)
+/// when sample < total rows, while batch engines should produce `MetricConfidence::Exact`.
+#[test]
+fn test_streaming_vs_batch_quality_confidence() {
+    // CSV with known null pattern: empty fields in name/value columns
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,name,value").unwrap();
+    for i in 0..200 {
+        let name = if i % 10 == 0 { "" } else { "Alice" }; // 10% nulls in name
+        let value = if i % 20 == 0 {
+            ""
+        } else {
+            &format!("{}", i * 100)
+        }; // 5% nulls in value
+        writeln!(f, "{},{},{}", i, name, value).unwrap();
+    }
+    f.flush().unwrap();
+
+    // Batch engine (ArrowProfiler) — full data, exact confidence
+    let batch_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(f.path())
+        .expect("Batch analysis should succeed");
+
+    // Streaming engine (IncrementalProfiler)
+    let streaming_report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(f.path())
+        .expect("Streaming analysis should succeed");
+
+    // Both should have quality assessments
+    let batch_quality = batch_report
+        .quality
+        .as_ref()
+        .expect("Batch report should have quality");
+    let streaming_quality = streaming_report
+        .quality
+        .as_ref()
+        .expect("Streaming report should have quality");
+
+    // Batch engine should produce Exact confidence
+    assert!(
+        matches!(batch_quality.confidence, MetricConfidence::Exact),
+        "Batch engine should produce Exact confidence, got {:?}",
+        batch_quality.confidence
+    );
+
+    // For 200 rows (< 10K reservoir), the streaming engine has sample == total.
+    // The bifurcated path only triggers when sample < total, so both engines
+    // use the uniform path here. The structural bifurcation test with Mixed
+    // confidence is in test_streaming_bifurcation_with_large_dataset.
+
+    // Streaming engine should detect the known null pattern in ColumnProfile.
+    // The streaming null_count tracks empty strings as nulls, giving us exact
+    // completeness metrics from global counters.
+    let streaming_m = &streaming_quality.metrics;
+    assert!(
+        streaming_m.missing_values_ratio > 0.0,
+        "Streaming engine should detect missing values from empty CSV fields"
+    );
+
+    // key_uniqueness should be close (HLL ≤ 3% error for 200 rows)
+    let batch_m = &batch_quality.metrics;
+    assert!(
+        (batch_m.key_uniqueness - streaming_m.key_uniqueness).abs() < 5.0,
+        "key_uniqueness: batch={:.2} vs streaming={:.2}",
+        batch_m.key_uniqueness,
+        streaming_m.key_uniqueness
+    );
+}
+
+/// Test bifurcation with a larger dataset where sample < total rows.
+/// This forces the streaming engine to produce Mixed confidence.
+#[test]
+fn test_streaming_bifurcation_with_large_dataset() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,category,amount").unwrap();
+    // Write enough rows that reservoir sample (10K) < total rows
+    // This triggers the bifurcated path in ReportAssembler
+    for i in 0..15_000 {
+        let cat = if i % 3 == 0 {
+            "A"
+        } else if i % 3 == 1 {
+            "B"
+        } else {
+            "C"
+        };
+        let amount = if i % 100 == 0 {
+            ""
+        } else {
+            &format!("{:.2}", i as f64 * 1.5)
+        };
+        writeln!(f, "{},{},{}", i, cat, amount).unwrap();
+    }
+    f.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(f.path())
+        .expect("Large streaming analysis should succeed");
+
+    let quality = report
+        .quality
+        .as_ref()
+        .expect("Should have quality assessment");
+
+    // With 15K rows and 10K reservoir, sample < total → Mixed confidence
+    match &quality.confidence {
+        MetricConfidence::Mixed {
+            exact_dimensions,
+            sampled_dimensions,
+            sample_size,
+        } => {
+            assert!(
+                exact_dimensions.contains(&"completeness".to_string()),
+                "completeness should be exact"
+            );
+            assert!(
+                exact_dimensions.contains(&"key_uniqueness".to_string()),
+                "key_uniqueness should be exact"
+            );
+            assert!(
+                sampled_dimensions.contains(&"consistency".to_string()),
+                "consistency should be sampled"
+            );
+            assert!(
+                sampled_dimensions.contains(&"accuracy".to_string()),
+                "accuracy should be sampled"
+            );
+            assert!(
+                *sample_size < 15_000,
+                "sample_size ({}) should be less than total rows (15000)",
+                sample_size
+            );
+        }
+        other => panic!(
+            "Expected Mixed confidence for large streaming dataset, got {:?}",
+            other
+        ),
+    }
+
+    // Completeness should reflect the exact global counters
+    // ~1% nulls in amount column (every 100th row), 0 nulls in id/category
+    let m = &quality.metrics;
+    assert!(
+        m.missing_values_ratio > 0.0,
+        "Should detect some missing values"
+    );
+    assert!(
+        m.missing_values_ratio < 2.0,
+        "Missing ratio should be small (~0.33%)"
+    );
 }

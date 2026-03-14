@@ -5,8 +5,8 @@
 
 use super::utils::is_likely_id_column;
 use crate::core::config::IsoQualityConfig;
+use crate::core::errors::DataProfilerError;
 use crate::types::ColumnProfile;
-use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
 /// Uniqueness metrics container
@@ -33,7 +33,7 @@ impl<'a> UniquenessCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
         total_rows: usize,
-    ) -> Result<UniquenessMetrics> {
+    ) -> Result<UniquenessMetrics, DataProfilerError> {
         let duplicate_rows = Self::count_exact_duplicate_rows(data)?;
         let key_uniqueness = Self::calculate_key_uniqueness(column_profiles)?;
         let high_cardinality_warning = self.check_high_cardinality(column_profiles, total_rows);
@@ -46,16 +46,18 @@ impl<'a> UniquenessCalculator<'a> {
     }
 
     /// Count exact duplicate rows
-    fn count_exact_duplicate_rows(data: &HashMap<String, Vec<String>>) -> Result<usize> {
+    fn count_exact_duplicate_rows(
+        data: &HashMap<String, Vec<String>>,
+    ) -> Result<usize, DataProfilerError> {
         if data.is_empty() {
             return Ok(0);
         }
 
-        let total_rows = data
-            .values()
-            .next()
-            .map(|v| v.len())
-            .ok_or_else(|| anyhow::anyhow!("No data columns found"))?;
+        let total_rows = data.values().next().map(|v| v.len()).ok_or_else(|| {
+            DataProfilerError::MetricsCalculationError {
+                message: "No data columns found".to_string(),
+            }
+        })?;
         let column_names: Vec<&String> = data.keys().collect();
 
         let mut row_signatures = HashSet::new();
@@ -76,7 +78,9 @@ impl<'a> UniquenessCalculator<'a> {
     }
 
     /// Calculate key uniqueness percentage
-    fn calculate_key_uniqueness(column_profiles: &[ColumnProfile]) -> Result<f64> {
+    fn calculate_key_uniqueness(
+        column_profiles: &[ColumnProfile],
+    ) -> Result<f64, DataProfilerError> {
         // Look for ID-like columns
         let key_column = column_profiles.iter().find(|profile| {
             let name_lower = profile.name.to_lowercase();
