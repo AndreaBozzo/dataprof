@@ -453,6 +453,28 @@ impl Profiler {
             }),
         }
     }
+
+    /// Infer schema from any async byte stream.
+    ///
+    /// True async — no file path needed. Reads up to 1000 rows for
+    /// CSV/JSON/JSONL. Parquet is not supported (requires seeking).
+    pub async fn infer_schema_stream(
+        &self,
+        source: impl crate::engines::streaming::AsyncDataSource,
+    ) -> Result<SchemaResult, DataProfilerError> {
+        partial::infer_schema_stream(source).await
+    }
+
+    /// Quick row count from any async byte stream.
+    ///
+    /// True async — always a full scan (no sampling, since stream size is
+    /// unknown). Parquet is not supported (requires seeking).
+    pub async fn quick_row_count_stream(
+        &self,
+        source: impl crate::engines::streaming::AsyncDataSource,
+    ) -> Result<RowCountEstimate, DataProfilerError> {
+        partial::quick_row_count_stream(source).await
+    }
 }
 
 #[cfg(feature = "parquet-async")]

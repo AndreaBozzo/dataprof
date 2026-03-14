@@ -5,7 +5,7 @@
 //! - [`quick_row_count`] — fast row counting / estimation
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::time::Instant;
 
@@ -142,20 +142,9 @@ fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataPro
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
-
-    // Note: analyze_csv_from_reader builds full ColumnProfiles (including pattern
-    // detection). For 1000 rows the overhead is negligible (~microseconds), so we
-    // reuse the existing parser rather than adding a stats-only code path.
-    let config = CsvParserConfig::default().max_rows(Some(SCHEMA_SAMPLE_ROWS));
-    let (_profiles, column_stats, rows_read, headers) =
-        crate::parsers::csv::analyze_csv_from_reader(file, &config)?;
-
-    Ok(schema_from_streaming_stats(
-        &column_stats,
-        &headers,
-        rows_read,
-        start.elapsed().as_millis(),
-    ))
+    let mut result = infer_schema_from_csv_reader(file)?;
+    result.inference_time_ms = start.elapsed().as_millis();
+    Ok(result)
 }
 
 fn infer_schema_json(
@@ -166,9 +155,34 @@ fn infer_schema_json(
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
-    let reader = BufReader::new(file);
+    let mut result = infer_schema_from_json_reader(BufReader::new(file), format)?;
+    result.inference_time_ms = start.elapsed().as_millis();
+    Ok(result)
+}
 
-    // Respect format override so callers who force JSONL/JSON array get it.
+// ---------------------------------------------------------------------------
+// Reader-based helpers (shared by sync file and async stream paths)
+// ---------------------------------------------------------------------------
+
+/// Infer schema from any CSV reader. Reads up to `SCHEMA_SAMPLE_ROWS` rows.
+fn infer_schema_from_csv_reader<R: Read>(reader: R) -> Result<SchemaResult, DataProfilerError> {
+    let config = CsvParserConfig::default().max_rows(Some(SCHEMA_SAMPLE_ROWS));
+    let (_profiles, column_stats, rows_read, headers) =
+        crate::parsers::csv::analyze_csv_from_reader(reader, &config)?;
+
+    Ok(schema_from_streaming_stats(
+        &column_stats,
+        &headers,
+        rows_read,
+        0, // caller patches timing
+    ))
+}
+
+/// Infer schema from any JSON/JSONL reader. Reads up to `SCHEMA_SAMPLE_ROWS` rows.
+fn infer_schema_from_json_reader<R: BufRead>(
+    reader: R,
+    format: &FileFormat,
+) -> Result<SchemaResult, DataProfilerError> {
     let config = match format {
         FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(SCHEMA_SAMPLE_ROWS),
         FileFormat::Json => JsonParserConfig::json_array().with_max_rows(SCHEMA_SAMPLE_ROWS),
@@ -186,8 +200,91 @@ fn infer_schema_json(
         &column_stats,
         &names,
         rows_read,
-        start.elapsed().as_millis(),
+        0, // caller patches timing
     ))
+}
+
+/// Infer schema from a generic reader, dispatching by format.
+/// Parquet is not supported (requires seeking).
+#[cfg(feature = "async-streaming")]
+fn infer_schema_from_reader<R: Read>(
+    reader: R,
+    format: &FileFormat,
+) -> Result<SchemaResult, DataProfilerError> {
+    match format {
+        FileFormat::Csv => infer_schema_from_csv_reader(reader),
+        FileFormat::Json | FileFormat::Jsonl => {
+            infer_schema_from_json_reader(BufReader::new(reader), format)
+        }
+        FileFormat::Parquet => Err(DataProfilerError::StreamingError {
+            message: "Parquet schema inference requires random access; use infer_schema() with a file path instead".into(),
+        }),
+        FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
+            format: ext.clone(),
+        }),
+    }
+}
+
+/// Count rows from a generic reader, dispatching by format.
+/// Always performs a full scan (no sampling — stream size is unknown).
+#[cfg(feature = "async-streaming")]
+fn count_from_reader<R: Read>(
+    reader: R,
+    format: &FileFormat,
+) -> Result<RowCountEstimate, DataProfilerError> {
+    let buf_reader = BufReader::new(reader);
+
+    match format {
+        FileFormat::Csv => {
+            let mut line_count: usize = 0;
+            for line in buf_reader.lines() {
+                let _line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+                line_count += 1;
+            }
+            let count = if line_count > 0 { line_count - 1 } else { 0 };
+            Ok(RowCountEstimate {
+                count: count as u64,
+                exact: true,
+                method: CountMethod::StreamFullScan,
+                count_time_ms: 0, // caller patches timing
+            })
+        }
+        FileFormat::Jsonl => {
+            let mut count: u64 = 0;
+            for line in buf_reader.lines() {
+                let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+                if !line.trim().is_empty() {
+                    count += 1;
+                }
+            }
+            Ok(RowCountEstimate {
+                count,
+                exact: true,
+                method: CountMethod::StreamFullScan,
+                count_time_ms: 0,
+            })
+        }
+        FileFormat::Json => {
+            let arr: Vec<serde::de::IgnoredAny> =
+                serde_json::from_reader(buf_reader).map_err(|e| {
+                    DataProfilerError::JsonParsingError {
+                        message: format!("Failed to parse JSON array: {}", e),
+                    }
+                })?;
+            Ok(RowCountEstimate {
+                count: arr.len() as u64,
+                exact: true,
+                method: CountMethod::StreamFullScan,
+                count_time_ms: 0,
+            })
+        }
+        FileFormat::Parquet => Err(DataProfilerError::StreamingError {
+            message: "Parquet row counting requires random access; use quick_row_count() with a file path instead".into(),
+        }),
+        FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
+            format: ext.clone(),
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -461,6 +558,101 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
 }
 
 // ---------------------------------------------------------------------------
+// True async streaming (feature: async-streaming)
+// ---------------------------------------------------------------------------
+
+/// Infer schema from any async byte stream.
+///
+/// True async — no file path needed. Reads up to 1000 rows for
+/// CSV/JSON/JSONL. Parquet is not supported (requires seeking).
+///
+/// # Example
+/// ```no_run
+/// use dataprof::{AsyncSourceInfo, BytesSource, FileFormat};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let csv = b"name,age\nAlice,30\nBob,25\n";
+/// let source = BytesSource::new(
+///     bytes::Bytes::from_static(csv),
+///     AsyncSourceInfo {
+///         label: "api-body".into(),
+///         format: FileFormat::Csv,
+///         size_hint: None,
+///         source_system: None,
+///     },
+/// );
+/// let schema = dataprof::infer_schema_stream(source).await?;
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "async-streaming")]
+pub async fn infer_schema_stream(
+    source: impl crate::engines::streaming::AsyncDataSource,
+) -> Result<SchemaResult, DataProfilerError> {
+    let info = source.source_info();
+    let format = info.format.clone();
+
+    let start = Instant::now();
+    let async_reader = source.into_async_read().await?;
+    let sync_reader = tokio_util::io::SyncIoBridge::new(async_reader);
+
+    let mut result =
+        tokio::task::spawn_blocking(move || infer_schema_from_reader(sync_reader, &format))
+            .await
+            .map_err(|e| DataProfilerError::StreamingError {
+                message: format!("Schema inference task failed: {}", e),
+            })??;
+
+    result.inference_time_ms = start.elapsed().as_millis();
+    Ok(result)
+}
+
+/// Quick row count from any async byte stream.
+///
+/// True async — always a full scan (no sampling, since stream size is unknown).
+/// Parquet is not supported (requires seeking).
+///
+/// # Example
+/// ```no_run
+/// use dataprof::{AsyncSourceInfo, BytesSource, FileFormat};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let csv = b"name,age\nAlice,30\nBob,25\n";
+/// let source = BytesSource::new(
+///     bytes::Bytes::from_static(csv),
+///     AsyncSourceInfo {
+///         label: "api-body".into(),
+///         format: FileFormat::Csv,
+///         size_hint: None,
+///         source_system: None,
+///     },
+/// );
+/// let est = dataprof::quick_row_count_stream(source).await?;
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "async-streaming")]
+pub async fn quick_row_count_stream(
+    source: impl crate::engines::streaming::AsyncDataSource,
+) -> Result<RowCountEstimate, DataProfilerError> {
+    let info = source.source_info();
+    let format = info.format.clone();
+
+    let start = Instant::now();
+    let async_reader = source.into_async_read().await?;
+    let sync_reader = tokio_util::io::SyncIoBridge::new(async_reader);
+
+    let mut result = tokio::task::spawn_blocking(move || count_from_reader(sync_reader, &format))
+        .await
+        .map_err(|e| DataProfilerError::StreamingError {
+            message: format!("Row count task failed: {}", e),
+        })??;
+
+    result.count_time_ms = start.elapsed().as_millis();
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -668,5 +860,147 @@ mod tests {
         );
         assert_eq!(arrow_type_to_dataprof(&AT::Utf8), DataType::String);
         assert_eq!(arrow_type_to_dataprof(&AT::Boolean), DataType::String);
+    }
+}
+
+#[cfg(all(test, feature = "async-streaming"))]
+mod async_tests {
+    use super::*;
+    use crate::engines::streaming::BytesSource;
+    use crate::engines::streaming::async_source::AsyncSourceInfo;
+    use crate::types::FileFormat;
+
+    fn csv_source(data: &'static [u8]) -> BytesSource {
+        BytesSource::new(
+            bytes::Bytes::from_static(data),
+            AsyncSourceInfo {
+                label: "test-csv".into(),
+                format: FileFormat::Csv,
+                size_hint: Some(data.len() as u64),
+                source_system: None,
+            },
+        )
+    }
+
+    fn jsonl_source(data: &'static [u8]) -> BytesSource {
+        BytesSource::new(
+            bytes::Bytes::from_static(data),
+            AsyncSourceInfo {
+                label: "test-jsonl".into(),
+                format: FileFormat::Jsonl,
+                size_hint: Some(data.len() as u64),
+                source_system: None,
+            },
+        )
+    }
+
+    fn json_source(data: &'static [u8]) -> BytesSource {
+        BytesSource::new(
+            bytes::Bytes::from_static(data),
+            AsyncSourceInfo {
+                label: "test-json".into(),
+                format: FileFormat::Json,
+                size_hint: Some(data.len() as u64),
+                source_system: None,
+            },
+        )
+    }
+
+    fn parquet_source() -> BytesSource {
+        BytesSource::new(
+            bytes::Bytes::from_static(b""),
+            AsyncSourceInfo {
+                label: "test-parquet".into(),
+                format: FileFormat::Parquet,
+                size_hint: None,
+                source_system: None,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn test_infer_schema_stream_csv() {
+        let source = csv_source(b"name,age,salary\nAlice,30,50000.5\nBob,25,60000.0\n");
+        let result = infer_schema_stream(source).await.unwrap();
+
+        assert_eq!(result.columns.len(), 3);
+        assert_eq!(result.columns[0].name, "name");
+        assert_eq!(result.columns[0].data_type, DataType::String);
+        assert_eq!(result.columns[1].name, "age");
+        assert_eq!(result.columns[1].data_type, DataType::Integer);
+        assert_eq!(result.columns[2].name, "salary");
+        assert_eq!(result.columns[2].data_type, DataType::Float);
+        assert!(result.rows_sampled > 0);
+        assert!(result.schema_stable); // small data — all rows consumed
+    }
+
+    #[tokio::test]
+    async fn test_infer_schema_stream_jsonl() {
+        let source =
+            jsonl_source(b"{\"name\":\"Alice\",\"age\":30}\n{\"name\":\"Bob\",\"age\":25}\n");
+        let result = infer_schema_stream(source).await.unwrap();
+
+        assert_eq!(result.columns.len(), 2);
+        // JSON columns are sorted alphabetically
+        assert_eq!(result.columns[0].name, "age");
+        assert_eq!(result.columns[1].name, "name");
+    }
+
+    #[tokio::test]
+    async fn test_infer_schema_stream_json_array() {
+        let source = json_source(b"[{\"x\":1,\"y\":\"hello\"},{\"x\":2,\"y\":\"world\"}]");
+        let result = infer_schema_stream(source).await.unwrap();
+
+        assert_eq!(result.columns.len(), 2);
+        assert_eq!(result.columns[0].name, "x");
+        assert_eq!(result.columns[1].name, "y");
+    }
+
+    #[tokio::test]
+    async fn test_infer_schema_stream_parquet_rejected() {
+        let source = parquet_source();
+        let result = infer_schema_stream(source).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("random access"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_quick_row_count_stream_csv() {
+        let source = csv_source(b"a,b\n1,2\n3,4\n5,6\n");
+        let result = quick_row_count_stream(source).await.unwrap();
+
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+        assert_eq!(result.method, CountMethod::StreamFullScan);
+    }
+
+    #[tokio::test]
+    async fn test_quick_row_count_stream_jsonl() {
+        let source = jsonl_source(b"{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n");
+        let result = quick_row_count_stream(source).await.unwrap();
+
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+        assert_eq!(result.method, CountMethod::StreamFullScan);
+    }
+
+    #[tokio::test]
+    async fn test_quick_row_count_stream_json_array() {
+        let source = json_source(b"[{\"a\":1},{\"a\":2},{\"a\":3}]");
+        let result = quick_row_count_stream(source).await.unwrap();
+
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+        assert_eq!(result.method, CountMethod::StreamFullScan);
+    }
+
+    #[tokio::test]
+    async fn test_quick_row_count_stream_parquet_rejected() {
+        let source = parquet_source();
+        let result = quick_row_count_stream(source).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("random access"), "unexpected error: {err}");
     }
 }
