@@ -344,8 +344,127 @@ class TestNamespace:
             "RecordBatch",
             "__version__",
         }
-        assert expected.issubset(set(dataprof.__all__))
+        assert expected == set(dataprof.__all__), (
+            f"__all__ drift detected. "
+            f"Missing: {expected - set(dataprof.__all__)}. "
+            f"Unexpected: {set(dataprof.__all__) - expected}."
+        )
+
+    def test_all_exports_accessible(self):
+        """Every name in __all__ must be importable from the package."""
+        for name in dataprof.__all__:
+            assert hasattr(dataprof, name), f"{name!r} in __all__ but not accessible"
 
     def test_version(self):
         assert isinstance(dataprof.__version__, str)
         assert "." in dataprof.__version__
+
+    def test_profile_signature(self):
+        """Guard against accidental signature changes to profile()."""
+        import inspect
+
+        sig = inspect.signature(dataprof.profile)
+        expected_params = {
+            "source",
+            "engine",
+            "chunk_size",
+            "memory_limit_mb",
+            "format",
+            "max_rows",
+            "name",
+            "csv_delimiter",
+            "csv_flexible",
+            "sampling",
+            "stop_condition",
+            "on_progress",
+            "progress_interval_ms",
+            "quality_dimensions",
+        }
+        actual_params = set(sig.parameters.keys())
+        assert actual_params == expected_params, (
+            f"profile() signature drift. "
+            f"Missing: {expected_params - actual_params}. "
+            f"Unexpected: {actual_params - expected_params}."
+        )
+        # source is positional; all others are keyword-only
+        assert sig.parameters["source"].kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+        assert sig.parameters["engine"].default == "auto"
+
+    def test_profile_report_properties(self):
+        """Key ProfileReport properties must exist on the class."""
+        expected_props = [
+            "source",
+            "source_type",
+            "rows",
+            "columns",
+            "column_profiles",
+            "quality_score",
+            "quality",
+            "execution_time_ms",
+            "throughput",
+            "memory_peak_mb",
+            "truncation_reason",
+            "source_exhausted",
+            "sampling_applied",
+            "sampling_ratio",
+        ]
+        for prop in expected_props:
+            assert hasattr(dataprof.ProfileReport, prop), (
+                f"ProfileReport missing expected property: {prop!r}"
+            )
+
+    def test_stub_all_matches_runtime(self):
+        """The __all__ list in __init__.pyi must match the runtime __all__."""
+        import ast
+
+        stub_path = Path(__file__).resolve().parent.parent / "dataprof" / "__init__.pyi"
+        if not stub_path.exists():
+            pytest.skip("Type stub not found")
+        tree = ast.parse(stub_path.read_text())
+        stub_all = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "__all__":
+                        if isinstance(node.value, ast.List):
+                            stub_all = {
+                                elt.value
+                                for elt in node.value.elts
+                                if isinstance(elt, ast.Constant)
+                            }
+        assert stub_all is not None, "__all__ not found in __init__.pyi"
+        runtime_all = set(dataprof.__all__)
+        assert stub_all == runtime_all, (
+            f"Stub/runtime __all__ mismatch. "
+            f"In stub only: {stub_all - runtime_all}. "
+            f"In runtime only: {runtime_all - stub_all}."
+        )
+
+
+# ─────────────────────────────────────────────────
+#  9. CSV config across engines
+# ─────────────────────────────────────────────────
+
+
+class TestCsvConfigEngines:
+    """Verify csv_delimiter works with all engine types."""
+
+    @pytest.fixture(autouse=True)
+    def _check_fixture(self):
+        if not os.path.exists(SEMICOLON_FILE):
+            pytest.skip("semicolon fixture missing")
+
+    def test_csv_delimiter_incremental(self):
+        r = dataprof.profile(SEMICOLON_FILE, csv_delimiter=";", engine="incremental")
+        assert r.rows > 0
+        assert r.columns > 1, "delimiter not applied — got single column"
+
+    def test_csv_delimiter_columnar(self):
+        r = dataprof.profile(SEMICOLON_FILE, csv_delimiter=";", engine="columnar")
+        assert r.rows > 0
+        assert r.columns > 1, "delimiter not applied — got single column"
+
+    def test_csv_delimiter_auto(self):
+        r = dataprof.profile(SEMICOLON_FILE, csv_delimiter=";")
+        assert r.rows > 0
+        assert r.columns > 1, "delimiter not applied — got single column"

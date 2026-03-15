@@ -89,8 +89,8 @@ def profile(
         format: Override format detection ("csv", "json", "jsonl", "parquet").
         max_rows: Maximum rows to process before stopping.
         name: Name for DataFrame sources in the report.
-        csv_delimiter: Single-character CSV delimiter (engine="auto" only).
-        csv_flexible: Allow variable-length CSV records (engine="auto" only).
+        csv_delimiter: Single-character CSV delimiter (default: comma).
+        csv_flexible: Allow variable-length CSV records.
         sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.

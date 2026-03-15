@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::core::errors::DataProfilerError;
 use crate::engines::streaming::IncrementalProfiler;
+use crate::parsers::csv::CsvParserConfig;
 use crate::types::{ProfileReport, QualityDimension};
 
 /// Internal engine type for adaptive selection.
@@ -19,17 +20,24 @@ pub(crate) enum InternalEngineType {
 /// Arrow is selected when the file has many numeric columns and enough memory.
 pub(crate) struct AdaptiveProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
+    csv_config: Option<CsvParserConfig>,
 }
 
 impl AdaptiveProfiler {
     pub fn new() -> Self {
         Self {
             quality_dimensions: None,
+            csv_config: None,
         }
     }
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.quality_dimensions = Some(dims);
+        self
+    }
+
+    pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
+        self.csv_config = Some(config);
         self
     }
 
@@ -81,12 +89,19 @@ impl AdaptiveProfiler {
         let reader = BufReader::new(file);
         let mut lines = reader.lines();
 
+        // Use configured delimiter or default to comma
+        let delimiter = self
+            .csv_config
+            .as_ref()
+            .and_then(|c| c.delimiter)
+            .unwrap_or(b',') as char;
+
         // Read header to count columns
         let header = match lines.next() {
             Some(Ok(line)) => line,
             _ => return InternalEngineType::Incremental,
         };
-        let num_columns = header.split(',').count();
+        let num_columns = header.split(delimiter).count();
 
         // Arrow needs many columns to outperform Incremental
         if num_columns < 20 {
@@ -98,7 +113,7 @@ impl AdaptiveProfiler {
         let mut total_fields = 0usize;
         for line in lines.take(10) {
             let Ok(line) = line else { break };
-            for val in line.split(',') {
+            for val in line.split(delimiter) {
                 total_fields += 1;
                 if val.trim().parse::<f64>().is_ok() {
                     numeric_count += 1;
@@ -132,12 +147,18 @@ impl AdaptiveProfiler {
                 if let Some(ref dims) = self.quality_dimensions {
                     profiler = profiler.quality_dimensions(dims.clone());
                 }
+                if let Some(ref config) = self.csv_config {
+                    profiler = profiler.csv_config(config.clone());
+                }
                 profiler.analyze_csv_file(file_path)
             }
             InternalEngineType::Incremental => {
                 let mut profiler = IncrementalProfiler::new();
                 if let Some(ref dims) = self.quality_dimensions {
                     profiler = profiler.quality_dimensions(dims.clone());
+                }
+                if let Some(ref config) = self.csv_config {
+                    profiler = profiler.csv_config(config.clone());
                 }
                 profiler.analyze_file(file_path)
             }

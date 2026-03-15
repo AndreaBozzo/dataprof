@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::report_assembler::ReportAssembler;
+use crate::parsers::csv::CsvParserConfig;
 use crate::types::{
     ColumnProfile, DataSource, DataType, ExecutionMetadata, FileFormat, ProfileReport,
     QualityDimension,
@@ -20,6 +21,7 @@ pub struct ArrowProfiler {
     batch_size: usize,
     memory_limit_mb: usize,
     quality_dimensions: Option<Vec<QualityDimension>>,
+    csv_config: Option<CsvParserConfig>,
 }
 
 impl ArrowProfiler {
@@ -28,6 +30,7 @@ impl ArrowProfiler {
             batch_size: 8192, // Default batch size for Arrow
             memory_limit_mb: 512,
             quality_dimensions: None,
+            csv_config: None,
         }
     }
 
@@ -46,6 +49,11 @@ impl ArrowProfiler {
         self
     }
 
+    pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
+        self.csv_config = Some(config);
+        self
+    }
+
     pub fn analyze_csv_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let file = File::open(file_path)?;
@@ -53,9 +61,15 @@ impl ArrowProfiler {
         let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
         // Read first to infer schema from headers
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(true)
-            .from_path(file_path)?;
+        let mut header_builder = csv::ReaderBuilder::new();
+        header_builder.has_headers(true);
+        if let Some(ref config) = self.csv_config {
+            if let Some(delim) = config.delimiter {
+                header_builder.delimiter(delim);
+            }
+            header_builder.flexible(config.flexible);
+        }
+        let mut reader = header_builder.from_path(file_path)?;
 
         // Get headers to create Arrow schema
         let headers = reader.headers()?.clone();
@@ -68,10 +82,15 @@ impl ArrowProfiler {
 
         // Now create Arrow reader with proper schema
         let file = File::open(file_path)?;
-        let csv_reader = ReaderBuilder::new(schema)
+        let mut arrow_builder = ReaderBuilder::new(schema)
             .with_header(true)
-            .with_batch_size(self.batch_size)
-            .build(file)?;
+            .with_batch_size(self.batch_size);
+        if let Some(ref config) = self.csv_config
+            && let Some(delim) = config.delimiter
+        {
+            arrow_builder = arrow_builder.with_delimiter(delim);
+        }
+        let csv_reader = arrow_builder.build(file)?;
 
         // Process data in columnar batches
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =

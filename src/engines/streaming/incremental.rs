@@ -10,6 +10,7 @@ use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEva
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::common::MemoryConfig;
 use crate::engines::streaming::MemoryMappedCsvReader;
+use crate::parsers::csv::CsvParserConfig;
 use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension};
 
 /// Incremental profiler that processes data without loading everything into memory
@@ -23,6 +24,7 @@ pub struct IncrementalProfiler {
     memory: MemoryConfig,
     stop_condition: StopCondition,
     quality_dimensions: Option<Vec<QualityDimension>>,
+    csv_config: Option<CsvParserConfig>,
 }
 
 impl IncrementalProfiler {
@@ -35,6 +37,7 @@ impl IncrementalProfiler {
             memory: MemoryConfig::default(),
             stop_condition: StopCondition::Never,
             quality_dimensions: None,
+            csv_config: None,
         }
     }
 
@@ -66,6 +69,11 @@ impl IncrementalProfiler {
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.quality_dimensions = Some(dims);
+        self
+    }
+
+    pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
+        self.csv_config = Some(config);
         self
     }
 
@@ -106,8 +114,12 @@ impl IncrementalProfiler {
 
         // Process file in chunks using true streaming
         loop {
-            let (chunk_headers, records, actual_bytes) =
-                reader.read_csv_chunk(offset, chunk_size_bytes, headers.is_none())?;
+            let (chunk_headers, records, actual_bytes) = reader.read_csv_chunk(
+                offset,
+                chunk_size_bytes,
+                headers.is_none(),
+                self.csv_config.as_ref(),
+            )?;
 
             if records.is_empty() && actual_bytes == 0 {
                 break;
