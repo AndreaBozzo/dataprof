@@ -34,7 +34,7 @@ struct ParsedChunk {
 /// ```text
 /// AsyncDataSource ──► [spawn_blocking: csv::Reader] ──► bounded mpsc ──► [processor loop]
 ///                       SyncIoBridge + csv crate           capacity N      StreamingColumnCollection
-///                       (RFC 4180 compliant)                               ──► QualityReport
+///                       (RFC 4180 compliant)                               ──► ProfileReport
 /// ```
 pub struct AsyncStreamingProfiler {
     chunk_size: ChunkSize,
@@ -97,7 +97,7 @@ impl AsyncStreamingProfiler {
         self
     }
 
-    /// Profile data from an async source, returning a [`QualityReport`].
+    /// Profile data from an async source, returning a [`ProfileReport`].
     ///
     /// Supports CSV, JSON, and JSONL formats. Parquet async support is tracked separately.
     pub async fn analyze_stream(

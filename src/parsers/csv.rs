@@ -45,16 +45,6 @@ impl Default for CsvParserConfig {
 }
 
 impl CsvParserConfig {
-    /// Create a config optimized for speed (skips pattern detection).
-    #[deprecated(
-        note = "fast() is currently equivalent to default(). Feature will be removed or refactored."
-    )]
-    pub fn fast() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-
     /// Create a strict config that rejects ragged rows.
     pub fn strict() -> Self {
         Self {
@@ -441,20 +431,6 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 0);
         assert_eq!(report.execution.rows_processed, 0);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_analyze_csv_fast_produces_profiles() {
-        let csv = write_csv("a,b,c\n1,x,true\n2,y,false\n3,z,true\n");
-        let config = CsvParserConfig::fast();
-        let report = analyze_csv_file(csv.path(), &config).unwrap();
-        let profiles = &report.column_profiles;
-        assert_eq!(profiles.len(), 3);
-
-        for p in profiles {
-            assert_eq!(p.total_count, 3);
-        }
     }
 
     #[test]

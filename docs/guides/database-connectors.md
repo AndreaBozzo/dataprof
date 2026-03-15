@@ -435,7 +435,7 @@ async fn profile_daily_data() -> anyhow::Result<()> {
 
 ### Quality Monitoring
 ```rust
-use dataprof::{DatabaseConfig, analyze_database, ErrorSeverity};
+use dataprof::{DatabaseConfig, analyze_database};
 
 async fn monitor_data_quality() -> anyhow::Result<()> {
     let config = DatabaseConfig {
@@ -449,15 +449,10 @@ async fn monitor_data_quality() -> anyhow::Result<()> {
         WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
     ").await?;
 
-    let critical_issues: Vec<_> = report.issues
-        .iter()
-        .filter(|issue| issue.severity == ErrorSeverity::Critical)
-        .collect();
-
-    if !critical_issues.is_empty() {
-        eprintln!("⚠️  Found {} critical data quality issues!", critical_issues.len());
-        for issue in critical_issues {
-            eprintln!("  - {}: {}", issue.column, issue.description);
+    if let Some(ref quality) = report.quality {
+        let score = quality.metrics.overall_score();
+        if score < 80.0 {
+            eprintln!("⚠️  Data quality score below threshold: {:.1}%", score);
         }
     }
 

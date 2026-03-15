@@ -1,7 +1,7 @@
 //! Centralized report assembly for all profiling engines.
 //!
 //! `ReportAssembler` is the single entry point for constructing a [`ProfileReport`].
-//! It replaces the scattered `QualityReport::new()` calls across parsers, engines,
+//! It replaces the scattered report construction calls across parsers, engines,
 //! and database connectors, centralizing quality metric calculation and confidence
 //! tracking in one place.
 //!

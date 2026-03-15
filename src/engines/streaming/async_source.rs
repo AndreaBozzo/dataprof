@@ -24,7 +24,7 @@ pub struct AsyncSourceInfo {
 /// Implementors include HTTP response bodies, file streams, in-memory buffers,
 /// and gRPC streams. The returned `AsyncRead` is consumed by
 /// [`AsyncStreamingProfiler`](super::AsyncStreamingProfiler) to produce a
-/// [`QualityReport`](crate::types::QualityReport).
+/// [`ProfileReport`](crate::types::ProfileReport).
 #[async_trait::async_trait]
 pub trait AsyncDataSource: Send {
     /// Consume this source into an async byte reader.

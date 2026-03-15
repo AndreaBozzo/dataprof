@@ -140,13 +140,19 @@ pub struct JsonReport {
 }
 
 /// Comprehensive data quality metrics following industry standards (ISO 8000/25012)
+/// Only computed dimensions are serialized; skipped dimensions are omitted.
 #[derive(Serialize)]
 pub struct JsonDataQualityMetrics {
-    pub completeness: JsonCompletenessMetrics,
-    pub consistency: JsonConsistencyMetrics,
-    pub uniqueness: JsonUniquenessMetrics,
-    pub accuracy: JsonAccuracyMetrics,
-    pub timeliness: JsonTimelinessMetrics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completeness: Option<JsonCompletenessMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consistency: Option<JsonConsistencyMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uniqueness: Option<JsonUniquenessMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accuracy: Option<JsonAccuracyMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeliness: Option<JsonTimelinessMetrics>,
 }
 
 #[derive(Serialize)]
@@ -327,34 +333,41 @@ impl JsonFormatter {
         }
     }
 
-    /// Format comprehensive data quality metrics for JSON output (ISO 8000/25012)
+    /// Format comprehensive data quality metrics for JSON output (ISO 8000/25012).
+    /// Only dimensions that were actually computed are included.
     fn format_data_quality_metrics(&self, metrics: &QualityMetrics) -> JsonDataQualityMetrics {
         JsonDataQualityMetrics {
-            completeness: JsonCompletenessMetrics {
-                missing_values_ratio: metrics.missing_values_ratio(),
-                complete_records_ratio: metrics.complete_records_ratio(),
-                null_columns: metrics.null_columns().to_vec(),
-            },
-            consistency: JsonConsistencyMetrics {
-                data_type_consistency: metrics.data_type_consistency(),
-                format_violations: metrics.format_violations(),
-                encoding_issues: metrics.encoding_issues(),
-            },
-            uniqueness: JsonUniquenessMetrics {
-                duplicate_rows: metrics.duplicate_rows(),
-                key_uniqueness: metrics.key_uniqueness(),
-                high_cardinality_warning: metrics.high_cardinality_warning(),
-            },
-            accuracy: JsonAccuracyMetrics {
-                outlier_ratio: metrics.outlier_ratio(),
-                range_violations: metrics.range_violations(),
-                negative_values_in_positive: metrics.negative_values_in_positive(),
-            },
-            timeliness: JsonTimelinessMetrics {
-                future_dates_count: metrics.future_dates_count(),
-                stale_data_ratio: metrics.stale_data_ratio(),
-                temporal_violations: metrics.temporal_violations(),
-            },
+            completeness: metrics
+                .completeness
+                .as_ref()
+                .map(|c| JsonCompletenessMetrics {
+                    missing_values_ratio: c.missing_values_ratio,
+                    complete_records_ratio: c.complete_records_ratio,
+                    null_columns: c.null_columns.clone(),
+                }),
+            consistency: metrics
+                .consistency
+                .as_ref()
+                .map(|c| JsonConsistencyMetrics {
+                    data_type_consistency: c.data_type_consistency,
+                    format_violations: c.format_violations,
+                    encoding_issues: c.encoding_issues,
+                }),
+            uniqueness: metrics.uniqueness.as_ref().map(|u| JsonUniquenessMetrics {
+                duplicate_rows: u.duplicate_rows,
+                key_uniqueness: u.key_uniqueness,
+                high_cardinality_warning: u.high_cardinality_warning,
+            }),
+            accuracy: metrics.accuracy.as_ref().map(|a| JsonAccuracyMetrics {
+                outlier_ratio: a.outlier_ratio,
+                range_violations: a.range_violations,
+                negative_values_in_positive: a.negative_values_in_positive,
+            }),
+            timeliness: metrics.timeliness.as_ref().map(|t| JsonTimelinessMetrics {
+                future_dates_count: t.future_dates_count,
+                stale_data_ratio: t.stale_data_ratio,
+                temporal_violations: t.temporal_violations,
+            }),
         }
     }
 }
@@ -423,49 +436,48 @@ impl OutputFormatter for PlainFormatter {
             report.execution.scan_time_ms
         ));
 
-        // Data Quality Metrics (ISO 8000/25012)
+        // Data Quality Metrics (ISO 8000/25012) — only computed dimensions
         if let Some(ref quality) = report.quality {
             let metrics = &quality.metrics;
             output.push_str("Data Quality Metrics\n");
-            output.push_str(&format!(
-                "  Completeness: {:.1}% missing, {:.1}% complete\n",
-                metrics.missing_values_ratio(),
-                metrics.complete_records_ratio()
-            ));
-            output.push_str(&format!(
-                "  Consistency: {:.1}% type consistency\n",
-                metrics.data_type_consistency()
-            ));
-            output.push_str(&format!(
-                "  Uniqueness: {:.1}% key uniqueness\n",
-                metrics.key_uniqueness()
-            ));
-            output.push_str(&format!(
-                "  Accuracy: {:.1}% outlier ratio\n",
-                metrics.outlier_ratio()
-            ));
 
-            if metrics.duplicate_rows() > 0 {
-                output.push_str(&format!("  Duplicate Rows: {}\n", metrics.duplicate_rows()));
-            }
-            if metrics.format_violations() > 0 {
+            if let Some(ref c) = metrics.completeness {
                 output.push_str(&format!(
-                    "  Format Violations: {}\n",
-                    metrics.format_violations()
+                    "  Completeness: {:.1}% missing, {:.1}% complete\n",
+                    c.missing_values_ratio, c.complete_records_ratio
+                ));
+                if !c.null_columns.is_empty() {
+                    output.push_str(&format!("  Null Columns: {}\n", c.null_columns.join(", ")));
+                }
+            }
+            if let Some(ref c) = metrics.consistency {
+                output.push_str(&format!(
+                    "  Consistency: {:.1}% type consistency\n",
+                    c.data_type_consistency
+                ));
+                if c.format_violations > 0 {
+                    output.push_str(&format!("  Format Violations: {}\n", c.format_violations));
+                }
+                if c.encoding_issues > 0 {
+                    output.push_str(&format!("  Encoding Issues: {}\n", c.encoding_issues));
+                }
+            }
+            if let Some(ref u) = metrics.uniqueness {
+                output.push_str(&format!(
+                    "  Uniqueness: {:.1}% key uniqueness\n",
+                    u.key_uniqueness
+                ));
+                if u.duplicate_rows > 0 {
+                    output.push_str(&format!("  Duplicate Rows: {}\n", u.duplicate_rows));
+                }
+            }
+            if let Some(ref a) = metrics.accuracy {
+                output.push_str(&format!(
+                    "  Accuracy: {:.1}% outlier ratio\n",
+                    a.outlier_ratio
                 ));
             }
-            if metrics.encoding_issues() > 0 {
-                output.push_str(&format!(
-                    "  Encoding Issues: {}\n",
-                    metrics.encoding_issues()
-                ));
-            }
-            if !metrics.null_columns().is_empty() {
-                output.push_str(&format!(
-                    "  Null Columns: {}\n",
-                    metrics.null_columns().join(", ")
-                ));
-            }
+
             output.push('\n');
         }
 

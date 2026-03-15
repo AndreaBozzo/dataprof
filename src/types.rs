@@ -785,14 +785,6 @@ where
     }
 }
 
-/// Deprecated: Use `ProfileReport` instead.
-#[deprecated(since = "0.7.0", note = "Renamed to ProfileReport")]
-pub type QualityReport = ProfileReport;
-
-/// Deprecated: Use `QualityMetrics` instead.
-#[deprecated(since = "0.7.0", note = "Renamed to QualityMetrics")]
-pub type DataQualityMetrics = QualityMetrics;
-
 /// Metadata specific to Parquet files
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParquetMetadata {
@@ -1486,5 +1478,96 @@ mod tests {
         let deserialized: DataSource = serde_json::from_str(&json).unwrap();
         assert!(deserialized.is_stream());
         assert_eq!(deserialized.stream_topic(), Some("sensor-data"));
+    }
+
+    // -- Partial dimension requests --
+
+    #[test]
+    fn test_partial_dimensions_only_completeness() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics {
+                complete_records_ratio: 100.0,
+                missing_values_ratio: 0.0,
+                null_columns: vec![],
+            }),
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+        assert!(metrics.completeness.is_some());
+        assert!(metrics.consistency.is_none());
+        assert!(metrics.uniqueness.is_none());
+        assert!(metrics.accuracy.is_none());
+        assert!(metrics.timeliness.is_none());
+        // Score should re-normalize: 100% completeness alone → 100
+        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_dimensions_two_dimensions() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics {
+                complete_records_ratio: 50.0,
+                ..CompletenessMetrics::default()
+            }),
+            consistency: None,
+            uniqueness: Some(UniquenessMetrics {
+                key_uniqueness: 80.0,
+                ..UniquenessMetrics::default()
+            }),
+            accuracy: None,
+            timeliness: None,
+        };
+        // Weights: completeness=30, uniqueness=20 → total=50
+        // Score: (50*0.30 + 80*0.20) / 0.50 = (15+16)/0.50 = 62.0
+        assert!((metrics.overall_score() - 62.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_all_dimensions_none_score_zero() {
+        let metrics = QualityMetrics {
+            completeness: None,
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_dimensions_json_skips_none() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics::default()),
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("completeness"));
+        assert!(!json.contains("consistency"));
+        assert!(!json.contains("uniqueness"));
+        assert!(!json.contains("accuracy"));
+        assert!(!json.contains("timeliness"));
+    }
+
+    #[test]
+    fn test_partial_dimensions_flat_accessors_return_defaults() {
+        let metrics = QualityMetrics {
+            completeness: None,
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+        // Flat accessors return "perfect" defaults when dimension is None
+        assert!((metrics.complete_records_ratio() - 100.0).abs() < 0.01);
+        assert!((metrics.data_type_consistency() - 100.0).abs() < 0.01);
+        assert!((metrics.key_uniqueness() - 100.0).abs() < 0.01);
+        assert!((metrics.missing_values_ratio() - 0.0).abs() < 0.01);
+        assert_eq!(metrics.duplicate_rows(), 0);
+        assert!(!metrics.high_cardinality_warning());
     }
 }

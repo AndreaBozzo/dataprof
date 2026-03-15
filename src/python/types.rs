@@ -226,174 +226,162 @@ impl PyDataQualityMetrics {
 
     /// Completeness dimension dict, or None if not computed.
     #[getter]
-    fn completeness(&self, py: Python<'_>) -> Option<std::collections::HashMap<String, Py<PyAny>>> {
-        self.inner.completeness.as_ref().map(|c| {
-            let mut m: std::collections::HashMap<String, Py<PyAny>> =
-                std::collections::HashMap::new();
-            m.insert(
-                "missing_values_ratio".into(),
-                c.missing_values_ratio
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "complete_records_ratio".into(),
-                c.complete_records_ratio
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "null_columns".into(),
-                c.null_columns
-                    .clone()
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m
-        })
+    fn completeness(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .completeness
+            .as_ref()
+            .map(|c| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "missing_values_ratio".into(),
+                    c.missing_values_ratio
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "complete_records_ratio".into(),
+                    c.complete_records_ratio
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "null_columns".into(),
+                    c.null_columns
+                        .as_slice()
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
     }
 
     /// Consistency dimension dict, or None if not computed.
     #[getter]
-    fn consistency(&self, py: Python<'_>) -> Option<std::collections::HashMap<String, Py<PyAny>>> {
-        self.inner.consistency.as_ref().map(|c| {
-            let mut m: std::collections::HashMap<String, Py<PyAny>> =
-                std::collections::HashMap::new();
-            m.insert(
-                "data_type_consistency".into(),
-                c.data_type_consistency
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "format_violations".into(),
-                c.format_violations
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "encoding_issues".into(),
-                c.encoding_issues
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m
-        })
+    fn consistency(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .consistency
+            .as_ref()
+            .map(|c| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "data_type_consistency".into(),
+                    c.data_type_consistency
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "format_violations".into(),
+                    c.format_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "encoding_issues".into(),
+                    c.encoding_issues.into_pyobject(py)?.unbind().into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
     }
 
     /// Uniqueness dimension dict, or None if not computed.
     #[getter]
-    fn uniqueness(&self, py: Python<'_>) -> Option<std::collections::HashMap<String, Py<PyAny>>> {
-        self.inner.uniqueness.as_ref().map(|u| {
-            let mut m: std::collections::HashMap<String, Py<PyAny>> =
-                std::collections::HashMap::new();
-            m.insert(
-                "duplicate_rows".into(),
-                u.duplicate_rows
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "key_uniqueness".into(),
-                u.key_uniqueness
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "high_cardinality_warning".into(),
-                u.high_cardinality_warning
-                    .into_pyobject(py)
-                    .unwrap()
-                    .to_owned()
-                    .unbind()
-                    .into_any(),
-            );
-            m
-        })
+    fn uniqueness(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .uniqueness
+            .as_ref()
+            .map(|u| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "duplicate_rows".into(),
+                    u.duplicate_rows.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "key_uniqueness".into(),
+                    u.key_uniqueness.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "high_cardinality_warning".into(),
+                    u.high_cardinality_warning
+                        .into_pyobject(py)?
+                        .to_owned()
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
     }
 
     /// Accuracy dimension dict, or None if not computed.
     #[getter]
-    fn accuracy(&self, py: Python<'_>) -> Option<std::collections::HashMap<String, Py<PyAny>>> {
-        self.inner.accuracy.as_ref().map(|a| {
-            let mut m: std::collections::HashMap<String, Py<PyAny>> =
-                std::collections::HashMap::new();
-            m.insert(
-                "outlier_ratio".into(),
-                a.outlier_ratio
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "range_violations".into(),
-                a.range_violations
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "negative_values_in_positive".into(),
-                a.negative_values_in_positive
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m
-        })
+    fn accuracy(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .accuracy
+            .as_ref()
+            .map(|a| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "outlier_ratio".into(),
+                    a.outlier_ratio.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "range_violations".into(),
+                    a.range_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "negative_values_in_positive".into(),
+                    a.negative_values_in_positive
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
     }
 
     /// Timeliness dimension dict, or None if not computed.
     #[getter]
-    fn timeliness(&self, py: Python<'_>) -> Option<std::collections::HashMap<String, Py<PyAny>>> {
-        self.inner.timeliness.as_ref().map(|t| {
-            let mut m: std::collections::HashMap<String, Py<PyAny>> =
-                std::collections::HashMap::new();
-            m.insert(
-                "future_dates_count".into(),
-                t.future_dates_count
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "stale_data_ratio".into(),
-                t.stale_data_ratio
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m.insert(
-                "temporal_violations".into(),
-                t.temporal_violations
-                    .into_pyobject(py)
-                    .unwrap()
-                    .unbind()
-                    .into_any(),
-            );
-            m
-        })
+    fn timeliness(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .timeliness
+            .as_ref()
+            .map(|t| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "future_dates_count".into(),
+                    t.future_dates_count.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "stale_data_ratio".into(),
+                    t.stale_data_ratio.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "temporal_violations".into(),
+                    t.temporal_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
     }
 
     /// Overall quality score (0-100) using ISO 8000/25012 weighted formula.

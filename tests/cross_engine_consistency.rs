@@ -6,7 +6,7 @@
 use std::io::Write;
 
 use dataprof::parsers::csv::{CsvParserConfig, analyze_csv_file};
-use dataprof::types::{ColumnStats, DataType, MetricConfidence};
+use dataprof::types::{ColumnStats, DataType, MetricConfidence, QualityDimension};
 use dataprof::{EngineType, Profiler};
 use tempfile::NamedTempFile;
 
@@ -344,4 +344,69 @@ fn test_streaming_bifurcation_with_large_dataset() {
         m.missing_values_ratio() < 2.0,
         "Missing ratio should be small (~0.33%)"
     );
+}
+
+// -- Selective dimension computation --
+
+#[test]
+fn test_profiler_selective_dimensions_only_completeness() {
+    let csv = create_test_csv();
+    let report = Profiler::new()
+        .quality_dimensions(vec![QualityDimension::Completeness])
+        .analyze_file(csv.path())
+        .unwrap();
+
+    let quality = report.quality.expect("quality should be present");
+    let m = &quality.metrics;
+
+    assert!(m.completeness.is_some(), "completeness should be computed");
+    assert!(m.consistency.is_none(), "consistency should be skipped");
+    assert!(m.uniqueness.is_none(), "uniqueness should be skipped");
+    assert!(m.accuracy.is_none(), "accuracy should be skipped");
+    assert!(m.timeliness.is_none(), "timeliness should be skipped");
+
+    // Score should re-normalize to completeness alone
+    let score = m.overall_score();
+    let completeness_score = m.completeness.as_ref().unwrap().complete_records_ratio;
+    assert!(
+        (score - completeness_score).abs() < 0.01,
+        "score {score} should equal completeness {completeness_score}"
+    );
+}
+
+#[test]
+fn test_profiler_selective_dimensions_subset() {
+    let csv = create_test_csv();
+    let report = Profiler::new()
+        .quality_dimensions(vec![
+            QualityDimension::Completeness,
+            QualityDimension::Uniqueness,
+        ])
+        .analyze_file(csv.path())
+        .unwrap();
+
+    let quality = report.quality.expect("quality should be present");
+    let m = &quality.metrics;
+
+    assert!(m.completeness.is_some());
+    assert!(m.consistency.is_none());
+    assert!(m.uniqueness.is_some());
+    assert!(m.accuracy.is_none());
+    assert!(m.timeliness.is_none());
+}
+
+#[test]
+fn test_profiler_all_dimensions_default() {
+    let csv = create_test_csv();
+    // No quality_dimensions() call → all dimensions computed
+    let report = Profiler::new().analyze_file(csv.path()).unwrap();
+
+    let quality = report.quality.expect("quality should be present");
+    let m = &quality.metrics;
+
+    assert!(m.completeness.is_some());
+    assert!(m.consistency.is_some());
+    assert!(m.uniqueness.is_some());
+    assert!(m.accuracy.is_some());
+    assert!(m.timeliness.is_some());
 }

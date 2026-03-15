@@ -133,7 +133,7 @@ impl ParquetConfig {
 /// * `file_path` - Path to the Parquet file
 ///
 /// # Returns
-/// * `QualityReport` with column profiles and quality metrics
+/// * `ProfileReport` with column profiles and quality metrics
 ///
 /// # Errors
 /// Returns error if:
@@ -173,7 +173,7 @@ pub fn analyze_parquet_with_quality_dims(
 /// * `config` - Configuration options for analysis
 ///
 /// # Returns
-/// * `QualityReport` with column profiles and quality metrics
+/// * `ProfileReport` with column profiles and quality metrics
 ///
 /// # Example
 /// ```no_run
