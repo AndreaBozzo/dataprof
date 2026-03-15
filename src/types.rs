@@ -523,7 +523,7 @@ impl QualityMetrics {
         }
 
         if total_weight > 0.0 {
-            score / total_weight * 1.0
+            (score / total_weight).min(100.0)
         } else {
             0.0
         }

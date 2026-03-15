@@ -112,6 +112,9 @@ impl IncrementalProfiler {
         let mut offset = 0u64;
         let mut source_exhausted = true;
 
+        // Extract the max_rows limit (if any) for per-row stop checking
+        let row_limit = Self::extract_max_rows(&self.stop_condition);
+
         // Process file in chunks using true streaming
         loop {
             let (chunk_headers, records, actual_bytes) = reader.read_csv_chunk(
@@ -125,16 +128,18 @@ impl IncrementalProfiler {
                 break;
             }
 
-            // Store headers from first chunk
+            // Store headers from first chunk and initialize column collection
             if headers.is_none() && chunk_headers.is_some() {
                 headers = chunk_headers;
                 if let Some(ref h) = headers {
                     let names: Vec<String> = h.iter().map(|s| s.to_string()).collect();
+                    column_stats.init_columns(&names);
                     progress_tracker.emit_schema(names);
                 }
             }
 
             // Process this chunk incrementally
+            let mut hit_row_limit = false;
             if let Some(ref header_record) = headers {
                 let header_names: Vec<String> =
                     header_record.iter().map(|s| s.to_string()).collect();
@@ -158,7 +163,22 @@ impl IncrementalProfiler {
                     // Process record incrementally (no memory accumulation)
                     column_stats.process_record(&header_names, values);
                     analyzed_rows += 1;
+
+                    // Per-row stop check for MaxRows to avoid chunk-boundary overshoot
+                    if let Some(limit) = row_limit
+                        && analyzed_rows as u64 >= limit
+                    {
+                        iterated_rows += row_idx + 1;
+                        source_exhausted = false;
+                        stop_eval.update((row_idx + 1) as u64, actual_bytes as u64, 0.0);
+                        hit_row_limit = true;
+                        break;
+                    }
                 }
+            }
+
+            if hit_row_limit {
+                break;
             }
 
             iterated_rows += records.len();
@@ -176,7 +196,7 @@ impl IncrementalProfiler {
                 column_stats.reduce_memory_usage();
             }
 
-            // Evaluate stop condition
+            // Evaluate stop condition (chunk-level for non-MaxRows conditions)
             let memory_fraction = if self.memory.limit_mb > 0 {
                 column_stats.memory_usage_bytes() as f64
                     / (self.memory.limit_mb * 1024 * 1024) as f64
@@ -234,10 +254,14 @@ impl IncrementalProfiler {
             execution = execution.with_truncation(tracker.truncation_reason());
         }
 
-        if source_exhausted && estimated_total_rows > 0 && analyzed_rows < estimated_total_rows {
-            let ratio = analyzed_rows as f64 / estimated_total_rows as f64;
-            execution = execution.with_sampling(ratio).with_source_exhausted(false);
-        } else if !source_exhausted {
+        // Determine if actual row-level sampling occurred (rows skipped by strategy)
+        let sampling_was_applied = analyzed_rows < iterated_rows;
+        if sampling_was_applied {
+            let ratio = analyzed_rows as f64 / iterated_rows as f64;
+            execution = execution.with_sampling(ratio);
+        }
+
+        if !source_exhausted {
             execution = execution.with_source_exhausted(false);
         }
 
@@ -257,6 +281,18 @@ impl IncrementalProfiler {
             assembler = assembler.with_requested_dimensions(dims.clone());
         }
         Ok(assembler.build())
+    }
+
+    /// Extract a top-level `MaxRows` limit from the stop condition (including
+    /// inside `Any` composites) so we can check it per-row instead of per-chunk.
+    fn extract_max_rows(condition: &StopCondition) -> Option<u64> {
+        match condition {
+            StopCondition::MaxRows(n) => Some(*n),
+            StopCondition::Any(conditions) | StopCondition::All(conditions) => {
+                conditions.iter().find_map(Self::extract_max_rows)
+            }
+            _ => None,
+        }
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {

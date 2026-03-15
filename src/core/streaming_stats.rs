@@ -551,6 +551,8 @@ impl Default for StreamingStatistics {
 /// Collection of streaming statistics for all columns.
 pub struct StreamingColumnCollection {
     columns: HashMap<String, StreamingStatistics>,
+    /// Column names in source order (insertion order).
+    ordered_names: Vec<String>,
     memory_limit_bytes: usize,
 }
 
@@ -558,6 +560,7 @@ impl StreamingColumnCollection {
     pub fn new() -> Self {
         Self {
             columns: HashMap::new(),
+            ordered_names: Vec::new(),
             memory_limit_bytes: 100 * 1024 * 1024, // 100 MB default
         }
     }
@@ -565,7 +568,20 @@ impl StreamingColumnCollection {
     pub fn memory_limit(limit_mb: usize) -> Self {
         Self {
             columns: HashMap::new(),
+            ordered_names: Vec::new(),
             memory_limit_bytes: limit_mb * 1024 * 1024,
+        }
+    }
+
+    /// Initialize columns from header names, preserving source order.
+    /// Columns that already exist are not re-added.
+    pub fn init_columns(&mut self, headers: &[String]) {
+        for header in headers {
+            if !self.columns.contains_key(header) {
+                self.columns
+                    .insert(header.clone(), StreamingStatistics::default());
+                self.ordered_names.push(header.clone());
+            }
         }
     }
 
@@ -575,6 +591,9 @@ impl StreamingColumnCollection {
         I: IntoIterator<Item = String>,
     {
         for (header, value) in headers.iter().zip(values) {
+            if !self.columns.contains_key(header) {
+                self.ordered_names.push(header.clone());
+            }
             let stats = self.columns.entry(header.to_string()).or_default();
             stats.update(&value);
         }
@@ -585,9 +604,9 @@ impl StreamingColumnCollection {
         self.columns.get(column_name)
     }
 
-    /// Get all column names.
+    /// Get all column names in source (insertion) order.
     pub fn column_names(&self) -> Vec<String> {
-        self.columns.keys().cloned().collect()
+        self.ordered_names.clone()
     }
 
     /// Get total memory usage.

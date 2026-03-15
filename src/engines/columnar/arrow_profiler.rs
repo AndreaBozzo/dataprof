@@ -120,15 +120,17 @@ impl ArrowProfiler {
         }
 
         // Convert analyzers to column profiles and extract samples
+        // Iterate in header order (from schema) to preserve source column ordering
         let mut column_profiles = Vec::new();
         let mut sample_columns = std::collections::HashMap::new();
 
-        for (name, analyzer) in &column_analyzers {
-            let profile = analyzer.to_column_profile(name.clone());
-            column_profiles.push(profile);
-
-            // Extract samples from analyzer for quality metrics
-            sample_columns.insert(name.clone(), analyzer.get_sample_values());
+        for header in headers.iter() {
+            let name = header.to_string();
+            if let Some(analyzer) = column_analyzers.get(&name) {
+                let profile = analyzer.to_column_profile(name.clone());
+                column_profiles.push(profile);
+                sample_columns.insert(name, analyzer.get_sample_values());
+            }
         }
 
         let scan_time_ms = start.elapsed().as_millis();

@@ -33,8 +33,31 @@ impl<'a> CompletenessCalculator<'a> {
         column_profiles: &[ColumnProfile],
         total_rows: usize,
     ) -> Result<CompletenessMetrics, DataProfilerError> {
-        let missing_values_ratio = Self::calculate_missing_values_ratio(data)?;
-        let complete_records_ratio = Self::calculate_complete_records_ratio(data, total_rows)?;
+        // Prefer ColumnProfile counters for missing_values_ratio when available,
+        // because the reservoir sample does not include empty/null values.
+        let missing_values_ratio = if !column_profiles.is_empty() {
+            let total_cells: usize = column_profiles.iter().map(|p| p.total_count).sum();
+            let null_cells: usize = column_profiles.iter().map(|p| p.null_count).sum();
+            if total_cells == 0 {
+                0.0
+            } else {
+                (null_cells as f64 / total_cells as f64) * 100.0
+            }
+        } else {
+            Self::calculate_missing_values_ratio(data)?
+        };
+        let complete_records_ratio = if !column_profiles.is_empty() {
+            // Use profile-based lower bound (same as calculate_from_profiles)
+            let total = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
+            let null_cells: usize = column_profiles.iter().map(|p| p.null_count).sum();
+            if total == 0 {
+                100.0
+            } else {
+                (total.saturating_sub(null_cells) as f64 / total as f64 * 100.0).max(0.0)
+            }
+        } else {
+            Self::calculate_complete_records_ratio(data, total_rows)?
+        };
         let null_columns = self.identify_null_columns(column_profiles);
 
         Ok(CompletenessMetrics {
