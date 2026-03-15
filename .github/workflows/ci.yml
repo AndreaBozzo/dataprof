@@ -102,6 +102,23 @@ jobs:
           cargo doc --no-deps --document-private-items
           echo "Documentation check passed"
 
+  python-quality:
+    name: Python Lint & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Check formatting
+        run: uv run ruff format --check python/
+
+      - name: Lint
+        run: uv run ruff check python/
+
   python-tests:
     name: Python Tests
     runs-on: ubuntu-latest
@@ -115,25 +132,12 @@ jobs:
         with:
           cache-prefix: rust-python
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Create virtualenv and install dependencies
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip
-          pip install maturin pytest
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
 
       - name: Build Python bindings
-        run: |
-          source .venv/bin/activate
-          maturin develop --features python
+        run: uv run maturin develop
 
       - name: Run Python tests
-        run: |
-          source .venv/bin/activate
-          pytest python/tests/ -v -ra
+        run: uv run pytest python/tests/ -v -ra
 
