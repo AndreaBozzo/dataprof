@@ -88,8 +88,8 @@ def profile(
         format: Override format detection ("csv", "json", "jsonl", "parquet").
         max_rows: Maximum rows to process before stopping.
         name: Name for DataFrame sources in the report.
-        csv_delimiter: Single-character CSV delimiter.
-        csv_flexible: Allow variable-length CSV records.
+        csv_delimiter: Single-character CSV delimiter (engine="auto" only).
+        csv_flexible: Allow variable-length CSV records (engine="auto" only).
         sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.
@@ -101,22 +101,21 @@ def profile(
     Returns:
         ProfileReport with analysis results and quality metrics.
     """
-    config = ProfilerConfig(
-        engine=engine,
-        chunk_size=chunk_size,
-        memory_limit_mb=memory_limit_mb,
-        format=format,
-        max_rows=max_rows,
-        csv_delimiter=csv_delimiter,
-        csv_flexible=csv_flexible,
-        sampling=sampling,
-        stop_condition=stop_condition,
-        on_progress=on_progress,
-        progress_interval_ms=progress_interval_ms,
-    )
-
-    # File path
+    # File path — build config and delegate to Rust
     if isinstance(source, (str, pathlib.PurePath)):
+        config = ProfilerConfig(
+            engine=engine,
+            chunk_size=chunk_size,
+            memory_limit_mb=memory_limit_mb,
+            format=format,
+            max_rows=max_rows,
+            csv_delimiter=csv_delimiter,
+            csv_flexible=csv_flexible,
+            sampling=sampling,
+            stop_condition=stop_condition,
+            on_progress=on_progress,
+            progress_interval_ms=progress_interval_ms,
+        )
         rust_report = _analyze_file(str(source), config)
         return ProfileReport(rust_report)
 

@@ -1,6 +1,10 @@
-"""Type stubs for dataprof.interop — low-level Rust bindings."""
+"""Type stubs for dataprof.interop — low-level Rust bindings.
 
-from dataprof import (
+These return the *Rust* ProfileReport (from ``_dataprof``), not the
+high-level Python ``dataprof.ProfileReport`` wrapper.
+"""
+
+from ._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
     DataQualityMetrics,
     ProfilerConfig,

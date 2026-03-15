@@ -82,6 +82,17 @@ impl PyProfilerConfig {
             ));
         }
 
+        if let Some(ref cb) = on_progress {
+            Python::attach(|py| -> PyResult<()> {
+                if !cb.bind(py).is_callable() {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(
+                        "on_progress must be a callable (e.g., a function or lambda)",
+                    ));
+                }
+                Ok(())
+            })?;
+        }
+
         Ok(Self {
             engine,
             chunk_size,
