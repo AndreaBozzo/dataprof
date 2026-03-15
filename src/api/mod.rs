@@ -319,6 +319,9 @@ impl Profiler {
                 if let Some(d) = &self.config.quality_dimensions {
                     profiler = profiler.quality_dimensions(d.clone());
                 }
+                if self.has_csv_config() {
+                    profiler = profiler.csv_config(self.csv_parser_config());
+                }
                 profiler.analyze_file(file_path)
             }
         }
@@ -356,6 +359,9 @@ impl Profiler {
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
+        if self.has_csv_config() {
+            profiler = profiler.csv_config(self.csv_parser_config());
+        }
 
         profiler.analyze_file(file_path)
     }
@@ -389,6 +395,9 @@ impl Profiler {
         }
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
+        }
+        if self.has_csv_config() {
+            profiler = profiler.csv_config(self.csv_parser_config());
         }
         profiler.analyze_csv_file(file_path)
     }

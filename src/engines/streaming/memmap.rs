@@ -1,4 +1,5 @@
 use crate::core::MemoryTracker;
+use crate::parsers::csv::CsvParserConfig;
 use anyhow::Result;
 use memmap2::Mmap;
 use std::fs::File;
@@ -84,6 +85,7 @@ impl MemoryMappedCsvReader {
         offset: u64,
         chunk_size: usize,
         has_headers: bool,
+        csv_config: Option<&CsvParserConfig>,
     ) -> Result<(Option<csv::StringRecord>, Vec<csv::StringRecord>, usize)> {
         let (lines, actual_bytes) = self.read_chunk(offset, chunk_size)?;
 
@@ -93,9 +95,19 @@ impl MemoryMappedCsvReader {
 
         // Create a CSV reader from the chunk data
         let chunk_data = lines.join("\n");
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(has_headers && offset == 0) // Only first chunk has headers
-            .from_reader(Cursor::new(chunk_data.as_bytes()));
+        let mut builder = csv::ReaderBuilder::new();
+        builder.has_headers(has_headers && offset == 0); // Only first chunk has headers
+        if let Some(config) = csv_config {
+            if let Some(delim) = config.delimiter {
+                builder.delimiter(delim);
+            }
+            builder.flexible(config.flexible);
+            builder.quote(config.quote_char);
+            if config.trim_whitespace {
+                builder.trim(csv::Trim::All);
+            }
+        }
+        let mut reader = builder.from_reader(Cursor::new(chunk_data.as_bytes()));
 
         let headers = if has_headers && offset == 0 {
             Some(reader.headers()?.clone())
@@ -209,7 +221,7 @@ mod tests {
         assert!(reader.file_size() > 0);
 
         // Read the entire file as one chunk
-        let (headers, records, _bytes) = reader.read_csv_chunk(0, 1024, true)?;
+        let (headers, records, _bytes) = reader.read_csv_chunk(0, 1024, true, None)?;
 
         assert!(headers.is_some());
         assert_eq!(records.len(), 3);
