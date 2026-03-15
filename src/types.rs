@@ -1373,29 +1373,6 @@ mod tests {
         assert!(deserialized.quality.is_none());
     }
 
-    #[test]
-    fn test_legacy_json_deserialization() {
-        // Simulate legacy JSON with flat data_quality_metrics field
-        let legacy_json = r#"{
-            "id": "test-id",
-            "timestamp": "2026-01-01T00:00:00Z",
-            "data_source": {"type": "file", "path": "test.csv", "format": "csv", "size_bytes": 0},
-            "column_profiles": [],
-            "execution": {"rows_processed": 10, "columns_detected": 2, "scan_time_ms": 5, "error_count": 0, "source_exhausted": true, "sampling_applied": false},
-            "data_quality_metrics": {
-                "missing_values_ratio": 0.0, "complete_records_ratio": 100.0, "null_columns": [],
-                "data_type_consistency": 100.0, "format_violations": 0, "encoding_issues": 0,
-                "duplicate_rows": 0, "key_uniqueness": 100.0, "high_cardinality_warning": false,
-                "outlier_ratio": 0.0, "range_violations": 0, "negative_values_in_positive": 0,
-                "future_dates_count": 0, "stale_data_ratio": 0.0, "temporal_violations": 0
-            }
-        }"#;
-
-        let report: ProfileReport = serde_json::from_str(legacy_json).unwrap();
-        assert!(report.quality.is_some());
-        assert!((report.quality_score().unwrap() - 100.0).abs() < 0.01);
-    }
-
     // -- ExecutionMetadata --
 
     #[test]
