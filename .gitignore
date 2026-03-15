@@ -9,6 +9,8 @@ __pycache__/
 dist/
 *.egg
 *.so
+*.so.*
+*.dwp
 
 # IDE files - personal settings only
 .vscode/settings.json

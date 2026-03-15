@@ -345,14 +345,14 @@ pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
 /// * `name` - Optional name for identification in reports (default: "dataframe")
 ///
 /// # Returns
-/// A PyQualityReport with comprehensive data quality metrics
+/// A PyProfileReport with comprehensive data quality metrics
 #[pyfunction]
 #[pyo3(signature = (df, name = "dataframe".to_string()))]
 pub fn profile_dataframe(
     py: Python<'_>,
     df: Py<PyAny>,
     name: String,
-) -> PyResult<super::types::PyQualityReport> {
+) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
     // Detect source library
@@ -393,7 +393,7 @@ pub fn profile_dataframe(
     .with_quality_data(sample_columns)
     .build();
 
-    Ok(super::types::PyQualityReport::from(&report))
+    Ok(super::types::PyProfileReport::new(report))
 }
 
 /// Profile a PyArrow Table or RecordBatch directly.
@@ -406,14 +406,14 @@ pub fn profile_dataframe(
 /// * `name` - Optional name for identification in reports (default: "arrow_table")
 ///
 /// # Returns
-/// A PyQualityReport with comprehensive data quality metrics
+/// A PyProfileReport with comprehensive data quality metrics
 #[pyfunction]
 #[pyo3(signature = (table, name = "arrow_table".to_string()))]
 pub fn profile_arrow(
     py: Python<'_>,
     table: Py<PyAny>,
     name: String,
-) -> PyResult<super::types::PyQualityReport> {
+) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
     let bound = table.bind(py);
@@ -455,7 +455,7 @@ pub fn profile_arrow(
     .with_quality_data(sample_columns)
     .build();
 
-    Ok(super::types::PyQualityReport::from(&report))
+    Ok(super::types::PyProfileReport::new(report))
 }
 
 // ============================================================================

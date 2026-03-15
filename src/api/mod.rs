@@ -34,6 +34,10 @@ pub struct ProfilerConfig {
     pub format_override: Option<FileFormat>,
     pub stop_condition: StopCondition,
     pub progress_interval: Duration,
+    /// Custom CSV delimiter (None = auto-detect).
+    pub csv_delimiter: Option<u8>,
+    /// Allow ragged CSV rows (None = use parser default).
+    pub csv_flexible: Option<bool>,
 }
 
 impl Default for ProfilerConfig {
@@ -46,6 +50,8 @@ impl Default for ProfilerConfig {
             format_override: None,
             stop_condition: StopCondition::Never,
             progress_interval: Duration::from_millis(500),
+            csv_delimiter: None,
+            csv_flexible: None,
         }
     }
 }
@@ -129,6 +135,18 @@ impl Profiler {
     /// when the extension is missing or misleading (e.g. a CSV file named `.dat`).
     pub fn format(mut self, format: FileFormat) -> Self {
         self.config.format_override = Some(format);
+        self
+    }
+
+    /// Set a custom CSV delimiter (single byte). None = auto-detect.
+    pub fn csv_delimiter(mut self, delimiter: u8) -> Self {
+        self.config.csv_delimiter = Some(delimiter);
+        self
+    }
+
+    /// Set whether to allow ragged CSV rows. None = use parser default.
+    pub fn csv_flexible(mut self, flexible: bool) -> Self {
+        self.config.csv_flexible = Some(flexible);
         self
     }
 
@@ -242,18 +260,37 @@ impl Profiler {
             .unwrap_or(FileFormat::Csv) // default to CSV for extensionless files
     }
 
+    /// Whether custom CSV config options are set.
+    fn has_csv_config(&self) -> bool {
+        self.config.csv_delimiter.is_some() || self.config.csv_flexible.is_some()
+    }
+
+    /// Build a `CsvParserConfig` from the profiler's CSV settings.
+    fn csv_parser_config(&self) -> crate::parsers::csv::CsvParserConfig {
+        let mut csv_config = crate::parsers::csv::CsvParserConfig::default();
+        if let Some(d) = self.config.csv_delimiter {
+            csv_config = csv_config.with_delimiter(d);
+        }
+        if let Some(f) = self.config.csv_flexible {
+            csv_config.flexible = f;
+        }
+        csv_config
+    }
+
     /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON
     fn run_auto(
         &self,
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
-        // AdaptiveProfiler handles Parquet and CSV natively, but not JSON
         match format {
             FileFormat::Json | FileFormat::Jsonl => crate::parsers::json::analyze_json_file(
                 file_path,
                 &crate::parsers::json::JsonParserConfig::default(),
             ),
+            FileFormat::Csv if self.has_csv_config() => {
+                crate::parsers::csv::analyze_csv_file(file_path, &self.csv_parser_config())
+            }
             _ => AdaptiveProfiler::new().analyze_file(file_path),
         }
     }
