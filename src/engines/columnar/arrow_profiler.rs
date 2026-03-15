@@ -9,6 +9,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::report_assembler::ReportAssembler;
 use crate::types::{
     ColumnProfile, DataSource, DataType, ExecutionMetadata, FileFormat, ProfileReport,
+    QualityDimension,
 };
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
@@ -18,6 +19,7 @@ const NUMERIC_SAMPLE_CAP: usize = 10_000;
 pub struct ArrowProfiler {
     batch_size: usize,
     memory_limit_mb: usize,
+    quality_dimensions: Option<Vec<QualityDimension>>,
 }
 
 impl ArrowProfiler {
@@ -25,6 +27,7 @@ impl ArrowProfiler {
         Self {
             batch_size: 8192, // Default batch size for Arrow
             memory_limit_mb: 512,
+            quality_dimensions: None,
         }
     }
 
@@ -35,6 +38,11 @@ impl ArrowProfiler {
 
     pub fn memory_limit_mb(mut self, limit: usize) -> Self {
         self.memory_limit_mb = limit;
+        self
+    }
+
+    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
+        self.quality_dimensions = Some(dims);
         self
     }
 
@@ -103,7 +111,7 @@ impl ArrowProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
-        Ok(ReportAssembler::new(
+        let mut assembler = ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
                 format: FileFormat::Csv,
@@ -114,8 +122,11 @@ impl ArrowProfiler {
             ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
         )
         .columns(column_profiles)
-        .with_quality_data(sample_columns)
-        .build())
+        .with_quality_data(sample_columns);
+        if let Some(ref dims) = self.quality_dimensions {
+            assembler = assembler.with_requested_dimensions(dims.clone());
+        }
+        Ok(assembler.build())
     }
 }
 

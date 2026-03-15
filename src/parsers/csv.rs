@@ -6,7 +6,9 @@ use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
+use crate::types::{
+    ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension,
+};
 
 // ============================================================================
 // NEW CONFIG-BASED API (#181 + #218)
@@ -43,16 +45,6 @@ impl Default for CsvParserConfig {
 }
 
 impl CsvParserConfig {
-    /// Create a config optimized for speed (skips pattern detection).
-    #[deprecated(
-        note = "fast() is currently equivalent to default(). Feature will be removed or refactored."
-    )]
-    pub fn fast() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-
     /// Create a strict config that rejects ragged rows.
     pub fn strict() -> Self {
         Self {
@@ -224,6 +216,15 @@ pub fn analyze_csv_file(
     file_path: &Path,
     config: &CsvParserConfig,
 ) -> Result<ProfileReport, DataProfilerError> {
+    analyze_csv_file_with_dimensions(file_path, config, None)
+}
+
+/// Like [`analyze_csv_file`] but only computes the requested quality dimensions.
+pub fn analyze_csv_file_with_dimensions(
+    file_path: &Path,
+    config: &CsvParserConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let start = std::time::Instant::now();
 
@@ -254,13 +255,16 @@ pub fn analyze_csv_file(
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    Ok(ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         file_source,
         ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .build())
+    .with_quality_data(sample_columns);
+    if let Some(dims) = quality_dimensions {
+        assembler = assembler.with_requested_dimensions(dims.to_vec());
+    }
+    Ok(assembler.build())
 }
 
 /// Map I/O errors to DataProfilerError with the actual file path context
@@ -427,20 +431,6 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 0);
         assert_eq!(report.execution.rows_processed, 0);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_analyze_csv_fast_produces_profiles() {
-        let csv = write_csv("a,b,c\n1,x,true\n2,y,false\n3,z,true\n");
-        let config = CsvParserConfig::fast();
-        let report = analyze_csv_file(csv.path(), &config).unwrap();
-        let profiles = &report.column_profiles;
-        assert_eq!(profiles.len(), 3);
-
-        for p in profiles {
-            assert_eq!(p.total_count, 3);
-        }
     }
 
     #[test]

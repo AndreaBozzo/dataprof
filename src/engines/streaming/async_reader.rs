@@ -9,7 +9,9 @@ use crate::core::report_assembler::ReportAssembler;
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
 use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, StreamSourceSystem};
+use crate::types::{
+    DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension, StreamSourceSystem,
+};
 
 use super::async_source::AsyncDataSource;
 
@@ -32,7 +34,7 @@ struct ParsedChunk {
 /// ```text
 /// AsyncDataSource ──► [spawn_blocking: csv::Reader] ──► bounded mpsc ──► [processor loop]
 ///                       SyncIoBridge + csv crate           capacity N      StreamingColumnCollection
-///                       (RFC 4180 compliant)                               ──► QualityReport
+///                       (RFC 4180 compliant)                               ──► ProfileReport
 /// ```
 pub struct AsyncStreamingProfiler {
     chunk_size: ChunkSize,
@@ -42,6 +44,7 @@ pub struct AsyncStreamingProfiler {
     progress_sink: ProgressSink,
     progress_interval: Duration,
     stop_condition: StopCondition,
+    quality_dimensions: Option<Vec<QualityDimension>>,
 }
 
 impl AsyncStreamingProfiler {
@@ -54,6 +57,7 @@ impl AsyncStreamingProfiler {
             progress_sink: ProgressSink::None,
             progress_interval: Duration::from_millis(500),
             stop_condition: StopCondition::Never,
+            quality_dimensions: None,
         }
     }
 
@@ -88,7 +92,12 @@ impl AsyncStreamingProfiler {
         self
     }
 
-    /// Profile data from an async source, returning a [`QualityReport`].
+    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
+        self.quality_dimensions = Some(dims);
+        self
+    }
+
+    /// Profile data from an async source, returning a [`ProfileReport`].
     ///
     /// Supports CSV, JSON, and JSONL formats. Parquet async support is tracked separately.
     pub async fn analyze_stream(
@@ -185,10 +194,13 @@ impl AsyncStreamingProfiler {
             execution = execution.with_sampling(ratio).with_source_exhausted(false);
         }
 
-        Ok(ReportAssembler::new(data_source, execution)
+        let mut assembler = ReportAssembler::new(data_source, execution)
             .columns(column_profiles)
-            .with_quality_data(sample_columns)
-            .build())
+            .with_quality_data(sample_columns);
+        if let Some(ref dims) = self.quality_dimensions {
+            assembler = assembler.with_requested_dimensions(dims.clone());
+        }
+        Ok(assembler.build())
     }
 
     /// Blocking reader task: uses the `csv` crate's RFC 4180-compliant parser

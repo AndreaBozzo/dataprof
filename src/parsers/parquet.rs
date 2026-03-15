@@ -20,7 +20,9 @@ use std::path::Path;
 use crate::core::errors::DataProfilerError;
 use crate::core::report_assembler::ReportAssembler;
 use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::types::{DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, ProfileReport};
+use crate::types::{
+    DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, ProfileReport, QualityDimension,
+};
 
 /// Check if a file is a valid Parquet file by examining its magic number
 ///
@@ -131,7 +133,7 @@ impl ParquetConfig {
 /// * `file_path` - Path to the Parquet file
 ///
 /// # Returns
-/// * `QualityReport` with column profiles and quality metrics
+/// * `ProfileReport` with column profiles and quality metrics
 ///
 /// # Errors
 /// Returns error if:
@@ -151,7 +153,15 @@ impl ParquetConfig {
 /// # Ok::<(), dataprof::DataProfilerError>(())
 /// ```
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
-    analyze_parquet_with_config(file_path, &ParquetConfig::default())
+    analyze_parquet_with_quality_dims(file_path, None)
+}
+
+/// Like [`analyze_parquet_with_quality`] but only computes the requested quality dimensions.
+pub fn analyze_parquet_with_quality_dims(
+    file_path: &Path,
+    quality_dimensions: Option<&[QualityDimension]>,
+) -> Result<ProfileReport, DataProfilerError> {
+    analyze_parquet_with_config_dims(file_path, &ParquetConfig::default(), quality_dimensions)
 }
 
 /// Analyze a Parquet file with custom configuration
@@ -163,7 +173,7 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<ProfileReport, D
 /// * `config` - Configuration options for analysis
 ///
 /// # Returns
-/// * `QualityReport` with column profiles and quality metrics
+/// * `ProfileReport` with column profiles and quality metrics
 ///
 /// # Example
 /// ```no_run
@@ -177,6 +187,15 @@ pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<ProfileReport, D
 pub fn analyze_parquet_with_config(
     file_path: &Path,
     config: &ParquetConfig,
+) -> Result<ProfileReport, DataProfilerError> {
+    analyze_parquet_with_config_dims(file_path, config, None)
+}
+
+/// Analyze a Parquet file with custom configuration and selective quality dimensions.
+pub fn analyze_parquet_with_config_dims(
+    file_path: &Path,
+    config: &ParquetConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
 ) -> Result<ProfileReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
@@ -264,7 +283,7 @@ pub fn analyze_parquet_with_config(
 
     let num_columns = column_profiles.len();
 
-    Ok(ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         DataSource::File {
             path: file_path.display().to_string(),
             format: FileFormat::Parquet,
@@ -275,8 +294,11 @@ pub fn analyze_parquet_with_config(
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .build())
+    .with_quality_data(sample_columns);
+    if let Some(dims) = quality_dimensions {
+        assembler = assembler.with_requested_dimensions(dims.to_vec());
+    }
+    Ok(assembler.build())
 }
 
 #[cfg(test)]
@@ -419,8 +441,8 @@ mod tests {
 
         // Should have quality metrics calculated
         let quality = report.quality.as_ref().expect("Quality should be present");
-        assert!(quality.metrics.complete_records_ratio >= 0.0);
-        assert!(quality.metrics.complete_records_ratio <= 100.0);
+        assert!(quality.metrics.complete_records_ratio() >= 0.0);
+        assert!(quality.metrics.complete_records_ratio() <= 100.0);
 
         // Quality score should be reasonable
         let quality_score = report.quality_score().unwrap();

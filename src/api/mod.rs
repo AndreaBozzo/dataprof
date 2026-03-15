@@ -9,7 +9,9 @@ use crate::core::progress::{ProgressEvent, ProgressSink};
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::StopCondition;
 use crate::engines::adaptive::AdaptiveProfiler;
-use crate::types::{DataSource, FileFormat, ProfileReport, RowCountEstimate, SchemaResult};
+use crate::types::{
+    DataSource, FileFormat, ProfileReport, QualityDimension, RowCountEstimate, SchemaResult,
+};
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -38,6 +40,8 @@ pub struct ProfilerConfig {
     pub csv_delimiter: Option<u8>,
     /// Allow ragged CSV rows (None = use parser default).
     pub csv_flexible: Option<bool>,
+    /// Which quality dimensions to compute. `None` = all (default).
+    pub quality_dimensions: Option<Vec<QualityDimension>>,
 }
 
 impl Default for ProfilerConfig {
@@ -52,6 +56,7 @@ impl Default for ProfilerConfig {
             progress_interval: Duration::from_millis(500),
             csv_delimiter: None,
             csv_flexible: None,
+            quality_dimensions: None,
         }
     }
 }
@@ -147,6 +152,16 @@ impl Profiler {
     /// Set whether to allow ragged CSV rows. None = use parser default.
     pub fn csv_flexible(mut self, flexible: bool) -> Self {
         self.config.csv_flexible = Some(flexible);
+        self
+    }
+
+    /// Select which ISO 25012 quality dimensions to compute.
+    ///
+    /// By default all dimensions are evaluated. Call this method with a subset
+    /// to skip the rest — dimensions that are not requested will appear as
+    /// `None` in the report.
+    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
+        self.config.quality_dimensions = Some(dims);
         self
     }
 
@@ -283,15 +298,29 @@ impl Profiler {
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
+        let dims = self.config.quality_dimensions.as_deref();
         match format {
-            FileFormat::Json | FileFormat::Jsonl => crate::parsers::json::analyze_json_file(
-                file_path,
-                &crate::parsers::json::JsonParserConfig::default(),
-            ),
-            FileFormat::Csv if self.has_csv_config() => {
-                crate::parsers::csv::analyze_csv_file(file_path, &self.csv_parser_config())
+            FileFormat::Json | FileFormat::Jsonl => {
+                crate::parsers::json::analyze_json_file_with_dimensions(
+                    file_path,
+                    &crate::parsers::json::JsonParserConfig::default(),
+                    dims,
+                )
             }
-            _ => AdaptiveProfiler::new().analyze_file(file_path),
+            FileFormat::Csv if self.has_csv_config() => {
+                crate::parsers::csv::analyze_csv_file_with_dimensions(
+                    file_path,
+                    &self.csv_parser_config(),
+                    dims,
+                )
+            }
+            _ => {
+                let mut profiler = AdaptiveProfiler::new();
+                if let Some(d) = &self.config.quality_dimensions {
+                    profiler = profiler.quality_dimensions(d.clone());
+                }
+                profiler.analyze_file(file_path)
+            }
         }
     }
 
@@ -301,27 +330,32 @@ impl Profiler {
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
+        let dims = self.config.quality_dimensions.as_deref();
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                return crate::parsers::json::analyze_json_file(
+                return crate::parsers::json::analyze_json_file_with_dimensions(
                     file_path,
                     &crate::parsers::json::JsonParserConfig::default(),
+                    dims,
                 );
             }
             FileFormat::Parquet => {
-                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+                return crate::parsers::parquet::analyze_parquet_with_quality_dims(file_path, dims);
             }
             _ => {}
         }
 
         use crate::engines::streaming::IncrementalProfiler;
 
-        let profiler = IncrementalProfiler::new()
+        let mut profiler = IncrementalProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
             .sampling(self.config.sampling.clone())
             .stop_condition(self.config.stop_condition.clone())
             .progress(self.progress_sink.clone(), self.config.progress_interval);
+        if let Some(d) = &self.config.quality_dimensions {
+            profiler = profiler.quality_dimensions(d.clone());
+        }
 
         profiler.analyze_file(file_path)
     }
@@ -332,14 +366,16 @@ impl Profiler {
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
+        let dims = self.config.quality_dimensions.as_deref();
         match format {
             FileFormat::Parquet => {
-                return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+                return crate::parsers::parquet::analyze_parquet_with_quality_dims(file_path, dims);
             }
             FileFormat::Json | FileFormat::Jsonl => {
-                return crate::parsers::json::analyze_json_file(
+                return crate::parsers::json::analyze_json_file_with_dimensions(
                     file_path,
                     &crate::parsers::json::JsonParserConfig::default(),
+                    dims,
                 );
             }
             _ => {}
@@ -350,6 +386,9 @@ impl Profiler {
         let mut profiler = ArrowProfiler::new();
         if let Some(mb) = self.config.memory_limit_mb {
             profiler = profiler.memory_limit_mb(mb);
+        }
+        if let Some(d) = &self.config.quality_dimensions {
+            profiler = profiler.quality_dimensions(d.clone());
         }
         profiler.analyze_csv_file(file_path)
     }
@@ -417,6 +456,9 @@ impl Profiler {
         if let Some(mb) = self.config.memory_limit_mb {
             profiler = profiler.memory_limit_mb(mb);
         }
+        if let Some(ref d) = self.config.quality_dimensions {
+            profiler = profiler.quality_dimensions(d.clone());
+        }
 
         profiler.analyze_stream(source).await
     }
@@ -454,8 +496,12 @@ impl Profiler {
             FileFormat::Parquet => {
                 // Parquet requires seeking — delegate to sync parser on a blocking thread.
                 let path = path.to_path_buf();
+                let dims = self.config.quality_dimensions.clone();
                 tokio::task::spawn_blocking(move || {
-                    crate::parsers::parquet::analyze_parquet_with_quality(&path)
+                    crate::parsers::parquet::analyze_parquet_with_quality_dims(
+                        &path,
+                        dims.as_deref(),
+                    )
                 })
                 .await
                 .map_err(|e| DataProfilerError::StreamingError {
@@ -553,9 +599,10 @@ impl Profiler {
 
         match format {
             FileFormat::Parquet => {
-                crate::parsers::parquet_async::analyze_parquet_async_http(
+                crate::parsers::parquet_async::analyze_parquet_async_http_dims(
                     url,
                     &crate::parsers::parquet::ParquetConfig::default(),
+                    self.config.quality_dimensions.clone(),
                 )
                 .await
             }

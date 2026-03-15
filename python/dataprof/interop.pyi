@@ -16,11 +16,19 @@ def analyze_file(path: str, config: ProfilerConfig | None = None) -> ProfileRepo
     """Analyze a file with optional config. Format auto-detected from extension."""
     ...
 
-def profile_dataframe(df: object, name: str = "dataframe", max_rows: int | None = None) -> ProfileReport:
+def profile_dataframe(
+    df: object,
+    name: str = "dataframe",
+    max_rows: int | None = None,
+) -> ProfileReport:
     """Profile a pandas/polars DataFrame via Arrow PyCapsule protocol."""
     ...
 
-def profile_arrow(table: object, name: str = "arrow_table", max_rows: int | None = None) -> ProfileReport:
+def profile_arrow(
+    table: object,
+    name: str = "arrow_table",
+    max_rows: int | None = None,
+) -> ProfileReport:
     """Profile a PyArrow Table or RecordBatch directly."""
     ...
 

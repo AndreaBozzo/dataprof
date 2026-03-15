@@ -25,6 +25,7 @@ class ProfilerConfig:
         stop_condition: StopCondition | None = None,
         on_progress: Callable[[ProgressEvent], None] | None = None,
         progress_interval_ms: int | None = None,
+        quality_dimensions: list[str] | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
@@ -130,6 +131,7 @@ def profile(
     stop_condition: StopCondition | None = None,
     on_progress: Callable[[ProgressEvent], None] | None = None,
     progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
     ...
@@ -200,8 +202,14 @@ class ColumnProfile:
     is_approximate: bool | None
 
 class DataQualityMetrics:
-    """ISO 8000/25012 data quality metrics."""
+    """ISO 8000/25012 data quality metrics.
 
+    Flat accessors return defaults (0.0 / 0 / [] / False) for dimensions
+    not computed. Use the nested dimension properties to check which
+    dimensions were actually evaluated.
+    """
+
+    # Flat backward-compatible accessors
     missing_values_ratio: float
     complete_records_ratio: float
     null_columns: list[str]
@@ -217,6 +225,18 @@ class DataQualityMetrics:
     future_dates_count: int
     stale_data_ratio: float
     temporal_violations: int
+
+    # Nested dimension accessors (None when dimension was not requested)
+    @property
+    def completeness(self) -> dict[str, Any] | None: ...
+    @property
+    def consistency(self) -> dict[str, Any] | None: ...
+    @property
+    def uniqueness(self) -> dict[str, Any] | None: ...
+    @property
+    def accuracy(self) -> dict[str, Any] | None: ...
+    @property
+    def timeliness(self) -> dict[str, Any] | None: ...
 
     def overall_quality_score(self) -> float: ...
 

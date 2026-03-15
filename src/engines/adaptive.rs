@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::core::errors::DataProfilerError;
 use crate::engines::streaming::IncrementalProfiler;
-use crate::types::ProfileReport;
+use crate::types::{ProfileReport, QualityDimension};
 
 /// Internal engine type for adaptive selection.
 ///
@@ -17,11 +17,20 @@ pub(crate) enum InternalEngineType {
 ///
 /// Simple heuristic: Incremental is the default (streaming, memory-bounded).
 /// Arrow is selected when the file has many numeric columns and enough memory.
-pub(crate) struct AdaptiveProfiler;
+pub(crate) struct AdaptiveProfiler {
+    quality_dimensions: Option<Vec<QualityDimension>>,
+}
 
 impl AdaptiveProfiler {
     pub fn new() -> Self {
-        Self
+        Self {
+            quality_dimensions: None,
+        }
+    }
+
+    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
+        self.quality_dimensions = Some(dims);
+        self
     }
 
     /// Analyze a file, auto-selecting the best engine.
@@ -30,7 +39,10 @@ impl AdaptiveProfiler {
     pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         // Parquet has its own parser — short-circuit
         if is_parquet(file_path) {
-            return crate::parsers::parquet::analyze_parquet_with_quality(file_path);
+            return crate::parsers::parquet::analyze_parquet_with_quality_dims(
+                file_path,
+                self.quality_dimensions.as_deref(),
+            );
         }
 
         let engine = self.select_engine(file_path);
@@ -116,9 +128,19 @@ impl AdaptiveProfiler {
         match engine_type {
             InternalEngineType::Arrow => {
                 use crate::engines::columnar::ArrowProfiler;
-                ArrowProfiler::new().analyze_csv_file(file_path)
+                let mut profiler = ArrowProfiler::new();
+                if let Some(ref dims) = self.quality_dimensions {
+                    profiler = profiler.quality_dimensions(dims.clone());
+                }
+                profiler.analyze_csv_file(file_path)
             }
-            InternalEngineType::Incremental => IncrementalProfiler::new().analyze_file(file_path),
+            InternalEngineType::Incremental => {
+                let mut profiler = IncrementalProfiler::new();
+                if let Some(ref dims) = self.quality_dimensions {
+                    profiler = profiler.quality_dimensions(dims.clone());
+                }
+                profiler.analyze_file(file_path)
+            }
         }
     }
 }

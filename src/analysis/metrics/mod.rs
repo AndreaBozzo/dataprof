@@ -44,7 +44,7 @@
 //! ### How to Add a New Dimension
 //! 1. Create `metrics/{dimension}.rs` with `{Dimension}Metrics` struct + `{Dimension}Calculator`
 //! 2. Add `mod {dimension};` and `use {dimension}::...;` in this file
-//! 3. Extend `DataQualityMetrics` in `src/types.rs` with new fields
+//! 3. Extend `QualityMetrics` in `src/types.rs` with new fields
 //! 4. Call the calculator in `calculate_comprehensive_metrics()` and map fields
 //! 5. Update `IsoQualityConfig` in `src/core/config.rs` if configurable thresholds needed
 //!
@@ -72,7 +72,10 @@ use uniqueness::UniquenessCalculator;
 
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use crate::types::{ColumnProfile, QualityMetrics};
+use crate::types::{
+    AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, QualityDimension,
+    QualityMetrics, TimelinessMetrics, UniquenessMetrics,
+};
 use std::collections::HashMap;
 
 /// Engine for calculating comprehensive data quality metrics
@@ -116,41 +119,39 @@ impl MetricsCalculator {
     }
 
     /// Validate statistical requirements for metric calculation
-    ///
-    /// Checks if the dataset has sufficient sample size for reliable metrics.
-    /// Based on central limit theorem and statistical best practices.
-    ///
-    /// # Arguments
-    /// * `sample_size` - Actual number of observations
-    /// * `metric_type` - Type of metric being calculated
-    ///
-    /// # Returns
-    /// StatisticalValidation with sufficiency status and recommendations
     pub fn validate_sample_size(sample_size: usize, metric_type: &str) -> StatisticalValidation {
         utils::validate_sample_size(sample_size, metric_type)
     }
 
-    /// Calculate comprehensive data quality metrics from column data
+    /// Check whether a dimension is requested.
     ///
-    /// # Arguments
-    /// * `data` - HashMap containing column names and their values
-    /// * `column_profiles` - Vector of analyzed column profiles
+    /// `None` → all dimensions are requested (backward-compatible default).
+    fn is_requested(requested: &Option<&[QualityDimension]>, dim: QualityDimension) -> bool {
+        match requested {
+            None => true,
+            Some(dims) => dims.contains(&dim),
+        }
+    }
+
+    /// Calculate comprehensive data quality metrics from column data.
     ///
-    /// # Returns
-    /// * `Result<QualityMetrics>` - Comprehensive quality metrics or error
-    ///
-    /// # Errors
-    /// Returns error if data is malformed or calculation fails
+    /// When `requested_dimensions` is `None`, all dimensions are computed
+    /// (backward-compatible default). When `Some(&[...])`, only the listed
+    /// dimensions are computed; the rest are `None` in the returned struct.
     pub fn calculate_comprehensive_metrics(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
     ) -> Result<QualityMetrics, DataProfilerError> {
         if data.is_empty() {
-            return Ok(Self::default_metrics_for_empty_dataset());
+            return Ok(Self::default_metrics_for_empty_dataset(
+                &requested_dimensions,
+            ));
         }
 
         let total_rows = Self::calculate_total_rows(data)?;
+        let requested = &requested_dimensions;
 
         // Validate sample size for statistical reliability
         let validation = Self::validate_sample_size(total_rows, "general");
@@ -162,67 +163,137 @@ impl MetricsCalculator {
         }
 
         // Completeness dimension
-        let completeness = CompletenessCalculator::new(&self.thresholds).calculate(
-            data,
-            column_profiles,
-            total_rows,
-        )?;
+        let completeness = if Self::is_requested(requested, QualityDimension::Completeness) {
+            let c = CompletenessCalculator::new(&self.thresholds).calculate(
+                data,
+                column_profiles,
+                total_rows,
+            )?;
+            Some(CompletenessMetrics {
+                missing_values_ratio: c.missing_values_ratio,
+                complete_records_ratio: c.complete_records_ratio,
+                null_columns: c.null_columns,
+            })
+        } else {
+            None
+        };
 
         // Consistency dimension
-        let consistency = ConsistencyCalculator::calculate(data, column_profiles)?;
+        let consistency = if Self::is_requested(requested, QualityDimension::Consistency) {
+            let c = ConsistencyCalculator::calculate(data, column_profiles)?;
+            Some(ConsistencyMetrics {
+                data_type_consistency: c.data_type_consistency,
+                format_violations: c.format_violations,
+                encoding_issues: c.encoding_issues,
+            })
+        } else {
+            None
+        };
 
         // Uniqueness dimension
-        let uniqueness = UniquenessCalculator::new(&self.thresholds).calculate(
-            data,
-            column_profiles,
-            total_rows,
-        )?;
+        let uniqueness = if Self::is_requested(requested, QualityDimension::Uniqueness) {
+            let u = UniquenessCalculator::new(&self.thresholds).calculate(
+                data,
+                column_profiles,
+                total_rows,
+            )?;
+            Some(UniquenessMetrics {
+                duplicate_rows: u.duplicate_rows,
+                key_uniqueness: u.key_uniqueness,
+                high_cardinality_warning: u.high_cardinality_warning,
+            })
+        } else {
+            None
+        };
 
         // Accuracy dimension
-        let accuracy =
-            AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
+        let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
+            let a = AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
+            Some(AccuracyMetrics {
+                outlier_ratio: a.outlier_ratio,
+                range_violations: a.range_violations,
+                negative_values_in_positive: a.negative_values_in_positive,
+            })
+        } else {
+            None
+        };
 
         // Timeliness dimension
-        let timeliness =
-            TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
+        let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
+            let t = TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
+            Some(TimelinessMetrics {
+                future_dates_count: t.future_dates_count,
+                stale_data_ratio: t.stale_data_ratio,
+                temporal_violations: t.temporal_violations,
+            })
+        } else {
+            None
+        };
 
         Ok(QualityMetrics {
-            missing_values_ratio: completeness.missing_values_ratio,
-            complete_records_ratio: completeness.complete_records_ratio,
-            null_columns: completeness.null_columns,
-            data_type_consistency: consistency.data_type_consistency,
-            format_violations: consistency.format_violations,
-            encoding_issues: consistency.encoding_issues,
-            duplicate_rows: uniqueness.duplicate_rows,
-            key_uniqueness: uniqueness.key_uniqueness,
-            high_cardinality_warning: uniqueness.high_cardinality_warning,
-            outlier_ratio: accuracy.outlier_ratio,
-            range_violations: accuracy.range_violations,
-            negative_values_in_positive: accuracy.negative_values_in_positive,
-            future_dates_count: timeliness.future_dates_count,
-            stale_data_ratio: timeliness.stale_data_ratio,
-            temporal_violations: timeliness.temporal_violations,
+            completeness,
+            consistency,
+            uniqueness,
+            accuracy,
+            timeliness,
         })
     }
 
-    /// Create default metrics for empty dataset
-    fn default_metrics_for_empty_dataset() -> QualityMetrics {
+    /// Create default metrics for empty dataset (only requested dimensions are populated).
+    fn default_metrics_for_empty_dataset(
+        requested: &Option<&[QualityDimension]>,
+    ) -> QualityMetrics {
+        let is_req = |d| match requested {
+            None => true,
+            Some(dims) => dims.contains(&d),
+        };
+
         QualityMetrics {
-            missing_values_ratio: 0.0,
-            complete_records_ratio: 100.0,
-            null_columns: vec![],
-            data_type_consistency: 100.0,
-            format_violations: 0,
-            encoding_issues: 0,
-            duplicate_rows: 0,
-            key_uniqueness: 100.0,
-            high_cardinality_warning: false,
-            outlier_ratio: 0.0,
-            range_violations: 0,
-            negative_values_in_positive: 0,
-            future_dates_count: 0,
-            stale_data_ratio: 0.0,
-            temporal_violations: 0,
+            completeness: if is_req(QualityDimension::Completeness) {
+                Some(CompletenessMetrics {
+                    missing_values_ratio: 0.0,
+                    complete_records_ratio: 100.0,
+                    null_columns: vec![],
+                })
+            } else {
+                None
+            },
+            consistency: if is_req(QualityDimension::Consistency) {
+                Some(ConsistencyMetrics {
+                    data_type_consistency: 100.0,
+                    format_violations: 0,
+                    encoding_issues: 0,
+                })
+            } else {
+                None
+            },
+            uniqueness: if is_req(QualityDimension::Uniqueness) {
+                Some(UniquenessMetrics {
+                    duplicate_rows: 0,
+                    key_uniqueness: 100.0,
+                    high_cardinality_warning: false,
+                })
+            } else {
+                None
+            },
+            accuracy: if is_req(QualityDimension::Accuracy) {
+                Some(AccuracyMetrics {
+                    outlier_ratio: 0.0,
+                    range_violations: 0,
+                    negative_values_in_positive: 0,
+                })
+            } else {
+                None
+            },
+            timeliness: if is_req(QualityDimension::Timeliness) {
+                Some(TimelinessMetrics {
+                    future_dates_count: 0,
+                    stale_data_ratio: 0.0,
+                    temporal_violations: 0,
+                })
+            } else {
+                None
+            },
         }
     }
 
@@ -241,10 +312,11 @@ impl MetricsCalculator {
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
     ) -> Result<BifurcatedResult, DataProfilerError> {
         if data.is_empty() && column_profiles.is_empty() {
             return Ok(BifurcatedResult {
-                metrics: Self::default_metrics_for_empty_dataset(),
+                metrics: Self::default_metrics_for_empty_dataset(&requested_dimensions),
                 exact_dimensions: vec![],
                 sampled_dimensions: vec![],
                 sample_size: 0,
@@ -252,77 +324,116 @@ impl MetricsCalculator {
         }
 
         let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
+        let sample_rows = Self::calculate_total_rows(data).unwrap_or(0);
+        let requested = &requested_dimensions;
+
+        let mut exact_dimensions = Vec::new();
+        let mut sampled_dimensions = Vec::new();
 
         // Phase A: Completeness from exact global counters
-        let completeness = CompletenessCalculator::new(&self.thresholds)
-            .calculate_from_profiles(column_profiles)?;
+        let completeness = if Self::is_requested(requested, QualityDimension::Completeness) {
+            let c = CompletenessCalculator::new(&self.thresholds)
+                .calculate_from_profiles(column_profiles)?;
+            exact_dimensions.push("completeness".to_string());
+            Some(CompletenessMetrics {
+                missing_values_ratio: c.missing_values_ratio,
+                complete_records_ratio: c.complete_records_ratio,
+                null_columns: c.null_columns,
+            })
+        } else {
+            None
+        };
 
         // Phase B: Sampled dimensions from reservoir data
-        let sample_rows = Self::calculate_total_rows(data).unwrap_or(0);
-
-        let consistency = if !data.is_empty() {
-            ConsistencyCalculator::calculate(data, column_profiles)?
+        let consistency = if Self::is_requested(requested, QualityDimension::Consistency) {
+            let c = if !data.is_empty() {
+                ConsistencyCalculator::calculate(data, column_profiles)?
+            } else {
+                consistency::ConsistencyMetrics {
+                    data_type_consistency: 100.0,
+                    format_violations: 0,
+                    encoding_issues: 0,
+                }
+            };
+            sampled_dimensions.push("consistency".to_string());
+            Some(ConsistencyMetrics {
+                data_type_consistency: c.data_type_consistency,
+                format_violations: c.format_violations,
+                encoding_issues: c.encoding_issues,
+            })
         } else {
-            consistency::ConsistencyMetrics {
-                data_type_consistency: 100.0,
-                format_violations: 0,
-                encoding_issues: 0,
-            }
+            None
         };
 
-        let uniqueness = UniquenessCalculator::new(&self.thresholds).calculate(
-            data,
-            column_profiles,
-            total_rows,
-        )?;
-
-        let accuracy = if !data.is_empty() {
-            AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+        let uniqueness = if Self::is_requested(requested, QualityDimension::Uniqueness) {
+            let u = UniquenessCalculator::new(&self.thresholds).calculate(
+                data,
+                column_profiles,
+                total_rows,
+            )?;
+            exact_dimensions.push("key_uniqueness".to_string());
+            sampled_dimensions.push("duplicate_rows".to_string());
+            Some(UniquenessMetrics {
+                duplicate_rows: u.duplicate_rows,
+                key_uniqueness: u.key_uniqueness,
+                high_cardinality_warning: u.high_cardinality_warning,
+            })
         } else {
-            accuracy::AccuracyMetrics {
-                outlier_ratio: 0.0,
-                range_violations: 0,
-                negative_values_in_positive: 0,
-            }
+            None
         };
 
-        let timeliness = if !data.is_empty() {
-            TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+        let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
+            let a = if !data.is_empty() {
+                AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+            } else {
+                accuracy::AccuracyMetrics {
+                    outlier_ratio: 0.0,
+                    range_violations: 0,
+                    negative_values_in_positive: 0,
+                }
+            };
+            sampled_dimensions.push("accuracy".to_string());
+            Some(AccuracyMetrics {
+                outlier_ratio: a.outlier_ratio,
+                range_violations: a.range_violations,
+                negative_values_in_positive: a.negative_values_in_positive,
+            })
         } else {
-            timeliness::TimelinessMetrics {
-                future_dates_count: 0,
-                stale_data_ratio: 0.0,
-                temporal_violations: 0,
-            }
+            None
+        };
+
+        let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
+            let t = if !data.is_empty() {
+                TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+            } else {
+                timeliness::TimelinessMetrics {
+                    future_dates_count: 0,
+                    stale_data_ratio: 0.0,
+                    temporal_violations: 0,
+                }
+            };
+            sampled_dimensions.push("timeliness".to_string());
+            Some(TimelinessMetrics {
+                future_dates_count: t.future_dates_count,
+                stale_data_ratio: t.stale_data_ratio,
+                temporal_violations: t.temporal_violations,
+            })
+        } else {
+            None
         };
 
         let metrics = QualityMetrics {
-            missing_values_ratio: completeness.missing_values_ratio,
-            complete_records_ratio: completeness.complete_records_ratio,
-            null_columns: completeness.null_columns,
-            data_type_consistency: consistency.data_type_consistency,
-            format_violations: consistency.format_violations,
-            encoding_issues: consistency.encoding_issues,
-            duplicate_rows: uniqueness.duplicate_rows,
-            key_uniqueness: uniqueness.key_uniqueness,
-            high_cardinality_warning: uniqueness.high_cardinality_warning,
-            outlier_ratio: accuracy.outlier_ratio,
-            range_violations: accuracy.range_violations,
-            negative_values_in_positive: accuracy.negative_values_in_positive,
-            future_dates_count: timeliness.future_dates_count,
-            stale_data_ratio: timeliness.stale_data_ratio,
-            temporal_violations: timeliness.temporal_violations,
+            completeness,
+            consistency,
+            uniqueness,
+            accuracy,
+            timeliness,
         };
 
         Ok(BifurcatedResult {
             metrics,
-            exact_dimensions: vec!["completeness".to_string(), "key_uniqueness".to_string()],
-            sampled_dimensions: vec![
-                "consistency".to_string(),
-                "accuracy".to_string(),
-                "timeliness".to_string(),
-                "duplicate_rows".to_string(),
-            ],
+            exact_dimensions,
+            sampled_dimensions,
             sample_size: sample_rows,
         })
     }

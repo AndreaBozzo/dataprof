@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::api::{EngineType, Profiler};
 use crate::core::sampling::ChunkSize;
 use crate::core::stop_condition::StopCondition;
-use crate::types::FileFormat;
+use crate::types::{FileFormat, QualityDimension};
 
 use super::progress::py_callback_to_sink;
 use super::sampling::PySamplingStrategy;
@@ -30,6 +30,7 @@ pub struct PyProfilerConfig {
     pub(crate) stop_condition: Option<PyStopCondition>,
     pub(crate) on_progress: Option<Arc<Py<PyAny>>>,
     pub(crate) progress_interval_ms: Option<u64>,
+    pub(crate) quality_dimensions: Option<Vec<QualityDimension>>,
 }
 
 #[pymethods]
@@ -47,6 +48,7 @@ impl PyProfilerConfig {
         stop_condition = None,
         on_progress = None,
         progress_interval_ms = None,
+        quality_dimensions = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -61,6 +63,7 @@ impl PyProfilerConfig {
         stop_condition: Option<PyStopCondition>,
         on_progress: Option<Py<PyAny>>,
         progress_interval_ms: Option<u64>,
+        quality_dimensions: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -93,6 +96,15 @@ impl PyProfilerConfig {
             })?;
         }
 
+        // Parse quality_dimensions strings into QualityDimension enums
+        let quality_dimensions = quality_dimensions
+            .map(|dims| {
+                dims.iter()
+                    .map(|s| s.parse::<QualityDimension>().map_err(PyValueError::new_err))
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
+
         Ok(Self {
             engine,
             chunk_size,
@@ -105,6 +117,7 @@ impl PyProfilerConfig {
             stop_condition,
             on_progress: on_progress.map(Arc::new),
             progress_interval_ms,
+            quality_dimensions,
         })
     }
 
@@ -208,6 +221,9 @@ impl PyProfilerConfig {
         }
         if let Some(ms) = self.progress_interval_ms {
             profiler = profiler.progress_interval(Duration::from_millis(ms));
+        }
+        if let Some(ref dims) = self.quality_dimensions {
+            profiler = profiler.quality_dimensions(dims.clone());
         }
 
         profiler

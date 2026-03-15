@@ -141,82 +141,261 @@ impl From<&ColumnProfile> for PyColumnProfile {
 }
 
 /// Python wrapper for QualityMetrics — ISO 8000/25012 quality dimensions.
+///
+/// Exposes both flat backward-compatible properties and new nested dimension
+/// accessors (completeness, consistency, uniqueness, accuracy, timeliness).
+/// Un-computed dimensions are `None` at the Python level.
 #[pyclass(name = "DataQualityMetrics")]
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
-    #[pyo3(get)]
-    pub missing_values_ratio: f64,
-    #[pyo3(get)]
-    pub complete_records_ratio: f64,
-    #[pyo3(get)]
-    pub null_columns: Vec<String>,
-    #[pyo3(get)]
-    pub data_type_consistency: f64,
-    #[pyo3(get)]
-    pub format_violations: usize,
-    #[pyo3(get)]
-    pub encoding_issues: usize,
-    #[pyo3(get)]
-    pub duplicate_rows: usize,
-    #[pyo3(get)]
-    pub key_uniqueness: f64,
-    #[pyo3(get)]
-    pub high_cardinality_warning: bool,
-    #[pyo3(get)]
-    pub outlier_ratio: f64,
-    #[pyo3(get)]
-    pub range_violations: usize,
-    #[pyo3(get)]
-    pub negative_values_in_positive: usize,
-    #[pyo3(get)]
-    pub future_dates_count: usize,
-    #[pyo3(get)]
-    pub stale_data_ratio: f64,
-    #[pyo3(get)]
-    pub temporal_violations: usize,
+    inner: QualityMetrics,
 }
 
 impl From<&QualityMetrics> for PyDataQualityMetrics {
     fn from(m: &QualityMetrics) -> Self {
-        Self {
-            missing_values_ratio: m.missing_values_ratio,
-            complete_records_ratio: m.complete_records_ratio,
-            null_columns: m.null_columns.clone(),
-            data_type_consistency: m.data_type_consistency,
-            format_violations: m.format_violations,
-            encoding_issues: m.encoding_issues,
-            duplicate_rows: m.duplicate_rows,
-            key_uniqueness: m.key_uniqueness,
-            high_cardinality_warning: m.high_cardinality_warning,
-            outlier_ratio: m.outlier_ratio,
-            range_violations: m.range_violations,
-            negative_values_in_positive: m.negative_values_in_positive,
-            future_dates_count: m.future_dates_count,
-            stale_data_ratio: m.stale_data_ratio,
-            temporal_violations: m.temporal_violations,
-        }
+        Self { inner: m.clone() }
     }
 }
 
 #[pymethods]
 impl PyDataQualityMetrics {
+    // -- Backward-compatible flat properties --
+
+    #[getter]
+    fn missing_values_ratio(&self) -> f64 {
+        self.inner.missing_values_ratio()
+    }
+    #[getter]
+    fn complete_records_ratio(&self) -> f64 {
+        self.inner.complete_records_ratio()
+    }
+    #[getter]
+    fn null_columns(&self) -> Vec<String> {
+        self.inner.null_columns().to_vec()
+    }
+    #[getter]
+    fn data_type_consistency(&self) -> f64 {
+        self.inner.data_type_consistency()
+    }
+    #[getter]
+    fn format_violations(&self) -> usize {
+        self.inner.format_violations()
+    }
+    #[getter]
+    fn encoding_issues(&self) -> usize {
+        self.inner.encoding_issues()
+    }
+    #[getter]
+    fn duplicate_rows(&self) -> usize {
+        self.inner.duplicate_rows()
+    }
+    #[getter]
+    fn key_uniqueness(&self) -> f64 {
+        self.inner.key_uniqueness()
+    }
+    #[getter]
+    fn high_cardinality_warning(&self) -> bool {
+        self.inner.high_cardinality_warning()
+    }
+    #[getter]
+    fn outlier_ratio(&self) -> f64 {
+        self.inner.outlier_ratio()
+    }
+    #[getter]
+    fn range_violations(&self) -> usize {
+        self.inner.range_violations()
+    }
+    #[getter]
+    fn negative_values_in_positive(&self) -> usize {
+        self.inner.negative_values_in_positive()
+    }
+    #[getter]
+    fn future_dates_count(&self) -> usize {
+        self.inner.future_dates_count()
+    }
+    #[getter]
+    fn stale_data_ratio(&self) -> f64 {
+        self.inner.stale_data_ratio()
+    }
+    #[getter]
+    fn temporal_violations(&self) -> usize {
+        self.inner.temporal_violations()
+    }
+
+    // -- Nested dimension accessors (composable API) --
+
+    /// Completeness dimension dict, or None if not computed.
+    #[getter]
+    fn completeness(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .completeness
+            .as_ref()
+            .map(|c| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "missing_values_ratio".into(),
+                    c.missing_values_ratio
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "complete_records_ratio".into(),
+                    c.complete_records_ratio
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "null_columns".into(),
+                    c.null_columns
+                        .as_slice()
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
+    /// Consistency dimension dict, or None if not computed.
+    #[getter]
+    fn consistency(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .consistency
+            .as_ref()
+            .map(|c| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "data_type_consistency".into(),
+                    c.data_type_consistency
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "format_violations".into(),
+                    c.format_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "encoding_issues".into(),
+                    c.encoding_issues.into_pyobject(py)?.unbind().into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
+    /// Uniqueness dimension dict, or None if not computed.
+    #[getter]
+    fn uniqueness(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .uniqueness
+            .as_ref()
+            .map(|u| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "duplicate_rows".into(),
+                    u.duplicate_rows.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "key_uniqueness".into(),
+                    u.key_uniqueness.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "high_cardinality_warning".into(),
+                    u.high_cardinality_warning
+                        .into_pyobject(py)?
+                        .to_owned()
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
+    /// Accuracy dimension dict, or None if not computed.
+    #[getter]
+    fn accuracy(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .accuracy
+            .as_ref()
+            .map(|a| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "outlier_ratio".into(),
+                    a.outlier_ratio.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "range_violations".into(),
+                    a.range_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "negative_values_in_positive".into(),
+                    a.negative_values_in_positive
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
+    /// Timeliness dimension dict, or None if not computed.
+    #[getter]
+    fn timeliness(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .timeliness
+            .as_ref()
+            .map(|t| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "future_dates_count".into(),
+                    t.future_dates_count.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "stale_data_ratio".into(),
+                    t.stale_data_ratio.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "temporal_violations".into(),
+                    t.temporal_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
     /// Overall quality score (0-100) using ISO 8000/25012 weighted formula.
     fn overall_quality_score(&self) -> f64 {
-        let completeness = self.complete_records_ratio * 0.3;
-        let consistency = self.data_type_consistency * 0.25;
-        let uniqueness = self.key_uniqueness * 0.2;
-        let accuracy = (100.0 - self.outlier_ratio) * 0.15;
-        let timeliness = (100.0 - self.stale_data_ratio) * 0.1;
-        completeness + consistency + uniqueness + accuracy + timeliness
+        self.inner.overall_score()
     }
 
     fn __str__(&self) -> String {
         format!(
             "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, uniqueness={:.1}%)",
-            self.overall_quality_score(),
-            self.complete_records_ratio,
-            self.data_type_consistency,
-            self.key_uniqueness,
+            self.inner.overall_score(),
+            self.inner.complete_records_ratio(),
+            self.inner.data_type_consistency(),
+            self.inner.key_uniqueness(),
         )
     }
 }

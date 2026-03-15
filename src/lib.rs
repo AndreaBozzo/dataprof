@@ -35,10 +35,7 @@ pub use api::partial::{
     infer_schema_async, infer_schema_stream, quick_row_count_async, quick_row_count_stream,
 };
 
-#[deprecated(note = "Use the unified Profiler builder instead.")]
-pub type DataProfiler = Profiler;
-
-pub use core::errors::{DataProfilerError, ErrorSeverity};
+pub use core::errors::DataProfilerError;
 pub use core::sampling::{ChunkSize, SamplingStrategy};
 pub use parsers::CsvDiagnostics;
 
@@ -63,40 +60,19 @@ pub use engines::DataFusionLoader;
 
 // Public API exports - Core types and functionality
 pub use types::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, ExecutionMetadata,
-    FileFormat, MetricConfidence, OutputFormat, Pattern, ProfileReport, QualityAssessment,
-    QualityMetrics, QueryEngine, TruncationReason,
+    AccuracyMetrics, ColumnProfile, ColumnStats, CompletenessMetrics, ConsistencyMetrics,
+    DataFrameLibrary, DataSource, DataType, ExecutionMetadata, FileFormat, MetricConfidence,
+    OutputFormat, Pattern, ProfileReport, QualityAssessment, QualityDimension, QualityMetrics,
+    QueryEngine, TimelinessMetrics, TruncationReason, UniquenessMetrics,
 };
-
-// Deprecated aliases for backwards compatibility
-#[allow(deprecated)]
-pub use types::{DataQualityMetrics, QualityReport};
-
-#[deprecated(since = "0.6.0", note = "Use ExecutionMetadata instead.")]
-pub type ScanInfo = ExecutionMetadata;
-// Note: Legacy Sampler removed - use core::sampling::SamplingStrategy instead
 
 // Parser API - New config-based CSV API (#181 + #218)
 pub use parsers::csv::{CsvParserConfig, analyze_csv_file, analyze_csv_from_reader};
-
-#[deprecated(note = "Use analyze_csv_file() with CsvParserConfig::default() instead.")]
-pub fn analyze_csv_robust(
-    path: impl AsRef<std::path::Path>,
-) -> Result<ProfileReport, DataProfilerError> {
-    analyze_csv_file(path.as_ref(), &CsvParserConfig::default())
-}
 
 // Parser API - New config-based JSON API (#218)
 pub use parsers::json::{
     JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader,
 };
-
-#[deprecated(note = "Use analyze_json_file() instead.")]
-pub fn analyze_json_with_quality(
-    path: impl AsRef<std::path::Path>,
-) -> Result<ProfileReport, DataProfilerError> {
-    analyze_json_file(path.as_ref(), &JsonParserConfig::default())
-}
 
 pub use parsers::parquet::{
     ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file,

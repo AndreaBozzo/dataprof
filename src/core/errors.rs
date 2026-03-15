@@ -1,4 +1,3 @@
-use std::fmt;
 use thiserror::Error;
 
 /// Auto-retry configuration for error recovery
@@ -355,54 +354,6 @@ impl DataProfilerError {
             DataProfilerError::ConfigValidationError { .. } => "config_validation",
         }
     }
-
-    /// Get severity level for this error
-    pub fn severity(&self) -> ErrorSeverity {
-        match self {
-            DataProfilerError::FileNotFound { .. } => ErrorSeverity::Critical,
-            DataProfilerError::UnsupportedFormat { .. } => ErrorSeverity::Critical,
-            DataProfilerError::MemoryLimitExceeded => ErrorSeverity::Critical,
-            DataProfilerError::IoError { .. } => ErrorSeverity::High,
-            DataProfilerError::CsvParsingError { .. } => ErrorSeverity::High,
-            DataProfilerError::JsonParsingError { .. } => ErrorSeverity::High,
-            DataProfilerError::InvalidConfiguration { .. } => ErrorSeverity::Medium,
-            DataProfilerError::StreamingError { .. } => ErrorSeverity::Medium,
-            DataProfilerError::ColumnAnalysisError { .. } => ErrorSeverity::Medium,
-            DataProfilerError::SamplingError { .. } => ErrorSeverity::Low,
-            DataProfilerError::DataQualityIssue { .. } => ErrorSeverity::Info,
-            DataProfilerError::SimdUnavailable { .. } => ErrorSeverity::Info,
-            DataProfilerError::RecoverableError { .. } => ErrorSeverity::Medium,
-            DataProfilerError::RecoveryFailed { .. } => ErrorSeverity::High,
-            DataProfilerError::ParquetError { .. } => ErrorSeverity::High,
-            DataProfilerError::ArrowError { .. } => ErrorSeverity::High,
-            DataProfilerError::UnsupportedDataSource { .. } => ErrorSeverity::Critical,
-            DataProfilerError::AllEnginesFailed { .. } => ErrorSeverity::Critical,
-            DataProfilerError::MetricsCalculationError { .. } => ErrorSeverity::Medium,
-            DataProfilerError::ConfigValidationError { .. } => ErrorSeverity::Medium,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorSeverity {
-    Critical, // Prevents execution
-    High,     // Major functionality impacted
-    Medium,   // Some features may not work
-    Low,      // Minor issues, workarounds available
-    Info,     // Informational, no impact
-}
-
-impl fmt::Display for ErrorSeverity {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = match self {
-            ErrorSeverity::Critical => "CRITICAL",
-            ErrorSeverity::High => "HIGH",
-            ErrorSeverity::Medium => "MEDIUM",
-            ErrorSeverity::Low => "LOW",
-            ErrorSeverity::Info => "INFO",
-        };
-        write!(f, "{}", s)
-    }
 }
 
 /// Convert from anyhow::Error to DataProfilerError with context
@@ -632,7 +583,6 @@ mod tests {
     fn test_error_categorization() {
         let csv_error = DataProfilerError::csv_parsing("field count mismatch", "test.csv");
         assert_eq!(csv_error.category(), "csv_parsing");
-        assert_eq!(csv_error.severity(), ErrorSeverity::High);
         assert!(!csv_error.is_recoverable());
     }
 
@@ -640,7 +590,6 @@ mod tests {
     fn test_recoverable_errors() {
         let simd_error = DataProfilerError::simd_unavailable("CPU doesn't support SIMD");
         assert!(simd_error.is_recoverable());
-        assert_eq!(simd_error.severity(), ErrorSeverity::Info);
     }
 
     #[test]
