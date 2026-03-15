@@ -1,30 +1,22 @@
 """Type stubs for dataprof.interop — low-level Rust bindings."""
 
-from typing import Optional
-
 from dataprof import (
     ColumnProfile,
     DataQualityMetrics,
-    ProfileReport,
     ProfilerConfig,
+    ProfileReport,
     RecordBatch,
 )
 
-def analyze_file(
-    path: str, config: Optional[ProfilerConfig] = None
-) -> ProfileReport:
+def analyze_file(path: str, config: ProfilerConfig | None = None) -> ProfileReport:
     """Analyze a file with optional config. Format auto-detected from extension."""
     ...
 
-def profile_dataframe(
-    df: object, name: str = "dataframe"
-) -> ProfileReport:
+def profile_dataframe(df: object, name: str = "dataframe") -> ProfileReport:
     """Profile a pandas/polars DataFrame via Arrow PyCapsule protocol."""
     ...
 
-def profile_arrow(
-    table: object, name: str = "arrow_table"
-) -> ProfileReport:
+def profile_arrow(table: object, name: str = "arrow_table") -> ProfileReport:
     """Profile a PyArrow Table or RecordBatch directly."""
     ...
 

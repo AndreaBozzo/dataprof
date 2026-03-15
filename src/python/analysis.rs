@@ -9,16 +9,24 @@ use super::types::PyProfileReport;
 ///
 /// Format is auto-detected from the file extension unless overridden
 /// via `config.format`. Supports CSV, JSON, JSONL, and Parquet.
+///
+/// The GIL is released during profiling so that progress callbacks
+/// (which re-acquire the GIL) can execute on the profiling thread.
 #[pyfunction]
 #[pyo3(signature = (path, config=None))]
-pub fn analyze_file(path: &str, config: Option<&PyProfilerConfig>) -> PyResult<PyProfileReport> {
+pub fn analyze_file(
+    py: Python<'_>,
+    path: &str,
+    config: Option<&PyProfilerConfig>,
+) -> PyResult<PyProfileReport> {
     let profiler = match config {
         Some(cfg) => cfg.to_profiler(),
         None => crate::api::Profiler::new(),
     };
 
-    let report = profiler
-        .analyze_file(Path::new(path))
+    let path = path.to_string();
+    let report = py
+        .detach(|| profiler.analyze_file(Path::new(&path)))
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     Ok(PyProfileReport::new(report))

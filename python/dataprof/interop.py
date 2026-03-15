@@ -5,16 +5,16 @@ high-level dispatch and wrapping provided by ``dataprof.profile()``.
 """
 
 from dataprof._dataprof import (
-    analyze_file,
-    profile_dataframe,
-    profile_arrow,
-    analyze_csv_to_arrow,
-    analyze_parquet_to_arrow,
-    ProfilerConfig,
-    ProfileReport,
     ColumnProfile,
     DataQualityMetrics,
+    ProfilerConfig,
+    ProfileReport,
     RecordBatch,
+    analyze_csv_to_arrow,
+    analyze_file,
+    analyze_parquet_to_arrow,
+    profile_arrow,
+    profile_dataframe,
 )
 
 __all__ = [

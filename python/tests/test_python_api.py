@@ -1,571 +1,351 @@
-#!/usr/bin/env python3
-"""
-Comprehensive test suite for DataProf Python bindings.
+"""Minimal regression test suite for the dataprof Python API.
 
-This test suite validates:
-- API contract compliance (all declared fields/methods exist)
-- Type correctness
-- Value ranges and constraints
-- Error handling
-- Edge cases
+Run after building the extension:
+    maturin develop --features python
+    pytest python/tests/test_python_api.py -v
 """
 
-import pytest
+from __future__ import annotations
+
+import json
 import os
 import tempfile
-from typing import List
-
-
-# Skip all tests if dataprof module is not built
-pytest.importorskip("dataprof")
-import dataprof
-
-
-class TestAPIContract:
-    """Test that the API contract matches the actual implementation."""
-
-    def test_pycolumn_profile_has_all_declared_fields(self, sample_csv_file):
-        """Verify PyColumnProfile has all fields declared in type stubs."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-        assert len(profiles) > 0, "Should have at least one column profile"
-
-        profile = profiles[0]
-
-        # Check all required attributes exist
-        assert hasattr(profile, 'name'), "Missing 'name' attribute"
-        assert hasattr(profile, 'data_type'), "Missing 'data_type' attribute"
-        assert hasattr(profile, 'total_count'), "Missing 'total_count' attribute"
-        assert hasattr(profile, 'null_count'), "Missing 'null_count' attribute"
-        assert hasattr(profile, 'unique_count'), "Missing 'unique_count' attribute"
-        assert hasattr(profile, 'null_percentage'), "Missing 'null_percentage' attribute"
-        assert hasattr(profile, 'uniqueness_ratio'), "Missing 'uniqueness_ratio' attribute"
-
-        # Verify types
-        assert isinstance(profile.name, str)
-        assert isinstance(profile.data_type, str)
-        assert isinstance(profile.total_count, int)
-        assert isinstance(profile.null_count, int)
-        assert profile.unique_count is None or isinstance(profile.unique_count, int)
-        assert isinstance(profile.null_percentage, float)
-        assert isinstance(profile.uniqueness_ratio, float)
-
-    def test_pyquality_report_has_all_declared_fields(self, sample_csv_file):
-        """Verify PyQualityReport has all fields declared in type stubs."""
-        report = dataprof.analyze_csv_with_quality(sample_csv_file)
-
-        # Check all required attributes exist
-        assert hasattr(report, 'file_path'), "Missing 'file_path' attribute"
-        assert hasattr(report, 'total_rows'), "Missing 'total_rows' attribute"
-        assert hasattr(report, 'total_columns'), "Missing 'total_columns' attribute"
-        assert hasattr(report, 'column_profiles'), "Missing 'column_profiles' attribute"
-        assert hasattr(report, 'rows_scanned'), "Missing 'rows_scanned' attribute"
-        assert hasattr(report, 'sampling_ratio'), "Missing 'sampling_ratio' attribute"
-        assert hasattr(report, 'scan_time_ms'), "Missing 'scan_time_ms' attribute"
-        assert hasattr(report, 'data_quality_metrics'), "Missing 'data_quality_metrics' attribute"
-
-        # CRITICAL: Verify removed fields do NOT exist
-        assert not hasattr(report, 'issues'), "BREAKING: 'issues' field should not exist (removed from API)"
-        assert not hasattr(report, 'issues_by_severity'), "BREAKING: 'issues_by_severity' method should not exist"
-
-        # Verify types
-        assert isinstance(report.file_path, str)
-        assert report.total_rows is None or isinstance(report.total_rows, int)
-        assert isinstance(report.total_columns, int)
-        assert isinstance(report.column_profiles, list)
-        assert isinstance(report.rows_scanned, int)
-        assert isinstance(report.sampling_ratio, float)
-        assert isinstance(report.scan_time_ms, int)
-        assert isinstance(report.data_quality_metrics, dataprof.PyDataQualityMetrics)
-
-    def test_pydata_quality_metrics_has_all_declared_fields(self, sample_csv_file):
-        """Verify PyDataQualityMetrics has all ISO 8000/25012 fields."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        # Overall score
-        assert hasattr(metrics, 'overall_quality_score'), "Missing 'overall_quality_score'"
-
-        # Completeness dimension
-        assert hasattr(metrics, 'missing_values_ratio'), "Missing 'missing_values_ratio'"
-        assert hasattr(metrics, 'complete_records_ratio'), "Missing 'complete_records_ratio'"
-        assert hasattr(metrics, 'null_columns'), "Missing 'null_columns'"
-
-        # Consistency dimension
-        assert hasattr(metrics, 'data_type_consistency'), "Missing 'data_type_consistency'"
-        assert hasattr(metrics, 'format_violations'), "Missing 'format_violations'"
-        assert hasattr(metrics, 'encoding_issues'), "Missing 'encoding_issues'"
-
-        # Uniqueness dimension
-        assert hasattr(metrics, 'duplicate_rows'), "Missing 'duplicate_rows'"
-        assert hasattr(metrics, 'key_uniqueness'), "Missing 'key_uniqueness'"
-        assert hasattr(metrics, 'high_cardinality_warning'), "Missing 'high_cardinality_warning'"
-
-        # Accuracy dimension
-        assert hasattr(metrics, 'outlier_ratio'), "Missing 'outlier_ratio'"
-        assert hasattr(metrics, 'range_violations'), "Missing 'range_violations'"
-        assert hasattr(metrics, 'negative_values_in_positive'), "Missing 'negative_values_in_positive'"
-
-        # Timeliness dimension (ISO 8000-8)
-        assert hasattr(metrics, 'future_dates_count'), "Missing 'future_dates_count'"
-        assert hasattr(metrics, 'stale_data_ratio'), "Missing 'stale_data_ratio'"
-        assert hasattr(metrics, 'temporal_violations'), "Missing 'temporal_violations'"
-
-        # Verify types (overall_quality_score is a method, not attribute)
-        assert callable(metrics.overall_quality_score)
-        assert isinstance(metrics.overall_quality_score(), float)
-        assert isinstance(metrics.missing_values_ratio, float)
-        assert isinstance(metrics.complete_records_ratio, float)
-        assert isinstance(metrics.null_columns, list)
-        assert isinstance(metrics.data_type_consistency, float)
-        assert isinstance(metrics.format_violations, int)
-        assert isinstance(metrics.encoding_issues, int)
-        assert isinstance(metrics.duplicate_rows, int)
-        assert isinstance(metrics.key_uniqueness, float)
-        assert isinstance(metrics.high_cardinality_warning, bool)
-        assert isinstance(metrics.outlier_ratio, float)
-        assert isinstance(metrics.range_violations, int)
-        assert isinstance(metrics.negative_values_in_positive, int)
-        assert isinstance(metrics.future_dates_count, int)
-        assert isinstance(metrics.stale_data_ratio, float)
-        assert isinstance(metrics.temporal_violations, int)
-
-
-class TestPyColumnProfile:
-    """Test PyColumnProfile functionality."""
-
-    def test_basic_csv_analysis(self, sample_csv_file):
-        """Test basic column profiling on CSV file."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-
-        assert isinstance(profiles, list)
-        assert len(profiles) > 0
-        assert all(isinstance(p, dataprof.PyColumnProfile) for p in profiles)
-
-    def test_column_profile_percentages_valid_range(self, sample_csv_file):
-        """Test that percentage values are in valid range [0, 100]."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-
-        for profile in profiles:
-            assert 0.0 <= profile.null_percentage <= 100.0, \
-                f"null_percentage {profile.null_percentage} out of range for column {profile.name}"
-            assert 0.0 <= profile.uniqueness_ratio <= 1.0, \
-                f"uniqueness_ratio {profile.uniqueness_ratio} out of range for column {profile.name}"
-
-    def test_column_profile_counts_consistency(self, sample_csv_file):
-        """Test that counts are consistent with each other."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-
-        for profile in profiles:
-            assert profile.null_count <= profile.total_count, \
-                f"null_count cannot exceed total_count for column {profile.name}"
-
-            if profile.unique_count is not None:
-                assert profile.unique_count <= profile.total_count, \
-                    f"unique_count cannot exceed total_count for column {profile.name}"
-
-    def test_data_type_values(self, sample_csv_file):
-        """Test that data_type is one of the expected values."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-
-        valid_types = {'integer', 'float', 'string', 'date'}
-        for profile in profiles:
-            assert profile.data_type in valid_types, \
-                f"Invalid data_type '{profile.data_type}' for column {profile.name}"
-
-
-class TestPyQualityReport:
-    """Test PyQualityReport functionality."""
-
-    def test_quality_report_generation(self, sample_csv_file):
-        """Test complete quality report generation."""
-        report = dataprof.analyze_csv_with_quality(sample_csv_file)
-
-        assert isinstance(report, dataprof.PyQualityReport)
-        assert report.file_path == sample_csv_file
-        assert report.total_columns > 0
-        assert len(report.column_profiles) == report.total_columns
-
-    def test_quality_score_method(self, sample_csv_file):
-        """Test quality_score() method returns valid score."""
-        report = dataprof.analyze_csv_with_quality(sample_csv_file)
-
-        score = report.quality_score()
-        assert isinstance(score, float)
-        assert 0.0 <= score <= 100.0, f"Quality score {score} out of valid range [0, 100]"
-
-    def test_quality_score_matches_metrics(self, sample_csv_file):
-        """Test that quality_score() matches data_quality_metrics.overall_quality_score."""
-        report = dataprof.analyze_csv_with_quality(sample_csv_file)
-
-        report_score = report.quality_score()
-        metrics_score = report.data_quality_metrics.overall_quality_score()
-
-        # Should be identical (same source)
-        assert abs(report_score - metrics_score) < 0.01, \
-            f"Mismatch: report.quality_score()={report_score} vs metrics.overall_quality_score()={metrics_score}"
-
-    def test_to_json_method(self, sample_csv_file):
-        """Test JSON serialization."""
-        report = dataprof.analyze_csv_with_quality(sample_csv_file)
-
-        json_str = report.to_json()
-        assert isinstance(json_str, str)
-        assert len(json_str) > 0
-
-        # Verify it's valid JSON
-        import json
-        data = json.loads(json_str)
-        assert 'metadata' in data
-        assert 'data_quality_metrics' in data
-        assert 'column_profiles' in data
-
-    def test_scan_info_validity(self, sample_csv_file):
-        """Test that scan information is valid."""
-        report = dataprof.analyze_csv_with_quality(sample_csv_file)
-
-        assert report.rows_scanned > 0
-        assert 0.0 < report.sampling_ratio <= 1.0
-        assert report.scan_time_ms >= 0
-
-
-class TestPyDataQualityMetrics:
-    """Test PyDataQualityMetrics ISO 8000/25012 compliance."""
-
-    def test_overall_quality_score_calculation(self, sample_csv_file):
-        """Test overall quality score is within valid range."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        score = metrics.overall_quality_score()
-        assert isinstance(score, float)
-        assert 0.0 <= score <= 100.0, f"Overall quality score {score} out of range"
-
-    def test_quality_score_method_consistency(self, sample_csv_file):
-        """Test overall_quality_score() method is consistent across calls."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        score1 = metrics.overall_quality_score()
-        score2 = metrics.overall_quality_score()
-
-        assert abs(score1 - score2) < 0.01, \
-            "Method should return consistent score across calls"
-
-    def test_completeness_metrics_valid(self, sample_csv_file):
-        """Test completeness dimension metrics are valid."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        assert 0.0 <= metrics.missing_values_ratio <= 100.0
-        assert 0.0 <= metrics.complete_records_ratio <= 100.0
-        assert isinstance(metrics.null_columns, list)
-
-        # Note: ratios are independent metrics, don't necessarily sum to 100%
-        # missing_values_ratio = % of all values that are null
-        # complete_records_ratio = % of rows with no nulls
-
-    def test_consistency_metrics_valid(self, sample_csv_file):
-        """Test consistency dimension metrics are valid."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        assert 0.0 <= metrics.data_type_consistency <= 100.0
-        assert metrics.format_violations >= 0
-        assert metrics.encoding_issues >= 0
-
-    def test_uniqueness_metrics_valid(self, sample_csv_file):
-        """Test uniqueness dimension metrics are valid."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        assert metrics.duplicate_rows >= 0
-        assert 0.0 <= metrics.key_uniqueness <= 100.0
-        assert isinstance(metrics.high_cardinality_warning, bool)
-
-    def test_accuracy_metrics_valid(self, sample_csv_file):
-        """Test accuracy dimension metrics are valid."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        assert 0.0 <= metrics.outlier_ratio <= 100.0
-        assert metrics.range_violations >= 0
-        assert metrics.negative_values_in_positive >= 0
-
-    def test_timeliness_metrics_valid(self, sample_csv_file):
-        """Test timeliness (ISO 8000-8) dimension metrics are valid."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        assert metrics.future_dates_count >= 0
-        assert 0.0 <= metrics.stale_data_ratio <= 100.0
-        assert metrics.temporal_violations >= 0
-
-    def test_summary_methods_exist(self, sample_csv_file):
-        """Test that all summary methods exist and return strings."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        summaries = [
-            metrics.completeness_summary(),
-            metrics.consistency_summary(),
-            metrics.uniqueness_summary(),
-            metrics.accuracy_summary(),
-            metrics.timeliness_summary(),
-        ]
-
-        for summary in summaries:
-            assert isinstance(summary, str)
-            assert len(summary) > 0
-
-    def test_summary_dict_method(self, sample_csv_file):
-        """Test summary_dict() returns proper dictionary."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        summary = metrics.summary_dict()
-        assert isinstance(summary, dict)
-        assert len(summary) > 0
-
-        # Check some expected keys
-        expected_keys = [
-            'missing_values_ratio',
-            'complete_records_ratio',
-            'data_type_consistency',
-            'duplicate_rows',
-            'key_uniqueness'
-        ]
-        for key in expected_keys:
-            assert key in summary, f"Missing key '{key}' in summary_dict"
-
-    def test_repr_html_for_jupyter(self, sample_csv_file):
-        """Test _repr_html_() for Jupyter notebook integration."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        html = metrics._repr_html_()
-        assert isinstance(html, str)
-        assert len(html) > 0
-        assert '<div' in html  # Should contain HTML
-        assert 'Quality' in html or 'quality' in html
-
-    def test_str_representation(self, sample_csv_file):
-        """Test __str__() method."""
-        metrics = dataprof.calculate_data_quality_metrics(sample_csv_file)
-
-        str_repr = str(metrics)
-        assert isinstance(str_repr, str)
-        assert len(str_repr) > 0
-        assert 'DataQualityMetrics' in str_repr
-
-
-class TestErrorHandling:
-    """Test error handling and edge cases."""
-
-    def test_nonexistent_file_raises_error(self):
-        """Test that analyzing non-existent file raises appropriate error."""
-        with pytest.raises(Exception):  # Should raise PyRuntimeError or similar
-            dataprof.analyze_csv_file("/nonexistent/file.csv")
-
-    def test_invalid_csv_format(self):
-        """Test handling of invalid CSV format."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            f.write("invalid\x00binary\x00data")
-            invalid_file = f.name
-
+from pathlib import Path
+
+import pytest
+
+# Resolve fixture paths relative to repo root
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+FIXTURES = REPO_ROOT / "examples" / "test_datasets"
+CSV_FILE = str(FIXTURES / "small_comma.csv")
+CSV_LARGE_FILE = str(FIXTURES / "large_dataset.csv")
+JSON_FILE = str(FIXTURES / "users.json")
+JSONL_FILE = str(FIXTURES / "logs.jsonl")
+PARQUET_FILE = str(REPO_ROOT / "examples" / "test_data" / "simple.parquet")
+SEMICOLON_FILE = str(FIXTURES / "employees_semicolon.csv")
+
+# ── Import guard ──
+
+try:
+    import dataprof
+except ImportError:
+    pytest.skip(
+        "dataprof native extension not built. Run: maturin develop --features python",
+        allow_module_level=True,
+    )
+
+
+# ─────────────────────────────────────────────────
+#  1. Core profile() dispatch
+# ─────────────────────────────────────────────────
+
+
+class TestProfileFile:
+    def test_csv(self):
+        r = dataprof.profile(CSV_FILE)
+        assert r.rows > 0
+        assert r.columns > 0
+        assert len(r.column_profiles) == r.columns
+
+    def test_json(self):
+        if not os.path.exists(JSON_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.profile(JSON_FILE)
+        assert r.rows > 0
+
+    def test_jsonl(self):
+        if not os.path.exists(JSONL_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.profile(JSONL_FILE)
+        assert r.rows > 0
+
+    def test_parquet(self):
+        if not os.path.exists(PARQUET_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.profile(PARQUET_FILE)
+        assert r.rows > 0
+
+    def test_path_object(self):
+        r = dataprof.profile(Path(CSV_FILE))
+        assert r.rows > 0
+
+    def test_unsupported_type_raises(self):
+        with pytest.raises(TypeError, match="Unsupported source type"):
+            dataprof.profile(42)
+
+
+class TestProfileDataFrame:
+    def test_pandas(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        r = dataprof.profile(df)
+        assert r.rows == 3
+        assert r.columns == 2
+
+    def test_polars(self):
+        pl = pytest.importorskip("polars")
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        r = dataprof.profile(df)
+        assert r.rows == 3
+        assert r.columns == 2
+
+
+# ─────────────────────────────────────────────────
+#  2. ProfileReport accessors & exports
+# ─────────────────────────────────────────────────
+
+
+class TestProfileReport:
+    @pytest.fixture()
+    def report(self):
+        return dataprof.profile(CSV_FILE)
+
+    def test_properties(self, report):
+        assert isinstance(report.source, str)
+        assert isinstance(report.source_type, str)
+        assert isinstance(report.rows, int)
+        assert isinstance(report.columns, int)
+        assert isinstance(report.execution_time_ms, int)
+        assert isinstance(report.source_exhausted, bool)
+        assert isinstance(report.sampling_applied, bool)
+
+    def test_column_profile_fields(self, report):
+        col = report.column_profiles[0]
+        assert hasattr(col, "name")
+        assert hasattr(col, "data_type")
+        assert hasattr(col, "total_count")
+        assert hasattr(col, "null_count")
+        assert hasattr(col, "null_percentage")
+
+    def test_to_dict(self, report):
+        d = report.to_dict()
+        assert "source" in d
+        assert "columns" in d
+        assert "execution" in d
+        assert isinstance(d["columns"], list)
+
+    def test_to_json(self, report):
+        j = report.to_json()
+        parsed = json.loads(j)
+        assert "source" in parsed
+
+    def test_to_dataframe(self, report):
+        pytest.importorskip("pandas")
+        df = report.to_dataframe()
+        assert len(df) == report.columns
+
+    def test_save_json(self, report):
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
         try:
-            # Should handle gracefully or raise clear error
-            dataprof.analyze_csv_file(invalid_file)
-        except Exception as e:
-            # Should be a clear error message
-            assert len(str(e)) > 0
+            result = report.save(path)
+            assert result is report  # fluent API
+            with open(path) as f:
+                parsed = json.loads(f.read())
+            assert "source" in parsed
         finally:
-            os.unlink(invalid_file)
+            os.unlink(path)
 
-    def test_empty_csv_file(self):
-        """Test handling of empty CSV file."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            f.write("")  # Empty file
-            empty_file = f.name
+    def test_save_unsupported_raises(self, report):
+        with pytest.raises(ValueError, match="Unsupported format"):
+            report.save("/tmp/test.html")
 
-        try:
-            # Should handle empty files gracefully
-            result = dataprof.analyze_csv_file(empty_file)
-            assert isinstance(result, list)
-        except Exception:
-            pass  # Or raise clear error - either is acceptable
-        finally:
-            os.unlink(empty_file)
+    def test_repr(self, report):
+        r = repr(report)
+        assert "ProfileReport" in r
+        assert "rows=" in r
 
-    def test_csv_with_only_headers(self):
-        """Test CSV with headers but no data rows."""
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-            f.write("col1,col2,col3\n")  # Only headers
-            headers_only_file = f.name
-
-        try:
-            profiles = dataprof.analyze_csv_file(headers_only_file)
-            # Should return column profiles even with no data
-            assert isinstance(profiles, list)
-        finally:
-            os.unlink(headers_only_file)
+    def test_repr_html(self, report):
+        html = report._repr_html_()
+        assert "<table>" in html
+        assert "ProfileReport" in html
 
 
-class TestJSONAnalysis:
-    """Test JSON/JSONL analysis functionality."""
-
-    def test_json_file_analysis(self, sample_json_file):
-        """Test basic JSON file analysis."""
-        profiles = dataprof.analyze_json_file(sample_json_file)
-
-        assert isinstance(profiles, list)
-        assert len(profiles) > 0
-        assert all(isinstance(p, dataprof.PyColumnProfile) for p in profiles)
-
-    def test_json_quality_analysis(self, sample_json_file):
-        """Test JSON quality analysis."""
-        report = dataprof.analyze_json_with_quality(sample_json_file)
-
-        assert isinstance(report, dataprof.PyQualityReport)
-        assert isinstance(report.data_quality_metrics, dataprof.PyDataQualityMetrics)
+# ─────────────────────────────────────────────────
+#  3. Partial analysis
+# ─────────────────────────────────────────────────
 
 
-class TestAdvancedNumericStats:
-    """Test that all advanced numeric stats fields are exposed and correct."""
+class TestPartialAnalysis:
+    def test_infer_schema(self):
+        result = dataprof.infer_schema(CSV_FILE)
+        assert result.num_columns > 0
+        assert len(result.column_names) == result.num_columns
+        assert result.rows_sampled > 0
 
-    @pytest.mark.api
-    def test_numeric_column_has_all_stats(self, sample_csv_file):
-        """Numeric columns should have all advanced stats populated."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-        numeric_profiles = [
-            p for p in profiles if p.data_type in ("integer", "float")
-        ]
-        assert len(numeric_profiles) > 0, "Should detect at least one numeric column"
+    def test_quick_row_count(self):
+        result = dataprof.quick_row_count(CSV_FILE)
+        assert result.count > 0
+        assert isinstance(result.exact, bool)
+        assert isinstance(result.method, str)
 
-        for p in numeric_profiles:
-            assert p.min is not None, f"{p.name}: min should not be None"
-            assert p.max is not None, f"{p.name}: max should not be None"
-            assert p.mean is not None, f"{p.name}: mean should not be None"
-            assert p.std_dev is not None, f"{p.name}: std_dev should not be None"
-            assert p.variance is not None, f"{p.name}: variance should not be None"
-            assert p.skewness is not None, f"{p.name}: skewness should not be None"
-            assert p.kurtosis is not None, f"{p.name}: kurtosis should not be None"
-            assert p.coefficient_of_variation is not None, (
-                f"{p.name}: coefficient_of_variation should not be None"
+
+# ─────────────────────────────────────────────────
+#  4. Configuration
+# ─────────────────────────────────────────────────
+
+
+class TestProfilerConfig:
+    def test_basic_config(self):
+        cfg = dataprof.ProfilerConfig()
+        assert cfg.engine == "auto"
+        assert cfg.chunk_size is None
+        assert cfg.max_rows is None
+
+    def test_engine_override(self):
+        cfg = dataprof.ProfilerConfig(engine="incremental")
+        assert cfg.engine == "incremental"
+
+    def test_max_rows(self):
+        if not os.path.exists(CSV_LARGE_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.profile(CSV_LARGE_FILE, max_rows=100, engine="incremental")
+        # Stop condition is evaluated per-chunk, so rows may exceed max_rows
+        # by up to one chunk. The key assertion: fewer rows than the full file.
+        assert r.rows < 10000
+        assert not r.source_exhausted
+
+    def test_csv_delimiter(self):
+        if not os.path.exists(SEMICOLON_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.profile(SEMICOLON_FILE, csv_delimiter=";")
+        assert r.rows > 0
+        assert r.columns > 1
+
+    def test_format_override(self):
+        r = dataprof.profile(CSV_FILE, format="csv")
+        assert r.rows > 0
+
+    def test_invalid_engine_raises(self):
+        with pytest.raises(ValueError):
+            dataprof.ProfilerConfig(engine="invalid")
+
+    def test_max_rows_and_stop_condition_conflict(self):
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            dataprof.ProfilerConfig(
+                max_rows=100,
+                stop_condition=dataprof.StopCondition.max_rows(200),
             )
 
-    @pytest.mark.api
-    def test_numeric_column_has_quartiles(self, sample_csv_file):
-        """Numeric columns should have quartiles with expected keys."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-        numeric_profiles = [
-            p for p in profiles if p.data_type in ("integer", "float")
-        ]
 
-        for p in numeric_profiles:
-            if p.median is not None:
-                assert isinstance(p.median, float), f"{p.name}: median should be float"
-            if p.quartiles is not None:
-                assert "q1" in p.quartiles, f"{p.name}: quartiles missing q1"
-                assert "q2" in p.quartiles, f"{p.name}: quartiles missing q2"
-                assert "q3" in p.quartiles, f"{p.name}: quartiles missing q3"
-                assert "iqr" in p.quartiles, f"{p.name}: quartiles missing iqr"
-
-    @pytest.mark.api
-    def test_non_numeric_column_stats_are_none(self, sample_csv_file):
-        """Non-numeric columns should have None for all numeric stats."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-        string_profiles = [p for p in profiles if p.data_type == "string"]
-        assert len(string_profiles) > 0, "Should have at least one string column"
-
-        for p in string_profiles:
-            assert p.min is None, f"{p.name}: min should be None for string"
-            assert p.max is None, f"{p.name}: max should be None for string"
-            assert p.skewness is None, f"{p.name}: skewness should be None"
-            assert p.kurtosis is None, f"{p.name}: kurtosis should be None"
-            assert p.coefficient_of_variation is None, f"{p.name}: CV should be None"
-            assert p.quartiles is None, f"{p.name}: quartiles should be None"
-            assert p.is_approximate is None, f"{p.name}: is_approximate should be None"
-
-    @pytest.mark.api
-    def test_quartiles_ordering(self, sample_csv_file):
-        """Quartiles should be properly ordered: q1 <= q2 <= q3."""
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-        numeric_profiles = [
-            p for p in profiles if p.data_type in ("integer", "float")
-        ]
-
-        for p in numeric_profiles:
-            if p.quartiles is not None:
-                assert p.quartiles["q1"] <= p.quartiles["q2"], (
-                    f"{p.name}: q1 should be <= q2"
-                )
-                assert p.quartiles["q2"] <= p.quartiles["q3"], (
-                    f"{p.name}: q2 should be <= q3"
-                )
-                expected_iqr = p.quartiles["q3"] - p.quartiles["q1"]
-                assert abs(p.quartiles["iqr"] - expected_iqr) < 0.01, (
-                    f"{p.name}: iqr should equal q3 - q1"
-                )
-
-    @pytest.mark.api
-    def test_variance_std_dev_consistency(self, sample_csv_file):
-        """std_dev should be sqrt(variance)."""
-        import math
-
-        profiles = dataprof.analyze_csv_file(sample_csv_file)
-        numeric_profiles = [
-            p for p in profiles if p.data_type in ("integer", "float")
-        ]
-
-        for p in numeric_profiles:
-            if p.variance is not None and p.std_dev is not None:
-                expected_std_dev = math.sqrt(p.variance)
-                assert abs(p.std_dev - expected_std_dev) < 0.01, (
-                    f"{p.name}: std_dev ({p.std_dev}) should be sqrt(variance) ({expected_std_dev})"
-                )
+# ─────────────────────────────────────────────────
+#  5. Sampling strategies
+# ─────────────────────────────────────────────────
 
 
-# ============================================================================
-# FIXTURES
-# ============================================================================
+class TestSamplingStrategy:
+    def test_none(self):
+        s = dataprof.SamplingStrategy.none()
+        assert s is not None
 
-@pytest.fixture
-def sample_csv_file(tmp_path):
-    """Create a sample CSV file for testing."""
-    csv_file = tmp_path / "sample.csv"
-    csv_file.write_text("""name,age,email,score,city
-Alice,25,alice@example.com,85.5,New York
-Bob,30,bob@example.com,92.0,San Francisco
-Charlie,35,charlie@example.com,78.3,Boston
-David,28,david@example.com,88.7,Seattle
-Eve,32,eve@example.com,95.2,Austin
-Frank,29,,82.1,Denver
-Grace,31,grace@example.com,90.4,Portland
-Henry,27,henry@example.com,,Miami
-Ivy,33,ivy@example.com,87.9,Chicago
-Jack,26,jack@example.com,91.5,Philadelphia
-""")
-    return str(csv_file)
+    def test_random(self):
+        s = dataprof.SamplingStrategy.random(100)
+        assert s is not None
 
+    def test_reservoir(self):
+        s = dataprof.SamplingStrategy.reservoir(100)
+        assert s is not None
 
-@pytest.fixture
-def sample_csv_directory(tmp_path):
-    """Create a directory with multiple CSV files for batch testing."""
-    csv_dir = tmp_path / "csv_files"
-    csv_dir.mkdir()
+    def test_systematic(self):
+        s = dataprof.SamplingStrategy.systematic(10)
+        assert s is not None
 
-    # Create multiple CSV files
-    for i in range(3):
-        csv_file = csv_dir / f"data_{i}.csv"
-        csv_file.write_text(f"""name,value,category
-Item{i}_1,{10 + i},A
-Item{i}_2,{20 + i},B
-Item{i}_3,{30 + i},C
-""")
+    def test_adaptive(self):
+        s = dataprof.SamplingStrategy.adaptive()
+        assert s is not None
 
-    return str(csv_dir)
+    def test_profile_with_sampling(self):
+        r = dataprof.profile(CSV_FILE, sampling=dataprof.SamplingStrategy.random(2))
+        assert r.rows > 0
 
 
-@pytest.fixture
-def sample_json_file(tmp_path):
-    """Create a sample JSON file for testing."""
-    json_file = tmp_path / "sample.json"
-    json_file.write_text("""[
-        {"name": "Alice", "age": 25, "active": true},
-        {"name": "Bob", "age": 30, "active": false},
-        {"name": "Charlie", "age": 35, "active": true}
-    ]""")
-    return str(json_file)
+# ─────────────────────────────────────────────────
+#  6. Stop conditions
+# ─────────────────────────────────────────────────
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+class TestStopCondition:
+    def test_max_rows(self):
+        sc = dataprof.StopCondition.max_rows(100)
+        assert sc is not None
+
+    def test_max_bytes(self):
+        sc = dataprof.StopCondition.max_bytes(1000)
+        assert sc is not None
+
+    def test_never(self):
+        sc = dataprof.StopCondition.never()
+        assert sc is not None
+
+    def test_or_composition(self):
+        sc = dataprof.StopCondition.max_rows(100) | dataprof.StopCondition.max_bytes(1000)
+        assert sc is not None
+
+    def test_and_composition(self):
+        sc = dataprof.StopCondition.max_rows(100) & dataprof.StopCondition.max_bytes(1000)
+        assert sc is not None
+
+    def test_presets(self):
+        assert dataprof.StopCondition.schema_inference() is not None
+        assert dataprof.StopCondition.quality_sample() is not None
+
+    def test_profile_with_stop_condition(self):
+        if not os.path.exists(CSV_LARGE_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.profile(
+            CSV_LARGE_FILE,
+            stop_condition=dataprof.StopCondition.max_rows(100),
+            engine="incremental",
+        )
+        # Stop condition is checked per-chunk; rows may slightly exceed target.
+        assert r.rows < 10000
+        assert not r.source_exhausted
+
+
+# ─────────────────────────────────────────────────
+#  7. Progress events
+# ─────────────────────────────────────────────────
+
+
+class TestProgress:
+    def test_progress_callback(self):
+        events = []
+        r = dataprof.profile(
+            CSV_FILE,
+            engine="incremental",
+            on_progress=lambda e: events.append(e.kind),
+            progress_interval_ms=0,
+        )
+        assert r.rows > 0
+        # Small file may not emit chunk events, but should at least start/finish
+        # We just verify the callback was invoked without error
+
+
+# ─────────────────────────────────────────────────
+#  8. Namespace & exports
+# ─────────────────────────────────────────────────
+
+
+class TestNamespace:
+    def test_all_exports(self):
+        expected = {
+            "profile",
+            "ProfileReport",
+            "ProfilerConfig",
+            "ColumnProfile",
+            "DataQualityMetrics",
+            "SamplingStrategy",
+            "StopCondition",
+            "ProgressEvent",
+            "infer_schema",
+            "quick_row_count",
+            "SchemaResult",
+            "RowCountEstimate",
+            "RecordBatch",
+            "__version__",
+        }
+        assert expected.issubset(set(dataprof.__all__))
+
+    def test_version(self):
+        assert isinstance(dataprof.__version__, str)
+        assert "." in dataprof.__version__

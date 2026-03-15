@@ -1,10 +1,17 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::api::{EngineType, Profiler};
 use crate::core::sampling::ChunkSize;
 use crate::core::stop_condition::StopCondition;
 use crate::types::FileFormat;
+
+use super::progress::py_callback_to_sink;
+use super::sampling::PySamplingStrategy;
+use super::stop_condition::PyStopCondition;
 
 /// Python-friendly profiler configuration.
 ///
@@ -19,6 +26,10 @@ pub struct PyProfilerConfig {
     pub(crate) max_rows: Option<u64>,
     pub(crate) csv_delimiter: Option<u8>,
     pub(crate) csv_flexible: Option<bool>,
+    pub(crate) sampling: Option<PySamplingStrategy>,
+    pub(crate) stop_condition: Option<PyStopCondition>,
+    pub(crate) on_progress: Option<Arc<Py<PyAny>>>,
+    pub(crate) progress_interval_ms: Option<u64>,
 }
 
 #[pymethods]
@@ -32,7 +43,12 @@ impl PyProfilerConfig {
         max_rows = None,
         csv_delimiter = None,
         csv_flexible = None,
+        sampling = None,
+        stop_condition = None,
+        on_progress = None,
+        progress_interval_ms = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         engine: &str,
         chunk_size: Option<usize>,
@@ -41,6 +57,10 @@ impl PyProfilerConfig {
         max_rows: Option<u64>,
         csv_delimiter: Option<&str>,
         csv_flexible: Option<bool>,
+        sampling: Option<PySamplingStrategy>,
+        stop_condition: Option<PyStopCondition>,
+        on_progress: Option<Py<PyAny>>,
+        progress_interval_ms: Option<u64>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -55,6 +75,13 @@ impl PyProfilerConfig {
             })
             .transpose()?;
 
+        if max_rows.is_some() && stop_condition.is_some() {
+            return Err(PyValueError::new_err(
+                "Cannot specify both max_rows and stop_condition. \
+                 Use StopCondition.max_rows() within a composed stop_condition instead.",
+            ));
+        }
+
         Ok(Self {
             engine,
             chunk_size,
@@ -63,6 +90,10 @@ impl PyProfilerConfig {
             max_rows,
             csv_delimiter,
             csv_flexible,
+            sampling,
+            stop_condition,
+            on_progress: on_progress.map(Arc::new),
+            progress_interval_ms,
         })
     }
 
@@ -148,6 +179,24 @@ impl PyProfilerConfig {
         }
         if let Some(max) = self.max_rows {
             profiler = profiler.stop_when(StopCondition::MaxRows(max));
+        }
+        if let Some(ref sc) = self.stop_condition {
+            profiler = profiler.stop_when(sc.clone().into_inner());
+        }
+        if let Some(ref s) = self.sampling {
+            profiler = profiler.sampling(s.clone().into_inner());
+        }
+        if let Some(d) = self.csv_delimiter {
+            profiler = profiler.csv_delimiter(d);
+        }
+        if let Some(f) = self.csv_flexible {
+            profiler = profiler.csv_flexible(f);
+        }
+        if let Some(ref cb) = self.on_progress {
+            profiler = profiler.progress_sink(py_callback_to_sink(Arc::clone(cb)));
+        }
+        if let Some(ms) = self.progress_interval_ms {
+            profiler = profiler.progress_interval(Duration::from_millis(ms));
         }
 
         profiler

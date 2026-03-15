@@ -11,6 +11,12 @@ pub struct PySchemaResult {
     inner: SchemaResult,
 }
 
+impl PySchemaResult {
+    pub fn from_inner(inner: SchemaResult) -> Self {
+        Self { inner }
+    }
+}
+
 #[pymethods]
 impl PySchemaResult {
     /// List of columns as dicts with "name" and "data_type" keys
@@ -82,6 +88,12 @@ impl PySchemaResult {
 #[pyclass(name = "RowCountEstimate")]
 pub struct PyRowCountEstimate {
     inner: RowCountEstimate,
+}
+
+impl PyRowCountEstimate {
+    pub fn from_inner(inner: RowCountEstimate) -> Self {
+        Self { inner }
+    }
 }
 
 #[pymethods]

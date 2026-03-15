@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable
 
 # Version
 __version__: str
@@ -15,24 +15,103 @@ class ProfilerConfig:
     def __init__(
         self,
         engine: str = "auto",
-        chunk_size: Optional[int] = None,
-        memory_limit_mb: Optional[int] = None,
-        format: Optional[str] = None,
-        max_rows: Optional[int] = None,
-        csv_delimiter: Optional[str] = None,
-        csv_flexible: Optional[bool] = None,
+        chunk_size: int | None = None,
+        memory_limit_mb: int | None = None,
+        format: str | None = None,
+        max_rows: int | None = None,
+        csv_delimiter: str | None = None,
+        csv_flexible: bool | None = None,
+        sampling: SamplingStrategy | None = None,
+        stop_condition: StopCondition | None = None,
+        on_progress: Callable[[ProgressEvent], None] | None = None,
+        progress_interval_ms: int | None = None,
     ) -> None: ...
-
     @property
     def engine(self) -> str: ...
     @property
-    def chunk_size(self) -> Optional[int]: ...
+    def chunk_size(self) -> int | None: ...
     @property
-    def memory_limit_mb(self) -> Optional[int]: ...
+    def memory_limit_mb(self) -> int | None: ...
     @property
-    def format(self) -> Optional[str]: ...
+    def format(self) -> str | None: ...
     @property
-    def max_rows(self) -> Optional[int]: ...
+    def max_rows(self) -> int | None: ...
+
+# --- Sampling ---
+
+class SamplingStrategy:
+    """Sampling strategy for controlling how data is sampled during profiling."""
+
+    @staticmethod
+    def none() -> SamplingStrategy: ...
+    @staticmethod
+    def random(size: int) -> SamplingStrategy: ...
+    @staticmethod
+    def reservoir(size: int) -> SamplingStrategy: ...
+    @staticmethod
+    def stratified(key_columns: list[str], samples_per_stratum: int) -> SamplingStrategy: ...
+    @staticmethod
+    def progressive(
+        initial_size: int,
+        confidence_level: float = 0.95,
+        max_size: int = 100_000,
+    ) -> SamplingStrategy: ...
+    @staticmethod
+    def systematic(interval: int) -> SamplingStrategy: ...
+    @staticmethod
+    def importance(weight_threshold: float) -> SamplingStrategy: ...
+    @staticmethod
+    def multi_stage(stages: list[SamplingStrategy]) -> SamplingStrategy: ...
+    @staticmethod
+    def adaptive(total_rows: int | None = None, file_size_mb: float = 0.0) -> SamplingStrategy: ...
+
+# --- Stop Conditions ---
+
+class StopCondition:
+    """Composable stop condition for early termination.
+
+    Combine with ``|`` (any) or ``&`` (all) operators::
+
+        stop = StopCondition.max_rows(10000) | StopCondition.max_bytes(50_000_000)
+    """
+
+    @staticmethod
+    def max_rows(n: int) -> StopCondition: ...
+    @staticmethod
+    def max_bytes(n: int) -> StopCondition: ...
+    @staticmethod
+    def schema_stable(consecutive_stable_rows: int) -> StopCondition: ...
+    @staticmethod
+    def confidence_threshold(threshold: float) -> StopCondition: ...
+    @staticmethod
+    def memory_pressure(threshold: float) -> StopCondition: ...
+    @staticmethod
+    def never() -> StopCondition: ...
+    @staticmethod
+    def schema_inference() -> StopCondition: ...
+    @staticmethod
+    def quality_sample() -> StopCondition: ...
+    def __or__(self, other: StopCondition) -> StopCondition: ...
+    def __and__(self, other: StopCondition) -> StopCondition: ...
+
+# --- Progress ---
+
+class ProgressEvent:
+    """A progress event emitted during profiling."""
+
+    kind: str
+    rows_processed: int | None
+    bytes_consumed: int | None
+    elapsed_ms: int | None
+    processing_speed: float | None
+    percentage: float | None
+    column_names: list[str] | None
+    total_rows: int | None
+    total_bytes: int | None
+    truncated: bool | None
+    message: str | None
+    estimated_total_rows: int | None
+    estimated_total_bytes: int | None
 
 # --- Primary API ---
 
@@ -40,13 +119,17 @@ def profile(
     source: Any,
     *,
     engine: str = "auto",
-    chunk_size: Optional[int] = None,
-    memory_limit_mb: Optional[int] = None,
-    format: Optional[str] = None,
-    max_rows: Optional[int] = None,
-    name: Optional[str] = None,
-    csv_delimiter: Optional[str] = None,
-    csv_flexible: Optional[bool] = None,
+    chunk_size: int | None = None,
+    memory_limit_mb: int | None = None,
+    format: str | None = None,
+    max_rows: int | None = None,
+    name: str | None = None,
+    csv_delimiter: str | None = None,
+    csv_flexible: bool | None = None,
+    sampling: SamplingStrategy | None = None,
+    stop_condition: StopCondition | None = None,
+    on_progress: Callable[[ProgressEvent], None] | None = None,
+    progress_interval_ms: int | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
     ...
@@ -65,32 +148,33 @@ class ProfileReport:
     @property
     def columns(self) -> int: ...
     @property
-    def column_profiles(self) -> List[ColumnProfile]: ...
+    def column_profiles(self) -> list[ColumnProfile]: ...
     @property
-    def quality_score(self) -> Optional[float]: ...
+    def quality_score(self) -> float | None: ...
     @property
-    def quality(self) -> Optional[DataQualityMetrics]: ...
+    def quality(self) -> DataQualityMetrics | None: ...
     @property
     def execution_time_ms(self) -> int: ...
     @property
-    def throughput(self) -> Optional[float]: ...
+    def throughput(self) -> float | None: ...
     @property
-    def memory_peak_mb(self) -> Optional[float]: ...
+    def memory_peak_mb(self) -> float | None: ...
     @property
-    def truncation_reason(self) -> Optional[str]: ...
+    def truncation_reason(self) -> str | None: ...
     @property
     def source_exhausted(self) -> bool: ...
     @property
     def sampling_applied(self) -> bool: ...
     @property
-    def sampling_ratio(self) -> Optional[float]: ...
-
-    def to_dict(self) -> Dict[str, Any]: ...
+    def sampling_ratio(self) -> float | None: ...
+    def to_dict(self) -> dict[str, Any]: ...
     def to_json(self, indent: int = 2) -> str: ...
     def to_dataframe(self) -> Any:
         """Returns pandas.DataFrame. Requires pandas."""
         ...
-    def save(self, path: str) -> ProfileReport: ...
+    def save(self, path: str) -> ProfileReport:
+        """Save the report to a JSON file (.json extension required)."""
+        ...
 
 class ColumnProfile:
     """Column-level profiling statistics."""
@@ -99,28 +183,28 @@ class ColumnProfile:
     data_type: str
     total_count: int
     null_count: int
-    unique_count: Optional[int]
+    unique_count: int | None
     null_percentage: float
     uniqueness_ratio: float
-    min: Optional[float]
-    max: Optional[float]
-    mean: Optional[float]
-    std_dev: Optional[float]
-    variance: Optional[float]
-    median: Optional[float]
-    mode: Optional[float]
-    skewness: Optional[float]
-    kurtosis: Optional[float]
-    coefficient_of_variation: Optional[float]
-    quartiles: Optional[Dict[str, float]]
-    is_approximate: Optional[bool]
+    min: float | None
+    max: float | None
+    mean: float | None
+    std_dev: float | None
+    variance: float | None
+    median: float | None
+    mode: float | None
+    skewness: float | None
+    kurtosis: float | None
+    coefficient_of_variation: float | None
+    quartiles: dict[str, float] | None
+    is_approximate: bool | None
 
 class DataQualityMetrics:
     """ISO 8000/25012 data quality metrics."""
 
     missing_values_ratio: float
     complete_records_ratio: float
-    null_columns: List[str]
+    null_columns: list[str]
     data_type_consistency: float
     format_violations: int
     encoding_issues: int
@@ -142,7 +226,7 @@ class SchemaResult:
     """Result of fast schema inference."""
 
     @property
-    def columns(self) -> List[Dict[str, str]]: ...
+    def columns(self) -> list[dict[str, str]]: ...
     @property
     def rows_sampled(self) -> int: ...
     @property
@@ -152,7 +236,7 @@ class SchemaResult:
     @property
     def num_columns(self) -> int: ...
     @property
-    def column_names(self) -> List[str]: ...
+    def column_names(self) -> list[str]: ...
 
 class RowCountEstimate:
     """Result of a quick row count."""
@@ -184,14 +268,13 @@ class RecordBatch:
     @property
     def num_columns(self) -> int: ...
     @property
-    def column_names(self) -> List[str]: ...
-
+    def column_names(self) -> list[str]: ...
     def to_pandas(self) -> Any: ...
     def to_polars(self) -> Any: ...
     def __arrow_c_schema__(self) -> object: ...
     def __arrow_c_array__(
-        self, requested_schema: Optional[object] = None
-    ) -> Tuple[object, object]: ...
+        self, requested_schema: object | None = None
+    ) -> tuple[object, object]: ...
 
 # --- Exports ---
 
@@ -199,6 +282,11 @@ __all__ = [
     "profile",
     "ProfileReport",
     "ProfilerConfig",
+    "ColumnProfile",
+    "DataQualityMetrics",
+    "SamplingStrategy",
+    "StopCondition",
+    "ProgressEvent",
     "infer_schema",
     "quick_row_count",
     "SchemaResult",
