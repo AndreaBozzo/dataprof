@@ -102,6 +102,10 @@ impl MemoryMappedCsvReader {
                 builder.delimiter(delim);
             }
             builder.flexible(config.flexible);
+            builder.quote(config.quote_char);
+            if config.trim_whitespace {
+                builder.trim(csv::Trim::All);
+            }
         }
         let mut reader = builder.from_reader(Cursor::new(chunk_data.as_bytes()));
 

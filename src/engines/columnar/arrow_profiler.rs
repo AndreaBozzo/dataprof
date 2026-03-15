@@ -68,6 +68,10 @@ impl ArrowProfiler {
                 header_builder.delimiter(delim);
             }
             header_builder.flexible(config.flexible);
+            header_builder.quote(config.quote_char);
+            if config.trim_whitespace {
+                header_builder.trim(csv::Trim::All);
+            }
         }
         let mut reader = header_builder.from_path(file_path)?;
 

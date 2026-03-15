@@ -150,8 +150,10 @@ impl IncrementalProfiler {
                         continue;
                     }
 
-                    // Convert record to values
-                    let values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                    // Convert record to values, padding ragged rows to header length
+                    // so missing trailing fields are counted as empty (null-like)
+                    let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                    values.resize(header_names.len(), String::new());
 
                     // Process record incrementally (no memory accumulation)
                     column_stats.process_record(&header_names, values);
