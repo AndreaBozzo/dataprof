@@ -6,7 +6,9 @@ use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
 use crate::core::report_assembler::ReportAssembler;
 use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport};
+use crate::types::{
+    ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension,
+};
 
 // ============================================================================
 // NEW CONFIG-BASED API (#181 + #218)
@@ -224,6 +226,15 @@ pub fn analyze_csv_file(
     file_path: &Path,
     config: &CsvParserConfig,
 ) -> Result<ProfileReport, DataProfilerError> {
+    analyze_csv_file_with_dimensions(file_path, config, None)
+}
+
+/// Like [`analyze_csv_file`] but only computes the requested quality dimensions.
+pub fn analyze_csv_file_with_dimensions(
+    file_path: &Path,
+    config: &CsvParserConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
     let start = std::time::Instant::now();
 
@@ -254,13 +265,16 @@ pub fn analyze_csv_file(
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    Ok(ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         file_source,
         ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .build())
+    .with_quality_data(sample_columns);
+    if let Some(dims) = quality_dimensions {
+        assembler = assembler.with_requested_dimensions(dims.to_vec());
+    }
+    Ok(assembler.build())
 }
 
 /// Map I/O errors to DataProfilerError with the actual file path context

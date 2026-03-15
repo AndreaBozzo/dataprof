@@ -249,17 +249,17 @@ fn test_streaming_vs_batch_quality_confidence() {
     // completeness metrics from global counters.
     let streaming_m = &streaming_quality.metrics;
     assert!(
-        streaming_m.missing_values_ratio > 0.0,
+        streaming_m.missing_values_ratio() > 0.0,
         "Streaming engine should detect missing values from empty CSV fields"
     );
 
     // key_uniqueness should be close (HLL ≤ 3% error for 200 rows)
     let batch_m = &batch_quality.metrics;
     assert!(
-        (batch_m.key_uniqueness - streaming_m.key_uniqueness).abs() < 5.0,
+        (batch_m.key_uniqueness() - streaming_m.key_uniqueness()).abs() < 5.0,
         "key_uniqueness: batch={:.2} vs streaming={:.2}",
-        batch_m.key_uniqueness,
-        streaming_m.key_uniqueness
+        batch_m.key_uniqueness(),
+        streaming_m.key_uniqueness()
     );
 }
 
@@ -337,11 +337,11 @@ fn test_streaming_bifurcation_with_large_dataset() {
     // ~1% nulls in amount column (every 100th row), 0 nulls in id/category
     let m = &quality.metrics;
     assert!(
-        m.missing_values_ratio > 0.0,
+        m.missing_values_ratio() > 0.0,
         "Should detect some missing values"
     );
     assert!(
-        m.missing_values_ratio < 2.0,
+        m.missing_values_ratio() < 2.0,
         "Missing ratio should be small (~0.33%)"
     );
 }

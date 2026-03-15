@@ -63,9 +63,10 @@ pub use engines::DataFusionLoader;
 
 // Public API exports - Core types and functionality
 pub use types::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, ExecutionMetadata,
-    FileFormat, MetricConfidence, OutputFormat, Pattern, ProfileReport, QualityAssessment,
-    QualityMetrics, QueryEngine, TruncationReason,
+    AccuracyMetrics, ColumnProfile, ColumnStats, CompletenessMetrics, ConsistencyMetrics,
+    DataFrameLibrary, DataSource, DataType, ExecutionMetadata, FileFormat, MetricConfidence,
+    OutputFormat, Pattern, ProfileReport, QualityAssessment, QualityDimension, QualityMetrics,
+    QueryEngine, TimelinessMetrics, TruncationReason, UniquenessMetrics,
 };
 
 // Deprecated aliases for backwards compatibility

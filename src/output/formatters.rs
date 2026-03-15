@@ -331,29 +331,29 @@ impl JsonFormatter {
     fn format_data_quality_metrics(&self, metrics: &QualityMetrics) -> JsonDataQualityMetrics {
         JsonDataQualityMetrics {
             completeness: JsonCompletenessMetrics {
-                missing_values_ratio: metrics.missing_values_ratio,
-                complete_records_ratio: metrics.complete_records_ratio,
-                null_columns: metrics.null_columns.clone(),
+                missing_values_ratio: metrics.missing_values_ratio(),
+                complete_records_ratio: metrics.complete_records_ratio(),
+                null_columns: metrics.null_columns().to_vec(),
             },
             consistency: JsonConsistencyMetrics {
-                data_type_consistency: metrics.data_type_consistency,
-                format_violations: metrics.format_violations,
-                encoding_issues: metrics.encoding_issues,
+                data_type_consistency: metrics.data_type_consistency(),
+                format_violations: metrics.format_violations(),
+                encoding_issues: metrics.encoding_issues(),
             },
             uniqueness: JsonUniquenessMetrics {
-                duplicate_rows: metrics.duplicate_rows,
-                key_uniqueness: metrics.key_uniqueness,
-                high_cardinality_warning: metrics.high_cardinality_warning,
+                duplicate_rows: metrics.duplicate_rows(),
+                key_uniqueness: metrics.key_uniqueness(),
+                high_cardinality_warning: metrics.high_cardinality_warning(),
             },
             accuracy: JsonAccuracyMetrics {
-                outlier_ratio: metrics.outlier_ratio,
-                range_violations: metrics.range_violations,
-                negative_values_in_positive: metrics.negative_values_in_positive,
+                outlier_ratio: metrics.outlier_ratio(),
+                range_violations: metrics.range_violations(),
+                negative_values_in_positive: metrics.negative_values_in_positive(),
             },
             timeliness: JsonTimelinessMetrics {
-                future_dates_count: metrics.future_dates_count,
-                stale_data_ratio: metrics.stale_data_ratio,
-                temporal_violations: metrics.temporal_violations,
+                future_dates_count: metrics.future_dates_count(),
+                stale_data_ratio: metrics.stale_data_ratio(),
+                temporal_violations: metrics.temporal_violations(),
             },
         }
     }
@@ -429,37 +429,41 @@ impl OutputFormatter for PlainFormatter {
             output.push_str("Data Quality Metrics\n");
             output.push_str(&format!(
                 "  Completeness: {:.1}% missing, {:.1}% complete\n",
-                metrics.missing_values_ratio, metrics.complete_records_ratio
+                metrics.missing_values_ratio(),
+                metrics.complete_records_ratio()
             ));
             output.push_str(&format!(
                 "  Consistency: {:.1}% type consistency\n",
-                metrics.data_type_consistency
+                metrics.data_type_consistency()
             ));
             output.push_str(&format!(
                 "  Uniqueness: {:.1}% key uniqueness\n",
-                metrics.key_uniqueness
+                metrics.key_uniqueness()
             ));
             output.push_str(&format!(
                 "  Accuracy: {:.1}% outlier ratio\n",
-                metrics.outlier_ratio
+                metrics.outlier_ratio()
             ));
 
-            if metrics.duplicate_rows > 0 {
-                output.push_str(&format!("  Duplicate Rows: {}\n", metrics.duplicate_rows));
+            if metrics.duplicate_rows() > 0 {
+                output.push_str(&format!("  Duplicate Rows: {}\n", metrics.duplicate_rows()));
             }
-            if metrics.format_violations > 0 {
+            if metrics.format_violations() > 0 {
                 output.push_str(&format!(
                     "  Format Violations: {}\n",
-                    metrics.format_violations
+                    metrics.format_violations()
                 ));
             }
-            if metrics.encoding_issues > 0 {
-                output.push_str(&format!("  Encoding Issues: {}\n", metrics.encoding_issues));
+            if metrics.encoding_issues() > 0 {
+                output.push_str(&format!(
+                    "  Encoding Issues: {}\n",
+                    metrics.encoding_issues()
+                ));
             }
-            if !metrics.null_columns.is_empty() {
+            if !metrics.null_columns().is_empty() {
                 output.push_str(&format!(
                     "  Null Columns: {}\n",
-                    metrics.null_columns.join(", ")
+                    metrics.null_columns().join(", ")
                 ));
             }
             output.push('\n');

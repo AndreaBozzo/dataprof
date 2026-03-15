@@ -74,6 +74,7 @@ def profile(
     stop_condition: StopCondition | None = None,
     on_progress: object | None = None,
     progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -97,6 +98,9 @@ def profile(
             Only effective with engine="incremental".
         progress_interval_ms: Minimum interval between progress events in ms
             (default: 500).
+        quality_dimensions: List of ISO 25012 quality dimensions to evaluate.
+            Valid values: "completeness", "consistency", "uniqueness",
+            "accuracy", "timeliness". None = all dimensions (default).
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -115,6 +119,7 @@ def profile(
             stop_condition=stop_condition,
             on_progress=on_progress,
             progress_interval_ms=progress_interval_ms,
+            quality_dimensions=quality_dimensions,
         )
         rust_report = _analyze_file(str(source), config)
         return ProfileReport(rust_report)
@@ -273,32 +278,22 @@ class ProfileReport:
         if q is not None:
             quality_dict = {
                 "overall_score": q.overall_quality_score(),
-                "completeness": {
-                    "missing_values_ratio": q.missing_values_ratio,
-                    "complete_records_ratio": q.complete_records_ratio,
-                    "null_columns": q.null_columns,
-                },
-                "consistency": {
-                    "data_type_consistency": q.data_type_consistency,
-                    "format_violations": q.format_violations,
-                    "encoding_issues": q.encoding_issues,
-                },
-                "uniqueness": {
-                    "duplicate_rows": q.duplicate_rows,
-                    "key_uniqueness": q.key_uniqueness,
-                    "high_cardinality_warning": q.high_cardinality_warning,
-                },
-                "accuracy": {
-                    "outlier_ratio": q.outlier_ratio,
-                    "range_violations": q.range_violations,
-                    "negative_values_in_positive": q.negative_values_in_positive,
-                },
-                "timeliness": {
-                    "future_dates_count": q.future_dates_count,
-                    "stale_data_ratio": q.stale_data_ratio,
-                    "temporal_violations": q.temporal_violations,
-                },
             }
+            comp = q.completeness
+            if comp is not None:
+                quality_dict["completeness"] = comp
+            cons = q.consistency
+            if cons is not None:
+                quality_dict["consistency"] = cons
+            uniq = q.uniqueness
+            if uniq is not None:
+                quality_dict["uniqueness"] = uniq
+            acc = q.accuracy
+            if acc is not None:
+                quality_dict["accuracy"] = acc
+            tim = q.timeliness
+            if tim is not None:
+                quality_dict["timeliness"] = tim
 
         return {
             "source": self._report.source,

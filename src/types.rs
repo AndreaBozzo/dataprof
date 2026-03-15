@@ -282,21 +282,85 @@ impl DataSource {
     }
 }
 
-/// Comprehensive data quality metrics following industry standards
-/// Provides structured assessment across five key dimensions (ISO 8000/25012)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct QualityMetrics {
-    // Completeness (ISO 8000-8)
+// ============================================================================
+// ISO 25012 Quality Dimension Enum
+// ============================================================================
+
+/// ISO 25012 quality dimensions that can be selectively requested.
+///
+/// When no specific dimensions are requested (the default), all dimensions
+/// are computed. Passing a subset enables "lazy metric packs" — only the
+/// requested calculators run, saving CPU/memory for large datasets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QualityDimension {
+    Completeness,
+    Consistency,
+    Uniqueness,
+    Accuracy,
+    Timeliness,
+}
+
+impl QualityDimension {
+    /// All currently implemented dimensions.
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::Completeness,
+            Self::Consistency,
+            Self::Uniqueness,
+            Self::Accuracy,
+            Self::Timeliness,
+        ]
+    }
+}
+
+impl std::str::FromStr for QualityDimension {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "completeness" => Ok(Self::Completeness),
+            "consistency" => Ok(Self::Consistency),
+            "uniqueness" => Ok(Self::Uniqueness),
+            "accuracy" => Ok(Self::Accuracy),
+            "timeliness" => Ok(Self::Timeliness),
+            _ => Err(format!("Unknown quality dimension: {s}")),
+        }
+    }
+}
+
+impl std::fmt::Display for QualityDimension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Completeness => write!(f, "completeness"),
+            Self::Consistency => write!(f, "consistency"),
+            Self::Uniqueness => write!(f, "uniqueness"),
+            Self::Accuracy => write!(f, "accuracy"),
+            Self::Timeliness => write!(f, "timeliness"),
+        }
+    }
+}
+
+// ============================================================================
+// Per-Dimension Metric Sub-Structs (ISO 25012 "Metric Packs")
+// ============================================================================
+
+/// Completeness metrics (ISO 8000-8)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CompletenessMetrics {
     /// Percentage of missing values across all cells
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub missing_values_ratio: f64,
     /// Percentage of rows with no null values
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub complete_records_ratio: f64,
-    /// Columns with more than 50% null values
+    /// Columns with more than the threshold of null values
     pub null_columns: Vec<String>,
+}
 
-    // Consistency (ISO 8000-61)
+/// Consistency metrics (ISO 8000-61)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ConsistencyMetrics {
     /// Percentage of values conforming to expected data type
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub data_type_consistency: f64,
@@ -304,8 +368,11 @@ pub struct QualityMetrics {
     pub format_violations: usize,
     /// Number of UTF-8 encoding issues detected
     pub encoding_issues: usize,
+}
 
-    // Uniqueness (ISO 8000-110)
+/// Uniqueness metrics (ISO 8000-110)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct UniquenessMetrics {
     /// Number of exact duplicate rows
     pub duplicate_rows: usize,
     /// Percentage of unique values in key columns (if applicable)
@@ -313,8 +380,11 @@ pub struct QualityMetrics {
     pub key_uniqueness: f64,
     /// Warning flag for columns with excessive unique values
     pub high_cardinality_warning: bool,
+}
 
-    // Accuracy (ISO 25012)
+/// Accuracy metrics (ISO 25012)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AccuracyMetrics {
     /// Percentage of statistically anomalous values (outliers)
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
@@ -322,8 +392,11 @@ pub struct QualityMetrics {
     pub range_violations: usize,
     /// Number of negative values in positive-only fields (e.g., age)
     pub negative_values_in_positive: usize,
+}
 
-    // Timeliness (ISO 8000-8) - NEW
+/// Timeliness metrics (ISO 8000-8)
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TimelinessMetrics {
     /// Number of future dates detected (dates beyond current date)
     pub future_dates_count: usize,
     /// Percentage of dates older than staleness threshold (e.g., >5 years)
@@ -333,81 +406,216 @@ pub struct QualityMetrics {
     pub temporal_violations: usize,
 }
 
+// ============================================================================
+// Composable QualityMetrics (opt-in dimensions)
+// ============================================================================
+
+/// Comprehensive data quality metrics following industry standards.
+///
+/// Each ISO 25012 dimension is an `Option` — dimensions that were not requested
+/// (or not computed) are `None`. When all dimensions are requested (the default),
+/// all fields are `Some`.
+///
+/// This composable design enables "lazy metric packs": the engine only computes
+/// the dimensions explicitly requested by the user, saving CPU/memory.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QualityMetrics {
+    /// Completeness dimension (ISO 8000-8)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completeness: Option<CompletenessMetrics>,
+
+    /// Consistency dimension (ISO 8000-61)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consistency: Option<ConsistencyMetrics>,
+
+    /// Uniqueness dimension (ISO 8000-110)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uniqueness: Option<UniquenessMetrics>,
+
+    /// Accuracy dimension (ISO 25012)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accuracy: Option<AccuracyMetrics>,
+
+    /// Timeliness dimension (ISO 8000-8)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeliness: Option<TimelinessMetrics>,
+}
+
 impl QualityMetrics {
-    /// Create metrics for an empty dataset (perfect quality, no data)
+    /// Create metrics for an empty dataset (perfect quality, no data).
+    /// All dimensions are populated with default "perfect" values.
     pub fn empty() -> Self {
         Self {
-            // Completeness: No data = no missing values
-            missing_values_ratio: 0.0,
-            complete_records_ratio: 100.0,
-            null_columns: vec![],
-
-            // Consistency: No data = perfect consistency
-            data_type_consistency: 100.0,
-            format_violations: 0,
-            encoding_issues: 0,
-
-            // Uniqueness: No data = perfect uniqueness
-            duplicate_rows: 0,
-            key_uniqueness: 100.0,
-            high_cardinality_warning: false,
-
-            // Accuracy: No data = no outliers
-            outlier_ratio: 0.0,
-            range_violations: 0,
-            negative_values_in_positive: 0,
-
-            // Timeliness: No data = no staleness
-            future_dates_count: 0,
-            stale_data_ratio: 0.0,
-            temporal_violations: 0,
+            completeness: Some(CompletenessMetrics {
+                missing_values_ratio: 0.0,
+                complete_records_ratio: 100.0,
+                null_columns: vec![],
+            }),
+            consistency: Some(ConsistencyMetrics {
+                data_type_consistency: 100.0,
+                format_violations: 0,
+                encoding_issues: 0,
+            }),
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 0,
+                key_uniqueness: 100.0,
+                high_cardinality_warning: false,
+            }),
+            accuracy: Some(AccuracyMetrics {
+                outlier_ratio: 0.0,
+                range_violations: 0,
+                negative_values_in_positive: 0,
+            }),
+            timeliness: Some(TimelinessMetrics {
+                future_dates_count: 0,
+                stale_data_ratio: 0.0,
+                temporal_violations: 0,
+            }),
         }
     }
 
-    /// Calculate comprehensive data quality metrics from column data
+    /// Calculate comprehensive data quality metrics from column data.
     ///
     /// Delegates to the specialized MetricsCalculator for proper separation of concerns.
-    /// Uses default ISO 8000/25012 thresholds.
-    ///
-    /// # Arguments
-    /// * `data` - HashMap containing column names and their values
-    /// * `column_profiles` - Vector of analyzed column profiles
-    ///
-    /// # Returns
-    /// * `Result<QualityMetrics>` - Comprehensive quality metrics or error
-    ///
-    /// # Errors
-    /// Returns error if data is malformed or calculation fails
+    /// Uses default ISO 8000/25012 thresholds. Computes all dimensions.
     pub fn calculate_from_data(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
     ) -> Result<Self, DataProfilerError> {
-        // Delegate to the specialized metrics calculator module with default ISO thresholds
-        // This follows the Single Responsibility Principle
         let calculator = crate::analysis::MetricsCalculator::new();
-        calculator.calculate_comprehensive_metrics(data, column_profiles)
+        calculator.calculate_comprehensive_metrics(data, column_profiles, None)
     }
 
-    /// Calculate overall quality score (0-100) based on ISO 8000/25012 dimensions
+    /// Calculate overall quality score (0-100) based on ISO 8000/25012 dimensions.
     ///
-    /// Weighted formula:
-    /// - Completeness: 30% (complete_records_ratio - already percentage 0-100)
-    /// - Consistency: 25% (data_type_consistency - already percentage 0-100)
-    /// - Uniqueness: 20% (key_uniqueness - already percentage 0-100)
-    /// - Accuracy: 15% (100 - outlier_ratio) - outlier_ratio is already percentage 0-100
-    /// - Timeliness: 10% (100 - stale_data_ratio) - stale_data_ratio is already percentage 0-100
+    /// Weighted formula (only computed dimensions contribute):
+    /// - Completeness: 30% (complete_records_ratio)
+    /// - Consistency: 25% (data_type_consistency)
+    /// - Uniqueness: 20% (key_uniqueness)
+    /// - Accuracy: 15% (100 - outlier_ratio)
+    /// - Timeliness: 10% (100 - stale_data_ratio)
     ///
-    /// NOTE: ALL metrics are percentages (0-100), not ratios (0-1)
+    /// When some dimensions are `None`, the weights of computed dimensions
+    /// are re-normalized so the score is still on a 0–100 scale.
     pub fn overall_score(&self) -> f64 {
-        let completeness = self.complete_records_ratio * 0.3;
-        let consistency = self.data_type_consistency * 0.25;
-        let uniqueness = self.key_uniqueness * 0.2;
+        let mut total_weight = 0.0;
+        let mut score = 0.0;
 
-        // Both outlier_ratio and stale_data_ratio are ALREADY percentages (0-100)
-        let accuracy = (100.0 - self.outlier_ratio) * 0.15;
-        let timeliness = (100.0 - self.stale_data_ratio) * 0.1;
+        if let Some(c) = &self.completeness {
+            total_weight += 0.3;
+            score += c.complete_records_ratio * 0.3;
+        }
+        if let Some(c) = &self.consistency {
+            total_weight += 0.25;
+            score += c.data_type_consistency * 0.25;
+        }
+        if let Some(u) = &self.uniqueness {
+            total_weight += 0.2;
+            score += u.key_uniqueness * 0.2;
+        }
+        if let Some(a) = &self.accuracy {
+            total_weight += 0.15;
+            score += (100.0 - a.outlier_ratio) * 0.15;
+        }
+        if let Some(t) = &self.timeliness {
+            total_weight += 0.1;
+            score += (100.0 - t.stale_data_ratio) * 0.1;
+        }
 
-        completeness + consistency + uniqueness + accuracy + timeliness
+        if total_weight > 0.0 {
+            score / total_weight * 1.0
+        } else {
+            0.0
+        }
+    }
+
+    // -- Convenience accessors for backward compatibility --
+
+    /// Missing values ratio (from completeness dimension, 0.0 if not computed)
+    pub fn missing_values_ratio(&self) -> f64 {
+        self.completeness
+            .as_ref()
+            .map_or(0.0, |c| c.missing_values_ratio)
+    }
+
+    /// Complete records ratio (from completeness dimension, 100.0 if not computed)
+    pub fn complete_records_ratio(&self) -> f64 {
+        self.completeness
+            .as_ref()
+            .map_or(100.0, |c| c.complete_records_ratio)
+    }
+
+    /// Null columns (from completeness dimension, empty if not computed)
+    pub fn null_columns(&self) -> &[String] {
+        self.completeness.as_ref().map_or(&[], |c| &c.null_columns)
+    }
+
+    /// Data type consistency (from consistency dimension, 100.0 if not computed)
+    pub fn data_type_consistency(&self) -> f64 {
+        self.consistency
+            .as_ref()
+            .map_or(100.0, |c| c.data_type_consistency)
+    }
+
+    /// Format violations (from consistency dimension, 0 if not computed)
+    pub fn format_violations(&self) -> usize {
+        self.consistency.as_ref().map_or(0, |c| c.format_violations)
+    }
+
+    /// Encoding issues (from consistency dimension, 0 if not computed)
+    pub fn encoding_issues(&self) -> usize {
+        self.consistency.as_ref().map_or(0, |c| c.encoding_issues)
+    }
+
+    /// Duplicate rows (from uniqueness dimension, 0 if not computed)
+    pub fn duplicate_rows(&self) -> usize {
+        self.uniqueness.as_ref().map_or(0, |u| u.duplicate_rows)
+    }
+
+    /// Key uniqueness (from uniqueness dimension, 100.0 if not computed)
+    pub fn key_uniqueness(&self) -> f64 {
+        self.uniqueness.as_ref().map_or(100.0, |u| u.key_uniqueness)
+    }
+
+    /// High cardinality warning (from uniqueness dimension, false if not computed)
+    pub fn high_cardinality_warning(&self) -> bool {
+        self.uniqueness
+            .as_ref()
+            .is_some_and(|u| u.high_cardinality_warning)
+    }
+
+    /// Outlier ratio (from accuracy dimension, 0.0 if not computed)
+    pub fn outlier_ratio(&self) -> f64 {
+        self.accuracy.as_ref().map_or(0.0, |a| a.outlier_ratio)
+    }
+
+    /// Range violations (from accuracy dimension, 0 if not computed)
+    pub fn range_violations(&self) -> usize {
+        self.accuracy.as_ref().map_or(0, |a| a.range_violations)
+    }
+
+    /// Negative values in positive fields (from accuracy dimension, 0 if not computed)
+    pub fn negative_values_in_positive(&self) -> usize {
+        self.accuracy
+            .as_ref()
+            .map_or(0, |a| a.negative_values_in_positive)
+    }
+
+    /// Future dates count (from timeliness dimension, 0 if not computed)
+    pub fn future_dates_count(&self) -> usize {
+        self.timeliness.as_ref().map_or(0, |t| t.future_dates_count)
+    }
+
+    /// Stale data ratio (from timeliness dimension, 0.0 if not computed)
+    pub fn stale_data_ratio(&self) -> f64 {
+        self.timeliness.as_ref().map_or(0.0, |t| t.stale_data_ratio)
+    }
+
+    /// Temporal violations (from timeliness dimension, 0 if not computed)
+    pub fn temporal_violations(&self) -> usize {
+        self.timeliness
+            .as_ref()
+            .map_or(0, |t| t.temporal_violations)
     }
 }
 
@@ -995,14 +1203,7 @@ mod tests {
     #[test]
     fn test_quality_score_weights_sum_to_100() {
         // With all dimensions at 100%, score should be 100
-        let metrics = QualityMetrics {
-            complete_records_ratio: 100.0,
-            data_type_consistency: 100.0,
-            key_uniqueness: 100.0,
-            outlier_ratio: 0.0,
-            stale_data_ratio: 0.0,
-            ..QualityMetrics::empty()
-        };
+        let metrics = QualityMetrics::empty();
         assert!((metrics.overall_score() - 100.0).abs() < 0.01);
     }
 
@@ -1010,7 +1211,9 @@ mod tests {
     fn test_quality_score_completeness_weight() {
         // Zero completeness, everything else perfect
         let mut metrics = QualityMetrics::empty();
-        metrics.complete_records_ratio = 0.0;
+        if let Some(ref mut c) = metrics.completeness {
+            c.complete_records_ratio = 0.0;
+        }
         // Score drops by 30% (completeness weight)
         assert!((metrics.overall_score() - 70.0).abs() < 0.01);
     }
@@ -1018,12 +1221,26 @@ mod tests {
     #[test]
     fn test_quality_score_all_bad() {
         let metrics = QualityMetrics {
-            complete_records_ratio: 0.0,
-            data_type_consistency: 0.0,
-            key_uniqueness: 0.0,
-            outlier_ratio: 100.0,
-            stale_data_ratio: 100.0,
-            ..QualityMetrics::empty()
+            completeness: Some(CompletenessMetrics {
+                complete_records_ratio: 0.0,
+                ..CompletenessMetrics::default()
+            }),
+            consistency: Some(ConsistencyMetrics {
+                data_type_consistency: 0.0,
+                ..ConsistencyMetrics::default()
+            }),
+            uniqueness: Some(UniquenessMetrics {
+                key_uniqueness: 0.0,
+                ..UniquenessMetrics::default()
+            }),
+            accuracy: Some(AccuracyMetrics {
+                outlier_ratio: 100.0,
+                ..AccuracyMetrics::default()
+            }),
+            timeliness: Some(TimelinessMetrics {
+                stale_data_ratio: 100.0,
+                ..TimelinessMetrics::default()
+            }),
         };
         assert!((metrics.overall_score() - 0.0).abs() < 0.01);
     }

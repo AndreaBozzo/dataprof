@@ -10,7 +10,7 @@ use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEva
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::common::MemoryConfig;
 use crate::engines::streaming::MemoryMappedCsvReader;
-use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport};
+use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension};
 
 /// Incremental profiler that processes data without loading everything into memory
 /// Uses online/streaming algorithms and memory mapping for maximum efficiency.
@@ -22,6 +22,7 @@ pub struct IncrementalProfiler {
     progress_interval: Duration,
     memory: MemoryConfig,
     stop_condition: StopCondition,
+    quality_dimensions: Option<Vec<QualityDimension>>,
 }
 
 impl IncrementalProfiler {
@@ -33,6 +34,7 @@ impl IncrementalProfiler {
             progress_interval: Duration::from_millis(500),
             memory: MemoryConfig::default(),
             stop_condition: StopCondition::Never,
+            quality_dimensions: None,
         }
     }
 
@@ -59,6 +61,11 @@ impl IncrementalProfiler {
 
     pub fn stop_condition(mut self, condition: StopCondition) -> Self {
         self.stop_condition = condition;
+        self
+    }
+
+    pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
+        self.quality_dimensions = Some(dims);
         self
     }
 
@@ -220,7 +227,7 @@ impl IncrementalProfiler {
             execution = execution.with_source_exhausted(false);
         }
 
-        Ok(ReportAssembler::new(
+        let mut assembler = ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
                 format: FileFormat::Csv,
@@ -231,8 +238,11 @@ impl IncrementalProfiler {
             execution,
         )
         .columns(column_profiles)
-        .with_quality_data(sample_columns)
-        .build())
+        .with_quality_data(sample_columns);
+        if let Some(ref dims) = self.quality_dimensions {
+            assembler = assembler.with_requested_dimensions(dims.clone());
+        }
+        Ok(assembler.build())
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {

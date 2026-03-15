@@ -24,7 +24,7 @@ use crate::analysis::MetricsCalculator;
 use crate::analysis::metrics::BifurcatedResult;
 use crate::types::{
     ColumnProfile, DataSource, ExecutionMetadata, MetricConfidence, ProfileReport,
-    QualityAssessment, QualityMetrics,
+    QualityAssessment, QualityDimension,
 };
 
 /// Builder for constructing a [`ProfileReport`].
@@ -43,6 +43,7 @@ pub struct ReportAssembler {
     quality_data: Option<HashMap<String, Vec<String>>>,
     confidence: Option<MetricConfidence>,
     skip_quality: bool,
+    requested_dimensions: Option<Vec<QualityDimension>>,
 }
 
 impl ReportAssembler {
@@ -55,6 +56,7 @@ impl ReportAssembler {
             quality_data: None,
             confidence: None,
             skip_quality: false,
+            requested_dimensions: None,
         }
     }
 
@@ -90,6 +92,15 @@ impl ReportAssembler {
     /// where quality metrics are not meaningful.
     pub fn skip_quality(mut self) -> Self {
         self.skip_quality = true;
+        self
+    }
+
+    /// Set the quality dimensions to compute.
+    ///
+    /// Only the listed dimensions will be evaluated. Unlisted dimensions
+    /// appear as `None` in the resulting [`QualityMetrics`].
+    pub fn with_requested_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
+        self.requested_dimensions = Some(dims);
         self
     }
 
@@ -141,7 +152,11 @@ impl ReportAssembler {
         _sample_size: usize,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_bifurcated_metrics(data, &self.columns) {
+        match calculator.calculate_bifurcated_metrics(
+            data,
+            &self.columns,
+            self.requested_dimensions.as_deref(),
+        ) {
             Ok(result) => {
                 let confidence = self
                     .confidence
@@ -164,7 +179,12 @@ impl ReportAssembler {
         &self,
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
-        match QualityMetrics::calculate_from_data(data, &self.columns) {
+        let calculator = MetricsCalculator::new();
+        match calculator.calculate_comprehensive_metrics(
+            data,
+            &self.columns,
+            self.requested_dimensions.as_deref(),
+        ) {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
                 Some(QualityAssessment {
