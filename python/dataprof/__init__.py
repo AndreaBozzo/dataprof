@@ -119,13 +119,12 @@ def profile(
         rust_report = _analyze_file(str(source), config)
         return ProfileReport(rust_report)
 
-    # DataFrame/Arrow paths — config kwargs other than 'name' are not supported
+    # DataFrame/Arrow paths — most config kwargs are file-only; max_rows is supported
     _file_only_kwargs = {
         "engine": engine != "auto",
         "chunk_size": chunk_size is not None,
         "memory_limit_mb": memory_limit_mb is not None,
         "format": format is not None,
-        "max_rows": max_rows is not None,
         "csv_delimiter": csv_delimiter is not None,
         "csv_flexible": csv_flexible is not None,
         "sampling": sampling is not None,
@@ -148,18 +147,18 @@ def profile(
 
     if source_module.startswith("pandas"):
         _warn_if_config_ignored()
-        rust_report = _profile_dataframe(source, name or "dataframe")
+        rust_report = _profile_dataframe(source, name or "dataframe", max_rows)
         return ProfileReport(rust_report)
 
     if source_module.startswith("polars"):
         _warn_if_config_ignored()
-        rust_report = _profile_dataframe(source, name or "dataframe")
+        rust_report = _profile_dataframe(source, name or "dataframe", max_rows)
         return ProfileReport(rust_report)
 
     # PyArrow or any Arrow PyCapsule-compatible object
     if hasattr(source, "__arrow_c_array__"):
         _warn_if_config_ignored()
-        rust_report = _profile_arrow(source, name or "arrow_data")
+        rust_report = _profile_arrow(source, name or "arrow_data", max_rows)
         return ProfileReport(rust_report)
 
     raise TypeError(

@@ -29,7 +29,9 @@ use pyo3::types::PyCapsule;
 
 use crate::core::report_assembler::ReportAssembler;
 use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, ExecutionMetadata};
+use crate::types::{
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, ExecutionMetadata, TruncationReason,
+};
 
 /// PyCapsule name for Arrow schema (null-terminated for C compatibility)
 const ARROW_SCHEMA_NAME: &[u8] = b"arrow_schema\0";
@@ -343,15 +345,17 @@ pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
 /// # Arguments
 /// * `df` - A pandas DataFrame, polars DataFrame, or any Arrow-compatible object
 /// * `name` - Optional name for identification in reports (default: "dataframe")
+/// * `max_rows` - Optional maximum number of rows to analyze (None = all rows)
 ///
 /// # Returns
 /// A PyProfileReport with comprehensive data quality metrics
 #[pyfunction]
-#[pyo3(signature = (df, name = "dataframe".to_string()))]
+#[pyo3(signature = (df, name = "dataframe".to_string(), max_rows = None))]
 pub fn profile_dataframe(
     py: Python<'_>,
     df: Py<PyAny>,
     name: String,
+    max_rows: Option<usize>,
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -360,6 +364,9 @@ pub fn profile_dataframe(
 
     // Convert DataFrame to RecordBatch via PyCapsule
     let batch = convert_dataframe_to_batch(py, &df, &source_library)?;
+
+    // Optionally limit rows before analysis
+    let (batch, truncated) = limit_batch_rows(batch, max_rows);
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
@@ -378,6 +385,12 @@ pub fn profile_dataframe(
     // Estimate memory usage before consuming the source library value
     let memory_bytes = estimate_memory_bytes(py, &df, &source_library);
 
+    // Build execution metadata, marking truncation if max_rows was applied
+    let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
+    if truncated {
+        exec = exec.with_truncation(TruncationReason::MaxRows(max_rows.unwrap_or(0) as u64));
+    }
+
     // Create report with DataFrame data source
     let report = ReportAssembler::new(
         DataSource::DataFrame {
@@ -387,7 +400,7 @@ pub fn profile_dataframe(
             column_count: num_cols,
             memory_bytes,
         },
-        ExecutionMetadata::new(num_rows, num_cols, scan_time_ms),
+        exec,
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns)
@@ -404,15 +417,17 @@ pub fn profile_dataframe(
 /// # Arguments
 /// * `table` - A pyarrow.Table or pyarrow.RecordBatch
 /// * `name` - Optional name for identification in reports (default: "arrow_table")
+/// * `max_rows` - Optional maximum number of rows to analyze (None = all rows)
 ///
 /// # Returns
 /// A PyProfileReport with comprehensive data quality metrics
 #[pyfunction]
-#[pyo3(signature = (table, name = "arrow_table".to_string()))]
+#[pyo3(signature = (table, name = "arrow_table".to_string(), max_rows = None))]
 pub fn profile_arrow(
     py: Python<'_>,
     table: Py<PyAny>,
     name: String,
+    max_rows: Option<usize>,
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -420,6 +435,9 @@ pub fn profile_arrow(
 
     // Import directly as PyArrow data (no library detection needed)
     let batch = import_from_pyarrow(py, bound)?;
+
+    // Optionally limit rows before analysis
+    let (batch, truncated) = limit_batch_rows(batch, max_rows);
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
@@ -441,6 +459,12 @@ pub fn profile_arrow(
 
     let scan_time_ms = start.elapsed().as_millis();
 
+    // Build execution metadata, marking truncation if max_rows was applied
+    let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
+    if truncated {
+        exec = exec.with_truncation(TruncationReason::MaxRows(max_rows.unwrap_or(0) as u64));
+    }
+
     let report = ReportAssembler::new(
         DataSource::DataFrame {
             name,
@@ -449,7 +473,7 @@ pub fn profile_arrow(
             column_count: num_cols,
             memory_bytes,
         },
-        ExecutionMetadata::new(num_rows, num_cols, scan_time_ms),
+        exec,
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns)
@@ -665,11 +689,12 @@ fn estimate_memory_bytes(
 
     match library {
         DataFrameLibrary::Pandas => {
-            // pandas: df.memory_usage(deep=True).sum()
-            let kwargs = pyo3::types::PyDict::new(py);
-            kwargs.set_item("deep", true).ok()?;
+            // pandas: df.memory_usage().sum()
+            // Note: deep=False (the default) reads only block metadata in O(1).
+            // deep=True would give exact sizes for object/string columns but
+            // blocks the GIL for O(n) traversal — unacceptable for large frames.
             bound
-                .call_method("memory_usage", (), Some(&kwargs))
+                .call_method0("memory_usage")
                 .ok()
                 .and_then(|usage| usage.call_method0("sum").ok())
                 .and_then(|val| val.extract::<u64>().ok())
@@ -689,6 +714,15 @@ fn estimate_memory_bytes(
                 .and_then(|val| val.extract::<u64>().ok())
         }
         DataFrameLibrary::Custom(_) => None,
+    }
+}
+
+/// Slice a RecordBatch to at most `max_rows` rows. Returns the (possibly
+/// sliced) batch and a boolean indicating whether truncation occurred.
+fn limit_batch_rows(batch: RecordBatch, max_rows: Option<usize>) -> (RecordBatch, bool) {
+    match max_rows {
+        Some(limit) if limit < batch.num_rows() => (batch.slice(0, limit), true),
+        _ => (batch, false),
     }
 }
 
@@ -815,10 +849,20 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
         .cast()
         .map_err(|_| PyTypeError::new_err("Expected PyCapsule for array"))?;
 
-    // Get raw pointers from capsules and properly consume them
-    // Safety: We trust that pyarrow provides valid Arrow C Data Interface structures.
-    // Using from_raw() nullifies the release callback in the original struct,
-    // preventing double-free when Python's GC destroys the capsule.
+    // Get raw pointers from capsules and properly consume them.
+    //
+    // Safety invariants:
+    //  1. The pointers come from pyarrow PyCapsules and point to valid
+    //     Arrow C Data Interface structs.
+    //  2. `from_raw()` takes ownership by nullifying the release callback at
+    //     the original pointer location. The returned struct now owns the
+    //     callback and will invoke it on Drop.
+    //  3. `from_ffi()` consumes `ffi_array` by value. On success, ownership
+    //     moves into the returned ArrayData. On failure (Err), arrow-rs
+    //     drops the consumed struct internally, calling the release callback.
+    //  4. `ffi_schema` is borrowed by reference and dropped at block exit.
+    //  5. No allocating or panicking calls exist between the two `from_raw`
+    //     calls, so both are always consumed together.
     let array_data = unsafe {
         // Get raw pointers - pointer() returns *mut c_void
         #[allow(deprecated)]
@@ -830,9 +874,8 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
             return Err(PyRuntimeError::new_err("Null pointer in PyCapsule"));
         }
 
-        // Use from_raw() which takes ownership by nullifying the release callback
-        // in the original struct. This is the Arrow-specified way to consume FFI data.
-        // After this call, the PyCapsule's destructor will see release=null and do nothing.
+        // from_raw: takes ownership by nullifying release at the source pointer.
+        // No panicking code between these two calls.
         let ffi_array = FFI_ArrowArray::from_raw(ffi_array_ptr);
         let ffi_schema = FFI_ArrowSchema::from_raw(ffi_schema_ptr);
 

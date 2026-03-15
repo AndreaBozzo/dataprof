@@ -139,10 +139,14 @@ impl StreamReservoirSampler {
     }
 
     /// Shrink the reservoir to a new (smaller) capacity, dropping excess items.
+    ///
+    /// Also releases the backing buffer via `shrink_to_fit` to reduce heap
+    /// fragmentation in long-running streaming processes.
     pub fn shrink_to(&mut self, new_capacity: usize) {
         let new_capacity = new_capacity.max(1);
         self.capacity = new_capacity;
         self.reservoir.truncate(new_capacity);
+        self.reservoir.shrink_to_fit();
     }
 
     /// Current contents (unordered).
