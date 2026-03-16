@@ -4,6 +4,22 @@
 -- Use the dataprof_test database
 USE dataprof_test;
 
+-- Create test_users table (used by integration tests)
+CREATE TABLE IF NOT EXISTS test_users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT,
+    age INT,
+    salary DOUBLE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO test_users (name, email, age, salary) VALUES
+('alice', 'alice@example.com', 25, 50000.0),
+('bob', 'bob@example.com', 30, 60000.0),
+('charlie', NULL, 35, NULL),
+('diana', 'diana@example.com', NULL, 55000.0),
+('eve', 'eve@example.com', 28, 70000.0);
+
 -- Create test tables for CSV-like data analysis
 CREATE TABLE IF NOT EXISTS sample_data (
     id INT AUTO_INCREMENT PRIMARY KEY,

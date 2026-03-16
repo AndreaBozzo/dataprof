@@ -5,6 +5,7 @@
 
 #![cfg(feature = "sqlite")]
 
+use dataprof::Profiler;
 use dataprof::database::{DatabaseConfig, analyze_database, create_connector};
 
 // ---------------------------------------------------------------------------
@@ -202,7 +203,7 @@ mod sqlite_tests {
         populate_test_db(&conn_str).await;
 
         let config = sqlite_config(&conn_str);
-        let report = analyze_database(config, "SELECT * FROM test_users")
+        let report = analyze_database(config, "SELECT * FROM test_users", true, None)
             .await
             .unwrap();
 
@@ -217,7 +218,9 @@ mod sqlite_tests {
 
         let config = sqlite_config(&conn_str);
         // Pass table name instead of SELECT query
-        let report = analyze_database(config, "test_users").await.unwrap();
+        let report = analyze_database(config, "test_users", true, None)
+            .await
+            .unwrap();
 
         assert_eq!(report.execution.rows_processed, 5);
         assert_eq!(report.column_profiles.len(), 5);
@@ -229,7 +232,7 @@ mod sqlite_tests {
         populate_test_db(&conn_str).await;
 
         let config = sqlite_config(&conn_str);
-        let result = analyze_database(config, "SELECT * FROM nonexistent_table").await;
+        let result = analyze_database(config, "SELECT * FROM nonexistent_table", true, None).await;
         assert!(result.is_err());
     }
 
@@ -240,8 +243,13 @@ mod sqlite_tests {
 
         let config = sqlite_config(&conn_str);
         // Semicolon-based injection — the DROP keyword triggers validation rejection
-        let result =
-            analyze_database(config, "SELECT * FROM test_users; DROP TABLE test_users").await;
+        let result = analyze_database(
+            config,
+            "SELECT * FROM test_users; DROP TABLE test_users",
+            true,
+            None,
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -251,7 +259,7 @@ mod sqlite_tests {
         populate_test_db(&conn_str).await;
 
         let config = sqlite_config(&conn_str);
-        let report = analyze_database(config, "SELECT * FROM test_users WHERE 1=0")
+        let report = analyze_database(config, "SELECT * FROM test_users WHERE 1=0", true, None)
             .await
             .unwrap();
 
@@ -264,7 +272,7 @@ mod sqlite_tests {
         populate_test_db(&conn_str).await;
 
         let config = sqlite_config(&conn_str);
-        let report = analyze_database(config, "SELECT * FROM test_users")
+        let report = analyze_database(config, "SELECT * FROM test_users", true, None)
             .await
             .unwrap();
 
@@ -272,6 +280,108 @@ mod sqlite_tests {
         // Verify we get profiles for all 5 columns with 5 rows
         assert_eq!(report.execution.rows_processed, 5);
         assert_eq!(report.column_profiles.len(), 5);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Profiler builder API tests
+// ---------------------------------------------------------------------------
+
+mod profiler_builder_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_profiler_analyze_query() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let report = Profiler::new()
+            .connection_string(&conn_str)
+            .analyze_query("SELECT * FROM test_users")
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 5);
+        assert_eq!(report.column_profiles.len(), 5);
+        assert!(report.quality.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_profiler_analyze_query_no_quality() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let report = Profiler::new()
+            .connection_string(&conn_str)
+            .analyze_query_no_quality("SELECT * FROM test_users")
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 5);
+        assert!(report.quality.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_profiler_analyze_query_table_name() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let report = Profiler::new()
+            .connection_string(&conn_str)
+            .analyze_query("test_users")
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 5);
+    }
+
+    #[tokio::test]
+    async fn test_profiler_analyze_query_with_database_config() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let config = DatabaseConfig {
+            connection_string: conn_str,
+            batch_size: 2,
+            load_credentials_from_env: false,
+            ..Default::default()
+        };
+
+        let report = Profiler::new()
+            .database(config)
+            .analyze_query("SELECT * FROM test_users")
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 5);
+    }
+
+    #[tokio::test]
+    async fn test_profiler_no_database_configured_error() {
+        let result = Profiler::new().analyze_query("SELECT 1").await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_profiler_analyze_source_async_query() {
+        let (_dir, conn_str) = create_test_db();
+        populate_test_db(&conn_str).await;
+
+        let source = dataprof::types::DataSource::Query {
+            engine: dataprof::types::QueryEngine::Sqlite,
+            statement: "SELECT * FROM test_users".to_string(),
+            database: None,
+            execution_id: None,
+        };
+
+        let report = Profiler::new()
+            .connection_string(&conn_str)
+            .analyze_source_async(&source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 5);
     }
 }
 
@@ -404,7 +514,7 @@ mod mysql_tests {
         connector.connect().await.unwrap();
 
         let columns = connector
-            .profile_query("SELECT * FROM test_products")
+            .profile_query("SELECT * FROM test_users")
             .await
             .unwrap();
 
@@ -421,7 +531,7 @@ mod mysql_tests {
         let mut connector = create_connector(config).unwrap();
         connector.connect().await.unwrap();
 
-        let schema = connector.get_table_schema("test_products").await.unwrap();
+        let schema = connector.get_table_schema("test_users").await.unwrap();
         assert!(!schema.is_empty());
 
         connector.disconnect().await.unwrap();
@@ -436,7 +546,7 @@ mod mysql_tests {
         let mut connector = create_connector(config).unwrap();
         connector.connect().await.unwrap();
 
-        let count = connector.count_table_rows("test_products").await.unwrap();
+        let count = connector.count_table_rows("test_users").await.unwrap();
         assert!(count > 0);
 
         connector.disconnect().await.unwrap();

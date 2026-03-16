@@ -72,7 +72,7 @@ async fn analyze_database_internal(
     connection_string: String,
     query: String,
     batch_size: usize,
-    _calculate_quality: bool,
+    calculate_quality: bool,
 ) -> Result<PyProfileReport, crate::core::errors::DataProfilerError> {
     // Create database configuration
     let config = DatabaseConfig {
@@ -82,7 +82,7 @@ async fn analyze_database_internal(
     };
 
     // Analyze the database query
-    let report = analyze_database(config, &query).await?;
+    let report = analyze_database(config, &query, calculate_quality, None).await?;
 
     Ok(PyProfileReport::new(report))
 }

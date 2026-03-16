@@ -87,38 +87,48 @@ class TestDatabaseAnalysis:
     """Test analyze_database_async with SQLite."""
 
     def test_analyze_basic(self, sqlite_db):
-        result = _run(analyze_database_async, sqlite_db, "SELECT * FROM test_users")
-        assert "columns" in result
-        assert result["row_count"] == 5
-        assert len(result["columns"]) == 5  # id, name, email, age, salary
+        report = _run(analyze_database_async, sqlite_db, "SELECT * FROM test_users")
+        assert report.rows_processed == 5
+        assert len(report.column_profiles) == 5  # id, name, email, age, salary
+        assert report.source_type == "query"
 
     def test_analyze_with_quality(self, sqlite_db):
-        result = _run(
+        report = _run(
             analyze_database_async,
             sqlite_db,
             "SELECT * FROM test_users",
             calculate_quality=True,
         )
-        assert "columns" in result
-        assert result["row_count"] == 5
+        assert report.rows_processed == 5
+        assert report.quality is not None
+
+    def test_analyze_without_quality(self, sqlite_db):
+        report = _run(
+            analyze_database_async,
+            sqlite_db,
+            "SELECT * FROM test_users",
+            calculate_quality=False,
+        )
+        assert report.rows_processed == 5
+        assert report.quality is None
 
     def test_analyze_custom_batch_size(self, sqlite_db):
-        result = _run(
+        report = _run(
             analyze_database_async,
             sqlite_db,
             "SELECT * FROM test_users",
             batch_size=2,
         )
-        assert result["row_count"] == 5
+        assert report.rows_processed == 5
 
     def test_analyze_filtered_query(self, sqlite_db):
-        result = _run(
+        report = _run(
             analyze_database_async,
             sqlite_db,
             "SELECT name, age FROM test_users WHERE age > 28",
         )
-        assert result["row_count"] == 2  # bob(30), charlie(35)
-        assert len(result["columns"]) == 2
+        assert report.rows_processed == 2  # bob(30), charlie(35)
+        assert len(report.column_profiles) == 2
 
 
 @pytest.mark.database

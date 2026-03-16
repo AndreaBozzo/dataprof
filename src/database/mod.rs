@@ -171,10 +171,18 @@ fn apply_environment_configuration(
     Ok(config)
 }
 
-/// High-level function to analyze a database table or query
+/// High-level function to analyze a database table or query.
+///
+/// # Arguments
+/// * `config` - Database connection and execution configuration
+/// * `query` - SQL query or table name to profile
+/// * `calculate_quality` - Whether to compute ISO 25012 quality metrics
+/// * `quality_dimensions` - Optional subset of quality dimensions to compute
 pub async fn analyze_database(
     config: DatabaseConfig,
     query: &str,
+    calculate_quality: bool,
+    quality_dimensions: Option<Vec<crate::types::QualityDimension>>,
 ) -> Result<ProfileReport, DataProfilerError> {
     let mut connector = create_connector(config.clone())?;
 
@@ -248,7 +256,7 @@ pub async fn analyze_database(
             },
             exec,
         )
-        .skip_quality()
+        .skip_quality() // empty result set — no quality to compute
         .build());
     }
 
@@ -272,7 +280,7 @@ pub async fn analyze_database(
             .with_source_exhausted(false);
     }
 
-    let report = ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         DataSource::Query {
             engine: query_engine,
             statement: query.to_string(),
@@ -281,9 +289,18 @@ pub async fn analyze_database(
         },
         execution,
     )
-    .columns(column_profiles)
-    .with_quality_data(columns)
-    .build();
+    .columns(column_profiles);
+
+    if calculate_quality {
+        assembler = assembler.with_quality_data(columns);
+        if let Some(dims) = quality_dimensions {
+            assembler = assembler.with_requested_dimensions(dims);
+        }
+    } else {
+        assembler = assembler.skip_quality();
+    }
+
+    let report = assembler.build();
 
     Ok(report)
 }
