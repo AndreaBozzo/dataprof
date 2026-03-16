@@ -1,7 +1,7 @@
 //! Connection retry logic with exponential backoff
 
+use crate::core::errors::DataProfilerError;
 use crate::database::security::sanitize_error_message;
-use anyhow::Result;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -37,20 +37,20 @@ pub async fn retry_database_operation<T, F, Fut, E>(
     config: &RetryConfig,
     operation: F,
     operation_name: &str,
-) -> Result<T>
+) -> Result<T, DataProfilerError>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
     E: std::fmt::Display + Send + Sync + 'static,
 {
-    let mut last_error = None;
+    let mut last_error_msg = None;
     let mut delay = config.initial_delay;
 
     for attempt in 0..=config.max_retries {
         match operation().await {
             Ok(result) => return Ok(result),
             Err(error) => {
-                last_error = Some(anyhow::anyhow!("{}", error));
+                last_error_msg = Some(error.to_string());
 
                 if attempt < config.max_retries {
                     let actual_delay = if config.use_jitter {
@@ -81,13 +81,11 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        anyhow::anyhow!(
-            "Database operation '{}' failed after {} attempts",
-            operation_name,
-            config.max_retries + 1
-        )
-    }))
+    Err(DataProfilerError::DatabaseRetryExhausted {
+        operation: operation_name.to_string(),
+        attempts: config.max_retries + 1,
+        last_error: last_error_msg.unwrap_or_else(|| "unknown error".to_string()),
+    })
 }
 
 /// Add jitter to delay to avoid thundering herd problem
@@ -123,13 +121,13 @@ pub async fn retry_on_connection_error<T, F, Fut, E>(
     config: &RetryConfig,
     operation: F,
     operation_name: &str,
-) -> Result<T>
+) -> Result<T, DataProfilerError>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
     E: std::fmt::Display + Send + Sync + 'static,
 {
-    let mut last_error = None;
+    let mut last_error_msg = None;
     let mut delay = config.initial_delay;
 
     for attempt in 0..=config.max_retries {
@@ -140,10 +138,10 @@ where
 
                 // Only retry if it's a connection-related error
                 if !is_retryable_error(&error_str) {
-                    return Err(anyhow::anyhow!("{}", error));
+                    return Err(DataProfilerError::database_query(&error_str));
                 }
 
-                last_error = Some(anyhow::anyhow!("{}", error));
+                last_error_msg = Some(error_str);
 
                 if attempt < config.max_retries {
                     let actual_delay = if config.use_jitter {
@@ -174,13 +172,11 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        anyhow::anyhow!(
-            "Database operation '{}' failed after {} attempts",
-            operation_name,
-            config.max_retries + 1
-        )
-    }))
+    Err(DataProfilerError::DatabaseRetryExhausted {
+        operation: operation_name.to_string(),
+        attempts: config.max_retries + 1,
+        last_error: last_error_msg.unwrap_or_else(|| "unknown error".to_string()),
+    })
 }
 
 #[cfg(test)]

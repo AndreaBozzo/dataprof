@@ -4,13 +4,13 @@
 services:
   # PostgreSQL for testing database features
   postgres:
-    image: postgres:15-alpine
+    image: postgres:16-alpine
     container_name: dataprof-postgres-dev
     restart: unless-stopped
     environment:
       POSTGRES_DB: dataprof_test
       POSTGRES_USER: dataprof
-      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     ports:
       - "5432:5432"
@@ -32,17 +32,17 @@ services:
     container_name: dataprof-mysql-dev
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root_password_123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password_123}
       MYSQL_DATABASE: dataprof_test
       MYSQL_USER: dataprof
-      MYSQL_PASSWORD: dev_password_123
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-dev_password_123}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./init-scripts/mysql:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "dataprof", "-pdev_password_123"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -73,8 +73,8 @@ services:
     container_name: dataprof-minio-dev
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     ports:
       - "9000:9000"
       - "9090:9090"
@@ -95,8 +95,8 @@ services:
     container_name: dataprof-pgadmin-dev
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@dataprof.dev
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@dataprof.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
     ports:
@@ -118,7 +118,7 @@ services:
     environment:
       PMA_HOST: mysql
       PMA_USER: dataprof
-      PMA_PASSWORD: dev_password_123
+      PMA_PASSWORD: ${MYSQL_PASSWORD:-dev_password_123}
       UPLOAD_LIMIT: 100M
     ports:
       - "8081:80"
@@ -128,6 +128,25 @@ services:
       - dataprof-dev
     profiles:
       - admin  # Only start with --profile admin
+
+  # Dev container for VS Code Remote Containers
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password_123}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-dev_password_123}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - dataprof-dev
 
 # Persistent volumes for development data
 volumes:

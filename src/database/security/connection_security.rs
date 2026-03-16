@@ -4,7 +4,7 @@ use super::{
     credentials::DatabaseCredentials, environment::load_ssl_config_from_environment,
     ssl_config::SslConfig,
 };
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use std::collections::HashMap;
 
 /// Validate database connection security
@@ -12,7 +12,7 @@ pub fn validate_connection_security(
     connection_string: &str,
     ssl_config: &SslConfig,
     database_type: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<String>, DataProfilerError> {
     let mut warnings = Vec::new();
 
     // Parse connection string to check for security issues
@@ -70,7 +70,9 @@ pub fn validate_connection_security(
 }
 
 /// Load database configuration from environment with security best practices
-pub fn load_secure_database_config(database_type: &str) -> Result<(String, SslConfig)> {
+pub fn load_secure_database_config(
+    database_type: &str,
+) -> Result<(String, SslConfig), DataProfilerError> {
     let credentials = DatabaseCredentials::from_environment(database_type);
 
     // Build base connection string
@@ -92,10 +94,10 @@ pub fn load_secure_database_config(database_type: &str) -> Result<(String, SslCo
             .clone()
             .unwrap_or_else(|| ":memory:".to_string()),
         _ => {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::database_config(&format!(
                 "Unsupported database type: {}",
                 database_type
-            ));
+            )));
         }
     };
 

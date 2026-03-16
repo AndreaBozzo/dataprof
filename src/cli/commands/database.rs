@@ -94,7 +94,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| anyhow::anyhow!("Failed to create async runtime: {}", e))?;
 
-    let report = rt.block_on(async { analyze_database(config, &query).await })?;
+    let report = rt.block_on(async { analyze_database(config, &query, true, None).await })?;
 
     println!(
         "🔗 {} | {} columns | {} rows",

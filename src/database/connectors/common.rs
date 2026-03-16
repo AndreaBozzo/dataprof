@@ -3,26 +3,22 @@
 //! This module provides reusable functions to reduce code duplication across
 //! PostgreSQL, MySQL, and SQLite connectors.
 
+use crate::core::errors::DataProfilerError;
 use crate::database::{validate_base_query, validate_sql_identifier};
-use anyhow::Result;
 
 // ============================================================================
 // Error Helpers
 // ============================================================================
 
 /// Generate "not connected to database" error
-pub fn not_connected_error() -> anyhow::Error {
-    anyhow::anyhow!("Not connected to database")
+pub fn not_connected_error() -> DataProfilerError {
+    DataProfilerError::database_connection("Not connected to database")
 }
 
 /// Generate feature-not-enabled error for a specific database
 #[allow(dead_code)]
-pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "{} support not compiled. Enable '{}' feature.",
-        db_name,
-        feature
-    )
+pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerError {
+    DataProfilerError::database_feature_disabled(db_name, feature)
 }
 
 // ============================================================================
@@ -48,7 +44,11 @@ macro_rules! streaming_profile_loop {
             let rows = sqlx::query(&batch_query)
                 .fetch_all($pool)
                 .await
-                .map_err(|e| anyhow::anyhow!("Batch query execution failed: {}", e))?;
+                .map_err(
+                    |e| $crate::core::errors::DataProfilerError::DatabaseQueryError {
+                        message: format!("Batch query execution failed: {}", e),
+                    },
+                )?;
 
             if rows.is_empty() {
                 break;
@@ -133,7 +133,7 @@ macro_rules! process_rows_to_columns {
 // ============================================================================
 
 /// Build a count query for a given table or query
-pub fn build_count_query(query: &str) -> Result<String> {
+pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {
     if query.trim().to_uppercase().starts_with("SELECT") {
         let validated_query = validate_base_query(query)?;
         Ok(format!(
@@ -147,7 +147,11 @@ pub fn build_count_query(query: &str) -> Result<String> {
 }
 
 /// Build a batch query with LIMIT and OFFSET
-pub fn build_batch_query(query: &str, batch_size: usize, offset: usize) -> Result<String> {
+pub fn build_batch_query(
+    query: &str,
+    batch_size: usize,
+    offset: usize,
+) -> Result<String, DataProfilerError> {
     let validated_query = if query.trim().to_uppercase().starts_with("SELECT") {
         validate_base_query(query)?
     } else {

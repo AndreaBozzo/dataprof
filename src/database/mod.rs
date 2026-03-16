@@ -9,9 +9,9 @@
 //! the same data profiling features as file-based sources.
 
 use crate::analysis::analyze_column;
+use crate::core::errors::DataProfilerError;
 use crate::core::report_assembler::ReportAssembler;
 use crate::types::{DataSource, ExecutionMetadata, ProfileReport, QueryEngine};
-use anyhow::Result;
 use std::collections::HashMap;
 
 pub mod connection;
@@ -59,33 +59,41 @@ impl Default for DatabaseConfig {
 #[async_trait::async_trait]
 pub trait DatabaseConnector: Send + Sync {
     /// Connect to the database
-    async fn connect(&mut self) -> Result<()>;
+    async fn connect(&mut self) -> Result<(), DataProfilerError>;
 
     /// Disconnect from the database
-    async fn disconnect(&mut self) -> Result<()>;
+    async fn disconnect(&mut self) -> Result<(), DataProfilerError>;
 
     /// Execute a query and get column data for profiling
-    async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>>;
+    async fn profile_query(
+        &mut self,
+        query: &str,
+    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError>;
 
     /// Execute a query with streaming for large result sets
     async fn profile_query_streaming(
         &mut self,
         query: &str,
         batch_size: usize,
-    ) -> Result<HashMap<String, Vec<String>>>;
+    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError>;
 
     /// Get table schema information
-    async fn get_table_schema(&mut self, table_name: &str) -> Result<Vec<String>>;
+    async fn get_table_schema(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Vec<String>, DataProfilerError>;
 
     /// Count total rows in table (for progress tracking)
-    async fn count_table_rows(&mut self, table_name: &str) -> Result<u64>;
+    async fn count_table_rows(&mut self, table_name: &str) -> Result<u64, DataProfilerError>;
 
     /// Test connection
-    async fn test_connection(&mut self) -> Result<bool>;
+    async fn test_connection(&mut self) -> Result<bool, DataProfilerError>;
 }
 
 /// Factory function to create appropriate database connector
-pub fn create_connector(mut config: DatabaseConfig) -> Result<Box<dyn DatabaseConnector>> {
+pub fn create_connector(
+    mut config: DatabaseConfig,
+) -> Result<Box<dyn DatabaseConnector>, DataProfilerError> {
     // Apply environment variables and SSL configuration if enabled
     if config.load_credentials_from_env || config.connection_string.is_empty() {
         config = apply_environment_configuration(config)?;
@@ -106,15 +114,19 @@ pub fn create_connector(mut config: DatabaseConfig) -> Result<Box<dyn DatabaseCo
     {
         Ok(Box::new(connectors::sqlite::SqliteConnector::new(config)?))
     } else {
-        Err(anyhow::anyhow!(
-            "Unsupported database connection string: {}. Supported: postgresql://, mysql://, sqlite://",
-            connection_str
-        ))
+        Err(DataProfilerError::DatabaseConfigError {
+            message: format!(
+                "Unsupported database connection string: {}. Supported: postgresql://, mysql://, sqlite://",
+                connection_str
+            ),
+        })
     }
 }
 
 /// Apply environment configuration to database config
-fn apply_environment_configuration(mut config: DatabaseConfig) -> Result<DatabaseConfig> {
+fn apply_environment_configuration(
+    mut config: DatabaseConfig,
+) -> Result<DatabaseConfig, DataProfilerError> {
     // Determine database type from connection string or auto-detect
     let database_type = if config.connection_string.is_empty() {
         // Try to auto-detect from environment
@@ -159,8 +171,19 @@ fn apply_environment_configuration(mut config: DatabaseConfig) -> Result<Databas
     Ok(config)
 }
 
-/// High-level function to analyze a database table or query
-pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<ProfileReport> {
+/// High-level function to analyze a database table or query.
+///
+/// # Arguments
+/// * `config` - Database connection and execution configuration
+/// * `query` - SQL query or table name to profile
+/// * `calculate_quality` - Whether to compute ISO 25012 quality metrics
+/// * `quality_dimensions` - Optional subset of quality dimensions to compute
+pub async fn analyze_database(
+    config: DatabaseConfig,
+    query: &str,
+    calculate_quality: bool,
+    quality_dimensions: Option<Vec<crate::types::QualityDimension>>,
+) -> Result<ProfileReport, DataProfilerError> {
     let mut connector = create_connector(config.clone())?;
 
     // Connect to database
@@ -233,7 +256,7 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Pro
             },
             exec,
         )
-        .skip_quality()
+        .skip_quality() // empty result set — no quality to compute
         .build());
     }
 
@@ -257,7 +280,7 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Pro
             .with_source_exhausted(false);
     }
 
-    let report = ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         DataSource::Query {
             engine: query_engine,
             statement: query.to_string(),
@@ -266,9 +289,18 @@ pub async fn analyze_database(config: DatabaseConfig, query: &str) -> Result<Pro
         },
         execution,
     )
-    .columns(column_profiles)
-    .with_quality_data(columns)
-    .build();
+    .columns(column_profiles);
+
+    if calculate_quality {
+        assembler = assembler.with_quality_data(columns);
+        if let Some(dims) = quality_dimensions {
+            assembler = assembler.with_requested_dimensions(dims);
+        }
+    } else {
+        assembler = assembler.skip_quality();
+    }
+
+    let report = assembler.build();
 
     Ok(report)
 }

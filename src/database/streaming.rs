@@ -1,6 +1,6 @@
 //! Streaming utilities for processing large database result sets
 
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use std::collections::HashMap;
 
 /// Configuration for streaming database results
@@ -24,7 +24,7 @@ impl Default for StreamingConfig {
 /// Utility to merge multiple batches of column data
 pub fn merge_column_batches(
     batches: Vec<HashMap<String, Vec<String>>>,
-) -> Result<HashMap<String, Vec<String>>> {
+) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
     if batches.is_empty() {
         return Ok(HashMap::new());
     }
@@ -53,7 +53,7 @@ pub fn apply_sampling_if_needed(
     mut columns: HashMap<String, Vec<String>>,
     max_memory_mb: usize,
     sampling_ratio: f64,
-) -> Result<(HashMap<String, Vec<String>>, bool)> {
+) -> Result<(HashMap<String, Vec<String>>, bool), DataProfilerError> {
     let memory_usage_bytes = estimate_memory_usage(&columns);
     let memory_usage_mb = memory_usage_bytes / 1_048_576;
 

@@ -4,11 +4,10 @@
 //! allowing non-blocking database queries from Python using asyncio.
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 
 #[cfg(feature = "database")]
 use crate::database::{DatabaseConfig, analyze_database, create_connector};
-use crate::python::types::{PyColumnProfile, PyDataQualityMetrics};
+use crate::python::types::PyProfileReport;
 
 /// Async Python wrapper for database analysis
 ///
@@ -73,10 +72,8 @@ async fn analyze_database_internal(
     connection_string: String,
     query: String,
     batch_size: usize,
-    _calculate_quality: bool,
-) -> Result<pyo3::Py<pyo3::PyAny>, anyhow::Error> {
-    use pyo3::Python;
-
+    calculate_quality: bool,
+) -> Result<PyProfileReport, crate::core::errors::DataProfilerError> {
     // Create database configuration
     let config = DatabaseConfig {
         connection_string,
@@ -85,36 +82,9 @@ async fn analyze_database_internal(
     };
 
     // Analyze the database query
-    let quality_report = analyze_database(config, &query).await?;
+    let report = analyze_database(config, &query, calculate_quality, None).await?;
 
-    // Convert to Python objects
-    Python::attach(|py| {
-        let result = PyDict::new(py);
-
-        // Add column profiles as a list
-        let py_profiles: Vec<PyColumnProfile> = quality_report
-            .column_profiles
-            .iter()
-            .map(PyColumnProfile::from)
-            .collect();
-        result.set_item("columns", py_profiles)?;
-
-        // Add quality metrics
-        if let Some(ref quality) = quality_report.quality {
-            result.set_item("quality", PyDataQualityMetrics::from(&quality.metrics))?;
-        }
-
-        // Add metadata
-        result.set_item("row_count", quality_report.execution.rows_processed)?;
-
-        // Convert execution metadata to a simple string representation
-        let execution_info = format!("{:?}", quality_report.execution);
-        result.set_item("execution_info", &execution_info)?;
-        // Backward compatibility: keep old key name as alias
-        result.set_item("scan_info", &execution_info)?;
-
-        Ok(result.into())
-    })
+    Ok(PyProfileReport::new(report))
 }
 
 /// Test async database connection
@@ -162,14 +132,19 @@ pub fn test_connection_async<'py>(
 
 /// Internal test connection function
 #[cfg(all(feature = "database", feature = "python-async"))]
-async fn test_connection_internal(connection_string: String) -> Result<bool, anyhow::Error> {
+async fn test_connection_internal(
+    connection_string: String,
+) -> Result<bool, crate::core::errors::DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()
     };
 
     let mut connector = create_connector(config)?;
-    connector.test_connection().await
+    connector.connect().await?;
+    let result = connector.test_connection().await;
+    connector.disconnect().await?;
+    result
 }
 
 /// Get table schema asynchronously
@@ -223,7 +198,7 @@ pub fn get_table_schema_async<'py>(
 async fn get_table_schema_internal(
     connection_string: String,
     table_name: String,
-) -> Result<Vec<String>, anyhow::Error> {
+) -> Result<Vec<String>, crate::core::errors::DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()
@@ -288,7 +263,7 @@ pub fn count_table_rows_async<'py>(
 async fn count_table_rows_internal(
     connection_string: String,
     table_name: String,
-) -> Result<u64, anyhow::Error> {
+) -> Result<u64, crate::core::errors::DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()

@@ -1,0 +1,28 @@
+{
+    "name": "DataProf Dev",
+    "dockerComposeFile": "compose.yml",
+    "service": "devcontainer",
+    "workspaceFolder": "/workspace",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {
+            "version": "stable"
+        },
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.12"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ]
+        }
+    },
+    "postCreateCommand": "pip install uv maturin && cargo build --features all-db && uv sync",
+    "remoteEnv": {
+        "POSTGRES_TEST_URL": "postgresql://dataprof:dev_password_123@postgres:5432/dataprof_test",
+        "MYSQL_TEST_URL": "mysql://dataprof:dev_password_123@mysql:3306/dataprof_test"
+    }
+}

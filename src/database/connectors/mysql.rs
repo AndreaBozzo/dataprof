@@ -4,11 +4,11 @@
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "mysql")]
 use super::common::{build_count_query, not_connected_error};
+use crate::core::errors::DataProfilerError;
 use crate::database::connection::ConnectionInfo;
 use crate::database::security::validate_sql_identifier;
 use crate::database::{DatabaseConfig, DatabaseConnector};
 use crate::{process_rows_to_columns, streaming_profile_loop};
-use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -30,14 +30,16 @@ pub struct MySqlConnector {
 
 impl MySqlConnector {
     /// Create a new MySQL connector
-    pub fn new(config: DatabaseConfig) -> Result<Self> {
+    pub fn new(config: DatabaseConfig) -> Result<Self, DataProfilerError> {
         let connection_info = ConnectionInfo::parse(&config.connection_string)?;
 
         if connection_info.database_type() != "mysql" {
-            return Err(anyhow::anyhow!(
-                "Invalid connection string for MySQL: {}",
-                config.connection_string
-            ));
+            return Err(DataProfilerError::DatabaseConfigError {
+                message: format!(
+                    "Invalid connection string for MySQL: {}",
+                    config.connection_string
+                ),
+            });
         }
 
         Ok(Self {
@@ -50,7 +52,7 @@ impl MySqlConnector {
 
 #[async_trait]
 impl DatabaseConnector for MySqlConnector {
-    async fn connect(&mut self) -> Result<()> {
+    async fn connect(&mut self) -> Result<(), DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let connection_string = self.connection_info.to_connection_string("sqlx");
@@ -64,7 +66,12 @@ impl DatabaseConnector for MySqlConnector {
                 )
                 .connect(&connection_string)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to connect to MySQL: {}", e))?;
+                .map_err(|e| {
+                    DataProfilerError::database_connection(&format!(
+                        "Failed to connect to MySQL: {}",
+                        e
+                    ))
+                })?;
 
             self.pool = Some(pool);
             Ok(())
@@ -72,13 +79,13 @@ impl DatabaseConnector for MySqlConnector {
 
         #[cfg(not(feature = "mysql"))]
         {
-            Err(anyhow::anyhow!(
-                "MySQL support not compiled. Enable 'mysql' feature."
+            Err(DataProfilerError::database_feature_disabled(
+                "MySQL", "mysql",
             ))
         }
     }
 
-    async fn disconnect(&mut self) -> Result<()> {
+    async fn disconnect(&mut self) -> Result<(), DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             if let Some(pool) = &self.pool {
@@ -90,15 +97,17 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     #[allow(unused_variables)]
-    async fn profile_query(&mut self, query: &str) -> Result<HashMap<String, Vec<String>>> {
+    async fn profile_query(
+        &mut self,
+        query: &str,
+    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            let rows = sqlx::query(query)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| anyhow::anyhow!("Query execution failed: {}", e))?;
+            let rows = sqlx::query(query).fetch_all(pool).await.map_err(|e| {
+                DataProfilerError::database_query(&format!("Query execution failed: {}", e))
+            })?;
 
             Ok(process_rows_to_columns!(rows))
         }
@@ -112,7 +121,7 @@ impl DatabaseConnector for MySqlConnector {
         &mut self,
         query: &str,
         batch_size: usize,
-    ) -> Result<HashMap<String, Vec<String>>> {
+    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
@@ -122,7 +131,9 @@ impl DatabaseConnector for MySqlConnector {
             let total_rows: i64 = sqlx::query_scalar(&count_query)
                 .fetch_one(pool)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to count rows: {}", e))?;
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
+                })?;
 
             streaming_profile_loop!(pool, query, batch_size, total_rows, "MySQL")
         }
@@ -132,7 +143,10 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     #[allow(unused_variables)]
-    async fn get_table_schema(&mut self, table_name: &str) -> Result<Vec<String>> {
+    async fn get_table_schema(
+        &mut self,
+        table_name: &str,
+    ) -> Result<Vec<String>, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             use sqlx::Row;
@@ -150,13 +164,15 @@ impl DatabaseConnector for MySqlConnector {
                 .bind(table_name)
                 .fetch_all(pool)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to get table schema: {}", e))?;
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to get table schema: {}", e))
+                })?;
 
             let mut columns = Vec::new();
             for row in rows {
-                let column_name: String = row
-                    .try_get(0)
-                    .map_err(|e| anyhow::anyhow!("Failed to read column name: {}", e))?;
+                let column_name: String = row.try_get(0).map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to read column name: {}", e))
+                })?;
                 columns.push(column_name);
             }
 
@@ -168,7 +184,7 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     #[allow(unused_variables)]
-    async fn count_table_rows(&mut self, table_name: &str) -> Result<u64> {
+    async fn count_table_rows(&mut self, table_name: &str) -> Result<u64, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
@@ -178,7 +194,9 @@ impl DatabaseConnector for MySqlConnector {
             let count: i64 = sqlx::query_scalar(&query)
                 .fetch_one(pool)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to count rows: {}", e))?;
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
+                })?;
 
             Ok(count as u64)
         }
@@ -187,7 +205,7 @@ impl DatabaseConnector for MySqlConnector {
         Err(feature_not_enabled_error("MySQL", "mysql"))
     }
 
-    async fn test_connection(&mut self) -> Result<bool> {
+    async fn test_connection(&mut self) -> Result<bool, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
@@ -195,7 +213,9 @@ impl DatabaseConnector for MySqlConnector {
             let result: i32 = sqlx::query_scalar("SELECT 1")
                 .fetch_one(pool)
                 .await
-                .map_err(|e| anyhow::anyhow!("Connection test failed: {}", e))?;
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Connection test failed: {}", e))
+                })?;
 
             Ok(result == 1)
         }

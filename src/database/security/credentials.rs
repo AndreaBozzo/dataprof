@@ -1,6 +1,6 @@
 //! Database credentials management with environment variable support
 
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use std::collections::HashMap;
 use std::env;
 
@@ -145,20 +145,20 @@ impl DatabaseCredentials {
     }
 
     /// Validate that required credentials are present
-    pub fn validate(&self, database_type: &str) -> Result<()> {
+    pub fn validate(&self, database_type: &str) -> Result<(), DataProfilerError> {
         match database_type {
             "postgresql" | "mysql" => {
                 if self.host.is_none() {
-                    return Err(anyhow::anyhow!(
+                    return Err(DataProfilerError::database_config(&format!(
                         "Database host is required for {}",
                         database_type
-                    ));
+                    )));
                 }
                 if self.username.is_none() {
-                    return Err(anyhow::anyhow!(
+                    return Err(DataProfilerError::database_config(&format!(
                         "Database username is required for {}",
                         database_type
-                    ));
+                    )));
                 }
                 // Password might be optional for some authentication methods
             }

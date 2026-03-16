@@ -1,18 +1,22 @@
 //! SQL validation utilities to prevent injection attacks
 
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use std::collections::HashSet;
 
 /// Validate SQL identifiers (table names, column names) to prevent injection
-pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
+pub fn validate_sql_identifier(identifier: &str) -> Result<(), DataProfilerError> {
     // Check for empty or null
     if identifier.trim().is_empty() {
-        return Err(anyhow::anyhow!("SQL identifier cannot be empty"));
+        return Err(DataProfilerError::sql_validation(
+            "SQL identifier cannot be empty",
+        ));
     }
 
     // Check length (reasonable limit)
     if identifier.len() > 128 {
-        return Err(anyhow::anyhow!("SQL identifier too long (max 128 chars)"));
+        return Err(DataProfilerError::sql_validation(
+            "SQL identifier too long (max 128 chars)",
+        ));
     }
 
     // Allow only alphanumeric, underscores, dots (for schema.table), and spaces within quotes
@@ -29,28 +33,32 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
         // For quoted identifiers, allow more characters but still validate
         let inner = &identifier[1..identifier.len() - 1];
         if inner.is_empty() {
-            return Err(anyhow::anyhow!("Quoted identifier cannot be empty"));
+            return Err(DataProfilerError::sql_validation(
+                "Quoted identifier cannot be empty",
+            ));
         }
         // Prevent nested quotes or dangerous characters
         let quote_char = identifier
             .chars()
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Invalid identifier format"))?;
+            .ok_or_else(|| DataProfilerError::sql_validation("Invalid identifier format"))?;
         if inner.contains(quote_char)
             || inner.contains(';')
-            || inner.contains('-') && inner.contains('-')
+            || inner.contains("--")
             || inner.contains("/*")
             || inner.contains("*/")
         {
-            return Err(anyhow::anyhow!("Invalid characters in quoted identifier"));
+            return Err(DataProfilerError::sql_validation(
+                "Invalid characters in quoted identifier",
+            ));
         }
     } else {
         // Unquoted identifiers must follow strict rules
         if !identifier.chars().all(|c| allowed_chars.contains(&c)) {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::sql_validation(&format!(
                 "Invalid SQL identifier '{}': only alphanumeric, underscore, and dot allowed",
                 identifier
-            ));
+            )));
         }
 
         // Must start with letter or underscore
@@ -58,8 +66,8 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
             && !first_char.is_alphabetic()
             && first_char != '_'
         {
-            return Err(anyhow::anyhow!(
-                "SQL identifier must start with letter or underscore"
+            return Err(DataProfilerError::sql_validation(
+                "SQL identifier must start with letter or underscore",
             ));
         }
     }
@@ -92,10 +100,10 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
 
     for keyword in &dangerous_keywords {
         if identifier_upper.contains(keyword) {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::sql_validation(&format!(
                 "SQL identifier contains dangerous keyword or pattern: {}",
                 keyword
-            ));
+            )));
         }
     }
 
@@ -103,23 +111,25 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<()> {
 }
 
 /// Validate and sanitize a basic SQL query to ensure it's a SELECT statement
-pub fn validate_base_query(query: &str) -> Result<String> {
+pub fn validate_base_query(query: &str) -> Result<String, DataProfilerError> {
     let trimmed = query.trim();
 
     if trimmed.is_empty() {
-        return Err(anyhow::anyhow!("Query cannot be empty"));
+        return Err(DataProfilerError::sql_validation("Query cannot be empty"));
     }
 
     // Check total length
     if trimmed.len() > 10000 {
-        return Err(anyhow::anyhow!("Query too long (max 10000 chars)"));
+        return Err(DataProfilerError::sql_validation(
+            "Query too long (max 10000 chars)",
+        ));
     }
 
     // Must be a SELECT statement (case insensitive)
     let query_upper = trimmed.to_uppercase();
     if !query_upper.starts_with("SELECT") {
-        return Err(anyhow::anyhow!(
-            "Only SELECT queries are allowed for sampling"
+        return Err(DataProfilerError::sql_validation(
+            "Only SELECT queries are allowed for sampling",
         ));
     }
 
@@ -156,10 +166,10 @@ pub fn validate_base_query(query: &str) -> Result<String> {
 
     for pattern in &dangerous_patterns {
         if query_upper.contains(pattern) {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::sql_validation(&format!(
                 "Query contains dangerous SQL pattern: {}",
                 pattern
-            ));
+            )));
         }
     }
 

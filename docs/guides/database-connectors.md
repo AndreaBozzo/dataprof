@@ -96,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Get quality report with ISO 8000/25012 metrics
-    let report = analyze_database(config, "SELECT * FROM large_table").await?;
+    let report = analyze_database(config, "SELECT * FROM large_table", true, None).await?;
 
     println!("📊 Processed {} rows across {} columns",
         report.execution.rows_processed,
@@ -238,7 +238,7 @@ let config = DatabaseConfig {
     ..Default::default()
 };
 
-let report = analyze_database(config, "user_profiles").await?;
+let report = analyze_database(config, "user_profiles", true, None).await?;
 
 println!("Overall Quality Score: {:.1}%", report.quality_score());
 
@@ -425,7 +425,7 @@ async fn profile_daily_data() -> anyhow::Result<()> {
             ..Default::default()
         };
 
-        let report = analyze_database(config, "daily_metrics").await?;
+        let report = analyze_database(config, "daily_metrics", true, None).await?;
         println!("{}: {} rows profiled", name, report.execution.rows_processed);
     }
 
@@ -447,7 +447,7 @@ async fn monitor_data_quality() -> anyhow::Result<()> {
     let report = analyze_database(config, "
         SELECT * FROM customer_data
         WHERE created_at >= CURRENT_DATE - INTERVAL '1 day'
-    ").await?;
+    ", true, None).await?;
 
     if let Some(ref quality) = report.quality {
         let score = quality.metrics.overall_score();

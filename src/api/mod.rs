@@ -8,6 +8,8 @@ use crate::core::errors::DataProfilerError;
 use crate::core::progress::{ProgressEvent, ProgressSink};
 use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::StopCondition;
+#[cfg(feature = "database")]
+use crate::database::DatabaseConfig;
 use crate::engines::adaptive::AdaptiveProfiler;
 use crate::types::{
     DataSource, FileFormat, ProfileReport, QualityDimension, RowCountEstimate, SchemaResult,
@@ -42,6 +44,9 @@ pub struct ProfilerConfig {
     pub csv_flexible: Option<bool>,
     /// Which quality dimensions to compute. `None` = all (default).
     pub quality_dimensions: Option<Vec<QualityDimension>>,
+    /// Database connection configuration. Required for `analyze_query()`.
+    #[cfg(feature = "database")]
+    pub database_config: Option<DatabaseConfig>,
 }
 
 impl Default for ProfilerConfig {
@@ -57,6 +62,8 @@ impl Default for ProfilerConfig {
             csv_delimiter: None,
             csv_flexible: None,
             quality_dimensions: None,
+            #[cfg(feature = "database")]
+            database_config: None,
         }
     }
 }
@@ -155,6 +162,23 @@ impl Profiler {
         self
     }
 
+    /// Set database connection configuration for `analyze_query()`.
+    #[cfg(feature = "database")]
+    pub fn database(mut self, config: DatabaseConfig) -> Self {
+        self.config.database_config = Some(config);
+        self
+    }
+
+    /// Convenience: set a database connection string with default config.
+    #[cfg(feature = "database")]
+    pub fn connection_string(mut self, conn: &str) -> Self {
+        self.config.database_config = Some(DatabaseConfig {
+            connection_string: conn.to_string(),
+            ..Default::default()
+        });
+        self
+    }
+
     /// Select which ISO 25012 quality dimensions to compute.
     ///
     /// By default all dimensions are evaluated. Call this method with a subset
@@ -217,14 +241,36 @@ impl Profiler {
         }
     }
 
-    /// Analyze a DataSource and return a quality report
+    /// Analyze a DataSource and return a quality report.
+    ///
+    /// Supports `DataSource::File` synchronously. For `DataSource::Query`, use
+    /// [`analyze_source_async()`](Self::analyze_source_async) or [`analyze_query()`](Self::analyze_query).
     pub fn analyze_source(&self, source: &DataSource) -> Result<ProfileReport, DataProfilerError> {
         match source {
             DataSource::File { path, .. } => self.analyze_file(Path::new(path)),
             _ => Err(DataProfilerError::UnsupportedDataSource {
-                message: "Only File DataSource is currently supported in synchronous API. \
-                          Use async API for streams."
+                message: "Only File DataSource is supported in synchronous API. \
+                          Use analyze_source_async() for Query/Stream sources."
                     .to_string(),
+            }),
+        }
+    }
+
+    /// Analyze a DataSource asynchronously.
+    ///
+    /// Supports `DataSource::File` and `DataSource::Query`. For queries, a database
+    /// connection must be configured via [`.database()`](Self::database) or
+    /// [`.connection_string()`](Self::connection_string).
+    pub async fn analyze_source_async(
+        &self,
+        source: &DataSource,
+    ) -> Result<ProfileReport, DataProfilerError> {
+        match source {
+            DataSource::File { path, .. } => self.analyze_file(Path::new(path)),
+            #[cfg(feature = "database")]
+            DataSource::Query { statement, .. } => self.analyze_query(statement).await,
+            _ => Err(DataProfilerError::UnsupportedDataSource {
+                message: "Unsupported DataSource variant for this configuration.".to_string(),
             }),
         }
     }
@@ -408,6 +454,76 @@ impl Profiler {
 impl Default for Profiler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Database API (feature-gated)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "database")]
+impl Profiler {
+    /// Profile a database query or table asynchronously.
+    ///
+    /// Requires a database connection to be configured via [`.database()`](Self::database)
+    /// or [`.connection_string()`](Self::connection_string).
+    ///
+    /// Quality metrics are computed by default. Use [`.quality_dimensions()`](Self::quality_dimensions)
+    /// to select a subset.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use dataprof::Profiler;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let report = Profiler::new()
+    ///     .connection_string("sqlite:///tmp/test.db")
+    ///     .analyze_query("SELECT * FROM users")
+    ///     .await?;
+    /// println!("Rows: {}", report.execution.rows_processed);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn analyze_query(&self, query: &str) -> Result<ProfileReport, DataProfilerError> {
+        let config = self
+            .config
+            .database_config
+            .clone()
+            .ok_or(DataProfilerError::DatabaseConfigError {
+            message:
+                "No database connection configured. Use .database() or .connection_string() first."
+                    .to_string(),
+        })?;
+
+        crate::database::analyze_database(
+            config,
+            query,
+            true,
+            self.config.quality_dimensions.clone(),
+        )
+        .await
+    }
+
+    /// Profile a database query without computing quality metrics.
+    ///
+    /// Faster than [`analyze_query()`](Self::analyze_query) since it skips
+    /// ISO 25012 quality metric computation.
+    pub async fn analyze_query_no_quality(
+        &self,
+        query: &str,
+    ) -> Result<ProfileReport, DataProfilerError> {
+        let config = self
+            .config
+            .database_config
+            .clone()
+            .ok_or(DataProfilerError::DatabaseConfigError {
+            message:
+                "No database connection configured. Use .database() or .connection_string() first."
+                    .to_string(),
+        })?;
+
+        crate::database::analyze_database(config, query, false, None).await
     }
 }
 

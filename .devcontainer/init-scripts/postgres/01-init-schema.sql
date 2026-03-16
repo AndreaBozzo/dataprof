@@ -11,6 +11,26 @@ CREATE SCHEMA IF NOT EXISTS dataprof_test;
 GRANT ALL PRIVILEGES ON SCHEMA dataprof_core TO dataprof;
 GRANT ALL PRIVILEGES ON SCHEMA dataprof_test TO dataprof;
 
+-- Set default search_path so unqualified table names resolve to dataprof_test
+ALTER ROLE dataprof SET search_path TO dataprof_test, public;
+SET search_path TO dataprof_test, public;
+
+-- Create test_users table (used by integration tests)
+CREATE TABLE IF NOT EXISTS dataprof_test.test_users (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT,
+    age INTEGER,
+    salary REAL
+);
+
+INSERT INTO dataprof_test.test_users (name, email, age, salary) VALUES
+('alice', 'alice@example.com', 25, 50000.0),
+('bob', 'bob@example.com', 30, 60000.0),
+('charlie', NULL, 35, NULL),
+('diana', 'diana@example.com', NULL, 55000.0),
+('eve', 'eve@example.com', 28, 70000.0);
+
 -- Create test tables for CSV-like data analysis
 CREATE TABLE IF NOT EXISTS dataprof_test.sample_data (
     id SERIAL PRIMARY KEY,

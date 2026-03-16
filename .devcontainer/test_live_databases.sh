@@ -15,7 +15,7 @@ NC='\033[0m' # No Color
 
 # Test PostgreSQL connectivity
 echo "1️⃣ Testing PostgreSQL Connection..."
-export PGPASSWORD='dev_password_123'
+export PGPASSWORD="${POSTGRES_PASSWORD:-dev_password_123}"
 if psql -h localhost -U dataprof -d dataprof_test -c "SELECT version();" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ PostgreSQL is accessible${NC}"
     
@@ -58,12 +58,13 @@ echo ""
 
 # Test MySQL connectivity
 echo "2️⃣ Testing MySQL Connection..."
-if mysql -h 127.0.0.1 -u dataprof -pdev_password_123 dataprof_test -e "SELECT VERSION();" > /dev/null 2>&1; then
+MYSQL_PWD="${MYSQL_PASSWORD:-dev_password_123}"
+if mysql -h 127.0.0.1 -u dataprof -p"${MYSQL_PWD}" dataprof_test -e "SELECT VERSION();" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ MySQL is accessible${NC}"
     
     # Create test table and data
     echo "   Creating test table and sample data..."
-    mysql -h 127.0.0.1 -u dataprof -pdev_password_123 dataprof_test << EOF
+    mysql -h 127.0.0.1 -u dataprof -p"${MYSQL_PWD}" dataprof_test << EOF
 DROP TABLE IF EXISTS test_products;
 CREATE TABLE test_products (
     product_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -100,9 +101,9 @@ echo ""
 echo "3️⃣ Running Rust Database Tests..."
 echo ""
 
-# Run the database integration tests (excluding DuckDB which isn't configured)
-cargo test --test database_integration --features "database,postgres,mysql,sqlite" \
-    --lib -- --test-threads=1 2>&1 | grep -E "(test |passed|failed|running)" || true
+# Run the database integration tests
+cargo test --test database_integration --features "all-db" \
+    -- --test-threads=1 2>&1 | grep -E "(test |passed|failed|running)" || true
 
 echo ""
 echo "4️⃣ Testing Database Profiling with DataProf..."
@@ -110,12 +111,13 @@ echo ""
 
 # Build with database features if needed
 echo "   Building dataprof with database support..."
-cargo build --release --features "database,postgres,mysql,sqlite" 2>&1 | tail -5
+cargo build --release --features "all-db" 2>&1 | tail -5
 
 echo ""
 echo "   Profiling PostgreSQL table..."
+PG_CONN="postgresql://dataprof:${PGPASSWORD}@localhost:5432/dataprof_test"
 if ./target/release/dataprof db \
-    "postgresql://dataprof:dev_password_123@localhost:5432/dataprof_test" \
+    "${PG_CONN}" \
     --query "SELECT * FROM test_users" \
     --output postgres_profile.json 2>&1; then
     echo -e "${GREEN}   ✅ PostgreSQL profiling completed${NC}"
@@ -131,8 +133,9 @@ fi
 
 echo ""
 echo "   Profiling MySQL table..."
+MY_CONN="mysql://dataprof:${MYSQL_PWD}@127.0.0.1:3306/dataprof_test"
 if ./target/release/dataprof db \
-    "mysql://dataprof:dev_password_123@127.0.0.1:3306/dataprof_test" \
+    "${MY_CONN}" \
     --query "SELECT * FROM test_products" \
     --output mysql_profile.json 2>&1; then
     echo -e "${GREEN}   ✅ MySQL profiling completed${NC}"
@@ -155,5 +158,5 @@ echo "  - MySQL: Running on port 3306"
 echo "  - Test tables created with sample data"
 echo ""
 echo "Connection strings for testing:"
-echo "  PostgreSQL: postgresql://dataprof:dev_password_123@localhost:5432/dataprof_test"
-echo "  MySQL: mysql://dataprof:dev_password_123@127.0.0.1:3306/dataprof_test"
+echo "  PostgreSQL: postgresql://dataprof:${PGPASSWORD}@localhost:5432/dataprof_test"
+echo "  MySQL: mysql://dataprof:${MYSQL_PWD}@127.0.0.1:3306/dataprof_test"
