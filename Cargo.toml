@@ -80,7 +80,7 @@ uuid = { version = "1.0", features = ["v4"] }
 # Note: Async support is available via feature flags (database, python-async)
 
 # SIMD acceleration
-wide = "1.1.1"
+wide = "1.2.0"
 
 # Random number generation for sampling
 rand = { version = "0.9", features = ["small_rng"] }
