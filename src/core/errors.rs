@@ -166,11 +166,12 @@ pub enum DataProfilerError {
 impl DataProfilerError {
     /// Create a database connection error
     pub fn database_connection(message: &str) -> Self {
-        let suggestion = if message.contains("refused") {
+        let m = message.to_lowercase();
+        let suggestion = if m.contains("refused") {
             "Check that the database server is running and accepting connections."
-        } else if message.contains("timeout") {
+        } else if m.contains("timeout") {
             "Increase the connection timeout or check network connectivity."
-        } else if message.contains("authentication") || message.contains("password") {
+        } else if m.contains("authentication") || m.contains("password") {
             "Verify your credentials or use environment variables for authentication."
         } else {
             "Verify the connection string format and database server availability."

@@ -44,7 +44,7 @@ pub fn validate_sql_identifier(identifier: &str) -> Result<(), DataProfilerError
             .ok_or_else(|| DataProfilerError::sql_validation("Invalid identifier format"))?;
         if inner.contains(quote_char)
             || inner.contains(';')
-            || inner.contains('-') && inner.contains('-')
+            || inner.contains("--")
             || inner.contains("/*")
             || inner.contains("*/")
         {

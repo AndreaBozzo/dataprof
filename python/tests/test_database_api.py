@@ -37,7 +37,7 @@ def _run(async_fn, *args, **kwargs):
     async def _inner():
         return await async_fn(*args, **kwargs)
 
-    return asyncio.get_event_loop().run_until_complete(_inner())
+    return asyncio.run(_inner())
 
 
 @pytest.fixture()
