@@ -334,9 +334,5 @@ __all__ = [
     "SchemaResult",
     "RowCountEstimate",
     "RecordBatch",
-    "analyze_database_async",
-    "test_connection_async",
-    "get_table_schema_async",
-    "count_table_rows_async",
     "__version__",
 ]
