@@ -147,3 +147,74 @@ jobs:
       - name: Run Python tests
         run: uv run pytest python/tests/ -v -ra
 
+  db-integration-tests:
+    name: Database Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: dataprof_test
+          POSTGRES_USER: dataprof
+          POSTGRES_PASSWORD: dev_password_123
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dataprof -d dataprof_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password_123
+          MYSQL_DATABASE: dataprof_test
+          MYSQL_USER: dataprof
+          MYSQL_PASSWORD: dev_password_123
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+    env:
+      POSTGRES_TEST_URL: "postgresql://dataprof:dev_password_123@localhost:5432/dataprof_test"
+      MYSQL_TEST_URL: "mysql://dataprof:dev_password_123@127.0.0.1:3306/dataprof_test"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-db
+
+      - name: Initialize test databases
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client default-mysql-client
+          PGPASSWORD=dev_password_123 psql -h localhost -U dataprof -d dataprof_test \
+            -f .devcontainer/init-scripts/postgres/01-init-schema.sql || true
+          mysql -h 127.0.0.1 -u dataprof -pdev_password_123 dataprof_test \
+            < .devcontainer/init-scripts/mysql/01-init-schema.sql || true
+
+      - name: Run Rust database tests (SQLite only)
+        run: cargo test --test database_integration --features "sqlite"
+
+      - name: Run Rust database tests (all DBs)
+        run: cargo test --test database_integration --features "all-db"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Build Python bindings with database support
+        run: uv run maturin develop --features "python,python-async,database,sqlite"
+
+      - name: Run Python database tests
+        run: uv run pytest python/tests/test_database_api.py -v -ra
+

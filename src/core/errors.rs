@@ -132,9 +132,92 @@ pub enum DataProfilerError {
 
     #[error("Configuration validation failed: {message}")]
     ConfigValidationError { message: String },
+
+    #[error("Database connection failed: {message}\n💡 {suggestion}")]
+    DatabaseConnectionError { message: String, suggestion: String },
+
+    #[error("Database query failed: {message}")]
+    DatabaseQueryError { message: String },
+
+    #[error("Database configuration error: {message}")]
+    DatabaseConfigError { message: String },
+
+    #[error(
+        "Database feature not enabled: {message}\n💡 Recompile with the appropriate feature flag"
+    )]
+    DatabaseFeatureDisabled { message: String },
+
+    #[error("SQL validation failed: {message}")]
+    SqlValidationError { message: String },
+
+    #[error("Database SSL/TLS error: {message}")]
+    DatabaseSslError { message: String },
+
+    #[error(
+        "Database retry exhausted: operation '{operation}' failed after {attempts} attempts\n💡 Last error: {last_error}"
+    )]
+    DatabaseRetryExhausted {
+        operation: String,
+        attempts: u32,
+        last_error: String,
+    },
 }
 
 impl DataProfilerError {
+    /// Create a database connection error
+    pub fn database_connection(message: &str) -> Self {
+        let suggestion = if message.contains("refused") {
+            "Check that the database server is running and accepting connections."
+        } else if message.contains("timeout") {
+            "Increase the connection timeout or check network connectivity."
+        } else if message.contains("authentication") || message.contains("password") {
+            "Verify your credentials or use environment variables for authentication."
+        } else {
+            "Verify the connection string format and database server availability."
+        };
+        DataProfilerError::DatabaseConnectionError {
+            message: message.to_string(),
+            suggestion: suggestion.to_string(),
+        }
+    }
+
+    /// Create a database query error
+    pub fn database_query(message: &str) -> Self {
+        DataProfilerError::DatabaseQueryError {
+            message: message.to_string(),
+        }
+    }
+
+    /// Create a database config error
+    pub fn database_config(message: &str) -> Self {
+        DataProfilerError::DatabaseConfigError {
+            message: message.to_string(),
+        }
+    }
+
+    /// Create a feature-not-enabled error
+    pub fn database_feature_disabled(db_name: &str, feature: &str) -> Self {
+        DataProfilerError::DatabaseFeatureDisabled {
+            message: format!(
+                "{} support not compiled. Enable '{}' feature.",
+                db_name, feature
+            ),
+        }
+    }
+
+    /// Create a SQL validation error
+    pub fn sql_validation(message: &str) -> Self {
+        DataProfilerError::SqlValidationError {
+            message: message.to_string(),
+        }
+    }
+
+    /// Create a database SSL error
+    pub fn database_ssl(message: &str) -> Self {
+        DataProfilerError::DatabaseSslError {
+            message: message.to_string(),
+        }
+    }
     /// Create a CSV parsing error with helpful suggestions
     pub fn csv_parsing(original_error: &str, file_path: &str) -> Self {
         let suggestion = if original_error.contains("field") && original_error.contains("record") {
@@ -352,6 +435,13 @@ impl DataProfilerError {
             DataProfilerError::AllEnginesFailed { .. } => "all_engines_failed",
             DataProfilerError::MetricsCalculationError { .. } => "metrics_calculation",
             DataProfilerError::ConfigValidationError { .. } => "config_validation",
+            DataProfilerError::DatabaseConnectionError { .. } => "database_connection",
+            DataProfilerError::DatabaseQueryError { .. } => "database_query",
+            DataProfilerError::DatabaseConfigError { .. } => "database_config",
+            DataProfilerError::DatabaseFeatureDisabled { .. } => "database_feature_disabled",
+            DataProfilerError::SqlValidationError { .. } => "sql_validation",
+            DataProfilerError::DatabaseSslError { .. } => "database_ssl",
+            DataProfilerError::DatabaseRetryExhausted { .. } => "database_retry_exhausted",
         }
     }
 }

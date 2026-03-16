@@ -1,7 +1,7 @@
 //! Database table sampling strategies for large datasets
 
+use crate::core::errors::DataProfilerError;
 use crate::database::security::{validate_base_query, validate_sql_identifier};
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for database table sampling
@@ -83,7 +83,11 @@ impl SamplingConfig {
     }
 
     /// Generate the appropriate SQL sampling query
-    pub fn generate_sample_query(&self, base_query: &str, total_rows: u64) -> Result<String> {
+    pub fn generate_sample_query(
+        &self,
+        base_query: &str,
+        total_rows: u64,
+    ) -> Result<String, DataProfilerError> {
         // Determine if we need sampling
         if total_rows as usize <= self.sample_size {
             return Ok(base_query.to_string());
@@ -153,7 +157,11 @@ impl SamplingConfig {
     }
 
     /// Generate a TABLESAMPLE query (PostgreSQL/SQL Server)
-    fn generate_tablesample_query(&self, base_query: &str, sampling_ratio: f64) -> Result<String> {
+    fn generate_tablesample_query(
+        &self,
+        base_query: &str,
+        sampling_ratio: f64,
+    ) -> Result<String, DataProfilerError> {
         let percentage = (sampling_ratio * 100.0).min(100.0);
 
         if base_query.trim().to_uppercase().starts_with("SELECT") {
@@ -180,7 +188,7 @@ impl SamplingConfig {
         base_query: &str,
         stratify_col: &str,
         _total_rows: u64,
-    ) -> Result<String> {
+    ) -> Result<String, DataProfilerError> {
         // Validate inputs - stratify_col already validated by caller
         let sample_per_stratum = self.sample_size / 10; // Assume up to 10 strata for simplicity
 
@@ -219,7 +227,7 @@ impl SamplingConfig {
         base_query: &str,
         time_col: &str,
         total_rows: u64,
-    ) -> Result<String> {
+    ) -> Result<String, DataProfilerError> {
         // time_col already validated by caller
         // Sample evenly across time periods
         if base_query.trim().to_uppercase().starts_with("SELECT") {

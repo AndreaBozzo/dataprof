@@ -114,7 +114,7 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'jupyter'", specifier = ">=1.3.0" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=1.3.0" },
 ]
-provides-extras = ["all", "jupyter", "pandas"]
+provides-extras = ["all", "database", "jupyter", "pandas"]
 
 [package.metadata.requires-dev]
 dev = [

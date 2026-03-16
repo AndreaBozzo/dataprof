@@ -1,6 +1,6 @@
 //! Connection management and utilities for database connectors
 
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use url::Url;
 
 /// Parse database connection string and extract components
@@ -37,7 +37,7 @@ impl std::fmt::Debug for ConnectionInfo {
 
 impl ConnectionInfo {
     /// Parse a connection string into its components
-    pub fn parse(connection_string: &str) -> Result<Self> {
+    pub fn parse(connection_string: &str) -> Result<Self, DataProfilerError> {
         // Handle file paths (for SQLite)
         if !connection_string.contains("://") {
             return Ok(ConnectionInfo {
@@ -52,8 +52,10 @@ impl ConnectionInfo {
             });
         }
 
-        let url = Url::parse(connection_string)
-            .map_err(|e| anyhow::anyhow!("Invalid connection string: {}", e))?;
+        let url =
+            Url::parse(connection_string).map_err(|e| DataProfilerError::DatabaseConfigError {
+                message: format!("Invalid connection string: {}", e),
+            })?;
 
         let mut query_params = std::collections::HashMap::new();
         for (key, value) in url.query_pairs() {

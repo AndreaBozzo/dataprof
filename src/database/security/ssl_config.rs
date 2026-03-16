@@ -1,7 +1,7 @@
 //! SSL/TLS configuration for secure database connections
 
 use super::utils::add_query_param;
-use anyhow::Result;
+use crate::core::errors::DataProfilerError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -61,33 +61,33 @@ impl SslConfig {
     }
 
     /// Validate SSL configuration
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), DataProfilerError> {
         // Check if certificate files exist
         if let Some(ca_cert_path) = &self.ca_cert_path
             && !Path::new(ca_cert_path).exists()
         {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::database_ssl(&format!(
                 "CA certificate file not found: {}",
                 ca_cert_path
-            ));
+            )));
         }
 
         if let Some(client_cert_path) = &self.client_cert_path
             && !Path::new(client_cert_path).exists()
         {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::database_ssl(&format!(
                 "Client certificate file not found: {}",
                 client_cert_path
-            ));
+            )));
         }
 
         if let Some(client_key_path) = &self.client_key_path
             && !Path::new(client_key_path).exists()
         {
-            return Err(anyhow::anyhow!(
+            return Err(DataProfilerError::database_ssl(&format!(
                 "Client private key file not found: {}",
                 client_key_path
-            ));
+            )));
         }
 
         // Validate SSL mode
@@ -101,11 +101,11 @@ impl SslConfig {
                 "verify-full",
             ];
             if !valid_modes.contains(&ssl_mode.as_str()) {
-                return Err(anyhow::anyhow!(
+                return Err(DataProfilerError::database_ssl(&format!(
                     "Invalid SSL mode '{}'. Valid modes: {}",
                     ssl_mode,
                     valid_modes.join(", ")
-                ));
+                )));
             }
         }
 

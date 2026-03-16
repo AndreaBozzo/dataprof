@@ -1,4 +1,4 @@
-.PHONY: build dev test test-rust test-python lint lint-rust lint-python fmt fmt-rust fmt-python clippy check clean
+.PHONY: build dev build-db dev-db test test-rust test-python test-python-db test-db test-db-all test-db-live lint lint-rust lint-python fmt fmt-rust fmt-python clippy check clean
 
 # ── Build ────────────────────────────────────────
 
@@ -7,6 +7,12 @@ build:  ## Build the Python extension (release)
 
 dev:  ## Build the Python extension (debug, fast)
 	uv run maturin develop
+
+build-db:  ## Build the Python extension with database support (release)
+	uv run maturin develop --release --features "python,python-async,database,sqlite"
+
+dev-db:  ## Build the Python extension with database support (debug, fast)
+	uv run maturin develop --features "python,python-async,database,sqlite"
 
 # ── Test ─────────────────────────────────────────
 
@@ -17,6 +23,18 @@ test-rust:  ## Run Rust tests
 
 test-python: dev  ## Build and run Python tests
 	uv run pytest
+
+test-python-db: dev-db  ## Build with DB features and run Python database tests
+	uv run pytest python/tests/test_database_api.py -v -ra
+
+test-db:  ## Run Rust database integration tests (SQLite only)
+	cargo test --test database_integration --features "database,sqlite"
+
+test-db-all:  ## Run Rust database integration tests (all DBs, needs Docker)
+	cargo test --test database_integration --features "all-db"
+
+test-db-live:  ## Run live database tests with Docker containers
+	cd .devcontainer && bash test_live_databases.sh
 
 # ── Lint ─────────────────────────────────────────
 
