@@ -292,6 +292,18 @@ impl Profiler {
         csv_config
     }
 
+    /// Build a `CsvParserConfig` for a CSV file, auto-detecting the delimiter
+    /// when none was explicitly configured.
+    fn csv_config_for_file(&self, file_path: &Path) -> crate::parsers::csv::CsvParserConfig {
+        if self.has_csv_config() {
+            self.csv_parser_config()
+        } else {
+            let detected =
+                crate::parsers::csv::detect_delimiter_from_path(file_path).unwrap_or(b',');
+            crate::parsers::csv::CsvParserConfig::default().with_delimiter(detected)
+        }
+    }
+
     /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON
     fn run_auto(
         &self,
@@ -307,21 +319,13 @@ impl Profiler {
                     dims,
                 )
             }
-            FileFormat::Csv if self.has_csv_config() => {
-                crate::parsers::csv::analyze_csv_file_with_dimensions(
-                    file_path,
-                    &self.csv_parser_config(),
-                    dims,
-                )
-            }
             _ => {
                 let mut profiler = AdaptiveProfiler::new();
                 if let Some(d) = &self.config.quality_dimensions {
                     profiler = profiler.quality_dimensions(d.clone());
                 }
-                if self.has_csv_config() {
-                    profiler = profiler.csv_config(self.csv_parser_config());
-                }
+                let csv_config = self.csv_config_for_file(file_path);
+                profiler = profiler.csv_config(csv_config);
                 profiler.analyze_file(file_path)
             }
         }
@@ -359,9 +363,8 @@ impl Profiler {
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
-        if self.has_csv_config() {
-            profiler = profiler.csv_config(self.csv_parser_config());
-        }
+        let csv_config = self.csv_config_for_file(file_path);
+        profiler = profiler.csv_config(csv_config);
 
         profiler.analyze_file(file_path)
     }
@@ -396,9 +399,8 @@ impl Profiler {
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
-        if self.has_csv_config() {
-            profiler = profiler.csv_config(self.csv_parser_config());
-        }
+        let csv_config = self.csv_config_for_file(file_path);
+        profiler = profiler.csv_config(csv_config);
         profiler.analyze_csv_file(file_path)
     }
 }

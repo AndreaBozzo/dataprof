@@ -66,6 +66,89 @@ impl CsvParserConfig {
     }
 }
 
+/// Count fields in a line for a given delimiter, respecting quoted sections.
+fn count_fields(line: &str, del: char) -> usize {
+    let mut count = 1;
+    let mut in_quotes = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            if chars.peek() == Some(&'"') {
+                chars.next();
+            } else {
+                in_quotes = !in_quotes;
+            }
+        } else if c == del && !in_quotes {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Detect the most likely CSV delimiter by sampling up to 4 KB of data.
+///
+/// Tests comma, semicolon, tab, and pipe. Returns the delimiter that produces
+/// the most consistent field counts across the first 5 sample lines, preferring
+/// delimiters that yield more than one field.
+///
+/// Falls back to comma if no clear winner is found.
+pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
+    let mut preamble = Vec::new();
+    let mut take = reader.take(4096);
+    take.read_to_end(&mut preamble)?;
+
+    let preamble_str = String::from_utf8_lossy(&preamble);
+    let lines: Vec<String> = preamble_str.lines().map(|s| s.to_string()).collect();
+
+    let delimiters = [b',', b';', b'\t', b'|'];
+    let mut best_del = b',';
+    let mut max_consistency = 0;
+    let mut max_fields = 0;
+
+    for &d in &delimiters {
+        let del_char = d as char;
+        let mut counts = std::collections::HashMap::new();
+        let mut total_fields = 0;
+
+        let sample_lines = std::cmp::min(lines.len(), 5);
+        for line in lines.iter().take(sample_lines) {
+            let c = count_fields(line, del_char);
+            *counts.entry(c).or_insert(0) += 1;
+            total_fields += c;
+        }
+
+        let consistency = counts.values().max().copied().unwrap_or(0);
+        let avg_fields = if sample_lines > 0 {
+            total_fields / sample_lines
+        } else {
+            0
+        };
+
+        let should_update = if avg_fields > 1 && max_fields <= 1 {
+            true
+        } else if avg_fields <= 1 && max_fields > 1 {
+            false
+        } else {
+            consistency > max_consistency
+                || (consistency == max_consistency && avg_fields > max_fields)
+        };
+
+        if should_update {
+            max_consistency = consistency;
+            max_fields = avg_fields;
+            best_del = d;
+        }
+    }
+
+    Ok(best_del)
+}
+
+/// Detect the most likely CSV delimiter from a file path.
+pub fn detect_delimiter_from_path(path: &Path) -> std::io::Result<u8> {
+    let file = std::fs::File::open(path)?;
+    detect_delimiter(std::io::BufReader::new(file))
+}
+
 /// Analyze CSV data from any `Read` source using streaming statistics.
 ///
 /// This is the primary generic entry point for both file-based and stream-based
@@ -99,68 +182,9 @@ pub fn analyze_csv_from_reader<R: Read>(
         let mut take = reader.take(4096);
         take.read_to_end(&mut preamble)?;
 
-        let preamble_str = String::from_utf8_lossy(&preamble);
-        let lines: Vec<String> = preamble_str.lines().map(|s| s.to_string()).collect();
+        let detected = detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
+        actual_delimiter = Some(detected);
 
-        let delimiters = [b',', b';', b'\t', b'|'];
-        let mut best_del = b',';
-        let mut max_consistency = 0;
-        let mut max_fields = 0;
-
-        let count_fields = |line: &str, del: char| -> usize {
-            let mut count = 1;
-            let mut in_quotes = false;
-            let mut chars = line.chars().peekable();
-            while let Some(c) = chars.next() {
-                if c == '"' {
-                    if chars.peek() == Some(&'"') {
-                        chars.next();
-                    } else {
-                        in_quotes = !in_quotes;
-                    }
-                } else if c == del && !in_quotes {
-                    count += 1;
-                }
-            }
-            count
-        };
-
-        for &d in &delimiters {
-            let del_char = d as char;
-            let mut counts = std::collections::HashMap::new();
-            let mut total_fields = 0;
-
-            let sample_lines = std::cmp::min(lines.len(), 5);
-            for line in lines.iter().take(sample_lines) {
-                let c = count_fields(line, del_char);
-                *counts.entry(c).or_insert(0) += 1;
-                total_fields += c;
-            }
-
-            let consistency = counts.values().max().copied().unwrap_or(0);
-            let avg_fields = if sample_lines > 0 {
-                total_fields / sample_lines
-            } else {
-                0
-            };
-
-            let should_update = if avg_fields > 1 && max_fields <= 1 {
-                true
-            } else if avg_fields <= 1 && max_fields > 1 {
-                false
-            } else {
-                consistency > max_consistency
-                    || (consistency == max_consistency && avg_fields > max_fields)
-            };
-
-            if should_update {
-                max_consistency = consistency;
-                max_fields = avg_fields;
-                best_del = d;
-            }
-        }
-
-        actual_delimiter = Some(best_del);
         Box::new(std::io::Cursor::new(preamble).chain(take.into_inner()))
     } else {
         Box::new(reader)
@@ -508,5 +532,44 @@ mod tests {
         assert_eq!(age.total_count, 10);
         // Quality score should be computable (>= 0)
         assert!(report.quality_score().unwrap() >= 0.0);
+    }
+
+    // --- detect_delimiter tests ---
+
+    #[test]
+    fn test_detect_delimiter_comma() {
+        let data = b"name,age,city\nAlice,25,NYC\nBob,30,London\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_semicolon() {
+        let data = b"name;age;city\nAlice;25;NYC\nBob;30;London\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_pipe() {
+        let data = b"name|age|city\nAlice|25|NYC\nBob|30|London\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b'|');
+    }
+
+    #[test]
+    fn test_detect_delimiter_tab() {
+        let data = b"name\tage\tcity\nAlice\t25\tNYC\nBob\t30\tLondon\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b'\t');
+    }
+
+    #[test]
+    fn test_detect_delimiter_from_path_semicolon() {
+        let csv = write_csv("id;name;salary\n1;Alice;50000\n2;Bob;60000\n");
+        assert_eq!(detect_delimiter_from_path(csv.path()).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_quoted_fields() {
+        // Semicolons inside quotes should not confuse detection
+        let data = b"name;desc;val\n\"hello;world\";foo;1\nbar;baz;2\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
     }
 }

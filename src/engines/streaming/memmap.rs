@@ -61,9 +61,14 @@ impl MemoryMappedCsvReader {
         // Get the chunk data
         let chunk_data = &self.mmap[start..end];
 
-        // Find line boundaries to avoid cutting lines in half
-        let adjusted_chunk = self.find_line_boundary(chunk_data, start > 0);
-        let actual_bytes = adjusted_chunk.len();
+        // Find line boundaries to avoid cutting lines in half.
+        // Only skip a leading partial line when the chunk truly starts
+        // mid-line. This happens when the preceding byte is NOT a newline
+        // (and we're not at the start of the file).
+        let at_eof = end == self.mmap.len();
+        let starts_mid_line = start > 0 && self.mmap[start - 1] != b'\n';
+        let (adjusted_chunk, bytes_consumed) =
+            self.find_line_boundary(chunk_data, starts_mid_line, at_eof);
 
         // Parse lines from the chunk
         let cursor = Cursor::new(adjusted_chunk);
@@ -74,7 +79,7 @@ impl MemoryMappedCsvReader {
             lines.push(line?);
         }
 
-        Ok((lines, actual_bytes))
+        Ok((lines, bytes_consumed))
     }
 
     /// Parse CSV records from memory-mapped data in chunks.
@@ -123,10 +128,23 @@ impl MemoryMappedCsvReader {
         Ok((headers, records, actual_bytes))
     }
 
-    /// Find the next line boundary to avoid cutting CSV records in half
-    fn find_line_boundary<'a>(&self, chunk: &'a [u8], skip_first_partial: bool) -> &'a [u8] {
+    /// Find the next line boundary to avoid cutting CSV records in half.
+    ///
+    /// When `at_eof` is true, any trailing data after the last newline is
+    /// included because there is no subsequent chunk that will pick it up.
+    ///
+    /// Returns `(data_slice, bytes_consumed)` where `bytes_consumed` is the
+    /// number of bytes from the original chunk that were consumed (including
+    /// any skipped partial-line prefix), so the caller can correctly advance
+    /// the file offset.
+    fn find_line_boundary<'a>(
+        &self,
+        chunk: &'a [u8],
+        skip_first_partial: bool,
+        at_eof: bool,
+    ) -> (&'a [u8], usize) {
         if chunk.is_empty() {
-            return chunk;
+            return (chunk, 0);
         }
 
         let mut start_pos = 0;
@@ -136,8 +154,9 @@ impl MemoryMappedCsvReader {
             if let Some(first_newline) = chunk.iter().position(|&b| b == b'\n') {
                 start_pos = first_newline + 1;
             } else {
-                // No newline found, return empty chunk
-                return &chunk[chunk.len()..];
+                // No newline found — entire chunk is one partial line.
+                // Consume all bytes so the next chunk moves past it.
+                return (&chunk[chunk.len()..], chunk.len());
             }
         }
 
@@ -145,14 +164,21 @@ impl MemoryMappedCsvReader {
         let mut end_pos = chunk.len();
 
         // Look for the last newline, but don't include incomplete final line
-        if let Some(last_newline) = chunk[start_pos..].iter().rposition(|&b| b == b'\n') {
-            end_pos = start_pos + last_newline + 1;
-        } else if start_pos > 0 {
-            // No complete lines in this chunk
-            return &chunk[chunk.len()..];
+        // unless we are at end-of-file (no subsequent chunk will pick it up).
+        if !at_eof {
+            if let Some(last_newline) = chunk[start_pos..].iter().rposition(|&b| b == b'\n') {
+                end_pos = start_pos + last_newline + 1;
+            } else if start_pos > 0 {
+                // No complete lines in this chunk.
+                // Consume up through the skipped partial so we advance past it.
+                return (&chunk[chunk.len()..], start_pos);
+            }
         }
 
-        &chunk[start_pos..end_pos]
+        // Return the data slice and the total bytes consumed from the
+        // original chunk (including the skipped prefix), so the caller's
+        // offset advances past everything up to end_pos.
+        (&chunk[start_pos..end_pos], end_pos)
     }
 
     /// Estimate the number of rows in the file by sampling
@@ -251,6 +277,54 @@ mod tests {
 
         // Should estimate around 101 rows (header + 100 data rows)
         assert!(estimated > 90 && estimated < 120);
+
+        Ok(())
+    }
+
+    /// Regression test: chunked reading must not lose rows at chunk boundaries.
+    ///
+    /// When the first chunk ends exactly at a newline, the next chunk starts
+    /// at a complete line boundary. Previously, `skip_first_partial` would
+    /// incorrectly skip this first complete line, silently dropping one row
+    /// per chunk boundary that happened to align with a newline.
+    #[test]
+    fn test_no_row_loss_at_chunk_boundaries() -> Result<()> {
+        let expected_rows = 1000;
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,name,value")?;
+        for i in 0..expected_rows {
+            // Variable-length rows to ensure chunk boundaries land mid-line sometimes
+            let padding = "x".repeat(i % 50);
+            writeln!(temp_file, "{},name_{}{},{}", i, i, padding, i * 10)?;
+        }
+        temp_file.flush()?;
+
+        let reader = MemoryMappedCsvReader::new(temp_file.path())?;
+
+        // Use a small chunk size to force many chunk boundaries
+        let chunk_size = 512;
+        let mut offset = 0u64;
+        let mut total_records = 0;
+        let mut first = true;
+
+        loop {
+            let (headers, records, bytes) =
+                reader.read_csv_chunk(offset, chunk_size, first, None)?;
+            if records.is_empty() && bytes == 0 {
+                break;
+            }
+            if first && headers.is_some() {
+                first = false;
+            }
+            total_records += records.len();
+            offset += bytes as u64;
+        }
+
+        assert_eq!(
+            total_records, expected_rows,
+            "Expected {expected_rows} rows but got {total_records} — \
+             rows lost at chunk boundaries"
+        );
 
         Ok(())
     }
