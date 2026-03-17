@@ -156,8 +156,10 @@ jobs:
 
     - name: Build binary
       run: |
-        # Use baseline CPU target for maximum compatibility
-        export RUSTFLAGS="-C target-cpu=x86-64"
+        # Use baseline CPU target for maximum compatibility (x86_64 only)
+        if [[ "${{ matrix.target }}" == x86_64* ]]; then
+          export RUSTFLAGS="-C target-cpu=x86-64"
+        fi
 
         if [ "${{ matrix.cross }}" = "true" ]; then
           cross build --release --target ${{ matrix.target }} --bin dataprof-cli
@@ -226,17 +228,15 @@ jobs:
     - name: Publish to crates.io
       run: |
         echo "Publishing to crates.io..."
-        if cargo publish --token ${{ secrets.CRATES_TOKEN }}; then
-          echo "Successfully published to crates.io"
-        else
+        cargo publish --token ${{ secrets.CRATES_TOKEN }} || {
           EXIT_CODE=$?
           if [ $EXIT_CODE -eq 101 ]; then
-            echo "ℹVersion already exists on crates.io"
+            echo "Version already exists on crates.io, skipping"
           else
-            echo "Failed to publish to crates.io"
+            echo "Failed to publish to crates.io (exit code: $EXIT_CODE)"
             exit $EXIT_CODE
           fi
-        fi
+        }
 
   # Step 3: Build Python Wheels with CPU Compatibility
   python-wheels:
@@ -309,9 +309,9 @@ jobs:
         CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: ${{ matrix.rustflags }}
         CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
         CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS: ${{ matrix.rustflags }}
-        # Disable any CPU-specific optimizations in dependencies
-        CFLAGS: "-march=x86-64"
-        CXXFLAGS: "-march=x86-64"
+        # Disable CPU-specific optimizations in C dependencies (Linux/macOS x86_64 only)
+        CFLAGS: ${{ matrix.target == 'x86_64' && '-march=x86-64' || '' }}
+        CXXFLAGS: ${{ matrix.target == 'x86_64' && '-march=x86-64' || '' }}
         # Enable forward compatibility for Python versions newer than PyO3 max supported
         PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
 
@@ -320,7 +320,7 @@ jobs:
       run: |
         # Install objdump/readelf for analysis (Linux only for now)
         if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-          echo "🔍 Verifying baseline wheel has no advanced CPU instructions..."
+          echo "Verifying baseline wheel has no advanced CPU instructions..."
           cd dist
 
           for wheel in *.whl; do
@@ -334,10 +334,10 @@ jobs:
               find wheel_extracted/ -name "*.so" -exec sh -c '
                 echo "Checking $1 for advanced CPU instructions..."
                 if objdump -d "$1" 2>/dev/null | grep -E "(vzeroupper|vmovdqu|vpor|vpaddd)" >/dev/null; then
-                  echo "⚠️  WARNING: Found AVX instructions in $1"
+                  echo "WARNING: Found AVX instructions in $1"
                   echo "This wheel may not be compatible with older CPUs"
                 else
-                  echo "✅ No advanced CPU instructions found in $1"
+                  echo "OK: No advanced CPU instructions found in $1"
                 fi
               ' _ {} \;
 
@@ -438,8 +438,8 @@ jobs:
 
     - name: Mark release as published
       run: |
-        echo "🚀 Finalizing release ${{ needs.create-release.outputs.tag }}..."
+        echo "Finalizing release ${{ needs.create-release.outputs.tag }}..."
         gh release edit ${{ needs.create-release.outputs.tag }} --draft=false
-        echo "✅ Release ${{ needs.create-release.outputs.tag }} is now public!"
+        echo "Release ${{ needs.create-release.outputs.tag }} is now public!"
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
