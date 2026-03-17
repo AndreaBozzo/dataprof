@@ -692,8 +692,8 @@ impl From<QualityMetrics> for QualityAssessment {
 ///
 /// Contains column-level statistics, execution metadata, and an optional
 /// ISO 8000/25012 quality assessment. This is the primary output of all
-/// profiling operations ([`Profiler::analyze_file`](crate::Profiler::analyze_file),
-/// [`profile()`](crate::Profiler), etc.).
+/// profiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,
+/// `Profiler::profile_stream`, etc.).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProfileReport {
     /// Unique identifier for this report (UUID v4)

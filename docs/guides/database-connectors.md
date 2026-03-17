@@ -103,7 +103,7 @@ let report = Profiler::new()
 
 println!("Rows: {}", report.execution.rows_processed);
 if let Some(quality) = &report.quality {
-    println!("Quality: {:.1}%", quality.score() * 100.0);
+    println!("Quality: {:.1}%", quality.score());
 }
 ```
 

@@ -44,7 +44,7 @@ use dataprof::Profiler;
 
 let report = Profiler::new().analyze_file("data.csv")?;
 println!("Rows: {}", report.execution.rows_processed);
-println!("Quality: {:.1}%", report.quality_score().unwrap_or(0.0) * 100.0);
+println!("Quality: {:.1}%", report.quality_score().unwrap_or(0.0));
 
 for col in &report.column_profiles {
     println!("  {} ({:?}): {} nulls", col.name, col.data_type, col.null_count);
@@ -133,7 +133,7 @@ dataprof evaluates data quality against the five dimensions defined in [ISO 8000
 | **Accuracy** | Outlier ratio, range violations, negative values in positive-only columns |
 | **Timeliness** | Future dates, stale data ratio, temporal ordering violations |
 
-An overall quality score (0.0 -- 1.0) is computed as a weighted average of dimension scores.
+An overall quality score (0 -- 100) is computed as a weighted average of dimension scores.
 
 ## Documentation
 

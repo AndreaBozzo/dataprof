@@ -88,7 +88,7 @@ fn main() -> Result<(), dataprof::DataProfilerError> {
     println!("Columns: {}", report.execution.columns_detected);
 
     if let Some(quality) = &report.quality {
-        println!("Quality score: {:.1}%", quality.score() * 100.0);
+        println!("Quality score: {:.1}%", quality.score());
     }
 
     for col in &report.column_profiles {
@@ -102,7 +102,7 @@ fn main() -> Result<(), dataprof::DataProfilerError> {
 
 ## Understanding Quality Metrics
 
-dataprof evaluates data quality across five ISO 8000/25012 dimensions. Each is scored from 0.0 to 1.0, and the overall score is a weighted average.
+dataprof evaluates data quality across five ISO 8000/25012 dimensions. Each is scored from 0 to 100, and the overall score is a weighted average.
 
 ### Completeness
 

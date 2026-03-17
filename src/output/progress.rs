@@ -505,7 +505,7 @@ pub fn display_startup_banner(version: &str, _colored: bool) {
 }
 
 /// Display completion summary
-pub fn display_completion_summary(files_processed: usize, total_time: Duration, colored: bool) {
+pub fn display_completion_summary(files_processed: usize, total_time: Duration, _colored: bool) {
     let time_str = if total_time.as_secs() > 60 {
         format!(
             "{}m {:.1}s",
@@ -516,7 +516,6 @@ pub fn display_completion_summary(files_processed: usize, total_time: Duration, 
         format!("{:.2}s", total_time.as_secs_f64())
     };
 
-    let _ = colored;
     println!(
         "\nAnalysis complete! Processed {} files in {}",
         files_processed, time_str

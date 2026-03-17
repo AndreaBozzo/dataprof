@@ -537,7 +537,7 @@ println!("{} rows (exact: {})", count.count, count.exact);
 use dataprof::quick_quality_check;
 
 let score = quick_quality_check("data.csv")?;
-println!("Quality: {:.1}%", score * 100.0);
+println!("Quality: {:.1}%", score);
 ```
 
 ### Async stream profiling

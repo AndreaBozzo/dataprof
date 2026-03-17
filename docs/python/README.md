@@ -10,7 +10,7 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.9+. The package ships pre-built wheels for Linux, macOS, and Windows.
+Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows.
 
 ## Quick Start
 
@@ -85,7 +85,7 @@ Returned by `profile()` and all analysis functions.
 | `rows` | `int` | Number of rows processed |
 | `columns` | `int` | Number of columns detected |
 | `column_profiles` | `list[ColumnProfile]` | Per-column statistics |
-| `quality_score` | `float \| None` | Overall quality score (0.0--1.0) |
+| `quality_score` | `float \| None` | Overall quality score (0--100) |
 | `quality` | `DataQualityMetrics \| None` | Detailed quality breakdown |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
