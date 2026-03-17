@@ -413,14 +413,14 @@ impl DataprofConfig {
             if path.exists() {
                 match Self::load_from_file(path) {
                     Ok(mut config) => {
-                        log::info!("✓ Loaded configuration from: {}", path.display());
+                        log::info!("Loaded configuration from: {}", path.display());
                         // Apply environment overrides on top of file config
                         config.apply_env_overrides();
                         return config;
                     }
                     Err(e) => {
                         log::warn!(
-                            "⚠ Found config file at {} but failed to load: {}",
+                            "Found config file at {} but failed to load: {}",
                             path.display(),
                             e
                         );

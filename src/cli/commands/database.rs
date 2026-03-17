@@ -15,7 +15,8 @@ pub struct DatabaseArgs {
     #[arg(long)]
     pub query: Option<String>,
 
-    /// Table name to analyze (alternative to query)
+    /// Table name to analyze (alternative to --query)
+    #[arg(long)]
     pub table: Option<String>,
 
     /// Batch size for streaming
@@ -35,7 +36,7 @@ pub fn execute(args: &DatabaseArgs) -> Result<()> {
 /// Display a single column profile
 fn display_column_profile(profile: &ColumnProfile) {
     println!(
-        "📊 {} ({})",
+        "{} ({})",
         profile.name.bright_cyan().bold(),
         format!("{:?}", profile.data_type).yellow()
     );
@@ -61,9 +62,12 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
 
     println!(
         "{}",
-        "🗃️ DataProfiler v0.3.0 - Database Analysis"
-            .bright_blue()
-            .bold()
+        format!(
+            "DataProfiler v{} - Database Analysis",
+            env!("CARGO_PKG_VERSION")
+        )
+        .bright_blue()
+        .bold()
     );
     println!();
 
@@ -97,7 +101,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     let report = rt.block_on(async { analyze_database(config, &query, true, None).await })?;
 
     println!(
-        "🔗 {} | {} columns | {} rows",
+        "{} | {} columns | {} rows",
         connection_string
             .split('@')
             .next_back()
@@ -110,7 +114,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
         let scan_time_sec = report.execution.scan_time_ms as f64 / 1000.0;
         let rows_per_sec = report.execution.rows_processed as f64 / scan_time_sec;
         println!(
-            "⚡ Processed {} rows in {:.1}s ({:.0} rows/sec)",
+            "Processed {} rows in {:.1}s ({:.0} rows/sec)",
             report.execution.rows_processed, scan_time_sec, rows_per_sec
         );
     }

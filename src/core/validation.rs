@@ -13,7 +13,7 @@ pub struct ValidationError {
 
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}\n💡 {}", self.message, self.suggestion)
+        write!(f, "{}\n{}", self.message, self.suggestion)
     }
 }
 
