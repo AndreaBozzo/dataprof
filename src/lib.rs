@@ -1,4 +1,37 @@
-// New v0.3.0 modular architecture
+//! High-performance data profiling with ISO 8000/25012 quality metrics.
+//!
+//! dataprof analyzes tabular data (CSV, JSON, JSONL, Parquet, databases,
+//! DataFrames, Arrow) and produces column-level statistics, pattern detection,
+//! and a quality assessment scored against the ISO 8000/25012 standard.
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use dataprof::Profiler;
+//!
+//! let report = Profiler::new().analyze_file("data.csv")?;
+//! println!("Rows: {}", report.execution.rows_processed);
+//! println!("Quality: {:?}", report.quality_score());
+//! # Ok::<(), dataprof::DataProfilerError>(())
+//! ```
+//!
+//! # Engines
+//!
+//! - [`EngineType::Auto`] — intelligent selection based on file size and format (default)
+//! - [`EngineType::Incremental`] — true streaming with bounded memory
+//! - [`EngineType::Columnar`] — Arrow-based batch processing
+//!
+//! # Feature Flags
+//!
+//! | Feature | Description |
+//! |---|---|
+//! | `cli` (default) | CLI binary |
+//! | `async-streaming` | Async profiling engine |
+//! | `database` | Database connectivity |
+//! | `postgres`, `mysql`, `sqlite` | Database connectors |
+//! | `parquet-async` | Profile Parquet over HTTP |
+//! | `python` | Python bindings via PyO3 |
+
 pub mod acceleration;
 pub mod analysis;
 pub mod api;

@@ -87,7 +87,7 @@ impl ProgressManager {
                     .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
                         let _ = write!(w, "{:.1}s", state.eta().as_secs_f64());
                     })
-                    .progress_chars("🔄🔵⚪"),
+                    .progress_chars("=>-"),
             );
         }
 
@@ -110,7 +110,7 @@ impl ProgressManager {
                     .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
                         let _ = write!(w, "{:.1}s", state.eta().as_secs_f64());
                     })
-                    .progress_chars("📁📂⚪"),
+                    .progress_chars("=>-"),
             );
         }
 
@@ -128,7 +128,7 @@ impl ProgressManager {
         if let Ok(style) = ProgressStyle::with_template(
             "{spinner:.magenta} [{elapsed_precise}] [{wide_bar:.magenta/pink}] {pos:>2}/{len:2} {msg}",
         ) {
-            pb.set_style(style.progress_chars("🤖🔮⚪"));
+            pb.set_style(style.progress_chars("=>-"));
         }
 
         pb.set_message("ML Readiness Analysis...");
@@ -145,7 +145,7 @@ impl ProgressManager {
         if let Ok(style) = ProgressStyle::with_template(
             "{spinner:.blue} [{elapsed_precise}] [{wide_bar:.blue/cyan}] {pos:>3}/{len:3} columns {msg}",
         ) {
-            pb.set_style(style.progress_chars("🔍🔎⚪"));
+            pb.set_style(style.progress_chars("=>-"));
         }
 
         pb.set_message("Quality checking...");
@@ -178,7 +178,7 @@ impl ProgressManager {
         }
 
         let pb = if self.is_interactive() {
-            // Rich interactive progress bar with emojis and colors
+            // Rich interactive progress bar with colors
             let pb = ProgressBar::new(file_size);
             if let Ok(style) = ProgressStyle::with_template(
                 "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}) | {msg}",
@@ -188,7 +188,7 @@ impl ProgressManager {
                         .with_key("eta", |state: &ProgressState, w: &mut dyn Write| {
                             let _ = write!(w, "{:.1}s", state.eta().as_secs_f64());
                         })
-                        .progress_chars("🔄🔵⚪"),
+                        .progress_chars("=>-"),
                 );
             }
             pb
@@ -224,11 +224,7 @@ impl ProgressManager {
         };
 
         if let Ok(style) = ProgressStyle::with_template(template) {
-            if self.is_interactive() {
-                pb.set_style(style.progress_chars("🔷🔹⚪"));
-            } else {
-                pb.set_style(style.progress_chars("=>-"));
-            }
+            pb.set_style(style.progress_chars("=>-"));
         }
 
         pb.set_message(operation.to_string());
@@ -248,9 +244,9 @@ impl ProgressManager {
     pub fn verbose(&self, level: u8, message: &str) {
         if self.verbosity >= level {
             match level {
-                1 => println!("ℹ️  {}", message),
-                2 => println!("🔧 [DEBUG] {}", message),
-                3 => println!("🔬 [TRACE] {}", message),
+                1 => println!("[INFO] {}", message),
+                2 => println!("[DEBUG] {}", message),
+                3 => println!("[TRACE] {}", message),
                 _ => println!("{}", message),
             }
         }
@@ -259,26 +255,26 @@ impl ProgressManager {
     /// Display success message
     pub fn success(&self, message: &str) {
         if self.show_progress || self.verbosity > 0 {
-            println!("✅ {}", message);
+            println!("[OK] {}", message);
         }
     }
 
     /// Display warning message
     pub fn warning(&self, message: &str) {
         if self.show_progress || self.verbosity > 0 {
-            println!("⚠️  {}", message);
+            println!("[WARN] {}", message);
         }
     }
 
     /// Display error message
     pub fn error(&self, message: &str) {
-        println!("❌ {}", message);
+        println!("[ERROR] {}", message);
     }
 
     /// Display info message
     pub fn info(&self, message: &str) {
         if self.verbosity > 0 {
-            println!("ℹ️  {}", message);
+            println!("[INFO] {}", message);
         }
     }
 }
@@ -428,7 +424,7 @@ impl EnhancedProgressBar {
     /// Update with performance hints
     pub fn update_with_hints(&mut self, position: u64, rows: u64, columns: u64, hints: Vec<&str>) {
         let hint_text = if !hints.is_empty() {
-            format!(" 💡 {}", hints.join(" | "))
+            format!(" Hint: {}", hints.join(" | "))
         } else {
             String::new()
         };
@@ -447,7 +443,7 @@ impl EnhancedProgressBar {
         };
 
         let summary = format!(
-            "✅ Completed: {} rows, {} columns, {:.1} MB/s avg",
+            "Completed: {} rows, {} columns, {:.1} MB/s avg",
             self.rows_processed, self.columns_processed, final_mb_per_sec
         );
 
@@ -503,18 +499,13 @@ pub fn generate_performance_hints(
 }
 
 /// Create a fancy startup banner
-pub fn display_startup_banner(version: &str, colored: bool) {
-    if colored {
-        println!("🚀 DataProfiler CLI v{}", version);
-        println!("   Fast CSV data profiling with ML readiness scoring");
-    } else {
-        println!("DataProfiler CLI v{}", version);
-        println!("Fast CSV data profiling with ML readiness scoring");
-    }
+pub fn display_startup_banner(version: &str, _colored: bool) {
+    println!("DataProfiler CLI v{}", version);
+    println!("High-performance data profiling with ISO 8000/25012 quality metrics");
 }
 
 /// Display completion summary
-pub fn display_completion_summary(files_processed: usize, total_time: Duration, colored: bool) {
+pub fn display_completion_summary(files_processed: usize, total_time: Duration, _colored: bool) {
     let time_str = if total_time.as_secs() > 60 {
         format!(
             "{}m {:.1}s",
@@ -525,15 +516,8 @@ pub fn display_completion_summary(files_processed: usize, total_time: Duration, 
         format!("{:.2}s", total_time.as_secs_f64())
     };
 
-    if colored {
-        println!(
-            "\n🎉 ✨ Analysis complete! Processed {} files in {}",
-            files_processed, time_str
-        );
-    } else {
-        println!(
-            "\nAnalysis complete! Processed {} files in {}",
-            files_processed, time_str
-        );
-    }
+    println!(
+        "\nAnalysis complete! Processed {} files in {}",
+        files_processed, time_str
+    );
 }

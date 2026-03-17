@@ -541,31 +541,29 @@ impl OutputFormatter for InteractiveFormatter {
         let mut output = String::new();
 
         // Determine source label based on data source type
-        let (source_label, source_emoji) = match &report.data_source {
-            DataSource::File { .. } => ("File:", "📁"),
-            DataSource::Query { .. } => ("Query:", "🔍"),
-            DataSource::DataFrame { .. } => ("DataFrame:", "🐼"),
-            DataSource::Stream { .. } => ("Stream:", "📡"),
+        let source_label = match &report.data_source {
+            DataSource::File { .. } => "File:",
+            DataSource::Query { .. } => "Query:",
+            DataSource::DataFrame { .. } => "DataFrame:",
+            DataSource::Stream { .. } => "Stream:",
         };
 
-        // Enhanced source info section with colors and emojis
         let size_mb = report.data_source.size_mb().unwrap_or(0.0);
         if self.context.supports_unicode {
             output.push_str(&format!(
-                "{} {} {}\n",
-                source_emoji,
+                "{} {}\n",
                 source_label.bright_blue().bold(),
                 report.data_source.identifier()
             ));
             if size_mb > 0.0 {
                 output.push_str(&format!(
-                    "📏 {} {:.1} MB\n",
+                    "{} {:.1} MB\n",
                     "Size:".bright_blue().bold(),
                     size_mb
                 ));
             }
             output.push_str(&format!(
-                "📊 {} {}\n",
+                "{} {}\n",
                 "Columns:".bright_blue().bold(),
                 report.execution.columns_detected
             ));
@@ -583,7 +581,7 @@ impl OutputFormatter for InteractiveFormatter {
 
         if self.context.supports_unicode {
             output.push_str(&format!(
-                "📈 {} {}\n",
+                "{} {}\n",
                 "Rows:".bright_blue().bold(),
                 report.execution.rows_processed
             ));
@@ -594,7 +592,7 @@ impl OutputFormatter for InteractiveFormatter {
         // Performance info
         if self.context.supports_unicode {
             output.push_str(&format!(
-                "⏱️  {} {} ms\n\n",
+                "{} {} ms\n\n",
                 "Scan time:".bright_blue().bold(),
                 report.execution.scan_time_ms
             ));
@@ -607,7 +605,7 @@ impl OutputFormatter for InteractiveFormatter {
 
         // Column profiles with enhanced formatting
         if self.context.supports_unicode {
-            output.push_str(&format!("📋 {}\n", "Column Profiles".bright_green().bold()));
+            output.push_str(&format!("{}\n", "Column Profiles".bright_green().bold()));
         } else {
             output.push_str("Column Profiles\n");
         }

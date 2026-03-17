@@ -244,7 +244,7 @@ impl Profiler {
     /// Analyze a DataSource and return a quality report.
     ///
     /// Supports `DataSource::File` synchronously. For `DataSource::Query`, use
-    /// [`analyze_source_async()`](Self::analyze_source_async) or [`analyze_query()`](Self::analyze_query).
+    /// `analyze_source_async()` or `analyze_query()` (requires `database` feature).
     pub fn analyze_source(&self, source: &DataSource) -> Result<ProfileReport, DataProfilerError> {
         match source {
             DataSource::File { path, .. } => self.analyze_file(Path::new(path)),
@@ -259,8 +259,8 @@ impl Profiler {
     /// Analyze a DataSource asynchronously.
     ///
     /// Supports `DataSource::File` and `DataSource::Query`. For queries, a database
-    /// connection must be configured via [`.database()`](Self::database) or
-    /// [`.connection_string()`](Self::connection_string).
+    /// connection must be configured via `.database()` or `.connection_string()`
+    /// (requires `database` feature).
     pub async fn analyze_source_async(
         &self,
         source: &DataSource,
@@ -465,8 +465,7 @@ impl Default for Profiler {
 impl Profiler {
     /// Profile a database query or table asynchronously.
     ///
-    /// Requires a database connection to be configured via [`.database()`](Self::database)
-    /// or [`.connection_string()`](Self::connection_string).
+    /// Requires a database connection configured via `.database()` or `.connection_string()`.
     ///
     /// Quality metrics are computed by default. Use [`.quality_dimensions()`](Self::quality_dimensions)
     /// to select a subset.
@@ -507,7 +506,7 @@ impl Profiler {
 
     /// Profile a database query without computing quality metrics.
     ///
-    /// Faster than [`analyze_query()`](Self::analyze_query) since it skips
+    /// Faster than `analyze_query()` since it skips
     /// ISO 25012 quality metric computation.
     pub async fn analyze_query_no_quality(
         &self,

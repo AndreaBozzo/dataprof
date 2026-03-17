@@ -688,7 +688,12 @@ impl From<QualityMetrics> for QualityAssessment {
     }
 }
 
-// Main report structure
+/// Complete profiling report for a data source.
+///
+/// Contains column-level statistics, execution metadata, and an optional
+/// ISO 8000/25012 quality assessment. This is the primary output of all
+/// profiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,
+/// `Profiler::profile_stream`, etc.).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProfileReport {
     /// Unique identifier for this report (UUID v4)
@@ -925,43 +930,66 @@ impl ExecutionMetadata {
     }
 }
 
+/// Profiling statistics for a single column.
+///
+/// Includes data type, null counts, unique counts, type-specific statistics
+/// (numeric, text, or datetime), and detected patterns (e.g. email, phone).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColumnProfile {
+    /// Column name
     pub name: String,
+    /// Inferred data type
     pub data_type: DataType,
+    /// Number of null/missing values
     pub null_count: usize,
+    /// Total number of values (including nulls)
     pub total_count: usize,
+    /// Number of distinct values (when computed)
     pub unique_count: Option<usize>,
+    /// Type-specific statistics (numeric, text, or datetime)
     pub stats: ColumnStats,
+    /// Detected value patterns (e.g. email, phone, UUID)
     pub patterns: Vec<Pattern>,
 }
 
+/// Inferred column data type.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DataType {
+    /// Text / string values
     String,
+    /// Whole numbers (i64 range)
     Integer,
+    /// Floating-point numbers
     Float,
+    /// Date or datetime values
     Date,
 }
 
+/// Quartile statistics for numeric distributions.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Quartiles {
-    pub q1: f64,  // 25th percentile
-    pub q2: f64,  // 50th percentile (median)
-    pub q3: f64,  // 75th percentile
-    pub iqr: f64, // Interquartile range (Q3 - Q1)
+    /// 25th percentile
+    pub q1: f64,
+    /// 50th percentile (median)
+    pub q2: f64,
+    /// 75th percentile
+    pub q3: f64,
+    /// Interquartile range (Q3 - Q1)
+    pub iqr: f64,
 }
 
+/// A value and its frequency count within a column.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FrequencyItem {
+    /// The value as a string
     pub value: String,
+    /// Number of occurrences
     pub count: usize,
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub percentage: f64,
 }
 
-// ── Extracted stat structs ──────────────────────────────────────────────
-
+/// Statistics for numeric (integer or float) columns.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NumericStats {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
@@ -1028,6 +1056,7 @@ impl NumericStats {
     }
 }
 
+/// Statistics for text/string columns.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TextStats {
     pub min_length: usize,
@@ -1069,6 +1098,7 @@ impl TextStats {
     }
 }
 
+/// Statistics for date/datetime columns.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DateTimeStats {
     pub min_datetime: String,
@@ -1097,24 +1127,31 @@ impl DateTimeStats {
     }
 }
 
-// ── ColumnStats enum (tuple variants wrapping extracted structs) ─────────
-
+/// Type-specific statistics for a column, determined by the inferred [`DataType`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ColumnStats {
+    /// Statistics for integer and float columns
     Numeric(NumericStats),
+    /// Statistics for string columns
     Text(TextStats),
+    /// Statistics for date/datetime columns
     DateTime(DateTimeStats),
 }
 
+/// A detected value pattern within a column (e.g. email, phone, UUID).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Pattern {
+    /// Pattern name (e.g. "email", "phone", "uuid")
     pub name: String,
+    /// Regex used for detection
     pub regex: String,
+    /// Number of values matching this pattern
     pub match_count: usize,
+    /// Percentage of non-null values matching (0.0--100.0)
     pub match_percentage: f64,
 }
 
-// Output format types for CLI and output formatting
+/// Output format for CLI and programmatic output.
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     /// Human-readable text output

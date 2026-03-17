@@ -98,7 +98,7 @@ impl ReportAssembler {
     /// Set the quality dimensions to compute.
     ///
     /// Only the listed dimensions will be evaluated. Unlisted dimensions
-    /// appear as `None` in the resulting [`QualityMetrics`].
+    /// appear as `None` in the resulting `QualityMetrics`.
     pub fn with_requested_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.requested_dimensions = Some(dims);
         self

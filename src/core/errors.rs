@@ -42,27 +42,27 @@ pub enum RecoveryStrategy {
 /// Enhanced error types with more descriptive messages for DataProfiler
 #[derive(Error, Debug, Clone)]
 pub enum DataProfilerError {
-    #[error("CSV parsing failed: {message}\n💡 Suggestion: {suggestion}")]
+    #[error("CSV parsing failed: {message}\nSuggestion: {suggestion}")]
     CsvParsingError { message: String, suggestion: String },
 
     #[error(
-        "File not found: {path}\n💡 Please check that the file exists and you have permission to read it"
+        "File not found: {path}\nPlease check that the file exists and you have permission to read it"
     )]
     FileNotFound { path: String },
 
-    #[error("Unsupported file format: {format}\n💡 Supported formats: CSV, JSON, JSONL")]
+    #[error("Unsupported file format: {format}\nSupported formats: CSV, JSON, JSONL")]
     UnsupportedFormat { format: String },
 
     #[error(
-        "Memory limit exceeded while processing large file\n💡 Try using --streaming mode or increase available memory"
+        "Memory limit exceeded while processing large file\nTry using streaming mode or increase available memory"
     )]
     MemoryLimitExceeded,
 
-    #[error("Invalid configuration: {message}\n💡 {suggestion}")]
+    #[error("Invalid configuration: {message}\n{suggestion}")]
     InvalidConfiguration { message: String, suggestion: String },
 
     #[error(
-        "Data quality issue detected: {issue}\n📊 Impact: {impact}\n💡 Recommendation: {recommendation}"
+        "Data quality issue detected: {issue}\nImpact: {impact}\nRecommendation: {recommendation}"
     )]
     DataQualityIssue {
         issue: String,
@@ -70,24 +70,22 @@ pub enum DataProfilerError {
         recommendation: String,
     },
 
-    #[error(
-        "Streaming processing failed: {message}\n💡 Try using --chunk-size with a smaller value or disable streaming"
-    )]
+    #[error("Streaming processing failed: {message}\nTry using --chunk-size with a smaller value")]
     StreamingError { message: String },
 
-    #[error("SIMD acceleration not available: {reason}\n💡 Falling back to standard processing")]
+    #[error("SIMD acceleration not available: {reason}\nFalling back to standard processing")]
     SimdUnavailable { reason: String },
 
-    #[error("Sampling error: {message}\n💡 {suggestion}")]
+    #[error("Sampling error: {message}\n{suggestion}")]
     SamplingError { message: String, suggestion: String },
 
-    #[error("I/O error: {message}\n💡 Check file permissions and disk space")]
+    #[error("I/O error: {message}\nCheck file permissions and disk space")]
     IoError { message: String },
 
-    #[error("JSON parsing failed: {message}\n💡 Verify JSON format and encoding")]
+    #[error("JSON parsing failed: {message}\nVerify JSON format and encoding")]
     JsonParsingError { message: String },
 
-    #[error("Column analysis failed for '{column}': {reason}\n💡 {suggestion}")]
+    #[error("Column analysis failed for '{column}': {reason}\n{suggestion}")]
     ColumnAnalysisError {
         column: String,
         reason: String,
@@ -95,7 +93,7 @@ pub enum DataProfilerError {
     },
 
     #[error(
-        "Recoverable error (attempt {attempt}/{max_attempts}): {message}\n💡 {recovery_suggestion}"
+        "Recoverable error (attempt {attempt}/{max_attempts}): {message}\n{recovery_suggestion}"
     )]
     RecoverableError {
         message: String,
@@ -106,7 +104,7 @@ pub enum DataProfilerError {
     },
 
     #[error(
-        "Auto-recovery failed after {attempts} attempts\n💡 Last strategy tried: {last_strategy}\n📋 Recovery log: {recovery_log}"
+        "Auto-recovery failed after {attempts} attempts\nLast strategy tried: {last_strategy}\nRecovery log: {recovery_log}"
     )]
     RecoveryFailed {
         attempts: usize,
@@ -133,7 +131,7 @@ pub enum DataProfilerError {
     #[error("Configuration validation failed: {message}")]
     ConfigValidationError { message: String },
 
-    #[error("Database connection failed: {message}\n💡 {suggestion}")]
+    #[error("Database connection failed: {message}\n{suggestion}")]
     DatabaseConnectionError { message: String, suggestion: String },
 
     #[error("Database query failed: {message}")]
@@ -142,9 +140,7 @@ pub enum DataProfilerError {
     #[error("Database configuration error: {message}")]
     DatabaseConfigError { message: String },
 
-    #[error(
-        "Database feature not enabled: {message}\n💡 Recompile with the appropriate feature flag"
-    )]
+    #[error("Database feature not enabled: {message}\nRecompile with the appropriate feature flag")]
     DatabaseFeatureDisabled { message: String },
 
     #[error("SQL validation failed: {message}")]
@@ -154,7 +150,7 @@ pub enum DataProfilerError {
     DatabaseSslError { message: String },
 
     #[error(
-        "Database retry exhausted: operation '{operation}' failed after {attempts} attempts\n💡 Last error: {last_error}"
+        "Database retry exhausted: operation '{operation}' failed after {attempts} attempts\nLast error: {last_error}"
     )]
     DatabaseRetryExhausted {
         operation: String,
@@ -692,6 +688,6 @@ mod tests {
 
         let error_string = config_error.to_string();
         assert!(error_string.contains("Invalid chunk size"));
-        assert!(error_string.contains("💡"));
+        assert!(error_string.contains("Use a value between"));
     }
 }

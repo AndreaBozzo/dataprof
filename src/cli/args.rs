@@ -1,5 +1,4 @@
 use clap::ValueEnum;
-use serde::Serialize;
 
 #[derive(Clone, Debug, ValueEnum)]
 pub enum CliOutputFormat {
@@ -22,27 +21,4 @@ impl From<CliOutputFormat> for dataprof::OutputFormat {
             CliOutputFormat::Plain => dataprof::OutputFormat::Plain,
         }
     }
-}
-
-#[derive(Clone, Debug, ValueEnum)]
-pub enum EngineChoice {
-    /// Automatic intelligent selection (RECOMMENDED)
-    Auto,
-    /// Standard streaming engine
-    Streaming,
-    /// Memory-efficient streaming engine
-    MemoryEfficient,
-    /// True streaming for very large files
-    TrueStreaming,
-    /// Apache Arrow columnar engine (requires arrow feature)
-    Arrow,
-}
-
-#[derive(Serialize)]
-#[allow(dead_code)] // Used in different feature combinations
-pub struct BenchmarkOutput {
-    pub rows: usize,
-    pub columns: usize,
-    pub file_size_mb: f64,
-    pub scan_time_ms: u128,
 }

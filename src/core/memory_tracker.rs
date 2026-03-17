@@ -172,7 +172,7 @@ impl MemoryTracker {
         if leaks.is_empty() {
             "No memory leaks detected.".to_string()
         } else {
-            let mut report = format!("⚠️  {} potential memory leak(s) detected:\n\n", leaks.len());
+            let mut report = format!("{} potential memory leak(s) detected:\n\n", leaks.len());
 
             for leak in leaks {
                 #[cfg(debug_assertions)]
