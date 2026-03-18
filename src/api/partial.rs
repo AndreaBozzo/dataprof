@@ -602,12 +602,7 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
 /// let csv = b"name,age\nAlice,30\nBob,25\n";
 /// let source = BytesSource::new(
 ///     bytes::Bytes::from_static(csv),
-///     AsyncSourceInfo {
-///         label: "api-body".into(),
-///         format: FileFormat::Csv,
-///         size_hint: None,
-///         source_system: None,
-///     },
+///     AsyncSourceInfo::new("api-body", FileFormat::Csv),
 /// );
 /// let schema = dataprof::infer_schema_stream(source).await?;
 /// # Ok(())
@@ -650,12 +645,7 @@ pub async fn infer_schema_stream(
 /// let csv = b"name,age\nAlice,30\nBob,25\n";
 /// let source = BytesSource::new(
 ///     bytes::Bytes::from_static(csv),
-///     AsyncSourceInfo {
-///         label: "api-body".into(),
-///         format: FileFormat::Csv,
-///         size_hint: None,
-///         source_system: None,
-///     },
+///     AsyncSourceInfo::new("api-body", FileFormat::Csv),
 /// );
 /// let est = dataprof::quick_row_count_stream(source).await?;
 /// # Ok(())

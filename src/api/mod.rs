@@ -554,12 +554,8 @@ impl Profiler {
     /// let csv_data = b"name,age\nAlice,30\nBob,25\n";
     /// let source = BytesSource::new(
     ///     bytes::Bytes::from_static(csv_data),
-    ///     AsyncSourceInfo {
-    ///         label: "request-body".into(),
-    ///         format: FileFormat::Csv,
-    ///         size_hint: Some(csv_data.len() as u64),
-    ///         source_system: None,
-    ///     },
+    ///     AsyncSourceInfo::new("request-body", FileFormat::Csv)
+    ///         .size_hint(Some(csv_data.len() as u64)),
     /// );
     ///
     /// let report = Profiler::new().profile_stream(source).await?;
