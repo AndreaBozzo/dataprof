@@ -6,7 +6,13 @@ use crate::core::errors::DataProfilerError;
 use crate::types::{FileFormat, StreamSourceSystem};
 
 /// Metadata about an async data source for report construction and progress tracking.
+///
+/// Use struct update syntax with `Default` to avoid breaking when new fields are added:
+/// ```ignore
+/// AsyncSourceInfo { label: "...".into(), format: FileFormat::Csv, ..Default::default() }
+/// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AsyncSourceInfo {
     /// Human-readable label (e.g., URL, topic name, filename)
     pub label: String,
@@ -17,6 +23,49 @@ pub struct AsyncSourceInfo {
     /// Optional source system for the report's `DataSource::Stream` variant.
     /// Defaults to `StreamSourceSystem::Http` when `None`.
     pub source_system: Option<StreamSourceSystem>,
+    /// Whether the first row of a CSV contains column headers.
+    /// `None` (default) assumes headers are present. Ignored for non-CSV formats.
+    pub has_header: Option<bool>,
+}
+
+impl AsyncSourceInfo {
+    /// Create a new source info with the required fields; optional fields use defaults.
+    pub fn new(label: impl Into<String>, format: FileFormat) -> Self {
+        Self {
+            label: label.into(),
+            format,
+            size_hint: None,
+            source_system: None,
+            has_header: None,
+        }
+    }
+
+    pub fn size_hint(mut self, size: Option<u64>) -> Self {
+        self.size_hint = size;
+        self
+    }
+
+    pub fn source_system(mut self, system: StreamSourceSystem) -> Self {
+        self.source_system = Some(system);
+        self
+    }
+
+    pub fn has_header(mut self, has: bool) -> Self {
+        self.has_header = Some(has);
+        self
+    }
+}
+
+impl Default for AsyncSourceInfo {
+    fn default() -> Self {
+        Self {
+            label: String::new(),
+            format: FileFormat::Unknown(String::new()),
+            size_hint: None,
+            source_system: None,
+            has_header: None,
+        }
+    }
 }
 
 /// A source of raw bytes that can be consumed asynchronously.
@@ -146,6 +195,7 @@ mod tests {
                 format: FileFormat::Csv,
                 size_hint: Some(csv_data.len() as u64),
                 source_system: None,
+                has_header: None,
             },
         );
 
@@ -173,6 +223,7 @@ mod tests {
             format: FileFormat::Csv,
             size_hint: Some(std::fs::metadata(tmp.path()).unwrap().len()),
             source_system: None,
+            has_header: None,
         };
 
         let source = (file, info);

@@ -683,6 +683,7 @@ mod tests {
                 format: FileFormat::Csv,
                 size_hint: Some(data.len() as u64),
                 source_system: None,
+                has_header: None,
             },
         )
     }
@@ -757,6 +758,7 @@ mod tests {
                 format: FileFormat::Csv,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
 
@@ -802,6 +804,7 @@ mod tests {
                 format: FileFormat::Csv,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
 
@@ -826,6 +829,7 @@ mod tests {
                 format: FileFormat::Json,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
         let profiler = AsyncStreamingProfiler::new();
@@ -847,6 +851,7 @@ mod tests {
                 format: FileFormat::Csv,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
 

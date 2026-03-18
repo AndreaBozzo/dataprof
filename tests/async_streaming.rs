@@ -28,12 +28,8 @@ async fn test_async_vs_sync_parity() {
     // --- Async ---
     let file = tokio::fs::File::open(tmp.path()).await.unwrap();
     let meta = std::fs::metadata(tmp.path()).unwrap();
-    let info = AsyncSourceInfo {
-        label: tmp.path().display().to_string(),
-        format: FileFormat::Csv,
-        size_hint: Some(meta.len()),
-        source_system: None,
-    };
+    let info = AsyncSourceInfo::new(tmp.path().display().to_string(), FileFormat::Csv)
+        .size_hint(Some(meta.len()));
 
     let async_report = AsyncStreamingProfiler::new()
         .memory_limit_mb(16)
@@ -86,12 +82,7 @@ async fn test_bytes_source_end_to_end() {
     let csv = b"color,count\nred,10\nblue,20\ngreen,30\n";
     let source = BytesSource::new(
         bytes::Bytes::from_static(csv),
-        AsyncSourceInfo {
-            label: "colors".into(),
-            format: FileFormat::Csv,
-            size_hint: Some(csv.len() as u64),
-            source_system: None,
-        },
+        AsyncSourceInfo::new("colors", FileFormat::Csv).size_hint(Some(csv.len() as u64)),
     );
 
     let report = AsyncStreamingProfiler::new()
@@ -120,12 +111,7 @@ async fn test_profiler_profile_stream_csv() {
     let csv = b"name,age\nAlice,30\nBob,25\nCarol,28\n";
     let source = BytesSource::new(
         bytes::Bytes::from_static(csv),
-        AsyncSourceInfo {
-            label: "test-csv".into(),
-            format: FileFormat::Csv,
-            size_hint: Some(csv.len() as u64),
-            source_system: None,
-        },
+        AsyncSourceInfo::new("test-csv", FileFormat::Csv).size_hint(Some(csv.len() as u64)),
     );
 
     let report = Profiler::new().profile_stream(source).await.unwrap();
@@ -142,12 +128,7 @@ async fn test_profiler_profile_stream_json() {
         br#"[{"city":"Rome","pop":2873},{"city":"Milan","pop":1352},{"city":"Naples","pop":967}]"#;
     let source = BytesSource::new(
         bytes::Bytes::from_static(json),
-        AsyncSourceInfo {
-            label: "test-json".into(),
-            format: FileFormat::Json,
-            size_hint: Some(json.len() as u64),
-            source_system: None,
-        },
+        AsyncSourceInfo::new("test-json", FileFormat::Json).size_hint(Some(json.len() as u64)),
     );
 
     let report = Profiler::new().profile_stream(source).await.unwrap();
@@ -229,12 +210,7 @@ async fn test_profiler_profile_stream_with_stop_condition() {
 
     let source = BytesSource::new(
         bytes::Bytes::from(csv_data.clone()),
-        AsyncSourceInfo {
-            label: "big-csv".into(),
-            format: FileFormat::Csv,
-            size_hint: Some(csv_data.len() as u64),
-            source_system: None,
-        },
+        AsyncSourceInfo::new("big-csv", FileFormat::Csv).size_hint(Some(csv_data.len() as u64)),
     );
 
     let report = Profiler::new()
@@ -258,12 +234,7 @@ async fn test_profiler_profile_stream_with_stop_condition() {
 async fn test_profiler_profile_stream_rejects_parquet() {
     let source = BytesSource::new(
         bytes::Bytes::from_static(b"not-real-parquet"),
-        AsyncSourceInfo {
-            label: "fake.parquet".into(),
-            format: FileFormat::Parquet,
-            size_hint: None,
-            source_system: None,
-        },
+        AsyncSourceInfo::new("fake.parquet", FileFormat::Parquet),
     );
 
     let result = Profiler::new().profile_stream(source).await;

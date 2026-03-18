@@ -142,7 +142,7 @@ fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataPro
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
-    let mut result = infer_schema_from_csv_reader(file)?;
+    let mut result = infer_schema_from_csv_reader(file, true)?;
     result.inference_time_ms = start.elapsed().as_millis();
     Ok(result)
 }
@@ -165,8 +165,13 @@ fn infer_schema_json(
 // ---------------------------------------------------------------------------
 
 /// Infer schema from any CSV reader. Reads up to `SCHEMA_SAMPLE_ROWS` rows.
-fn infer_schema_from_csv_reader<R: Read>(reader: R) -> Result<SchemaResult, DataProfilerError> {
-    let config = CsvParserConfig::default().max_rows(Some(SCHEMA_SAMPLE_ROWS));
+fn infer_schema_from_csv_reader<R: Read>(
+    reader: R,
+    has_header: bool,
+) -> Result<SchemaResult, DataProfilerError> {
+    let config = CsvParserConfig::default()
+        .has_header(has_header)
+        .max_rows(Some(SCHEMA_SAMPLE_ROWS));
     let (_profiles, column_stats, rows_read, headers) =
         crate::parsers::csv::analyze_csv_from_reader(reader, &config)?;
 
@@ -210,9 +215,10 @@ fn infer_schema_from_json_reader<R: BufRead>(
 fn infer_schema_from_reader<R: Read>(
     reader: R,
     format: &FileFormat,
+    has_header: bool,
 ) -> Result<SchemaResult, DataProfilerError> {
     match format {
-        FileFormat::Csv => infer_schema_from_csv_reader(reader),
+        FileFormat::Csv => infer_schema_from_csv_reader(reader, has_header),
         FileFormat::Json | FileFormat::Jsonl => {
             infer_schema_from_json_reader(BufReader::new(reader), format)
         }
@@ -613,17 +619,19 @@ pub async fn infer_schema_stream(
 ) -> Result<SchemaResult, DataProfilerError> {
     let info = source.source_info();
     let format = info.format.clone();
+    let has_header = info.has_header.unwrap_or(true);
 
     let start = Instant::now();
     let async_reader = source.into_async_read().await?;
     let sync_reader = tokio_util::io::SyncIoBridge::new(async_reader);
 
-    let mut result =
-        tokio::task::spawn_blocking(move || infer_schema_from_reader(sync_reader, &format))
-            .await
-            .map_err(|e| DataProfilerError::StreamingError {
-                message: format!("Schema inference task failed: {}", e),
-            })??;
+    let mut result = tokio::task::spawn_blocking(move || {
+        infer_schema_from_reader(sync_reader, &format, has_header)
+    })
+    .await
+    .map_err(|e| DataProfilerError::StreamingError {
+        message: format!("Schema inference task failed: {}", e),
+    })??;
 
     result.inference_time_ms = start.elapsed().as_millis();
     Ok(result)
@@ -900,6 +908,7 @@ mod async_tests {
                 format: FileFormat::Csv,
                 size_hint: Some(data.len() as u64),
                 source_system: None,
+                has_header: None,
             },
         )
     }
@@ -912,6 +921,7 @@ mod async_tests {
                 format: FileFormat::Jsonl,
                 size_hint: Some(data.len() as u64),
                 source_system: None,
+                has_header: None,
             },
         )
     }
@@ -924,6 +934,7 @@ mod async_tests {
                 format: FileFormat::Json,
                 size_hint: Some(data.len() as u64),
                 source_system: None,
+                has_header: None,
             },
         )
     }
@@ -936,6 +947,7 @@ mod async_tests {
                 format: FileFormat::Parquet,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         )
     }

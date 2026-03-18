@@ -28,6 +28,9 @@ pub struct CsvParserConfig {
     pub quote_char: u8,
     /// Trim whitespace from fields.
     pub trim_whitespace: bool,
+    /// Whether the first row contains column headers.
+    /// When `false`, columns are named `column_0`, `column_1`, etc.
+    pub has_header: bool,
     /// Maximum rows to process (None = all rows).
     pub max_rows: Option<usize>,
 }
@@ -39,6 +42,7 @@ impl Default for CsvParserConfig {
             delimiter: None,
             quote_char: b'"',
             trim_whitespace: false,
+            has_header: true,
             max_rows: None,
         }
     }
@@ -56,6 +60,12 @@ impl CsvParserConfig {
     /// Set the delimiter.
     pub fn with_delimiter(mut self, delimiter: u8) -> Self {
         self.delimiter = Some(delimiter);
+        self
+    }
+
+    /// Set whether the first row contains column headers.
+    pub fn has_header(mut self, yes: bool) -> Self {
+        self.has_header = yes;
         self
     }
 
@@ -169,7 +179,7 @@ pub fn analyze_csv_from_reader<R: Read>(
     DataProfilerError,
 > {
     let mut csv_builder = ReaderBuilder::new();
-    csv_builder.has_headers(true);
+    csv_builder.has_headers(config.has_header);
     csv_builder.flexible(config.flexible);
     csv_builder.quote(config.quote_char);
     if config.trim_whitespace {
@@ -196,8 +206,15 @@ pub fn analyze_csv_from_reader<R: Read>(
 
     let mut csv_reader = csv_builder.from_reader(boxed_reader);
 
-    let headers = csv_reader.headers()?;
-    let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
+    let header_names: Vec<String> = if config.has_header {
+        let headers = csv_reader.headers()?;
+        headers.iter().map(|h| h.to_string()).collect()
+    } else {
+        // Peek the first record to determine the number of columns,
+        // then generate synthetic names.
+        let headers = csv_reader.headers()?;
+        (0..headers.len()).map(|i| format!("column_{i}")).collect()
+    };
 
     let mut column_stats = StreamingColumnCollection::new();
     let mut rows_read = 0;

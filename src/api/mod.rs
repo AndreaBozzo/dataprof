@@ -652,6 +652,7 @@ impl Profiler {
                     format,
                     size_hint: Some(metadata.len()),
                     source_system: Some(crate::types::StreamSourceSystem::Custom("file".into())),
+                    ..Default::default()
                 };
                 self.profile_stream((file, info)).await
             }
@@ -755,6 +756,7 @@ impl Profiler {
                         format,
                         size_hint,
                         source_system: Some(crate::types::StreamSourceSystem::Http),
+                        ..Default::default()
                     },
                 );
                 self.profile_stream(source).await

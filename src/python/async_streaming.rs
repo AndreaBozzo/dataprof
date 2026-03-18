@@ -72,6 +72,7 @@ pub fn profile_bytes_async<'py>(
                 format: fmt,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
 
@@ -126,6 +127,7 @@ pub fn infer_schema_stream_async<'py>(
                 format: fmt,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
 
@@ -158,6 +160,7 @@ pub fn quick_row_count_stream_async<'py>(
                 format: fmt,
                 size_hint: None,
                 source_system: None,
+                has_header: None,
             },
         );
 
