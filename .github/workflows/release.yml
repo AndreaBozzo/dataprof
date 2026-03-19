@@ -151,7 +151,7 @@ jobs:
       if: matrix.cross
       run: |
         echo "Installing cross-compilation tools..."
-        cargo install cross --git https://github.com/cross-rs/cross
+        cargo install cross
         echo "Cross-compilation tools installed"
 
     - name: Build binary
