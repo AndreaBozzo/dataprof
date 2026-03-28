@@ -154,6 +154,19 @@ dataprof is the subject of a peer-reviewed paper submitted to **IEEE ScalCom 202
 
 The paper benchmarks dataprof against YData Profiling, Polars, and pandas across execution efficiency, memory scalability, energy consumption, and zero-copy interoperability in constrained Edge AI environments.
 
+### BibTeX
+
+```bibtex
+@inproceedings{bozzo2026compiled,
+  author={Bozzo, Andrea},
+  title={A Compiled Paradigm for Scalable and Sustainable Edge AI: Out-of-Core Execution and SIMD Acceleration in Telemetry Profiling},
+  booktitle={2026 IEEE International Conference on Scalable Computing and Communications (ScalCom)},
+  year={2026},
+  note={Under review}
+}
+```
+
+
 ## License
 
 Dual-licensed under either the [MIT License](LICENSE) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option.
