@@ -150,7 +150,7 @@ class ProfileReport:
     @property
     def columns(self) -> int: ...
     @property
-    def column_profiles(self) -> list[ColumnProfile]: ...
+    def column_profiles(self) -> dict[str, ColumnProfile]: ...
     @property
     def quality_score(self) -> float | None: ...
     @property
@@ -200,6 +200,10 @@ class ColumnProfile:
     coefficient_of_variation: float | None
     quartiles: dict[str, float] | None
     is_approximate: bool | None
+    min_length: int | None
+    max_length: int | None
+    avg_length: float | None
+    patterns: list[str] | None
 
 class DataQualityMetrics:
     """ISO 8000/25012 data quality metrics.
