@@ -442,7 +442,7 @@ impl MetricsCalculator {
     fn calculate_total_rows(
         data: &HashMap<String, Vec<String>>,
     ) -> Result<usize, DataProfilerError> {
-        data.values().next().map(|v| v.len()).ok_or_else(|| {
+        data.values().map(|v| v.len()).max().ok_or_else(|| {
             DataProfilerError::MetricsCalculationError {
                 message: "No data columns found".to_string(),
             }

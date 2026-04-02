@@ -8,7 +8,6 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 
-use crate::analysis::patterns::looks_like_date;
 use crate::types::{ColumnProfile, DataType};
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
@@ -67,11 +66,11 @@ impl RecordBatchAnalyzer {
         profiles
     }
 
-    /// Create empty sample columns for quality metrics calculation
+    /// Create sample columns for quality metrics calculation
     pub fn create_sample_columns(&self) -> HashMap<String, Vec<String>> {
         let mut samples = HashMap::new();
-        for name in self.column_analyzers.keys() {
-            samples.insert(name.clone(), Vec::new());
+        for (name, analyzer) in &self.column_analyzers {
+            samples.insert(name.clone(), analyzer.sample_values.clone());
         }
         samples
     }
@@ -939,24 +938,8 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Duration(_) => DataType::Integer,
             // String types
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                // Check if it looks like dates (for string-encoded dates)
-                let sample_size = self.sample_values.len().min(50);
-                if sample_size > 0 {
-                    let date_like_count = self
-                        .sample_values
-                        .iter()
-                        .take(sample_size)
-                        .filter(|s| looks_like_date(s))
-                        .count();
-
-                    if date_like_count as f64 / sample_size as f64 > 0.7 {
-                        DataType::Date
-                    } else {
-                        DataType::String
-                    }
-                } else {
-                    DataType::String
-                }
+                // Check if it looks like dates or numbers (for string-encoded types)
+                crate::analysis::inference::infer_type(&self.sample_values)
             }
             // Binary types and complex types - treat as String
             _ => DataType::String,
