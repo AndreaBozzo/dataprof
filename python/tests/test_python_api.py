@@ -110,7 +110,7 @@ class TestProfileReport:
         assert isinstance(report.sampling_applied, bool)
 
     def test_column_profile_fields(self, report):
-        col = report.column_profiles[0]
+        col = report.column_profiles["name"]
         assert hasattr(col, "name")
         assert hasattr(col, "data_type")
         assert hasattr(col, "total_count")

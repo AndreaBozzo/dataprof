@@ -198,8 +198,8 @@ class ProfileReport:
         return self._report.columns_detected
 
     @property
-    def column_profiles(self) -> list:
-        return self._report.column_profiles
+    def column_profiles(self) -> dict:
+        return {col.name: col for col in self._report.column_profiles}
 
     @property
     def quality_score(self) -> float | None:
@@ -271,6 +271,32 @@ class ProfileReport:
                     }.items()
                     if v is not None
                 }
+            if col.min_length is not None:
+                if "stats" not in col_data:
+                    col_data["stats"] = {}
+                # Add text specific stats
+                col_data["stats"].update(
+                    {
+                        k: v
+                        for k, v in {
+                            "min_length": col.min_length,
+                            "max_length": col.max_length,
+                            "avg_length": col.avg_length,
+                        }.items()
+                        if v is not None
+                    }
+                )
+
+            if col.patterns is not None:
+                col_data["patterns"] = [
+                    {
+                        "name": p.name,
+                        "regex": p.regex,
+                        "match_count": p.match_count,
+                        "match_percentage": p.match_percentage,
+                    }
+                    for p in col.patterns
+                ]
             cols.append(col_data)
 
         quality_dict = None

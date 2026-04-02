@@ -150,7 +150,7 @@ class ProfileReport:
     @property
     def columns(self) -> int: ...
     @property
-    def column_profiles(self) -> list[ColumnProfile]: ...
+    def column_profiles(self) -> dict[str, ColumnProfile]: ...
     @property
     def quality_score(self) -> float | None: ...
     @property
@@ -178,6 +178,14 @@ class ProfileReport:
         """Save the report to a JSON file (.json extension required)."""
         ...
 
+class Pattern:
+    """Detected pattern statistics."""
+
+    name: str
+    regex: str
+    match_count: int
+    match_percentage: float
+
 class ColumnProfile:
     """Column-level profiling statistics."""
 
@@ -200,6 +208,10 @@ class ColumnProfile:
     coefficient_of_variation: float | None
     quartiles: dict[str, float] | None
     is_approximate: bool | None
+    min_length: int | None
+    max_length: int | None
+    avg_length: float | None
+    patterns: list[Pattern] | None
 
 class DataQualityMetrics:
     """ISO 8000/25012 data quality metrics.
