@@ -16,6 +16,9 @@
 
 dataprof is a Rust library and CLI for profiling tabular data. It computes column-level statistics, detects data types and patterns, and evaluates data quality against the ISO 8000/25012 standard -- all with bounded memory usage that lets you profile datasets far larger than your available RAM.
 
+> [!NOTE]
+> This is a work in progress, the project is now over 6 months old and the API is not stable and may change in future versions. Please, report any issues or suggestions you may have.
+
 ## Highlights
 
 - **Rust core** -- fast columnar and streaming engines
