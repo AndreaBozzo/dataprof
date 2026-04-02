@@ -96,7 +96,7 @@ import dataprof as dp
 df = pd.read_csv("data.csv")
 report = dp.profile(df)
 
-for col in report.column_profiles:
+for col in report.column_profiles.values():
     print(f"{col.name}: {col.data_type}, {col.null_percentage:.1f}% null")
 ```
 
@@ -345,7 +345,7 @@ df = pd.DataFrame(X_train, columns=feature_names)
 report = dp.profile(df, name="X_train")
 
 # Check for ML-readiness issues
-for col in report.column_profiles:
+for col in report.column_profiles.values():
     issues = []
     if col.null_count > 0:
         issues.append(f"{col.null_percentage:.1f}% null")

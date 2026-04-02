@@ -60,7 +60,7 @@ report = dataprof.profile("data.csv")
 print(f"{report.rows} rows, {report.columns} columns")
 print(f"Quality score: {report.quality_score}")
 
-for col in report.column_profiles:
+for col in report.column_profiles.values():
     print(f"  {col.name} ({col.data_type}): {col.null_percentage:.1f}% null")
 ```
 

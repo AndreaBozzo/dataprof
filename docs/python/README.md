@@ -84,7 +84,7 @@ Returned by `profile()` and all analysis functions.
 | `source_type` | `str` | `"file"`, `"query"`, `"dataframe"`, `"stream"` |
 | `rows` | `int` | Number of rows processed |
 | `columns` | `int` | Number of columns detected |
-| `column_profiles` | `list[ColumnProfile]` | Per-column statistics |
+| `column_profiles` | `dict[str, ColumnProfile]` | Per-column statistics (by name) |
 | `quality_score` | `float \| None` | Overall quality score (0--100) |
 | `quality` | `DataQualityMetrics \| None` | Detailed quality breakdown |
 | `execution_time_ms` | `int` | Total processing time |
@@ -129,6 +129,21 @@ Per-column profiling statistics.
 | `coefficient_of_variation` | `float \| None` | CV |
 | `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}` |
 | `is_approximate` | `bool \| None` | Whether stats were estimated from a sample |
+| `min_length` | `int \| None` | Minimum character length |
+| `max_length` | `int \| None` | Maximum character length |
+| `avg_length` | `float \| None` | Average character length |
+| `patterns` | `list[Pattern] \| None` | List of detected value patterns |
+
+## `Pattern`
+
+Represents a statistical pattern match (regex) found in a column.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `str` | Name of the pattern (e.g. `"email"`, `"url"`) |
+| `regex` | `str` | Regular expression used for matching |
+| `match_count` | `int` | Number of rows matching the pattern |
+| `match_percentage` | `float` | Percentage of non-null rows matching (0.0--100.0) |
 
 ## Configuration
 

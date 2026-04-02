@@ -69,7 +69,7 @@ print(f"Columns: {report.columns}")
 print(f"Quality: {report.quality_score}")
 
 # Inspect each column
-for col in report.column_profiles:
+for col in report.column_profiles.values():
     print(f"  {col.name}: {col.data_type}, {col.null_percentage:.1f}% null")
 
 # Export to pandas for further analysis
