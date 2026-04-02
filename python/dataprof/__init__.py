@@ -199,7 +199,7 @@ class ProfileReport:
 
     @property
     def column_profiles(self) -> dict:
-        return self._report.column_profiles
+        return {col.name: col for col in self._report.column_profiles}
 
     @property
     def quality_score(self) -> float | None:
@@ -242,7 +242,7 @@ class ProfileReport:
     def to_dict(self) -> dict:
         """Convert the report to a nested Python dict."""
         cols = []
-        for col in self._report.column_profiles.values():
+        for col in self._report.column_profiles:
             col_data = {
                 "name": col.name,
                 "data_type": col.data_type,
@@ -271,7 +271,7 @@ class ProfileReport:
                     }.items()
                     if v is not None
                 }
-            if col.min_length is not None or col.patterns is not None:
+            if col.min_length is not None:
                 if "stats" not in col_data:
                     col_data["stats"] = {}
                 # Add text specific stats
@@ -282,11 +282,21 @@ class ProfileReport:
                             "min_length": col.min_length,
                             "max_length": col.max_length,
                             "avg_length": col.avg_length,
-                            "patterns": col.patterns,
                         }.items()
                         if v is not None
                     }
                 )
+
+            if col.patterns is not None:
+                col_data["patterns"] = [
+                    {
+                        "name": p.name,
+                        "regex": p.regex,
+                        "match_count": p.match_count,
+                        "match_percentage": p.match_percentage,
+                    }
+                    for p in col.patterns
+                ]
             cols.append(col_data)
 
         quality_dict = None
@@ -343,7 +353,7 @@ class ProfileReport:
         import pandas as pd
 
         records = []
-        for col in self._report.column_profiles.values():
+        for col in self._report.column_profiles:
             record = {
                 "name": col.name,
                 "data_type": col.data_type,
@@ -387,7 +397,7 @@ class ProfileReport:
         qs = self.quality_score
         qs_str = f"{qs:.1f}%" if qs is not None else "N/A"
         col_rows = ""
-        for col in self._report.column_profiles.values():
+        for col in self._report.column_profiles:
             stats = ""
             if col.mean is not None:
                 stats = f"mean={col.mean:.2f}"

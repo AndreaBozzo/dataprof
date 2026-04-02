@@ -150,11 +150,11 @@ impl MetricsCalculator {
             ));
         }
 
-        let total_rows = Self::calculate_total_rows(data)?;
+        let sample_size = Self::calculate_sample_size(data)?;
         let requested = &requested_dimensions;
 
         // Validate sample size for statistical reliability
-        let validation = Self::validate_sample_size(total_rows, "general");
+        let validation = Self::validate_sample_size(sample_size, "general");
         if !validation.sufficient_sample {
             eprintln!(
                 "Warning: Sample size ({}) is below recommended minimum ({}) for reliable statistics",
@@ -167,7 +167,7 @@ impl MetricsCalculator {
             let c = CompletenessCalculator::new(&self.thresholds).calculate(
                 data,
                 column_profiles,
-                total_rows,
+                sample_size,
             )?;
             Some(CompletenessMetrics {
                 missing_values_ratio: c.missing_values_ratio,
@@ -195,7 +195,7 @@ impl MetricsCalculator {
             let u = UniquenessCalculator::new(&self.thresholds).calculate(
                 data,
                 column_profiles,
-                total_rows,
+                sample_size,
             )?;
             Some(UniquenessMetrics {
                 duplicate_rows: u.duplicate_rows,
@@ -324,7 +324,7 @@ impl MetricsCalculator {
         }
 
         let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
-        let sample_rows = Self::calculate_total_rows(data).unwrap_or(0);
+        let sample_rows = Self::calculate_sample_size(data).unwrap_or(0);
         let requested = &requested_dimensions;
 
         let mut exact_dimensions = Vec::new();
@@ -438,8 +438,8 @@ impl MetricsCalculator {
         })
     }
 
-    /// Calculate total number of rows from data
-    fn calculate_total_rows(
+    /// Calculate sample size across data column arrays (using max inner length heuristic)
+    fn calculate_sample_size(
         data: &HashMap<String, Vec<String>>,
     ) -> Result<usize, DataProfilerError> {
         data.values().map(|v| v.len()).max().ok_or_else(|| {

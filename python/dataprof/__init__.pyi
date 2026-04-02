@@ -178,6 +178,14 @@ class ProfileReport:
         """Save the report to a JSON file (.json extension required)."""
         ...
 
+class Pattern:
+    """Detected pattern statistics."""
+
+    name: str
+    regex: str
+    match_count: int
+    match_percentage: float
+
 class ColumnProfile:
     """Column-level profiling statistics."""
 
@@ -203,7 +211,7 @@ class ColumnProfile:
     min_length: int | None
     max_length: int | None
     avg_length: float | None
-    patterns: list[str] | None
+    patterns: list[Pattern] | None
 
 class DataQualityMetrics:
     """ISO 8000/25012 data quality metrics.

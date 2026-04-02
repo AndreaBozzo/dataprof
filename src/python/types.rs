@@ -1,9 +1,34 @@
 use pyo3::prelude::*;
 
 use crate::types::{
-    ColumnProfile, ColumnStats, DataSource, DataType, ProfileReport, QualityMetrics,
+    ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport, QualityMetrics,
     TruncationReason,
 };
+
+/// Python wrapper for Pattern metrics
+#[pyclass(name = "Pattern")]
+#[derive(Clone)]
+pub struct PyPattern {
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub regex: String,
+    #[pyo3(get)]
+    pub match_count: usize,
+    #[pyo3(get)]
+    pub match_percentage: f64,
+}
+
+impl From<&Pattern> for PyPattern {
+    fn from(p: &Pattern) -> Self {
+        Self {
+            name: p.name.clone(),
+            regex: p.regex.clone(),
+            match_count: p.match_count,
+            match_percentage: p.match_percentage,
+        }
+    }
+}
 
 /// Python wrapper for ColumnProfile — column-level statistics.
 #[pyclass(name = "ColumnProfile")]
@@ -57,7 +82,7 @@ pub struct PyColumnProfile {
     pub avg_length: Option<f64>,
     // Patterns
     #[pyo3(get)]
-    pub patterns: Option<Vec<String>>,
+    pub patterns: Option<Vec<PyPattern>>,
 }
 
 impl From<&ColumnProfile> for PyColumnProfile {
@@ -127,7 +152,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
         };
 
         let patterns = if !profile.patterns.is_empty() {
-            Some(profile.patterns.iter().map(|p| p.name.clone()).collect())
+            Some(profile.patterns.iter().map(PyPattern::from).collect())
         } else {
             None
         };
@@ -558,13 +583,13 @@ impl PyProfileReport {
 
     // -- Profile data --
 
-    /// Column-level statistics map (column name -> ColumnProfile)
+    /// Column-level statistics list (preserves original order)
     #[getter]
-    fn column_profiles(&self) -> std::collections::HashMap<String, PyColumnProfile> {
+    fn column_profiles(&self) -> Vec<PyColumnProfile> {
         self.inner
             .column_profiles
             .iter()
-            .map(|p| (p.name.clone(), PyColumnProfile::from(p)))
+            .map(PyColumnProfile::from)
             .collect()
     }
 
