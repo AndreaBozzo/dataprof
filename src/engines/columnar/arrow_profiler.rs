@@ -698,6 +698,7 @@ impl ColumnAnalyzer {
                     max_length: self.max_length,
                     avg_length,
                 }),
+                boolean_counts: None,
             },
         )
     }
@@ -711,6 +712,7 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Int32
             | arrow::datatypes::DataType::Int16
             | arrow::datatypes::DataType::Int8 => DataType::Integer,
+            arrow::datatypes::DataType::Boolean => DataType::Boolean,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Reuse the shared inference logic for consistent type detection
                 // across all engines (dates before numerics, 100% match threshold)

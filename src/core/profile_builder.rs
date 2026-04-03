@@ -24,6 +24,8 @@ pub struct ColumnProfileInput<'a> {
     /// Pre-computed text lengths for engines that track them incrementally.
     /// When `Some`, text stats are built from these instead of re-scanning samples.
     pub text_lengths: Option<TextLengths>,
+    /// Pre-computed boolean counts (true_count, false_count) for boolean columns.
+    pub boolean_counts: Option<(usize, usize)>,
 }
 
 /// Pre-computed text length stats from streaming/columnar engines.
@@ -58,6 +60,25 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
             } else {
                 ColumnStats::DateTime(crate::types::DateTimeStats::empty())
             }
+        }
+        DataType::Boolean => {
+            let (true_count, false_count) = input.boolean_counts.unwrap_or_else(|| {
+                // Fall back: count from sample values
+                let tc = input.sample_values.iter().filter(|v| *v == "True").count();
+                let fc = input.sample_values.iter().filter(|v| *v == "False").count();
+                (tc, fc)
+            });
+            let total = true_count + false_count;
+            let true_ratio = if total > 0 {
+                true_count as f64 / total as f64
+            } else {
+                0.0
+            };
+            ColumnStats::Boolean(crate::types::BooleanStats {
+                true_count,
+                false_count,
+                true_ratio,
+            })
         }
         DataType::String => {
             if let Some(tl) = &input.text_lengths {
@@ -118,6 +139,7 @@ pub fn profile_from_stats(name: &str, stats: &StreamingStatistics) -> ColumnProf
             max_length: text_stats.max_length,
             avg_length: text_stats.avg_length,
         }),
+        boolean_counts: None,
     })
 }
 

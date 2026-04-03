@@ -239,6 +239,8 @@ class ColumnProfile:
     min_length: int | None
     max_length: int | None
     avg_length: float | None
+    true_count: int | None
+    false_count: int | None
     patterns: list[Pattern] | None
 
 class DataQualityMetrics:

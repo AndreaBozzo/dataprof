@@ -40,7 +40,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     let stats = match data_type {
         DataType::Integer | DataType::Float => calculate_numeric_stats(data),
         DataType::Date => calculate_datetime_stats(data),
-        DataType::String => calculate_text_stats(data),
+        DataType::Boolean | DataType::String => calculate_text_stats(data),
     };
 
     // Skip expensive operations in fast mode

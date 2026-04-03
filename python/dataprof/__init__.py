@@ -146,6 +146,8 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "min_length": col.min_length,
         "max_length": col.max_length,
         "avg_length": _r4(col.avg_length),
+        "true_count": col.true_count,
+        "false_count": col.false_count,
         "top_pattern": top_pattern,
         "top_pattern_pct": top_pattern_pct,
     }
@@ -411,6 +413,11 @@ class ProfileReport:
                         if v is not None
                     }
                 )
+            if col.true_count is not None:
+                if "stats" not in col_data:
+                    col_data["stats"] = {}
+                col_data["stats"]["true_count"] = col.true_count
+                col_data["stats"]["false_count"] = col.false_count
 
             if col.patterns is not None:
                 col_data["patterns"] = [
@@ -535,6 +542,8 @@ class ProfileReport:
                 "min_length": col.min_length,
                 "max_length": col.max_length,
                 "avg_length": _r4(col.avg_length),
+                "true_count": col.true_count,
+                "false_count": col.false_count,
             }
             summary[col.name] = d
 
