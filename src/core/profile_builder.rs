@@ -63,9 +63,18 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         }
         DataType::Boolean => {
             let (true_count, false_count) = input.boolean_counts.unwrap_or_else(|| {
-                // Fall back: count from sample values
-                let tc = input.sample_values.iter().filter(|v| *v == "True").count();
-                let fc = input.sample_values.iter().filter(|v| *v == "False").count();
+                // Fall back: count from sample values, tolerating case differences
+                // and surrounding whitespace from engine string representations.
+                let tc = input
+                    .sample_values
+                    .iter()
+                    .filter(|v| v.trim().eq_ignore_ascii_case("true"))
+                    .count();
+                let fc = input
+                    .sample_values
+                    .iter()
+                    .filter(|v| v.trim().eq_ignore_ascii_case("false"))
+                    .count();
                 (tc, fc)
             });
             let total = true_count + false_count;
@@ -233,5 +242,57 @@ mod tests {
         let samples = quality_check_samples(&collection);
         assert!(samples.contains_key("col"));
         assert_eq!(samples["col"].len(), 2);
+    }
+
+    #[test]
+    fn test_boolean_stats_with_counts() {
+        let samples = vec!["True".to_string(), "False".to_string(), "True".to_string()];
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "flag".to_string(),
+            data_type: DataType::Boolean,
+            total_count: 3,
+            null_count: 0,
+            unique_count: Some(2),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: Some((2, 1)),
+        });
+
+        match &profile.stats {
+            crate::types::ColumnStats::Boolean(b) => {
+                assert_eq!(b.true_count, 2);
+                assert_eq!(b.false_count, 1);
+                assert!((b.true_ratio - 2.0 / 3.0).abs() < 0.001);
+            }
+            other => panic!("expected Boolean stats, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_boolean_stats_fallback_case_insensitive() {
+        let samples = vec![
+            "true".to_string(),
+            "FALSE".to_string(),
+            " True ".to_string(),
+        ];
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "flag".to_string(),
+            data_type: DataType::Boolean,
+            total_count: 3,
+            null_count: 0,
+            unique_count: Some(2),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None, // forces fallback path
+        });
+
+        match &profile.stats {
+            crate::types::ColumnStats::Boolean(b) => {
+                assert_eq!(b.true_count, 2);
+                assert_eq!(b.false_count, 1);
+                assert!((b.true_ratio - 2.0 / 3.0).abs() < 0.001);
+            }
+            other => panic!("expected Boolean stats, got {:?}", other),
+        }
     }
 }
