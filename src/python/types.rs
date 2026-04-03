@@ -85,6 +85,8 @@ pub struct PyColumnProfile {
     pub true_count: Option<usize>,
     #[pyo3(get)]
     pub false_count: Option<usize>,
+    #[pyo3(get)]
+    pub true_ratio: Option<f64>,
     // Patterns
     #[pyo3(get)]
     pub patterns: Option<Vec<PyPattern>>,
@@ -146,19 +148,8 @@ impl From<&ColumnProfile> for PyColumnProfile {
                     n.is_approximate,
                 )
             }
-            ColumnStats::Boolean(b) => (
-                Some(0.0),
-                Some(1.0),
-                Some(b.true_ratio),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+            ColumnStats::Boolean(_) => (
+                None, None, None, None, None, None, None, None, None, None, None, None,
             ),
             _ => (
                 None, None, None, None, None, None, None, None, None, None, None, None,
@@ -170,9 +161,9 @@ impl From<&ColumnProfile> for PyColumnProfile {
             _ => (None, None, None),
         };
 
-        let (true_count, false_count) = match &profile.stats {
-            ColumnStats::Boolean(b) => (Some(b.true_count), Some(b.false_count)),
-            _ => (None, None),
+        let (true_count, false_count, true_ratio) = match &profile.stats {
+            ColumnStats::Boolean(b) => (Some(b.true_count), Some(b.false_count), Some(b.true_ratio)),
+            _ => (None, None, None),
         };
 
         let patterns = if !profile.patterns.is_empty() {
@@ -212,6 +203,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             avg_length,
             true_count,
             false_count,
+            true_ratio,
             patterns,
         }
     }

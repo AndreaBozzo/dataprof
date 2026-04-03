@@ -241,6 +241,7 @@ class ColumnProfile:
     avg_length: float | None
     true_count: int | None
     false_count: int | None
+    true_ratio: float | None
     patterns: list[Pattern] | None
 
 class DataQualityMetrics:
