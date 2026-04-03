@@ -156,6 +156,18 @@ fn test_boolean_yes_no_detection() {
         DataType::Boolean,
         "yes/no values should be detected as Boolean"
     );
+    match &col.stats {
+        ColumnStats::Boolean(b) => {
+            assert_eq!(b.true_count, 25, "yes values should count as true");
+            assert_eq!(b.false_count, 25, "no values should count as false");
+            assert!(
+                (b.true_ratio - 0.5).abs() < 1e-9,
+                "expected true_ratio to be 0.5, got {}",
+                b.true_ratio
+            );
+        }
+        other => panic!("Expected Boolean stats, got {:?}", other),
+    }
 }
 
 #[test]
@@ -165,16 +177,41 @@ fn test_boolean_json_output_includes_stats() {
         .expect("CSV analysis should succeed");
 
     let json = serde_json::to_string(&report).expect("JSON serialization should succeed");
+    let value: serde_json::Value =
+        serde_json::from_str(&json).expect("JSON deserialization should succeed");
+
+    let column_profiles = value["column_profiles"]
+        .as_array()
+        .expect("column_profiles should be an array");
+    let active_col = column_profiles
+        .iter()
+        .find(|col| col["name"].as_str() == Some("active"))
+        .expect("JSON output should include the active column");
+    // ColumnStats is an externally-tagged serde enum: {"Boolean": {…}}
+    let stats = active_col["stats"]["Boolean"]
+        .as_object()
+        .expect("active column should include Boolean stats object");
+
     assert!(
-        json.contains("true_count"),
-        "JSON output should include true_count"
+        stats.contains_key("true_count"),
+        "active column stats should include true_count"
     );
     assert!(
-        json.contains("false_count"),
-        "JSON output should include false_count"
+        stats.contains_key("false_count"),
+        "active column stats should include false_count"
     );
     assert!(
-        json.contains("true_ratio"),
-        "JSON output should include true_ratio"
+        stats.contains_key("true_ratio"),
+        "active column stats should include true_ratio"
+    );
+    assert_eq!(
+        stats["true_count"].as_u64(),
+        Some(66),
+        "active column true_count should match the generated data"
+    );
+    assert_eq!(
+        stats["false_count"].as_u64(),
+        Some(34),
+        "active column false_count should match the generated data"
     );
 }
