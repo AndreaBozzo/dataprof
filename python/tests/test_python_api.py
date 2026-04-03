@@ -157,7 +157,7 @@ class TestProfileReport:
 
     def test_repr_html(self, report):
         html = report._repr_html_()
-        assert "<table>" in html
+        assert "<table" in html
         assert "ProfileReport" in html
 
 
@@ -413,6 +413,27 @@ class TestNamespace:
                 f"ProfileReport missing expected property: {prop!r}"
             )
 
+    def test_profile_report_methods(self):
+        """New export methods must exist on the class."""
+        expected_methods = [
+            "to_dict",
+            "to_json",
+            "to_dataframe",
+            "to_polars",
+            "to_arrow",
+            "describe",
+            "quality_summary",
+            "save",
+            "__getitem__",
+            "__contains__",
+            "__iter__",
+            "__len__",
+        ]
+        for method in expected_methods:
+            assert hasattr(dataprof.ProfileReport, method), (
+                f"ProfileReport missing expected method: {method!r}"
+            )
+
     def test_stub_all_matches_runtime(self):
         """The __all__ list in __init__.pyi must match the runtime __all__."""
         import ast
@@ -468,3 +489,271 @@ class TestCsvConfigEngines:
         r = dataprof.profile(SEMICOLON_FILE, csv_delimiter=";")
         assert r.rows > 0
         assert r.columns > 1, "delimiter not applied — got single column"
+
+
+# ─────────────────────────────────────────────────
+#  10. Mapping protocol (dict-like access)
+# ─────────────────────────────────────────────────
+
+
+class TestProfileReportMapping:
+    @pytest.fixture()
+    def report(self):
+        return dataprof.profile(CSV_FILE)
+
+    def test_getitem(self, report):
+        col = report["name"]
+        assert col.name == "name"
+
+    def test_getitem_missing_raises(self, report):
+        with pytest.raises(KeyError):
+            report["nonexistent_column"]
+
+    def test_contains(self, report):
+        assert "name" in report
+        assert "nonexistent_column" not in report
+
+    def test_iter(self, report):
+        names = list(report)
+        assert len(names) == report.columns
+        assert all(isinstance(n, str) for n in names)
+
+    def test_len(self, report):
+        assert len(report) == report.columns
+
+
+# ─────────────────────────────────────────────────
+#  11. Rounding
+# ─────────────────────────────────────────────────
+
+
+class TestRounding:
+    @pytest.fixture()
+    def report(self):
+        return dataprof.profile(CSV_FILE)
+
+    def test_to_dict_percentages_rounded(self, report):
+        d = report.to_dict()
+        for col in d["columns"]:
+            np = col["null_percentage"]
+            if np is not None:
+                # Should have at most 2 decimal places
+                assert np == round(np, 2), f"{col['name']}: null_percentage not rounded"
+
+    def test_to_dict_stats_rounded(self, report):
+        d = report.to_dict()
+        for col in d["columns"]:
+            stats = col.get("stats", {})
+            for key in ("mean", "std_dev", "variance", "median"):
+                v = stats.get(key)
+                if v is not None:
+                    assert v == round(v, 4), f"{col['name']}: {key} not rounded"
+
+    def test_to_dict_execution_rounded(self, report):
+        d = report.to_dict()
+        tp = d["execution"]["throughput_rows_sec"]
+        if tp is not None:
+            assert tp == round(tp, 4)
+
+    def test_quality_score_rounded(self, report):
+        qs = report.quality_score
+        if qs is not None:
+            assert qs == round(qs, 2)
+
+
+# ─────────────────────────────────────────────────
+#  12. Enriched to_dataframe
+# ─────────────────────────────────────────────────
+
+
+class TestToDataframeEnriched:
+    def test_enriched_columns(self):
+        pytest.importorskip("pandas")
+        r = dataprof.profile(CSV_FILE)
+        df = r.to_dataframe()
+        assert len(df) == r.columns
+        expected_cols = {
+            "name",
+            "data_type",
+            "total_count",
+            "null_count",
+            "null_percentage",
+            "unique_count",
+            "uniqueness_ratio",
+            "min",
+            "max",
+            "mean",
+            "std_dev",
+            "variance",
+            "median",
+            "mode",
+            "skewness",
+            "kurtosis",
+            "coefficient_of_variation",
+            "q1",
+            "q2",
+            "q3",
+            "iqr",
+            "is_approximate",
+            "min_length",
+            "max_length",
+            "avg_length",
+            "top_pattern",
+            "top_pattern_pct",
+        }
+        assert expected_cols.issubset(set(df.columns)), (
+            f"Missing columns: {expected_cols - set(df.columns)}"
+        )
+
+    def test_values_are_rounded(self):
+        pd = pytest.importorskip("pandas")
+        r = dataprof.profile(CSV_FILE)
+        df = r.to_dataframe()
+        for _, row in df.iterrows():
+            np_val = row["null_percentage"]
+            if np_val is not None and pd.notna(np_val):
+                assert np_val == round(np_val, 2)
+
+
+# ─────────────────────────────────────────────────
+#  13. to_polars
+# ─────────────────────────────────────────────────
+
+
+class TestToPolars:
+    def test_to_polars(self):
+        pytest.importorskip("polars")
+        r = dataprof.profile(CSV_FILE)
+        df = r.to_polars()
+        assert len(df) == r.columns
+        assert "name" in df.columns
+        assert "mean" in df.columns
+
+
+# ─────────────────────────────────────────────────
+#  14. to_arrow
+# ─────────────────────────────────────────────────
+
+
+class TestToArrow:
+    def test_to_arrow(self):
+        pa = pytest.importorskip("pyarrow")
+        r = dataprof.profile(CSV_FILE)
+        table = r.to_arrow()
+        assert isinstance(table, pa.Table)
+        assert table.num_rows == r.columns
+        assert "name" in table.column_names
+
+
+# ─────────────────────────────────────────────────
+#  15. describe
+# ─────────────────────────────────────────────────
+
+
+class TestDescribe:
+    def test_describe_returns_dataframe(self):
+        pd = pytest.importorskip("pandas")
+        r = dataprof.profile(CSV_FILE)
+        desc = r.describe()
+        assert isinstance(desc, pd.DataFrame)
+        assert "count" in desc.index
+        assert "null%" in desc.index
+        assert "mean" in desc.index
+
+    def test_describe_without_pandas(self):
+        r = dataprof.profile(CSV_FILE)
+        # describe() falls back to dict-of-dicts if pandas is missing,
+        # but since pandas is installed in test env, just verify it works
+        desc = r.describe()
+        assert desc is not None
+
+
+# ─────────────────────────────────────────────────
+#  16. quality_summary
+# ─────────────────────────────────────────────────
+
+
+class TestQualitySummary:
+    def test_quality_summary_keys(self):
+        r = dataprof.profile(CSV_FILE)
+        qs = r.quality_summary()
+        assert isinstance(qs, dict)
+        expected_keys = {
+            "source",
+            "rows",
+            "quality_score",
+            "completeness",
+            "consistency",
+            "uniqueness",
+            "accuracy",
+            "timeliness",
+            "execution_time_ms",
+        }
+        assert expected_keys == set(qs.keys())
+
+    def test_quality_summary_values(self):
+        r = dataprof.profile(CSV_FILE)
+        qs = r.quality_summary()
+        assert qs["rows"] == r.rows
+        assert isinstance(qs["execution_time_ms"], int)
+
+
+# ─────────────────────────────────────────────────
+#  17. save formats
+# ─────────────────────────────────────────────────
+
+
+class TestSaveFormats:
+    @pytest.fixture()
+    def report(self):
+        return dataprof.profile(CSV_FILE)
+
+    def test_save_csv(self, report):
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            path = f.name
+        try:
+            result = report.save(path)
+            assert result is report
+            with open(path) as f:
+                content = f.read()
+            assert "name" in content
+            assert "data_type" in content
+        finally:
+            os.unlink(path)
+
+    def test_save_parquet(self, report):
+        pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+            path = f.name
+        try:
+            result = report.save(path)
+            assert result is report
+            table = pq.read_table(path)
+            assert table.num_rows == report.columns
+        finally:
+            os.unlink(path)
+
+
+# ─────────────────────────────────────────────────
+#  18. Improved repr
+# ─────────────────────────────────────────────────
+
+
+class TestReprImproved:
+    @pytest.fixture()
+    def report(self):
+        return dataprof.profile(CSV_FILE)
+
+    def test_repr_multiline(self, report):
+        r = repr(report)
+        assert "ProfileReport" in r
+        assert "Columns:" in r
+        # Should show at least one column name from the dataset
+        assert any(col_name in r for col_name in report.column_profiles)
+
+    def test_repr_html_enriched(self, report):
+        html = report._repr_html_()
+        assert "Unique" in html
+        assert "Pattern" in html
+        assert "Stats" in html

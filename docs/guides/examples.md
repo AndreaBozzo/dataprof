@@ -87,6 +87,26 @@ print(f"{report.rows} rows, {report.columns} columns")
 print(f"Quality: {report.quality_score}")
 ```
 
+### Access columns directly
+
+```python
+import dataprof as dp
+
+report = dp.profile("data.csv")
+
+# Dict-like access
+col = report["age"]
+print(f"mean={col.mean}, nulls={col.null_percentage}%")
+
+# Check if a column exists
+if "email" in report:
+    print(f"email patterns: {report['email'].patterns}")
+
+# Iterate column names
+for name in report:
+    print(name, report[name].data_type)
+```
+
 ### Profile a pandas DataFrame
 
 ```python
@@ -96,7 +116,8 @@ import dataprof as dp
 df = pd.read_csv("data.csv")
 report = dp.profile(df)
 
-for col in report.column_profiles.values():
+for name in report:
+    col = report[name]
     print(f"{col.name}: {col.data_type}, {col.null_percentage:.1f}% null")
 ```
 
@@ -167,16 +188,39 @@ print(report.quality.completeness)     # has data
 print(report.quality.consistency)      # None (not requested)
 ```
 
-### Export report to DataFrame for visualization
+### Quick pandas-like summary with describe()
 
 ```python
 import dataprof as dp
 
 report = dp.profile("data.csv")
-df = report.to_dataframe()
+print(report.describe())
+#          col_a   col_b   col_c
+# count    1000    1000    1000
+# null%    0.0     2.1     0.0
+# unique   45      800     3
+# mean     34.5    None    None
+# std      12.1    None    None
+# ...
+```
 
-# Now use pandas for visualization
-print(df[["name", "data_type", "null_count", "unique_count"]])
+### Export to pandas, polars, or Arrow
+
+```python
+import dataprof as dp
+
+report = dp.profile("data.csv")
+
+# pandas DataFrame with all stats
+df = report.to_dataframe()
+print(df[["name", "data_type", "null_percentage", "mean", "std_dev"]])
+
+# polars DataFrame (no pandas needed)
+pl_df = report.to_polars()
+high_null = pl_df.filter(pl.col("null_percentage") > 5.0)
+
+# PyArrow Table (no pandas needed)
+table = report.to_arrow()
 ```
 
 ### Save and reload reports
@@ -186,12 +230,33 @@ import json
 import dataprof as dp
 
 report = dp.profile("data.csv")
-report.save("report.json")                  # save to disk
 
-# Later: reload and inspect
+# Save as JSON (full report)
+report.save("report.json")
+
+# Save column profiles as CSV (no extra deps)
+report.save("profiles.csv")
+
+# Save column profiles as Parquet (requires pyarrow)
+report.save("profiles.parquet")
+
+# Later: reload JSON and inspect
 with open("report.json") as f:
     data = json.load(f)
 print(data["execution"]["rows_processed"])
+```
+
+### Track quality over time
+
+```python
+from pathlib import Path
+import pandas as pd
+import dataprof as dp
+
+files = sorted(Path("warehouse/daily/").glob("orders_*.csv"))
+rows = [dp.profile(str(f)).quality_summary() for f in files]
+history = pd.DataFrame(rows)
+print(history[["source", "rows", "quality_score", "completeness"]])
 ```
 
 ### Async file profiling
@@ -324,8 +389,8 @@ import dataprof as dp
 df = pl.scan_parquet("events/*.parquet").collect()
 report = dp.profile(df, engine="columnar")
 
-# Turn the profile into a Polars DataFrame for downstream analysis
-profile_df = pl.from_pandas(report.to_dataframe())
+# Turn the profile into a Polars DataFrame natively
+profile_df = report.to_polars()
 problematic = profile_df.filter(pl.col("null_percentage") > 5.0)
 print(f"{len(problematic)} columns with >5% nulls:")
 print(problematic.select(["name", "null_percentage", "unique_count"]))
@@ -345,7 +410,8 @@ df = pd.DataFrame(X_train, columns=feature_names)
 report = dp.profile(df, name="X_train")
 
 # Check for ML-readiness issues
-for col in report.column_profiles.values():
+for name in report:
+    col = report[name]
     issues = []
     if col.null_count > 0:
         issues.append(f"{col.null_percentage:.1f}% null")
@@ -385,7 +451,7 @@ async def profile_upload(file: UploadFile):
         "rows": report.rows,
         "columns": report.columns,
         "quality_score": report.quality_score,
-        "column_profiles": report.to_dict()["column_profiles"],
+        "column_profiles": report.to_dict()["columns"],
     }
 ```
 
