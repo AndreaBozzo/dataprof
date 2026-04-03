@@ -245,69 +245,127 @@ pub async fn analyze_parquet_async_http_dims(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
+    use std::thread::JoinHandle;
+    use std::time::Duration;
 
-    fn spawn_mock_server(data: Vec<u8>) -> String {
+    struct MockServer {
+        url: String,
+        handle: JoinHandle<()>,
+    }
+
+    impl MockServer {
+        fn url(&self) -> &str {
+            &self.url
+        }
+
+        fn join(self) {
+            self.handle.join().unwrap();
+        }
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> std::io::Result<String> {
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+
+        let mut request = Vec::new();
+        let mut buffer = [0; 1024];
+
+        loop {
+            let bytes_read = stream.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+
+            request.extend_from_slice(&buffer[..bytes_read]);
+
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+
+            if request.len() > 16 * 1024 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "request headers exceeded test limit",
+                ));
+            }
+        }
+
+        Ok(String::from_utf8_lossy(&request).into_owned())
+    }
+
+    fn parse_range_header(request: &str) -> Option<(usize, usize)> {
+        let range_line = request
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("range: bytes="))?;
+        let range_value = range_line.split_once(':')?.1.trim();
+        let byte_range = range_value.strip_prefix("bytes=")?;
+        let (start, end) = byte_range.split_once('-')?;
+
+        Some((start.parse().ok()?, end.parse().ok()?))
+    }
+
+    fn spawn_mock_server(data: Vec<u8>) -> MockServer {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let data = Arc::new(data);
 
-        std::thread::spawn(move || {
-            for mut stream in listener.incoming().flatten() {
-                let mut buffer = [0; 512];
-                if let Ok(bytes_read) = stream.read(&mut buffer) {
-                    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+        let handle = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("mock server accept failed");
+                let request = read_http_request(&mut stream).expect("mock server read failed");
 
-                    if request.starts_with("HEAD") {
-                        let response = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n\r\n",
-                            data.len()
-                        );
-                        let _ = stream.write_all(response.as_bytes());
-                    } else if request.starts_with("GET") {
-                        // "Range: bytes=0-10"
-                        if let Some(range_line) = request
-                            .lines()
-                            .find(|l| l.to_lowercase().starts_with("range: bytes="))
-                        {
-                            let parts: Vec<&str> = range_line
-                                .trim_start_matches("Range: bytes=")
-                                .trim_start_matches("range: bytes=")
-                                .split('-')
-                                .collect();
-                            if parts.len() == 2 {
-                                let start: usize = parts[0].parse().unwrap();
-                                let end: usize = parts[1].parse().unwrap(); // inclusive
-                                let chunk = &data[start..=end];
-                                let response = format!(
-                                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\n\r\n",
-                                    start,
-                                    end,
-                                    data.len(),
-                                    chunk.len()
-                                );
-                                let _ = stream.write_all(response.as_bytes());
-                                let _ = stream.write_all(chunk);
-                            }
-                        }
-                    }
+                if request.starts_with("HEAD") {
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                        data.len()
+                    );
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("mock server HEAD response failed");
+                } else if request.starts_with("GET") {
+                    let (start, end) = parse_range_header(&request)
+                        .expect("mock server missing or invalid Range header");
+                    let chunk = data
+                        .get(start..=end)
+                        .expect("mock server requested invalid byte range");
+                    let response = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        start,
+                        end,
+                        data.len(),
+                        chunk.len()
+                    );
+                    stream
+                        .write_all(response.as_bytes())
+                        .expect("mock server GET response headers failed");
+                    stream
+                        .write_all(chunk)
+                        .expect("mock server GET response body failed");
+                } else {
+                    panic!("mock server received unexpected request: {request}");
                 }
             }
         });
-        format!("http://127.0.0.1:{}", port)
+
+        MockServer {
+            url: format!("http://127.0.0.1:{}", port),
+            handle,
+        }
     }
 
     #[tokio::test]
     async fn test_http_parquet_reader_byte_ranges() {
         let dummy_data: Vec<u8> = (0..255).map(|x| x as u8).collect();
-        let url = spawn_mock_server(dummy_data.clone());
+        let server = spawn_mock_server(dummy_data.clone());
 
-        let mut reader = HttpParquetReader::try_new(&url).await.unwrap();
+        let mut reader = HttpParquetReader::try_new(server.url()).await.unwrap();
         assert_eq!(reader.content_length, 255);
 
         let bytes = reader.get_bytes(10..20).await.unwrap();
         assert_eq!(bytes.len(), 10);
         assert_eq!(&bytes[..], &dummy_data[10..20]);
+
+        server.join();
     }
 }
