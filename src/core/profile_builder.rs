@@ -65,15 +65,23 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
             let (true_count, false_count) = input.boolean_counts.unwrap_or_else(|| {
                 // Fall back: count from sample values, tolerating case differences
                 // and surrounding whitespace from engine string representations.
+                // Map yes/no variants to true/false so stats stay consistent
+                // with inference which accepts yes/no as boolean.
                 let tc = input
                     .sample_values
                     .iter()
-                    .filter(|v| v.trim().eq_ignore_ascii_case("true"))
+                    .filter(|v| {
+                        let t = v.trim();
+                        t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+                    })
                     .count();
                 let fc = input
                     .sample_values
                     .iter()
-                    .filter(|v| v.trim().eq_ignore_ascii_case("false"))
+                    .filter(|v| {
+                        let t = v.trim();
+                        t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
+                    })
                     .count();
                 (tc, fc)
             });
@@ -175,7 +183,10 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
     }
 
     let sample_values = stats.sample_values();
-    let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
+    let non_empty: Vec<&String> = sample_values
+        .iter()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
 
     if !non_empty.is_empty() {
         let date_like_count = non_empty
@@ -186,6 +197,32 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
 
         if date_like_count as f64 / non_empty.len().min(100) as f64 > 0.7 {
             return DataType::Date;
+        }
+
+        // Boolean detection: string literals (true/false/yes/no variants)
+        let bool_count = non_empty
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.trim(),
+                    "true"
+                        | "false"
+                        | "True"
+                        | "False"
+                        | "TRUE"
+                        | "FALSE"
+                        | "yes"
+                        | "no"
+                        | "Yes"
+                        | "No"
+                        | "YES"
+                        | "NO"
+                )
+            })
+            .count();
+
+        if bool_count as f64 / non_empty.len() as f64 >= 0.9 {
+            return DataType::Boolean;
         }
     }
 

@@ -44,11 +44,17 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
             let non_null: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
             let tc = non_null
                 .iter()
-                .filter(|v| v.trim().eq_ignore_ascii_case("true"))
+                .filter(|v| {
+                    let t = v.trim();
+                    t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+                })
                 .count();
             let fc = non_null
                 .iter()
-                .filter(|v| v.trim().eq_ignore_ascii_case("false"))
+                .filter(|v| {
+                    let t = v.trim();
+                    t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
+                })
                 .count();
             let total = tc + fc;
             let true_ratio = if total > 0 {

@@ -775,3 +775,65 @@ class TestReprImproved:
         assert "Unique" in html
         assert "Pattern" in html
         assert "Stats" in html
+
+
+# ─────────────────────────────────────────────────
+#  Boolean column support
+# ─────────────────────────────────────────────────
+
+
+class TestBooleanColumns:
+    @pytest.fixture()
+    def boolean_csv(self, tmp_path):
+        p = tmp_path / "booleans.csv"
+        lines = ["active,verified,count"]
+        for i in range(100):
+            active = "true" if i % 2 == 0 else "false"
+            verified = "True" if i % 3 == 0 else "False"
+            lines.append(f"{active},{verified},{i}")
+        p.write_text("\n".join(lines))
+        return str(p)
+
+    @pytest.fixture()
+    def report(self, boolean_csv):
+        return dataprof.profile(boolean_csv)
+
+    def test_boolean_detection(self, report):
+        active = report["active"]
+        assert active.data_type == "boolean"
+
+    def test_boolean_stats_properties(self, report):
+        active = report["active"]
+        assert active.true_count == 50
+        assert active.false_count == 50
+        assert active.true_ratio is not None
+        assert abs(active.true_ratio - 0.5) < 0.01
+
+    def test_boolean_in_to_dict(self, report):
+        d = report.to_dict()
+        active_col = next(c for c in d["columns"] if c["name"] == "active")
+        assert "stats" in active_col
+        assert active_col["stats"]["true_count"] == 50
+        assert active_col["stats"]["false_count"] == 50
+        assert active_col["stats"]["true_ratio"] is not None
+
+    def test_boolean_in_to_json(self, report):
+        j = json.loads(report.to_json())
+        active_col = next(c for c in j["columns"] if c["name"] == "active")
+        assert "stats" in active_col
+        assert "true_count" in active_col["stats"]
+
+    def test_boolean_in_column_record(self, report):
+        df = report.to_dataframe()
+        active_row = df[df["name"] == "active"].iloc[0]
+        assert active_row["true_count"] == 50
+        assert active_row["false_count"] == 50
+
+    def test_boolean_repr_shows_stats(self, report):
+        r = repr(report)
+        assert "true=" in r
+
+    def test_integer_not_boolean(self, report):
+        """Pure integer column should NOT be detected as boolean."""
+        count_col = report["count"]
+        assert count_col.data_type == "integer"

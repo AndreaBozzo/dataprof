@@ -6,6 +6,15 @@ use is_terminal::IsTerminal;
 use serde::Serialize;
 use std::io::{stderr, stdout};
 
+/// Compute null percentage, returning 0.0 for empty datasets (avoids NaN).
+fn null_pct(profile: &ColumnProfile) -> f64 {
+    if profile.total_count == 0 {
+        0.0
+    } else {
+        (profile.null_count as f64 / profile.total_count as f64) * 100.0
+    }
+}
+
 /// Trait for output formatting - enables modular output systems
 pub trait OutputFormatter {
     fn format_report(&self, report: &ProfileReport) -> Result<String>;
@@ -136,6 +145,8 @@ pub struct JsonReport {
     pub metadata: JsonMetadata,
     pub columns: Vec<JsonColumn>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub overall_quality_score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data_quality_metrics: Option<JsonDataQualityMetrics>,
 }
 
@@ -249,6 +260,7 @@ impl OutputFormatter for JsonFormatter {
                 .iter()
                 .map(|p| self.format_column(p))
                 .collect(),
+            overall_quality_score: report.quality_score(),
             data_quality_metrics: report
                 .quality
                 .as_ref()
@@ -271,7 +283,7 @@ impl OutputFormatter for JsonFormatter {
                 serde_json::json!({
                     "name": p.name,
                     "type": format!("{:?}", p.data_type),
-                    "null_percentage": (p.null_count as f64 / p.total_count as f64) * 100.0
+                    "null_percentage": null_pct(p)
                 })
             }).collect::<Vec<_>>()
         });
@@ -320,7 +332,7 @@ impl JsonFormatter {
             data_type: format!("{:?}", profile.data_type),
             total_count: profile.total_count,
             null_count: profile.null_count,
-            null_percentage: (profile.null_count as f64 / profile.total_count as f64) * 100.0,
+            null_percentage: null_pct(profile),
             stats: stats_json,
             patterns: profile
                 .patterns
@@ -373,46 +385,81 @@ impl JsonFormatter {
     }
 }
 
+const CSV_HEADER: &str = "column_name,data_type,total_count,null_count,null_percentage,\
+unique_count,min,max,mean,std_dev,median,\
+min_length,max_length,avg_length,\
+true_count,false_count,true_ratio\n";
+
+fn csv_opt_f64(v: Option<f64>) -> String {
+    match v {
+        Some(f) if f.is_finite() => format!("{:.4}", f),
+        _ => String::new(),
+    }
+}
+
+fn csv_opt_usize(v: Option<usize>) -> String {
+    match v {
+        Some(n) => n.to_string(),
+        None => String::new(),
+    }
+}
+
+fn format_csv_row(profile: &ColumnProfile) -> String {
+    let (min, max, mean, std_dev, median) = match &profile.stats {
+        ColumnStats::Numeric(n) => (
+            Some(n.min),
+            Some(n.max),
+            Some(n.mean),
+            Some(n.std_dev),
+            n.median,
+        ),
+        _ => (None, None, None, None, None),
+    };
+    let (min_length, max_length, avg_length) = match &profile.stats {
+        ColumnStats::Text(t) => (Some(t.min_length), Some(t.max_length), Some(t.avg_length)),
+        _ => (None, None, None),
+    };
+    let (true_count, false_count, true_ratio) = match &profile.stats {
+        ColumnStats::Boolean(b) => (Some(b.true_count), Some(b.false_count), Some(b.true_ratio)),
+        _ => (None, None, None),
+    };
+
+    format!(
+        "{},{:?},{},{},{:.2},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+        profile.name,
+        profile.data_type,
+        profile.total_count,
+        profile.null_count,
+        null_pct(profile),
+        csv_opt_usize(profile.unique_count),
+        csv_opt_f64(min),
+        csv_opt_f64(max),
+        csv_opt_f64(mean),
+        csv_opt_f64(std_dev),
+        csv_opt_f64(median),
+        csv_opt_usize(min_length),
+        csv_opt_usize(max_length),
+        csv_opt_f64(avg_length),
+        csv_opt_usize(true_count),
+        csv_opt_usize(false_count),
+        csv_opt_f64(true_ratio),
+    )
+}
+
 impl OutputFormatter for CsvFormatter {
     fn format_report(&self, report: &ProfileReport) -> Result<String> {
-        let mut output = String::new();
-
-        // Header
-        output.push_str("column_name,data_type,total_count,null_count,null_percentage\n");
-
-        // Data rows
+        let mut output = String::from(CSV_HEADER);
         for profile in &report.column_profiles {
-            let null_percentage = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
-
-            output.push_str(&format!(
-                "{},{:?},{},{},{:.2}\n",
-                profile.name,
-                profile.data_type,
-                profile.total_count,
-                profile.null_count,
-                null_percentage
-            ));
+            output.push_str(&format_csv_row(profile));
         }
-
         Ok(output)
     }
 
     fn format_profiles(&self, profiles: &[ColumnProfile]) -> Result<String> {
-        let mut output = String::new();
-        output.push_str("column_name,data_type,total_count,null_count,null_percentage\n");
-
+        let mut output = String::from(CSV_HEADER);
         for profile in profiles {
-            let null_percentage = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
-            output.push_str(&format!(
-                "{},{:?},{},{},{:.2}\n",
-                profile.name,
-                profile.data_type,
-                profile.total_count,
-                profile.null_count,
-                null_percentage
-            ));
+            output.push_str(&format_csv_row(profile));
         }
-
         Ok(output)
     }
 
@@ -621,7 +668,7 @@ impl OutputFormatter for InteractiveFormatter {
             output.push_str(&format!("  Type: {:?}\n", profile.data_type));
             output.push_str(&format!("  Records: {}\n", profile.total_count));
 
-            let null_percentage = (profile.null_count as f64 / profile.total_count as f64) * 100.0;
+            let null_percentage = null_pct(profile);
             if null_percentage > 0.0 {
                 output.push_str(&format!(
                     "  Nulls: {} ({:.1}%)\n",

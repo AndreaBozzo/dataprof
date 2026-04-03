@@ -304,7 +304,16 @@ class ProfileReport:
 
     @functools.cached_property
     def column_profiles(self) -> dict[str, ColumnProfile]:
-        return {col.name: col for col in self._report.column_profiles}
+        cols = self._report.column_profiles
+        d = {col.name: col for col in cols}
+        if len(d) != len(cols):
+            warnings.warn(
+                f"Dataset has duplicate column names — {len(cols) - len(d)} "
+                "column(s) shadowed in dict access. Use _report.column_profiles "
+                "for the full list.",
+                stacklevel=2,
+            )
+        return d
 
     @property
     def quality_score(self) -> float | None:
@@ -587,10 +596,14 @@ class ProfileReport:
                 row["uniqueness"] = _r2(uniq.get("key_uniqueness"))
             acc = q.accuracy
             if acc is not None:
-                row["accuracy"] = _r2(100.0 - (acc.get("outlier_ratio") or 0.0))
+                # Invert: low outlier_ratio → high accuracy score
+                raw = 100.0 - (acc.get("outlier_ratio") or 0.0)
+                row["accuracy"] = _r2(max(0.0, min(100.0, raw)))
             tim = q.timeliness
             if tim is not None:
-                row["timeliness"] = _r2(100.0 - (tim.get("stale_data_ratio") or 0.0))
+                # Invert: low stale_data_ratio → high timeliness score
+                raw = 100.0 - (tim.get("stale_data_ratio") or 0.0)
+                row["timeliness"] = _r2(max(0.0, min(100.0, raw)))
         return row
 
     def save(self, path: str) -> ProfileReport:
@@ -645,6 +658,9 @@ class ProfileReport:
                 parts.append(f"mean={_r4(col.mean)}")
                 if col.std_dev is not None:
                     parts.append(f"std={_r4(col.std_dev)}")
+            elif col.true_count is not None:
+                pct = _r2(col.true_ratio * 100) if col.true_ratio is not None else 0
+                parts.append(f"true={col.true_count}({pct:.0f}%)")
             elif col.avg_length is not None:
                 parts.append(f"avg_len={_r4(col.avg_length)}")
             if col.patterns:
@@ -686,6 +702,9 @@ class ProfileReport:
                     stats_parts.append(f"std={_r4(col.std_dev)}")
                 if col.median is not None:
                     stats_parts.append(f"median={_r4(col.median)}")
+            elif col.true_count is not None:
+                pct = _r2(col.true_ratio * 100) if col.true_ratio is not None else 0
+                stats_parts.append(f"true={col.true_count} ({pct:.0f}%)")
             elif col.avg_length is not None:
                 stats_parts.append(f"avg_len={_r4(col.avg_length)}")
             stats = ", ".join(stats_parts)
