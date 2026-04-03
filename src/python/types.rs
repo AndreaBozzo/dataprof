@@ -162,7 +162,9 @@ impl From<&ColumnProfile> for PyColumnProfile {
         };
 
         let (true_count, false_count, true_ratio) = match &profile.stats {
-            ColumnStats::Boolean(b) => (Some(b.true_count), Some(b.false_count), Some(b.true_ratio)),
+            ColumnStats::Boolean(b) => {
+                (Some(b.true_count), Some(b.false_count), Some(b.true_ratio))
+            }
             _ => (None, None, None),
         };
 

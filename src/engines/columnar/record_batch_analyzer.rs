@@ -917,10 +917,7 @@ impl ColumnAnalyzer {
                     max_length: self.max_length,
                     avg_length,
                 }),
-                boolean_counts: if matches!(
-                    self.data_type,
-                    arrow::datatypes::DataType::Boolean
-                ) {
+                boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
                     Some((self.true_count, self.false_count))
                 } else {
                     None
