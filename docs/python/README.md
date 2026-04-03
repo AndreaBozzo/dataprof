@@ -323,7 +323,7 @@ Single-row dict for easy aggregation across multiple reports:
 ```python
 qs = report.quality_summary()
 # {"source": "data.csv", "rows": 1000, "quality_score": 92.3,
-#  "completeness": 0.98, "consistency": 0.95, ...}
+#  "completeness": 98.0, "consistency": 95.0, ...}
 
 # Track quality over time
 import pandas as pd

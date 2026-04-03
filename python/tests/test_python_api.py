@@ -696,6 +696,24 @@ class TestQualitySummary:
         qs = r.quality_summary()
         assert qs["rows"] == r.rows
         assert isinstance(qs["execution_time_ms"], int)
+        assert qs["execution_time_ms"] >= 0
+
+    def test_quality_summary_score_ranges(self):
+        r = dataprof.profile(CSV_FILE)
+        qs = r.quality_summary()
+        score_keys = (
+            "quality_score",
+            "completeness",
+            "consistency",
+            "uniqueness",
+            "accuracy",
+            "timeliness",
+        )
+        for key in score_keys:
+            v = qs[key]
+            if v is not None:
+                assert isinstance(v, (int, float)), f"{key} should be numeric"
+                assert 0 <= v <= 100, f"{key}={v} should be in the 0-100 range"
 
 
 # ─────────────────────────────────────────────────

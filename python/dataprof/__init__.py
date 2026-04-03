@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import csv as _csv
+import decimal as _decimal
+import functools
 import html as _html
 import json
 import math
@@ -66,25 +68,37 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
+def _half_up(v: float, ndigits: int) -> float:
+    """Round using half-away-from-zero, matching Rust f64::round() semantics.
+
+    Python's built-in round() uses bankers rounding (ties-to-even), which can
+    disagree with the CLI JSON on edge cases like 1.005.
+    """
+    with _decimal.localcontext() as ctx:
+        ctx.rounding = _decimal.ROUND_HALF_UP
+        d = _decimal.Decimal(str(v)).quantize(_decimal.Decimal(10) ** -ndigits)
+        return float(d)
+
+
 def _r2(v: float | None) -> float | None:
     """Round to 2 decimal places (percentages, ratios). None/NaN → None."""
     if v is None or not math.isfinite(v):
         return None
-    return round(v, 2)
+    return _half_up(v, 2)
 
 
 def _r4(v: float | None) -> float | None:
     """Round to 4 decimal places (statistical metrics). None/NaN → None."""
     if v is None or not math.isfinite(v):
         return None
-    return round(v, 4)
+    return _half_up(v, 4)
 
 
 def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     """Round quartile values to 2 decimal places."""
     if q is None:
         return None
-    return {k: round(v, 2) for k, v in q.items()}
+    return {k: _half_up(v, 2) for k, v in q.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +299,7 @@ class ProfileReport:
     def columns(self) -> int:
         return self._report.columns_detected
 
-    @property
+    @functools.cached_property
     def column_profiles(self) -> dict[str, ColumnProfile]:
         return {col.name: col for col in self._report.column_profiles}
 
@@ -561,10 +575,10 @@ class ProfileReport:
                 row["uniqueness"] = _r2(uniq.get("key_uniqueness"))
             acc = q.accuracy
             if acc is not None:
-                row["accuracy"] = _r2(1.0 - (acc.get("outlier_ratio") or 0.0))
+                row["accuracy"] = _r2(100.0 - (acc.get("outlier_ratio") or 0.0))
             tim = q.timeliness
             if tim is not None:
-                row["timeliness"] = _r2(1.0 - (tim.get("stale_data_ratio") or 0.0))
+                row["timeliness"] = _r2(100.0 - (tim.get("stale_data_ratio") or 0.0))
         return row
 
     def save(self, path: str) -> ProfileReport:
