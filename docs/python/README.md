@@ -1,6 +1,6 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.6.0).
+Complete reference for the `dataprof` Python package (v0.6.2).
 
 ## Installation
 
@@ -21,6 +21,10 @@ import dataprof as dp
 report = dp.profile("data.csv")
 print(f"{report.rows} rows, {report.columns} columns")
 print(f"Quality score: {report.quality_score}")
+
+# Access columns directly
+col = report["age"]
+print(f"mean={col.mean}, nulls={col.null_percentage}%")
 
 # Profile a pandas DataFrame
 import pandas as pd
@@ -95,14 +99,34 @@ Returned by `profile()` and all analysis functions.
 | `sampling_applied` | `bool` | Whether sampling was used |
 | `sampling_ratio` | `float \| None` | Fraction of data sampled |
 
+**Dict-like column access:**
+
+```python
+col = report["column_name"]          # -> ColumnProfile
+"column_name" in report              # -> True/False
+for name in report: print(name)      # iterate column names
+len(report)                          # number of columns
+```
+
 **Export methods:**
 
 ```python
-report.to_dict()                  # dict
+report.to_dict()                  # nested dict (rounded values)
 report.to_json(indent=2)         # JSON string
-report.to_dataframe()            # pandas DataFrame (requires pandas)
-report.save("report.json")       # write JSON to disk
+report.to_dataframe()            # pandas DataFrame -- all stats (requires pandas)
+report.to_polars()               # polars DataFrame -- all stats (requires polars)
+report.to_arrow()                # PyArrow Table -- all stats (requires pyarrow)
+report.describe()                # transposed summary like pandas describe()
+report.quality_summary()         # single-row dict for quality tracking
+report.save("report.json")      # save to JSON
+report.save("report.csv")       # save column profiles to CSV
+report.save("report.parquet")   # save column profiles to Parquet (requires pyarrow)
 ```
+
+**Rounding:** All floating-point values in exported data are rounded to match the CLI
+JSON output -- 2 decimal places for percentages and ratios, 4 decimal places for
+statistical metrics. Raw property access on `ColumnProfile` returns unrounded Rust
+values; use the export methods for clean output.
 
 ## `ColumnProfile`
 
@@ -246,6 +270,73 @@ print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., 
 report = dp.profile("data.csv", quality_dimensions=["completeness", "uniqueness"])
 # report.quality.consistency will be None
 # report.quality.completeness will have values
+```
+
+## Export Methods
+
+### `to_dataframe()` / `to_polars()` / `to_arrow()`
+
+All three return an enriched table of column profiles with rounded values:
+
+```python
+# pandas DataFrame
+df = report.to_dataframe()
+
+# polars DataFrame (no pandas dependency needed)
+pl_df = report.to_polars()
+
+# PyArrow Table (no pandas dependency needed)
+table = report.to_arrow()
+```
+
+Columns included: `name`, `data_type`, `total_count`, `null_count`, `null_percentage`,
+`unique_count`, `uniqueness_ratio`, `min`, `max`, `mean`, `std_dev`, `variance`,
+`median`, `mode`, `skewness`, `kurtosis`, `coefficient_of_variation`, `q1`, `q2`,
+`q3`, `iqr`, `is_approximate`, `min_length`, `max_length`, `avg_length`,
+`top_pattern`, `top_pattern_pct`.
+
+### `describe()`
+
+Transposed summary similar to `pandas.DataFrame.describe()`:
+
+```python
+desc = report.describe()
+#          col_a   col_b   col_c
+# count    1000    1000    1000
+# null%    0.0     2.1     0.0
+# unique   45      800     3
+# mean     34.5    None    None
+# std      12.1    None    None
+# min      1.0     None    None
+# 25%      25.0    None    None
+# 50%      33.0    None    None
+# 75%      44.0    None    None
+# max      99.0    None    None
+```
+
+Returns a pandas DataFrame if available, otherwise a dict-of-dicts.
+
+### `quality_summary()`
+
+Single-row dict for easy aggregation across multiple reports:
+
+```python
+qs = report.quality_summary()
+# {"source": "data.csv", "rows": 1000, "quality_score": 92.3,
+#  "completeness": 98.0, "consistency": 95.0, ...}
+
+# Track quality over time
+import pandas as pd
+rows = [dp.profile(f).quality_summary() for f in files]
+history = pd.DataFrame(rows)
+```
+
+### `save()`
+
+```python
+report.save("report.json")      # full report as JSON
+report.save("profiles.csv")     # column profiles as CSV (no extra deps)
+report.save("profiles.parquet") # column profiles as Parquet (requires pyarrow)
 ```
 
 ## Partial Analysis

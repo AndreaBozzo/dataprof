@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 # Version
 __version__: str
@@ -139,7 +139,15 @@ def profile(
 # --- Result Types ---
 
 class ProfileReport:
-    """High-level profiling report with export methods."""
+    """High-level profiling report with export methods.
+
+    Supports dict-like column access::
+
+        report["column_name"]          # -> ColumnProfile
+        "column_name" in report        # -> bool
+        for name in report: ...        # iterate column names
+        len(report)                    # number of columns
+    """
 
     @property
     def source(self) -> str: ...
@@ -169,13 +177,33 @@ class ProfileReport:
     def sampling_applied(self) -> bool: ...
     @property
     def sampling_ratio(self) -> float | None: ...
+
+    # Mapping protocol
+    def __getitem__(self, key: str) -> ColumnProfile: ...
+    def __contains__(self, key: object) -> bool: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+
+    # Export methods
     def to_dict(self) -> dict[str, Any]: ...
     def to_json(self, indent: int = 2) -> str: ...
     def to_dataframe(self) -> Any:
-        """Returns pandas.DataFrame. Requires pandas."""
+        """Column profiles as pandas DataFrame (all stats, rounded). Requires pandas."""
+        ...
+    def to_polars(self) -> Any:
+        """Column profiles as polars DataFrame (all stats, rounded). Requires polars."""
+        ...
+    def to_arrow(self) -> Any:
+        """Column profiles as PyArrow Table (all stats, rounded). Requires pyarrow."""
+        ...
+    def describe(self) -> Any:
+        """Transposed summary (like pandas describe). Returns pandas DataFrame or dict."""
+        ...
+    def quality_summary(self) -> dict[str, Any]:
+        """Single-row quality summary dict for easy aggregation."""
         ...
     def save(self, path: str) -> ProfileReport:
-        """Save the report to a JSON file (.json extension required)."""
+        """Save report to file (.json, .csv, or .parquet)."""
         ...
 
 class Pattern:

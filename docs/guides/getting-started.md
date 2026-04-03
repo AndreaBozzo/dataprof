@@ -68,12 +68,22 @@ print(f"Rows: {report.rows}")
 print(f"Columns: {report.columns}")
 print(f"Quality: {report.quality_score}")
 
-# Inspect each column
-for col in report.column_profiles.values():
+# Access columns directly (dict-like)
+col = report["price"]
+print(f"  price: mean={col.mean}, std={col.std_dev}")
+
+# Iterate all columns
+for name in report:
+    col = report[name]
     print(f"  {col.name}: {col.data_type}, {col.null_percentage:.1f}% null")
 
-# Export to pandas for further analysis
-df = report.to_dataframe()
+# Quick pandas-like summary
+print(report.describe())
+
+# Export to pandas, polars, or Arrow for further analysis
+df = report.to_dataframe()           # pandas
+pl_df = report.to_polars()           # polars (no pandas needed)
+table = report.to_arrow()            # pyarrow (no pandas needed)
 ```
 
 ### With Rust
