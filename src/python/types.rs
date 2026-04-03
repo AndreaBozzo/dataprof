@@ -80,6 +80,13 @@ pub struct PyColumnProfile {
     pub max_length: Option<usize>,
     #[pyo3(get)]
     pub avg_length: Option<f64>,
+    // Boolean statistics (None for non-boolean columns)
+    #[pyo3(get)]
+    pub true_count: Option<usize>,
+    #[pyo3(get)]
+    pub false_count: Option<usize>,
+    #[pyo3(get)]
+    pub true_ratio: Option<f64>,
     // Patterns
     #[pyo3(get)]
     pub patterns: Option<Vec<PyPattern>>,
@@ -141,6 +148,9 @@ impl From<&ColumnProfile> for PyColumnProfile {
                     n.is_approximate,
                 )
             }
+            ColumnStats::Boolean(_) => (
+                None, None, None, None, None, None, None, None, None, None, None, None,
+            ),
             _ => (
                 None, None, None, None, None, None, None, None, None, None, None, None,
             ),
@@ -148,6 +158,13 @@ impl From<&ColumnProfile> for PyColumnProfile {
 
         let (min_length, max_length, avg_length) = match &profile.stats {
             ColumnStats::Text(t) => (Some(t.min_length), Some(t.max_length), Some(t.avg_length)),
+            _ => (None, None, None),
+        };
+
+        let (true_count, false_count, true_ratio) = match &profile.stats {
+            ColumnStats::Boolean(b) => {
+                (Some(b.true_count), Some(b.false_count), Some(b.true_ratio))
+            }
             _ => (None, None, None),
         };
 
@@ -164,6 +181,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
                 DataType::Float => "float".to_string(),
                 DataType::String => "string".to_string(),
                 DataType::Date => "date".to_string(),
+                DataType::Boolean => "boolean".to_string(),
             },
             total_count: profile.total_count,
             null_count: profile.null_count,
@@ -185,6 +203,9 @@ impl From<&ColumnProfile> for PyColumnProfile {
             min_length,
             max_length,
             avg_length,
+            true_count,
+            false_count,
+            true_ratio,
             patterns,
         }
     }

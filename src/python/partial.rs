@@ -35,6 +35,7 @@ impl PySchemaResult {
                         DataType::Float => "float",
                         DataType::String => "string",
                         DataType::Date => "date",
+                        DataType::Boolean => "boolean",
                     }
                     .to_string(),
                 );

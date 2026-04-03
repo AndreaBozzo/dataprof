@@ -305,6 +305,7 @@ impl JsonFormatter {
             ColumnStats::Numeric(..) => "numeric",
             ColumnStats::Text(..) => "text",
             ColumnStats::DateTime(..) => "datetime",
+            ColumnStats::Boolean(..) => "boolean",
         };
 
         if let serde_json::Value::Object(ref mut map) = stats_json {
@@ -509,6 +510,11 @@ impl OutputFormatter for PlainFormatter {
                     output.push_str(&format!("  Max Date: {}\n", d.max_datetime));
                     output.push_str(&format!("  Duration: {:.0} days\n", d.duration_days));
                 }
+                ColumnStats::Boolean(b) => {
+                    output.push_str(&format!("  True: {}\n", b.true_count));
+                    output.push_str(&format!("  False: {}\n", b.false_count));
+                    output.push_str(&format!("  True ratio: {:.4}\n", b.true_ratio));
+                }
             }
             output.push('\n');
         }
@@ -644,6 +650,11 @@ impl OutputFormatter for InteractiveFormatter {
                     output.push_str(&format!("  Min Date: {}\n", d.min_datetime));
                     output.push_str(&format!("  Max Date: {}\n", d.max_datetime));
                     output.push_str(&format!("  Duration: {:.0} days\n", d.duration_days));
+                }
+                ColumnStats::Boolean(b) => {
+                    output.push_str(&format!("  True: {}\n", b.true_count));
+                    output.push_str(&format!("  False: {}\n", b.false_count));
+                    output.push_str(&format!("  True ratio: {:.4}\n", b.true_ratio));
                 }
             }
             output.push('\n');

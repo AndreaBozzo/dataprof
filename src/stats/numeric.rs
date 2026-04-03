@@ -113,10 +113,10 @@ pub fn calculate_quartiles(sorted_data: &[f64]) -> Option<Quartiles> {
     Some(Quartiles { q1, q2, q3, iqr })
 }
 
-/// Calculate percentile using linear interpolation (Excel/R method)
+/// Calculate percentile using Type 7 linear interpolation (R/Excel/pandas default)
 fn calculate_percentile(sorted_data: &[f64], p: f64, n: f64) -> f64 {
-    // Use position formula: p * (n + 1) - 1 for 0-indexed arrays
-    let pos = p * (n + 1.0) - 1.0;
+    // Type 7 (0-indexed): pos = p * (n - 1)
+    let pos = p * (n - 1.0);
 
     if pos < 0.0 {
         return sorted_data[0];
@@ -264,10 +264,10 @@ mod tests {
     fn test_quartiles() {
         let sorted = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let q = calculate_quartiles(&sorted).unwrap();
-        assert!((q.q1 - 1.5).abs() < 0.01);
+        assert!((q.q1 - 2.0).abs() < 0.01);
         assert_eq!(q.q2, 3.0);
-        assert!((q.q3 - 4.5).abs() < 0.01);
-        assert!((q.iqr - 3.0).abs() < 0.01);
+        assert!((q.q3 - 4.0).abs() < 0.01);
+        assert!((q.iqr - 2.0).abs() < 0.01);
     }
 
     #[test]

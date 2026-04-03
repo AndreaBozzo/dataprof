@@ -554,7 +554,9 @@ fn arrow_type_to_dataprof(arrow_type: &arrow::datatypes::DataType) -> DataType {
             DataType::Date
         }
 
-        // Everything else (Utf8, LargeUtf8, Boolean, Binary, List, Struct, etc.)
+        // Everything else (Utf8, LargeUtf8, Binary, List, Struct, etc.)
+        // Boolean gets its own type
+        AT::Boolean => DataType::Boolean,
         _ => DataType::String,
     }
 }
@@ -879,7 +881,7 @@ mod tests {
             DataType::Date
         );
         assert_eq!(arrow_type_to_dataprof(&AT::Utf8), DataType::String);
-        assert_eq!(arrow_type_to_dataprof(&AT::Boolean), DataType::String);
+        assert_eq!(arrow_type_to_dataprof(&AT::Boolean), DataType::Boolean);
     }
 }
 

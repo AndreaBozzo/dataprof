@@ -97,6 +97,9 @@ pub struct ColumnAnalyzer {
     min_length: usize,
     max_length: usize,
     total_length: usize,
+    // Boolean statistics
+    true_count: usize,
+    false_count: usize,
     // Sample values for pattern detection
     sample_values: Vec<String>,
 }
@@ -115,6 +118,8 @@ impl ColumnAnalyzer {
             min_length: usize::MAX,
             max_length: 0,
             total_length: 0,
+            true_count: 0,
+            false_count: 0,
             sample_values: Vec::new(),
         }
     }
@@ -503,15 +508,19 @@ impl ColumnAnalyzer {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
-                let value_str = value.to_string();
-                self.update_text_stats(&value_str);
+                if value {
+                    self.true_count += 1;
+                } else {
+                    self.false_count += 1;
+                }
+                let value_str = if value { "True" } else { "False" };
 
                 if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value_str.clone());
+                    self.unique_values.insert(value_str.to_string());
                 }
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value_str);
+                    self.sample_values.push(value_str.to_string());
                 }
             }
         }
@@ -908,6 +917,11 @@ impl ColumnAnalyzer {
                     max_length: self.max_length,
                     avg_length,
                 }),
+                boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
+                    Some((self.true_count, self.false_count))
+                } else {
+                    None
+                },
             },
         )
     }
@@ -936,6 +950,8 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Decimal256(_, _) => DataType::Float,
             // Duration - treat as Integer (numeric elapsed time)
             arrow::datatypes::DataType::Duration(_) => DataType::Integer,
+            // Boolean type
+            arrow::datatypes::DataType::Boolean => DataType::Boolean,
             // String types
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Check if it looks like dates or numbers (for string-encoded types)

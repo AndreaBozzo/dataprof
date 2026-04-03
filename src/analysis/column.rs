@@ -1,4 +1,4 @@
-use crate::types::{ColumnProfile, DataType};
+use crate::types::{ColumnProfile, ColumnStats, DataType};
 
 use crate::analysis::inference::infer_type;
 use crate::analysis::patterns::detect_patterns;
@@ -40,6 +40,28 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     let stats = match data_type {
         DataType::Integer | DataType::Float => calculate_numeric_stats(data),
         DataType::Date => calculate_datetime_stats(data),
+        DataType::Boolean => {
+            let non_null: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
+            let tc = non_null
+                .iter()
+                .filter(|v| v.trim().eq_ignore_ascii_case("true"))
+                .count();
+            let fc = non_null
+                .iter()
+                .filter(|v| v.trim().eq_ignore_ascii_case("false"))
+                .count();
+            let total = tc + fc;
+            let true_ratio = if total > 0 {
+                tc as f64 / total as f64
+            } else {
+                0.0
+            };
+            ColumnStats::Boolean(crate::types::BooleanStats {
+                true_count: tc,
+                false_count: fc,
+                true_ratio,
+            })
+        }
         DataType::String => calculate_text_stats(data),
     };
 

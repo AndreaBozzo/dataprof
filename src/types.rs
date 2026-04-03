@@ -963,6 +963,8 @@ pub enum DataType {
     Float,
     /// Date or datetime values
     Date,
+    /// Boolean (true / false) values
+    Boolean,
 }
 
 /// Quartile statistics for numeric distributions.
@@ -1127,6 +1129,18 @@ impl DateTimeStats {
     }
 }
 
+/// Statistics for boolean columns.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BooleanStats {
+    /// Number of `true` values
+    pub true_count: usize,
+    /// Number of `false` values
+    pub false_count: usize,
+    /// Proportion of `true` among non-null values (0.0 -- 1.0)
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
+    pub true_ratio: f64,
+}
+
 /// Type-specific statistics for a column, determined by the inferred [`DataType`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ColumnStats {
@@ -1136,6 +1150,8 @@ pub enum ColumnStats {
     Text(TextStats),
     /// Statistics for date/datetime columns
     DateTime(DateTimeStats),
+    /// Statistics for boolean columns
+    Boolean(BooleanStats),
 }
 
 /// A detected value pattern within a column (e.g. email, phone, UUID).

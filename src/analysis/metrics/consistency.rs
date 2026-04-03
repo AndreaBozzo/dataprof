@@ -58,6 +58,9 @@ impl ConsistencyCalculator {
                         DataType::Integer => value.parse::<i64>().is_ok(),
                         DataType::Float => value.parse::<f64>().is_ok(),
                         DataType::Date => is_valid_date_format(value),
+                        DataType::Boolean => {
+                            matches!(value.as_str(), "True" | "False" | "true" | "false")
+                        }
                         DataType::String => true, // String type is always consistent
                     };
 

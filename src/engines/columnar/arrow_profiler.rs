@@ -176,6 +176,9 @@ struct ColumnAnalyzer {
     min_length: usize,
     max_length: usize,
     total_length: usize,
+    // Boolean statistics
+    true_count: usize,
+    false_count: usize,
     // Sample values for pattern detection
     sample_values: Vec<String>,
 }
@@ -194,6 +197,8 @@ impl ColumnAnalyzer {
             min_length: usize::MAX,
             max_length: 0,
             total_length: 0,
+            true_count: 0,
+            false_count: 0,
             sample_values: Vec::new(),
         }
     }
@@ -438,15 +443,21 @@ impl ColumnAnalyzer {
 
     fn process_boolean_array(&mut self, array: &BooleanArray) -> Result<(), DataProfilerError> {
         for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let value_str = value.to_string();
+            if !array.is_null(i) {
+                let value = array.value(i);
+                if value {
+                    self.true_count += 1;
+                } else {
+                    self.false_count += 1;
+                }
+                let value_str = if value { "True" } else { "False" };
 
                 if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value_str.clone());
+                    self.unique_values.insert(value_str.to_string());
                 }
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value_str);
+                    self.sample_values.push(value_str.to_string());
                 }
             }
         }
@@ -698,6 +709,11 @@ impl ColumnAnalyzer {
                     max_length: self.max_length,
                     avg_length,
                 }),
+                boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
+                    Some((self.true_count, self.false_count))
+                } else {
+                    None
+                },
             },
         )
     }
@@ -711,6 +727,7 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Int32
             | arrow::datatypes::DataType::Int16
             | arrow::datatypes::DataType::Int8 => DataType::Integer,
+            arrow::datatypes::DataType::Boolean => DataType::Boolean,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Reuse the shared inference logic for consistent type detection
                 // across all engines (dates before numerics, 100% match threshold)
@@ -853,5 +870,48 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_boolean_column_detection_and_stats() {
+        use crate::types::ColumnStats;
+        use arrow::array::BooleanArray;
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        // Create a ColumnAnalyzer for a Boolean column
+        let mut analyzer = ColumnAnalyzer::new(&ArrowDataType::Boolean);
+
+        // Construct a BooleanArray with some nulls
+        let array = BooleanArray::from(vec![
+            Some(true),
+            Some(false),
+            Some(true),
+            None,
+            Some(true),
+            Some(false),
+        ]);
+
+        analyzer
+            .process_array(&array)
+            .expect("should process boolean array");
+
+        assert_eq!(analyzer.total_count, 6);
+        assert_eq!(analyzer.null_count, 1);
+        assert_eq!(analyzer.true_count, 3);
+        assert_eq!(analyzer.false_count, 2);
+
+        let profile = analyzer.to_column_profile("flag".to_string());
+        assert_eq!(profile.data_type, DataType::Boolean);
+        assert_eq!(profile.total_count, 6);
+        assert_eq!(profile.null_count, 1);
+
+        match &profile.stats {
+            ColumnStats::Boolean(b) => {
+                assert_eq!(b.true_count, 3);
+                assert_eq!(b.false_count, 2);
+                assert!((b.true_ratio - 0.6).abs() < 0.001);
+            }
+            other => panic!("expected Boolean stats, got {:?}", other),
+        }
     }
 }
