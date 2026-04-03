@@ -187,6 +187,32 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
         if date_like_count as f64 / non_empty.len().min(100) as f64 > 0.7 {
             return DataType::Date;
         }
+
+        // Boolean detection: string literals (true/false/yes/no variants)
+        let bool_count = non_empty
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.trim(),
+                    "true"
+                        | "false"
+                        | "True"
+                        | "False"
+                        | "TRUE"
+                        | "FALSE"
+                        | "yes"
+                        | "no"
+                        | "Yes"
+                        | "No"
+                        | "YES"
+                        | "NO"
+                )
+            })
+            .count();
+
+        if bool_count as f64 / non_empty.len() as f64 >= 0.9 {
+            return DataType::Boolean;
+        }
     }
 
     DataType::String

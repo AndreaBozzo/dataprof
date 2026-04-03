@@ -56,7 +56,34 @@ pub fn infer_type(data: &[String]) -> DataType {
         return DataType::Float;
     }
 
-    // Check dates after numeric (70% threshold, consistent with streaming inference)
+    // Check booleans after numeric — string literals only (pure 0/1 columns
+    // already matched as Integer above). 90% threshold to tolerate a few nulls.
+    let bool_count = non_empty
+        .iter()
+        .filter(|s| {
+            matches!(
+                s.trim(),
+                "true"
+                    | "false"
+                    | "True"
+                    | "False"
+                    | "TRUE"
+                    | "FALSE"
+                    | "yes"
+                    | "no"
+                    | "Yes"
+                    | "No"
+                    | "YES"
+                    | "NO"
+            )
+        })
+        .count();
+
+    if bool_count as f64 / non_empty.len() as f64 >= 0.9 {
+        return DataType::Boolean;
+    }
+
+    // Check dates after boolean (70% threshold, consistent with streaming inference)
     for regex in DATE_REGEXES.iter() {
         let date_matches = non_empty
             .iter()
@@ -209,6 +236,98 @@ mod tests {
             "2023".to_string(), // This looks like a year but alone is an integer
         ];
         assert!(matches!(infer_type(&data), DataType::String));
+    }
+
+    #[test]
+    fn test_infer_boolean_lowercase() {
+        let data = vec![
+            "true".to_string(),
+            "false".to_string(),
+            "true".to_string(),
+            "false".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_boolean_titlecase() {
+        let data = vec!["True".to_string(), "False".to_string(), "True".to_string()];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_boolean_uppercase() {
+        let data = vec!["TRUE".to_string(), "FALSE".to_string(), "TRUE".to_string()];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_boolean_yes_no() {
+        let data = vec!["yes".to_string(), "no".to_string(), "yes".to_string()];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_boolean_mixed_case() {
+        let data = vec![
+            "True".to_string(),
+            "false".to_string(),
+            "TRUE".to_string(),
+            "False".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_boolean_with_whitespace() {
+        let data = vec![
+            " true ".to_string(),
+            "  false".to_string(),
+            "true  ".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_boolean_threshold() {
+        // 90% threshold: 9 of 10 are boolean → should detect
+        let data = vec![
+            "true".to_string(),
+            "false".to_string(),
+            "true".to_string(),
+            "false".to_string(),
+            "true".to_string(),
+            "false".to_string(),
+            "true".to_string(),
+            "false".to_string(),
+            "true".to_string(),
+            "maybe".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
+    }
+
+    #[test]
+    fn test_infer_not_boolean_below_threshold() {
+        // Only 50% are boolean → should be String
+        let data = vec![
+            "true".to_string(),
+            "false".to_string(),
+            "hello".to_string(),
+            "world".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::String));
+    }
+
+    #[test]
+    fn test_infer_pure_01_stays_integer() {
+        // Pure 0/1 columns should remain Integer, not Boolean
+        let data = vec![
+            "0".to_string(),
+            "1".to_string(),
+            "0".to_string(),
+            "1".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Integer));
     }
 
     #[test]
