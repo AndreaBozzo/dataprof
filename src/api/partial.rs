@@ -193,7 +193,7 @@ fn infer_schema_from_json_reader<R: BufRead>(
         FileFormat::Json => JsonParserConfig::json_array().with_max_rows(SCHEMA_SAMPLE_ROWS),
         _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS),
     };
-    let (_profiles, column_stats, rows_read, _detected_format) =
+    let (_profiles, column_stats, rows_read, _malformed_lines, _detected_format) =
         crate::parsers::json::analyze_json_from_reader(reader, &config)?;
 
     // column_names() returns HashMap keys in arbitrary order. Sort

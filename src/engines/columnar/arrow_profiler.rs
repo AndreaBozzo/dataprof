@@ -117,13 +117,10 @@ impl ArrowProfiler {
             for (col_idx, column) in batch.columns().iter().enumerate() {
                 let schema = batch.schema();
                 let field = schema.field(col_idx);
-                let column_name = field.name().to_string();
 
-                let analyzer = column_analyzers
-                    .entry(column_name)
-                    .or_insert_with(|| ColumnAnalyzer::new(field.data_type()));
-
-                analyzer.process_array(column)?;
+                if let Some(analyzer) = column_analyzers.get_mut(field.name()) {
+                    analyzer.process_array(column)?;
+                }
             }
         }
 

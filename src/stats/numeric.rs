@@ -28,8 +28,11 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
     let mean = base.mean();
     let mut variance = calculate_variance(base.sum_squares, base.sum, numbers.len());
 
-    // Fallback if variance is NaN or sum_squares overflowed
-    if (variance.is_nan() || base.sum_squares.is_infinite()) && numbers.len() > 1 {
+    // Fallback if variance is invalid or sum_squares overflowed
+    // Tiny negative variances can happen due to floating point catastrophic cancellation
+    if (!variance.is_finite() || variance < 0.0 || base.sum_squares.is_infinite())
+        && numbers.len() > 1
+    {
         let mut welford_mean = 0.0;
         let mut welford_m2 = 0.0;
         for (i, &x) in numbers.iter().enumerate() {
@@ -42,7 +45,9 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
         variance = welford_m2 / (numbers.len() - 1) as f64;
     }
 
-    let std_dev = variance.sqrt();
+    // Ensure variance doesn't become slightly negative before taking sqrt
+    let safe_variance = variance.max(0.0);
+    let std_dev = safe_variance.sqrt();
 
     // Determine if we need sampling for large datasets
     let (sample_data, is_approximate) = if numbers.len() > SAMPLE_THRESHOLD {
