@@ -306,6 +306,11 @@ pub fn analyze_json_file_with_dimensions(
     };
 
     if rows_read == 0 {
+        if metadata.len() > 0 {
+            return Err(DataProfilerError::JsonParsingError {
+                message: "No valid JSON records found in non-empty file".to_string(),
+            });
+        }
         return Ok(ReportAssembler::new(
             file_source,
             ExecutionMetadata::new(0, 0, start.elapsed().as_millis()),
@@ -485,8 +490,8 @@ mod tests {
     fn test_analyze_json_empty_array() {
         let json = write_file("[]");
         let config = JsonParserConfig::default();
-        let report = analyze_json_file(json.path(), &config).unwrap();
-        assert!(report.column_profiles.is_empty());
+        let report = analyze_json_file(json.path(), &config);
+        assert!(report.is_err());
     }
 
     #[test]
@@ -515,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_analyze_json_file_empty() {
-        let json = write_file("[]");
+        let json = write_file("");
         let config = JsonParserConfig::default();
         let report = analyze_json_file(json.path(), &config).unwrap();
         assert_eq!(report.execution.rows_processed, 0);

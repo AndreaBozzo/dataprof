@@ -26,7 +26,22 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
     let min = base.min;
     let max = base.max;
     let mean = base.mean();
-    let variance = calculate_variance(base.sum_squares, base.sum, numbers.len());
+    let mut variance = calculate_variance(base.sum_squares, base.sum, numbers.len());
+
+    // Fallback if variance is NaN or sum_squares overflowed
+    if (variance.is_nan() || base.sum_squares.is_infinite()) && numbers.len() > 1 {
+        let mut welford_mean = 0.0;
+        let mut welford_m2 = 0.0;
+        for (i, &x) in numbers.iter().enumerate() {
+            let n = (i + 1) as f64;
+            let delta = x - welford_mean;
+            welford_mean += delta / n;
+            let delta2 = x - welford_mean;
+            welford_m2 += delta * delta2;
+        }
+        variance = welford_m2 / (numbers.len() - 1) as f64;
+    }
+
     let std_dev = variance.sqrt();
 
     // Determine if we need sampling for large datasets

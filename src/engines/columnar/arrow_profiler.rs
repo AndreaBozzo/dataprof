@@ -86,7 +86,7 @@ impl ArrowProfiler {
 
         // Now create Arrow reader with proper schema
         let file = File::open(file_path)?;
-        let mut arrow_builder = ReaderBuilder::new(schema)
+        let mut arrow_builder = ReaderBuilder::new(schema.clone())
             .with_header(true)
             .with_batch_size(self.batch_size);
         if let Some(ref config) = self.csv_config
@@ -99,6 +99,14 @@ impl ArrowProfiler {
         // Process data in columnar batches
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
             std::collections::HashMap::new();
+
+        for field in schema.fields() {
+            column_analyzers.insert(
+                field.name().to_string(),
+                ColumnAnalyzer::new(field.data_type()),
+            );
+        }
+
         let mut total_rows = 0;
 
         for batch_result in csv_reader {

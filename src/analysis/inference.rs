@@ -42,7 +42,9 @@ pub fn infer_type(data: &[String]) -> DataType {
         if trimmed.parse::<i64>().is_ok() {
             integer_count += 1;
             float_count += 1; // integers are also valid floats
-        } else if trimmed.parse::<f64>().is_ok() {
+        } else if let Ok(f) = trimmed.parse::<f64>()
+            && f.is_finite()
+        {
             float_count += 1;
         }
     }
