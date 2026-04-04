@@ -110,6 +110,7 @@ pub fn analyze_json_from_reader<R: BufRead>(
         Vec<ColumnProfile>,
         StreamingColumnCollection,
         usize,
+        usize,
         FileFormat,
     ),
     DataProfilerError,
@@ -132,6 +133,7 @@ pub fn analyze_json_from_reader<R: BufRead>(
     let mut known_columns: Vec<String> = Vec::new();
     let mut known_columns_set: HashSet<String> = HashSet::new();
     let mut rows_read = 0;
+    let mut malformed_lines = 0;
 
     match format {
         FileFormat::Jsonl => {
@@ -159,7 +161,10 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
                 let value: Value = match serde_json::from_str(trimmed) {
                     Ok(v) => v,
-                    Err(_) => continue,
+                    Err(_) => {
+                        malformed_lines += 1;
+                        continue;
+                    }
                 };
                 if let Value::Object(ref obj) = value {
                     feed_json_object(
@@ -260,6 +265,7 @@ pub fn analyze_json_from_reader<R: BufRead>(
                             Ok(_) => { /* Skip non-object elements */ }
                             Err(_) => {
                                 // If parsing fails (e.g., malformed object), stop array stream
+                                malformed_lines += 1;
                                 break;
                             }
                         }
@@ -271,7 +277,7 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
     let profiles = profile_builder::profiles_from_streaming(&column_stats);
 
-    Ok((profiles, column_stats, rows_read, format))
+    Ok((profiles, column_stats, rows_read, malformed_lines, format))
 }
 
 /// Analyze a JSON/JSONL file, returning a full [`ProfileReport`].
@@ -294,7 +300,7 @@ pub fn analyze_json_file_with_dimensions(
     let file = std::fs::File::open(file_path).map_err(|e| map_io_error(file_path, e))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let (column_profiles, column_stats, rows_read, format) =
+    let (column_profiles, column_stats, rows_read, malformed_lines, format) =
         analyze_json_from_reader(buf_reader, config)?;
 
     let file_source = DataSource::File {
@@ -306,6 +312,12 @@ pub fn analyze_json_file_with_dimensions(
     };
 
     if rows_read == 0 {
+        if malformed_lines > 0 {
+            return Err(DataProfilerError::JsonParsingError {
+                message: "No valid JSON records found in file (malformed JSON encountered)"
+                    .to_string(),
+            });
+        }
         return Ok(ReportAssembler::new(
             file_source,
             ExecutionMetadata::new(0, 0, start.elapsed().as_millis()),
@@ -361,7 +373,8 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = JsonParserConfig::default();
 
-        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _malformed, format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
         assert_eq!(format, FileFormat::Jsonl);
         assert_eq!(rows, 3);
         assert_eq!(profiles.len(), 2);
@@ -373,7 +386,8 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = JsonParserConfig::default();
 
-        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _malformed, format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
         assert_eq!(format, FileFormat::Json);
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
@@ -385,7 +399,8 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = JsonParserConfig::default().with_max_rows(3);
 
-        let (_profiles, _stats, rows, _format) = analyze_json_from_reader(cursor, &config).unwrap();
+        let (_profiles, _stats, rows, _malformed, _format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 3);
     }
 
@@ -395,7 +410,8 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = JsonParserConfig::jsonl();
 
-        let (profiles, _stats, rows, _format) = analyze_json_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _malformed, _format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
         assert_eq!(rows, 2);
 
         let col_b = profiles.iter().find(|p| p.name == "b").unwrap();
@@ -419,7 +435,8 @@ mod tests {
         let cursor = Cursor::new(data.as_ref());
         let config = JsonParserConfig::jsonl();
 
-        let (profiles, _stats, rows, format) = analyze_json_from_reader(cursor, &config).unwrap();
+        let (profiles, _stats, rows, _malformed, format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
         assert_eq!(format, FileFormat::Jsonl);
         assert_eq!(rows, 2);
         assert_eq!(profiles[0].total_count, 2);
@@ -490,6 +507,20 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_json_malformed_returns_error() {
+        let json = write_file("this is entirely invalid json");
+        let config = JsonParserConfig::default();
+        let err = analyze_json_file(json.path(), &config)
+            .expect_err("malformed JSON should return an error");
+
+        let message = err.to_string().to_lowercase();
+        assert!(
+            message.contains("malformed") && message.contains("json"),
+            "expected parsing error mentioning malformed json, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_analyze_json_file_detects_format() {
         let json_array = write_file(r#"[{"x":1}]"#);
         let config = JsonParserConfig::default();
@@ -515,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_analyze_json_file_empty() {
-        let json = write_file("[]");
+        let json = write_file("");
         let config = JsonParserConfig::default();
         let report = analyze_json_file(json.path(), &config).unwrap();
         assert_eq!(report.execution.rows_processed, 0);
