@@ -88,6 +88,9 @@ pub enum StreamSourceSystem {
     Pulsar,
     Http,      // For REST API ingestion
     WebSocket, // For WS ingestion
+    ObjectStore, // For S3/GCS streaming sources
+    MessageQueue, // Generic MQ systems (RabbitMQ, ActiveMQ, etc.)
+    Database, // For CDC streams from databases
     #[serde(untagged)]
     Custom(String),
 }
@@ -100,6 +103,9 @@ impl std::fmt::Display for StreamSourceSystem {
             Self::Pulsar => write!(f, "pulsar"),
             Self::Http => write!(f, "http"),
             Self::WebSocket => write!(f, "websocket"),
+            Self::ObjectStore => write!(f, "object_store"),
+            Self::MessageQueue => write!(f, "message_queue"),
+            Self::Database => write!(f, "database"),
             Self::Custom(s) => write!(f, "{}", s),
         }
     }
