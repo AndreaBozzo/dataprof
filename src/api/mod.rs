@@ -12,7 +12,8 @@ use crate::core::stop_condition::StopCondition;
 use crate::database::DatabaseConfig;
 use crate::engines::adaptive::AdaptiveProfiler;
 use crate::types::{
-    DataSource, FileFormat, ProfileReport, QualityDimension, RowCountEstimate, SchemaResult,
+    DataSource, FileFormat, MetricPack, ProfileReport, QualityDimension, RowCountEstimate,
+    SchemaResult,
 };
 
 /// Which engine to use for profiling
@@ -44,6 +45,9 @@ pub struct ProfilerConfig {
     pub csv_flexible: Option<bool>,
     /// Which quality dimensions to compute. `None` = all (default).
     pub quality_dimensions: Option<Vec<QualityDimension>>,
+    /// Which metric packs to compute. `None` = all (default).
+    /// Controls whether statistics, patterns, and quality are included.
+    pub metric_packs: Option<Vec<MetricPack>>,
     /// Database connection configuration. Required for `analyze_query()`.
     #[cfg(feature = "database")]
     pub database_config: Option<DatabaseConfig>,
@@ -62,6 +66,7 @@ impl Default for ProfilerConfig {
             csv_delimiter: None,
             csv_flexible: None,
             quality_dimensions: None,
+            metric_packs: None,
             #[cfg(feature = "database")]
             database_config: None,
         }
@@ -186,6 +191,15 @@ impl Profiler {
     /// `None` in the report.
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.config.quality_dimensions = Some(dims);
+        self
+    }
+
+    /// Select which metric packs to compute.
+    ///
+    /// Controls high-level categories: `Schema` (always included),
+    /// `Statistics`, `Patterns`, `Quality`. `None` = all (default).
+    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
+        self.config.metric_packs = Some(packs);
         self
     }
 
@@ -370,6 +384,9 @@ impl Profiler {
                 if let Some(d) = &self.config.quality_dimensions {
                     profiler = profiler.quality_dimensions(d.clone());
                 }
+                if let Some(p) = &self.config.metric_packs {
+                    profiler = profiler.metric_packs(p.clone());
+                }
                 let csv_config = self.csv_config_for_file(file_path);
                 profiler = profiler.csv_config(csv_config);
                 profiler.analyze_file(file_path)
@@ -409,6 +426,9 @@ impl Profiler {
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
+        if let Some(p) = &self.config.metric_packs {
+            profiler = profiler.metric_packs(p.clone());
+        }
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);
 
@@ -444,6 +464,9 @@ impl Profiler {
         }
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
+        }
+        if let Some(p) = &self.config.metric_packs {
+            profiler = profiler.metric_packs(p.clone());
         }
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);

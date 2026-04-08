@@ -342,6 +342,94 @@ impl std::fmt::Display for QualityDimension {
 }
 
 // ============================================================================
+// Metric Pack Selection
+// ============================================================================
+
+/// High-level categories of analysis that can be selectively enabled.
+///
+/// When no packs are specified (`None`), all categories are computed
+/// (backward-compatible default). Passing a subset skips expensive
+/// computation the caller doesn't need.
+///
+/// `Schema` is always included regardless of selection — it provides the
+/// baseline column names, types, and null counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MetricPack {
+    /// Column names, data types, null counts — always included.
+    Schema,
+    /// Numeric stats (min/max/mean/median/std_dev/quartiles), text lengths.
+    Statistics,
+    /// Regex pattern detection (email, phone, UUID, etc.).
+    Patterns,
+    /// ISO 25012 quality dimensions (completeness, consistency, etc.).
+    Quality,
+}
+
+impl MetricPack {
+    /// All available metric packs.
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::Schema,
+            Self::Statistics,
+            Self::Patterns,
+            Self::Quality,
+        ]
+    }
+
+    /// Whether statistics should be computed given the selected packs.
+    pub fn include_statistics(packs: Option<&[Self]>) -> bool {
+        match packs {
+            None => true,
+            Some(p) => p.contains(&Self::Statistics),
+        }
+    }
+
+    /// Whether pattern detection should run given the selected packs.
+    pub fn include_patterns(packs: Option<&[Self]>) -> bool {
+        match packs {
+            None => true,
+            Some(p) => p.contains(&Self::Patterns),
+        }
+    }
+
+    /// Whether quality metrics should be computed given the selected packs.
+    pub fn include_quality(packs: Option<&[Self]>) -> bool {
+        match packs {
+            None => true,
+            Some(p) => p.contains(&Self::Quality),
+        }
+    }
+}
+
+impl std::str::FromStr for MetricPack {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "schema" => Ok(Self::Schema),
+            "statistics" => Ok(Self::Statistics),
+            "patterns" => Ok(Self::Patterns),
+            "quality" => Ok(Self::Quality),
+            _ => Err(format!(
+                "Unknown metric pack: {s}. Valid packs: schema, statistics, patterns, quality"
+            )),
+        }
+    }
+}
+
+impl std::fmt::Display for MetricPack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Schema => write!(f, "schema"),
+            Self::Statistics => write!(f, "statistics"),
+            Self::Patterns => write!(f, "patterns"),
+            Self::Quality => write!(f, "quality"),
+        }
+    }
+}
+
+// ============================================================================
 // Per-Dimension Metric Sub-Structs (ISO 25012 "Metric Packs")
 // ============================================================================
 
@@ -1152,6 +1240,8 @@ pub enum ColumnStats {
     DateTime(DateTimeStats),
     /// Statistics for boolean columns
     Boolean(BooleanStats),
+    /// Statistics were not computed (MetricPack::Statistics was excluded).
+    None,
 }
 
 /// A detected value pattern within a column (e.g. email, phone, UUID).
@@ -1622,5 +1712,35 @@ mod tests {
         assert!((metrics.missing_values_ratio() - 0.0).abs() < 0.01);
         assert_eq!(metrics.duplicate_rows(), 0);
         assert!(!metrics.high_cardinality_warning());
+    }
+
+    // -- MetricPack helpers --
+
+    #[test]
+    fn test_metric_pack_include_helpers_none_means_all() {
+        assert!(MetricPack::include_statistics(None));
+        assert!(MetricPack::include_patterns(None));
+        assert!(MetricPack::include_quality(None));
+    }
+
+    #[test]
+    fn test_metric_pack_include_helpers_selective() {
+        let packs = vec![MetricPack::Schema, MetricPack::Quality];
+        assert!(!MetricPack::include_statistics(Some(&packs)));
+        assert!(!MetricPack::include_patterns(Some(&packs)));
+        assert!(MetricPack::include_quality(Some(&packs)));
+    }
+
+    #[test]
+    fn test_metric_pack_from_str() {
+        assert_eq!(
+            "statistics".parse::<MetricPack>().unwrap(),
+            MetricPack::Statistics
+        );
+        assert_eq!(
+            "QUALITY".parse::<MetricPack>().unwrap(),
+            MetricPack::Quality
+        );
+        assert!("invalid".parse::<MetricPack>().is_err());
     }
 }

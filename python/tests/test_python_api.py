@@ -330,6 +330,7 @@ class TestNamespace:
     def test_all_exports(self):
         expected = {
             "profile",
+            "Profiler",
             "ProfileReport",
             "ProfilerConfig",
             "ColumnProfile",
@@ -379,6 +380,7 @@ class TestNamespace:
             "on_progress",
             "progress_interval_ms",
             "quality_dimensions",
+            "metrics",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (
@@ -837,3 +839,114 @@ class TestBooleanColumns:
         """Pure integer column should NOT be detected as boolean."""
         count_col = report["count"]
         assert count_col.data_type == "integer"
+
+
+# ─────────────────────────────────────────────────
+#  16. Profiler builder class
+# ─────────────────────────────────────────────────
+
+
+class TestProfilerBuilder:
+    def test_basic_csv(self):
+        r = dataprof.Profiler().profile(CSV_FILE)
+        assert r.rows > 0
+        assert r.columns > 0
+
+    def test_chaining(self):
+        r = dataprof.Profiler().engine("auto").max_rows(10).profile(CSV_FILE)
+        assert r.rows <= 10
+
+    def test_with_dataframe(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        r = dataprof.Profiler().name("test_df").profile(df)
+        assert r.rows == 3
+        assert r.columns == 2
+
+    def test_stop_when_string(self):
+        r = dataprof.Profiler().stop_when("schema_stable").profile(CSV_FILE)
+        assert r.rows > 0
+
+    def test_stop_when_object(self):
+        r = dataprof.Profiler().stop_when(dataprof.StopCondition.max_rows(5)).profile(CSV_FILE)
+        assert r.rows <= 5
+
+    def test_stop_when_invalid_string(self):
+        with pytest.raises(ValueError, match="Unknown stop_when shorthand"):
+            dataprof.Profiler().stop_when("nonexistent")
+
+    def test_metrics_all_packs(self):
+        r = (
+            dataprof.Profiler()
+            .metrics(["schema", "statistics", "patterns", "quality"])
+            .profile(CSV_FILE)
+        )
+        assert r.quality_score is not None
+
+    def test_metrics_skip_quality(self):
+        r = dataprof.Profiler().metrics(["schema", "statistics", "patterns"]).profile(CSV_FILE)
+        assert r.quality_score is None
+
+    def test_metrics_schema_only(self):
+        r = dataprof.Profiler().metrics(["schema"]).profile(CSV_FILE)
+        assert r.quality_score is None
+
+    def test_metrics_invalid_pack(self):
+        with pytest.raises(ValueError, match="Unknown metric packs"):
+            dataprof.Profiler().metrics(["schema", "bogus"])
+
+    def test_returns_self(self):
+        p = dataprof.Profiler()
+        assert p.engine("auto") is p
+        assert p.max_rows(10) is p
+        assert p.csv_delimiter(",") is p
+        assert p.quality_dimensions(["completeness"]) is p
+
+    def test_csv_delimiter(self):
+        if not os.path.exists(SEMICOLON_FILE):
+            pytest.skip("fixture missing")
+        r = dataprof.Profiler().csv_delimiter(";").profile(SEMICOLON_FILE)
+        assert r.columns > 1
+
+    def test_repr(self):
+        p = dataprof.Profiler().engine("incremental").max_rows(100)
+        r = repr(p)
+        assert "Profiler(" in r
+        assert "engine='incremental'" in r
+        assert "max_rows=100" in r
+
+
+class TestMetricPacks:
+    """Test metric pack selection via profile() function and Profiler builder."""
+
+    def test_schema_only(self):
+        r = dataprof.profile(CSV_FILE, metrics=["schema"])
+        assert r.quality_score is None
+
+    def test_schema_and_statistics(self):
+        r = dataprof.profile(CSV_FILE, metrics=["schema", "statistics"])
+        assert r.quality_score is None
+
+    def test_all_packs(self):
+        r = dataprof.profile(CSV_FILE, metrics=["schema", "statistics", "patterns", "quality"])
+        assert r.quality_score is not None
+
+    def test_none_means_all(self):
+        r = dataprof.profile(CSV_FILE)
+        assert r.quality_score is not None
+
+    def test_builder_metrics(self):
+        r = dataprof.Profiler().metrics(["schema", "quality"]).profile(CSV_FILE)
+        assert r.quality_score is not None
+
+    def test_metrics_with_dataframe(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        r = dataprof.profile(df, metrics=["schema"])
+        assert r.quality_score is None
+
+    def test_metrics_with_arrow(self):
+        pa = pytest.importorskip("pyarrow")
+        table = pa.table({"a": [1, 2, 3]})
+        r = dataprof.profile(table, metrics=["schema", "statistics"])
+        assert r.quality_score is None

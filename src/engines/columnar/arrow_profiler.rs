@@ -9,7 +9,7 @@ use crate::core::errors::DataProfilerError;
 use crate::core::report_assembler::ReportAssembler;
 use crate::parsers::csv::CsvParserConfig;
 use crate::types::{
-    ColumnProfile, DataSource, DataType, ExecutionMetadata, FileFormat, ProfileReport,
+    ColumnProfile, DataSource, DataType, ExecutionMetadata, FileFormat, MetricPack, ProfileReport,
     QualityDimension,
 };
 
@@ -21,6 +21,7 @@ pub struct ArrowProfiler {
     batch_size: usize,
     memory_limit_mb: usize,
     quality_dimensions: Option<Vec<QualityDimension>>,
+    metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
 }
 
@@ -30,6 +31,7 @@ impl ArrowProfiler {
             batch_size: 8192, // Default batch size for Arrow
             memory_limit_mb: 512,
             quality_dimensions: None,
+            metric_packs: None,
             csv_config: None,
         }
     }
@@ -46,6 +48,11 @@ impl ArrowProfiler {
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.quality_dimensions = Some(dims);
+        self
+    }
+
+    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
+        self.metric_packs = Some(packs);
         self
     }
 
@@ -126,13 +133,17 @@ impl ArrowProfiler {
 
         // Convert analyzers to column profiles and extract samples
         // Iterate in header order (from schema) to preserve source column ordering
+        let packs = self.metric_packs.as_deref();
+        let skip_stats = !MetricPack::include_statistics(packs);
+        let skip_patterns = !MetricPack::include_patterns(packs);
+
         let mut column_profiles = Vec::new();
         let mut sample_columns = std::collections::HashMap::new();
 
         for header in headers.iter() {
             let name = header.to_string();
             if let Some(analyzer) = column_analyzers.get(&name) {
-                let profile = analyzer.to_column_profile(name.clone());
+                let profile = analyzer.to_column_profile(name.clone(), skip_stats, skip_patterns);
                 column_profiles.push(profile);
                 sample_columns.insert(name, analyzer.get_sample_values());
             }
@@ -151,11 +162,17 @@ impl ArrowProfiler {
             },
             ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
         )
-        .columns(column_profiles)
-        .with_quality_data(sample_columns);
-        if let Some(ref dims) = self.quality_dimensions {
-            assembler = assembler.with_requested_dimensions(dims.clone());
+        .columns(column_profiles);
+
+        if MetricPack::include_quality(packs) {
+            assembler = assembler.with_quality_data(sample_columns);
+            if let Some(ref dims) = self.quality_dimensions {
+                assembler = assembler.with_requested_dimensions(dims.clone());
+            }
+        } else {
+            assembler = assembler.skip_quality();
         }
+
         Ok(assembler.build())
     }
 }
@@ -693,7 +710,12 @@ impl ColumnAnalyzer {
         self.total_length += len;
     }
 
-    fn to_column_profile(&self, name: String) -> ColumnProfile {
+    fn to_column_profile(
+        &self,
+        name: String,
+        skip_statistics: bool,
+        skip_patterns: bool,
+    ) -> ColumnProfile {
         let data_type = self.infer_data_type();
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64
@@ -719,6 +741,8 @@ impl ColumnAnalyzer {
                 } else {
                     None
                 },
+                skip_statistics,
+                skip_patterns,
             },
         )
     }
@@ -905,7 +929,7 @@ mod tests {
         assert_eq!(analyzer.true_count, 3);
         assert_eq!(analyzer.false_count, 2);
 
-        let profile = analyzer.to_column_profile("flag".to_string());
+        let profile = analyzer.to_column_profile("flag".to_string(), false, false);
         assert_eq!(profile.data_type, DataType::Boolean);
         assert_eq!(profile.total_count, 6);
         assert_eq!(profile.null_count, 1);

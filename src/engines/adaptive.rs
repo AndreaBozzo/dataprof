@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::core::errors::DataProfilerError;
 use crate::engines::streaming::IncrementalProfiler;
 use crate::parsers::csv::CsvParserConfig;
-use crate::types::{ProfileReport, QualityDimension};
+use crate::types::{MetricPack, ProfileReport, QualityDimension};
 
 /// Internal engine type for adaptive selection.
 ///
@@ -20,6 +20,7 @@ pub(crate) enum InternalEngineType {
 /// Arrow is selected when the file has many numeric columns and enough memory.
 pub(crate) struct AdaptiveProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
+    metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
 }
 
@@ -27,12 +28,18 @@ impl AdaptiveProfiler {
     pub fn new() -> Self {
         Self {
             quality_dimensions: None,
+            metric_packs: None,
             csv_config: None,
         }
     }
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.quality_dimensions = Some(dims);
+        self
+    }
+
+    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
+        self.metric_packs = Some(packs);
         self
     }
 
@@ -147,6 +154,9 @@ impl AdaptiveProfiler {
                 if let Some(ref dims) = self.quality_dimensions {
                     profiler = profiler.quality_dimensions(dims.clone());
                 }
+                if let Some(ref packs) = self.metric_packs {
+                    profiler = profiler.metric_packs(packs.clone());
+                }
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());
                 }
@@ -156,6 +166,9 @@ impl AdaptiveProfiler {
                 let mut profiler = IncrementalProfiler::new();
                 if let Some(ref dims) = self.quality_dimensions {
                     profiler = profiler.quality_dimensions(dims.clone());
+                }
+                if let Some(ref packs) = self.metric_packs {
+                    profiler = profiler.metric_packs(packs.clone());
                 }
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());

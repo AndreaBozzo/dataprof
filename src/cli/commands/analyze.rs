@@ -27,6 +27,12 @@ pub struct AnalyzeArgs {
     #[arg(long)]
     pub sample: Option<usize>,
 
+    /// Metric packs to compute: schema, statistics, patterns, quality.
+    /// Schema is always included. Omit to compute all (default).
+    /// Example: --metrics schema --metrics statistics
+    #[arg(long, value_name = "PACK")]
+    pub metrics: Vec<String>,
+
     /// Common analysis options (progress, chunk-size, config)
     #[command(flatten)]
     pub common: super::CommonAnalysisOptions,
@@ -40,6 +46,18 @@ use crate::cli::{AnalysisOptions, analyze_file_with_options};
 
 /// Execute the analyze command - comprehensive ISO 8000/25012 analysis
 pub fn execute(args: &AnalyzeArgs) -> Result<()> {
+    // Parse metric pack strings into MetricPack values
+    let metric_packs = if args.metrics.is_empty() {
+        None
+    } else {
+        let packs: Result<Vec<dataprof::MetricPack>, _> = args
+            .metrics
+            .iter()
+            .map(|s| s.parse::<dataprof::MetricPack>())
+            .collect();
+        Some(packs.map_err(|e| anyhow::anyhow!("{}", e))?)
+    };
+
     // Build analysis options from command arguments
     let options = AnalysisOptions {
         progress: args.common.progress,
@@ -47,6 +65,7 @@ pub fn execute(args: &AnalyzeArgs) -> Result<()> {
         config: args.common.config.clone(),
         sample: args.sample,
         verbosity: Some(args.common.verbosity),
+        metric_packs,
     };
 
     // Use shared core logic that handles all improvements

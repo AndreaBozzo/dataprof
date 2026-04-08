@@ -57,10 +57,10 @@ impl RecordBatchAnalyzer {
     }
 
     /// Convert the analyzers to column profiles
-    pub fn to_profiles(&self) -> Vec<ColumnProfile> {
+    pub fn to_profiles(&self, skip_statistics: bool, skip_patterns: bool) -> Vec<ColumnProfile> {
         let mut profiles = Vec::new();
         for (name, analyzer) in &self.column_analyzers {
-            let profile = analyzer.to_column_profile(name.clone());
+            let profile = analyzer.to_column_profile(name.clone(), skip_statistics, skip_patterns);
             profiles.push(profile);
         }
         profiles
@@ -896,7 +896,12 @@ impl ColumnAnalyzer {
         self.total_length += len;
     }
 
-    pub fn to_column_profile(&self, name: String) -> ColumnProfile {
+    pub fn to_column_profile(
+        &self,
+        name: String,
+        skip_statistics: bool,
+        skip_patterns: bool,
+    ) -> ColumnProfile {
         let data_type = self.infer_data_type();
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64
@@ -922,6 +927,8 @@ impl ColumnAnalyzer {
                 } else {
                     None
                 },
+                skip_statistics,
+                skip_patterns,
             },
         )
     }
@@ -992,7 +999,7 @@ mod tests {
         let mut analyzer = RecordBatchAnalyzer::new();
         analyzer.process_batch(&batch).unwrap();
 
-        let profiles = analyzer.to_profiles();
+        let profiles = analyzer.to_profiles(false, false);
         assert_eq!(profiles.len(), 3);
 
         // Check score column

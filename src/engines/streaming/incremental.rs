@@ -11,7 +11,9 @@ use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::engines::common::MemoryConfig;
 use crate::engines::streaming::MemoryMappedCsvReader;
 use crate::parsers::csv::CsvParserConfig;
-use crate::types::{DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension};
+use crate::types::{
+    DataSource, ExecutionMetadata, FileFormat, MetricPack, ProfileReport, QualityDimension,
+};
 
 /// Incremental profiler that processes data without loading everything into memory
 /// Uses online/streaming algorithms and memory mapping for maximum efficiency.
@@ -24,6 +26,7 @@ pub struct IncrementalProfiler {
     memory: MemoryConfig,
     stop_condition: StopCondition,
     quality_dimensions: Option<Vec<QualityDimension>>,
+    metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
 }
 
@@ -37,6 +40,7 @@ impl IncrementalProfiler {
             memory: MemoryConfig::default(),
             stop_condition: StopCondition::Never,
             quality_dimensions: None,
+            metric_packs: None,
             csv_config: None,
         }
     }
@@ -69,6 +73,11 @@ impl IncrementalProfiler {
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.quality_dimensions = Some(dims);
+        self
+    }
+
+    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
+        self.metric_packs = Some(packs);
         self
     }
 
@@ -228,7 +237,11 @@ impl IncrementalProfiler {
         progress_tracker.emit_finished(!source_exhausted);
 
         // Convert streaming statistics to column profiles
-        let column_profiles = profile_builder::profiles_from_streaming(&column_stats);
+        let packs = self.metric_packs.as_deref();
+        let skip_stats = !MetricPack::include_statistics(packs);
+        let skip_patterns = !MetricPack::include_patterns(packs);
+        let column_profiles =
+            profile_builder::profiles_from_streaming(&column_stats, skip_stats, skip_patterns);
 
         // Calculate quality metrics from sample data
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
@@ -275,11 +288,17 @@ impl IncrementalProfiler {
             },
             execution,
         )
-        .columns(column_profiles)
-        .with_quality_data(sample_columns);
-        if let Some(ref dims) = self.quality_dimensions {
-            assembler = assembler.with_requested_dimensions(dims.clone());
+        .columns(column_profiles);
+
+        if MetricPack::include_quality(packs) {
+            assembler = assembler.with_quality_data(sample_columns);
+            if let Some(ref dims) = self.quality_dimensions {
+                assembler = assembler.with_requested_dimensions(dims.clone());
+            }
+        } else {
+            assembler = assembler.skip_quality();
         }
+
         Ok(assembler.build())
     }
 

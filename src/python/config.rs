@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::api::{EngineType, Profiler};
 use crate::core::sampling::ChunkSize;
 use crate::core::stop_condition::StopCondition;
-use crate::types::{FileFormat, QualityDimension};
+use crate::types::{FileFormat, MetricPack, QualityDimension};
 
 use super::progress::py_callback_to_sink;
 use super::sampling::PySamplingStrategy;
@@ -31,6 +31,7 @@ pub struct PyProfilerConfig {
     pub(crate) on_progress: Option<Arc<Py<PyAny>>>,
     pub(crate) progress_interval_ms: Option<u64>,
     pub(crate) quality_dimensions: Option<Vec<QualityDimension>>,
+    pub(crate) metric_packs: Option<Vec<MetricPack>>,
 }
 
 #[pymethods]
@@ -49,6 +50,7 @@ impl PyProfilerConfig {
         on_progress = None,
         progress_interval_ms = None,
         quality_dimensions = None,
+        metrics = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -64,6 +66,7 @@ impl PyProfilerConfig {
         on_progress: Option<Py<PyAny>>,
         progress_interval_ms: Option<u64>,
         quality_dimensions: Option<Vec<String>>,
+        metrics: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -105,6 +108,16 @@ impl PyProfilerConfig {
             })
             .transpose()?;
 
+        // Parse metrics strings into MetricPack enums
+        let metric_packs = metrics
+            .map(|packs| {
+                packs
+                    .iter()
+                    .map(|s| s.parse::<MetricPack>().map_err(PyValueError::new_err))
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
+
         Ok(Self {
             engine,
             chunk_size,
@@ -118,6 +131,7 @@ impl PyProfilerConfig {
             on_progress: on_progress.map(Arc::new),
             progress_interval_ms,
             quality_dimensions,
+            metric_packs,
         })
     }
 
@@ -224,6 +238,9 @@ impl PyProfilerConfig {
         }
         if let Some(ref dims) = self.quality_dimensions {
             profiler = profiler.quality_dimensions(dims.clone());
+        }
+        if let Some(ref packs) = self.metric_packs {
+            profiler = profiler.metric_packs(packs.clone());
         }
 
         profiler

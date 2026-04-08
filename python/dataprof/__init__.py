@@ -47,6 +47,7 @@ from ._dataprof import (
 
 __all__ = [
     "profile",
+    "Profiler",
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
@@ -170,6 +171,7 @@ def profile(
     on_progress: object | None = None,
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -196,6 +198,10 @@ def profile(
         quality_dimensions: List of ISO 25012 quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
             "accuracy", "timeliness". None = all dimensions (default).
+        metrics: List of metric packs to compute. Valid values: "schema"
+            (always included), "statistics", "patterns", "quality".
+            None = all packs (default). Omitting a pack skips that
+            category of computation entirely.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -215,11 +221,23 @@ def profile(
             on_progress=on_progress,
             progress_interval_ms=progress_interval_ms,
             quality_dimensions=quality_dimensions,
+            metrics=metrics,
         )
         rust_report = _analyze_file(str(source), config)
         return ProfileReport(rust_report)
 
-    # DataFrame/Arrow paths — most config kwargs are file-only; max_rows is supported
+    # DataFrame/Arrow paths — build config for metric packs + quality dims
+    def _df_config() -> ProfilerConfig | None:
+        """Build a ProfilerConfig if any DataFrame-relevant options are set."""
+        if any(v is not None for v in (max_rows, quality_dimensions, metrics)):
+            return ProfilerConfig(
+                max_rows=max_rows,
+                quality_dimensions=quality_dimensions,
+                metrics=metrics,
+            )
+        return None
+
+    # Warn about file-only kwargs that are ignored for DataFrame/Arrow sources
     _file_only_kwargs = {
         "engine": engine != "auto",
         "chunk_size": chunk_size is not None,
@@ -247,18 +265,18 @@ def profile(
 
     if source_module.startswith("pandas"):
         _warn_if_config_ignored()
-        rust_report = _profile_dataframe(source, name or "dataframe", max_rows)
+        rust_report = _profile_dataframe(source, name or "dataframe", max_rows, _df_config())
         return ProfileReport(rust_report)
 
     if source_module.startswith("polars"):
         _warn_if_config_ignored()
-        rust_report = _profile_dataframe(source, name or "dataframe", max_rows)
+        rust_report = _profile_dataframe(source, name or "dataframe", max_rows, _df_config())
         return ProfileReport(rust_report)
 
-    # PyArrow or any Arrow PyCapsule-compatible object
-    if hasattr(source, "__arrow_c_array__"):
+    # PyArrow objects (Table, RecordBatch) or any Arrow PyCapsule-compatible object
+    if source_module.startswith("pyarrow") or hasattr(source, "__arrow_c_array__"):
         _warn_if_config_ignored()
-        rust_report = _profile_arrow(source, name or "arrow_data", max_rows)
+        rust_report = _profile_arrow(source, name or "arrow_data", max_rows, _df_config())
         return ProfileReport(rust_report)
 
     raise TypeError(
@@ -266,6 +284,142 @@ def profile(
         "Expected a file path (str/Path), pandas DataFrame, polars DataFrame, "
         "or an object implementing the Arrow PyCapsule protocol."
     )
+
+
+# Stop-when shorthand strings for the Profiler builder
+_STOP_SHORTHANDS: dict[str, object] = {
+    "schema_stable": lambda: StopCondition.schema_stable(1000),
+    "schema_inference": lambda: StopCondition.schema_inference(),
+    "quality_sample": lambda: StopCondition.quality_sample(),
+}
+
+# Valid metric pack names
+_VALID_METRIC_PACKS = {"schema", "statistics", "patterns", "quality"}
+
+
+class Profiler:
+    """Builder-style profiler configuration.
+
+    Chainable methods accumulate settings; call ``.profile(source)`` to run.
+
+    Example::
+
+        report = dp.Profiler().engine("incremental").max_rows(5000).profile("data.csv")
+        report = dp.Profiler().stop_when("schema_stable").profile(df)
+        report = dp.Profiler().metrics(["quality"]).profile("data.csv")
+    """
+
+    def __init__(self) -> None:
+        self._kwargs: dict[str, Any] = {}
+
+    def engine(self, engine: str) -> Profiler:
+        """Set profiling engine ("auto", "incremental", "columnar")."""
+        self._kwargs["engine"] = engine
+        return self
+
+    def chunk_size(self, n: int) -> Profiler:
+        """Set fixed chunk size for streaming (None = adaptive)."""
+        self._kwargs["chunk_size"] = n
+        return self
+
+    def memory_limit_mb(self, mb: int) -> Profiler:
+        """Set memory limit in MB."""
+        self._kwargs["memory_limit_mb"] = mb
+        return self
+
+    def format(self, fmt: str) -> Profiler:
+        """Override format detection ("csv", "json", "jsonl", "parquet")."""
+        self._kwargs["format"] = fmt
+        return self
+
+    def max_rows(self, n: int) -> Profiler:
+        """Set maximum rows to process."""
+        self._kwargs["max_rows"] = n
+        return self
+
+    def name(self, name: str) -> Profiler:
+        """Set name for DataFrame sources in the report."""
+        self._kwargs["name"] = name
+        return self
+
+    def csv_delimiter(self, d: str) -> Profiler:
+        """Set single-character CSV delimiter."""
+        self._kwargs["csv_delimiter"] = d
+        return self
+
+    def csv_flexible(self, flexible: bool) -> Profiler:
+        """Allow variable-length CSV records."""
+        self._kwargs["csv_flexible"] = flexible
+        return self
+
+    def sampling(self, strategy: SamplingStrategy) -> Profiler:
+        """Set sampling strategy."""
+        self._kwargs["sampling"] = strategy
+        return self
+
+    def stop_condition(self, cond: StopCondition) -> Profiler:
+        """Set early stop condition."""
+        self._kwargs["stop_condition"] = cond
+        return self
+
+    def on_progress(self, cb: object) -> Profiler:
+        """Set progress callback (engine="incremental" only)."""
+        self._kwargs["on_progress"] = cb
+        return self
+
+    def progress_interval_ms(self, ms: int) -> Profiler:
+        """Set minimum interval between progress events in ms."""
+        self._kwargs["progress_interval_ms"] = ms
+        return self
+
+    def quality_dimensions(self, dims: list[str]) -> Profiler:
+        """Select ISO 25012 quality dimensions to evaluate."""
+        self._kwargs["quality_dimensions"] = dims
+        return self
+
+    def stop_when(self, condition: StopCondition | str) -> Profiler:
+        """Set stop condition from a StopCondition or a shorthand string.
+
+        Shorthand strings: "schema_stable", "schema_inference", "quality_sample".
+        """
+        if isinstance(condition, str):
+            factory = _STOP_SHORTHANDS.get(condition)
+            if factory is None:
+                raise ValueError(
+                    f"Unknown stop_when shorthand: {condition!r}. "
+                    f"Valid shorthands: {sorted(_STOP_SHORTHANDS)}"
+                )
+            condition = factory()
+        self._kwargs["stop_condition"] = condition
+        return self
+
+    def metrics(self, packs: list[str]) -> Profiler:
+        """Select metric packs to compute.
+
+        Valid packs: "schema" (always included), "statistics", "patterns", "quality".
+        Omitting a pack skips that category of computation entirely.
+        """
+        normalized_packs = [pack.lower() for pack in packs]
+        unknown = set(normalized_packs) - _VALID_METRIC_PACKS
+        if unknown:
+            raise ValueError(
+                f"Unknown metric packs: {sorted(unknown)}. "
+                f"Valid packs: {sorted(_VALID_METRIC_PACKS)}"
+            )
+        self._kwargs["metrics"] = normalized_packs
+        return self
+
+    def profile(self, source: Any) -> ProfileReport:
+        """Profile the given source with accumulated settings.
+
+        Accepts file paths (str/Path), pandas DataFrames, polars DataFrames,
+        or any object implementing the Arrow PyCapsule protocol.
+        """
+        return profile(source, **self._kwargs)
+
+    def __repr__(self) -> str:
+        settings = ", ".join(f"{k}={v!r}" for k, v in self._kwargs.items())
+        return f"Profiler({settings})"
 
 
 class ProfileReport:
