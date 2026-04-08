@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use dataprof::{
-    ChunkSize, EngineType, Profiler, ProgressEvent, ProgressSink,
+    ChunkSize, EngineType, MetricPack, Profiler, ProgressEvent, ProgressSink,
     core::{DataprofConfig, sampling::SamplingStrategy},
     types::ProfileReport,
 };
@@ -30,6 +30,8 @@ pub struct AnalysisOptions {
     pub sample: Option<usize>,
     /// Verbosity level (0=quiet, 1=normal, 2=verbose, 3=debug)
     pub verbosity: Option<u8>,
+    /// Metric packs to compute (None = all)
+    pub metric_packs: Option<Vec<MetricPack>>,
 }
 
 /// Builder for creating a properly configured profiler with all improvements
@@ -63,6 +65,11 @@ impl ProfilerBuilder {
         // Configure sampling strategy
         if let Some(sample_size) = self.options.sample {
             profiler = profiler.sampling(SamplingStrategy::Random { size: sample_size });
+        }
+
+        // Configure metric packs if specified
+        if let Some(ref packs) = self.options.metric_packs {
+            profiler = profiler.metric_packs(packs.clone());
         }
 
         // Enable progress if requested
