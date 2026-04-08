@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::BufRead;
@@ -119,14 +120,10 @@ pub fn analyze_json_from_reader<R: BufRead>(
     let format = match config.format {
         Some(JsonFormat::JsonArray) => FileFormat::Json,
         Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
-        None => {
-            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-            let first_char = buf.iter().find(|b| !b.is_ascii_whitespace());
-            match first_char {
-                Some(b'[') => FileFormat::Json,
-                _ => FileFormat::Jsonl,
-            }
-        }
+        None => match consume_leading_whitespace(&mut reader)? {
+            Some(b'[') => FileFormat::Json,
+            _ => FileFormat::Jsonl,
+        },
     };
 
     let mut column_stats = StreamingColumnCollection::new();
@@ -137,45 +134,25 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
     match format {
         FileFormat::Jsonl => {
-            // Stream line-by-line, but accumulate partial objects so pretty-printed
-            // single documents and multi-line JSONL records are handled correctly.
-            let mut line = String::new();
-            let mut pending_record = String::new();
+            // Parse one top-level JSON value at a time from the reader. This keeps
+            // memory bounded to a single value and handles pretty-printed root objects.
             loop {
-                line.clear();
-                let bytes = reader
-                    .read_line(&mut line)
-                    .map_err(DataProfilerError::from)?;
-                if bytes == 0 {
-                    break; // EOF
-                }
-
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    if !pending_record.is_empty() {
-                        pending_record.push_str(&line);
-                    }
-                    continue;
-                }
-
                 if let Some(max) = config.max_rows
                     && rows_read >= max
                 {
                     break;
                 }
 
-                pending_record.push_str(&line);
-
-                let value: Value = match serde_json::from_str(&pending_record) {
+                let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
+                let value: Value = match Value::deserialize(&mut deserializer) {
                     Ok(v) => v,
-                    Err(err) if err.classify() == serde_json::error::Category::Eof => continue,
+                    Err(err) if err.classify() == serde_json::error::Category::Eof => break,
                     Err(_) => {
                         malformed_lines += 1;
-                        pending_record.clear();
+                        skip_to_next_line(&mut reader)?;
                         continue;
                     }
                 };
-                pending_record.clear();
 
                 if let Value::Object(ref obj) = value {
                     feed_json_object(
@@ -186,10 +163,6 @@ pub fn analyze_json_from_reader<R: BufRead>(
                     );
                     rows_read += 1;
                 }
-            }
-
-            if !pending_record.trim().is_empty() {
-                malformed_lines += 1;
             }
         }
         _ => {
@@ -293,6 +266,38 @@ pub fn analyze_json_from_reader<R: BufRead>(
     let profiles = profile_builder::profiles_from_streaming(&column_stats, false, false);
 
     Ok((profiles, column_stats, rows_read, malformed_lines, format))
+}
+
+fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, DataProfilerError> {
+    loop {
+        let mut bytes_to_consume = 0;
+        let first_non_whitespace = {
+            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+            if buf.is_empty() {
+                return Ok(None);
+            }
+
+            let first_non_whitespace = buf.iter().find(|byte| !byte.is_ascii_whitespace()).copied();
+            if first_non_whitespace.is_none() {
+                bytes_to_consume = buf.len();
+            }
+            first_non_whitespace
+        };
+
+        if first_non_whitespace.is_some() {
+            return Ok(first_non_whitespace);
+        }
+
+        reader.consume(bytes_to_consume);
+    }
+}
+
+fn skip_to_next_line<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
+    let mut discarded = Vec::new();
+    reader
+        .read_until(b'\n', &mut discarded)
+        .map_err(DataProfilerError::from)?;
+    Ok(())
 }
 
 /// Analyze a JSON/JSONL file, returning a full [`ProfileReport`].
@@ -455,6 +460,19 @@ mod tests {
         assert_eq!(format, FileFormat::Jsonl);
         assert_eq!(rows, 2);
         assert_eq!(profiles[0].total_count, 2);
+    }
+
+    #[test]
+    fn test_analyze_json_with_large_leading_whitespace() {
+        let data = format!("{}[{{\"x\":1}}]", " ".repeat(10_000));
+        let cursor = Cursor::new(data.into_bytes());
+        let config = JsonParserConfig::default();
+
+        let (_profiles, _stats, rows, malformed, format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Json);
+        assert_eq!(rows, 1);
+        assert_eq!(malformed, 0);
     }
 
     // --- Legacy API tests migrated to new API ---

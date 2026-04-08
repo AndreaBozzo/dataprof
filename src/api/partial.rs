@@ -522,12 +522,7 @@ fn is_single_root_json_object(path: &Path) -> Result<bool, DataProfilerError> {
     })?;
     let mut reader = BufReader::new(file);
 
-    let first_non_whitespace = {
-        let buf = reader
-            .fill_buf()
-            .map_err(|e| DataProfilerError::io_error(&e))?;
-        buf.iter().find(|byte| !byte.is_ascii_whitespace()).copied()
-    };
+    let first_non_whitespace = consume_leading_whitespace(&mut reader)?;
 
     if first_non_whitespace != Some(b'{') {
         return Ok(false);
@@ -537,6 +532,33 @@ fn is_single_root_json_object(path: &Path) -> Result<bool, DataProfilerError> {
     match serde::de::IgnoredAny::deserialize(&mut deserializer) {
         Ok(_) => Ok(deserializer.end().is_ok()),
         Err(_) => Ok(false),
+    }
+}
+
+fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, DataProfilerError> {
+    loop {
+        let mut bytes_to_consume = 0;
+        let first_non_whitespace = {
+            let buf = reader
+                .fill_buf()
+                .map_err(|e| DataProfilerError::io_error(&e))?;
+
+            if buf.is_empty() {
+                return Ok(None);
+            }
+
+            let first_non_whitespace = buf.iter().find(|byte| !byte.is_ascii_whitespace()).copied();
+            if first_non_whitespace.is_none() {
+                bytes_to_consume = buf.len();
+            }
+            first_non_whitespace
+        };
+
+        if first_non_whitespace.is_some() {
+            return Ok(first_non_whitespace);
+        }
+
+        reader.consume(bytes_to_consume);
     }
 }
 
@@ -923,6 +945,15 @@ mod tests {
         let f = write_temp_jsonl("\n\n{\"x\":1}\n{\"x\":2}\n");
         let result = quick_row_count(f.path()).unwrap();
         assert_eq!(result.count, 2);
+        assert!(result.exact);
+    }
+
+    #[test]
+    fn test_count_json_single_object_with_large_leading_whitespace() {
+        let content = format!("{}{{\"x\":1}}", " ".repeat(10_000));
+        let f = write_temp_jsonl(&content);
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 1);
         assert!(result.exact);
     }
 
