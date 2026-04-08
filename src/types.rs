@@ -88,9 +88,11 @@ pub enum StreamSourceSystem {
     Pulsar,
     Http,      // For REST API ingestion
     WebSocket, // For WS ingestion
+    #[serde(rename = "object_store")]
     ObjectStore, // For S3/GCS streaming sources
+    #[serde(rename = "message_queue")]
     MessageQueue, // Generic MQ systems (RabbitMQ, ActiveMQ, etc.)
-    Database, // For CDC streams from databases
+    Database,  // For CDC streams from databases
     #[serde(untagged)]
     Custom(String),
 }
@@ -1627,6 +1629,25 @@ mod tests {
         let deserialized: DataSource = serde_json::from_str(&json).unwrap();
         assert!(deserialized.is_stream());
         assert_eq!(deserialized.stream_topic(), Some("sensor-data"));
+    }
+
+    #[test]
+    fn test_stream_source_system_serialization_names() {
+        let object_store = serde_json::to_string(&StreamSourceSystem::ObjectStore).unwrap();
+        let message_queue = serde_json::to_string(&StreamSourceSystem::MessageQueue).unwrap();
+        let database = serde_json::to_string(&StreamSourceSystem::Database).unwrap();
+
+        assert_eq!(object_store, r#""object_store""#);
+        assert_eq!(message_queue, r#""message_queue""#);
+        assert_eq!(database, r#""database""#);
+
+        let object_store: StreamSourceSystem = serde_json::from_str(r#""object_store""#).unwrap();
+        let message_queue: StreamSourceSystem = serde_json::from_str(r#""message_queue""#).unwrap();
+        let database: StreamSourceSystem = serde_json::from_str(r#""database""#).unwrap();
+
+        assert_eq!(object_store, StreamSourceSystem::ObjectStore);
+        assert_eq!(message_queue, StreamSourceSystem::MessageQueue);
+        assert_eq!(database, StreamSourceSystem::Database);
     }
 
     // -- Partial dimension requests --
