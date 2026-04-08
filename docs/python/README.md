@@ -55,6 +55,7 @@ dp.profile(
     stop_condition=None,             # StopCondition
     on_progress=None,                # Callable[[ProgressEvent], None]
     progress_interval_ms=None,       # int -- ms between progress events
+    metrics=None,                    # list[str] -- "schema", "statistics", "patterns", "quality"
     quality_dimensions=None,         # list[str] -- subset of dimensions to compute
 ) -> ProfileReport
 ```
@@ -156,6 +157,9 @@ Per-column profiling statistics.
 | `min_length` | `int \| None` | Minimum character length |
 | `max_length` | `int \| None` | Maximum character length |
 | `avg_length` | `float \| None` | Average character length |
+| `true_count` | `int \| None` | Number of `True` values (boolean columns) |
+| `false_count` | `int \| None` | Number of `False` values (boolean columns) |
+| `true_ratio` | `float \| None` | Ratio of `True` values (0.0--1.0) |
 | `patterns` | `list[Pattern] \| None` | List of detected value patterns |
 
 ## `Pattern`

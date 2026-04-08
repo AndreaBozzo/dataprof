@@ -29,6 +29,7 @@ dataprof analyze <FILE> [OPTIONS]
 | `--progress` | Show real-time progress bar |
 | `--chunk-size <SIZE>` | Custom chunk size for streaming (e.g. `10000`) |
 | `--config <PATH>` | Load TOML configuration file |
+| `--metrics <PACK>` | Metric packs: `schema`, `statistics`, `patterns`, `quality` |
 | `-v, -vv, -vvv` | Increase verbosity (info, debug, trace) |
 
 **Examples:**

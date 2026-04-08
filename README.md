@@ -24,8 +24,10 @@ dataprof is a Rust library and CLI for profiling tabular data. It computes colum
 - **Rust core** -- fast columnar and streaming engines
 - **ISO 8000/25012 quality assessment** -- five dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
 - **Multi-format** -- CSV (auto-delimiter detection), JSON, JSONL, Parquet, databases, DataFrames, Arrow
+- **Boolean Support** -- Native profiling of boolean columns with true/false statistics
 - **True streaming** -- bounded-memory profiling with online algorithms (Incremental engine)
 - **Three interfaces** -- CLI binary, Rust library, Python package
+- **New Python Ecosystem** -- Export to pandas, Polars, Arrow, and JSON with rounding consistency
 - **Async-ready** -- `async/await` API for embedding in web services and stream pipelines
 
 ## Quick Start
@@ -36,6 +38,7 @@ dataprof is a Rust library and CLI for profiling tabular data. It computes colum
 cargo install dataprof
 
 dataprof analyze data.csv --detailed
+dataprof analyze data.csv --metrics schema --metrics statistics  # fast partial analysis
 dataprof schema data.csv
 dataprof count data.parquet
 ```
@@ -57,14 +60,18 @@ for col in &report.column_profiles {
 ### Python
 
 ```python
-import dataprof
+import dataprof as dp
 
-report = dataprof.profile("data.csv")
+# Profile with selective metrics for speed
+report = dp.profile("data.csv", metrics=["schema", "statistics"])
 print(f"{report.rows} rows, {report.columns} columns")
-print(f"Quality score: {report.quality_score}")
 
-for col in report.column_profiles.values():
-    print(f"  {col.name} ({col.data_type}): {col.null_percentage:.1f}% null")
+# Dict-like access and export to pandas/Polars
+age_stats = report["age"]
+print(f"Mean age: {age_stats.mean}")
+
+df = report.to_dataframe()
+report.save("report.json")
 ```
 
 ## Installation

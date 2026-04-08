@@ -59,6 +59,22 @@ dataprof analyze huge.csv --sample 50000 --progress
 dataprof analyze data.csv --config .dataprof.toml
 ```
 
+### Selective profiling (Performance)
+
+```bash
+# Skip expensive pattern detection and quality assessment
+dataprof analyze data.csv --metrics schema --metrics statistics
+
+# Compute only schema (fastest)
+dataprof analyze data.csv --metrics schema
+```
+
+### Boolean Analysis
+
+```bash
+dataprof analyze data.csv --detailed | grep -A 5 "Boolean"
+```
+
 ### Profile a database table
 
 ```bash
@@ -164,6 +180,30 @@ from dataprof import StopCondition
 stop = StopCondition.max_rows(10000) | StopCondition.max_bytes(50_000_000)
 report = dp.profile("stream.csv", stop_condition=stop)
 print(f"Truncated: {report.truncation_reason}")
+```
+
+### Selective profiling for speed
+
+```python
+# Compute only basic statistics, skip patterns and quality
+report = dp.profile("huge.csv", metrics=["schema", "statistics"])
+
+# Use the Profiler builder
+report = (dp.Profiler()
+          .metrics(["schema", "statistics"])
+          .max_rows(10000)
+          .profile("huge.csv"))
+```
+
+### Boolean Data Analysis
+
+```python
+report = dp.profile("data.csv")
+active_col = report["is_active"]
+
+if active_col.data_type == "Boolean":
+    print(f"True: {active_col.true_count} ({active_col.true_ratio:.1%})")
+    print(f"False: {active_col.false_count}")
 ```
 
 ### Progress callbacks
