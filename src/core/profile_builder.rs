@@ -26,6 +26,10 @@ pub struct ColumnProfileInput<'a> {
     pub text_lengths: Option<TextLengths>,
     /// Pre-computed boolean counts (true_count, false_count) for boolean columns.
     pub boolean_counts: Option<(usize, usize)>,
+    /// When true, skip statistics computation (produce `ColumnStats::None`).
+    pub skip_statistics: bool,
+    /// When true, skip pattern detection (produce empty patterns vec).
+    pub skip_patterns: bool,
 }
 
 /// Pre-computed text length stats from streaming/columnar engines.
@@ -42,75 +46,79 @@ pub struct TextLengths {
 /// pre-computed text lengths; this function handles stats calculation
 /// and pattern detection.
 pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
-    let stats = match input.data_type {
-        DataType::Integer | DataType::Float => {
-            crate::stats::numeric::calculate_numeric_stats(input.sample_values)
-        }
-        DataType::Date => {
-            // Produce real datetime stats when sample values are available;
-            // fall back to text lengths for engines that only tracked lengths.
-            if !input.sample_values.is_empty() {
-                crate::stats::datetime::calculate_datetime_stats(input.sample_values)
-            } else if let Some(tl) = &input.text_lengths {
-                ColumnStats::Text(TextStats::from_lengths(
-                    tl.min_length,
-                    tl.max_length,
-                    tl.avg_length,
-                ))
-            } else {
-                ColumnStats::DateTime(crate::types::DateTimeStats::empty())
+    let stats = if input.skip_statistics {
+        ColumnStats::None
+    } else {
+        match input.data_type {
+            DataType::Integer | DataType::Float => {
+                crate::stats::numeric::calculate_numeric_stats(input.sample_values)
             }
-        }
-        DataType::Boolean => {
-            let (true_count, false_count) = input.boolean_counts.unwrap_or_else(|| {
-                // Fall back: count from sample values, tolerating case differences
-                // and surrounding whitespace from engine string representations.
-                // Map yes/no variants to true/false so stats stay consistent
-                // with inference which accepts yes/no as boolean.
-                let tc = input
-                    .sample_values
-                    .iter()
-                    .filter(|v| {
-                        let t = v.trim();
-                        t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-                    })
-                    .count();
-                let fc = input
-                    .sample_values
-                    .iter()
-                    .filter(|v| {
-                        let t = v.trim();
-                        t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
-                    })
-                    .count();
-                (tc, fc)
-            });
-            let total = true_count + false_count;
-            let true_ratio = if total > 0 {
-                true_count as f64 / total as f64
-            } else {
-                0.0
-            };
-            ColumnStats::Boolean(crate::types::BooleanStats {
-                true_count,
-                false_count,
-                true_ratio,
-            })
-        }
-        DataType::String => {
-            if let Some(tl) = &input.text_lengths {
-                ColumnStats::Text(TextStats::from_lengths(
-                    tl.min_length,
-                    tl.max_length,
-                    tl.avg_length,
-                ))
-            } else {
-                crate::stats::text::calculate_text_stats(input.sample_values)
+            DataType::Date => {
+                // Produce real datetime stats when sample values are available;
+                // fall back to text lengths for engines that only tracked lengths.
+                if !input.sample_values.is_empty() {
+                    crate::stats::datetime::calculate_datetime_stats(input.sample_values)
+                } else if let Some(tl) = &input.text_lengths {
+                    ColumnStats::Text(TextStats::from_lengths(
+                        tl.min_length,
+                        tl.max_length,
+                        tl.avg_length,
+                    ))
+                } else {
+                    ColumnStats::DateTime(crate::types::DateTimeStats::empty())
+                }
+            }
+            DataType::Boolean => {
+                let (true_count, false_count) = input.boolean_counts.unwrap_or_else(|| {
+                    let tc = input
+                        .sample_values
+                        .iter()
+                        .filter(|v| {
+                            let t = v.trim();
+                            t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
+                        })
+                        .count();
+                    let fc = input
+                        .sample_values
+                        .iter()
+                        .filter(|v| {
+                            let t = v.trim();
+                            t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
+                        })
+                        .count();
+                    (tc, fc)
+                });
+                let total = true_count + false_count;
+                let true_ratio = if total > 0 {
+                    true_count as f64 / total as f64
+                } else {
+                    0.0
+                };
+                ColumnStats::Boolean(crate::types::BooleanStats {
+                    true_count,
+                    false_count,
+                    true_ratio,
+                })
+            }
+            DataType::String => {
+                if let Some(tl) = &input.text_lengths {
+                    ColumnStats::Text(TextStats::from_lengths(
+                        tl.min_length,
+                        tl.max_length,
+                        tl.avg_length,
+                    ))
+                } else {
+                    crate::stats::text::calculate_text_stats(input.sample_values)
+                }
             }
         }
     };
 
-    let patterns = crate::detect_patterns(input.sample_values);
+    let patterns = if input.skip_patterns {
+        Vec::new()
+    } else {
+        crate::detect_patterns(input.sample_values)
+    };
 
     ColumnProfile {
         name: input.name,
@@ -126,12 +134,16 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
 // ── Streaming helpers ───────────────────────────────────────────────────
 
 /// Convert all columns in a [`StreamingColumnCollection`] into [`ColumnProfile`]s.
-pub fn profiles_from_streaming(column_stats: &StreamingColumnCollection) -> Vec<ColumnProfile> {
+pub fn profiles_from_streaming(
+    column_stats: &StreamingColumnCollection,
+    skip_statistics: bool,
+    skip_patterns: bool,
+) -> Vec<ColumnProfile> {
     let mut profiles = Vec::new();
 
     for column_name in column_stats.column_names() {
         if let Some(stats) = column_stats.get_column_stats(&column_name) {
-            let profile = profile_from_stats(&column_name, stats);
+            let profile = profile_from_stats(&column_name, stats, skip_statistics, skip_patterns);
             profiles.push(profile);
         }
     }
@@ -140,7 +152,12 @@ pub fn profiles_from_streaming(column_stats: &StreamingColumnCollection) -> Vec<
 }
 
 /// Convert a single column's [`StreamingStatistics`] into a [`ColumnProfile`].
-pub fn profile_from_stats(name: &str, stats: &StreamingStatistics) -> ColumnProfile {
+pub fn profile_from_stats(
+    name: &str,
+    stats: &StreamingStatistics,
+    skip_statistics: bool,
+    skip_patterns: bool,
+) -> ColumnProfile {
     let data_type = infer_data_type_streaming(stats);
     let text_stats = stats.text_length_stats();
 
@@ -157,6 +174,8 @@ pub fn profile_from_stats(name: &str, stats: &StreamingStatistics) -> ColumnProf
             avg_length: text_stats.avg_length,
         }),
         boolean_counts: None,
+        skip_statistics,
+        skip_patterns,
     })
 }
 
@@ -260,7 +279,7 @@ mod tests {
         collection.process_record(&headers, vec!["Bob".to_string(), "25".to_string()]);
         collection.process_record(&headers, vec!["Charlie".to_string(), "35".to_string()]);
 
-        let profiles = profiles_from_streaming(&collection);
+        let profiles = profiles_from_streaming(&collection, false, false);
         assert_eq!(profiles.len(), 2);
 
         let age = profiles.iter().find(|p| p.name == "age").unwrap();
@@ -293,6 +312,8 @@ mod tests {
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: Some((2, 1)),
+            skip_statistics: false,
+            skip_patterns: false,
         });
 
         match &profile.stats {
@@ -321,6 +342,8 @@ mod tests {
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None, // forces fallback path
+            skip_statistics: false,
+            skip_patterns: false,
         });
 
         match &profile.stats {
@@ -331,5 +354,70 @@ mod tests {
             }
             other => panic!("expected Boolean stats, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_skip_statistics() {
+        let samples = vec!["10".to_string(), "20".to_string(), "30".to_string()];
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "num".to_string(),
+            data_type: DataType::Integer,
+            total_count: 3,
+            null_count: 0,
+            unique_count: Some(3),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None,
+            skip_statistics: true,
+            skip_patterns: false,
+        });
+
+        assert!(matches!(profile.stats, crate::types::ColumnStats::None));
+        // Patterns should still be computed
+        assert_eq!(profile.data_type, DataType::Integer);
+    }
+
+    #[test]
+    fn test_skip_patterns() {
+        let samples = vec!["hello".to_string(), "world".to_string()];
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "text".to_string(),
+            data_type: DataType::String,
+            total_count: 2,
+            null_count: 0,
+            unique_count: Some(2),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None,
+            skip_statistics: false,
+            skip_patterns: true,
+        });
+
+        assert!(profile.patterns.is_empty());
+        // Stats should still be computed
+        assert!(matches!(profile.stats, crate::types::ColumnStats::Text(_)));
+    }
+
+    #[test]
+    fn test_all_packs_default() {
+        let samples = vec!["42".to_string(), "99".to_string()];
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "val".to_string(),
+            data_type: DataType::Integer,
+            total_count: 2,
+            null_count: 0,
+            unique_count: Some(2),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None,
+            skip_statistics: false,
+            skip_patterns: false,
+        });
+
+        assert!(matches!(
+            profile.stats,
+            crate::types::ColumnStats::Numeric(_)
+        ));
+        assert_eq!(profile.data_type, DataType::Integer);
     }
 }

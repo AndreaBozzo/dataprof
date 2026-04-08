@@ -205,7 +205,7 @@ pub async fn analyze_parquet_async_http_dims(
         analyzer.process_batch(&batch)?;
     }
 
-    let column_profiles = analyzer.to_profiles();
+    let column_profiles = analyzer.to_profiles(false, false);
     let total_rows = analyzer.total_rows();
 
     let sample_columns = analyzer.create_sample_columns();

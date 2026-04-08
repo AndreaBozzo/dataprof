@@ -78,3 +78,6 @@ env/
 
 #dev scripts folder
 scripts/
+
+#claude settings
+.claude/

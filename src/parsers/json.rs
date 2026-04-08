@@ -275,7 +275,7 @@ pub fn analyze_json_from_reader<R: BufRead>(
         }
     }
 
-    let profiles = profile_builder::profiles_from_streaming(&column_stats);
+    let profiles = profile_builder::profiles_from_streaming(&column_stats, false, false);
 
     Ok((profiles, column_stats, rows_read, malformed_lines, format))
 }

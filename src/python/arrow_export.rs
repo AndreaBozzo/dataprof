@@ -30,8 +30,11 @@ use pyo3::types::PyCapsule;
 use crate::core::report_assembler::ReportAssembler;
 use crate::engines::columnar::RecordBatchAnalyzer;
 use crate::types::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, ExecutionMetadata, TruncationReason,
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, ExecutionMetadata, MetricPack,
+    TruncationReason,
 };
+
+use super::config::PyProfilerConfig;
 
 /// PyCapsule name for Arrow schema (null-terminated for C compatibility)
 const ARROW_SCHEMA_NAME: &[u8] = b"arrow_schema\0";
@@ -350,14 +353,25 @@ pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
 /// # Returns
 /// A PyProfileReport with comprehensive data quality metrics
 #[pyfunction]
-#[pyo3(signature = (df, name = "dataframe".to_string(), max_rows = None))]
+#[pyo3(signature = (df, name = "dataframe".to_string(), max_rows = None, config = None))]
 pub fn profile_dataframe(
     py: Python<'_>,
     df: Py<PyAny>,
     name: String,
     max_rows: Option<usize>,
+    config: Option<&PyProfilerConfig>,
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
+
+    // Extract metric packs and quality dimensions from config
+    let packs = config.and_then(|c| c.metric_packs.as_deref());
+    let skip_statistics = !MetricPack::include_statistics(packs);
+    let skip_patterns = !MetricPack::include_patterns(packs);
+    let include_quality = MetricPack::include_quality(packs);
+
+    // max_rows from direct param or config
+    let effective_max_rows =
+        max_rows.or_else(|| config.and_then(|c| c.max_rows.map(|v| v as usize)));
 
     // Detect source library
     let source_library = detect_dataframe_library(py, &df)?;
@@ -366,7 +380,7 @@ pub fn profile_dataframe(
     let batch = convert_dataframe_to_batch(py, &df, &source_library)?;
 
     // Optionally limit rows before analysis
-    let (batch, truncated) = limit_batch_rows(batch, max_rows);
+    let (batch, truncated) = limit_batch_rows(batch, effective_max_rows);
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
@@ -377,7 +391,7 @@ pub fn profile_dataframe(
         .process_batch(&batch)
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
-    let column_profiles = analyzer.to_profiles();
+    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns);
     let sample_columns = analyzer.create_sample_columns();
 
     let scan_time_ms = start.elapsed().as_millis();
@@ -388,11 +402,13 @@ pub fn profile_dataframe(
     // Build execution metadata, marking truncation if max_rows was applied
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
     if truncated {
-        exec = exec.with_truncation(TruncationReason::MaxRows(max_rows.unwrap_or(0) as u64));
+        exec = exec.with_truncation(TruncationReason::MaxRows(
+            effective_max_rows.unwrap_or(0) as u64
+        ));
     }
 
     // Create report with DataFrame data source
-    let report = ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         DataSource::DataFrame {
             name,
             source_library,
@@ -402,9 +418,18 @@ pub fn profile_dataframe(
         },
         exec,
     )
-    .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .build();
+    .columns(column_profiles);
+
+    if include_quality {
+        assembler = assembler.with_quality_data(sample_columns);
+        if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
+            assembler = assembler.with_requested_dimensions(dims);
+        }
+    } else {
+        assembler = assembler.skip_quality();
+    }
+
+    let report = assembler.build();
 
     Ok(super::types::PyProfileReport::new(report))
 }
@@ -422,14 +447,25 @@ pub fn profile_dataframe(
 /// # Returns
 /// A PyProfileReport with comprehensive data quality metrics
 #[pyfunction]
-#[pyo3(signature = (table, name = "arrow_table".to_string(), max_rows = None))]
+#[pyo3(signature = (table, name = "arrow_table".to_string(), max_rows = None, config = None))]
 pub fn profile_arrow(
     py: Python<'_>,
     table: Py<PyAny>,
     name: String,
     max_rows: Option<usize>,
+    config: Option<&PyProfilerConfig>,
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
+
+    // Extract metric packs and quality dimensions from config
+    let packs = config.and_then(|c| c.metric_packs.as_deref());
+    let skip_statistics = !MetricPack::include_statistics(packs);
+    let skip_patterns = !MetricPack::include_patterns(packs);
+    let include_quality = MetricPack::include_quality(packs);
+
+    // max_rows from direct param or config
+    let effective_max_rows =
+        max_rows.or_else(|| config.and_then(|c| c.max_rows.map(|v| v as usize)));
 
     let bound = table.bind(py);
 
@@ -437,7 +473,7 @@ pub fn profile_arrow(
     let batch = import_from_pyarrow(py, bound)?;
 
     // Optionally limit rows before analysis
-    let (batch, truncated) = limit_batch_rows(batch, max_rows);
+    let (batch, truncated) = limit_batch_rows(batch, effective_max_rows);
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
@@ -454,7 +490,7 @@ pub fn profile_arrow(
         .process_batch(&batch)
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
-    let column_profiles = analyzer.to_profiles();
+    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns);
     let sample_columns = analyzer.create_sample_columns();
 
     let scan_time_ms = start.elapsed().as_millis();
@@ -462,10 +498,12 @@ pub fn profile_arrow(
     // Build execution metadata, marking truncation if max_rows was applied
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
     if truncated {
-        exec = exec.with_truncation(TruncationReason::MaxRows(max_rows.unwrap_or(0) as u64));
+        exec = exec.with_truncation(TruncationReason::MaxRows(
+            effective_max_rows.unwrap_or(0) as u64
+        ));
     }
 
-    let report = ReportAssembler::new(
+    let mut assembler = ReportAssembler::new(
         DataSource::DataFrame {
             name,
             source_library: DataFrameLibrary::PyArrow,
@@ -475,9 +513,18 @@ pub fn profile_arrow(
         },
         exec,
     )
-    .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .build();
+    .columns(column_profiles);
+
+    if include_quality {
+        assembler = assembler.with_quality_data(sample_columns);
+        if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
+            assembler = assembler.with_requested_dimensions(dims);
+        }
+    } else {
+        assembler = assembler.skip_quality();
+    }
+
+    let report = assembler.build();
 
     Ok(super::types::PyProfileReport::new(report))
 }

@@ -165,7 +165,7 @@ impl AsyncStreamingProfiler {
         }
 
         // Build the report
-        let column_profiles = profile_builder::profiles_from_streaming(&column_stats);
+        let column_profiles = profile_builder::profiles_from_streaming(&column_stats, false, false);
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
 
         let scan_time_ms = start.elapsed().as_millis();

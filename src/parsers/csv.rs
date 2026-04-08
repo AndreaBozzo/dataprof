@@ -244,7 +244,7 @@ pub fn analyze_csv_from_reader<R: Read>(
         rows_read += 1;
     }
 
-    let profiles = profile_builder::profiles_from_streaming(&column_stats);
+    let profiles = profile_builder::profiles_from_streaming(&column_stats, false, false);
 
     Ok((profiles, column_stats, rows_read, header_names))
 }

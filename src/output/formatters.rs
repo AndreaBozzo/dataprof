@@ -318,6 +318,7 @@ impl JsonFormatter {
             ColumnStats::Text(..) => "text",
             ColumnStats::DateTime(..) => "datetime",
             ColumnStats::Boolean(..) => "boolean",
+            ColumnStats::None => "none",
         };
 
         if let serde_json::Value::Object(ref mut map) = stats_json {
@@ -562,6 +563,9 @@ impl OutputFormatter for PlainFormatter {
                     output.push_str(&format!("  False: {}\n", b.false_count));
                     output.push_str(&format!("  True ratio: {:.4}\n", b.true_ratio));
                 }
+                ColumnStats::None => {
+                    output.push_str("  (statistics not computed)\n");
+                }
             }
             output.push('\n');
         }
@@ -702,6 +706,9 @@ impl OutputFormatter for InteractiveFormatter {
                     output.push_str(&format!("  True: {}\n", b.true_count));
                     output.push_str(&format!("  False: {}\n", b.false_count));
                     output.push_str(&format!("  True ratio: {:.4}\n", b.true_ratio));
+                }
+                ColumnStats::None => {
+                    output.push_str("  (statistics not computed)\n");
                 }
             }
             output.push('\n');
