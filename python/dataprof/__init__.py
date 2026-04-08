@@ -399,13 +399,14 @@ class Profiler:
         Valid packs: "schema" (always included), "statistics", "patterns", "quality".
         Omitting a pack skips that category of computation entirely.
         """
-        unknown = set(packs) - _VALID_METRIC_PACKS
+        normalized_packs = [pack.lower() for pack in packs]
+        unknown = set(normalized_packs) - _VALID_METRIC_PACKS
         if unknown:
             raise ValueError(
                 f"Unknown metric packs: {sorted(unknown)}. "
                 f"Valid packs: {sorted(_VALID_METRIC_PACKS)}"
             )
-        self._kwargs["metrics"] = packs
+        self._kwargs["metrics"] = normalized_packs
         return self
 
     def profile(self, source: Any) -> ProfileReport:
