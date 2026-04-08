@@ -18,6 +18,7 @@
 //! - [Arrow C Data Interface](https://arrow.apache.org/docs/format/CDataInterface.html)
 //! - [Arrow PyCapsule Interface](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html)
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array};
@@ -395,7 +396,7 @@ pub fn profile_dataframe(
     let sample_columns = if include_quality {
         analyzer.create_sample_columns()
     } else {
-        Vec::new()
+        HashMap::new()
     };
 
     let scan_time_ms = start.elapsed().as_millis();
