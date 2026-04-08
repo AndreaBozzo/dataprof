@@ -137,8 +137,10 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
     match format {
         FileFormat::Jsonl => {
-            // True streaming: read line-by-line
+            // Stream line-by-line, but accumulate partial objects so pretty-printed
+            // single documents and multi-line JSONL records are handled correctly.
             let mut line = String::new();
+            let mut pending_record = String::new();
             loop {
                 line.clear();
                 let bytes = reader
@@ -150,6 +152,9 @@ pub fn analyze_json_from_reader<R: BufRead>(
 
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
+                    if !pending_record.is_empty() {
+                        pending_record.push_str(&line);
+                    }
                     continue;
                 }
 
@@ -159,13 +164,19 @@ pub fn analyze_json_from_reader<R: BufRead>(
                     break;
                 }
 
-                let value: Value = match serde_json::from_str(trimmed) {
+                pending_record.push_str(&line);
+
+                let value: Value = match serde_json::from_str(&pending_record) {
                     Ok(v) => v,
+                    Err(err) if err.classify() == serde_json::error::Category::Eof => continue,
                     Err(_) => {
                         malformed_lines += 1;
+                        pending_record.clear();
                         continue;
                     }
                 };
+                pending_record.clear();
+
                 if let Value::Object(ref obj) = value {
                     feed_json_object(
                         obj,
@@ -175,6 +186,10 @@ pub fn analyze_json_from_reader<R: BufRead>(
                     );
                     rows_read += 1;
                 }
+            }
+
+            if !pending_record.trim().is_empty() {
+                malformed_lines += 1;
             }
         }
         _ => {
@@ -566,5 +581,81 @@ mod tests {
 
         let nested = profiles.iter().find(|p| p.name == "nested").unwrap();
         assert_eq!(nested.total_count, 2);
+    }
+
+    // --- Issue #290: single root object profiled correctly ---
+
+    #[test]
+    fn test_single_root_object_compact_yields_one_row() {
+        // A compact single JSON object on one line is treated as 1-row JSONL by the
+        // sync parser. rows=1 and 2 columns is the correct behavior.
+        let data = br#"{"type":"FeatureCollection","features":[1,2,3]}"#;
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::default();
+
+        let (profiles, _stats, rows, malformed, _format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(malformed, 0);
+        assert_eq!(profiles.len(), 2); // "type" and "features"
+        let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"type"));
+        assert!(names.contains(&"features"));
+    }
+
+    #[test]
+    fn test_jsonl_multi_object_still_works() {
+        // Multi-object JSONL starting with '{' must not be broken.
+        let data = b"{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::default();
+
+        let (_profiles, _stats, rows, _malformed, format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Jsonl);
+        assert_eq!(rows, 3);
+    }
+
+    #[test]
+    fn test_single_root_object_via_analyze_json_file() {
+        // End-to-end: compact single-object file returns 1 row and 2 columns.
+        let f = write_file(r#"{"type":"FeatureCollection","features":[{"id":1},{"id":2}]}"#);
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(f.path(), &config).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.column_profiles.len(), 2);
+    }
+
+    #[test]
+    fn test_single_root_object_pretty_printed_yields_one_row() {
+        let data = br#"{
+  "type": "FeatureCollection",
+  "features": [
+    {"id": 1},
+    {"id": 2}
+  ]
+}"#;
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::default();
+
+        let (profiles, _stats, rows, malformed, format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(format, FileFormat::Jsonl);
+        assert_eq!(rows, 1);
+        assert_eq!(malformed, 0);
+        assert_eq!(profiles.len(), 2);
+    }
+
+    #[test]
+    fn test_single_root_object_pretty_printed_via_analyze_json_file() {
+        let f = write_file(
+            "{\n  \"type\": \"FeatureCollection\",\n  \"features\": [\n    {\"id\": 1},\n    {\"id\": 2}\n  ]\n}\n",
+        );
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(f.path(), &config).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.column_profiles.len(), 2);
     }
 }

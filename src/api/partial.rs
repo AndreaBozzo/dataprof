@@ -10,6 +10,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use serde::Deserialize;
 
 use crate::core::errors::DataProfilerError;
 use crate::core::profile_builder;
@@ -420,6 +421,15 @@ fn count_json(
 
     match format {
         FileFormat::Jsonl => {
+            if is_single_root_json_object(path)? {
+                return Ok(RowCountEstimate {
+                    count: 1,
+                    exact: true,
+                    method: CountMethod::FullScan,
+                    count_time_ms: start.elapsed().as_millis(),
+                });
+            }
+
             let reader = BufReader::new(file);
 
             if file_size < FULL_SCAN_THRESHOLD {
@@ -477,6 +487,15 @@ fn count_json(
             }
         }
         _ => {
+            if is_single_root_json_object(path)? {
+                return Ok(RowCountEstimate {
+                    count: 1,
+                    exact: true,
+                    method: CountMethod::FullScan,
+                    count_time_ms: start.elapsed().as_millis(),
+                });
+            }
+
             // JSON array — streaming count. We deserialize each element as
             // IgnoredAny which skips the value without allocating, keeping
             // memory usage constant regardless of array size.
@@ -494,6 +513,30 @@ fn count_json(
                 count_time_ms: start.elapsed().as_millis(),
             })
         }
+    }
+}
+
+fn is_single_root_json_object(path: &Path) -> Result<bool, DataProfilerError> {
+    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
+        path: path.display().to_string(),
+    })?;
+    let mut reader = BufReader::new(file);
+
+    let first_non_whitespace = {
+        let buf = reader
+            .fill_buf()
+            .map_err(|e| DataProfilerError::io_error(&e))?;
+        buf.iter().find(|byte| !byte.is_ascii_whitespace()).copied()
+    };
+
+    if first_non_whitespace != Some(b'{') {
+        return Ok(false);
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    match serde::de::IgnoredAny::deserialize(&mut deserializer) {
+        Ok(_) => Ok(deserializer.end().is_ok()),
+        Err(_) => Ok(false),
     }
 }
 
@@ -824,6 +867,62 @@ mod tests {
         let result = quick_row_count(f.path()).unwrap();
 
         assert_eq!(result.count, 3);
+        assert!(result.exact);
+    }
+
+    // --- Issue #290: count_json with single root objects ---
+
+    #[test]
+    fn test_count_json_single_object_via_jsonl_format() {
+        // A '{'-starting file passed as FileFormat::Jsonl must return 1, not line count.
+        let f = write_temp_jsonl(r#"{"type":"FeatureCollection","features":[1,2,3]}"#);
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 1);
+        assert!(result.exact);
+    }
+
+    #[test]
+    fn test_count_json_single_object_pretty_printed_via_jsonl_format() {
+        // Pretty-printed single object (many lines) must not return line count.
+        let content = "{\n  \"type\": \"FeatureCollection\",\n  \"features\": [\n    1,\n    2,\n    3\n  ]\n}\n";
+        let f = write_temp_jsonl(content);
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 1);
+        assert!(result.exact);
+    }
+
+    #[test]
+    fn test_count_json_single_object_via_json_format() {
+        // A root-object .json file (not an array) must return 1, not an error.
+        let f = write_temp_json(r#"{"type":"FeatureCollection","features":[1,2,3]}"#);
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 1);
+        assert!(result.exact);
+    }
+
+    #[test]
+    fn test_count_json_array_unchanged() {
+        // JSON array count must be unaffected by the fix.
+        let f = write_temp_json(r#"[{"x":1},{"x":2},{"x":3}]"#);
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+    }
+
+    #[test]
+    fn test_count_jsonl_multi_object_unchanged() {
+        // Multi-object JSONL must still be counted correctly.
+        let f = write_temp_jsonl("{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n");
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+    }
+
+    #[test]
+    fn test_count_jsonl_leading_blank_lines_unchanged() {
+        let f = write_temp_jsonl("\n\n{\"x\":1}\n{\"x\":2}\n");
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.count, 2);
         assert!(result.exact);
     }
 
