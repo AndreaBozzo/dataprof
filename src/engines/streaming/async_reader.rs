@@ -10,7 +10,8 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::types::{
-    DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension, StreamSourceSystem,
+    DataSource, ExecutionMetadata, FileFormat, MetricPack, ProfileReport, QualityDimension,
+    StreamSourceSystem,
 };
 
 use super::async_source::AsyncDataSource;
@@ -45,6 +46,7 @@ pub struct AsyncStreamingProfiler {
     progress_interval: Duration,
     stop_condition: StopCondition,
     quality_dimensions: Option<Vec<QualityDimension>>,
+    metric_packs: Option<Vec<MetricPack>>,
 }
 
 impl AsyncStreamingProfiler {
@@ -58,6 +60,7 @@ impl AsyncStreamingProfiler {
             progress_interval: Duration::from_millis(500),
             stop_condition: StopCondition::Never,
             quality_dimensions: None,
+            metric_packs: None,
         }
     }
 
@@ -94,6 +97,11 @@ impl AsyncStreamingProfiler {
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.quality_dimensions = Some(dims);
+        self
+    }
+
+    pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
+        self.metric_packs = Some(packs);
         self
     }
 
@@ -165,20 +173,13 @@ impl AsyncStreamingProfiler {
         }
 
         // Build the report
-        let include_statistics = self.metric_packs.includes_statistics();
-        let include_patterns = self.metric_packs.includes_patterns();
-        let include_quality = self.metric_packs.includes_quality();
+        let packs = self.metric_packs.as_deref();
+        let skip_stats = !MetricPack::include_statistics(packs);
+        let skip_patterns = !MetricPack::include_patterns(packs);
 
-        let column_profiles = profile_builder::profiles_from_streaming(
-            &column_stats,
-            include_statistics,
-            include_patterns,
-        );
-        let sample_columns = if include_quality {
-            profile_builder::quality_check_samples(&column_stats)
-        } else {
-            Vec::new()
-        };
+        let column_profiles =
+            profile_builder::profiles_from_streaming(&column_stats, skip_stats, skip_patterns);
+        let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
