@@ -87,8 +87,8 @@ cargo install dataprof --features full-cli    # CLI + all formats + databases
 
 ```toml
 [dependencies]
-dataprof = "0.6"                  # core library (no CLI deps)
-dataprof = { version = "0.6", features = ["async-streaming"] }
+dataprof = "0.7"                  # core library (no CLI deps)
+dataprof = { version = "0.7", features = ["async-streaming"] }
 ```
 
 ### Python package
