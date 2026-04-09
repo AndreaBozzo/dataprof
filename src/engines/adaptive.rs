@@ -22,6 +22,7 @@ pub(crate) struct AdaptiveProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
+    locale: Option<String>,
 }
 
 impl AdaptiveProfiler {
@@ -30,6 +31,7 @@ impl AdaptiveProfiler {
             quality_dimensions: None,
             metric_packs: None,
             csv_config: None,
+            locale: None,
         }
     }
 
@@ -45,6 +47,11 @@ impl AdaptiveProfiler {
 
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
         self.csv_config = Some(config);
+        self
+    }
+
+    pub fn locale(mut self, locale: String) -> Self {
+        self.locale = Some(locale);
         self
     }
 
@@ -160,6 +167,9 @@ impl AdaptiveProfiler {
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());
                 }
+                if let Some(ref l) = self.locale {
+                    profiler = profiler.locale(l.clone());
+                }
                 profiler.analyze_csv_file(file_path)
             }
             InternalEngineType::Incremental => {
@@ -172,6 +182,9 @@ impl AdaptiveProfiler {
                 }
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());
+                }
+                if let Some(ref l) = self.locale {
+                    profiler = profiler.locale(l.clone());
                 }
                 profiler.analyze_file(file_path)
             }

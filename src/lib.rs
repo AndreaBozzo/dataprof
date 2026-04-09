@@ -95,8 +95,9 @@ pub use engines::DataFusionLoader;
 pub use types::{
     AccuracyMetrics, ColumnProfile, ColumnStats, CompletenessMetrics, ConsistencyMetrics,
     DataFrameLibrary, DataSource, DataType, ExecutionMetadata, FileFormat, MetricConfidence,
-    MetricPack, OutputFormat, Pattern, ProfileReport, QualityAssessment, QualityDimension,
-    QualityMetrics, QueryEngine, TimelinessMetrics, TruncationReason, UniquenessMetrics,
+    MetricPack, OutputFormat, Pattern, PatternCategory, ProfileReport, QualityAssessment,
+    QualityDimension, QualityMetrics, QueryEngine, TimelinessMetrics, TruncationReason,
+    UniquenessMetrics,
 };
 
 // Parser API - New config-based CSV API (#181 + #218)

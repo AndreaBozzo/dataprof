@@ -32,6 +32,8 @@ pub struct AnalysisOptions {
     pub verbosity: Option<u8>,
     /// Metric packs to compute (None = all)
     pub metric_packs: Option<Vec<MetricPack>>,
+    /// ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT", "US")
+    pub locale: Option<String>,
 }
 
 /// Builder for creating a properly configured profiler with all improvements
@@ -70,6 +72,11 @@ impl ProfilerBuilder {
         // Configure metric packs if specified
         if let Some(ref packs) = self.options.metric_packs {
             profiler = profiler.metric_packs(packs.clone());
+        }
+
+        // Configure locale for pattern detection
+        if let Some(ref locale) = self.options.locale {
+            profiler = profiler.locale(locale);
         }
 
         // Enable progress if requested

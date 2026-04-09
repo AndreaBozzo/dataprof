@@ -263,7 +263,7 @@ pub fn analyze_parquet_with_config_dims(
     }
 
     // Convert to column profiles
-    let column_profiles = analyzer.to_profiles(false, false);
+    let column_profiles = analyzer.to_profiles(false, false, None);
     let total_rows = analyzer.total_rows();
 
     // Calculate comprehensive quality metrics using ISO 8000/25012 standards

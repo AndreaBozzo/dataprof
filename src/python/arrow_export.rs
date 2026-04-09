@@ -392,7 +392,7 @@ pub fn profile_dataframe(
         .process_batch(&batch)
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
-    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns);
+    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns, None);
     let sample_columns = if include_quality {
         analyzer.create_sample_columns()
     } else {
@@ -495,7 +495,7 @@ pub fn profile_arrow(
         .process_batch(&batch)
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
-    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns);
+    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns, None);
     let sample_columns = analyzer.create_sample_columns();
 
     let scan_time_ms = start.elapsed().as_millis();

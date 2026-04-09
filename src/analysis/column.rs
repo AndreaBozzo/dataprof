@@ -75,7 +75,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     let patterns = if fast_mode {
         Vec::new()
     } else {
-        detect_patterns(data)
+        detect_patterns(data, None)
     };
 
     let unique_count = if fast_mode {

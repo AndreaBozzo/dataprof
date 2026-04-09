@@ -33,6 +33,11 @@ pub struct AnalyzeArgs {
     #[arg(long, value_name = "PACK")]
     pub metrics: Vec<String>,
 
+    /// Locale for pattern detection (ISO 3166-1 alpha-2, e.g. "IT", "US", "GB").
+    /// Boosts confidence for locale-matching patterns and suppresses non-matching ones.
+    #[arg(long)]
+    pub locale: Option<String>,
+
     /// Common analysis options (progress, chunk-size, config)
     #[command(flatten)]
     pub common: super::CommonAnalysisOptions,
@@ -66,6 +71,7 @@ pub fn execute(args: &AnalyzeArgs) -> Result<()> {
         sample: args.sample,
         verbosity: Some(args.common.verbosity),
         metric_packs,
+        locale: args.locale.clone(),
     };
 
     // Use shared core logic that handles all improvements

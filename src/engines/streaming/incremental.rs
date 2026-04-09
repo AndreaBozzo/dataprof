@@ -28,6 +28,7 @@ pub struct IncrementalProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
+    locale: Option<String>,
 }
 
 impl IncrementalProfiler {
@@ -42,6 +43,7 @@ impl IncrementalProfiler {
             quality_dimensions: None,
             metric_packs: None,
             csv_config: None,
+            locale: None,
         }
     }
 
@@ -83,6 +85,11 @@ impl IncrementalProfiler {
 
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
         self.csv_config = Some(config);
+        self
+    }
+
+    pub fn locale(mut self, locale: String) -> Self {
+        self.locale = Some(locale);
         self
     }
 
@@ -240,8 +247,12 @@ impl IncrementalProfiler {
         let packs = self.metric_packs.as_deref();
         let skip_stats = !MetricPack::include_statistics(packs);
         let skip_patterns = !MetricPack::include_patterns(packs);
-        let column_profiles =
-            profile_builder::profiles_from_streaming(&column_stats, skip_stats, skip_patterns);
+        let column_profiles = profile_builder::profiles_from_streaming(
+            &column_stats,
+            skip_stats,
+            skip_patterns,
+            self.locale.as_deref(),
+        );
 
         // Calculate quality metrics from sample data
         let sample_columns = profile_builder::quality_check_samples(&column_stats);

@@ -116,10 +116,14 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
     rq = _round_quartiles(q)
     top_pattern = None
     top_pattern_pct = None
+    top_pattern_category = None
+    top_pattern_confidence = None
     if col.patterns:
-        best = max(col.patterns, key=lambda p: p.match_count)
+        best = max(col.patterns, key=lambda p: p.confidence)
         top_pattern = best.name
         top_pattern_pct = _r2(best.match_percentage)
+        top_pattern_category = best.category
+        top_pattern_confidence = round(best.confidence, 4)
 
     return {
         "name": col.name,
@@ -152,6 +156,8 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "true_ratio": _r4(col.true_ratio),
         "top_pattern": top_pattern,
         "top_pattern_pct": top_pattern_pct,
+        "top_pattern_category": top_pattern_category,
+        "top_pattern_confidence": top_pattern_confidence,
     }
 
 
@@ -172,6 +178,7 @@ def profile(
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
+    locale: str | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -202,6 +209,9 @@ def profile(
             (always included), "statistics", "patterns", "quality".
             None = all packs (default). Omitting a pack skips that
             category of computation entirely.
+        locale: ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT",
+            "US", "GB"). Boosts confidence for locale-matching patterns and
+            suppresses non-matching locale patterns. None = no preference.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -222,6 +232,7 @@ def profile(
             progress_interval_ms=progress_interval_ms,
             quality_dimensions=quality_dimensions,
             metrics=metrics,
+            locale=locale,
         )
         rust_report = _analyze_file(str(source), config)
         return ProfileReport(rust_report)
@@ -391,6 +402,11 @@ class Profiler:
                 )
             condition = factory()
         self._kwargs["stop_condition"] = condition
+        return self
+
+    def locale(self, locale: str) -> Profiler:
+        """Set locale for pattern detection (e.g. "IT", "US", "GB")."""
+        self._kwargs["locale"] = locale
         return self
 
     def metrics(self, packs: list[str]) -> Profiler:
@@ -591,6 +607,8 @@ class ProfileReport:
                         "regex": p.regex,
                         "match_count": p.match_count,
                         "match_percentage": _r2(p.match_percentage),
+                        "category": p.category,
+                        "confidence": round(p.confidence, 4),
                     }
                     for p in col.patterns
                 ]
@@ -818,7 +836,7 @@ class ProfileReport:
             elif col.avg_length is not None:
                 parts.append(f"avg_len={_r4(col.avg_length)}")
             if col.patterns:
-                best = max(col.patterns, key=lambda p: p.match_count)
+                best = max(col.patterns, key=lambda p: p.confidence)
                 parts.append(f"{best.name}({_r2(best.match_percentage):.0f}%)")
             lines.append("   ".join(parts))
 
@@ -866,7 +884,7 @@ class ProfileReport:
             # Pattern cell
             pattern = ""
             if col.patterns:
-                best = max(col.patterns, key=lambda p: p.match_count)
+                best = max(col.patterns, key=lambda p: p.confidence)
                 pattern = f"{_html.escape(best.name)} ({_r2(best.match_percentage):.0f}%)"
 
             unique_str = f"{col.unique_count:,}" if col.unique_count is not None else ""

@@ -234,6 +234,8 @@ pub struct JsonPattern {
     pub name: String,
     pub match_count: usize,
     pub match_percentage: f64,
+    pub category: String,
+    pub confidence: f64,
 }
 
 impl OutputFormatter for JsonFormatter {
@@ -342,6 +344,8 @@ impl JsonFormatter {
                     name: p.name.clone(),
                     match_count: p.match_count,
                     match_percentage: p.match_percentage,
+                    category: p.category.to_string(),
+                    confidence: p.confidence,
                 })
                 .collect(),
         }

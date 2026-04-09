@@ -1252,10 +1252,44 @@ pub enum ColumnStats {
     None,
 }
 
+/// Semantic category for a detected pattern.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PatternCategory {
+    /// Email addresses, phone numbers
+    Contact,
+    /// UUIDs, fiscal codes, tax IDs
+    Identifier,
+    /// IPv4, IPv6, MAC addresses, URLs
+    Network,
+    /// Coordinates, postal codes
+    Geographic,
+    /// IBANs, credit cards, SWIFT/BIC
+    Financial,
+    /// Unix/Windows file paths
+    FilePath,
+    /// Uncategorized patterns
+    Other,
+}
+
+impl std::fmt::Display for PatternCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Contact => write!(f, "contact"),
+            Self::Identifier => write!(f, "identifier"),
+            Self::Network => write!(f, "network"),
+            Self::Geographic => write!(f, "geographic"),
+            Self::Financial => write!(f, "financial"),
+            Self::FilePath => write!(f, "file_path"),
+            Self::Other => write!(f, "other"),
+        }
+    }
+}
+
 /// A detected value pattern within a column (e.g. email, phone, UUID).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Pattern {
-    /// Pattern name (e.g. "email", "phone", "uuid")
+    /// Pattern name (e.g. "Email", "Phone (US)", "UUID")
     pub name: String,
     /// Regex used for detection
     pub regex: String,
@@ -1263,6 +1297,10 @@ pub struct Pattern {
     pub match_count: usize,
     /// Percentage of non-null values matching (0.0--100.0)
     pub match_percentage: f64,
+    /// Semantic category (e.g. contact, network, financial)
+    pub category: PatternCategory,
+    /// Detection confidence score (0.0--1.0), derived from pattern specificity and match rate
+    pub confidence: f64,
 }
 
 /// Output format for CLI and programmatic output.

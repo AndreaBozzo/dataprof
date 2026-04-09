@@ -17,6 +17,10 @@ pub struct PyPattern {
     pub match_count: usize,
     #[pyo3(get)]
     pub match_percentage: f64,
+    #[pyo3(get)]
+    pub category: String,
+    #[pyo3(get)]
+    pub confidence: f64,
 }
 
 impl From<&Pattern> for PyPattern {
@@ -26,6 +30,8 @@ impl From<&Pattern> for PyPattern {
             regex: p.regex.clone(),
             match_count: p.match_count,
             match_percentage: p.match_percentage,
+            category: p.category.to_string(),
+            confidence: p.confidence,
         }
     }
 }
