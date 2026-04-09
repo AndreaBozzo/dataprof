@@ -381,6 +381,7 @@ class TestNamespace:
             "progress_interval_ms",
             "quality_dimensions",
             "metrics",
+            "locale",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (

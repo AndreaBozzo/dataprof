@@ -23,6 +23,7 @@ pub struct ArrowProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
+    locale: Option<String>,
 }
 
 impl ArrowProfiler {
@@ -33,6 +34,7 @@ impl ArrowProfiler {
             quality_dimensions: None,
             metric_packs: None,
             csv_config: None,
+            locale: None,
         }
     }
 
@@ -58,6 +60,11 @@ impl ArrowProfiler {
 
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
         self.csv_config = Some(config);
+        self
+    }
+
+    pub fn locale(mut self, locale: String) -> Self {
+        self.locale = Some(locale);
         self
     }
 
@@ -143,7 +150,12 @@ impl ArrowProfiler {
         for header in headers.iter() {
             let name = header.to_string();
             if let Some(analyzer) = column_analyzers.get(&name) {
-                let profile = analyzer.to_column_profile(name.clone(), skip_stats, skip_patterns);
+                let profile = analyzer.to_column_profile(
+                    name.clone(),
+                    skip_stats,
+                    skip_patterns,
+                    self.locale.as_deref(),
+                );
                 column_profiles.push(profile);
                 sample_columns.insert(name, analyzer.get_sample_values());
             }
@@ -715,6 +727,7 @@ impl ColumnAnalyzer {
         name: String,
         skip_statistics: bool,
         skip_patterns: bool,
+        locale: Option<&str>,
     ) -> ColumnProfile {
         let data_type = self.infer_data_type();
         let avg_length = if self.total_count > self.null_count {
@@ -743,6 +756,7 @@ impl ColumnAnalyzer {
                 },
                 skip_statistics,
                 skip_patterns,
+                locale,
             },
         )
     }
@@ -929,7 +943,7 @@ mod tests {
         assert_eq!(analyzer.true_count, 3);
         assert_eq!(analyzer.false_count, 2);
 
-        let profile = analyzer.to_column_profile("flag".to_string(), false, false);
+        let profile = analyzer.to_column_profile("flag".to_string(), false, false, None);
         assert_eq!(profile.data_type, DataType::Boolean);
         assert_eq!(profile.total_count, 6);
         assert_eq!(profile.null_count, 1);

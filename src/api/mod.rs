@@ -48,6 +48,15 @@ pub struct ProfilerConfig {
     /// Which metric packs to compute. `None` = all (default).
     /// Controls whether statistics, patterns, and quality are included.
     pub metric_packs: Option<Vec<MetricPack>>,
+    /// ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT", "US", "GB").
+    /// When set, locale-matching patterns get a confidence boost and non-matching
+    /// locale patterns are suppressed (unless they have a very high match rate).
+    /// `None` = no locale preference (default).
+    ///
+    /// Applies to file-based (CSV/Parquet) and DataFrame/Arrow profiling engines.
+    /// Database-backed (`analyze_query`) and async streaming entry points do not
+    /// currently forward this setting.
+    pub locale: Option<String>,
     /// Database connection configuration. Required for `analyze_query()`.
     #[cfg(feature = "database")]
     pub database_config: Option<DatabaseConfig>,
@@ -67,6 +76,7 @@ impl Default for ProfilerConfig {
             csv_flexible: None,
             quality_dimensions: None,
             metric_packs: None,
+            locale: None,
             #[cfg(feature = "database")]
             database_config: None,
         }
@@ -200,6 +210,15 @@ impl Profiler {
     /// `Statistics`, `Patterns`, `Quality`. `None` = all (default).
     pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
         self.config.metric_packs = Some(packs);
+        self
+    }
+
+    /// Set the locale for pattern detection (e.g. "IT", "US", "GB").
+    ///
+    /// Locale-matching patterns get a confidence boost; non-matching locale
+    /// patterns are suppressed unless they have a very high match rate.
+    pub fn locale(mut self, locale: impl Into<String>) -> Self {
+        self.config.locale = Some(locale.into());
         self
     }
 
@@ -387,6 +406,9 @@ impl Profiler {
                 if let Some(p) = &self.config.metric_packs {
                     profiler = profiler.metric_packs(p.clone());
                 }
+                if let Some(l) = &self.config.locale {
+                    profiler = profiler.locale(l.clone());
+                }
                 let csv_config = self.csv_config_for_file(file_path);
                 profiler = profiler.csv_config(csv_config);
                 profiler.analyze_file(file_path)
@@ -429,6 +451,9 @@ impl Profiler {
         if let Some(p) = &self.config.metric_packs {
             profiler = profiler.metric_packs(p.clone());
         }
+        if let Some(l) = &self.config.locale {
+            profiler = profiler.locale(l.clone());
+        }
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);
 
@@ -467,6 +492,9 @@ impl Profiler {
         }
         if let Some(p) = &self.config.metric_packs {
             profiler = profiler.metric_packs(p.clone());
+        }
+        if let Some(l) = &self.config.locale {
+            profiler = profiler.locale(l.clone());
         }
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);

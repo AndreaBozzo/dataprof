@@ -30,6 +30,8 @@ pub struct ColumnProfileInput<'a> {
     pub skip_statistics: bool,
     /// When true, skip pattern detection (produce empty patterns vec).
     pub skip_patterns: bool,
+    /// Optional locale for pattern detection (e.g. "IT", "US").
+    pub locale: Option<&'a str>,
 }
 
 /// Pre-computed text length stats from streaming/columnar engines.
@@ -117,7 +119,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     let patterns = if input.skip_patterns {
         Vec::new()
     } else {
-        crate::detect_patterns(input.sample_values)
+        crate::detect_patterns(input.sample_values, input.locale)
     };
 
     ColumnProfile {
@@ -138,12 +140,14 @@ pub fn profiles_from_streaming(
     column_stats: &StreamingColumnCollection,
     skip_statistics: bool,
     skip_patterns: bool,
+    locale: Option<&str>,
 ) -> Vec<ColumnProfile> {
     let mut profiles = Vec::new();
 
     for column_name in column_stats.column_names() {
         if let Some(stats) = column_stats.get_column_stats(&column_name) {
-            let profile = profile_from_stats(&column_name, stats, skip_statistics, skip_patterns);
+            let profile =
+                profile_from_stats(&column_name, stats, skip_statistics, skip_patterns, locale);
             profiles.push(profile);
         }
     }
@@ -157,6 +161,7 @@ pub fn profile_from_stats(
     stats: &StreamingStatistics,
     skip_statistics: bool,
     skip_patterns: bool,
+    locale: Option<&str>,
 ) -> ColumnProfile {
     let data_type = infer_data_type_streaming(stats);
     let text_stats = stats.text_length_stats();
@@ -176,6 +181,7 @@ pub fn profile_from_stats(
         boolean_counts: None,
         skip_statistics,
         skip_patterns,
+        locale,
     })
 }
 
@@ -279,7 +285,7 @@ mod tests {
         collection.process_record(&headers, vec!["Bob".to_string(), "25".to_string()]);
         collection.process_record(&headers, vec!["Charlie".to_string(), "35".to_string()]);
 
-        let profiles = profiles_from_streaming(&collection, false, false);
+        let profiles = profiles_from_streaming(&collection, false, false, None);
         assert_eq!(profiles.len(), 2);
 
         let age = profiles.iter().find(|p| p.name == "age").unwrap();
@@ -314,6 +320,7 @@ mod tests {
             boolean_counts: Some((2, 1)),
             skip_statistics: false,
             skip_patterns: false,
+            locale: None,
         });
 
         match &profile.stats {
@@ -344,6 +351,7 @@ mod tests {
             boolean_counts: None, // forces fallback path
             skip_statistics: false,
             skip_patterns: false,
+            locale: None,
         });
 
         match &profile.stats {
@@ -370,6 +378,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: true,
             skip_patterns: false,
+            locale: None,
         });
 
         assert!(matches!(profile.stats, crate::types::ColumnStats::None));
@@ -391,6 +400,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: false,
             skip_patterns: true,
+            locale: None,
         });
 
         assert!(profile.patterns.is_empty());
@@ -412,6 +422,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: false,
             skip_patterns: false,
+            locale: None,
         });
 
         assert!(matches!(

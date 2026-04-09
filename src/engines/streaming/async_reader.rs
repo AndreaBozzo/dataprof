@@ -177,8 +177,12 @@ impl AsyncStreamingProfiler {
         let skip_stats = !MetricPack::include_statistics(packs);
         let skip_patterns = !MetricPack::include_patterns(packs);
 
-        let column_profiles =
-            profile_builder::profiles_from_streaming(&column_stats, skip_stats, skip_patterns);
+        let column_profiles = profile_builder::profiles_from_streaming(
+            &column_stats,
+            skip_stats,
+            skip_patterns,
+            None,
+        );
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();

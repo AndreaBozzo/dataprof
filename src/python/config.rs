@@ -32,6 +32,7 @@ pub struct PyProfilerConfig {
     pub(crate) progress_interval_ms: Option<u64>,
     pub(crate) quality_dimensions: Option<Vec<QualityDimension>>,
     pub(crate) metric_packs: Option<Vec<MetricPack>>,
+    pub(crate) locale: Option<String>,
 }
 
 #[pymethods]
@@ -51,6 +52,7 @@ impl PyProfilerConfig {
         progress_interval_ms = None,
         quality_dimensions = None,
         metrics = None,
+        locale = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -67,6 +69,7 @@ impl PyProfilerConfig {
         progress_interval_ms: Option<u64>,
         quality_dimensions: Option<Vec<String>>,
         metrics: Option<Vec<String>>,
+        locale: Option<String>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -132,6 +135,7 @@ impl PyProfilerConfig {
             progress_interval_ms,
             quality_dimensions,
             metric_packs,
+            locale,
         })
     }
 
@@ -179,6 +183,12 @@ impl PyProfilerConfig {
     #[getter]
     fn csv_flexible(&self) -> Option<bool> {
         self.csv_flexible
+    }
+
+    /// Locale for pattern detection
+    #[getter]
+    fn locale(&self) -> Option<&str> {
+        self.locale.as_deref()
     }
 
     fn __repr__(&self) -> String {
@@ -241,6 +251,9 @@ impl PyProfilerConfig {
         }
         if let Some(ref packs) = self.metric_packs {
             profiler = profiler.metric_packs(packs.clone());
+        }
+        if let Some(ref l) = self.locale {
+            profiler = profiler.locale(l);
         }
 
         profiler

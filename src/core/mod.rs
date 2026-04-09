@@ -22,4 +22,4 @@ pub use validation::*;
 
 // Re-export pattern detection from analysis module for convenience
 pub use crate::analysis::detect_patterns;
-pub use crate::types::Pattern;
+pub use crate::types::{Pattern, PatternCategory};

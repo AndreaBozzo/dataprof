@@ -124,7 +124,7 @@ impl DataFusionLoader {
         );
 
         // Build the report
-        let column_profiles = analyzer.to_profiles(false, false);
+        let column_profiles = analyzer.to_profiles(false, false, None);
         let sample_columns = analyzer.create_sample_columns();
 
         let scan_time_ms = start.elapsed().as_millis();
@@ -204,7 +204,7 @@ impl DataFusionLoader {
                 if batch.num_rows() > 0 {
                     analyzer.process_batch(&batch)?;
                 }
-                let column_profiles = analyzer.to_profiles(false, false);
+                let column_profiles = analyzer.to_profiles(false, false, None);
                 let sample_columns = analyzer.create_sample_columns();
 
                 let total_rows = analyzer.total_rows();
