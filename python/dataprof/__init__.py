@@ -237,14 +237,15 @@ def profile(
         rust_report = _analyze_file(str(source), config)
         return ProfileReport(rust_report)
 
-    # DataFrame/Arrow paths — build config for metric packs + quality dims
+    # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
     def _df_config() -> ProfilerConfig | None:
         """Build a ProfilerConfig if any DataFrame-relevant options are set."""
-        if any(v is not None for v in (max_rows, quality_dimensions, metrics)):
+        if any(v is not None for v in (max_rows, quality_dimensions, metrics, locale)):
             return ProfilerConfig(
                 max_rows=max_rows,
                 quality_dimensions=quality_dimensions,
                 metrics=metrics,
+                locale=locale,
             )
         return None
 

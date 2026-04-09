@@ -7,7 +7,8 @@
 //! confidence = base(specificity) × match_factor × validator_pass_rate
 //! ```
 //!
-//! Validators are pure functions with no allocations on the hot path.
+//! Validators are pure functions; some implementations may use small temporary
+//! allocations while validating.
 
 /// Validate an Italian CAP (Codice di Avviamento Postale).
 ///

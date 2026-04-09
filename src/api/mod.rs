@@ -52,6 +52,10 @@ pub struct ProfilerConfig {
     /// When set, locale-matching patterns get a confidence boost and non-matching
     /// locale patterns are suppressed (unless they have a very high match rate).
     /// `None` = no locale preference (default).
+    ///
+    /// Applies to file-based (CSV/Parquet) and DataFrame/Arrow profiling engines.
+    /// Database-backed (`analyze_query`) and async streaming entry points do not
+    /// currently forward this setting.
     pub locale: Option<String>,
     /// Database connection configuration. Required for `analyze_query()`.
     #[cfg(feature = "database")]

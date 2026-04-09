@@ -420,14 +420,14 @@ struct PatternMatch<'a> {
 
 /// Compute confidence score from pattern specificity, match rate, and validator pass rate.
 ///
-/// Formula: `(specificity / 100) × clamp(match_percentage / 50, 0.5, 1.0) × validator_pass_rate`
+/// Formula: `clamp((specificity / 100) × clamp(match_percentage / 50, 0.5, 1.0) × validator_pass_rate, 0.0, 1.0)`
 ///
 /// The validator_pass_rate penalizes patterns where the regex matches but the values
 /// fail semantic validation (e.g. 11-digit numbers that aren't valid P.IVA).
 fn compute_confidence(specificity: u8, match_percentage: f64, validator_pass_rate: f64) -> f64 {
     let base = specificity as f64 / 100.0;
     let match_factor = (match_percentage / 50.0).clamp(0.5, 1.0);
-    base * match_factor * validator_pass_rate
+    (base * match_factor * validator_pass_rate).clamp(0.0, 1.0)
 }
 
 /// Detect common data patterns in a column.

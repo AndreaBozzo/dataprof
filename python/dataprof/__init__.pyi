@@ -27,6 +27,7 @@ class ProfilerConfig:
         progress_interval_ms: int | None = None,
         quality_dimensions: list[str] | None = None,
         metrics: list[str] | None = None,
+        locale: str | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
@@ -38,6 +39,8 @@ class ProfilerConfig:
     def format(self) -> str | None: ...
     @property
     def max_rows(self) -> int | None: ...
+    @property
+    def locale(self) -> str | None: ...
 
 # --- Sampling ---
 
@@ -134,6 +137,7 @@ def profile(
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
+    locale: str | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
     ...
@@ -164,6 +168,7 @@ class Profiler:
     def quality_dimensions(self, dims: list[str]) -> Profiler: ...
     def stop_when(self, condition: StopCondition | str) -> Profiler: ...
     def metrics(self, packs: list[str]) -> Profiler: ...
+    def locale(self, locale: str) -> Profiler: ...
     def profile(self, source: Any) -> ProfileReport: ...
 
 # --- Result Types ---
@@ -243,6 +248,8 @@ class Pattern:
     regex: str
     match_count: int
     match_percentage: float
+    category: str
+    confidence: float
 
 class ColumnProfile:
     """Column-level profiling statistics."""
