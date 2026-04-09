@@ -59,7 +59,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
         },
         PatternDef {
             name: "URL",
-            regex: Regex::new(r"^https?://[^\s/$.?#].[^\s]*$")
+            regex: Regex::new(r"^(?:https?|ftps?)://[^\s/$.?#].[^\s]*$")
                 .expect("BUG: Invalid regex for URL"),
             category: PatternCategory::Network,
             specificity: 70,
@@ -91,7 +91,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
             name: "IPv6",
             // Pre-filter: hex groups with at least one colon, including :: compression.
             // The validator (Ipv6Addr::from_str) does the real validation.
-            regex: Regex::new(r"^[0-9a-fA-F]*:[0-9a-fA-F:]*$")
+            regex: Regex::new(r"^[0-9a-fA-F]*:[0-9a-fA-F:.]*$")
                 .expect("BUG: Invalid regex for IPv6"),
             category: PatternCategory::Network,
             specificity: 75,

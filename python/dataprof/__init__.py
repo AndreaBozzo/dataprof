@@ -77,8 +77,14 @@ def _half_up(v: float, ndigits: int) -> float:
     """
     with _decimal.localcontext() as ctx:
         ctx.rounding = _decimal.ROUND_HALF_UP
-        d = _decimal.Decimal(str(v)).quantize(_decimal.Decimal(10) ** -ndigits)
-        return float(d)
+        try:
+            d = _decimal.Decimal(str(v)).quantize(_decimal.Decimal(10) ** -ndigits)
+            return float(d)
+        except _decimal.InvalidOperation:
+            # Very large or very small numbers (e.g. variance ~1e+29) can't be
+            # quantized to N decimal places — return as-is since rounding wouldn't
+            # change the value at that magnitude anyway.
+            return v
 
 
 def _r2(v: float | None) -> float | None:
