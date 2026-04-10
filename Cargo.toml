@@ -109,7 +109,7 @@ url = { version = "2.5.8", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
 
 
-arrow = { version = "57.3.0", features = ["ffi"] }
+arrow = { version = "58.1.0", features = ["ffi"] }
 parquet = { version = "57.3.0", features = ["arrow"] }
 datafusion = { version = "52.2.0", optional = true }
 futures = "0.3.31"
