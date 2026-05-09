@@ -582,13 +582,13 @@ pub fn detect_patterns(data: &[String], locale: Option<&str>) -> Vec<Pattern> {
                         // Boost locale-matching patterns (cap at 1.0)
                         confidence = (confidence * 1.2).min(1.0);
                     }
-                    Some(_) => {
+                    Some(_)
                         // Suppress non-matching locale patterns with low confidence,
                         // unless the match rate is very high (data speaks for itself)
-                        if confidence < 0.5 && pm.match_percentage <= 80.0 {
+                        if confidence < 0.5 && pm.match_percentage <= 80.0 => {
                             return None;
                         }
-                    }
+                    Some(_) => {}
                     None => {} // Universal patterns — no adjustment
                 }
             }

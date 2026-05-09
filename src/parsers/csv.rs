@@ -128,11 +128,7 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
         }
 
         let consistency = counts.values().max().copied().unwrap_or(0);
-        let avg_fields = if sample_lines > 0 {
-            total_fields / sample_lines
-        } else {
-            0
-        };
+        let avg_fields = total_fields.checked_div(sample_lines).unwrap_or(0);
 
         let should_update = if avg_fields > 1 && max_fields <= 1 {
             true
