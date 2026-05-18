@@ -9,4 +9,4 @@ pub mod datafusion_loader;
 pub use streaming::*;
 
 #[cfg(feature = "datafusion")]
-pub use datafusion_loader::DataFusionLoader;
+pub use datafusion_loader::{CsvReadOptions, DataFusionLoader, RecordBatch};
