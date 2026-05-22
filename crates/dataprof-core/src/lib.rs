@@ -1,9 +1,11 @@
 pub mod errors;
+pub mod execution;
 pub mod progress;
 pub mod quality;
 pub mod source;
 
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
+pub use execution::{ExecutionMetadata, TruncationReason};
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{MetricPack, QualityDimension};
 pub use source::{
