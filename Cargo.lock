@@ -1622,7 +1622,6 @@ dependencies = [
  "rand_chacha 0.9.0",
  "rand_distr",
  "rayon",
- "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -1636,7 +1635,6 @@ dependencies = [
  "toml",
  "url",
  "uuid",
- "wide",
 ]
 
 [[package]]
