@@ -1,9 +1,11 @@
 pub mod errors;
 pub mod progress;
+pub mod quality;
 pub mod source;
 
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
 pub use progress::{ProgressEvent, ProgressSink};
+pub use quality::{MetricPack, QualityDimension};
 pub use source::{
-	DataFrameLibrary, DataSource, FileFormat, ParquetMetadata, QueryEngine, StreamSourceSystem,
+    DataFrameLibrary, DataSource, FileFormat, ParquetMetadata, QueryEngine, StreamSourceSystem,
 };
