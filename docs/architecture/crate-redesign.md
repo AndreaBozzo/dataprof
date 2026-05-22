@@ -63,8 +63,9 @@ crate on day one.
 
 ## Feature Boundary Proposal
 
-The current `minimal = []` feature is only a label because Arrow and Parquet are
-unconditional dependencies. The redesign should make the dependency story true:
+As of the 0.8 development branch, `minimal = []` no longer pulls in Arrow or
+Parquet. The remaining redesign work is to move these feature boundaries from
+module-level `cfg`s into cleaner crate boundaries:
 
 | Feature | Intended dependency boundary |
 | --- | --- |
@@ -133,7 +134,7 @@ must serve both, the CLI can stay default while library docs recommend
 
 1. Add an examples index with one e-commerce or telemetry quality workflow.
 2. Add a public API inventory document generated from `src/lib.rs`.
-3. Make Arrow and Parquet optional, or document why that waits for the workspace
-   split.
+3. Move Arrow and Parquet boundaries from feature-gated modules toward
+   workspace crates.
 4. Add issue labels/milestones around adoption, architecture, and paper-blocked
    work so contributors can see what is safe to touch.

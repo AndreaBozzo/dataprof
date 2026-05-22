@@ -9,6 +9,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::time::Instant;
 
+#[cfg(feature = "parquet")]
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::Deserialize;
 
@@ -17,9 +18,9 @@ use crate::core::profile_builder;
 use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::parsers::csv::CsvParserConfig;
 use crate::parsers::json::JsonParserConfig;
-use crate::types::{
-    ColumnSchema, CountMethod, DataType, FileFormat, RowCountEstimate, SchemaResult,
-};
+#[cfg(feature = "parquet")]
+use crate::types::DataType;
+use crate::types::{ColumnSchema, CountMethod, FileFormat, RowCountEstimate, SchemaResult};
 
 use super::Profiler;
 
@@ -81,7 +82,18 @@ pub(crate) fn infer_schema_with_format(
     let start = Instant::now();
 
     match format {
-        FileFormat::Parquet => infer_schema_parquet(path, start),
+        FileFormat::Parquet => {
+            #[cfg(feature = "parquet")]
+            {
+                infer_schema_parquet(path, start)
+            }
+            #[cfg(not(feature = "parquet"))]
+            {
+                Err(DataProfilerError::UnsupportedFormat {
+                    format: "parquet (enable the `parquet` feature)".to_string(),
+                })
+            }
+        }
         FileFormat::Csv => infer_schema_csv(path, start),
         FileFormat::Json | FileFormat::Jsonl => infer_schema_json(path, &format, start),
         FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
@@ -97,7 +109,18 @@ pub(crate) fn quick_row_count_with_format(
     let start = Instant::now();
 
     match format {
-        FileFormat::Parquet => count_parquet(path, start),
+        FileFormat::Parquet => {
+            #[cfg(feature = "parquet")]
+            {
+                count_parquet(path, start)
+            }
+            #[cfg(not(feature = "parquet"))]
+            {
+                Err(DataProfilerError::UnsupportedFormat {
+                    format: "parquet (enable the `parquet` feature)".to_string(),
+                })
+            }
+        }
         FileFormat::Csv => count_csv(path, start),
         FileFormat::Json | FileFormat::Jsonl => count_json(path, format, start),
         FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
@@ -110,6 +133,7 @@ pub(crate) fn quick_row_count_with_format(
 // Schema inference — per format
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "parquet")]
 fn infer_schema_parquet(path: &Path, start: Instant) -> Result<SchemaResult, DataProfilerError> {
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
@@ -320,6 +344,7 @@ fn count_from_reader<R: Read>(
 // Row count — per format
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "parquet")]
 fn count_parquet(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfilerError> {
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
@@ -599,6 +624,7 @@ fn schema_from_streaming_stats(
 }
 
 /// Map Arrow data types to dataprof's simplified 4-variant DataType.
+#[cfg(feature = "parquet")]
 fn arrow_type_to_dataprof(arrow_type: &arrow::datatypes::DataType) -> DataType {
     use arrow::datatypes::DataType as AT;
     match arrow_type {

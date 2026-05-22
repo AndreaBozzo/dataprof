@@ -10,6 +10,7 @@ use crate::types::{MetricPack, ProfileReport, QualityDimension};
 /// Not part of the public API — users interact via `EngineType` in `api/mod.rs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InternalEngineType {
+    #[cfg(feature = "arrow")]
     Arrow,
     Incremental,
 }
@@ -60,11 +61,19 @@ impl AdaptiveProfiler {
     /// Parquet files bypass engine selection entirely (native parser).
     pub fn analyze_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         // Parquet has its own parser — short-circuit
+        #[cfg(feature = "parquet")]
         if is_parquet(file_path) {
             return crate::parsers::parquet::analyze_parquet_with_quality_dims(
                 file_path,
                 self.quality_dimensions.as_deref(),
             );
+        }
+
+        #[cfg(not(feature = "parquet"))]
+        if is_parquet(file_path) {
+            return Err(DataProfilerError::UnsupportedFormat {
+                format: "parquet (enable the `parquet` feature)".to_string(),
+            });
         }
 
         let engine = self.select_engine(file_path);
@@ -76,10 +85,13 @@ impl AdaptiveProfiler {
         match result {
             Ok(report) => Ok(report),
             Err(primary_err) => {
+                #[cfg(feature = "arrow")]
                 let fallback = match engine {
                     InternalEngineType::Arrow => InternalEngineType::Incremental,
                     InternalEngineType::Incremental => InternalEngineType::Arrow,
                 };
+                #[cfg(not(feature = "arrow"))]
+                let fallback = InternalEngineType::Incremental;
                 log::warn!("Fallback: {:?} → {:?} — {}", engine, fallback, primary_err);
                 self.try_engine(&fallback, file_path)
                     .map_err(|fallback_err| DataProfilerError::AllEnginesFailed {
@@ -142,9 +154,15 @@ impl AdaptiveProfiler {
         };
 
         // Arrow for wide + numeric datasets
+        #[cfg(feature = "arrow")]
         if numeric_ratio > 0.5 {
             InternalEngineType::Arrow
         } else {
+            InternalEngineType::Incremental
+        }
+        #[cfg(not(feature = "arrow"))]
+        {
+            let _ = numeric_ratio;
             InternalEngineType::Incremental
         }
     }
@@ -155,6 +173,7 @@ impl AdaptiveProfiler {
         file_path: &Path,
     ) -> Result<ProfileReport, DataProfilerError> {
         match engine_type {
+            #[cfg(feature = "arrow")]
             InternalEngineType::Arrow => {
                 use crate::engines::columnar::ArrowProfiler;
                 let mut profiler = ArrowProfiler::new();
@@ -193,11 +212,19 @@ impl AdaptiveProfiler {
 }
 
 fn is_parquet(file_path: &Path) -> bool {
-    file_path
+    let has_parquet_extension = file_path
         .extension()
         .map(|ext| ext.eq_ignore_ascii_case("parquet"))
-        .unwrap_or(false)
-        || crate::parsers::parquet::is_parquet_file(file_path)
+        .unwrap_or(false);
+
+    #[cfg(feature = "parquet")]
+    {
+        has_parquet_extension || crate::parsers::parquet::is_parquet_file(file_path)
+    }
+    #[cfg(not(feature = "parquet"))]
+    {
+        has_parquet_extension
+    }
 }
 
 #[cfg(test)]

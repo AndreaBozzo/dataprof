@@ -113,16 +113,20 @@ pip install dataprof
 | Feature | Description |
 |---|---|
 | `cli` *(default)* | CLI binary with clap, colored output, progress bars |
+| `csv` *(default)* | CSV parsing and profiling |
+| `json` *(default)* | JSON and JSONL parsing and profiling |
+| `arrow` | Arrow-backed columnar engine |
+| `parquet` *(default)* | Parquet profiling; includes `arrow` |
 | `minimal` | No optional interfaces; library only |
 | `async-streaming` | Async profiling engine with tokio |
-| `parquet-async` | Profile Parquet files over HTTP |
+| `parquet-async` | Profile Parquet files over HTTP; includes `parquet` and `async-streaming` |
 | `database` | Database profiling (connection handling, retry, SSL) |
 | `postgres` | PostgreSQL connector (includes `database`) |
 | `mysql` | MySQL/MariaDB connector (includes `database`) |
 | `sqlite` | SQLite connector (includes `database`) |
 | `all-db` | All three database connectors |
-| `datafusion` | DataFusion SQL engine integration |
-| `python` | Python bindings via PyO3 |
+| `datafusion` | DataFusion SQL engine integration; includes `arrow` |
+| `python` | Python bindings via PyO3; includes `parquet` for PyArrow interop |
 | `python-async` | Async Python API (includes `python` + `async-streaming`) |
 | `full-cli` | CLI + all database connectors |
 | `production` | PostgreSQL + MySQL (common deployment) |

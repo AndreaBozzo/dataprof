@@ -498,6 +498,7 @@ impl From<csv::Error> for DataProfilerError {
 }
 
 /// Convert from arrow::error::ArrowError to DataProfilerError
+#[cfg(feature = "arrow")]
 impl From<arrow::error::ArrowError> for DataProfilerError {
     fn from(err: arrow::error::ArrowError) -> Self {
         DataProfilerError::ArrowError {

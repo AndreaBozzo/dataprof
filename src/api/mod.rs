@@ -433,7 +433,12 @@ impl Profiler {
                 );
             }
             FileFormat::Parquet => {
+                #[cfg(feature = "parquet")]
                 return crate::parsers::parquet::analyze_parquet_with_quality_dims(file_path, dims);
+                #[cfg(not(feature = "parquet"))]
+                return Err(DataProfilerError::UnsupportedFormat {
+                    format: "parquet (enable the `parquet` feature)".to_string(),
+                });
             }
             _ => {}
         }
@@ -469,7 +474,12 @@ impl Profiler {
         let dims = self.config.quality_dimensions.as_deref();
         match format {
             FileFormat::Parquet => {
+                #[cfg(feature = "parquet")]
                 return crate::parsers::parquet::analyze_parquet_with_quality_dims(file_path, dims);
+                #[cfg(not(feature = "parquet"))]
+                return Err(DataProfilerError::UnsupportedFormat {
+                    format: "parquet (enable the `parquet` feature)".to_string(),
+                });
             }
             FileFormat::Json | FileFormat::Jsonl => {
                 return crate::parsers::json::analyze_json_file_with_dimensions(
@@ -482,23 +492,33 @@ impl Profiler {
         }
 
         // CSV — use ArrowProfiler
-        use crate::engines::columnar::ArrowProfiler;
-        let mut profiler = ArrowProfiler::new();
-        if let Some(mb) = self.config.memory_limit_mb {
-            profiler = profiler.memory_limit_mb(mb);
+        #[cfg(feature = "arrow")]
+        {
+            use crate::engines::columnar::ArrowProfiler;
+            let mut profiler = ArrowProfiler::new();
+            if let Some(mb) = self.config.memory_limit_mb {
+                profiler = profiler.memory_limit_mb(mb);
+            }
+            if let Some(d) = &self.config.quality_dimensions {
+                profiler = profiler.quality_dimensions(d.clone());
+            }
+            if let Some(p) = &self.config.metric_packs {
+                profiler = profiler.metric_packs(p.clone());
+            }
+            if let Some(l) = &self.config.locale {
+                profiler = profiler.locale(l.clone());
+            }
+            let csv_config = self.csv_config_for_file(file_path);
+            profiler = profiler.csv_config(csv_config);
+            profiler.analyze_csv_file(file_path)
         }
-        if let Some(d) = &self.config.quality_dimensions {
-            profiler = profiler.quality_dimensions(d.clone());
+        #[cfg(not(feature = "arrow"))]
+        {
+            let _ = file_path;
+            Err(DataProfilerError::UnsupportedFormat {
+                format: "columnar engine (enable the `arrow` or `parquet` feature)".to_string(),
+            })
         }
-        if let Some(p) = &self.config.metric_packs {
-            profiler = profiler.metric_packs(p.clone());
-        }
-        if let Some(l) = &self.config.locale {
-            profiler = profiler.locale(l.clone());
-        }
-        let csv_config = self.csv_config_for_file(file_path);
-        profiler = profiler.csv_config(csv_config);
-        profiler.analyze_csv_file(file_path)
     }
 }
 
@@ -667,19 +687,28 @@ impl Profiler {
 
         match format {
             FileFormat::Parquet => {
-                // Parquet requires seeking — delegate to sync parser on a blocking thread.
-                let path = path.to_path_buf();
-                let dims = self.config.quality_dimensions.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::parsers::parquet::analyze_parquet_with_quality_dims(
-                        &path,
-                        dims.as_deref(),
-                    )
-                })
-                .await
-                .map_err(|e| DataProfilerError::StreamingError {
-                    message: format!("Blocking task failed: {e}"),
-                })?
+                #[cfg(feature = "parquet")]
+                {
+                    // Parquet requires seeking — delegate to sync parser on a blocking thread.
+                    let path = path.to_path_buf();
+                    let dims = self.config.quality_dimensions.clone();
+                    tokio::task::spawn_blocking(move || {
+                        crate::parsers::parquet::analyze_parquet_with_quality_dims(
+                            &path,
+                            dims.as_deref(),
+                        )
+                    })
+                    .await
+                    .map_err(|e| DataProfilerError::StreamingError {
+                        message: format!("Blocking task failed: {e}"),
+                    })?
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    Err(DataProfilerError::UnsupportedFormat {
+                        format: "parquet (enable the `parquet` feature)".to_string(),
+                    })
+                }
             }
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
                 let metadata =

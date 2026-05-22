@@ -26,6 +26,7 @@
 //! | Feature | Description |
 //! |---|---|
 //! | `cli` (default) | CLI binary |
+//! | `parquet` (default) | Parquet and Arrow-backed columnar engine |
 //! | `async-streaming` | Async profiling engine |
 //! | `database` | Database connectivity |
 //! | `postgres`, `mysql`, `sqlite` | Database connectors |
@@ -108,6 +109,7 @@ pub use parsers::json::{
     JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader,
 };
 
+#[cfg(feature = "parquet")]
 pub use parsers::parquet::{
     ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality, is_parquet_file,
 };

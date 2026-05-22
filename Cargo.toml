@@ -109,8 +109,8 @@ url = { version = "2.5.8", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
 
 
-arrow = { version = "57.3.0", features = ["ffi"] }
-parquet = { version = "57.3.0", features = ["arrow"] }
+arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+parquet = { version = "57.3.0", features = ["arrow"], optional = true }
 datafusion = { version = "52.2.0", optional = true }
 futures = "0.3.31"
 
@@ -179,18 +179,22 @@ opt-level = 1
 
 
 [features]
-default = ["cli"]
+default = ["cli", "csv", "json", "parquet"]
 
 # CLI feature — pulls in clap, colored, is-terminal, indicatif, env_logger
 cli = ["dep:clap", "dep:colored", "dep:is-terminal", "dep:indicatif", "dep:env_logger"]
+csv = []
+json = []
 
 # Individual features
-python = ["dep:pyo3"]
+arrow = ["dep:arrow"]
+parquet = ["dep:parquet", "arrow"]
+python = ["dep:pyo3", "parquet"]
 python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
-datafusion = ["dep:datafusion", "dep:tokio"]
+datafusion = ["dep:datafusion", "dep:tokio", "arrow"]
 async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util"]
-parquet-async = ["parquet/async", "dep:reqwest", "async-streaming"]
+parquet-async = ["parquet", "parquet/async", "dep:reqwest", "async-streaming"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]

@@ -159,7 +159,16 @@ pub fn analyze_file_with_options(
         )?)
     } else if is_parquet {
         // Parquet files: use Parquet parser
-        Ok(dataprof::analyze_parquet_with_quality(file_path)?)
+        #[cfg(feature = "parquet")]
+        {
+            Ok(dataprof::analyze_parquet_with_quality(file_path)?)
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            Err(anyhow::anyhow!(
+                "Parquet support is not enabled. Reinstall with `cargo install dataprof --features parquet`."
+            ))
+        }
     } else {
         // CSV files: try streaming profiler, fallback to robust parser
         let builder = ProfilerBuilder::new(options, config.clone());
