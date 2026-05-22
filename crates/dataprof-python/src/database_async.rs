@@ -5,9 +5,9 @@
 
 use pyo3::prelude::*;
 
+use crate::types::PyProfileReport;
 #[cfg(feature = "database")]
-use crate::database::{DatabaseConfig, analyze_database, create_connector};
-use crate::python::types::PyProfileReport;
+use dataprof::database::{DatabaseConfig, analyze_database, create_connector};
 
 /// Async Python wrapper for database analysis
 ///
@@ -73,7 +73,7 @@ async fn analyze_database_internal(
     query: String,
     batch_size: usize,
     calculate_quality: bool,
-) -> Result<PyProfileReport, crate::core::errors::DataProfilerError> {
+) -> Result<PyProfileReport, dataprof::core::errors::DataProfilerError> {
     // Create database configuration
     let config = DatabaseConfig {
         connection_string,
@@ -134,7 +134,7 @@ pub fn test_connection_async<'py>(
 #[cfg(all(feature = "database", feature = "python-async"))]
 async fn test_connection_internal(
     connection_string: String,
-) -> Result<bool, crate::core::errors::DataProfilerError> {
+) -> Result<bool, dataprof::core::errors::DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()
@@ -198,7 +198,7 @@ pub fn get_table_schema_async<'py>(
 async fn get_table_schema_internal(
     connection_string: String,
     table_name: String,
-) -> Result<Vec<String>, crate::core::errors::DataProfilerError> {
+) -> Result<Vec<String>, dataprof::core::errors::DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()
@@ -263,7 +263,7 @@ pub fn count_table_rows_async<'py>(
 async fn count_table_rows_internal(
     connection_string: String,
     table_name: String,
-) -> Result<u64, crate::core::errors::DataProfilerError> {
+) -> Result<u64, dataprof::core::errors::DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()

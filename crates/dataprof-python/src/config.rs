@@ -4,10 +4,10 @@ use pyo3::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::api::{EngineType, Profiler};
-use crate::core::sampling::ChunkSize;
-use crate::core::stop_condition::StopCondition;
-use crate::types::{FileFormat, MetricPack, QualityDimension};
+use dataprof::api::{EngineType, Profiler};
+use dataprof::core::sampling::ChunkSize;
+use dataprof::core::stop_condition::StopCondition;
+use dataprof::types::{FileFormat, MetricPack, QualityDimension};
 
 use super::progress::py_callback_to_sink;
 use super::sampling::PySamplingStrategy;

@@ -1,4 +1,4 @@
-/// Output format for CLI and programmatic output.
+/// Output format for serialized reports.
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     /// Human-readable text output

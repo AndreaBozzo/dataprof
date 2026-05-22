@@ -2,8 +2,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
-use crate::api::partial;
-use crate::types::{CountMethod, DataType, RowCountEstimate, SchemaResult};
+use dataprof::api::partial;
+use dataprof::types::{CountMethod, DataType, RowCountEstimate, SchemaResult};
 
 /// Result of fast schema inference.
 #[pyclass(name = "SchemaResult")]

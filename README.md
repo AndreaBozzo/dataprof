@@ -14,10 +14,10 @@
 
 ---
 
-dataprof is a Rust library and CLI for profiling tabular data. It computes column-level statistics, detects data types and patterns, and evaluates data quality against the ISO 8000/25012 standard, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
+dataprof is a Rust and Python library for profiling tabular data. It computes column-level statistics, detects data types and patterns, and evaluates data quality against the ISO 8000/25012 standard, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
 
 > [!NOTE]
-> dataprof is in beta. The CLI and Python package are intended for real use, while the Rust API may still change before 1.0. Please report issues or suggestions.
+> dataprof is in beta. This branch is library-first: the old CLI has been retired, while Rust and Python APIs remain the primary supported interfaces.
 
 ## Highlights
 
@@ -26,22 +26,11 @@ dataprof is a Rust library and CLI for profiling tabular data. It computes colum
 - **Multi-format** -- CSV (auto-delimiter detection), JSON, JSONL, Parquet, databases, DataFrames, Arrow
 - **Boolean Support** -- Native profiling of boolean columns with true/false statistics
 - **True streaming** -- bounded-memory profiling with online algorithms (Incremental engine)
-- **Three interfaces** -- CLI binary, Rust library, Python package
+- **Library-first interfaces** -- Rust crate and Python package
 - **New Python Ecosystem** -- Export to pandas, Polars, Arrow, and JSON with rounding consistency
 - **Async-ready** -- `async/await` API for embedding in web services and stream pipelines
 
 ## Quick Start
-
-### CLI
-
-```bash
-cargo install dataprof
-
-dataprof analyze data.csv --detailed
-dataprof analyze data.csv --metrics schema --metrics statistics  # fast partial analysis
-dataprof schema data.csv
-dataprof count data.parquet
-```
 
 ### Rust
 
@@ -78,19 +67,11 @@ report.save("report.json")
 
 | Use case | Start here |
 |---|---|
-| Inspect files from a terminal or CI job | CLI: `dataprof analyze data.csv` |
 | Add profiling to a Rust service or data tool | Rust API: `Profiler::new().analyze_file(...)` |
 | Work from notebooks, pandas, Polars, or PyArrow | Python: `dp.profile(...)` |
-| Profile PostgreSQL, MySQL, or SQLite | CLI or Rust with database feature flags |
+| Profile PostgreSQL, MySQL, or SQLite | Rust or Python with database feature flags |
 
 ## Installation
-
-### CLI binary
-
-```bash
-cargo install dataprof                        # installs the `dataprof` CLI
-cargo install dataprof --features full-cli    # CLI + all database connectors
-```
 
 ### Rust library
 
@@ -112,9 +93,6 @@ pip install dataprof
 
 | Feature | Description |
 |---|---|
-| `cli` *(default)* | CLI binary with clap, colored output, progress bars |
-| `csv` *(default)* | CSV parsing and profiling |
-| `json` *(default)* | JSON and JSONL parsing and profiling |
 | `arrow` | Arrow-backed columnar engine |
 | `parquet` *(default)* | Parquet profiling; includes `arrow` |
 | `minimal` | No optional interfaces; library only |
@@ -126,9 +104,10 @@ pip install dataprof
 | `sqlite` | SQLite connector (includes `database`) |
 | `all-db` | All three database connectors |
 | `datafusion` | DataFusion SQL engine integration; includes `arrow` |
-| `python` | Python bindings via PyO3; includes `parquet` for PyArrow interop |
-| `python-async` | Async Python API (includes `python` + `async-streaming`) |
-| `full-cli` | CLI + all database connectors |
+| `python` | Deprecated facade alias; real bindings live in `crates/dataprof-python` |
+| `python-async` | Deprecated facade alias; async Python bindings live in `crates/dataprof-python` |
+| `cli` | Deprecated compatibility alias; no CLI binary is built |
+| `full-cli` | Deprecated compatibility alias for database features; no CLI binary is built |
 | `production` | PostgreSQL + MySQL (common deployment) |
 
 ## Supported Formats
@@ -160,10 +139,10 @@ An overall quality score (0 -- 100) is computed as a weighted average of dimensi
 
 ## Documentation
 
-- [CLI Usage Guide](docs/guides/CLI_USAGE_GUIDE.md) -- every subcommand and flag
+- [Legacy CLI Usage Guide](docs/archive/CLI_USAGE_GUIDE.md) -- retained for historical reference
 - [Python API Guide](docs/python/README.md) -- `profile()`, report types, async, databases
 - [Getting Started](docs/guides/getting-started.md) -- tutorial from zero to profiling
-- [Examples Cookbook](docs/guides/examples.md) -- copy-pasteable recipes (CLI, Python, Rust)
+- [Examples Cookbook](docs/guides/examples.md) -- copy-pasteable recipes for Python and Rust
 - [Database Connectors](docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup
 - [Crate Redesign Notes](docs/architecture/crate-redesign.md) -- planned architecture direction
 - [Contributing](docs/CONTRIBUTING.md)

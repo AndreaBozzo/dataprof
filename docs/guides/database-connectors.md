@@ -4,21 +4,19 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with ISO 8000
 
 ## Feature Requirements
 
-Database support requires feature flags at compile time:
-
-```bash
-cargo install dataprof --features postgres         # PostgreSQL only
-cargo install dataprof --features mysql             # MySQL/MariaDB only
-cargo install dataprof --features sqlite            # SQLite only
-cargo install dataprof --features all-db            # All three
-cargo install dataprof --features full-cli          # CLI + all database connectors
-```
-
-For Rust library usage:
+Database support requires feature flags at compile time. Enable them on the
+Rust crate or on the Python extension build, depending on the interface you
+ship.
 
 ```toml
 [dependencies]
 dataprof = { version = "0.7", features = ["postgres"] }
+```
+
+For local Python extension development:
+
+```bash
+uv run maturin develop --features "python,python-async,database,sqlite"
 ```
 
 ## Supported Databases
@@ -30,30 +28,6 @@ dataprof = { version = "0.7", features = ["postgres"] }
 | SQLite | `sqlite` | `sqlite:///path/to/db.db` or `/path/to/db.db` |
 
 ## Quick Start
-
-### CLI
-
-```bash
-# PostgreSQL -- profile a table with quality metrics
-dataprof database postgres://user:pass@localhost/mydb --table users --quality
-
-# MySQL -- custom query
-dataprof database mysql://root:pass@localhost/shop --query "SELECT * FROM orders WHERE status = 'active'"
-
-# SQLite
-dataprof database sqlite:///data.db --table events
-```
-
-CLI flags:
-
-| Flag | Description | Default |
-|---|---|---|
-| `--table <NAME>` | Table to profile (generates `SELECT * FROM <table>`) | -- |
-| `--query <SQL>` | Custom SQL query | -- |
-| `--batch-size <N>` | Rows per streaming batch | `10000` |
-| `--quality` | Compute ISO 8000/25012 quality metrics | off |
-
-You must provide either `--table` or `--query`.
 
 ### Python
 

@@ -6,9 +6,9 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use crate::api::Profiler;
-use crate::engines::streaming::async_source::{AsyncSourceInfo, BytesSource};
-use crate::types::FileFormat;
+use dataprof::api::Profiler;
+use dataprof::engines::streaming::async_source::{AsyncSourceInfo, BytesSource};
+use dataprof::types::FileFormat;
 
 use super::config::PyProfilerConfig;
 use super::partial::{PyRowCountEstimate, PySchemaResult};
@@ -67,13 +67,7 @@ pub fn profile_bytes_async<'py>(
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let source = BytesSource::new(
             bytes::Bytes::from(data),
-            AsyncSourceInfo {
-                label: "python-bytes".into(),
-                format: fmt,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("python-bytes", fmt),
         );
 
         let report = profiler
@@ -122,13 +116,7 @@ pub fn infer_schema_stream_async<'py>(
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let source = BytesSource::new(
             bytes::Bytes::from(data),
-            AsyncSourceInfo {
-                label: "python-bytes".into(),
-                format: fmt,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("python-bytes", fmt),
         );
 
         let result = Profiler::new()
@@ -155,13 +143,7 @@ pub fn quick_row_count_stream_async<'py>(
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let source = BytesSource::new(
             bytes::Bytes::from(data),
-            AsyncSourceInfo {
-                label: "python-bytes".into(),
-                format: fmt,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("python-bytes", fmt),
         );
 
         let result = Profiler::new()

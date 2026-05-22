@@ -30,7 +30,7 @@
 //! | `database` | Database connectivity |
 //! | `postgres`, `mysql`, `sqlite` | Database connectors |
 //! | `parquet-async` | Profile Parquet over HTTP |
-//! | `python` | Python bindings via PyO3 |
+//! | `python` | Deprecated alias; Python bindings live in `dataprof-python` |
 
 pub mod acceleration;
 pub mod analysis;
@@ -45,10 +45,6 @@ pub mod types;
 // Database connectors (default: postgres, mysql, sqlite)
 #[cfg(feature = "database")]
 pub mod database;
-
-// Python bindings (optional)
-#[cfg(feature = "python")]
-pub mod python;
 
 // Unified public API
 pub use api::{

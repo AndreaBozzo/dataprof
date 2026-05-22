@@ -73,7 +73,7 @@ def _half_up(v: float, ndigits: int) -> float:
     """Round using half-away-from-zero, matching Rust f64::round() semantics.
 
     Python's built-in round() uses bankers rounding (ties-to-even), which can
-    disagree with the CLI JSON on edge cases like 1.005.
+    disagree with the Rust report serialization on edge cases like 1.005.
     """
     with _decimal.localcontext() as ctx:
         ctx.rounding = _decimal.ROUND_HALF_UP
@@ -554,7 +554,7 @@ class ProfileReport:
         """Convert the report to a nested Python dict.
 
         All floating-point values are rounded (2dp for percentages, 4dp for
-        statistics) to match the CLI JSON output.
+        statistics) to match the Rust report serialization.
         """
         cols = []
         for col in self._report.column_profiles:

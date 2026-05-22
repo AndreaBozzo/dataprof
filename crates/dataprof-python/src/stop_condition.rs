@@ -1,7 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::core::stop_condition::StopCondition;
+use dataprof::core::stop_condition::StopCondition;
 
 /// Python-friendly wrapper for composable stop conditions.
 ///

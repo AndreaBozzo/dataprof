@@ -1580,8 +1580,6 @@ dependencies = [
  "parquet",
  "predicates",
  "proptest",
- "pyo3",
- "pyo3-async-runtimes",
  "rand 0.9.3",
  "rand_chacha 0.9.0",
  "rand_distr",
@@ -1680,6 +1678,20 @@ dependencies = [
  "dataprof-runtime",
  "parquet",
  "tempfile",
+]
+
+[[package]]
+name = "dataprof-python"
+version = "0.7.1"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "bytes",
+ "dataprof",
+ "dataprof-parquet",
+ "pyo3",
+ "pyo3-async-runtimes",
+ "serde_json",
 ]
 
 [[package]]

@@ -39,7 +39,7 @@ pub enum ProgressSink {
     /// No progress reporting.
     #[default]
     None,
-    /// Synchronous callback (for CLI usage, tests, etc.)
+    /// Synchronous callback (for Python bindings, tests, embedding, etc.)
     Callback(Arc<dyn Fn(ProgressEvent) + Send + Sync>),
     /// Async channel sender (requires `async-streaming` feature).
     #[cfg(feature = "async-streaming")]

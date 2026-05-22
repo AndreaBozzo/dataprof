@@ -42,7 +42,7 @@ That breadth is useful, but it creates adoption friction:
 6. Make benchmarks and paper artifacts reproducible without making the main
    package feel research-only.
 
-## Status After The Core, Metrics, Runtime, Parser, Parquet, And DB Split
+## Status After The Core, Metrics, Runtime, Parser, Parquet, DB, And Python Split
 
 The redesign is now past the packaging-only stage and into a real workspace
 layout:
@@ -64,6 +64,8 @@ layout:
   feature-gated PostgreSQL, MySQL, and SQLite connectors
 - `dataprof-core` now owns `MemoryTracker`, leaving the facade path as a
   compatibility shim for streaming callers
+- `dataprof-python` now owns the PyO3 extension module and Python-facing report
+  wrappers; `pyproject.toml` points maturin at that crate
 - the legacy CLI implementation and CLI-only output module have been removed
   from the facade crate; `cli` and `full-cli` remain as deprecated no-op
   compatibility feature names
@@ -78,8 +80,7 @@ layout:
 
 That is a meaningful architectural milestone. The remaining work is no longer
 "create a place for shared code". The remaining work is to keep moving the
-engine, Python, and remaining Arrow-heavy ownership behind the same facade
-pattern.
+engine and remaining Arrow-heavy ownership behind the same facade pattern.
 
 ## Current Boundary Status
 
@@ -88,13 +89,14 @@ of real boundaries instead of hypothetical ones:
 
 | Area | What is already true | What is still coupled |
 | --- | --- | --- |
-| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, `dataprof-parquet`, and `dataprof-db`, and the facade crate supports meaningful library builds | Python and engine-oriented library crates do not exist yet |
+| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, `dataprof-parquet`, `dataprof-db`, and `dataprof-python`, and the facade crate supports meaningful library builds | Engine-oriented library crates do not exist yet |
 | Shared model | Core report and profiling DTOs live in `dataprof-core`, `MemoryTracker` lives in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
 | Parser boundary | Standard CSV, JSON/JSONL, and synchronous Parquet parsing now live outside the facade crate, and the facade parser modules are shims | Async Parquet HTTP handling, parser dispatch, and non-parser product code are still in `src/` |
 | Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code still reach metrics through runtime or facade re-exports rather than a smaller explicit adapter boundary |
 | Public API | Existing top-level exports remain available through facade re-exports and compatibility shims | `src/api/mod.rs` still dispatches through facade parser and engine modules instead of thinner crate-specific adapters |
-| Database boundary | Database config, connector traits, SQL validation/security helpers, retry/sampling/streaming helpers, and concrete SQL connectors now live in `dataprof-db`; `src/database` is a shim | Python async database bindings still call the facade/database surface |
-| Product surfaces | The facade crate is increasingly a shell around internal crates | Python and engine orchestration still ship from the same facade crate |
+| Database boundary | Database config, connector traits, SQL validation/security helpers, retry/sampling/streaming helpers, and concrete SQL connectors now live in `dataprof-db`; `src/database` is a shim | `dataprof-python` depends on the facade/database surface for Python async database bindings |
+| Python boundary | PyO3 classes, functions, and extension registration now live in `dataprof-python`; the root `python` feature is a deprecated alias | Python wrappers still depend on the facade API rather than smaller leaf crates directly |
+| Product surfaces | The facade crate is increasingly a shell around internal crates | Engine orchestration still ships from the same facade crate |
 
 ## End-State Workspace
 
@@ -127,7 +129,7 @@ branch now gives enough evidence to sequence the work more clearly:
 | 2 | `dataprof-metrics` | Completed. `analysis/` and `stats/` proved isolated enough to move behind the new core boundary with facade shims |
 | 3 | `dataprof-runtime`, `dataprof-csv`, and full `dataprof-json` ownership | Completed. Shared report-building helpers moved first, then standard CSV and JSON parser ownership followed behind facade shims |
 | 4 | `dataprof-parquet` | Completed. The synchronous Parquet reader and shared `RecordBatchAnalyzer` moved behind a new crate while facade module paths stayed stable |
-| 5 | `dataprof-db`, `dataprof-python`, facade polish | `dataprof-db` is completed behind a facade shim, and legacy CLI code has been removed. Leave Python, engine-library slices, and final facade polish for the remaining work |
+| 5 | `dataprof-db`, `dataprof-python`, facade polish | `dataprof-db` is completed behind a facade shim, `dataprof-python` owns the PyO3 extension, and legacy CLI code has been removed. Leave engine-library slices and final facade polish for the remaining work |
 
 ## Feature Boundary Proposal
 
@@ -145,7 +147,7 @@ dependencies with clearer ownership:
 | `parquet` | Parquet reader plus Arrow-backed dependencies |
 | `database` | `dataprof-db` facade dependency without concrete SQL backend dependencies |
 | `postgres`, `mysql`, `sqlite` | Individual SQL backends through `dataprof-db` features |
-| `python` | PyO3 only in the Python crate or extension build |
+| `python`, `python-async` | Deprecated facade aliases; real PyO3 features live on `dataprof-python` |
 | `datafusion` | DataFusion integration only |
 | `cli`, `full-cli` | Deprecated compatibility aliases; no CLI implementation is built |
 
@@ -205,8 +207,10 @@ Completed for the extracted reader crates on this branch:
 ### Phase 4: Heavy Optional Crates
 
 - Database connectors have moved to `dataprof-db` behind the facade shim.
-- Move remaining Arrow-heavy paths and Python bindings to dedicated crates after
-   the database split validates the approach.
+- Python bindings have moved to `dataprof-python`, with maturin configured to
+   build the extension crate directly.
+- Move remaining Arrow-heavy paths to dedicated crates after the database and
+   Python splits validate the approach.
 - Keep `dataprof` as the stable discovery package and dependency facade.
 
 ### Phase 5: Release Story
@@ -220,7 +224,7 @@ Completed for the extracted reader crates on this branch:
 
 - Do not move every module at once.
 - Do not make the first redesign PR mostly mechanical file churn.
-- Do not split Python before the Rust public API boundaries are clear.
+- Do not make Python wrappers depend on unstable private facade internals.
 - Do not add more format support until the existing format boundary is smaller.
 - Do not let academic framing be the first thing a practical user sees.
 
@@ -231,10 +235,10 @@ Completed for the extracted reader crates on this branch:
    This now lives in [`public-api-inventory.md`](public-api-inventory.md).
 2. Turn the current manual validation workflow into explicit compile-test
    coverage for facade re-exports and feature combinations.
-3. Keep tightening the `dataprof-db` split by validating facade/database feature
-   combinations and removing facade-only assumptions from Python callers.
+3. Keep tightening the `dataprof-db` and `dataprof-python` split by validating
+   feature combinations and removing facade-only assumptions from Python callers.
 4. Continue with library-oriented crate boundaries: engine orchestration, async
-   streaming, and Python-facing adapters.
+   streaming, and Arrow-heavy adapters.
 5. Decide whether the async HTTP Parquet path should stay facade-owned for a
    while longer or move behind `dataprof-parquet` in a later network-aware
    slice.

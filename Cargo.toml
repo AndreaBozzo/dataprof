@@ -6,6 +6,7 @@ members = [
     "crates/dataprof-json",
     "crates/dataprof-parquet",
     "crates/dataprof-db",
+    "crates/dataprof-python",
     "crates/dataprof-runtime",
 ]
 resolver = "3"
@@ -85,7 +86,7 @@ rand_distr = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4"] }
 
-# Note: Async support is available via feature flags (database, python-async)
+# Note: Async support is available via async-streaming and database feature flags.
 
 # Random number generation for sampling
 rand = { version = "0.9.3", features = ["small_rng"] }  # 0.9.3 patches RUSTSEC-2026-0097
@@ -95,10 +96,6 @@ rand_chacha = "0.9"
 glob = "0.3"
 num_cpus = "1.16"
 
-
-
-pyo3 = { version = "0.27", features = ["extension-module"], optional = true }
-pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"], optional = true }
 
 
 tokio = { version = "1.49", features = ["full"], optional = true }  # Latest: 1.48.0 (patch available via cargo update)
@@ -187,8 +184,10 @@ cli = []
 # Individual features
 arrow = ["dep:arrow", "dataprof-core/arrow", "dep:dataprof-parquet", "dataprof-parquet/arrow"]
 parquet = ["dep:parquet", "arrow", "dataprof-parquet/parquet"]
-python = ["dep:pyo3"]
-python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
+# Deprecated compatibility aliases. Python bindings now live in
+# crates/dataprof-python and are built through pyproject/maturin.
+python = []
+python-async = ["python"]
 database = ["dep:dataprof-db"]
 datafusion = ["dep:datafusion", "dep:tokio"]
 async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util", "dataprof-core/async-streaming"]
@@ -199,13 +198,13 @@ sqlite = ["database", "dep:tokio", "dep:sqlx", "sqlx/sqlite", "dataprof-db/sqlit
 
 # Sensible feature combinations
 minimal = []                             # No optional interfaces; library only
-full-cli = ["all-db"]
+full-cli = ["all-db"]                    # Deprecated alias; no CLI binary is built
 production = ["postgres", "mysql"]       
 all-db = ["postgres", "mysql", "sqlite"] 
 
 
-# Library configuration - rlib only for Rust use
-# cdylib is added automatically by maturin when building Python bindings
+# Library configuration - rlib only for Rust use.
+# Python extension builds live in crates/dataprof-python.
 [lib]
 name = "dataprof"
 crate-type = ["rlib"]

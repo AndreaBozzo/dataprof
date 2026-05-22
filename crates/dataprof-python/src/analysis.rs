@@ -21,7 +21,7 @@ pub fn analyze_file(
 ) -> PyResult<PyProfileReport> {
     let profiler = match config {
         Some(cfg) => cfg.to_profiler(),
-        None => crate::api::Profiler::new(),
+        None => dataprof::api::Profiler::new(),
     };
 
     let path = path.to_string();

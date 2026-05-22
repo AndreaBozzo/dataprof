@@ -242,7 +242,8 @@ cargo check --workspace --all-targets
 - `crates/` - Internal library crates used by the facade
 - `src/database/` - Database compatibility shim
 - `src/analysis/` - Core analysis logic
-- `python/` - Python bindings
+- `crates/dataprof-python/` - PyO3 extension crate
+- `python/` - Python package sources and tests
 - `tests/` - Integration tests
 - `docs/` - Documentation
 

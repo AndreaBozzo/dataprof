@@ -1,6 +1,6 @@
 # Getting Started with dataprof
 
-This guide walks you through installing dataprof, running your first profile, and understanding the results. By the end you'll know how to use all three interfaces (CLI, Python, Rust), interpret quality metrics, and handle large datasets.
+This guide walks you through installing dataprof, running your first profile, and understanding the results. By the end you'll know how to use the Python and Rust library interfaces, interpret quality metrics, and handle large datasets.
 
 ## What is Data Profiling?
 
@@ -19,42 +19,15 @@ dataprof automates this analysis and scores data quality against the ISO 8000/25
 Choose the interface that fits your workflow:
 
 ```bash
-# CLI (Rust binary)
-cargo install dataprof
-
 # Python
 uv pip install dataprof
 # or: pip install dataprof
 
 # Rust library -- add to Cargo.toml
-# dataprof = "0.6"
+# dataprof = "0.7"
 ```
 
 ## Your First Profile
-
-### With the CLI
-
-```bash
-dataprof analyze sales.csv
-```
-
-This prints a text report to your terminal. You'll see:
-
-1. **Source info** -- file name, size, column count, row count, scan time
-2. **Column profiles** -- for each column: data type, null count, basic statistics
-3. **Quality assessment** -- scores for each ISO dimension, plus an overall score
-
-To get the detailed breakdown of all five quality dimensions:
-
-```bash
-dataprof analyze sales.csv --detailed
-```
-
-To export as JSON for scripting or CI:
-
-```bash
-dataprof analyze sales.csv --format json -o report.json
-```
 
 ### With Python
 
@@ -156,25 +129,15 @@ Measures whether date/time values are current and consistent.
 - `stale_data_ratio` -- fraction of temporal data that appears outdated
 - `temporal_violations` -- ordering inconsistencies in time series
 
-### Threshold Profiles
-
-The CLI supports three threshold profiles that set the bar for "good" quality:
-
-```bash
-dataprof analyze data.csv --threshold-profile strict    # high bar
-dataprof analyze data.csv --threshold-profile default   # balanced (default)
-dataprof analyze data.csv --threshold-profile lenient    # low bar
-```
-
 ## Working with Different Formats
 
 ### CSV
 
 dataprof auto-detects the delimiter (`,`, `;`, `|`, `\t`) by analyzing the first few lines:
 
-```bash
-dataprof analyze european_data.csv    # semicolons -- auto-detected
-dataprof analyze pipe_export.csv      # pipes -- auto-detected
+```python
+report = dp.profile("european_data.csv")  # semicolons auto-detected
+report = dp.profile("pipe_export.csv")    # pipes auto-detected
 ```
 
 For files with inconsistent column counts, enable flexible parsing:
@@ -187,19 +150,19 @@ report = dp.profile("messy.csv", csv_flexible=True)
 
 JSON files should contain an array of objects. JSONL files should have one JSON object per line.
 
-```bash
-dataprof analyze users.json
-dataprof analyze events.jsonl
+```python
+report = dp.profile("users.json")
+report = dp.profile("events.jsonl")
 ```
 
 ### Parquet
 
 Parquet is the most efficient format to profile. Schema inference and row counting read only the file metadata -- zero row scanning required.
 
-```bash
-dataprof schema data.parquet     # instant schema from metadata
-dataprof count data.parquet      # instant row count from metadata
-dataprof analyze data.parquet    # full profiling reads all row groups
+```python
+schema = dp.infer_schema("data.parquet")      # instant schema from metadata
+rows = dp.quick_row_count("data.parquet")     # instant row count from metadata
+report = dp.profile("data.parquet")           # full profiling reads row groups
 ```
 
 ## Scaling Up: Sampling and Stop Conditions
@@ -209,11 +172,6 @@ For very large files, you don't always need to read every row. dataprof provides
 ### Sampling
 
 Read a representative subset:
-
-```bash
-# CLI: sample first 100k rows
-dataprof analyze huge.csv --sample 100000
-```
 
 ```python
 # Python: reservoir sampling (statistically representative)
@@ -267,28 +225,20 @@ report = await profile_url("https://example.com/data.parquet")
 ### Rust
 
 ```rust
+use bytes::Bytes;
 use dataprof::{Profiler, AsyncDataSource, BytesSource, AsyncSourceInfo, FileFormat};
 
 // Profile an async byte stream
-let source = BytesSource::new(bytes, AsyncSourceInfo {
-    label: "upload".into(),
-    format: FileFormat::Csv,
-    size_hint: Some(bytes.len() as u64),
-    source_system: None,
-});
+let bytes = Bytes::from("name,score\nada,100\n");
+let info = AsyncSourceInfo::new("upload", FileFormat::Csv)
+    .size_hint(Some(bytes.len() as u64));
+let source = BytesSource::new(bytes, info);
 let report = Profiler::new().profile_stream(source).await?;
 ```
 
 ## Database Profiling
 
 Profile data directly from PostgreSQL, MySQL, or SQLite without exporting to files.
-
-### CLI
-
-```bash
-cargo install dataprof --features full-cli
-dataprof database postgres://user:pass@localhost/mydb --table users --quality
-```
 
 ### Python
 
@@ -316,7 +266,6 @@ See the [Database Connectors Guide](database-connectors.md) for connection strin
 ## Next Steps
 
 - [Examples Cookbook](examples.md) -- copy-pasteable recipes for common tasks
-- [CLI Usage Guide](CLI_USAGE_GUIDE.md) -- every subcommand and flag
 - [Python API Guide](../python/README.md) -- full API reference
 - [Database Connectors](database-connectors.md) -- advanced database setup
 - [Contributing](../CONTRIBUTING.md) -- how to contribute to dataprof

@@ -28,12 +28,12 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 
-use crate::core::report_assembler::ReportAssembler;
-use crate::engines::columnar::RecordBatchAnalyzer;
-use crate::types::{
+use dataprof::core::report_assembler::ReportAssembler;
+use dataprof::types::{
     ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, ExecutionMetadata, MetricPack,
     TruncationReason,
 };
+use dataprof_parquet::record_batch_analyzer::RecordBatchAnalyzer;
 
 use super::config::PyProfilerConfig;
 
@@ -311,7 +311,7 @@ impl PyRecordBatch {
 /// as an Arrow RecordBatch, enabling zero-copy transfer to pandas/polars.
 #[pyfunction]
 pub fn analyze_csv_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
-    use crate::engines::columnar::ArrowProfiler;
+    use dataprof::engines::columnar::arrow_profiler::ArrowProfiler;
     use std::path::Path;
 
     let profiler = ArrowProfiler::new();
@@ -329,7 +329,7 @@ pub fn analyze_csv_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
 /// Analyze Parquet file and return results as Arrow RecordBatch.
 #[pyfunction]
 pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
-    use crate::analyze_parquet_with_quality;
+    use dataprof::analyze_parquet_with_quality;
     use std::path::Path;
 
     let report = analyze_parquet_with_quality(Path::new(path))
