@@ -1603,6 +1603,7 @@ dependencies = [
  "criterion",
  "csv",
  "datafusion",
+ "dataprof-core",
  "env_logger",
  "futures",
  "glob",
@@ -1635,6 +1636,22 @@ dependencies = [
  "url",
  "uuid",
  "wide",
+]
+
+[[package]]
+name = "dataprof-core"
+version = "0.7.1"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "csv",
+ "glob",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

@@ -41,7 +41,47 @@ That breadth is useful, but it creates adoption friction:
 6. Make benchmarks and paper artifacts reproducible without making the main
    package feel research-only.
 
-## Target Workspace
+## Status After The First Two Slices
+
+The redesign has started, but it has not reached a multi-crate workspace yet.
+The first two slices did useful prerequisite work:
+
+- the installed binary is now consistently named `dataprof`
+- `arrow` and `parquet` are now optional dependencies instead of always-on
+   library weight
+- `default = ["cli", "csv", "json", "parquet"]` keeps the common CLI path
+   working, while `minimal = []` now means a real library-only build with no
+   CLI, no Python, no databases, and no Arrow/Parquet stack
+- public APIs in `src/api/mod.rs` and `src/api/partial.rs` now return explicit
+   unsupported-feature errors when Parquet or Arrow-backed paths are disabled,
+   instead of assuming those backends are present
+- `parsers::parquet`, `engines::columnar`, and related re-exports are now
+   behind feature gates, and the adaptive engine treats Parquet as a dedicated
+   parser path rather than a generic engine decision
+
+That is good progress because it turns dependency weight into an explicit build
+choice. It also shows what is still missing: the package graph is cleaner, but
+the code graph is still mostly one crate.
+
+## Current Boundary Status
+
+The branch now has enough structure to talk about the remaining work in terms
+of real boundaries instead of hypothetical ones:
+
+| Area | What is already true | What is still coupled |
+| --- | --- | --- |
+| Packaging | Optional `arrow`/`parquet` dependencies and a meaningful `minimal` build exist | There are still no workspace members; all code ships from one package |
+| Public API | `Profiler` and partial-analysis entry points now degrade cleanly when features are off | `src/api/mod.rs` still dispatches directly into concrete parser and engine modules |
+| Engine selection | `engines::columnar` is behind `arrow`, and adaptive selection already branches on feature availability | Engine choice, CSV config translation, and parser invocation still live in the same crate |
+| Format readers | `parsers::parquet` and async Parquet paths are feature-gated | CSV and JSON parsing still depend on in-crate report assembly and streaming stats machinery |
+| Product surfaces | CLI, Python, and database support are already mostly feature-scoped | CLI, Python, and database code still share internal types and orchestration logic from the same crate |
+
+One important consequence follows from the current tree: `analysis/` and
+`stats/` do not depend on parsers or engines, but they do depend on shared
+types and core configuration/error types. That makes a small `dataprof-core`
+crate the next necessary boundary, not an optional future cleanup.
+
+## End-State Workspace
 
 The likely workspace shape is:
 
@@ -61,23 +101,41 @@ The facade crate should remain the main package people discover. Internally,
 the workspace can become more modular without forcing users to understand every
 crate on day one.
 
+## Recommended Execution Order
+
+The safest order is no longer "metrics or CSV, whichever feels smaller". The
+branch now gives enough evidence to sequence the work more clearly:
+
+| Step | Deliverable | Why this order is safer |
+| --- | --- | --- |
+| 1 | `dataprof-core` | Extract shared report types, quality enums, errors, progress types, and stable config primitives so every later crate has somewhere to depend |
+| 2 | `dataprof-metrics` | Move `analysis/` and `stats/` after `dataprof-core` exists; these modules are comparatively isolated from parsers and engines |
+| 3 | `dataprof-csv` and `dataprof-json` | Split lighter readers once report-building adapters are no longer tied to the facade crate |
+| 4 | `dataprof-parquet` and `dataprof-db` | Keep heavier optional dependencies isolated until the lighter crates prove the packaging model |
+| 5 | `dataprof-cli`, `dataprof-python`, facade polish | Leave the user-facing leaf crates for last, after the library contracts stop moving |
+
+Avoid splitting CSV first. The current CSV path still pulls on
+`core::profile_builder`, `core::report_assembler`, and streaming stats internals,
+so it would force adapter churn before the shared core types are stable.
+
 ## Feature Boundary Proposal
 
-As of the 0.8 development branch, `minimal = []` no longer pulls in Arrow or
-Parquet. The remaining redesign work is to move these feature boundaries from
-module-level `cfg`s into cleaner crate boundaries:
+As of the current redesign branch, `minimal = []` no longer pulls in Arrow or
+Parquet. The remaining work is to move those boundaries from module-level `cfg`
+checks into crate-level dependencies with clearer ownership:
 
 | Feature | Intended dependency boundary |
 | --- | --- |
-| default | CLI plus common local formats, unless release strategy chooses library-only |
-| `csv` | CSV parsing and basic profiling |
-| `json` | JSON and JSONL support |
-| `parquet` | Parquet plus Arrow |
-| `database` | Shared database config and connector traits |
+| default | Keep `cargo install dataprof` working: CLI plus common local formats |
+| `csv` | CSV parsing and CSV-specific config only |
+| `json` | JSON and JSONL support only |
+| `arrow` | Columnar engine internals, not the whole public facade |
+| `parquet` | Parquet reader plus Arrow-backed dependencies |
+| `database` | Shared database config, connector traits, and SQL validation |
 | `postgres`, `mysql`, `sqlite` | Individual SQL backends |
 | `python` | PyO3 only in the Python crate or extension build |
 | `datafusion` | DataFusion integration only |
-| `full-cli` | CLI plus all production connectors |
+| `full-cli` | CLI plus all production connectors and heavy backends |
 
 Open decision: decide whether the facade crate default should optimize for
 `cargo install dataprof` or `dataprof = "0.8"` as a dependency. If one package
@@ -86,36 +144,45 @@ must serve both, the CLI can stay default while library docs recommend
 
 ## Migration Plan
 
-### Phase 0: Trust and Funnel
+### Phase 0: Packaging Baseline
+
+Completed or largely completed on this branch:
 
 - Make the installed command match the README: `dataprof`.
-- Remove stale version references in docs.
-- Clarify beta/stability language without scaring away users.
-- Add a short "which interface should I use?" section to the README.
-- Add one real-world example that demonstrates clear value.
+- Turn Arrow and Parquet into optional dependencies.
+- Make unsupported backend paths fail explicitly at runtime.
+- Keep the common CLI path on by default.
 
-### Phase 1: API Inventory
+### Phase 1: Extract `dataprof-core`
 
-- List all public exports from `src/lib.rs`.
-- Classify each export as stable, unstable, internal-but-public, or deprecated.
-- Add compile tests for the public examples before moving code.
-- Decide which report fields are part of the 1.0 contract.
+- Move `types.rs`, stable error types, progress types, and the configuration
+   pieces that do not depend on CLI, Python, or database code into a new core
+   crate.
+- Re-export those items from the facade crate so downstream code does not break.
+- Keep this step intentionally boring: type moves, import rewrites, and tests.
 
-### Phase 2: Internal Module Boundaries
+### Phase 2: Move Metrics Behind The Core Boundary
 
-- Separate metrics from format readers inside the current crate first.
-- Move engine-independent types into a smaller core module.
-- Reduce direct dependencies from Python and CLI modules on engine internals.
-- Add narrow adapter functions where the CLI and Python APIs cross into Rust.
+- Move `analysis/` and `stats/` into `dataprof-metrics` once `dataprof-core`
+   exists.
+- Keep parser crates consuming a metrics API instead of reaching into metrics
+   internals.
+- Add compile tests for the public helpers re-exported from `src/lib.rs`.
 
-### Phase 3: Workspace Split
+### Phase 3: Split Reader Crates
 
-- Introduce workspace members one at a time.
-- Start with the lowest-risk split: metrics or CSV.
-- Keep the facade crate re-exporting the old paths during transition.
+- Split `dataprof-csv` and `dataprof-json` after report assembly stops being a
+   private monolith detail.
+- Keep the facade crate re-exporting the old entry points during transition.
 - Add deprecation notes only after the replacement paths are proven.
 
-### Phase 4: Release Story
+### Phase 4: Heavy Optional Crates
+
+- Move Parquet, Arrow-heavy paths, database connectors, and Python bindings to
+   dedicated crates after the lighter crates validate the approach.
+- Keep `dataprof` as the stable discovery package and dependency facade.
+
+### Phase 5: Release Story
 
 - Publish a release that is explicitly about usability and packaging.
 - Document old command/API compatibility.
@@ -132,9 +199,11 @@ must serve both, the CLI can stay default while library docs recommend
 
 ## Near-Term Next Steps
 
-1. Add an examples index with one e-commerce or telemetry quality workflow.
-2. Add a public API inventory document generated from `src/lib.rs`.
-3. Move Arrow and Parquet boundaries from feature-gated modules toward
-   workspace crates.
-4. Add issue labels/milestones around adoption, architecture, and paper-blocked
-   work so contributors can see what is safe to touch.
+1. Add a public API inventory document generated from `src/lib.rs`, grouped
+   into "must stay stable", "re-export during migration", and "internal-only".
+2. Define the exact contents of `dataprof-core` before creating any new crate:
+   shared report types, errors, progress types, and stable config primitives.
+3. Add a small compatibility test matrix for `default`, `minimal`, and
+   `default-features = false` so packaging regressions are visible early.
+4. Move `analysis/` and `stats/` only after `dataprof-core` compiles as an
+   internal dependency.

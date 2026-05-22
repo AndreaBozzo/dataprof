@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/dataprof-core"]
+resolver = "3"
+
 [package]
 name = "dataprof"
 version = "0.7.1"
@@ -39,6 +43,7 @@ all = "deny"
 # CSV parsing
 csv = "1.4"  # Updated: 1.3.1 -> 1.4.0 (minor bump, backward compatible)
 serde = { version = "1.0", features = ["derive"] }
+dataprof-core = { path = "crates/dataprof-core" }
 
 # CLI (optional — only needed for the binary)
 clap = { version = "4.5.54", features = ["derive"], optional = true }
@@ -179,21 +184,19 @@ opt-level = 1
 
 
 [features]
-default = ["cli", "csv", "json", "parquet"]
+default = ["cli", "parquet"]
 
 # CLI feature — pulls in clap, colored, is-terminal, indicatif, env_logger
 cli = ["dep:clap", "dep:colored", "dep:is-terminal", "dep:indicatif", "dep:env_logger"]
-csv = []
-json = []
 
 # Individual features
-arrow = ["dep:arrow"]
+arrow = ["dep:arrow", "dataprof-core/arrow"]
 parquet = ["dep:parquet", "arrow"]
-python = ["dep:pyo3", "parquet"]
+python = ["dep:pyo3"]
 python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
 database = ["dep:tokio", "dep:async-trait", "dep:url"]
-datafusion = ["dep:datafusion", "dep:tokio", "arrow"]
-async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util"]
+datafusion = ["dep:datafusion", "dep:tokio"]
+async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util", "dataprof-core/async-streaming"]
 parquet-async = ["parquet", "parquet/async", "dep:reqwest", "async-streaming"]
 postgres = ["database", "dep:sqlx", "sqlx/postgres"]
 mysql = ["database", "dep:sqlx", "sqlx/mysql"]
