@@ -1,5 +1,9 @@
-pub mod csv;
-pub mod json;
+pub mod csv {
+    pub use dataprof_csv::*;
+}
+pub mod json {
+    pub use dataprof_json::*;
+}
 #[cfg(feature = "parquet")]
 pub mod parquet;
 #[cfg(feature = "parquet-async")]

@@ -2,17 +2,12 @@ use csv::ReaderBuilder;
 use std::io::Read;
 use std::path::Path;
 
-use crate::core::errors::DataProfilerError;
-use crate::core::profile_builder;
-use crate::core::report_assembler::ReportAssembler;
-use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{
-    ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension,
+use dataprof_core::{
+    ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
 };
-
-// ============================================================================
-// NEW CONFIG-BASED API (#181 + #218)
-// ============================================================================
+use dataprof_runtime::{
+    ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
+};
 
 /// Configuration for CSV parsing and analysis.
 ///
@@ -77,18 +72,18 @@ impl CsvParserConfig {
 }
 
 /// Count fields in a line for a given delimiter, respecting quoted sections.
-fn count_fields(line: &str, del: char) -> usize {
+fn count_fields(line: &str, delimiter: char) -> usize {
     let mut count = 1;
     let mut in_quotes = false;
     let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '"' {
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
             if chars.peek() == Some(&'"') {
                 chars.next();
             } else {
                 in_quotes = !in_quotes;
             }
-        } else if c == del && !in_quotes {
+        } else if ch == delimiter && !in_quotes {
             count += 1;
         }
     }
@@ -108,23 +103,23 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     take.read_to_end(&mut preamble)?;
 
     let preamble_str = String::from_utf8_lossy(&preamble);
-    let lines: Vec<String> = preamble_str.lines().map(|s| s.to_string()).collect();
+    let lines: Vec<String> = preamble_str.lines().map(|line| line.to_string()).collect();
 
     let delimiters = [b',', b';', b'\t', b'|'];
-    let mut best_del = b',';
+    let mut best_delimiter = b',';
     let mut max_consistency = 0;
     let mut max_fields = 0;
 
-    for &d in &delimiters {
-        let del_char = d as char;
+    for &delimiter in &delimiters {
+        let delimiter_char = delimiter as char;
         let mut counts = std::collections::HashMap::new();
         let mut total_fields = 0;
 
         let sample_lines = std::cmp::min(lines.len(), 5);
         for line in lines.iter().take(sample_lines) {
-            let c = count_fields(line, del_char);
-            *counts.entry(c).or_insert(0) += 1;
-            total_fields += c;
+            let count = count_fields(line, delimiter_char);
+            *counts.entry(count).or_insert(0) += 1;
+            total_fields += count;
         }
 
         let consistency = counts.values().max().copied().unwrap_or(0);
@@ -142,11 +137,11 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
         if should_update {
             max_consistency = consistency;
             max_fields = avg_fields;
-            best_del = d;
+            best_delimiter = delimiter;
         }
     }
 
-    Ok(best_del)
+    Ok(best_delimiter)
 }
 
 /// Detect the most likely CSV delimiter from a file path.
@@ -196,39 +191,35 @@ pub fn analyze_csv_from_reader<R: Read>(
         Box::new(reader)
     };
 
-    if let Some(delim) = actual_delimiter {
-        csv_builder.delimiter(delim);
+    if let Some(delimiter) = actual_delimiter {
+        csv_builder.delimiter(delimiter);
     }
 
     let mut csv_reader = csv_builder.from_reader(boxed_reader);
 
     let header_names: Vec<String> = if config.has_header {
         let headers = csv_reader.headers()?;
-        headers.iter().map(|h| h.to_string()).collect()
+        headers.iter().map(|header| header.to_string()).collect()
     } else {
-        // Peek the first record to determine the number of columns,
-        // then generate synthetic names.
         let headers = csv_reader.headers()?;
-        (0..headers.len()).map(|i| format!("column_{i}")).collect()
+        (0..headers.len())
+            .map(|index| format!("column_{index}"))
+            .collect()
     };
 
     let mut column_stats = StreamingColumnCollection::new();
     let mut rows_read = 0;
 
     for result in csv_reader.records() {
-        if let Some(max) = config.max_rows
-            && rows_read >= max
+        if let Some(max_rows) = config.max_rows
+            && rows_read >= max_rows
         {
             break;
         }
 
         let record = result?;
-        let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+        let mut values: Vec<String> = record.iter().map(|value| value.to_string()).collect();
 
-        // Ensure values align with headers, even when using flexible (ragged) rows.
-        // Note: missing fields are padded with empty strings, which downstream
-        // StreamingColumnCollection treats as nulls — this conflates "absent" with
-        // "explicitly empty", which is acceptable for profiling purposes.
         let header_len = header_names.len();
         if values.len() < header_len {
             values.resize(header_len, String::new());
@@ -262,10 +253,10 @@ pub fn analyze_csv_file_with_dimensions(
     config: &CsvParserConfig,
     quality_dimensions: Option<&[QualityDimension]>,
 ) -> Result<ProfileReport, DataProfilerError> {
-    let metadata = std::fs::metadata(file_path).map_err(|e| map_io_error(file_path, e))?;
+    let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     let start = std::time::Instant::now();
 
-    let file = std::fs::File::open(file_path).map_err(|e| map_io_error(file_path, e))?;
+    let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
     let (column_profiles, column_stats, rows_read, header_names) =
@@ -298,38 +289,35 @@ pub fn analyze_csv_file_with_dimensions(
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns);
-    if let Some(dims) = quality_dimensions {
-        assembler = assembler.with_requested_dimensions(dims.to_vec());
+    if let Some(dimensions) = quality_dimensions {
+        assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }
     Ok(assembler.build())
 }
 
-/// Map I/O errors to DataProfilerError with the actual file path context
-fn map_io_error(file_path: &Path, e: std::io::Error) -> DataProfilerError {
-    if e.kind() == std::io::ErrorKind::NotFound {
+fn map_io_error(file_path: &Path, error: std::io::Error) -> DataProfilerError {
+    if error.kind() == std::io::ErrorKind::NotFound {
         DataProfilerError::FileNotFound {
             path: file_path.display().to_string(),
         }
     } else {
-        DataProfilerError::from(e)
+        DataProfilerError::from(error)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::DataType;
+    use dataprof_core::DataType;
     use std::io::{Cursor, Write};
     use tempfile::NamedTempFile;
 
     fn write_csv(content: &str) -> NamedTempFile {
-        let mut f = NamedTempFile::new().unwrap();
-        write!(f, "{}", content).unwrap();
-        f.flush().unwrap();
-        f
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{}", content).unwrap();
+        file.flush().unwrap();
+        file
     }
-
-    // --- New API tests ---
 
     #[test]
     fn test_analyze_csv_from_reader_basic() {
@@ -341,7 +329,10 @@ mod tests {
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
 
-        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        let age = profiles
+            .iter()
+            .find(|profile| profile.name == "age")
+            .unwrap();
         assert_eq!(age.total_count, 2);
         assert_eq!(age.data_type, DataType::Integer);
     }
@@ -409,11 +400,12 @@ mod tests {
         assert_eq!(rows, 2);
         assert_eq!(profiles.len(), 2);
 
-        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        let age = profiles
+            .iter()
+            .find(|profile| profile.name == "age")
+            .unwrap();
         assert_eq!(age.total_count, 2);
     }
-
-    // --- Legacy API tests migrated to new API ---
 
     #[test]
     fn test_analyze_csv_basic() {
@@ -423,11 +415,17 @@ mod tests {
         let profiles = &report.column_profiles;
         assert_eq!(profiles.len(), 2);
 
-        let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect();
         assert!(names.contains(&"name"));
         assert!(names.contains(&"age"));
 
-        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        let age = profiles
+            .iter()
+            .find(|profile| profile.name == "age")
+            .unwrap();
         assert_eq!(age.total_count, 2);
         assert_eq!(age.null_count, 0);
     }
@@ -439,11 +437,17 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &config).unwrap();
         let profiles = &report.column_profiles;
 
-        let age = profiles.iter().find(|p| p.name == "age").unwrap();
+        let age = profiles
+            .iter()
+            .find(|profile| profile.name == "age")
+            .unwrap();
         assert_eq!(age.total_count, 3);
         assert_eq!(age.null_count, 1);
 
-        let email = profiles.iter().find(|p| p.name == "email").unwrap();
+        let email = profiles
+            .iter()
+            .find(|profile| profile.name == "email")
+            .unwrap();
         assert_eq!(email.null_count, 1);
     }
 
@@ -488,26 +492,23 @@ mod tests {
         let report = analyze_csv_file(csv.path(), &config).unwrap();
         let profiles = &report.column_profiles;
 
-        let int_col = profiles.iter().find(|p| p.name == "int_col").unwrap();
-        assert!(
-            matches!(int_col.data_type, DataType::Integer),
-            "Expected Integer, got {:?}",
-            int_col.data_type
-        );
+        let int_col = profiles
+            .iter()
+            .find(|profile| profile.name == "int_col")
+            .unwrap();
+        assert!(matches!(int_col.data_type, DataType::Integer));
 
-        let float_col = profiles.iter().find(|p| p.name == "float_col").unwrap();
-        assert!(
-            matches!(float_col.data_type, DataType::Float),
-            "Expected Float, got {:?}",
-            float_col.data_type
-        );
+        let float_col = profiles
+            .iter()
+            .find(|profile| profile.name == "float_col")
+            .unwrap();
+        assert!(matches!(float_col.data_type, DataType::Float));
 
-        let str_col = profiles.iter().find(|p| p.name == "str_col").unwrap();
-        assert!(
-            matches!(str_col.data_type, DataType::String),
-            "Expected String, got {:?}",
-            str_col.data_type
-        );
+        let str_col = profiles
+            .iter()
+            .find(|profile| profile.name == "str_col")
+            .unwrap();
+        assert!(matches!(str_col.data_type, DataType::String));
     }
 
     #[test]
@@ -535,19 +536,15 @@ mod tests {
         let config = CsvParserConfig::default();
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
-        // 4 out of 10 records have a missing "age" field
         let age = report
             .column_profiles
             .iter()
-            .find(|p| p.name == "age")
+            .find(|profile| profile.name == "age")
             .unwrap();
         assert_eq!(age.null_count, 4);
         assert_eq!(age.total_count, 10);
-        // Quality score should be computable (>= 0)
         assert!(report.quality_score().unwrap() >= 0.0);
     }
-
-    // --- detect_delimiter tests ---
 
     #[test]
     fn test_detect_delimiter_comma() {
@@ -581,7 +578,6 @@ mod tests {
 
     #[test]
     fn test_detect_delimiter_quoted_fields() {
-        // Semicolons inside quotes should not confuse detection
         let data = b"name;desc;val\n\"hello;world\";foo;1\nbar;baz;2\n";
         assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
     }

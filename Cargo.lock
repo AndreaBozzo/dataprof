@@ -1604,6 +1604,7 @@ dependencies = [
  "csv",
  "datafusion",
  "dataprof-core",
+ "dataprof-csv",
  "dataprof-json",
  "dataprof-metrics",
  "dataprof-runtime",
@@ -1656,12 +1657,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dataprof-csv"
+version = "0.7.1"
+dependencies = [
+ "csv",
+ "dataprof-core",
+ "dataprof-runtime",
+ "tempfile",
+]
+
+[[package]]
 name = "dataprof-json"
 version = "0.7.1"
 dependencies = [
  "dataprof-core",
+ "dataprof-runtime",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

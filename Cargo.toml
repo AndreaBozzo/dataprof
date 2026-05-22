@@ -2,6 +2,7 @@
 members = [
     "crates/dataprof-core",
     "crates/dataprof-metrics",
+    "crates/dataprof-csv",
     "crates/dataprof-json",
     "crates/dataprof-runtime",
 ]
@@ -50,6 +51,7 @@ csv = "1.4"  # Updated: 1.3.1 -> 1.4.0 (minor bump, backward compatible)
 serde = { version = "1.0", features = ["derive"] }
 dataprof-core = { path = "crates/dataprof-core" }
 dataprof-metrics = { path = "crates/dataprof-metrics" }
+dataprof-csv = { path = "crates/dataprof-csv" }
 dataprof-json = { path = "crates/dataprof-json" }
 dataprof-runtime = { path = "crates/dataprof-runtime" }
 

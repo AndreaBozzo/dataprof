@@ -41,24 +41,31 @@ That breadth is useful, but it creates adoption friction:
 6. Make benchmarks and paper artifacts reproducible without making the main
    package feel research-only.
 
-## Status After The Core And Metrics Split
+## Status After The Core, Metrics, Runtime, And Parser Split
 
 The redesign is now past the packaging-only stage and into a real workspace
 layout:
 
-- `dataprof-core` exists and owns shared classification, execution, source,
-  partial-analysis, output, progress, config, and column/profile model types
-- `dataprof-metrics` exists and owns `analysis/`, `stats/`, pattern detection,
-  validators, the SIMD numeric helper, and the quality metric result types
+- `dataprof-core` owns shared classification, execution, source,
+   partial-analysis, output, progress, config, and column/profile model types
+- `dataprof-metrics` owns `analysis/`, `stats/`, pattern detection,
+   validators, the SIMD numeric helper, and the quality metric result types
+- `dataprof-runtime` owns `ProfileReport`, report assembly, streaming stats,
+   and profile-building helpers that used to live under `src/core/`
+- `dataprof-csv` now owns the standard CSV parser, delimiter detection, and
+   CSV report-building flow
+- `dataprof-json` now owns both the low-level JSON scanner and the higher-level
+   JSON/JSONL report-building flow
 - the top-level `dataprof` crate now acts as a facade and compatibility layer:
-  it re-exports the moved APIs and keeps the public surface stable while the
-  internal crate graph changes
-- the validation matrix that has been used slice-by-slice still passes for the
-  facade crate: default, `--no-default-features`, and `--features async-streaming`
+   it re-exports the moved APIs and keeps the public surface stable while the
+   internal crate graph changes
+- `src/parsers/csv` and `src/parsers/json` no longer own implementations;
+   parser compatibility is now provided through lightweight shim modules
 
 That is a meaningful architectural milestone. The remaining work is no longer
-"create a place for shared code". The remaining work is to keep moving parser,
-engine, CLI, Python, and database ownership behind the same facade pattern.
+"create a place for shared code". The remaining work is to keep moving the
+heavier parser, engine, CLI, Python, and database ownership behind the same
+facade pattern.
 
 ## Current Boundary Status
 
@@ -67,11 +74,12 @@ of real boundaries instead of hypothetical ones:
 
 | Area | What is already true | What is still coupled |
 | --- | --- | --- |
-| Packaging | The repo is now a workspace with `dataprof-core` and `dataprof-metrics`, and the facade crate still supports meaningful minimal/default builds | Format-specific and product-specific crates do not exist yet |
-| Shared model | Core report and profiling DTOs now live in `dataprof-core` and are reused by multiple crates | `ProfileReport` still lives in the facade because it composes core and metrics-owned types |
-| Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code in the facade still reaches metrics through internal re-exports rather than a smaller explicit adapter boundary |
-| Public API | Existing top-level exports remain available through facade re-exports and compatibility shims | `src/api/mod.rs` still dispatches directly into concrete parser and engine modules in the facade crate |
-| Product surfaces | CLI, Python, and database code are still mostly feature-scoped rather than always-on | CLI, Python, database, parser, and engine orchestration still ship from the same facade crate |
+| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, and `dataprof-json`, and the facade crate still supports meaningful minimal/default builds | Heavy format and product-specific crates do not exist yet |
+| Shared model | Core report and profiling DTOs live in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
+| Parser boundary | Standard CSV and JSON/JSONL parsing now live outside the facade crate, and the facade parser modules are shims | `robust_csv` and `CsvDiagnostics` are still facade-owned, and heavier readers like Parquet are still in `src/` |
+| Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code still reach metrics through runtime or facade re-exports rather than a smaller explicit adapter boundary |
+| Public API | Existing top-level exports remain available through facade re-exports and compatibility shims | `src/api/mod.rs` still dispatches through facade parser and engine modules instead of thinner crate-specific adapters |
+| Product surfaces | The facade crate is increasingly a shell around internal crates | CLI, Python, database, and engine orchestration still ship from the same facade crate |
 
 ## End-State Workspace
 
@@ -81,8 +89,9 @@ The likely workspace shape is:
 | --- | --- |
 | `dataprof-core` | Core report types, errors, data model, profiler traits, metric selection, sampling, stop conditions |
 | `dataprof-metrics` | ISO 8000/25012 quality metrics, pattern detection, validators, statistical summaries |
-| `dataprof-csv` | CSV and delimiter detection, including robust parsing behavior |
-| `dataprof-json` | JSON and JSONL readers |
+| `dataprof-runtime` | Shared runtime composition helpers, report assembly, streaming stats, and cross-crate profiling adapters |
+| `dataprof-csv` | Standard CSV parsing, delimiter detection, and CSV report assembly |
+| `dataprof-json` | JSON and JSONL scanning plus JSON report assembly |
 | `dataprof-parquet` | Parquet and Arrow-backed profiling |
 | `dataprof-db` | PostgreSQL, MySQL, SQLite connectors and SQL validation |
 | `dataprof-cli` | CLI application crate that builds the `dataprof` binary |
@@ -102,13 +111,9 @@ branch now gives enough evidence to sequence the work more clearly:
 | --- | --- | --- |
 | 1 | `dataprof-core` | Completed. Shared report types, progress/error/config primitives, and profiling model types now have a stable internal home |
 | 2 | `dataprof-metrics` | Completed. `analysis/` and `stats/` proved isolated enough to move behind the new core boundary with facade shims |
-| 3 | `dataprof-csv` and `dataprof-json` | Next logical split once report-building adapters stop being private facade details |
+| 3 | `dataprof-runtime`, `dataprof-csv`, and full `dataprof-json` ownership | Completed. Shared report-building helpers moved first, then standard CSV and JSON parser ownership followed behind facade shims |
 | 4 | `dataprof-parquet` and `dataprof-db` | Keep heavier optional dependencies isolated until the lighter reader crates prove the packaging model |
 | 5 | `dataprof-cli`, `dataprof-python`, facade polish | Leave the user-facing leaf crates for last, after the library contracts stop moving |
-
-Avoid splitting CSV first. The current CSV path still pulls on
-`core::profile_builder`, `core::report_assembler`, and streaming stats internals,
-so it would force adapter churn before the shared core types are stable.
 
 ## Feature Boundary Proposal
 
@@ -169,10 +174,17 @@ Completed on this branch:
 
 ### Phase 3: Split Reader Crates
 
-- Split `dataprof-csv` and `dataprof-json` after report assembly stops being a
-   private monolith detail.
-- Keep the facade crate re-exporting the old entry points during transition.
-- Add deprecation notes only after the replacement paths are proven.
+Completed for the standard CSV and JSON paths on this branch:
+
+- `dataprof-runtime` now owns the shared report-building and streaming helpers
+   that used to block parser extraction
+- `dataprof-csv` owns the standard CSV parser and delimiter detection flow
+- `dataprof-json` owns both the JSON scanner and the higher-level JSON/JSONL
+   report-building API
+- the facade crate still re-exports the old parser entry points through shim
+   modules so downstream module paths remain stable during transition
+- `robust_csv` remains a separate follow-up concern rather than part of the
+   first CSV ownership move
 
 ### Phase 4: Heavy Optional Crates
 
@@ -201,7 +213,7 @@ Completed on this branch:
    "must stay stable", "re-export during migration", and "internal-only".
 2. Turn the current manual validation workflow into explicit compile-test
    coverage for facade re-exports and feature combinations.
-3. Split `dataprof-csv` and `dataprof-json` once parser/report assembly seams
-   are narrow enough to move without broad facade churn.
-4. Decide whether `ProfileReport` should remain a facade-owned composition type
-   or move to another internal crate with a cleaner cross-crate ownership model.
+3. Split `dataprof-parquet` and the database readers now that the lighter
+   parser crates and runtime boundary are proven.
+4. Decide whether `robust_csv` and `CsvDiagnostics` should stay facade-owned,
+   move into `dataprof-csv`, or become their own recovery-focused boundary.
