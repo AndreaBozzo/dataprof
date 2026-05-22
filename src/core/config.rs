@@ -13,8 +13,8 @@ pub use dataprof_core::config::IsoQualityConfig;
 // Each constant is documented with its rationale to avoid "magic numbers".
 
 // Output Configuration Defaults
-/// Default output format for CLI commands.
-/// "text" provides human-readable output suitable for terminal display.
+/// Default output format for report serialization.
+/// "text" provides human-readable output suitable for direct display.
 const DEFAULT_OUTPUT_FORMAT: &str = "text";
 
 /// Enable colored output by default.
@@ -96,7 +96,7 @@ const DEFAULT_DB_SAMPLE_SIZE: usize = 100_000;
 /// Tables with over 1 million rows benefit significantly from sampling.
 const DEFAULT_DB_AUTO_SAMPLE_THRESHOLD: usize = 1_000_000;
 
-/// Main configuration structure for DataProfiler CLI
+/// Main configuration structure for dataprof.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DataprofConfig {
     /// Output configuration
@@ -382,25 +382,35 @@ impl DataprofConfig {
         }
     }
 
-    /// Merge CLI arguments with configuration
-    pub fn merge_with_cli_args(
+    /// Apply explicit runtime overrides to configuration.
+    pub fn apply_overrides(
         &mut self,
-        cli_format: Option<&str>,
-        cli_quality: Option<bool>,
-        cli_progress: Option<bool>,
+        format: Option<&str>,
+        quality: Option<bool>,
+        progress: Option<bool>,
     ) {
-        // CLI arguments take precedence over config file
-        if let Some(format) = cli_format {
+        if let Some(format) = format {
             self.output.default_format = format.to_string();
         }
 
-        if let Some(quality) = cli_quality {
+        if let Some(quality) = quality {
             self.quality.enabled = quality;
         }
 
-        if let Some(progress) = cli_progress {
+        if let Some(progress) = progress {
             self.output.show_progress = progress;
         }
+    }
+
+    /// Deprecated compatibility wrapper for the old CLI-oriented name.
+    #[deprecated(note = "use DataprofConfig::apply_overrides instead")]
+    pub fn merge_with_cli_args(
+        &mut self,
+        format: Option<&str>,
+        quality: Option<bool>,
+        progress: Option<bool>,
+    ) {
+        self.apply_overrides(format, quality, progress);
     }
 
     /// Create a sample configuration file for users

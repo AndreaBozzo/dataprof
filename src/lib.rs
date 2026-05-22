@@ -25,7 +25,6 @@
 //!
 //! | Feature | Description |
 //! |---|---|
-//! | `cli` (default) | CLI binary |
 //! | `parquet` (default) | Parquet and Arrow-backed columnar engine |
 //! | `async-streaming` | Async profiling engine |
 //! | `database` | Database connectivity |
@@ -39,10 +38,6 @@ pub mod api;
 pub mod core;
 pub mod engines;
 pub mod parsers;
-
-// Terminal output (CLI-only: colored, indicatif, is-terminal)
-#[cfg(feature = "cli")]
-pub mod output;
 pub mod serde_helpers;
 pub mod stats;
 pub mod types;

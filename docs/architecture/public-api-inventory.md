@@ -54,6 +54,7 @@ rather than the preferred ownership boundary.
 | `dataprof::core::profile_builder::*` | `dataprof-runtime` |
 | `dataprof::core::report_assembler::*` | `dataprof-runtime` |
 | `dataprof::core::streaming_stats::*` | `dataprof-runtime` |
+| `dataprof::core::memory_tracker::*` | `dataprof-core` |
 
 ## Internal-Only Candidates
 
@@ -66,7 +67,6 @@ or move them behind narrower public entry points.
 | `acceleration` module | Low-level implementation detail around SIMD helpers. |
 | `engines` module | Users should normally go through `Profiler` and `EngineType`. |
 | `serde_helpers` module | Serialization plumbing, not a user workflow. |
-| `output` module | CLI-oriented terminal output and formatting helpers. |
 | `check_memory_leaks`, `get_memory_usage_stats` | Diagnostics helpers with unclear facade-level stability contract. |
 | Database row-processing macros | Useful for compatibility, but not an ideal long-term public API. |
 
@@ -81,6 +81,8 @@ Public API compile coverage should exercise:
 - `--features database`
 - `--features all-db`
 - `--features async-streaming`
+- deprecated compatibility aliases such as `--features cli` and
+  `--features full-cli`
 
 The coverage should prove that paths compile. Behavioral tests can remain
 focused on the owning crates and the end-to-end facade workflows.

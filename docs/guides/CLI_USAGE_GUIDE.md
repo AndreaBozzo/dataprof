@@ -1,5 +1,9 @@
 # CLI Usage Guide
 
+> The CLI has been retired on the crate-redesign branch while dataprof moves
+> library-first. This guide is retained as legacy reference until the docs are
+> reorganized.
+
 Complete reference for the `dataprof` command-line interface (v0.7.1).
 
 ## Installation

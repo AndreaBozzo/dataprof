@@ -232,15 +232,15 @@ cargo clippy -- -W clippy::all
 # Run benchmarks
 cargo bench
 
-# Profile memory usage
-cargo build --release && valgrind ./target/release/dataprof analyze data.csv
+# Run library checks
+cargo check --workspace --all-targets
 ```
 
 ### Project Structure
 
 - `src/` - Main Rust library code
-- `src/cli/` - Command-line interface
-- `src/database/` - Database integration
+- `crates/` - Internal library crates used by the facade
+- `src/database/` - Database compatibility shim
 - `src/analysis/` - Core analysis logic
 - `python/` - Python bindings
 - `tests/` - Integration tests

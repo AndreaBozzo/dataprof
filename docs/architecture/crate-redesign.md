@@ -6,11 +6,11 @@ project easier to install, understand, test, and embed.
 
 ## Current Diagnosis
 
-dataprof has grown into several products inside one crate:
+dataprof has historically grown into several products inside one crate:
 
-- a CLI for profiling files from the terminal
 - a Rust library API
 - a Python package
+- a legacy CLI for profiling files from the terminal
 - format readers for CSV, JSON, JSONL, Parquet, Arrow, and databases
 - streaming and async ingestion
 - ISO 8000/25012 quality metrics
@@ -18,26 +18,27 @@ dataprof has grown into several products inside one crate:
 
 That breadth is useful, but it creates adoption friction:
 
-- new users do not immediately know whether dataprof is primarily a CLI, a
-  Python package, a Rust library, or an academic benchmark artifact
+- new users do not immediately know whether dataprof is primarily a Rust
+  library, a Python package, a CLI, or an academic benchmark artifact
 - default Rust builds pull in heavy format dependencies even when the user only
   wants simple CSV profiling
-- public APIs, Python bindings, CLI behavior, and internal engines live close
-  together, so changes feel riskier than they should
+- public APIs, Python bindings, legacy CLI behavior, and internal engines live
+  close together, so changes feel riskier than they should
 - the project has many valuable features, but the first-use path is not sharp
   enough
 
 ## Design Goals
 
-1. Keep the first user experience simple: `cargo install dataprof`,
-   `dataprof analyze data.csv`, useful output.
-2. Make the Rust library embeddable without CLI, Python, database, or heavy
+1. Make the Rust library embeddable without CLI, Python, database, or heavy
    columnar dependencies unless requested.
+2. Retire the CLI implementation from this redesign branch and keep any old CLI
+   feature names only as compatibility aliases while the project moves
+   library-first.
 3. Keep Python ergonomics independent from Rust internals where possible.
 4. Let format support grow through small, testable crates instead of one
    increasingly crowded parser layer.
-5. Preserve the current CLI command surface during the migration unless a
-   breaking change is explicitly planned.
+5. Keep the public Rust facade stable while treating the old CLI as
+   non-goal/deprecated code.
 6. Make benchmarks and paper artifacts reproducible without making the main
    package feel research-only.
 
@@ -61,6 +62,11 @@ layout:
 - `dataprof-db` now owns database configuration, connector traits, SQL
   validation/security helpers, retry/sampling/streaming helpers, and the
   feature-gated PostgreSQL, MySQL, and SQLite connectors
+- `dataprof-core` now owns `MemoryTracker`, leaving the facade path as a
+  compatibility shim for streaming callers
+- the legacy CLI implementation and CLI-only output module have been removed
+  from the facade crate; `cli` and `full-cli` remain as deprecated no-op
+  compatibility feature names
 - the top-level `dataprof` crate now acts as a facade and compatibility layer:
    it re-exports the moved APIs and keeps the public surface stable while the
    internal crate graph changes
@@ -72,7 +78,7 @@ layout:
 
 That is a meaningful architectural milestone. The remaining work is no longer
 "create a place for shared code". The remaining work is to keep moving the
-engine, CLI, Python, and remaining Arrow-heavy ownership behind the same facade
+engine, Python, and remaining Arrow-heavy ownership behind the same facade
 pattern.
 
 ## Current Boundary Status
@@ -82,13 +88,13 @@ of real boundaries instead of hypothetical ones:
 
 | Area | What is already true | What is still coupled |
 | --- | --- | --- |
-| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, `dataprof-parquet`, and `dataprof-db`, and the facade crate still supports meaningful minimal/default builds | CLI and Python product-specific crates do not exist yet |
-| Shared model | Core report and profiling DTOs live in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
+| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, `dataprof-parquet`, and `dataprof-db`, and the facade crate supports meaningful library builds | Python and engine-oriented library crates do not exist yet |
+| Shared model | Core report and profiling DTOs live in `dataprof-core`, `MemoryTracker` lives in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
 | Parser boundary | Standard CSV, JSON/JSONL, and synchronous Parquet parsing now live outside the facade crate, and the facade parser modules are shims | Async Parquet HTTP handling, parser dispatch, and non-parser product code are still in `src/` |
 | Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code still reach metrics through runtime or facade re-exports rather than a smaller explicit adapter boundary |
 | Public API | Existing top-level exports remain available through facade re-exports and compatibility shims | `src/api/mod.rs` still dispatches through facade parser and engine modules instead of thinner crate-specific adapters |
-| Database boundary | Database config, connector traits, SQL validation/security helpers, retry/sampling/streaming helpers, and concrete SQL connectors now live in `dataprof-db`; `src/database` is a shim | Python async database bindings and CLI database command code still call the facade surface |
-| Product surfaces | The facade crate is increasingly a shell around internal crates | CLI, Python, and engine orchestration still ship from the same facade crate |
+| Database boundary | Database config, connector traits, SQL validation/security helpers, retry/sampling/streaming helpers, and concrete SQL connectors now live in `dataprof-db`; `src/database` is a shim | Python async database bindings still call the facade/database surface |
+| Product surfaces | The facade crate is increasingly a shell around internal crates | Python and engine orchestration still ship from the same facade crate |
 
 ## End-State Workspace
 
@@ -103,7 +109,6 @@ The likely workspace shape is:
 | `dataprof-json` | JSON and JSONL scanning plus JSON report assembly |
 | `dataprof-parquet` | Synchronous Parquet profiling plus shared Arrow `RecordBatchAnalyzer` support used by Parquet-adjacent paths |
 | `dataprof-db` | PostgreSQL, MySQL, SQLite connectors and SQL validation |
-| `dataprof-cli` | CLI application crate that builds the `dataprof` binary |
 | `dataprof-python` | PyO3 extension and Python report wrappers |
 | `dataprof` | Facade crate for common Rust users, re-exporting stable APIs behind features |
 
@@ -122,7 +127,7 @@ branch now gives enough evidence to sequence the work more clearly:
 | 2 | `dataprof-metrics` | Completed. `analysis/` and `stats/` proved isolated enough to move behind the new core boundary with facade shims |
 | 3 | `dataprof-runtime`, `dataprof-csv`, and full `dataprof-json` ownership | Completed. Shared report-building helpers moved first, then standard CSV and JSON parser ownership followed behind facade shims |
 | 4 | `dataprof-parquet` | Completed. The synchronous Parquet reader and shared `RecordBatchAnalyzer` moved behind a new crate while facade module paths stayed stable |
-| 5 | `dataprof-db`, `dataprof-cli`, `dataprof-python`, facade polish | `dataprof-db` is completed behind a facade shim. Leave CLI, Python, and final facade polish for the remaining product-surface slices |
+| 5 | `dataprof-db`, `dataprof-python`, facade polish | `dataprof-db` is completed behind a facade shim, and legacy CLI code has been removed. Leave Python, engine-library slices, and final facade polish for the remaining work |
 
 ## Feature Boundary Proposal
 
@@ -133,7 +138,7 @@ dependencies with clearer ownership:
 
 | Feature | Intended dependency boundary |
 | --- | --- |
-| default | Keep `cargo install dataprof` working: CLI plus common local formats |
+| default | Library-friendly default feature set; no CLI binary |
 | `csv` | CSV parsing and CSV-specific config only |
 | `json` | JSON and JSONL support only |
 | `arrow` | Columnar engine internals, not the whole public facade |
@@ -142,23 +147,22 @@ dependencies with clearer ownership:
 | `postgres`, `mysql`, `sqlite` | Individual SQL backends through `dataprof-db` features |
 | `python` | PyO3 only in the Python crate or extension build |
 | `datafusion` | DataFusion integration only |
-| `full-cli` | CLI plus all production connectors and heavy backends |
+| `cli`, `full-cli` | Deprecated compatibility aliases; no CLI implementation is built |
 
-Open decision: decide whether the facade crate default should optimize for
-`cargo install dataprof` or `dataprof = "0.8"` as a dependency. If one package
-must serve both, the CLI can stay default while library docs recommend
-`default-features = false`.
+The facade crate now optimizes for `dataprof = "0.8"` as a Rust dependency.
+CLI packaging can return later as a separate product if it becomes useful, but
+it is not part of the current library-first redesign.
 
 ## Migration Plan
 
 ### Phase 0: Packaging Baseline
 
-Completed or largely completed on this branch:
+Completed or intentionally changed on this branch:
 
-- Make the installed command match the README: `dataprof`.
 - Turn Arrow and Parquet into optional dependencies.
 - Make unsupported backend paths fail explicitly at runtime.
-- Keep the common CLI path on by default.
+- Remove the legacy CLI binary and command modules from the facade crate.
+- Keep old `cli`/`full-cli` feature names as deprecated compatibility aliases.
 
 ### Phase 1: Extract `dataprof-core`
 
@@ -228,7 +232,9 @@ Completed for the extracted reader crates on this branch:
 2. Turn the current manual validation workflow into explicit compile-test
    coverage for facade re-exports and feature combinations.
 3. Keep tightening the `dataprof-db` split by validating facade/database feature
-   combinations and removing facade-only assumptions from CLI/Python callers.
-4. Decide whether the async HTTP Parquet path should stay facade-owned for a
+   combinations and removing facade-only assumptions from Python callers.
+4. Continue with library-oriented crate boundaries: engine orchestration, async
+   streaming, and Python-facing adapters.
+5. Decide whether the async HTTP Parquet path should stay facade-owned for a
    while longer or move behind `dataprof-parquet` in a later network-aware
    slice.
