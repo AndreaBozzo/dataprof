@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use dataprof_json::scan_json_from_reader;
+pub use dataprof_json::{JsonFormat, JsonParserConfig};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::BufRead;
@@ -11,52 +12,6 @@ use crate::core::streaming_stats::StreamingColumnCollection;
 use crate::types::{
     ColumnProfile, DataSource, ExecutionMetadata, FileFormat, ProfileReport, QualityDimension,
 };
-
-// ============================================================================
-// NEW CONFIG-BASED API (#218)
-// ============================================================================
-
-/// JSON/JSONL format hint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JsonFormat {
-    /// Standard JSON array of objects (`[{...}, {...}]`).
-    JsonArray,
-    /// JSON Lines — one JSON object per line.
-    Jsonl,
-}
-
-/// Configuration for JSON/JSONL parsing and analysis.
-#[derive(Debug, Clone, Default)]
-pub struct JsonParserConfig {
-    /// Force a specific format (None = auto-detect from content).
-    pub format: Option<JsonFormat>,
-    /// Maximum rows to process (None = all rows).
-    pub max_rows: Option<usize>,
-}
-
-impl JsonParserConfig {
-    /// Set the maximum number of rows to process.
-    pub fn with_max_rows(mut self, max_rows: usize) -> Self {
-        self.max_rows = Some(max_rows);
-        self
-    }
-
-    /// Force JSONL format.
-    pub fn jsonl() -> Self {
-        Self {
-            format: Some(JsonFormat::Jsonl),
-            ..Default::default()
-        }
-    }
-
-    /// Force JSON array format.
-    pub fn json_array() -> Self {
-        Self {
-            format: Some(JsonFormat::JsonArray),
-            ..Default::default()
-        }
-    }
-}
 
 /// Convert a JSON [`Value`] to a flat string for column storage.
 fn json_value_to_string(value: &Value) -> String {
@@ -97,14 +52,12 @@ fn feed_json_object(
 
 /// Analyze JSON/JSONL data from a buffered reader using streaming statistics.
 ///
-/// - **JSONL**: true streaming — reads line-by-line with bounded memory.
-/// - **JSON array**: parsed as a streaming array of objects using
-///   `serde_json::Deserializer::from_reader`, processing each element with
-///   [`StreamingColumnCollection`] without buffering the entire array in memory.
+/// The low-level JSON tokenization and format detection live in `dataprof-json`.
+/// The facade layer keeps ownership of stats accumulation and profile building.
 ///
 /// Returns `(column_profiles, streaming_stats, rows_read, detected_format)`.
 pub fn analyze_json_from_reader<R: BufRead>(
-    mut reader: R,
+    reader: R,
     config: &JsonParserConfig,
 ) -> Result<
     (
@@ -116,188 +69,28 @@ pub fn analyze_json_from_reader<R: BufRead>(
     ),
     DataProfilerError,
 > {
-    // Auto-detect format by peeking at the first non-whitespace byte
-    let format = match config.format {
-        Some(JsonFormat::JsonArray) => FileFormat::Json,
-        Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
-        None => match consume_leading_whitespace(&mut reader)? {
-            Some(b'[') => FileFormat::Json,
-            _ => FileFormat::Jsonl,
-        },
-    };
-
     let mut column_stats = StreamingColumnCollection::new();
     let mut known_columns: Vec<String> = Vec::new();
     let mut known_columns_set: HashSet<String> = HashSet::new();
-    let mut rows_read = 0;
-    let mut malformed_lines = 0;
 
-    match format {
-        FileFormat::Jsonl => {
-            // Parse one top-level JSON value at a time from the reader. This keeps
-            // memory bounded to a single value and handles pretty-printed root objects.
-            loop {
-                if let Some(max) = config.max_rows
-                    && rows_read >= max
-                {
-                    break;
-                }
-
-                let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
-                let value: Value = match Value::deserialize(&mut deserializer) {
-                    Ok(v) => v,
-                    Err(err) if err.classify() == serde_json::error::Category::Eof => break,
-                    Err(_) => {
-                        malformed_lines += 1;
-                        skip_to_next_line(&mut reader)?;
-                        continue;
-                    }
-                };
-
-                if let Value::Object(ref obj) = value {
-                    feed_json_object(
-                        obj,
-                        &mut known_columns,
-                        &mut known_columns_set,
-                        &mut column_stats,
-                    );
-                    rows_read += 1;
-                }
-            }
-        }
-        _ => {
-            // JSON array: stream elements efficiently
-            let mut found_array = false;
-            loop {
-                let mut consume = 0;
-                {
-                    let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-                    if buf.is_empty() {
-                        break;
-                    }
-                    for &b in buf {
-                        consume += 1;
-                        if b == b'[' {
-                            found_array = true;
-                            break;
-                        } else if !b.is_ascii_whitespace() {
-                            break;
-                        }
-                    }
-                }
-                reader.consume(consume);
-                if found_array || consume == 0 {
-                    break;
-                }
-            }
-
-            if !found_array {
-                // Format was forced to JsonArray but no '[' was found
-                if config.format.is_some() {
-                    return Err(DataProfilerError::JsonParsingError {
-                        message: "Expected JSON array (starts with '[') but input does not match"
-                            .to_string(),
-                    });
-                }
-                // Auto-detected: fall through with 0 rows
-            }
-
-            if found_array {
-                loop {
-                    let mut consume = 0;
-                    let mut found_value = false;
-                    let mut end_of_array = false;
-
-                    {
-                        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-                        if buf.is_empty() {
-                            break;
-                        }
-                        for &b in buf {
-                            if b.is_ascii_whitespace() || b == b',' {
-                                consume += 1;
-                            } else if b == b']' {
-                                end_of_array = true;
-                                consume += 1;
-                                break;
-                            } else {
-                                found_value = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    reader.consume(consume);
-                    if end_of_array {
-                        break;
-                    }
-
-                    if found_value {
-                        if let Some(max) = config.max_rows
-                            && rows_read >= max
-                        {
-                            break;
-                        }
-
-                        let mut de = serde_json::Deserializer::from_reader(&mut reader);
-                        match serde::Deserialize::deserialize(&mut de) {
-                            Ok(Value::Object(obj)) => {
-                                feed_json_object(
-                                    &obj,
-                                    &mut known_columns,
-                                    &mut known_columns_set,
-                                    &mut column_stats,
-                                );
-                                rows_read += 1;
-                            }
-                            Ok(_) => { /* Skip non-object elements */ }
-                            Err(_) => {
-                                // If parsing fails (e.g., malformed object), stop array stream
-                                malformed_lines += 1;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let summary = scan_json_from_reader(reader, config, |obj| {
+        feed_json_object(
+            obj,
+            &mut known_columns,
+            &mut known_columns_set,
+            &mut column_stats,
+        );
+    })?;
 
     let profiles = profile_builder::profiles_from_streaming(&column_stats, false, false, None);
 
-    Ok((profiles, column_stats, rows_read, malformed_lines, format))
-}
-
-fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, DataProfilerError> {
-    loop {
-        let mut bytes_to_consume = 0;
-        let first_non_whitespace = {
-            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-            if buf.is_empty() {
-                return Ok(None);
-            }
-
-            let first_non_whitespace = buf.iter().find(|byte| !byte.is_ascii_whitespace()).copied();
-            if first_non_whitespace.is_none() {
-                bytes_to_consume = buf.len();
-            }
-            first_non_whitespace
-        };
-
-        if first_non_whitespace.is_some() {
-            return Ok(first_non_whitespace);
-        }
-
-        reader.consume(bytes_to_consume);
-    }
-}
-
-fn skip_to_next_line<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
-    let mut discarded = Vec::new();
-    reader
-        .read_until(b'\n', &mut discarded)
-        .map_err(DataProfilerError::from)?;
-    Ok(())
+    Ok((
+        profiles,
+        column_stats,
+        summary.rows_read,
+        summary.malformed_lines,
+        summary.format,
+    ))
 }
 
 /// Analyze a JSON/JSONL file, returning a full [`ProfileReport`].

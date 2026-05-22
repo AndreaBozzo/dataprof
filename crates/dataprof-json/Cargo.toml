@@ -1,0 +1,12 @@
+[package]
+name = "dataprof-json"
+version = "0.7.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "JSON and JSONL scanning support for dataprof"
+
+[dependencies]
+dataprof-core = { path = "../dataprof-core" }
+serde = "1.0"
+serde_json = "1.0.149"

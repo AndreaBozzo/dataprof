@@ -1604,6 +1604,7 @@ dependencies = [
  "csv",
  "datafusion",
  "dataprof-core",
+ "dataprof-json",
  "dataprof-metrics",
  "env_logger",
  "futures",
@@ -1651,6 +1652,15 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "dataprof-json"
+version = "0.7.1"
+dependencies = [
+ "dataprof-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

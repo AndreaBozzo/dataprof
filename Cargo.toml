@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/dataprof-core", "crates/dataprof-metrics"]
+members = [
+    "crates/dataprof-core",
+    "crates/dataprof-metrics",
+    "crates/dataprof-json",
+]
 resolver = "3"
 
 [package]
@@ -45,6 +49,7 @@ csv = "1.4"  # Updated: 1.3.1 -> 1.4.0 (minor bump, backward compatible)
 serde = { version = "1.0", features = ["derive"] }
 dataprof-core = { path = "crates/dataprof-core" }
 dataprof-metrics = { path = "crates/dataprof-metrics" }
+dataprof-json = { path = "crates/dataprof-json" }
 
 # CLI (optional — only needed for the binary)
 clap = { version = "4.5.54", features = ["derive"], optional = true }
