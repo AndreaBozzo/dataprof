@@ -772,6 +772,7 @@ pub async fn quick_row_count_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::DataType;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -848,6 +849,7 @@ mod tests {
         assert_eq!(result.columns[1].name, "y");
     }
 
+    #[cfg(feature = "parquet")]
     #[test]
     fn test_infer_schema_parquet() {
         use arrow::array::{Float64Array, Int32Array, StringArray};
@@ -983,6 +985,7 @@ mod tests {
         assert!(result.exact);
     }
 
+    #[cfg(feature = "parquet")]
     #[test]
     fn test_quick_row_count_parquet() {
         use arrow::array::Int32Array;
@@ -1017,6 +1020,7 @@ mod tests {
         assert_eq!(result.count, 0);
     }
 
+    #[cfg(feature = "parquet")]
     #[test]
     fn test_arrow_type_mapping() {
         use arrow::datatypes::DataType as AT;
@@ -1046,7 +1050,7 @@ mod async_tests {
     use super::*;
     use crate::engines::streaming::BytesSource;
     use crate::engines::streaming::async_source::AsyncSourceInfo;
-    use crate::types::FileFormat;
+    use crate::types::{DataType, FileFormat};
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(

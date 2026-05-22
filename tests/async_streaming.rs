@@ -165,6 +165,7 @@ async fn test_profiler_profile_file_csv() {
 }
 
 /// Verify `Profiler::profile_file()` handles Parquet via spawn_blocking.
+#[cfg(feature = "parquet")]
 #[tokio::test]
 async fn test_profiler_profile_file_parquet() {
     use arrow::array::{Int32Array, StringArray};

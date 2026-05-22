@@ -7,6 +7,7 @@ use crate::DataProfilerError;
 use crate::security::{validate_base_query, validate_sql_identifier};
 
 /// Generate "not connected to database" error
+#[allow(dead_code)]
 pub fn not_connected_error() -> DataProfilerError {
     DataProfilerError::database_connection("Not connected to database")
 }
@@ -115,6 +116,7 @@ macro_rules! process_rows_to_columns {
 }
 
 /// Build a count query for a given table or query
+#[allow(dead_code)]
 pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {
     if query.trim().to_uppercase().starts_with("SELECT") {
         let validated_query = validate_base_query(query)?;
@@ -129,6 +131,7 @@ pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {
 }
 
 /// Build a batch query with LIMIT and OFFSET
+#[allow(dead_code)]
 pub fn build_batch_query(
     query: &str,
     batch_size: usize,

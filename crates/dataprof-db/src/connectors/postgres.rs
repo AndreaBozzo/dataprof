@@ -5,8 +5,10 @@ use super::common::feature_not_enabled_error;
 #[cfg(feature = "postgres")]
 use super::common::{build_count_query, not_connected_error};
 use crate::connection::ConnectionInfo;
+#[cfg(feature = "postgres")]
 use crate::security::validate_sql_identifier;
 use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector};
+#[cfg(feature = "postgres")]
 use crate::{process_rows_to_columns, streaming_profile_loop};
 use async_trait::async_trait;
 use std::collections::HashMap;
