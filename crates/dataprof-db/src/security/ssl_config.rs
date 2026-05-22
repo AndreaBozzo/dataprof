@@ -1,7 +1,7 @@
 //! SSL/TLS configuration for secure database connections
 
 use super::utils::add_query_param;
-use crate::core::errors::DataProfilerError;
+use crate::DataProfilerError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -40,7 +40,7 @@ impl SslConfig {
     pub fn production() -> Self {
         Self {
             require_ssl: true,
-            ca_cert_path: None, // Use system CA bundle
+            ca_cert_path: None,
             client_cert_path: None,
             client_key_path: None,
             verify_server_cert: true,
@@ -62,7 +62,6 @@ impl SslConfig {
 
     /// Validate SSL configuration
     pub fn validate(&self) -> Result<(), DataProfilerError> {
-        // Check if certificate files exist
         if let Some(ca_cert_path) = &self.ca_cert_path
             && !Path::new(ca_cert_path).exists()
         {
@@ -90,7 +89,6 @@ impl SslConfig {
             )));
         }
 
-        // Validate SSL mode
         if let Some(ssl_mode) = &self.ssl_mode {
             let valid_modes = [
                 "disable",
@@ -109,7 +107,6 @@ impl SslConfig {
             }
         }
 
-        // Warn about security implications
         if self.require_ssl && !self.verify_server_cert {
             log::warn!(
                 "SSL required but server certificate verification is disabled. This may be insecure."
@@ -162,7 +159,6 @@ impl SslConfig {
                 }
             }
             "sqlite" => {
-                // SQLite doesn't support SSL as it's an embedded database
                 if self.require_ssl {
                     log::warn!("SSL configuration ignored for SQLite (embedded database)");
                 }

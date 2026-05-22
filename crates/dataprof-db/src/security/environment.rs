@@ -13,7 +13,6 @@ pub fn load_ssl_config_from_environment(database_type: &str) -> SslConfig {
 
     let mut ssl_config = SslConfig::default();
 
-    // Load SSL mode
     if let Ok(ssl_mode) =
         env::var(format!("{}_SSL_MODE", prefix)).or_else(|_| env::var("DATABASE_SSL_MODE"))
     {
@@ -21,7 +20,6 @@ pub fn load_ssl_config_from_environment(database_type: &str) -> SslConfig {
         ssl_config.require_ssl = true;
     }
 
-    // Load certificate paths
     ssl_config.ca_cert_path = env::var(format!("{}_SSL_CA", prefix))
         .or_else(|_| env::var("DATABASE_SSL_CA"))
         .ok();
@@ -34,14 +32,12 @@ pub fn load_ssl_config_from_environment(database_type: &str) -> SslConfig {
         .or_else(|_| env::var("DATABASE_SSL_KEY"))
         .ok();
 
-    // Load SSL verification setting
     if let Ok(verify_str) =
         env::var(format!("{}_SSL_VERIFY", prefix)).or_else(|_| env::var("DATABASE_SSL_VERIFY"))
     {
         ssl_config.verify_server_cert = verify_str.parse().unwrap_or(true);
     }
 
-    // Auto-detect production environment
     if env::var("ENVIRONMENT").unwrap_or_default() == "production"
         || env::var("NODE_ENV").unwrap_or_default() == "production"
     {

@@ -3,12 +3,8 @@
 //! This module provides reusable functions to reduce code duplication across
 //! PostgreSQL, MySQL, and SQLite connectors.
 
-use crate::core::errors::DataProfilerError;
-use crate::database::{validate_base_query, validate_sql_identifier};
-
-// ============================================================================
-// Error Helpers
-// ============================================================================
+use crate::DataProfilerError;
+use crate::security::{validate_base_query, validate_sql_identifier};
 
 /// Generate "not connected to database" error
 pub fn not_connected_error() -> DataProfilerError {
@@ -21,19 +17,13 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
     DataProfilerError::database_feature_disabled(db_name, feature)
 }
 
-// ============================================================================
-// Streaming Batch Loop Macro
-// ============================================================================
-
 /// Macro to generate the streaming batch loop for profiling queries.
-/// Handles the common pattern while allowing database-specific pool types.
-/// Includes inline row processing to avoid complex generic trait bounds.
 #[macro_export]
 macro_rules! streaming_profile_loop {
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal) => {{
         use sqlx::{Column, Row};
-        use $crate::database::connectors::common::build_batch_query;
-        use $crate::database::streaming::{StreamingProgress, merge_column_batches};
+        use $crate::connectors::common::build_batch_query;
+        use $crate::streaming::{StreamingProgress, merge_column_batches};
 
         let mut progress = StreamingProgress::new(Some($total_rows as u64));
         let mut all_batches: Vec<std::collections::HashMap<String, Vec<String>>> = Vec::new();
@@ -44,17 +34,14 @@ macro_rules! streaming_profile_loop {
             let rows = sqlx::query(&batch_query)
                 .fetch_all($pool)
                 .await
-                .map_err(
-                    |e| $crate::core::errors::DataProfilerError::DatabaseQueryError {
-                        message: format!("Batch query execution failed: {}", e),
-                    },
-                )?;
+                .map_err(|e| $crate::DataProfilerError::DatabaseQueryError {
+                    message: format!("Batch query execution failed: {}", e),
+                })?;
 
             if rows.is_empty() {
                 break;
             }
 
-            // Process batch - inline to use concrete row types
             let columns = rows[0].columns();
             let mut batch_result: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::with_capacity(columns.len());
@@ -97,7 +84,6 @@ macro_rules! streaming_profile_loop {
 }
 
 /// Macro to process rows into column-oriented HashMap.
-/// Used for single-query (non-streaming) profiling.
 #[macro_export]
 macro_rules! process_rows_to_columns {
     ($rows:expr) => {{
@@ -127,10 +113,6 @@ macro_rules! process_rows_to_columns {
         }
     }};
 }
-
-// ============================================================================
-// Query Building Helpers
-// ============================================================================
 
 /// Build a count query for a given table or query
 pub fn build_count_query(query: &str) -> Result<String, DataProfilerError> {

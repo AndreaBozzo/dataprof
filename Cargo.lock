@@ -1605,6 +1605,7 @@ dependencies = [
  "datafusion",
  "dataprof-core",
  "dataprof-csv",
+ "dataprof-db",
  "dataprof-json",
  "dataprof-metrics",
  "dataprof-parquet",
@@ -1637,7 +1638,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
- "url",
  "uuid",
 ]
 
@@ -1667,6 +1667,23 @@ dependencies = [
  "dataprof-runtime",
  "log",
  "tempfile",
+]
+
+[[package]]
+name = "dataprof-db"
+version = "0.7.1"
+dependencies = [
+ "async-trait",
+ "dataprof-core",
+ "dataprof-metrics",
+ "dataprof-runtime",
+ "log",
+ "rand 0.9.3",
+ "regex",
+ "serde",
+ "sqlx",
+ "tokio",
+ "url",
 ]
 
 [[package]]

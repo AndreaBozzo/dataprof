@@ -1,6 +1,6 @@
 //! Connection management and utilities for database connectors
 
-use crate::core::errors::DataProfilerError;
+use crate::DataProfilerError;
 use url::Url;
 
 /// Parse database connection string and extract components
@@ -38,7 +38,6 @@ impl std::fmt::Debug for ConnectionInfo {
 impl ConnectionInfo {
     /// Parse a connection string into its components
     pub fn parse(connection_string: &str) -> Result<Self, DataProfilerError> {
-        // Handle file paths (for SQLite)
         if !connection_string.contains("://") {
             return Ok(ConnectionInfo {
                 scheme: "file".to_string(),

@@ -1,0 +1,27 @@
+[package]
+name = "dataprof-db"
+version = "0.7.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "Database connectivity and query profiling support for dataprof"
+
+[features]
+default = []
+postgres = ["dep:sqlx", "sqlx/postgres"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+all-db = ["postgres", "mysql", "sqlite"]
+
+[dependencies]
+async-trait = "0.1"
+dataprof-core = { path = "../dataprof-core" }
+dataprof-metrics = { path = "../dataprof-metrics" }
+dataprof-runtime = { path = "../dataprof-runtime" }
+log = "0.4"
+rand = { version = "0.9.3", features = ["small_rng"] }
+regex = "1.12"
+serde = { version = "1.0", features = ["derive"] }
+sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "chrono", "uuid"], optional = true, default-features = false }
+tokio = { version = "1.49", features = ["full"] }
+url = "2.5.8"

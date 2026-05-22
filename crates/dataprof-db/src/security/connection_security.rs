@@ -4,7 +4,7 @@ use super::{
     credentials::DatabaseCredentials, environment::load_ssl_config_from_environment,
     ssl_config::SslConfig,
 };
-use crate::core::errors::DataProfilerError;
+use crate::DataProfilerError;
 use std::collections::HashMap;
 
 /// Validate database connection security
@@ -15,9 +15,7 @@ pub fn validate_connection_security(
 ) -> Result<Vec<String>, DataProfilerError> {
     let mut warnings = Vec::new();
 
-    // Parse connection string to check for security issues
-    if let Ok(conn_info) = crate::database::connection::ConnectionInfo::parse(connection_string) {
-        // Check for plaintext passwords in connection string
+    if let Ok(conn_info) = crate::connection::ConnectionInfo::parse(connection_string) {
         if conn_info.password.is_some() {
             warnings.push(
                 "Password embedded in connection string. Consider using environment variables."
@@ -25,7 +23,6 @@ pub fn validate_connection_security(
             );
         }
 
-        // Check SSL configuration
         if database_type != "sqlite" {
             let has_ssl_params = conn_info.query_params.contains_key("sslmode")
                 || conn_info.query_params.contains_key("tls")
@@ -39,7 +36,6 @@ pub fn validate_connection_security(
             }
         }
 
-        // Check for development/localhost connections in production
         if let Some(host) = &conn_info.host
             && (host == "localhost" || host == "127.0.0.1" || host == "::1")
         {
@@ -48,7 +44,6 @@ pub fn validate_connection_security(
             );
         }
 
-        // Check for default ports
         let default_ports = HashMap::from([("postgresql", 5432), ("mysql", 3306)]);
 
         if let Some(default_port) = default_ports.get(database_type)
@@ -61,7 +56,6 @@ pub fn validate_connection_security(
         }
     }
 
-    // Validate SSL config
     if let Err(e) = ssl_config.validate() {
         warnings.push(format!("SSL configuration issue: {}", e));
     }
@@ -75,7 +69,6 @@ pub fn load_secure_database_config(
 ) -> Result<(String, SslConfig), DataProfilerError> {
     let credentials = DatabaseCredentials::from_environment(database_type);
 
-    // Build base connection string
     let base_connection_string = match database_type {
         "postgresql" => {
             let host = credentials.host.as_deref().unwrap_or("localhost");
@@ -101,20 +94,13 @@ pub fn load_secure_database_config(
         }
     };
 
-    // Apply credentials
     let connection_string = credentials.apply_to_connection_string(&base_connection_string);
-
-    // Load SSL config from environment
     let ssl_config = load_ssl_config_from_environment(database_type);
-
-    // Apply SSL to connection string
     let secure_connection_string =
         ssl_config.apply_to_connection_string(connection_string, database_type);
 
-    // Validate credentials
     credentials.validate(database_type)?;
 
-    // Validate security
     let warnings =
         validate_connection_security(&secure_connection_string, &ssl_config, database_type)?;
     for warning in warnings {

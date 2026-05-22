@@ -126,6 +126,9 @@ pub use database::{
     SslConfig, analyze_database, create_connector,
 };
 
+#[cfg(feature = "database")]
+pub use dataprof_db::{process_rows_to_columns, streaming_profile_loop};
+
 /// Global memory leak detection utility
 pub fn check_memory_leaks() -> String {
     use crate::core::MemoryTracker;

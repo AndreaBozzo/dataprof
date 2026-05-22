@@ -1,6 +1,6 @@
 //! Database credentials management with environment variable support
 
-use crate::core::errors::DataProfilerError;
+use crate::DataProfilerError;
 use std::collections::HashMap;
 use std::env;
 
@@ -55,7 +55,6 @@ impl DatabaseCredentials {
 
         let mut creds = Self::new();
 
-        // Load standard environment variables
         creds.username = env::var(format!("{}_USER", prefix))
             .ok()
             .or_else(|| env::var(format!("{}_USERNAME", prefix)).ok())
@@ -85,9 +84,8 @@ impl DatabaseCredentials {
             .or_else(|| env::var("DATABASE_NAME").ok())
             .or_else(|| env::var("DB_NAME").ok());
 
-        // Load URL-style environment variable
         if let Ok(database_url) = env::var("DATABASE_URL")
-            && let Ok(parsed) = crate::database::connection::ConnectionInfo::parse(&database_url)
+            && let Ok(parsed) = crate::connection::ConnectionInfo::parse(&database_url)
         {
             creds.username = creds.username.or(parsed.username);
             creds.password = creds.password.or(parsed.password);
@@ -96,10 +94,9 @@ impl DatabaseCredentials {
             creds.database = creds.database.or(parsed.database);
         }
 
-        // Load database-specific URL variables
         let url_var = format!("{}_URL", prefix);
         if let Ok(url) = env::var(&url_var)
-            && let Ok(parsed) = crate::database::connection::ConnectionInfo::parse(&url)
+            && let Ok(parsed) = crate::connection::ConnectionInfo::parse(&url)
         {
             creds.username = creds.username.or(parsed.username);
             creds.password = creds.password.or(parsed.password);
@@ -113,10 +110,7 @@ impl DatabaseCredentials {
 
     /// Apply credentials to connection string
     pub fn apply_to_connection_string(&self, connection_string: &str) -> String {
-        if let Ok(mut conn_info) =
-            crate::database::connection::ConnectionInfo::parse(connection_string)
-        {
-            // Override with environment variables if they exist
+        if let Ok(mut conn_info) = crate::connection::ConnectionInfo::parse(connection_string) {
             if let Some(username) = &self.username {
                 conn_info.username = Some(username.clone());
             }
@@ -133,7 +127,6 @@ impl DatabaseCredentials {
                 conn_info.database = Some(database.clone());
             }
 
-            // Add extra parameters
             for (key, value) in &self.extra_params {
                 conn_info.query_params.insert(key.clone(), value.clone());
             }
@@ -160,10 +153,8 @@ impl DatabaseCredentials {
                         database_type
                     )));
                 }
-                // Password might be optional for some authentication methods
             }
             "sqlite" => {
-                // SQLite doesn't need network credentials
                 if self.database.is_none() {
                     log::warn!("No database file path specified for SQLite");
                 }
@@ -205,14 +196,12 @@ mod tests {
         let mut creds = DatabaseCredentials::new();
         creds.username = Some("testuser".to_string());
 
-        // Test basic masking functionality without password field to avoid security scanner
         let masked = creds.to_masked_string();
         assert!(masked.contains("testuser"));
 
-        // Test that password masking works by testing the masking function directly
         let test_creds_with_pass = DatabaseCredentials {
             username: Some("user".to_string()),
-            password: Some(format!("{}123", "testpass")), // Dynamic construction
+            password: Some(format!("{}123", "testpass")),
             host: None,
             port: None,
             database: Some("testdb".to_string()),

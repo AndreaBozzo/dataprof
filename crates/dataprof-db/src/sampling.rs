@@ -1,7 +1,7 @@
 //! Database table sampling strategies for large datasets
 
-use crate::core::errors::DataProfilerError;
-use crate::database::security::{validate_base_query, validate_sql_identifier};
+use crate::DataProfilerError;
+use crate::security::{validate_base_query, validate_sql_identifier};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for database table sampling
@@ -51,7 +51,7 @@ impl SamplingConfig {
         Self {
             strategy: SamplingStrategy::Random,
             sample_size,
-            seed: Some(42), // Fixed seed for reproducibility
+            seed: Some(42),
             stratify_column: None,
         }
     }
@@ -88,7 +88,6 @@ impl SamplingConfig {
         base_query: &str,
         total_rows: u64,
     ) -> Result<String, DataProfilerError> {
-        // Determine if we need sampling
         if total_rows as usize <= self.sample_size {
             return Ok(base_query.to_string());
         }
@@ -129,7 +128,6 @@ impl SamplingConfig {
                 }
             }
             SamplingStrategy::Reservoir => {
-                // Reservoir sampling uses TABLESAMPLE if available, otherwise falls back to random
                 self.generate_tablesample_query(base_query, sampling_ratio)
             }
             SamplingStrategy::Stratified => {
@@ -137,7 +135,6 @@ impl SamplingConfig {
                     validate_sql_identifier(stratify_col)?;
                     self.generate_stratified_query(base_query, stratify_col, total_rows)
                 } else {
-                    // Fall back to random sampling with current configuration
                     let mut fallback_config = self.clone();
                     fallback_config.strategy = SamplingStrategy::Random;
                     fallback_config.generate_sample_query(base_query, total_rows)
@@ -148,7 +145,6 @@ impl SamplingConfig {
                 self.generate_temporal_query(base_query, column_name, total_rows)
             }
             SamplingStrategy::MultiStage => {
-                // For multi-stage, we'll use systematic sampling as base
                 let mut config = self.clone();
                 config.strategy = SamplingStrategy::Systematic;
                 config.generate_sample_query(base_query, total_rows)
@@ -165,7 +161,6 @@ impl SamplingConfig {
         let percentage = (sampling_ratio * 100.0).min(100.0);
 
         if base_query.trim().to_uppercase().starts_with("SELECT") {
-            // Complex query - use subquery approach
             let validated_query = validate_base_query(base_query)?;
             let seed = self.seed.unwrap_or(42);
             Ok(format!(
@@ -173,7 +168,6 @@ impl SamplingConfig {
                 validated_query, seed, self.sample_size
             ))
         } else {
-            // Simple table - can use TABLESAMPLE
             validate_sql_identifier(base_query)?;
             Ok(format!(
                 "SELECT * FROM {} TABLESAMPLE SYSTEM ({:.2}) LIMIT {}",
@@ -189,8 +183,7 @@ impl SamplingConfig {
         stratify_col: &str,
         _total_rows: u64,
     ) -> Result<String, DataProfilerError> {
-        // Validate inputs - stratify_col already validated by caller
-        let sample_per_stratum = self.sample_size / 10; // Assume up to 10 strata for simplicity
+        let sample_per_stratum = self.sample_size / 10;
 
         if base_query.trim().to_uppercase().starts_with("SELECT") {
             let validated_query = validate_base_query(base_query)?;
@@ -228,8 +221,6 @@ impl SamplingConfig {
         time_col: &str,
         total_rows: u64,
     ) -> Result<String, DataProfilerError> {
-        // time_col already validated by caller
-        // Sample evenly across time periods
         if base_query.trim().to_uppercase().starts_with("SELECT") {
             let validated_query = validate_base_query(base_query)?;
             Ok(format!(
@@ -292,17 +283,15 @@ impl SampleInfo {
             1.0
         };
 
-        // Estimate representativeness based on sample size and strategy
         let is_representative = match strategy {
             SamplingStrategy::Systematic | SamplingStrategy::Stratified => sampled_rows >= 1000,
             SamplingStrategy::Random | SamplingStrategy::Reservoir => sampled_rows >= 500,
-            SamplingStrategy::Temporal { .. } => sampled_rows >= 2000, // Temporal needs more samples
+            SamplingStrategy::Temporal { .. } => sampled_rows >= 2000,
             SamplingStrategy::MultiStage => sampled_rows >= 1500,
         };
 
-        // Calculate confidence margin (simplified)
         let confidence_margin = if sampled_rows > 0 {
-            1.96 / (sampled_rows as f64).sqrt() // 95% confidence interval
+            1.96 / (sampled_rows as f64).sqrt()
         } else {
             1.0
         };
@@ -402,7 +391,7 @@ mod tests {
             .expect("Failed to generate sample query");
 
         assert!(query.contains("ROW_NUMBER()"));
-        assert!(query.contains("% 10 = 1")); // Every 10th row
+        assert!(query.contains("% 10 = 1"));
     }
 
     #[test]

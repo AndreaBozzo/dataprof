@@ -1,6 +1,6 @@
 //! Streaming utilities for processing large database result sets
 
-use crate::core::errors::DataProfilerError;
+use crate::DataProfilerError;
 use std::collections::HashMap;
 
 /// Configuration for streaming database results
@@ -8,7 +8,7 @@ use std::collections::HashMap;
 pub struct StreamingConfig {
     pub batch_size: usize,
     pub max_memory_mb: usize,
-    pub progress_callback: Option<fn(u64, u64)>, // (processed_rows, total_rows)
+    pub progress_callback: Option<fn(u64, u64)>,
 }
 
 impl Default for StreamingConfig {
@@ -58,10 +58,9 @@ pub fn apply_sampling_if_needed(
     let memory_usage_mb = memory_usage_bytes / 1_048_576;
 
     if memory_usage_mb <= max_memory_mb {
-        return Ok((columns, false)); // No sampling needed
+        return Ok((columns, false));
     }
 
-    // Apply sampling
     let total_rows = columns.values().next().map(|v| v.len()).unwrap_or(0);
     let target_rows = (total_rows as f64 * sampling_ratio) as usize;
 
@@ -69,13 +68,12 @@ pub fn apply_sampling_if_needed(
         return Ok((HashMap::new(), true));
     }
 
-    // Simple systematic sampling
     let step = total_rows / target_rows;
     if step <= 1 {
         return Ok((columns, false));
     }
 
-    for (_, column_data) in columns.iter_mut() {
+    for column_data in columns.values_mut() {
         let sampled: Vec<String> = column_data
             .iter()
             .step_by(step)
@@ -187,7 +185,6 @@ mod tests {
         );
 
         let memory = estimate_memory_usage(&columns);
-        // "test" (4) + "hello" (5) + "world" (5) = 14 bytes
         assert_eq!(memory, 14);
     }
 

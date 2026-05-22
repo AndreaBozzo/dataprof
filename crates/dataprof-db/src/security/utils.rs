@@ -1,33 +1,25 @@
 //! Security utility functions
 
-use regex;
-
 /// Sanitize error messages to prevent information disclosure
 pub fn sanitize_error_message(error_message: &str) -> String {
     let mut sanitized = error_message.to_string();
 
-    // Remove common patterns that might contain sensitive information
     let patterns_to_remove = [
-        // Connection strings and URLs
         r"postgresql://[^\s]+",
         r"mysql://[^\s]+",
         r"sqlite://[^\s]+",
-        // Password patterns
         r"password[=:]\s*[^\s;]+",
         r"pass[=:]\s*[^\s;]+",
         r"pwd[=:]\s*[^\s;]+",
         r"Password [^:]*: ['\x22][^'\x22]+['\x22]",
         r"verification failed: ['\x22][^'\x22]+['\x22]",
-        // File paths that might contain sensitive info
         r"[A-Za-z]:\\[^\s]+",
         r"/[^\s]*/.env[^\s]*",
         r"/[^\s]*/config[^\s]*",
         r"/home/[^\s/]+/[^\s]*",
         r"/etc/[^\s]*",
         r"\.[^\s]*conf[^\s]*",
-        // IP addresses (be conservative)
         r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b",
-        // Usernames in connection errors
         r"user[\s=:]['\x22]?[^'\x22\s;]+['\x22]?",
         r"username[\s=:]['\x22]?[^'\x22\s;]+['\x22]?",
         r"for user: [a-zA-Z0-9_]+",
@@ -44,7 +36,6 @@ pub fn sanitize_error_message(error_message: &str) -> String {
         }
     }
 
-    // Truncate very long error messages that might contain sensitive data
     if sanitized.len() > 500 {
         sanitized = format!("{}... [truncated for security]", &sanitized[..500]);
     }
@@ -93,6 +84,6 @@ mod tests {
 
         let normal_error = "Table 'products' doesn't exist";
         let sanitized = sanitize_error_message(normal_error);
-        assert_eq!(sanitized, normal_error); // Should be unchanged
+        assert_eq!(sanitized, normal_error);
     }
 }

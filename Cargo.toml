@@ -5,6 +5,7 @@ members = [
     "crates/dataprof-csv",
     "crates/dataprof-json",
     "crates/dataprof-parquet",
+    "crates/dataprof-db",
     "crates/dataprof-runtime",
 ]
 resolver = "3"
@@ -55,6 +56,7 @@ dataprof-metrics = { path = "crates/dataprof-metrics" }
 dataprof-csv = { path = "crates/dataprof-csv" }
 dataprof-json = { path = "crates/dataprof-json" }
 dataprof-parquet = { path = "crates/dataprof-parquet", optional = true, default-features = false }
+dataprof-db = { path = "crates/dataprof-db", optional = true, default-features = false }
 dataprof-runtime = { path = "crates/dataprof-runtime" }
 
 # CLI (optional — only needed for the binary)
@@ -115,7 +117,6 @@ sqlx = { version = "0.8.1", features = [
     "chrono",
     "uuid",
 ], optional = true, default-features = false }
-url = { version = "2.5.8", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
 
 
@@ -199,13 +200,13 @@ arrow = ["dep:arrow", "dataprof-core/arrow", "dep:dataprof-parquet", "dataprof-p
 parquet = ["dep:parquet", "arrow", "dataprof-parquet/parquet"]
 python = ["dep:pyo3"]
 python-async = ["python", "dep:pyo3-async-runtimes", "dep:tokio"]
-database = ["dep:tokio", "dep:async-trait", "dep:url"]
+database = ["dep:dataprof-db"]
 datafusion = ["dep:datafusion", "dep:tokio"]
 async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util", "dataprof-core/async-streaming"]
 parquet-async = ["parquet", "parquet/async", "dep:reqwest", "async-streaming"]
-postgres = ["database", "dep:sqlx", "sqlx/postgres"]
-mysql = ["database", "dep:sqlx", "sqlx/mysql"]
-sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
+postgres = ["database", "dep:tokio", "dep:sqlx", "sqlx/postgres", "dataprof-db/postgres"]
+mysql = ["database", "dep:tokio", "dep:sqlx", "sqlx/mysql", "dataprof-db/mysql"]
+sqlite = ["database", "dep:tokio", "dep:sqlx", "sqlx/sqlite", "dataprof-db/sqlite"]
 
 # Sensible feature combinations
 minimal = []                             # No optional interfaces; library only

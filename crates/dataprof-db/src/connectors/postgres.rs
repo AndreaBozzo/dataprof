@@ -1,41 +1,41 @@
-//! SQLite database connector (embedded database)
+//! PostgreSQL database connector with connection pooling
 
-#[cfg(not(feature = "sqlite"))]
+#[cfg(not(feature = "postgres"))]
 use super::common::feature_not_enabled_error;
-#[cfg(feature = "sqlite")]
+#[cfg(feature = "postgres")]
 use super::common::{build_count_query, not_connected_error};
-use crate::core::errors::DataProfilerError;
-use crate::database::connection::ConnectionInfo;
-use crate::database::{DatabaseConfig, DatabaseConnector, validate_sql_identifier};
+use crate::connection::ConnectionInfo;
+use crate::security::validate_sql_identifier;
+use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector};
 use crate::{process_rows_to_columns, streaming_profile_loop};
 use async_trait::async_trait;
 use std::collections::HashMap;
 
-#[cfg(feature = "sqlite")]
-use {sqlx::sqlite::SqlitePool, sqlx::sqlite::SqlitePoolOptions};
+#[cfg(feature = "postgres")]
+use {sqlx::postgres::PgPool, sqlx::postgres::PgPoolOptions};
 
-/// SQLite embedded database connector
-pub struct SqliteConnector {
+/// PostgreSQL connector with connection pooling support
+pub struct PostgresConnector {
     #[allow(dead_code)]
     config: DatabaseConfig,
     #[allow(dead_code)]
     connection_info: ConnectionInfo,
-    #[cfg(feature = "sqlite")]
-    pool: Option<SqlitePool>,
-    #[cfg(not(feature = "sqlite"))]
+    #[cfg(feature = "postgres")]
+    pool: Option<PgPool>,
+    #[cfg(not(feature = "postgres"))]
     #[allow(dead_code)]
     pool: Option<()>,
 }
 
-impl SqliteConnector {
-    /// Create a new SQLite connector
+impl PostgresConnector {
+    /// Create a new PostgreSQL connector
     pub fn new(config: DatabaseConfig) -> Result<Self, DataProfilerError> {
         let connection_info = ConnectionInfo::parse(&config.connection_string)?;
 
-        if connection_info.database_type() != "sqlite" {
+        if connection_info.database_type() != "postgresql" {
             return Err(DataProfilerError::DatabaseConfigError {
                 message: format!(
-                    "Invalid connection string for SQLite: {}",
+                    "Invalid connection string for PostgreSQL: {}",
                     config.connection_string
                 ),
             });
@@ -47,36 +47,17 @@ impl SqliteConnector {
             pool: None,
         })
     }
-
-    /// Get the database file path
-    #[allow(dead_code)]
-    fn get_db_path(&self) -> Result<String, DataProfilerError> {
-        if let Some(path) = &self.connection_info.path {
-            Ok(path.clone())
-        } else if let Some(db) = &self.connection_info.database {
-            Ok(db.clone())
-        } else {
-            Err(DataProfilerError::DatabaseConfigError {
-                message: "No database path specified for SQLite".to_string(),
-            })
-        }
-    }
 }
 
 #[async_trait]
-impl DatabaseConnector for SqliteConnector {
+impl DatabaseConnector for PostgresConnector {
     async fn connect(&mut self) -> Result<(), DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
-            let db_path = self.get_db_path()?;
-            let connection_string = if db_path == ":memory:" {
-                "sqlite::memory:".to_string()
-            } else {
-                format!("sqlite://{}", db_path)
-            };
+            let connection_string = self.connection_info.to_connection_string("sqlx");
 
-            let pool = SqlitePoolOptions::new()
-                .max_connections(1) // SQLite is typically single-connection
+            let pool = PgPoolOptions::new()
+                .max_connections(self.config.max_connections.unwrap_or(10))
                 .acquire_timeout(
                     self.config
                         .connection_timeout
@@ -86,7 +67,7 @@ impl DatabaseConnector for SqliteConnector {
                 .await
                 .map_err(|e| {
                     DataProfilerError::database_connection(&format!(
-                        "Failed to connect to SQLite: {}",
+                        "Failed to connect to PostgreSQL: {}",
                         e
                     ))
                 })?;
@@ -95,16 +76,17 @@ impl DatabaseConnector for SqliteConnector {
             Ok(())
         }
 
-        #[cfg(not(feature = "sqlite"))]
+        #[cfg(not(feature = "postgres"))]
         {
             Err(DataProfilerError::database_feature_disabled(
-                "SQLite", "sqlite",
+                "PostgreSQL",
+                "postgres",
             ))
         }
     }
 
     async fn disconnect(&mut self) -> Result<(), DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
             if let Some(pool) = &self.pool {
                 pool.close().await;
@@ -119,7 +101,7 @@ impl DatabaseConnector for SqliteConnector {
         &mut self,
         query: &str,
     ) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
@@ -130,8 +112,8 @@ impl DatabaseConnector for SqliteConnector {
             Ok(process_rows_to_columns!(rows))
         }
 
-        #[cfg(not(feature = "sqlite"))]
-        Err(feature_not_enabled_error("SQLite", "sqlite"))
+        #[cfg(not(feature = "postgres"))]
+        Err(feature_not_enabled_error("PostgreSQL", "postgres"))
     }
 
     #[allow(unused_variables)]
@@ -140,11 +122,10 @@ impl DatabaseConnector for SqliteConnector {
         query: &str,
         batch_size: usize,
     ) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            // Get total count for progress tracking
             let count_query = build_count_query(query)?;
             let total_rows: i64 = sqlx::query_scalar(&count_query)
                 .fetch_one(pool)
@@ -153,11 +134,11 @@ impl DatabaseConnector for SqliteConnector {
                     DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
                 })?;
 
-            streaming_profile_loop!(pool, query, batch_size, total_rows, "SQLite")
+            streaming_profile_loop!(pool, query, batch_size, total_rows, "PostgreSQL")
         }
 
-        #[cfg(not(feature = "sqlite"))]
-        Err(feature_not_enabled_error("SQLite", "sqlite"))
+        #[cfg(not(feature = "postgres"))]
+        Err(feature_not_enabled_error("PostgreSQL", "postgres"))
     }
 
     #[allow(unused_variables)]
@@ -165,42 +146,45 @@ impl DatabaseConnector for SqliteConnector {
         &mut self,
         table_name: &str,
     ) -> Result<Vec<String>, DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
             use sqlx::Row;
 
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            // SQLite uses PRAGMA instead of information_schema
-            let query = format!("PRAGMA table_info({})", table_name);
+            let query = r#"
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = $1
+                ORDER BY ordinal_position
+            "#;
 
-            let rows = sqlx::query(&query).fetch_all(pool).await.map_err(|e| {
-                DataProfilerError::database_query(&format!("Failed to get table schema: {}", e))
-            })?;
+            let rows = sqlx::query(query)
+                .bind(table_name)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to get table schema: {}", e))
+                })?;
 
             let mut columns = Vec::new();
             for row in rows {
-                let column_name: String = row
-                    .try_get(1) // PRAGMA table_info: name column is at index 1
-                    .map_err(|e| {
-                        DataProfilerError::database_query(&format!(
-                            "Failed to read column name: {}",
-                            e
-                        ))
-                    })?;
+                let column_name: String = row.try_get(0).map_err(|e| {
+                    DataProfilerError::database_query(&format!("Failed to read column name: {}", e))
+                })?;
                 columns.push(column_name);
             }
 
             Ok(columns)
         }
 
-        #[cfg(not(feature = "sqlite"))]
-        Err(feature_not_enabled_error("SQLite", "sqlite"))
+        #[cfg(not(feature = "postgres"))]
+        Err(feature_not_enabled_error("PostgreSQL", "postgres"))
     }
 
     #[allow(unused_variables)]
     async fn count_table_rows(&mut self, table_name: &str) -> Result<u64, DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
@@ -216,12 +200,12 @@ impl DatabaseConnector for SqliteConnector {
             Ok(count as u64)
         }
 
-        #[cfg(not(feature = "sqlite"))]
-        Err(feature_not_enabled_error("SQLite", "sqlite"))
+        #[cfg(not(feature = "postgres"))]
+        Err(feature_not_enabled_error("PostgreSQL", "postgres"))
     }
 
     async fn test_connection(&mut self) -> Result<bool, DataProfilerError> {
-        #[cfg(feature = "sqlite")]
+        #[cfg(feature = "postgres")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
@@ -235,7 +219,7 @@ impl DatabaseConnector for SqliteConnector {
             Ok(result == 1)
         }
 
-        #[cfg(not(feature = "sqlite"))]
-        Err(feature_not_enabled_error("SQLite", "sqlite"))
+        #[cfg(not(feature = "postgres"))]
+        Err(feature_not_enabled_error("PostgreSQL", "postgres"))
     }
 }

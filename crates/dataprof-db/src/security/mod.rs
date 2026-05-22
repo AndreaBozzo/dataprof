@@ -7,7 +7,6 @@ pub mod sql_validation;
 pub mod ssl_config;
 pub mod utils;
 
-// Re-export main types and functions for convenience
 pub use connection_security::{load_secure_database_config, validate_connection_security};
 pub use credentials::DatabaseCredentials;
 pub use environment::load_ssl_config_from_environment;

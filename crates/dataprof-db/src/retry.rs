@@ -1,7 +1,7 @@
 //! Connection retry logic with exponential backoff
 
-use crate::core::errors::DataProfilerError;
-use crate::database::security::sanitize_error_message;
+use crate::DataProfilerError;
+use crate::security::sanitize_error_message;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -100,20 +100,19 @@ fn add_jitter(delay: Duration) -> Duration {
 pub fn is_retryable_error(error: &str) -> bool {
     let error_lower = error.to_lowercase();
 
-    // Common retryable database errors
-    error_lower.contains("connection") ||
-    error_lower.contains("timeout") ||
-    error_lower.contains("network") ||
-    error_lower.contains("temporary") ||
-    error_lower.contains("unavailable") ||
-    error_lower.contains("broken pipe") ||
-    error_lower.contains("connection reset") ||
-    error_lower.contains("connection refused") ||
-    error_lower.contains("host unreachable") ||
-    error_lower.contains("too many connections") ||
-    error_lower.contains("database is locked") ||  // SQLite specific
-    error_lower.contains("server has gone away") || // MySQL specific
-    error_lower.contains("connection timed out") // General timeout
+    error_lower.contains("connection")
+        || error_lower.contains("timeout")
+        || error_lower.contains("network")
+        || error_lower.contains("temporary")
+        || error_lower.contains("unavailable")
+        || error_lower.contains("broken pipe")
+        || error_lower.contains("connection reset")
+        || error_lower.contains("connection refused")
+        || error_lower.contains("host unreachable")
+        || error_lower.contains("too many connections")
+        || error_lower.contains("database is locked")
+        || error_lower.contains("server has gone away")
+        || error_lower.contains("connection timed out")
 }
 
 /// Enhanced retry logic that only retries on connection errors
@@ -136,7 +135,6 @@ where
             Err(error) => {
                 let error_str = error.to_string();
 
-                // Only retry if it's a connection-related error
                 if !is_retryable_error(&error_str) {
                     return Err(DataProfilerError::database_query(&error_str));
                 }

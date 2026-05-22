@@ -4,10 +4,9 @@
 use super::common::feature_not_enabled_error;
 #[cfg(feature = "mysql")]
 use super::common::{build_count_query, not_connected_error};
-use crate::core::errors::DataProfilerError;
-use crate::database::connection::ConnectionInfo;
-use crate::database::security::validate_sql_identifier;
-use crate::database::{DatabaseConfig, DatabaseConnector};
+use crate::connection::ConnectionInfo;
+use crate::security::validate_sql_identifier;
+use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector};
 use crate::{process_rows_to_columns, streaming_profile_loop};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -126,7 +125,6 @@ impl DatabaseConnector for MySqlConnector {
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
 
-            // Get total count for progress tracking
             let count_query = build_count_query(query)?;
             let total_rows: i64 = sqlx::query_scalar(&count_query)
                 .fetch_one(pool)
