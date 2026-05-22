@@ -109,3 +109,58 @@ impl ExecutionMetadata {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_execution_metadata_throughput_calculation() {
+        let meta = ExecutionMetadata::new(1000, 5, 500);
+        assert!(meta.throughput_rows_sec.is_some());
+        assert!((meta.throughput_rows_sec.unwrap() - 2000.0).abs() < 1.0);
+        assert!(meta.source_exhausted);
+        assert!(!meta.sampling_applied);
+        assert!(meta.sampling_ratio.is_none());
+    }
+
+    #[test]
+    fn test_execution_metadata_zero_time_no_throughput() {
+        let meta = ExecutionMetadata::new(100, 3, 0);
+        assert!(meta.throughput_rows_sec.is_none());
+    }
+
+    #[test]
+    fn test_execution_metadata_with_sampling() {
+        let meta = ExecutionMetadata::new(500, 3, 100).with_sampling(0.5);
+        assert!(meta.sampling_applied);
+        assert_eq!(meta.sampling_ratio, Some(0.5));
+    }
+
+    #[test]
+    fn test_execution_metadata_with_truncation() {
+        let meta =
+            ExecutionMetadata::new(1000, 5, 200).with_truncation(TruncationReason::MaxRows(1000));
+        assert!(!meta.source_exhausted);
+        assert!(meta.truncation_reason.is_some());
+    }
+
+    #[test]
+    fn test_truncation_reason_serde_roundtrip() {
+        let reasons = vec![
+            TruncationReason::MaxRows(5000),
+            TruncationReason::MaxBytes(1_000_000),
+            TruncationReason::MemoryPressure,
+            TruncationReason::StopCondition("accuracy > 0.95".to_string()),
+            TruncationReason::StreamClosed,
+            TruncationReason::Timeout,
+        ];
+
+        for reason in reasons {
+            let json = serde_json::to_string(&reason).unwrap();
+            let deserialized: TruncationReason = serde_json::from_str(&json).unwrap();
+            let json2 = serde_json::to_string(&deserialized).unwrap();
+            assert_eq!(json, json2);
+        }
+    }
+}

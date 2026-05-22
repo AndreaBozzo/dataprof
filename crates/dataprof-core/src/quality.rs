@@ -125,3 +125,36 @@ impl std::fmt::Display for MetricPack {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metric_pack_include_helpers_none_means_all() {
+        assert!(MetricPack::include_statistics(None));
+        assert!(MetricPack::include_patterns(None));
+        assert!(MetricPack::include_quality(None));
+    }
+
+    #[test]
+    fn test_metric_pack_include_helpers_selective() {
+        let packs = vec![MetricPack::Schema, MetricPack::Quality];
+        assert!(!MetricPack::include_statistics(Some(&packs)));
+        assert!(!MetricPack::include_patterns(Some(&packs)));
+        assert!(MetricPack::include_quality(Some(&packs)));
+    }
+
+    #[test]
+    fn test_metric_pack_from_str() {
+        assert_eq!(
+            "statistics".parse::<MetricPack>().unwrap(),
+            MetricPack::Statistics
+        );
+        assert_eq!(
+            "QUALITY".parse::<MetricPack>().unwrap(),
+            MetricPack::Quality
+        );
+        assert!("invalid".parse::<MetricPack>().is_err());
+    }
+}

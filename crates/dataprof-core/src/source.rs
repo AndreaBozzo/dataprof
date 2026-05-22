@@ -278,3 +278,89 @@ impl DataSource {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_data_source_file_identifier() {
+        let ds = DataSource::File {
+            path: "/path/to/data.csv".to_string(),
+            format: FileFormat::Csv,
+            size_bytes: 0,
+            modified_at: None,
+            parquet_metadata: None,
+        };
+
+        assert_eq!(ds.identifier(), "/path/to/data.csv");
+        assert!(ds.is_file());
+        assert!(!ds.is_query());
+        assert!(!ds.is_dataframe());
+        assert!(!ds.is_stream());
+    }
+
+    #[test]
+    fn test_data_source_stream_identifier_and_helpers() {
+        let ds = DataSource::Stream {
+            topic: "events".to_string(),
+            batch_id: "b1".to_string(),
+            partition: Some(0),
+            consumer_group: None,
+            source_system: StreamSourceSystem::Kafka,
+            session_id: None,
+            first_record_at: None,
+            last_record_at: None,
+        };
+
+        assert_eq!(ds.identifier(), "kafka[events]-batch:b1");
+        assert!(ds.is_stream());
+        assert_eq!(ds.stream_topic(), Some("events"));
+        assert_eq!(ds.batch_id(), Some("b1"));
+        assert!(!ds.is_file());
+        assert!(!ds.is_query());
+        assert!(ds.size_mb().is_none());
+    }
+
+    #[test]
+    fn test_stream_json_serialization() {
+        let ds = DataSource::Stream {
+            topic: "sensor-data".to_string(),
+            batch_id: "batch-789".to_string(),
+            partition: Some(2),
+            consumer_group: Some("processing-group".to_string()),
+            source_system: StreamSourceSystem::Kinesis,
+            session_id: Some("session-1".to_string()),
+            first_record_at: Some("2023-01-01T10:00:00Z".to_string()),
+            last_record_at: Some("2023-01-01T10:05:00Z".to_string()),
+        };
+
+        let json = serde_json::to_string(&ds).unwrap();
+        assert!(json.contains(r#""type":"stream""#));
+        assert!(json.contains(r#""source_system":"kinesis""#));
+        assert!(json.contains(r#""topic":"sensor-data""#));
+
+        let deserialized: DataSource = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.is_stream());
+        assert_eq!(deserialized.stream_topic(), Some("sensor-data"));
+    }
+
+    #[test]
+    fn test_stream_source_system_serialization_names() {
+        let object_store = serde_json::to_string(&StreamSourceSystem::ObjectStore).unwrap();
+        let message_queue = serde_json::to_string(&StreamSourceSystem::MessageQueue).unwrap();
+        let database = serde_json::to_string(&StreamSourceSystem::Database).unwrap();
+
+        assert_eq!(object_store, r#""object_store""#);
+        assert_eq!(message_queue, r#""message_queue""#);
+        assert_eq!(database, r#""database""#);
+
+        let object_store: StreamSourceSystem = serde_json::from_str(r#""object_store""#).unwrap();
+        let message_queue: StreamSourceSystem = serde_json::from_str(r#""message_queue""#).unwrap();
+        let database: StreamSourceSystem = serde_json::from_str(r#""database""#).unwrap();
+
+        assert_eq!(object_store, StreamSourceSystem::ObjectStore);
+        assert_eq!(message_queue, StreamSourceSystem::MessageQueue);
+        assert_eq!(database, StreamSourceSystem::Database);
+    }
+}

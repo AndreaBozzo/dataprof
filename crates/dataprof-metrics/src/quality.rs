@@ -274,3 +274,147 @@ impl From<QualityMetrics> for QualityAssessment {
         Self::exact(metrics)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty_metrics_perfect_score() {
+        let metrics = QualityMetrics::empty();
+        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quality_score_weights_sum_to_100() {
+        let metrics = QualityMetrics::empty();
+        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quality_score_completeness_weight() {
+        let mut metrics = QualityMetrics::empty();
+        if let Some(ref mut c) = metrics.completeness {
+            c.complete_records_ratio = 0.0;
+        }
+        assert!((metrics.overall_score() - 70.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_quality_score_all_bad() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics {
+                complete_records_ratio: 0.0,
+                ..CompletenessMetrics::default()
+            }),
+            consistency: Some(ConsistencyMetrics {
+                data_type_consistency: 0.0,
+                ..ConsistencyMetrics::default()
+            }),
+            uniqueness: Some(UniquenessMetrics {
+                key_uniqueness: 0.0,
+                ..UniquenessMetrics::default()
+            }),
+            accuracy: Some(AccuracyMetrics {
+                outlier_ratio: 100.0,
+                ..AccuracyMetrics::default()
+            }),
+            timeliness: Some(TimelinessMetrics {
+                stale_data_ratio: 100.0,
+                ..TimelinessMetrics::default()
+            }),
+        };
+
+        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_dimensions_only_completeness() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics {
+                complete_records_ratio: 100.0,
+                missing_values_ratio: 0.0,
+                null_columns: vec![],
+            }),
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+
+        assert!(metrics.completeness.is_some());
+        assert!(metrics.consistency.is_none());
+        assert!(metrics.uniqueness.is_none());
+        assert!(metrics.accuracy.is_none());
+        assert!(metrics.timeliness.is_none());
+        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_dimensions_two_dimensions() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics {
+                complete_records_ratio: 50.0,
+                ..CompletenessMetrics::default()
+            }),
+            consistency: None,
+            uniqueness: Some(UniquenessMetrics {
+                key_uniqueness: 80.0,
+                ..UniquenessMetrics::default()
+            }),
+            accuracy: None,
+            timeliness: None,
+        };
+
+        assert!((metrics.overall_score() - 62.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_all_dimensions_none_score_zero() {
+        let metrics = QualityMetrics {
+            completeness: None,
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+
+        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_partial_dimensions_json_skips_none() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics::default()),
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("completeness"));
+        assert!(!json.contains("consistency"));
+        assert!(!json.contains("uniqueness"));
+        assert!(!json.contains("accuracy"));
+        assert!(!json.contains("timeliness"));
+    }
+
+    #[test]
+    fn test_partial_dimensions_flat_accessors_return_defaults() {
+        let metrics = QualityMetrics {
+            completeness: None,
+            consistency: None,
+            uniqueness: None,
+            accuracy: None,
+            timeliness: None,
+        };
+
+        assert!((metrics.complete_records_ratio() - 100.0).abs() < 0.01);
+        assert!((metrics.data_type_consistency() - 100.0).abs() < 0.01);
+        assert!((metrics.key_uniqueness() - 100.0).abs() < 0.01);
+        assert!((metrics.missing_values_ratio() - 0.0).abs() < 0.01);
+        assert_eq!(metrics.duplicate_rows(), 0);
+        assert!(!metrics.high_cardinality_warning());
+    }
+}

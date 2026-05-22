@@ -186,3 +186,87 @@ pub enum ColumnStats {
     Boolean(BooleanStats),
     None,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_column_profile_json_roundtrip() {
+        let profile = ColumnProfile {
+            name: "test_col".to_string(),
+            data_type: DataType::Integer,
+            null_count: 2,
+            total_count: 10,
+            unique_count: Some(8),
+            stats: ColumnStats::Numeric(NumericStats {
+                min: 1.0,
+                max: 100.0,
+                mean: 50.5,
+                std_dev: 28.87,
+                variance: 833.25,
+                median: Some(50.0),
+                quartiles: Some(Quartiles {
+                    q1: 25.0,
+                    q2: 50.0,
+                    q3: 75.0,
+                    iqr: 50.0,
+                }),
+                mode: Some(42.0),
+                coefficient_of_variation: Some(57.17),
+                skewness: Some(0.0),
+                kurtosis: Some(-1.2),
+                is_approximate: Some(false),
+            }),
+            patterns: vec![],
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        let deserialized: ColumnProfile = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.name, "test_col");
+        assert_eq!(deserialized.data_type, DataType::Integer);
+        assert_eq!(deserialized.total_count, 10);
+        assert_eq!(deserialized.null_count, 2);
+
+        if let ColumnStats::Numeric(n) = &deserialized.stats {
+            assert!((n.min - 1.0).abs() < 0.01);
+            assert!((n.max - 100.0).abs() < 0.01);
+            assert!((n.mean - 50.5).abs() < 0.01);
+            assert!(n.median.is_some());
+            assert!(n.quartiles.is_some());
+        } else {
+            panic!("Expected Numeric stats after roundtrip");
+        }
+    }
+
+    #[test]
+    fn test_text_stats_json_roundtrip() {
+        let profile = ColumnProfile {
+            name: "name".to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 3,
+            unique_count: Some(3),
+            stats: ColumnStats::Text(TextStats {
+                min_length: 3,
+                max_length: 7,
+                avg_length: 5.0,
+                most_frequent: None,
+                least_frequent: None,
+            }),
+            patterns: vec![],
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        let deserialized: ColumnProfile = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.data_type, DataType::String);
+        if let ColumnStats::Text(t) = &deserialized.stats {
+            assert_eq!(t.min_length, 3);
+            assert_eq!(t.max_length, 7);
+        } else {
+            panic!("Expected Text stats after roundtrip");
+        }
+    }
+}
