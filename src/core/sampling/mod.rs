@@ -1,6 +1,14 @@
-pub mod chunk_size;
-pub mod reservoir;
-pub mod strategies;
+pub mod chunk_size {
+    pub use dataprof_core::sampling::chunk_size::*;
+}
+
+pub mod reservoir {
+    pub use dataprof_core::sampling::reservoir::*;
+}
+
+pub mod strategies {
+    pub use dataprof_core::sampling::strategies::*;
+}
 
 pub use chunk_size::*;
 pub use reservoir::*;

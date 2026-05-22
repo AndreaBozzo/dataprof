@@ -9,8 +9,11 @@ pub mod pattern;
 pub mod profile;
 pub mod progress;
 pub mod quality;
+pub mod sampling;
 pub mod serde_helpers;
 pub mod source;
+pub mod stop_condition;
+pub mod validation;
 
 pub use classification::{DataType, PatternCategory};
 pub use config::IsoQualityConfig;
@@ -26,6 +29,14 @@ pub use profile::{
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{MetricPack, QualityDimension};
+pub use sampling::{
+    ChunkSize, MultiReservoirSampler, ReservoirSampler, ReservoirStats, SamplingState,
+    SamplingStrategy, WeightedReservoirSampler,
+};
 pub use source::{
     DataFrameLibrary, DataSource, FileFormat, ParquetMetadata, QueryEngine, StreamSourceSystem,
 };
+pub use stop_condition::{
+    SchemaStabilityTracker, StopCondition, StopEvaluator, schema_stable_threshold,
+};
+pub use validation::{InputValidator, ValidationError, exit_codes};

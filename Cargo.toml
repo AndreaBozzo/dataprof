@@ -187,7 +187,7 @@ parquet = ["dep:parquet", "arrow", "dataprof-parquet/parquet"]
 # crates/dataprof-python and are built through pyproject/maturin.
 python = []
 python-async = ["python"]
-database = ["dep:dataprof-db"]
+database = ["dep:dataprof-db", "dataprof-core/database"]
 async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util", "dataprof-core/async-streaming"]
 parquet-async = ["parquet", "parquet/async", "dep:reqwest", "async-streaming"]
 postgres = ["database", "dep:tokio", "dep:sqlx", "sqlx/postgres", "dataprof-db/postgres"]
