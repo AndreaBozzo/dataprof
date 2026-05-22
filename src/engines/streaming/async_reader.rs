@@ -694,13 +694,7 @@ mod tests {
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
             bytes::Bytes::from_static(data),
-            AsyncSourceInfo {
-                label: "test".into(),
-                format: FileFormat::Csv,
-                size_hint: Some(data.len() as u64),
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("test", FileFormat::Csv).size_hint(Some(data.len() as u64)),
         )
     }
 
@@ -769,13 +763,7 @@ mod tests {
 
         let source = BytesSource::new(
             bytes::Bytes::from(data),
-            AsyncSourceInfo {
-                label: "large-test".into(),
-                format: FileFormat::Csv,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("large-test", FileFormat::Csv),
         );
 
         let profiler = AsyncStreamingProfiler::new().memory_limit_mb(16);
@@ -815,13 +803,7 @@ mod tests {
 
         let source = BytesSource::new(
             bytes::Bytes::from(data),
-            AsyncSourceInfo {
-                label: "progress-test".into(),
-                format: FileFormat::Csv,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("progress-test", FileFormat::Csv),
         );
 
         let sink = ProgressSink::Callback(Arc::new(move |_event: ProgressEvent| {
@@ -840,13 +822,7 @@ mod tests {
     async fn test_unsupported_format_rejected() {
         let source = BytesSource::new(
             bytes::Bytes::from_static(b"{}"),
-            AsyncSourceInfo {
-                label: "json-test".into(),
-                format: FileFormat::Json,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("json-test", FileFormat::Json),
         );
         let profiler = AsyncStreamingProfiler::new();
         let result = profiler.analyze_stream(source).await;
@@ -862,13 +838,7 @@ mod tests {
 
         let source = BytesSource::new(
             bytes::Bytes::from(data),
-            AsyncSourceInfo {
-                label: "stop-test".into(),
-                format: FileFormat::Csv,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("stop-test", FileFormat::Csv),
         );
 
         let profiler = AsyncStreamingProfiler::new().stop_condition(StopCondition::MaxRows(100));

@@ -9,8 +9,10 @@ use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 
+mod memmap_reader;
 mod robust_csv;
 
+pub use memmap_reader::MemoryMappedCsvReader;
 pub use robust_csv::{CsvDiagnostics, RobustCsvParser, RobustParseResult};
 
 /// Configuration for CSV parsing and analysis.

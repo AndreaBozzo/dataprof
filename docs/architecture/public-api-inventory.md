@@ -49,6 +49,11 @@ rather than the preferred ownership boundary.
 | `dataprof::parsers::csv::*` | `dataprof-csv` |
 | `dataprof::parsers::json::*` | `dataprof-json` |
 | `dataprof::parsers::parquet::*` | `dataprof-parquet` |
+| `dataprof::engines::columnar::arrow_profiler::*` | `dataprof-parquet` |
+| `dataprof::engines::columnar::record_batch_analyzer::*` | `dataprof-parquet` |
+| `dataprof::engines::streaming::memmap::*` | `dataprof-csv` |
+| `dataprof::engines::streaming::async_source::*` | `dataprof-runtime` |
+| `dataprof::engines::common::*` | `dataprof-runtime` |
 | `dataprof::database::*` | `dataprof-db` |
 | `dataprof::core::profile_builder::*` | `dataprof-runtime` |
 | `dataprof::core::report_assembler::*` | `dataprof-runtime` |
@@ -64,7 +69,7 @@ or move them behind narrower public entry points.
 | Surface | Reason to review |
 | --- | --- |
 | `acceleration` module | Low-level implementation detail around SIMD helpers. |
-| `engines` module | Users should normally go through `Profiler` and `EngineType`. |
+| `engines` module | Users should normally go through `Profiler` and `EngineType`; several subpaths are already shim-only compatibility layers. |
 | `serde_helpers` module | Serialization plumbing, not a user workflow. |
 | `check_memory_leaks`, `get_memory_usage_stats` | Diagnostics helpers with unclear facade-level stability contract. |
 | Database row-processing macros | Useful for compatibility, but not an ideal long-term public API. |

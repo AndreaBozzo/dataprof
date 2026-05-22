@@ -1,17 +1,18 @@
 use arrow::array::*;
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
+use dataprof_core::{
+    ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat,
+    MetricPack, QualityDimension,
+};
+use dataprof_csv::CsvParserConfig;
+use dataprof_metrics::analysis::inference::infer_type;
+use dataprof_runtime::{
+    ColumnProfileInput, ProfileReport, ReportAssembler, TextLengths, build_column_profile,
+};
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-
-use crate::core::errors::DataProfilerError;
-use crate::core::report_assembler::ReportAssembler;
-use crate::parsers::csv::CsvParserConfig;
-use crate::types::{
-    ColumnProfile, DataSource, DataType, ExecutionMetadata, FileFormat, MetricPack, ProfileReport,
-    QualityDimension,
-};
 
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
@@ -736,29 +737,27 @@ impl ColumnAnalyzer {
             0.0
         };
 
-        crate::core::profile_builder::build_column_profile(
-            crate::core::profile_builder::ColumnProfileInput {
-                name,
-                data_type,
-                total_count: self.total_count,
-                null_count: self.null_count,
-                unique_count: Some(self.unique_values.len()),
-                sample_values: &self.sample_values,
-                text_lengths: Some(crate::core::profile_builder::TextLengths {
-                    min_length: self.min_length,
-                    max_length: self.max_length,
-                    avg_length,
-                }),
-                boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
-                    Some((self.true_count, self.false_count))
-                } else {
-                    None
-                },
-                skip_statistics,
-                skip_patterns,
-                locale,
+        build_column_profile(ColumnProfileInput {
+            name,
+            data_type,
+            total_count: self.total_count,
+            null_count: self.null_count,
+            unique_count: Some(self.unique_values.len()),
+            sample_values: &self.sample_values,
+            text_lengths: Some(TextLengths {
+                min_length: self.min_length,
+                max_length: self.max_length,
+                avg_length,
+            }),
+            boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
+                Some((self.true_count, self.false_count))
+            } else {
+                None
             },
-        )
+            skip_statistics,
+            skip_patterns,
+            locale,
+        })
     }
 
     fn infer_data_type(&self) -> DataType {
@@ -774,7 +773,7 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Reuse the shared inference logic for consistent type detection
                 // across all engines (dates before numerics, 100% match threshold)
-                crate::analysis::inference::infer_type(&self.sample_values)
+                infer_type(&self.sample_values)
             }
             _ => DataType::String,
         }
@@ -789,6 +788,7 @@ impl ColumnAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dataprof_core::ColumnStats;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -827,8 +827,6 @@ mod tests {
 
     #[test]
     fn test_arrow_profiler_csv_with_mixed_columns() -> Result<(), DataProfilerError> {
-        use crate::types::ColumnStats;
-
         // The Arrow CSV profiler reads all columns as Utf8 and then infers types.
         // Numeric-looking Utf8 columns that also have float-typed Arrow data
         // get properly typed. Test with a mixed CSV.
@@ -884,8 +882,6 @@ mod tests {
 
     #[test]
     fn test_arrow_profiler_numeric_inference_float() -> Result<(), DataProfilerError> {
-        use crate::types::ColumnStats;
-
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "label,value")?;
         for i in 1..=20 {
@@ -917,7 +913,6 @@ mod tests {
 
     #[test]
     fn test_boolean_column_detection_and_stats() {
-        use crate::types::ColumnStats;
         use arrow::array::BooleanArray;
         use arrow::datatypes::DataType as ArrowDataType;
 

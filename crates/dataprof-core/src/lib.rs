@@ -16,7 +16,12 @@ pub mod stop_condition;
 pub mod validation;
 
 pub use classification::{DataType, PatternCategory};
-pub use config::IsoQualityConfig;
+#[cfg(feature = "database")]
+pub use config::{DatabaseSamplingConfig, DatabaseSettings};
+pub use config::{
+    DataprofConfig, DataprofConfigBuilder, EngineConfig, IsoQualityConfig, MemoryConfig,
+    OutputConfig, QualityConfig,
+};
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
 pub use execution::{ExecutionMetadata, TruncationReason};
 pub use memory_tracker::{MemoryLeak, MemoryTracker};

@@ -1,8 +1,14 @@
 #[cfg(feature = "arrow")]
+mod arrow_profiler;
+
+#[cfg(feature = "arrow")]
 pub mod record_batch_analyzer;
 
 #[cfg(feature = "parquet")]
 mod parser;
+
+#[cfg(feature = "arrow")]
+pub use arrow_profiler::ArrowProfiler;
 
 #[cfg(feature = "arrow")]
 pub use record_batch_analyzer::RecordBatchAnalyzer;

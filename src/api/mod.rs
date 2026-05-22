@@ -723,13 +723,9 @@ impl Profiler {
                         .map_err(|e| DataProfilerError::IoError {
                             message: format!("{}: {e}", path.display()),
                         })?;
-                let info = AsyncSourceInfo {
-                    label: path.display().to_string(),
-                    format,
-                    size_hint: Some(metadata.len()),
-                    source_system: Some(crate::types::StreamSourceSystem::Custom("file".into())),
-                    ..Default::default()
-                };
+                let info = AsyncSourceInfo::new(path.display().to_string(), format)
+                    .size_hint(Some(metadata.len()))
+                    .source_system(crate::types::StreamSourceSystem::Custom("file".into()));
                 self.profile_stream((file, info)).await
             }
             FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedDataSource {
@@ -827,13 +823,9 @@ impl Profiler {
                 let size_hint = response.content_length();
                 let source = ReqwestSource::new(
                     response,
-                    AsyncSourceInfo {
-                        label: url.to_string(),
-                        format,
-                        size_hint,
-                        source_system: Some(crate::types::StreamSourceSystem::Http),
-                        ..Default::default()
-                    },
+                    AsyncSourceInfo::new(url.to_string(), format)
+                        .size_hint(size_hint)
+                        .source_system(crate::types::StreamSourceSystem::Http),
                 );
                 self.profile_stream(source).await
             }

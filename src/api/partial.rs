@@ -1055,52 +1055,29 @@ mod async_tests {
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
             bytes::Bytes::from_static(data),
-            AsyncSourceInfo {
-                label: "test-csv".into(),
-                format: FileFormat::Csv,
-                size_hint: Some(data.len() as u64),
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("test-csv", FileFormat::Csv).size_hint(Some(data.len() as u64)),
         )
     }
 
     fn jsonl_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
             bytes::Bytes::from_static(data),
-            AsyncSourceInfo {
-                label: "test-jsonl".into(),
-                format: FileFormat::Jsonl,
-                size_hint: Some(data.len() as u64),
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("test-jsonl", FileFormat::Jsonl)
+                .size_hint(Some(data.len() as u64)),
         )
     }
 
     fn json_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
             bytes::Bytes::from_static(data),
-            AsyncSourceInfo {
-                label: "test-json".into(),
-                format: FileFormat::Json,
-                size_hint: Some(data.len() as u64),
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("test-json", FileFormat::Json).size_hint(Some(data.len() as u64)),
         )
     }
 
     fn parquet_source() -> BytesSource {
         BytesSource::new(
             bytes::Bytes::from_static(b""),
-            AsyncSourceInfo {
-                label: "test-parquet".into(),
-                format: FileFormat::Parquet,
-                size_hint: None,
-                source_system: None,
-                has_header: None,
-            },
+            AsyncSourceInfo::new("test-parquet", FileFormat::Parquet),
         )
     }
 

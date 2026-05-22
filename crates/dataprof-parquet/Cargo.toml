@@ -8,13 +8,15 @@ description = "Parquet profiling support for dataprof"
 
 [features]
 default = []
-arrow = ["dep:arrow", "dataprof-core/arrow"]
+arrow = ["dep:arrow", "dep:csv", "dep:dataprof-csv", "dataprof-core/arrow"]
 parquet = ["dep:parquet", "arrow"]
 
 [dependencies]
 anyhow = "1.0"
 arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+csv = { version = "1.4", optional = true }
 dataprof-core = { path = "../dataprof-core" }
+dataprof-csv = { path = "../dataprof-csv", optional = true }
 dataprof-metrics = { path = "../dataprof-metrics" }
 dataprof-runtime = { path = "../dataprof-runtime" }
 parquet = { version = "57.3.0", features = ["arrow"], optional = true }
