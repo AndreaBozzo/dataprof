@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 pub use dataprof_core::classification::{DataType, PatternCategory};
 pub use dataprof_core::execution::{ExecutionMetadata, TruncationReason};
+pub use dataprof_core::output::OutputFormat;
 pub use dataprof_core::partial::{ColumnSchema, CountMethod, RowCountEstimate, SchemaResult};
 pub use dataprof_core::pattern::Pattern;
 pub use dataprof_core::quality::{MetricPack, QualityDimension};
@@ -680,19 +681,6 @@ pub enum ColumnStats {
     Boolean(BooleanStats),
     /// Statistics were not computed (MetricPack::Statistics was excluded).
     None,
-}
-
-/// Output format for CLI and programmatic output.
-#[derive(Clone, Debug)]
-pub enum OutputFormat {
-    /// Human-readable text output
-    Text,
-    /// Machine-readable JSON output
-    Json,
-    /// CSV format for data processing
-    Csv,
-    /// Plain text without formatting for scripting
-    Plain,
 }
 
 // ---------------------------------------------------------------------------
