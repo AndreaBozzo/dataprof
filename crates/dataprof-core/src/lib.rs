@@ -9,7 +9,7 @@ pub mod source;
 pub use classification::{DataType, PatternCategory};
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
 pub use execution::{ExecutionMetadata, TruncationReason};
-pub use partial::{CountMethod, RowCountEstimate};
+pub use partial::{ColumnSchema, CountMethod, RowCountEstimate, SchemaResult};
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{MetricPack, QualityDimension};
 pub use source::{
