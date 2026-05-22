@@ -127,7 +127,11 @@ impl TextStats {
 
     pub fn from_lengths(min_length: usize, max_length: usize, avg_length: f64) -> Self {
         Self {
-            min_length: if min_length == usize::MAX { 0 } else { min_length },
+            min_length: if min_length == usize::MAX {
+                0
+            } else {
+                min_length
+            },
             max_length,
             avg_length,
             most_frequent: None,

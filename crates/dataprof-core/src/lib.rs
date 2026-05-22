@@ -1,5 +1,5 @@
-pub mod config;
 pub mod classification;
+pub mod config;
 pub mod errors;
 pub mod execution;
 pub mod output;
@@ -11,8 +11,8 @@ pub mod quality;
 pub mod serde_helpers;
 pub mod source;
 
-pub use config::IsoQualityConfig;
 pub use classification::{DataType, PatternCategory};
+pub use config::IsoQualityConfig;
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
 pub use execution::{ExecutionMetadata, TruncationReason};
 pub use output::OutputFormat;

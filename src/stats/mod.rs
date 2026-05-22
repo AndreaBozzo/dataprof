@@ -1,7 +1,4 @@
-pub mod datetime;
-pub mod numeric;
-pub mod text;
-
-pub use datetime::calculate_datetime_stats;
-pub use numeric::calculate_numeric_stats;
-pub use text::calculate_text_stats;
+pub use dataprof_metrics::stats::{
+    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats, datetime, numeric,
+    text,
+};

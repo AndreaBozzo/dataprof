@@ -1604,6 +1604,7 @@ dependencies = [
  "csv",
  "datafusion",
  "dataprof-core",
+ "dataprof-metrics",
  "env_logger",
  "futures",
  "glob",
@@ -1652,6 +1653,18 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "dataprof-metrics"
+version = "0.7.1"
+dependencies = [
+ "chrono",
+ "dataprof-core",
+ "rand 0.9.3",
+ "regex",
+ "serde",
+ "wide",
 ]
 
 [[package]]
