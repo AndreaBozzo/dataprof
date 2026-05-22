@@ -1,6 +1,7 @@
 use crate::core::errors::DataProfilerError;
 use std::collections::HashMap;
 
+pub use dataprof_core::classification::{DataType, PatternCategory};
 pub use dataprof_core::execution::{ExecutionMetadata, TruncationReason};
 pub use dataprof_core::quality::{MetricPack, QualityDimension};
 pub use dataprof_core::source::{
@@ -490,21 +491,6 @@ pub struct ColumnProfile {
     pub patterns: Vec<Pattern>,
 }
 
-/// Inferred column data type.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum DataType {
-    /// Text / string values
-    String,
-    /// Whole numbers (i64 range)
-    Integer,
-    /// Floating-point numbers
-    Float,
-    /// Date or datetime values
-    Date,
-    /// Boolean (true / false) values
-    Boolean,
-}
-
 /// Quartile statistics for numeric distributions.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Quartiles {
@@ -692,40 +678,6 @@ pub enum ColumnStats {
     Boolean(BooleanStats),
     /// Statistics were not computed (MetricPack::Statistics was excluded).
     None,
-}
-
-/// Semantic category for a detected pattern.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PatternCategory {
-    /// Email addresses, phone numbers
-    Contact,
-    /// UUIDs, fiscal codes, tax IDs
-    Identifier,
-    /// IPv4, IPv6, MAC addresses, URLs
-    Network,
-    /// Coordinates, postal codes
-    Geographic,
-    /// IBANs, credit cards, SWIFT/BIC
-    Financial,
-    /// Unix/Windows file paths
-    FilePath,
-    /// Uncategorized patterns
-    Other,
-}
-
-impl std::fmt::Display for PatternCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Contact => write!(f, "contact"),
-            Self::Identifier => write!(f, "identifier"),
-            Self::Network => write!(f, "network"),
-            Self::Geographic => write!(f, "geographic"),
-            Self::Financial => write!(f, "financial"),
-            Self::FilePath => write!(f, "file_path"),
-            Self::Other => write!(f, "other"),
-        }
-    }
 }
 
 /// A detected value pattern within a column (e.g. email, phone, UUID).
