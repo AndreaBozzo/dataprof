@@ -449,15 +449,15 @@ impl RobustCsvParser {
                         if row.len() < expected_field_count {
                             row.resize(expected_field_count, String::new());
                         } else if row.len() > expected_field_count {
-                            if row.len() == expected_field_count + 1 {
-                                if let (Some(second_last), Some(last)) = (
+                            if row.len() == expected_field_count + 1
+                                && let (Some(second_last), Some(last)) = (
                                     row.get(expected_field_count - 1),
                                     row.get(expected_field_count),
-                                ) {
-                                    let combined =
-                                        format!("{}{}{}", second_last, delimiter as char, last);
-                                    row[expected_field_count - 1] = combined;
-                                }
+                                )
+                            {
+                                let combined =
+                                    format!("{}{}{}", second_last, delimiter as char, last);
+                                row[expected_field_count - 1] = combined;
                             }
                             row.truncate(expected_field_count);
                         }

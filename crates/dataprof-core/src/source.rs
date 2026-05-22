@@ -26,7 +26,6 @@ impl std::fmt::Display for FileFormat {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryEngine {
-    DataFusion,
     Postgres,
     MySql,
     Sqlite,
@@ -39,7 +38,6 @@ pub enum QueryEngine {
 impl std::fmt::Display for QueryEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::DataFusion => write!(f, "datafusion"),
             Self::Postgres => write!(f, "postgres"),
             Self::MySql => write!(f, "mysql"),
             Self::Sqlite => write!(f, "sqlite"),

@@ -103,7 +103,6 @@ pip install dataprof
 | `mysql` | MySQL/MariaDB connector (includes `database`) |
 | `sqlite` | SQLite connector (includes `database`) |
 | `all-db` | All three database connectors |
-| `datafusion` | DataFusion SQL engine integration; includes `arrow` |
 | `python` | Deprecated facade alias; real bindings live in `crates/dataprof-python` |
 | `python-async` | Deprecated facade alias; async Python bindings live in `crates/dataprof-python` |
 | `cli` | Deprecated compatibility alias; no CLI binary is built |

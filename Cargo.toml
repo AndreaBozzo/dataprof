@@ -112,7 +112,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 arrow = { version = "57.3.0", features = ["ffi"], optional = true }
 parquet = { version = "57.3.0", features = ["arrow"], optional = true }
-datafusion = { version = "52.2.0", optional = true }
 futures = "0.3.31"
 
 [dev-dependencies]
@@ -189,7 +188,6 @@ parquet = ["dep:parquet", "arrow", "dataprof-parquet/parquet"]
 python = []
 python-async = ["python"]
 database = ["dep:dataprof-db"]
-datafusion = ["dep:datafusion", "dep:tokio"]
 async-streaming = ["dep:tokio", "dep:async-trait", "dep:bytes", "dep:tokio-util", "dataprof-core/async-streaming"]
 parquet-async = ["parquet", "parquet/async", "dep:reqwest", "async-streaming"]
 postgres = ["database", "dep:tokio", "dep:sqlx", "sqlx/postgres", "dataprof-db/postgres"]

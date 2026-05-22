@@ -33,8 +33,7 @@ implementation crates change.
 | `database` compatibility | `process_rows_to_columns`, `streaming_profile_loop` |
 | `async-streaming` | `AsyncDataSource`, `AsyncSourceInfo`, `AsyncStreamingProfiler`, `BytesSource` |
 | `parquet-async` | `ReqwestSource` |
-| `datafusion` | `DataFusionLoader` |
-| `python`, `python-async` | Deprecated compatibility aliases on the Rust facade; PyO3 extension builds use `crates/dataprof-python` |
+| `python` | `python` module for PyO3 extension builds |
 
 ## Migration Re-Exports
 

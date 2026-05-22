@@ -132,9 +132,7 @@ pub fn test_connection_async<'py>(
 
 /// Internal test connection function
 #[cfg(all(feature = "database", feature = "python-async"))]
-async fn test_connection_internal(
-    connection_string: String,
-) -> Result<bool, DataProfilerError> {
+async fn test_connection_internal(connection_string: String) -> Result<bool, DataProfilerError> {
     let config = DatabaseConfig {
         connection_string,
         ..Default::default()

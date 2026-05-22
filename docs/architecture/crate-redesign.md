@@ -148,7 +148,6 @@ dependencies with clearer ownership:
 | `database` | `dataprof-db` facade dependency without concrete SQL backend dependencies |
 | `postgres`, `mysql`, `sqlite` | Individual SQL backends through `dataprof-db` features |
 | `python`, `python-async` | Deprecated facade aliases; real PyO3 features live on `dataprof-python` |
-| `datafusion` | DataFusion integration only |
 | `cli`, `full-cli` | Deprecated compatibility aliases; no CLI implementation is built |
 
 The facade crate now optimizes for `dataprof = "0.8"` as a Rust dependency.

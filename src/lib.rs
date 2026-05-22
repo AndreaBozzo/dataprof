@@ -80,9 +80,6 @@ pub use engines::streaming::{
 #[cfg(feature = "parquet-async")]
 pub use engines::streaming::ReqwestSource;
 
-#[cfg(feature = "datafusion")]
-pub use engines::DataFusionLoader;
-
 // Public API exports - Core types and functionality
 pub use types::{
     AccuracyMetrics, ColumnProfile, ColumnStats, CompletenessMetrics, ConsistencyMetrics,
