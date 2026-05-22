@@ -9,6 +9,10 @@ use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 
+mod robust_csv;
+
+pub use robust_csv::{CsvDiagnostics, RobustCsvParser, RobustParseResult};
+
 /// Configuration for CSV parsing and analysis.
 ///
 /// Replaces the 7 separate `analyze_csv_*` functions with a single config struct.

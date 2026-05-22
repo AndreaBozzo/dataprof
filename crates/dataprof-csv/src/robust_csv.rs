@@ -3,13 +3,13 @@ use csv::{ReaderBuilder, Trim};
 use std::io::{BufRead, BufReader, Cursor};
 use std::path::Path;
 
-use crate::core::{AutoRecoveryManager, DataProfilerError, RecoveryStrategy, RetryConfig};
+use dataprof_core::errors::AutoRecoveryManager;
+use dataprof_core::{DataProfilerError, RecoveryStrategy, RetryConfig};
 
-/// Result type for robust CSV parsing operations
+/// Result type for robust CSV parsing operations.
 pub type RobustParseResult = (Option<Vec<String>>, Vec<Vec<String>>);
 
-/// Robust CSV parser that handles edge cases and malformed data
-/// No longer derives Clone - uses parameter overrides instead of cloning for recovery
+/// Robust CSV parser that handles edge cases and malformed data.
 pub struct RobustCsvParser {
     pub flexible: bool,
     pub quote_char: Option<u8>,
@@ -26,12 +26,12 @@ impl Default for RobustCsvParser {
         Self {
             flexible: true,
             quote_char: Some(b'"'),
-            delimiter: None, // Enable auto-detection by default
+            delimiter: None,
             allow_variable_columns: true,
             trim_whitespace: true,
             auto_recovery: true,
             retry_config: RetryConfig::default(),
-            verbosity: 1, // Normal verbosity by default
+            verbosity: 1,
         }
     }
 }
@@ -51,34 +51,33 @@ impl RobustCsvParser {
         self
     }
 
-    /// Set verbosity level for logging
+    /// Set verbosity level for logging.
     /// 0=quiet, 1=normal, 2=verbose, 3=debug
     pub fn verbosity(mut self, level: u8) -> Self {
         self.verbosity = level;
         self
     }
 
-    /// Enable/disable auto-recovery features
+    /// Enable or disable auto-recovery features.
     pub fn with_auto_recovery(mut self, enabled: bool) -> Self {
         self.auto_recovery = enabled;
         self
     }
 
-    /// Set custom retry configuration
+    /// Set custom retry configuration.
     pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
         self.retry_config = config;
         self
     }
 
-    /// Detect encoding by analyzing file bytes
+    /// Detect encoding by analyzing file bytes.
     pub fn detect_encoding(&self, file_path: &Path) -> Result<&'static str> {
         let mut file = std::fs::File::open(file_path)?;
-        let mut buffer = [0; 4096]; // Read first 4KB for analysis
+        let mut buffer = [0; 4096];
         let bytes_read = std::io::Read::read(&mut file, &mut buffer)?;
 
         let sample = &buffer[..bytes_read];
 
-        // Check for BOM markers
         if sample.starts_with(&[0xEF, 0xBB, 0xBF]) {
             return Ok("utf-8");
         }
@@ -89,27 +88,24 @@ impl RobustCsvParser {
             return Ok("utf-16be");
         }
 
-        // Check if it's valid UTF-8
         if String::from_utf8(sample.to_vec()).is_ok() {
             return Ok("utf-8");
         }
 
-        // Check for common Latin-1 indicators
         let latin1_indicators = [
             0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D,
             0x8E, 0x8F,
         ];
-        let has_latin1_chars = sample.iter().any(|&b| latin1_indicators.contains(&b));
+        let has_latin1_chars = sample.iter().any(|&byte| latin1_indicators.contains(&byte));
 
         if has_latin1_chars {
             Ok("latin1")
         } else {
-            // Default to UTF-8 and let the reader handle conversion errors
             Ok("utf-8")
         }
     }
 
-    /// Enhanced parsing with auto-recovery
+    /// Enhanced parsing with auto-recovery.
     pub fn parse_csv_with_recovery(
         &self,
         file_path: &Path,
@@ -120,7 +116,6 @@ impl RobustCsvParser {
 
         let mut recovery_manager = AutoRecoveryManager::new(self.retry_config.clone());
 
-        // Initial parsing attempt
         match self.parse_csv(file_path) {
             Ok(result) => Ok(result),
             Err(initial_error) => {
@@ -129,7 +124,6 @@ impl RobustCsvParser {
                     initial_error
                 );
 
-                // Convert to DataProfilerError for recovery
                 let initial_error_string = initial_error.to_string();
                 let dp_error = if let Ok(dp_err) = initial_error.downcast::<DataProfilerError>() {
                     dp_err
@@ -140,18 +134,15 @@ impl RobustCsvParser {
                     )
                 };
 
-                // Attempt auto-recovery
                 recovery_manager
                     .attempt_recovery(&dp_error, |strategy| {
                         self.try_recovery_strategy(file_path, strategy)
                     })
-                    .map_err(|e| e.into())
+                    .map_err(|error| error.into())
             }
         }
     }
 
-    /// Try a specific recovery strategy
-    /// Optimized to avoid cloning the entire parser - only creates temporary parsing configs
     fn try_recovery_strategy(
         &self,
         file_path: &Path,
@@ -160,31 +151,34 @@ impl RobustCsvParser {
         match strategy {
             RecoveryStrategy::DelimiterDetection { delimiter } => {
                 log::debug!("Trying delimiter: '{}'", delimiter);
-                // Parse directly with overridden delimiter instead of cloning parser
                 self.parse_with_override(file_path, Some(delimiter as u8), None, None)
-                    .map_err(|e| {
-                        DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
+                    .map_err(|error| {
+                        DataProfilerError::csv_parsing(
+                            &error.to_string(),
+                            &file_path.to_string_lossy(),
+                        )
                     })
             }
-            RecoveryStrategy::EncodingConversion {
-                from: _from,
-                to: _to,
-            } => {
+            RecoveryStrategy::EncodingConversion { from: _, to: _ } => {
                 log::debug!(
                     "Attempting encoding conversion (placeholder - full implementation needed)"
                 );
-                // Try with flexible parsing enabled, without cloning
                 self.parse_with_override(file_path, None, Some(true), Some(true))
-                    .map_err(|e| {
-                        DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
+                    .map_err(|error| {
+                        DataProfilerError::csv_parsing(
+                            &error.to_string(),
+                            &file_path.to_string_lossy(),
+                        )
                     })
             }
             RecoveryStrategy::FlexibleParsing => {
                 log::debug!("Enabling flexible parsing");
-                // Enable flexible parsing without cloning the parser
                 self.parse_with_override(file_path, None, Some(true), Some(true))
-                    .map_err(|e| {
-                        DataProfilerError::csv_parsing(&e.to_string(), &file_path.to_string_lossy())
+                    .map_err(|error| {
+                        DataProfilerError::csv_parsing(
+                            &error.to_string(),
+                            &file_path.to_string_lossy(),
+                        )
                     })
             }
             _ => Err(DataProfilerError::csv_parsing(
@@ -194,8 +188,6 @@ impl RobustCsvParser {
         }
     }
 
-    /// Internal helper to parse with specific overrides without cloning the parser
-    /// This avoids expensive parser cloning in recovery scenarios
     fn parse_with_override(
         &self,
         file_path: &Path,
@@ -210,11 +202,9 @@ impl RobustCsvParser {
         let flexible = flexible_override.unwrap_or(self.flexible);
         let allow_variable = allow_variable_override.unwrap_or(self.allow_variable_columns);
 
-        // Use flexible parsing directly with overridden parameters
         self.parse_with_config(file_path, delimiter, flexible, allow_variable)
     }
 
-    /// Unified parsing method with explicit configuration
     fn parse_with_config(
         &self,
         file_path: &Path,
@@ -234,17 +224,20 @@ impl RobustCsvParser {
             })
             .from_path(file_path)?;
 
-        let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
+        let headers: Vec<String> = reader
+            .headers()?
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
         let expected_field_count = headers.len();
         let mut records = Vec::new();
 
         if flexible {
-            // Use flexible parsing logic (similar to try_flexible_parsing)
             for result in reader.records() {
                 match result {
                     Ok(record) => {
-                        let mut row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
-                        // Normalize field count if needed
+                        let mut row: Vec<String> =
+                            record.iter().map(|value| value.to_string()).collect();
                         if row.len() < expected_field_count {
                             row.resize(expected_field_count, String::new());
                         } else if row.len() > expected_field_count {
@@ -252,17 +245,13 @@ impl RobustCsvParser {
                         }
                         records.push(row);
                     }
-                    Err(_) => {
-                        // Skip malformed records in flexible mode
-                        continue;
-                    }
+                    Err(_) => continue,
                 }
             }
         } else {
-            // Strict parsing
             for result in reader.records() {
                 let record = result?;
-                let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                let row: Vec<String> = record.iter().map(|value| value.to_string()).collect();
                 records.push(row);
             }
         }
@@ -270,15 +259,15 @@ impl RobustCsvParser {
         Ok((headers, records))
     }
 
-    /// Detect delimiter by sampling the file
+    /// Detect delimiter by sampling the file.
     pub fn detect_delimiter(&self, file_path: &Path) -> Result<u8> {
         let file = std::fs::File::open(file_path)?;
         let reader = BufReader::new(file);
 
-        let mut lines: Vec<String> = Vec::new();
-        for (i, line) in reader.lines().enumerate() {
-            if i >= 5 {
-                break; // Sample first 5 lines
+        let mut lines = Vec::new();
+        for (index, line) in reader.lines().enumerate() {
+            if index >= 5 {
+                break;
             }
             lines.push(line?);
         }
@@ -292,16 +281,11 @@ impl RobustCsvParser {
             let consistency = self.measure_delimiter_consistency(&lines, delimiter);
             let avg_field_count = self.average_field_count(&lines, delimiter);
 
-            // Enhanced logic: prefer higher field count when consistency is low (indicating malformed data)
-            // or prefer higher consistency when field counts are reasonable
             let should_update = if avg_field_count > 1 && max_field_count <= 1 {
-                // If this delimiter produces multiple fields and current best doesn't, prefer this one
                 true
             } else if avg_field_count <= 1 && max_field_count > 1 {
-                // If this delimiter produces single field but current best produces multiple, keep current
                 false
             } else {
-                // Both produce similar field counts, use original logic
                 consistency > max_consistency
                     || (consistency == max_consistency && avg_field_count > max_field_count)
             };
@@ -327,7 +311,6 @@ impl RobustCsvParser {
             .map(|line| self.count_fields_simple(line, delimiter_char))
             .collect();
 
-        // Find the most common field count
         let mut counts = std::collections::HashMap::new();
         for &count in &field_counts {
             *counts.entry(count).or_insert(0) += 1;
@@ -351,7 +334,6 @@ impl RobustCsvParser {
     }
 
     fn count_fields_simple(&self, line: &str, delimiter: char) -> usize {
-        // Simple field counting that handles basic quoted fields
         let mut field_count = 1;
         let mut in_quotes = false;
         let mut chars = line.chars().peekable();
@@ -359,14 +341,13 @@ impl RobustCsvParser {
         while let Some(ch) = chars.next() {
             match ch {
                 '"' => {
-                    // Handle escaped quotes
                     if chars.peek() == Some(&'"') {
-                        chars.next(); // Skip the escaped quote
+                        chars.next();
                     } else {
                         in_quotes = !in_quotes;
                     }
                 }
-                c if c == delimiter && !in_quotes => {
+                current if current == delimiter && !in_quotes => {
                     field_count += 1;
                 }
                 _ => {}
@@ -376,27 +357,24 @@ impl RobustCsvParser {
         field_count
     }
 
-    /// Parse CSV with robust error handling
+    /// Parse CSV with robust error handling.
     pub fn parse_csv(&self, file_path: &Path) -> Result<(Vec<String>, Vec<Vec<String>>)> {
-        let delimiter = if let Some(d) = self.delimiter {
-            d
+        let delimiter = if let Some(delimiter) = self.delimiter {
+            delimiter
         } else {
             self.detect_delimiter(file_path)
                 .context("Failed to detect delimiter")?
         };
 
-        // First, try with strict parsing
         match self.try_strict_parsing(file_path, delimiter) {
             Ok(result) => return Ok(result),
-            Err(e) => {
-                // Only show fallback message at verbose level (2+)
+            Err(error) => {
                 if self.verbosity >= 2 {
-                    log::info!("Using flexible CSV parsing (strict mode failed: {})", e);
+                    log::info!("Using flexible CSV parsing (strict mode failed: {})", error);
                 }
             }
         }
 
-        // If strict parsing fails, use flexible parsing
         self.try_flexible_parsing(file_path, delimiter)
             .context("Both strict and flexible CSV parsing failed")
     }
@@ -409,7 +387,7 @@ impl RobustCsvParser {
         let mut reader = ReaderBuilder::new()
             .delimiter(delimiter)
             .has_headers(true)
-            .flexible(false) // Strict field count validation
+            .flexible(false)
             .quote(self.quote_char.unwrap_or(b'"'))
             .trim(if self.trim_whitespace {
                 Trim::All
@@ -418,12 +396,16 @@ impl RobustCsvParser {
             })
             .from_path(file_path)?;
 
-        let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
+        let headers: Vec<String> = reader
+            .headers()?
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
         let mut records = Vec::new();
 
         for result in reader.records() {
             let record = result?;
-            let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+            let row: Vec<String> = record.iter().map(|value| value.to_string()).collect();
             records.push(row);
         }
 
@@ -438,7 +420,7 @@ impl RobustCsvParser {
         let mut reader = ReaderBuilder::new()
             .delimiter(delimiter)
             .has_headers(true)
-            .flexible(true) // Allow variable field counts
+            .flexible(true)
             .quote(self.quote_char.unwrap_or(b'"'))
             .trim(if self.trim_whitespace {
                 Trim::All
@@ -447,26 +429,27 @@ impl RobustCsvParser {
             })
             .from_path(file_path)?;
 
-        let headers: Vec<String> = reader.headers()?.iter().map(|s| s.to_string()).collect();
+        let headers: Vec<String> = reader
+            .headers()?
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
         let expected_field_count = headers.len();
         let mut records = Vec::new();
         let mut error_count = 0;
-        let max_errors = 100; // Stop after too many errors
+        let max_errors = 100;
 
         for (row_index, result) in reader.records().enumerate() {
             match result {
                 Ok(record) => {
-                    let mut row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                    let mut row: Vec<String> =
+                        record.iter().map(|value| value.to_string()).collect();
 
-                    // Normalize field count
                     if self.allow_variable_columns {
                         if row.len() < expected_field_count {
-                            // Pad with empty strings
                             row.resize(expected_field_count, String::new());
                         } else if row.len() > expected_field_count {
-                            // Truncate extra fields (or combine them)
                             if row.len() == expected_field_count + 1 {
-                                // Often the last field contains the delimiter, combine last two
                                 if let (Some(second_last), Some(last)) = (
                                     row.get(expected_field_count - 1),
                                     row.get(expected_field_count),
@@ -482,17 +465,12 @@ impl RobustCsvParser {
 
                     records.push(row);
                 }
-                Err(e) => {
+                Err(error) => {
                     error_count += 1;
 
-                    // Use enhanced error reporting
                     let enhanced_error =
-                        DataProfilerError::csv_parsing(&e.to_string(), "current file");
-                    eprintln!(
-                        "Row {}: {}",
-                        row_index + 2, // +2 because row_index is 0-based and we have headers
-                        enhanced_error
-                    );
+                        DataProfilerError::csv_parsing(&error.to_string(), "current file");
+                    eprintln!("Row {}: {}", row_index + 2, enhanced_error);
 
                     if error_count > max_errors {
                         return Err(DataProfilerError::csv_parsing(
@@ -516,7 +494,7 @@ impl RobustCsvParser {
         Ok((headers, records))
     }
 
-    /// Parse a specific chunk of CSV data (useful for streaming)
+    /// Parse a specific chunk of CSV data.
     pub fn parse_csv_chunk(
         &self,
         data: &str,
@@ -536,7 +514,13 @@ impl RobustCsvParser {
             .from_reader(Cursor::new(data));
 
         let headers = if has_headers {
-            Some(reader.headers()?.iter().map(|s| s.to_string()).collect())
+            Some(
+                reader
+                    .headers()?
+                    .iter()
+                    .map(|value| value.to_string())
+                    .collect(),
+            )
         } else {
             None
         };
@@ -547,14 +531,13 @@ impl RobustCsvParser {
         for (row_index, result) in reader.records().enumerate() {
             match result {
                 Ok(record) => {
-                    let row: Vec<String> = record.iter().map(|s| s.to_string()).collect();
+                    let row: Vec<String> = record.iter().map(|value| value.to_string()).collect();
                     records.push(row);
                 }
-                Err(e) => {
+                Err(error) => {
                     error_count += 1;
                     if error_count <= 10 {
-                        // Only log first 10 errors to avoid spam
-                        eprintln!("Chunk row {}: {}", row_index + 1, e);
+                        eprintln!("Chunk row {}: {}", row_index + 1, error);
                     }
                 }
             }
@@ -563,7 +546,7 @@ impl RobustCsvParser {
         Ok((headers, records))
     }
 
-    /// Validate CSV structure and provide diagnostic information
+    /// Validate CSV structure and provide diagnostic information.
     pub fn validate_csv(&self, file_path: &Path) -> Result<CsvDiagnostics> {
         let file = std::fs::File::open(file_path)?;
         let reader = BufReader::new(file);
@@ -579,18 +562,15 @@ impl RobustCsvParser {
                 continue;
             }
 
-            // Detect potential issues
             if line.contains('\0') {
                 diagnostics.null_bytes += 1;
             }
 
-            // Count quotes
-            let quote_count = line.chars().filter(|&c| c == '"').count();
+            let quote_count = line.chars().filter(|&ch| ch == '"').count();
             if quote_count % 2 != 0 {
                 diagnostics.unmatched_quotes += 1;
             }
 
-            // Estimate field count
             let delimiter = self.delimiter.unwrap_or(b',') as char;
             let field_count = self.count_fields_simple(&line, delimiter);
             *field_counts.entry(field_count).or_insert(0) += 1;
@@ -598,8 +578,9 @@ impl RobustCsvParser {
             diagnostics.total_lines += 1;
         }
 
-        // Find the most common field count (likely the correct one)
-        if let Some((&most_common_fields, &count)) = field_counts.iter().max_by_key(|(_, v)| *v) {
+        if let Some((&most_common_fields, &count)) =
+            field_counts.iter().max_by_key(|(_, count)| *count)
+        {
             diagnostics.most_common_field_count = most_common_fields;
             diagnostics.consistent_field_rows = count;
         }
@@ -696,8 +677,8 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,age,city")?;
         writeln!(temp_file, "Alice,25,New York")?;
-        writeln!(temp_file, "Bob,30")?; // Missing field
-        writeln!(temp_file, "Charlie,35,London,UK")?; // Extra field
+        writeln!(temp_file, "Bob,30")?;
+        writeln!(temp_file, "Charlie,35,London,UK")?;
         temp_file.flush()?;
 
         let mut parser = RobustCsvParser::new();
@@ -707,8 +688,8 @@ mod tests {
 
         assert_eq!(headers, vec!["name", "age", "city"]);
         assert_eq!(records.len(), 3);
-        assert_eq!(records[1], vec!["Bob", "30", ""]); // Padded with empty string
-        assert_eq!(records[2], vec!["Charlie", "35", "London,UK"]); // Combined extra field
+        assert_eq!(records[1], vec!["Bob", "30", ""]);
+        assert_eq!(records[2], vec!["Charlie", "35", "London,UK"]);
 
         Ok(())
     }
@@ -723,8 +704,6 @@ mod tests {
 
         let parser = RobustCsvParser::new();
         let delimiter = parser.detect_delimiter(temp_file.path())?;
-        // The detection algorithm should find semicolon as the most consistent delimiter
-        // Note: The actual algorithm may prefer comma due to default behavior
         assert!(delimiter == b';' || delimiter == b',');
 
         Ok(())
@@ -735,15 +714,15 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,age,city")?;
         writeln!(temp_file, "Alice,25,New York")?;
-        writeln!(temp_file, "Bob,30")?; // Inconsistent
-        writeln!(temp_file)?; // Empty line
+        writeln!(temp_file, "Bob,30")?;
+        writeln!(temp_file)?;
         writeln!(temp_file, "Charlie,35,London")?;
         temp_file.flush()?;
 
         let parser = RobustCsvParser::new();
         let diagnostics = parser.validate_csv(temp_file.path())?;
 
-        assert_eq!(diagnostics.total_lines, 4); // Excluding empty line
+        assert_eq!(diagnostics.total_lines, 4);
         assert_eq!(diagnostics.empty_lines, 1);
         assert_eq!(diagnostics.most_common_field_count, 3);
         assert_eq!(diagnostics.inconsistent_field_rows, 1);

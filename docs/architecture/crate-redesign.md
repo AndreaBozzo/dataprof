@@ -76,7 +76,7 @@ of real boundaries instead of hypothetical ones:
 | --- | --- | --- |
 | Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, and `dataprof-json`, and the facade crate still supports meaningful minimal/default builds | Heavy format and product-specific crates do not exist yet |
 | Shared model | Core report and profiling DTOs live in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
-| Parser boundary | Standard CSV and JSON/JSONL parsing now live outside the facade crate, and the facade parser modules are shims | `robust_csv` and `CsvDiagnostics` are still facade-owned, and heavier readers like Parquet are still in `src/` |
+| Parser boundary | Standard CSV and JSON/JSONL parsing now live outside the facade crate, including robust CSV recovery and `CsvDiagnostics`; the facade parser modules are shims | Heavier readers like Parquet are still in `src/`, and the facade still dispatches parser selection |
 | Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code still reach metrics through runtime or facade re-exports rather than a smaller explicit adapter boundary |
 | Public API | Existing top-level exports remain available through facade re-exports and compatibility shims | `src/api/mod.rs` still dispatches through facade parser and engine modules instead of thinner crate-specific adapters |
 | Product surfaces | The facade crate is increasingly a shell around internal crates | CLI, Python, database, and engine orchestration still ship from the same facade crate |
@@ -90,7 +90,7 @@ The likely workspace shape is:
 | `dataprof-core` | Core report types, errors, data model, profiler traits, metric selection, sampling, stop conditions |
 | `dataprof-metrics` | ISO 8000/25012 quality metrics, pattern detection, validators, statistical summaries |
 | `dataprof-runtime` | Shared runtime composition helpers, report assembly, streaming stats, and cross-crate profiling adapters |
-| `dataprof-csv` | Standard CSV parsing, delimiter detection, and CSV report assembly |
+| `dataprof-csv` | Standard CSV parsing, delimiter detection, robust CSV recovery helpers, diagnostics, and CSV report assembly |
 | `dataprof-json` | JSON and JSONL scanning plus JSON report assembly |
 | `dataprof-parquet` | Parquet and Arrow-backed profiling |
 | `dataprof-db` | PostgreSQL, MySQL, SQLite connectors and SQL validation |
@@ -178,13 +178,13 @@ Completed for the standard CSV and JSON paths on this branch:
 
 - `dataprof-runtime` now owns the shared report-building and streaming helpers
    that used to block parser extraction
-- `dataprof-csv` owns the standard CSV parser and delimiter detection flow
+- `dataprof-csv` owns the standard CSV parser, delimiter detection flow,
+  robust CSV recovery helpers, and `CsvDiagnostics`
 - `dataprof-json` owns both the JSON scanner and the higher-level JSON/JSONL
    report-building API
 - the facade crate still re-exports the old parser entry points through shim
    modules so downstream module paths remain stable during transition
-- `robust_csv` remains a separate follow-up concern rather than part of the
-   first CSV ownership move
+- the facade no longer owns `robust_csv`; only lightweight re-exports remain
 
 ### Phase 4: Heavy Optional Crates
 
@@ -215,5 +215,6 @@ Completed for the standard CSV and JSON paths on this branch:
    coverage for facade re-exports and feature combinations.
 3. Split `dataprof-parquet` and the database readers now that the lighter
    parser crates and runtime boundary are proven.
-4. Decide whether `robust_csv` and `CsvDiagnostics` should stay facade-owned,
-   move into `dataprof-csv`, or become their own recovery-focused boundary.
+4. Decide whether the CSV recovery path should stay inside `dataprof-csv` or
+   eventually become its own recovery-focused boundary once more parser crates
+   exist.

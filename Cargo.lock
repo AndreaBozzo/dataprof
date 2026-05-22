@@ -1660,9 +1660,11 @@ dependencies = [
 name = "dataprof-csv"
 version = "0.7.1"
 dependencies = [
+ "anyhow",
  "csv",
  "dataprof-core",
  "dataprof-runtime",
+ "log",
  "tempfile",
 ]
 
