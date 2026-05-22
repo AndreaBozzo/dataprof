@@ -1607,6 +1607,7 @@ dependencies = [
  "dataprof-csv",
  "dataprof-json",
  "dataprof-metrics",
+ "dataprof-parquet",
  "dataprof-runtime",
  "env_logger",
  "futures",
@@ -1690,6 +1691,19 @@ dependencies = [
  "serde",
  "serde_json",
  "wide",
+]
+
+[[package]]
+name = "dataprof-parquet"
+version = "0.7.1"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "dataprof-core",
+ "dataprof-metrics",
+ "dataprof-runtime",
+ "parquet",
+ "tempfile",
 ]
 
 [[package]]

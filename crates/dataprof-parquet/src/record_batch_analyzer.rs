@@ -1,22 +1,17 @@
-//! Shared utilities for analyzing Apache Arrow RecordBatches
-//!
-//! This module provides reusable components for processing Arrow data
-//! from both CSV (via arrow::csv) and Parquet files.
+//! Shared utilities for analyzing Apache Arrow RecordBatches.
 
 use anyhow::Result;
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
+use arrow::util::display::ArrayFormatter;
+use dataprof_core::{ColumnProfile, DataType};
+use dataprof_metrics::infer_type;
+use dataprof_runtime::{ColumnProfileInput, TextLengths, build_column_profile};
 use std::collections::HashMap;
 
-use crate::types::{ColumnProfile, DataType};
-
-/// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
 
-// Additional Arrow utilities for display formatting
-use arrow::util::display::ArrayFormatter;
-
-/// Analyzer for processing multiple RecordBatches and building column profiles
+/// Analyzer for processing multiple RecordBatches and building column profiles.
 pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
     total_rows: usize,
@@ -30,14 +25,12 @@ impl RecordBatchAnalyzer {
         }
     }
 
-    /// Process a RecordBatch, updating statistics for all columns
     pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
         self.total_rows += batch.num_rows();
 
-        // Process each column in the batch
-        for (col_idx, column) in batch.columns().iter().enumerate() {
+        for (column_index, column) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
-            let field = schema.field(col_idx);
+            let field = schema.field(column_index);
             let column_name = field.name().to_string();
 
             let analyzer = self
@@ -51,12 +44,10 @@ impl RecordBatchAnalyzer {
         Ok(())
     }
 
-    /// Get the total number of rows processed
     pub fn total_rows(&self) -> usize {
         self.total_rows
     }
 
-    /// Convert the analyzers to column profiles
     pub fn to_profiles(
         &self,
         skip_statistics: bool,
@@ -65,14 +56,16 @@ impl RecordBatchAnalyzer {
     ) -> Vec<ColumnProfile> {
         let mut profiles = Vec::new();
         for (name, analyzer) in &self.column_analyzers {
-            let profile =
-                analyzer.to_column_profile(name.clone(), skip_statistics, skip_patterns, locale);
-            profiles.push(profile);
+            profiles.push(analyzer.to_column_profile(
+                name.clone(),
+                skip_statistics,
+                skip_patterns,
+                locale,
+            ));
         }
         profiles
     }
 
-    /// Create sample columns for quality metrics calculation
     pub fn create_sample_columns(&self) -> HashMap<String, Vec<String>> {
         let mut samples = HashMap::new();
         for (name, analyzer) in &self.column_analyzers {
@@ -88,25 +81,20 @@ impl Default for RecordBatchAnalyzer {
     }
 }
 
-/// Column analyzer for Arrow arrays - processes statistics incrementally
 pub struct ColumnAnalyzer {
     data_type: arrow::datatypes::DataType,
     total_count: usize,
     null_count: usize,
     unique_values: std::collections::HashSet<String>,
-    // Numeric statistics
     min_value: Option<f64>,
     max_value: Option<f64>,
     sum: f64,
     sum_squares: f64,
-    // Text statistics
     min_length: usize,
     max_length: usize,
     total_length: usize,
-    // Boolean statistics
     true_count: usize,
     false_count: usize,
-    // Sample values for pattern detection
     sample_values: Vec<String>,
 }
 
@@ -135,7 +123,6 @@ impl ColumnAnalyzer {
         self.null_count += array.null_count();
 
         match array.data_type() {
-            // Floating point types
             arrow::datatypes::DataType::Float64 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
@@ -150,7 +137,6 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to Float32Array"));
                 }
             }
-            // Signed integer types
             arrow::datatypes::DataType::Int64 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
                     self.process_int64_array(int_array)?;
@@ -179,7 +165,6 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to Int8Array"));
                 }
             }
-            // Unsigned integer types
             arrow::datatypes::DataType::UInt64 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<UInt64Array>() {
                     self.process_uint64_array(int_array)?;
@@ -208,7 +193,6 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to UInt8Array"));
                 }
             }
-            // String types
             arrow::datatypes::DataType::Utf8 => {
                 if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
                     self.process_string_array(string_array)?;
@@ -223,7 +207,6 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to LargeStringArray"));
                 }
             }
-            // Boolean type
             arrow::datatypes::DataType::Boolean => {
                 if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
                     self.process_boolean_array(bool_array)?;
@@ -231,7 +214,6 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to BooleanArray"));
                 }
             }
-            // Date and time types
             arrow::datatypes::DataType::Date32 => {
                 if let Some(date_array) = array.as_any().downcast_ref::<Date32Array>() {
                     self.process_date32_array(date_array)?;
@@ -249,7 +231,6 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Timestamp(_, _) => {
                 self.process_timestamp_array(array)?;
             }
-            // Binary types
             arrow::datatypes::DataType::Binary => {
                 if let Some(binary_array) = array.as_any().downcast_ref::<BinaryArray>() {
                     self.process_binary_array(binary_array)?;
@@ -264,7 +245,6 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to LargeBinaryArray"));
                 }
             }
-            // Decimal types
             arrow::datatypes::DataType::Decimal128(_, _) => {
                 if let Some(decimal_array) = array.as_any().downcast_ref::<Decimal128Array>() {
                     self.process_decimal128_array(decimal_array)?;
@@ -279,13 +259,10 @@ impl ColumnAnalyzer {
                     return Err(anyhow::anyhow!("Failed to downcast to Decimal256Array"));
                 }
             }
-            // Duration types
             arrow::datatypes::DataType::Duration(_) => {
                 self.process_duration_array(array)?;
             }
-            // Complex types - use fallback with improved extraction
             _ => {
-                // For other types, use improved generic handling
                 self.process_generic_array(array)?;
             }
         }
@@ -294,16 +271,12 @@ impl ColumnAnalyzer {
     }
 
     fn process_float64_array(&mut self, array: &Float64Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 self.update_numeric_stats(value);
-
-                // Add to unique values (with limit)
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
-                // Keep samples for pattern detection
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -313,15 +286,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_float32_array(&mut self, array: &Float32Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -331,15 +302,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_int64_array(&mut self, array: &Int64Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -349,15 +318,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_int32_array(&mut self, array: &Int32Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -367,15 +334,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_int16_array(&mut self, array: &Int16Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -385,15 +350,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_int8_array(&mut self, array: &Int8Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -403,15 +366,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_uint64_array(&mut self, array: &UInt64Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -421,15 +382,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_uint32_array(&mut self, array: &UInt32Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -439,15 +398,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_uint16_array(&mut self, array: &UInt16Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -457,15 +414,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_uint8_array(&mut self, array: &UInt8Array) -> Result<()> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
+        for index in 0..array.len() {
+            if let Some(value) = array.value(index).into() {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -475,15 +430,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_string_array(&mut self, array: &StringArray) -> Result<()> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 self.update_text_stats(value);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -493,15 +446,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_large_string_array(&mut self, array: &LargeStringArray) -> Result<()> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 self.update_text_stats(value);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -511,20 +462,18 @@ impl ColumnAnalyzer {
     }
 
     fn process_boolean_array(&mut self, array: &BooleanArray) -> Result<()> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 if value {
                     self.true_count += 1;
                 } else {
                     self.false_count += 1;
                 }
                 let value_str = if value { "True" } else { "False" };
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value_str.to_string());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value_str.to_string());
                 }
@@ -534,20 +483,14 @@ impl ColumnAnalyzer {
     }
 
     fn process_date32_array(&mut self, array: &Date32Array) -> Result<()> {
-        // Date32: days since Unix epoch (1970-01-01)
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let days = array.value(i);
-                // Convert to approximate year for statistics
-                let value_f64 = days as f64;
-                self.update_numeric_stats(value_f64);
-
-                // Format as date string for display
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let days = array.value(index);
+                self.update_numeric_stats(days as f64);
                 let date_str = format!("1970-01-01+{}days", days);
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(date_str.clone());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
                 }
@@ -557,19 +500,14 @@ impl ColumnAnalyzer {
     }
 
     fn process_date64_array(&mut self, array: &Date64Array) -> Result<()> {
-        // Date64: milliseconds since Unix epoch
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let millis = array.value(i);
-                let value_f64 = millis as f64;
-                self.update_numeric_stats(value_f64);
-
-                // Format as datetime string
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let millis = array.value(index);
+                self.update_numeric_stats(millis as f64);
                 let datetime_str = format!("1970-01-01T00:00:00.000+{}ms", millis);
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(datetime_str.clone());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(datetime_str);
                 }
@@ -579,25 +517,20 @@ impl ColumnAnalyzer {
     }
 
     fn process_timestamp_array(&mut self, array: &dyn Array) -> Result<()> {
-        // Generic timestamp processing - extract as i64 and treat as numeric
         use arrow::array::PrimitiveArray;
 
-        // Timestamp arrays are primitive arrays of i64
         if let Some(ts_array) = array
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampNanosecondType>>()
         {
-            for i in 0..ts_array.len() {
-                if !ts_array.is_null(i) {
-                    let ts_value = ts_array.value(i);
-                    let value_f64 = ts_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..ts_array.len() {
+                if !ts_array.is_null(index) {
+                    let ts_value = ts_array.value(index);
+                    self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(ts_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -607,17 +540,14 @@ impl ColumnAnalyzer {
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampMicrosecondType>>()
         {
-            for i in 0..ts_array.len() {
-                if !ts_array.is_null(i) {
-                    let ts_value = ts_array.value(i);
-                    let value_f64 = ts_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..ts_array.len() {
+                if !ts_array.is_null(index) {
+                    let ts_value = ts_array.value(index);
+                    self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(ts_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -627,17 +557,14 @@ impl ColumnAnalyzer {
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampMillisecondType>>()
         {
-            for i in 0..ts_array.len() {
-                if !ts_array.is_null(i) {
-                    let ts_value = ts_array.value(i);
-                    let value_f64 = ts_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..ts_array.len() {
+                if !ts_array.is_null(index) {
+                    let ts_value = ts_array.value(index);
+                    self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(ts_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -647,17 +574,14 @@ impl ColumnAnalyzer {
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampSecondType>>()
         {
-            for i in 0..ts_array.len() {
-                if !ts_array.is_null(i) {
-                    let ts_value = ts_array.value(i);
-                    let value_f64 = ts_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..ts_array.len() {
+                if !ts_array.is_null(index) {
+                    let ts_value = ts_array.value(index);
+                    self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(ts_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -669,17 +593,14 @@ impl ColumnAnalyzer {
     }
 
     fn process_binary_array(&mut self, array: &BinaryArray) -> Result<()> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let bytes = array.value(i);
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let bytes = array.value(index);
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
-
-                // For binary, we track length distributions
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(format!("len:{}", len));
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
@@ -689,16 +610,14 @@ impl ColumnAnalyzer {
     }
 
     fn process_large_binary_array(&mut self, array: &LargeBinaryArray) -> Result<()> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let bytes = array.value(i);
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let bytes = array.value(index);
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(format!("len:{}", len));
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
@@ -708,19 +627,14 @@ impl ColumnAnalyzer {
     }
 
     fn process_decimal128_array(&mut self, array: &Decimal128Array) -> Result<()> {
-        // Decimal128: fixed-point decimal with precision and scale
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let decimal_value = array.value(i);
-                // Convert to f64 for statistics (may lose precision)
-                let value_f64 = decimal_value as f64;
-                self.update_numeric_stats(value_f64);
-
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let decimal_value = array.value(index);
+                self.update_numeric_stats(decimal_value as f64);
                 let decimal_str = format!("dec128:{}", decimal_value);
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(decimal_str.clone());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(decimal_str);
                 }
@@ -730,17 +644,13 @@ impl ColumnAnalyzer {
     }
 
     fn process_decimal256_array(&mut self, array: &Decimal256Array) -> Result<()> {
-        // Decimal256: larger fixed-point decimal
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                // Decimal256 is stored as i256, we'll represent as string
-                let decimal_str = format!("dec256:value_{}", i);
+        for index in 0..array.len() {
+            if !array.is_null(index) {
+                let decimal_str = format!("dec256:value_{}", index);
                 self.update_text_stats(&decimal_str);
-
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(decimal_str.clone());
                 }
-
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(decimal_str);
                 }
@@ -750,24 +660,20 @@ impl ColumnAnalyzer {
     }
 
     fn process_duration_array(&mut self, array: &dyn Array) -> Result<()> {
-        // Duration is stored as i64 with different units (seconds, millis, micros, nanos)
         use arrow::array::PrimitiveArray;
 
         if let Some(dur_array) = array
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationNanosecondType>>()
         {
-            for i in 0..dur_array.len() {
-                if !dur_array.is_null(i) {
-                    let dur_value = dur_array.value(i);
-                    let value_f64 = dur_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..dur_array.len() {
+                if !dur_array.is_null(index) {
+                    let dur_value = dur_array.value(index);
+                    self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ns", dur_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(dur_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -777,17 +683,14 @@ impl ColumnAnalyzer {
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationMicrosecondType>>()
         {
-            for i in 0..dur_array.len() {
-                if !dur_array.is_null(i) {
-                    let dur_value = dur_array.value(i);
-                    let value_f64 = dur_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..dur_array.len() {
+                if !dur_array.is_null(index) {
+                    let dur_value = dur_array.value(index);
+                    self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}us", dur_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(dur_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -797,17 +700,14 @@ impl ColumnAnalyzer {
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationMillisecondType>>()
         {
-            for i in 0..dur_array.len() {
-                if !dur_array.is_null(i) {
-                    let dur_value = dur_array.value(i);
-                    let value_f64 = dur_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..dur_array.len() {
+                if !dur_array.is_null(index) {
+                    let dur_value = dur_array.value(index);
+                    self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ms", dur_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(dur_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -817,17 +717,14 @@ impl ColumnAnalyzer {
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::DurationSecondType>>()
         {
-            for i in 0..dur_array.len() {
-                if !dur_array.is_null(i) {
-                    let dur_value = dur_array.value(i);
-                    let value_f64 = dur_value as f64;
-                    self.update_numeric_stats(value_f64);
-
+            for index in 0..dur_array.len() {
+                if !dur_array.is_null(index) {
+                    let dur_value = dur_array.value(index);
+                    self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}s", dur_value);
                     if self.unique_values.len() < 1000 {
                         self.unique_values.insert(dur_str.clone());
                     }
-
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -839,20 +736,15 @@ impl ColumnAnalyzer {
     }
 
     fn process_generic_array(&mut self, array: &dyn Array) -> Result<()> {
-        // Use Arrow's display formatting for unsupported types (List, Struct, Map, etc.)
-        // This provides actual values instead of placeholder strings
         match ArrayFormatter::try_new(array, &Default::default()) {
             Ok(formatter) => {
-                for i in 0..array.len() {
-                    if !array.is_null(i) {
-                        // Format the value using Arrow's formatter
-                        let value_str = formatter.value(i).to_string();
+                for index in 0..array.len() {
+                    if !array.is_null(index) {
+                        let value_str = formatter.value(index).to_string();
                         self.update_text_stats(&value_str);
-
                         if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
-
                         if self.unique_values.len() < 1000 {
                             self.unique_values.insert(value_str);
                         }
@@ -860,16 +752,13 @@ impl ColumnAnalyzer {
                 }
             }
             Err(_) => {
-                // If formatter fails, fall back to generic placeholder
-                for i in 0..array.len() {
-                    if !array.is_null(i) {
-                        let value_str = format!("<{}:value_{}>", array.data_type(), i);
+                for index in 0..array.len() {
+                    if !array.is_null(index) {
+                        let value_str = format!("<{}:value_{}>", array.data_type(), index);
                         self.update_text_stats(&value_str);
-
                         if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
-
                         if self.unique_values.len() < 1000 {
                             self.unique_values.insert(value_str);
                         }
@@ -885,12 +774,12 @@ impl ColumnAnalyzer {
         self.sum_squares += value * value;
 
         self.min_value = Some(match self.min_value {
-            Some(min) => min.min(value),
+            Some(min_value) => min_value.min(value),
             None => value,
         });
 
         self.max_value = Some(match self.max_value {
-            Some(max) => max.max(value),
+            Some(max_value) => max_value.max(value),
             None => value,
         });
     }
@@ -916,38 +805,34 @@ impl ColumnAnalyzer {
             0.0
         };
 
-        crate::core::profile_builder::build_column_profile(
-            crate::core::profile_builder::ColumnProfileInput {
-                name,
-                data_type,
-                total_count: self.total_count,
-                null_count: self.null_count,
-                unique_count: Some(self.unique_values.len()),
-                sample_values: &self.sample_values,
-                text_lengths: Some(crate::core::profile_builder::TextLengths {
-                    min_length: self.min_length,
-                    max_length: self.max_length,
-                    avg_length,
-                }),
-                boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
-                    Some((self.true_count, self.false_count))
-                } else {
-                    None
-                },
-                skip_statistics,
-                skip_patterns,
-                locale,
+        build_column_profile(ColumnProfileInput {
+            name,
+            data_type,
+            total_count: self.total_count,
+            null_count: self.null_count,
+            unique_count: Some(self.unique_values.len()),
+            sample_values: &self.sample_values,
+            text_lengths: Some(TextLengths {
+                min_length: self.min_length,
+                max_length: self.max_length,
+                avg_length,
+            }),
+            boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
+                Some((self.true_count, self.false_count))
+            } else {
+                None
             },
-        )
+            skip_statistics,
+            skip_patterns,
+            locale,
+        })
     }
 
     fn infer_data_type(&self) -> DataType {
         match &self.data_type {
-            // Floating point types
             arrow::datatypes::DataType::Float64 | arrow::datatypes::DataType::Float32 => {
                 DataType::Float
             }
-            // Integer types (signed and unsigned)
             arrow::datatypes::DataType::Int64
             | arrow::datatypes::DataType::Int32
             | arrow::datatypes::DataType::Int16
@@ -956,23 +841,16 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::UInt32
             | arrow::datatypes::DataType::UInt16
             | arrow::datatypes::DataType::UInt8 => DataType::Integer,
-            // Date and timestamp types - preserve as Date
             arrow::datatypes::DataType::Date32
             | arrow::datatypes::DataType::Date64
             | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
-            // Decimal types - treat as Float for now
             arrow::datatypes::DataType::Decimal128(_, _)
             | arrow::datatypes::DataType::Decimal256(_, _) => DataType::Float,
-            // Duration - treat as Integer (numeric elapsed time)
             arrow::datatypes::DataType::Duration(_) => DataType::Integer,
-            // Boolean type
             arrow::datatypes::DataType::Boolean => DataType::Boolean,
-            // String types
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                // Check if it looks like dates or numbers (for string-encoded types)
-                crate::analysis::inference::infer_type(&self.sample_values)
+                infer_type(&self.sample_values)
             }
-            // Binary types and complex types - treat as String
             _ => DataType::String,
         }
     }
@@ -984,6 +862,7 @@ mod tests {
     use arrow::array::{Float64Array, Int64Array, StringArray};
     use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
+    use dataprof_core::ColumnStats;
     use std::sync::Arc;
 
     #[test]
@@ -1010,38 +889,43 @@ mod tests {
         let profiles = analyzer.to_profiles(false, false, None);
         assert_eq!(profiles.len(), 3);
 
-        // Check score column
-        let score_col = profiles.iter().find(|p| p.name == "score").unwrap();
+        let score_col = profiles
+            .iter()
+            .find(|profile| profile.name == "score")
+            .unwrap();
         match &score_col.stats {
-            crate::types::ColumnStats::Numeric(n) => {
-                assert!((n.min - 10.0).abs() < 0.01);
-                assert!((n.max - 80.0).abs() < 0.01);
-                assert!((n.mean - 45.0).abs() < 0.01);
-                assert!(n.std_dev > 0.0);
-                assert!(n.median.is_some());
-                assert!(n.skewness.is_some());
-                assert!(n.kurtosis.is_some());
-                assert!(n.coefficient_of_variation.is_some());
-                // Linear data should have near-zero skewness
-                assert!(n.skewness.unwrap().abs() < 0.5);
+            ColumnStats::Numeric(stats) => {
+                assert!((stats.min - 10.0).abs() < 0.01);
+                assert!((stats.max - 80.0).abs() < 0.01);
+                assert!((stats.mean - 45.0).abs() < 0.01);
+                assert!(stats.std_dev > 0.0);
+                assert!(stats.median.is_some());
+                assert!(stats.skewness.is_some());
+                assert!(stats.kurtosis.is_some());
+                assert!(stats.coefficient_of_variation.is_some());
+                assert!(stats.skewness.unwrap().abs() < 0.5);
             }
             _ => panic!("Expected Numeric stats for score column"),
         }
 
-        // Check rank column also has advanced stats
-        let rank_col = profiles.iter().find(|p| p.name == "rank").unwrap();
+        let rank_col = profiles
+            .iter()
+            .find(|profile| profile.name == "rank")
+            .unwrap();
         match &rank_col.stats {
-            crate::types::ColumnStats::Numeric(n) => {
-                assert!(n.skewness.is_some(), "rank should have skewness");
-                assert!(n.kurtosis.is_some(), "rank should have kurtosis");
+            ColumnStats::Numeric(stats) => {
+                assert!(stats.skewness.is_some(), "rank should have skewness");
+                assert!(stats.kurtosis.is_some(), "rank should have kurtosis");
             }
             _ => panic!("Expected Numeric stats for rank column"),
         }
 
-        // Check label column is text (no numeric stats)
-        let label_col = profiles.iter().find(|p| p.name == "label").unwrap();
+        let label_col = profiles
+            .iter()
+            .find(|profile| profile.name == "label")
+            .unwrap();
         match &label_col.stats {
-            crate::types::ColumnStats::Text(..) => {}
+            ColumnStats::Text(..) => {}
             _ => panic!("Expected Text stats for label column"),
         }
     }

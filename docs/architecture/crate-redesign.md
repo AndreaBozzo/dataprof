@@ -41,7 +41,7 @@ That breadth is useful, but it creates adoption friction:
 6. Make benchmarks and paper artifacts reproducible without making the main
    package feel research-only.
 
-## Status After The Core, Metrics, Runtime, And Parser Split
+## Status After The Core, Metrics, Runtime, Parser, And Parquet Split
 
 The redesign is now past the packaging-only stage and into a real workspace
 layout:
@@ -56,11 +56,14 @@ layout:
    CSV report-building flow
 - `dataprof-json` now owns both the low-level JSON scanner and the higher-level
    JSON/JSONL report-building flow
+- `dataprof-parquet` now owns the synchronous Parquet parser plus the shared
+  `RecordBatchAnalyzer` used by Parquet-backed and Arrow-backed batch analysis
 - the top-level `dataprof` crate now acts as a facade and compatibility layer:
    it re-exports the moved APIs and keeps the public surface stable while the
    internal crate graph changes
-- `src/parsers/csv` and `src/parsers/json` no longer own implementations;
-   parser compatibility is now provided through lightweight shim modules
+- `src/parsers/csv`, `src/parsers/json`, and `src/parsers/parquet` no longer
+  own implementations; parser compatibility is now provided through lightweight
+  shim modules
 
 That is a meaningful architectural milestone. The remaining work is no longer
 "create a place for shared code". The remaining work is to keep moving the
@@ -74,9 +77,9 @@ of real boundaries instead of hypothetical ones:
 
 | Area | What is already true | What is still coupled |
 | --- | --- | --- |
-| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, and `dataprof-json`, and the facade crate still supports meaningful minimal/default builds | Heavy format and product-specific crates do not exist yet |
+| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, and `dataprof-parquet`, and the facade crate still supports meaningful minimal/default builds | Database and product-specific crates do not exist yet |
 | Shared model | Core report and profiling DTOs live in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
-| Parser boundary | Standard CSV and JSON/JSONL parsing now live outside the facade crate, including robust CSV recovery and `CsvDiagnostics`; the facade parser modules are shims | Heavier readers like Parquet are still in `src/`, and the facade still dispatches parser selection |
+| Parser boundary | Standard CSV, JSON/JSONL, and synchronous Parquet parsing now live outside the facade crate, and the facade parser modules are shims | Async Parquet HTTP handling, parser dispatch, and non-parser product code are still in `src/` |
 | Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code still reach metrics through runtime or facade re-exports rather than a smaller explicit adapter boundary |
 | Public API | Existing top-level exports remain available through facade re-exports and compatibility shims | `src/api/mod.rs` still dispatches through facade parser and engine modules instead of thinner crate-specific adapters |
 | Product surfaces | The facade crate is increasingly a shell around internal crates | CLI, Python, database, and engine orchestration still ship from the same facade crate |
@@ -92,7 +95,7 @@ The likely workspace shape is:
 | `dataprof-runtime` | Shared runtime composition helpers, report assembly, streaming stats, and cross-crate profiling adapters |
 | `dataprof-csv` | Standard CSV parsing, delimiter detection, robust CSV recovery helpers, diagnostics, and CSV report assembly |
 | `dataprof-json` | JSON and JSONL scanning plus JSON report assembly |
-| `dataprof-parquet` | Parquet and Arrow-backed profiling |
+| `dataprof-parquet` | Synchronous Parquet profiling plus shared Arrow `RecordBatchAnalyzer` support used by Parquet-adjacent paths |
 | `dataprof-db` | PostgreSQL, MySQL, SQLite connectors and SQL validation |
 | `dataprof-cli` | CLI application crate that builds the `dataprof` binary |
 | `dataprof-python` | PyO3 extension and Python report wrappers |
@@ -112,8 +115,8 @@ branch now gives enough evidence to sequence the work more clearly:
 | 1 | `dataprof-core` | Completed. Shared report types, progress/error/config primitives, and profiling model types now have a stable internal home |
 | 2 | `dataprof-metrics` | Completed. `analysis/` and `stats/` proved isolated enough to move behind the new core boundary with facade shims |
 | 3 | `dataprof-runtime`, `dataprof-csv`, and full `dataprof-json` ownership | Completed. Shared report-building helpers moved first, then standard CSV and JSON parser ownership followed behind facade shims |
-| 4 | `dataprof-parquet` and `dataprof-db` | Keep heavier optional dependencies isolated until the lighter reader crates prove the packaging model |
-| 5 | `dataprof-cli`, `dataprof-python`, facade polish | Leave the user-facing leaf crates for last, after the library contracts stop moving |
+| 4 | `dataprof-parquet` | Completed. The synchronous Parquet reader and shared `RecordBatchAnalyzer` moved behind a new crate while facade module paths stayed stable |
+| 5 | `dataprof-db`, `dataprof-cli`, `dataprof-python`, facade polish | Leave the user-facing and connector-heavy leaf crates for last, after the reader and runtime contracts stop moving |
 
 ## Feature Boundary Proposal
 
@@ -174,7 +177,7 @@ Completed on this branch:
 
 ### Phase 3: Split Reader Crates
 
-Completed for the standard CSV and JSON paths on this branch:
+Completed for the extracted reader crates on this branch:
 
 - `dataprof-runtime` now owns the shared report-building and streaming helpers
    that used to block parser extraction
@@ -182,14 +185,16 @@ Completed for the standard CSV and JSON paths on this branch:
   robust CSV recovery helpers, and `CsvDiagnostics`
 - `dataprof-json` owns both the JSON scanner and the higher-level JSON/JSONL
    report-building API
+- `dataprof-parquet` owns the synchronous Parquet parser and the shared
+  `RecordBatchAnalyzer` used by Parquet-backed batch analysis
 - the facade crate still re-exports the old parser entry points through shim
    modules so downstream module paths remain stable during transition
 - the facade no longer owns `robust_csv`; only lightweight re-exports remain
 
 ### Phase 4: Heavy Optional Crates
 
-- Move Parquet, Arrow-heavy paths, database connectors, and Python bindings to
-   dedicated crates after the lighter crates validate the approach.
+- Move database connectors, remaining Arrow-heavy paths, and Python bindings to
+   dedicated crates after the reader crates validate the approach.
 - Keep `dataprof` as the stable discovery package and dependency facade.
 
 ### Phase 5: Release Story
@@ -213,8 +218,8 @@ Completed for the standard CSV and JSON paths on this branch:
    "must stay stable", "re-export during migration", and "internal-only".
 2. Turn the current manual validation workflow into explicit compile-test
    coverage for facade re-exports and feature combinations.
-3. Split `dataprof-parquet` and the database readers now that the lighter
-   parser crates and runtime boundary are proven.
-4. Decide whether the CSV recovery path should stay inside `dataprof-csv` or
-   eventually become its own recovery-focused boundary once more parser crates
-   exist.
+3. Split the database readers now that the lighter parser crates, runtime
+   boundary, and synchronous Parquet path are proven.
+4. Decide whether the async HTTP Parquet path should stay facade-owned for a
+   while longer or move behind `dataprof-parquet` in a later network-aware
+   slice.

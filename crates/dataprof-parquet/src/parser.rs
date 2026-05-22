@@ -1,59 +1,23 @@
-//! Apache Parquet file format parser
-//!
-//! This module provides analysis capabilities for Parquet files using Apache Arrow.
-//! Parquet is a columnar storage format optimized for analytics workloads.
-//!
-//! # Example
-//! ```no_run
-//! use dataprof::analyze_parquet_with_quality;
-//! use std::path::Path;
-//!
-//! let report = analyze_parquet_with_quality(Path::new("data.parquet")).unwrap();
-//! println!("Quality score: {:.1}%", report.quality_score().unwrap_or(0.0));
-//! ```
-
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::core::errors::DataProfilerError;
-use crate::core::report_assembler::ReportAssembler;
-use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::types::{
-    DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, ProfileReport, QualityDimension,
+use crate::record_batch_analyzer::RecordBatchAnalyzer;
+use dataprof_core::{
+    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityDimension,
 };
+use dataprof_runtime::{ProfileReport, ReportAssembler};
 
-/// Check if a file is a valid Parquet file by examining its magic number
-///
-/// Parquet files have the magic number "PAR1" at the beginning and end of the file.
-/// This function checks both locations to validate the format.
-///
-/// # Arguments
-/// * `file_path` - Path to the file to check
-///
-/// # Returns
-/// * `true` if the file appears to be a valid Parquet file
-/// * `false` otherwise (including if the file cannot be read)
-///
-/// # Example
-/// ```no_run
-/// use dataprof::is_parquet_file;
-/// use std::path::Path;
-///
-/// if is_parquet_file(Path::new("data.parquet")) {
-///     println!("This is a Parquet file!");
-/// }
-/// ```
+/// Check if a file is a valid Parquet file by examining its magic number.
 pub fn is_parquet_file(file_path: &Path) -> bool {
     let mut file = match File::open(file_path) {
-        Ok(f) => f,
+        Ok(file) => file,
         Err(_) => return false,
     };
 
-    // Check file size - Parquet files need at least 8 bytes (4 for header + 4 for footer)
     let file_size = match file.metadata() {
-        Ok(meta) => meta.len(),
+        Ok(metadata) => metadata.len(),
         Err(_) => return false,
     };
 
@@ -61,7 +25,6 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
         return false;
     }
 
-    // Read first 4 bytes - should be "PAR1"
     let mut header = [0u8; 4];
     if file.read_exact(&mut header).is_err() {
         return false;
@@ -71,7 +34,6 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
         return false;
     }
 
-    // Read last 4 bytes - should also be "PAR1"
     if file.seek(SeekFrom::End(-4)).is_err() {
         return false;
     }
@@ -84,79 +46,38 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
     &footer == b"PAR1"
 }
 
-/// Configuration options for Parquet analysis
+/// Configuration options for Parquet analysis.
 #[derive(Debug, Clone)]
 pub struct ParquetConfig {
-    /// Batch size for reading Parquet files (number of rows per batch)
-    /// Default: 8192 (optimal for most workloads)
-    /// - Smaller values (1024-4096): Better for memory-constrained environments
-    /// - Larger values (16384-65536): Better for large files with many columns
     pub batch_size: usize,
 }
 
 impl Default for ParquetConfig {
     fn default() -> Self {
-        Self {
-            batch_size: 8192, // 8K rows - good balance between memory and performance
-        }
+        Self { batch_size: 8192 }
     }
 }
 
 impl ParquetConfig {
-    /// Create new config with custom batch size
     pub fn batch_size(batch_size: usize) -> Self {
         Self { batch_size }
     }
 
-    /// Adaptive batch sizing based on file size
-    /// Returns optimal batch size for the given file size
     pub fn adaptive_batch_size(file_size_bytes: u64) -> usize {
         match file_size_bytes {
-            0..=1_048_576 => 1024,                // < 1MB: small batches
-            1_048_577..=10_485_760 => 4096,       // 1-10MB: medium batches
-            10_485_761..=104_857_600 => 8192,     // 10-100MB: default batches
-            104_857_601..=1_073_741_824 => 16384, // 100MB-1GB: large batches
-            _ => 32768,                           // > 1GB: very large batches
+            0..=1_048_576 => 1024,
+            1_048_577..=10_485_760 => 4096,
+            10_485_761..=104_857_600 => 8192,
+            104_857_601..=1_073_741_824 => 16384,
+            _ => 32768,
         }
     }
 }
 
-/// Analyze a Parquet file and return a comprehensive quality report
-///
-/// This function:
-/// - Reads Parquet file using Apache Arrow's ParquetRecordBatchReader
-/// - Processes data in columnar batches for efficiency
-/// - Calculates comprehensive statistics for each column
-/// - Computes ISO 8000/25012 compliant quality metrics
-///
-/// # Arguments
-/// * `file_path` - Path to the Parquet file
-///
-/// # Returns
-/// * `ProfileReport` with column profiles and quality metrics
-///
-/// # Errors
-/// Returns error if:
-/// - File cannot be opened
-/// - File is not valid Parquet format
-/// - Data processing fails
-///
-/// # Example
-/// ```no_run
-/// use dataprof::analyze_parquet_with_quality;
-/// use std::path::Path;
-///
-/// let report = analyze_parquet_with_quality(Path::new("data.parquet"))?;
-/// println!("Analyzed {} rows in {} columns",
-///          report.execution.rows_processed,
-///          report.execution.columns_detected);
-/// # Ok::<(), dataprof::DataProfilerError>(())
-/// ```
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
     analyze_parquet_with_quality_dims(file_path, None)
 }
 
-/// Like [`analyze_parquet_with_quality`] but only computes the requested quality dimensions.
 pub fn analyze_parquet_with_quality_dims(
     file_path: &Path,
     quality_dimensions: Option<&[QualityDimension]>,
@@ -164,26 +85,6 @@ pub fn analyze_parquet_with_quality_dims(
     analyze_parquet_with_config_dims(file_path, &ParquetConfig::default(), quality_dimensions)
 }
 
-/// Analyze a Parquet file with custom configuration
-///
-/// Provides control over batch size and other processing parameters.
-///
-/// # Arguments
-/// * `file_path` - Path to the Parquet file
-/// * `config` - Configuration options for analysis
-///
-/// # Returns
-/// * `ProfileReport` with column profiles and quality metrics
-///
-/// # Example
-/// ```no_run
-/// use dataprof::{analyze_parquet_with_config, ParquetConfig};
-/// use std::path::Path;
-///
-/// let config = ParquetConfig::batch_size(16384);
-/// let report = analyze_parquet_with_config(Path::new("data.parquet"), &config)?;
-/// # Ok::<(), dataprof::DataProfilerError>(())
-/// ```
 pub fn analyze_parquet_with_config(
     file_path: &Path,
     config: &ParquetConfig,
@@ -191,7 +92,6 @@ pub fn analyze_parquet_with_config(
     analyze_parquet_with_config_dims(file_path, config, None)
 }
 
-/// Analyze a Parquet file with custom configuration and selective quality dimensions.
 pub fn analyze_parquet_with_config_dims(
     file_path: &Path,
     config: &ParquetConfig,
@@ -199,86 +99,69 @@ pub fn analyze_parquet_with_config_dims(
 ) -> Result<ProfileReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
-    // Open the Parquet file
-    let file = File::open(file_path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+    let file = File::open(file_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
             DataProfilerError::FileNotFound {
                 path: file_path.display().to_string(),
             }
         } else {
-            DataProfilerError::from(e)
+            DataProfilerError::from(error)
         }
     })?;
     let metadata = file.metadata()?;
     let file_size_bytes = metadata.len();
 
-    // Create Parquet reader using Arrow
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|error| {
         DataProfilerError::ParquetError {
-            message: format!("Failed to create Parquet reader: {}", e),
+            message: format!("Failed to create Parquet reader: {}", error),
         }
     })?;
 
-    // Extract Parquet metadata before consuming the builder
     let parquet_meta = builder.metadata();
     let file_metadata = parquet_meta.file_metadata();
 
-    // Extract metadata information
     let num_row_groups = parquet_meta.num_row_groups();
     let version = file_metadata.version();
 
-    // Get compression codec from first row group's first column (representative)
     let compression = if num_row_groups > 0 && parquet_meta.row_group(0).num_columns() > 0 {
         format!("{:?}", parquet_meta.row_group(0).column(0).compression())
     } else {
         "UNKNOWN".to_string()
     };
 
-    // Calculate compressed size (sum of all row group compressed sizes)
     let compressed_size_bytes: u64 = (0..num_row_groups)
-        .map(|i| parquet_meta.row_group(i).compressed_size() as u64)
+        .map(|index| parquet_meta.row_group(index).compressed_size() as u64)
         .sum();
 
-    // Get schema information
-    let schema = builder.schema();
-    let schema_summary = format!("{}", schema);
+    let schema_summary = format!("{}", builder.schema());
 
-    // Build the reader with configured batch size
     let reader = builder
         .with_batch_size(config.batch_size)
         .build()
-        .map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to build Parquet reader: {}", e),
+        .map_err(|error| DataProfilerError::ParquetError {
+            message: format!("Failed to build Parquet reader: {}", error),
         })?;
 
-    // Use RecordBatchAnalyzer to process batches
     let mut analyzer = RecordBatchAnalyzer::new();
-
-    // Process all record batches
     for batch_result in reader {
-        let batch = batch_result.map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to read Parquet batch: {}", e),
+        let batch = batch_result.map_err(|error| DataProfilerError::ParquetError {
+            message: format!("Failed to read Parquet batch: {}", error),
         })?;
         analyzer.process_batch(&batch)?;
     }
 
-    // Convert to column profiles
     let column_profiles = analyzer.to_profiles(false, false, None);
     let total_rows = analyzer.total_rows();
-
-    // Calculate comprehensive quality metrics using ISO 8000/25012 standards
     let sample_columns = analyzer.create_sample_columns();
-
     let scan_time_ms = start.elapsed().as_millis();
 
-    // Create Parquet metadata
     let parquet_metadata = Some(ParquetMetadata {
         num_row_groups,
         compression,
         version,
         schema_summary,
         compressed_size_bytes,
-        uncompressed_size_bytes: None, // Not readily available without decompressing
+        uncompressed_size_bytes: None,
     });
 
     let num_columns = column_profiles.len();
@@ -295,8 +178,8 @@ pub fn analyze_parquet_with_config_dims(
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns);
-    if let Some(dims) = quality_dimensions {
-        assembler = assembler.with_requested_dimensions(dims.to_vec());
+    if let Some(dimensions) = quality_dimensions {
+        assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }
     Ok(assembler.build())
 }
@@ -315,18 +198,15 @@ mod tests {
 
     #[test]
     fn test_analyze_parquet_basic() -> Result<()> {
-        // Create a test Parquet file
         let temp_file = NamedTempFile::new()?;
         let path = temp_file.path();
 
-        // Define schema
         let schema = Arc::new(Schema::new(vec![
             Field::new("name", DataType::Utf8, false),
             Field::new("age", DataType::Int32, false),
             Field::new("salary", DataType::Float64, false),
         ]));
 
-        // Create data
         let names = StringArray::from(vec!["Alice", "Bob", "Charlie"]);
         let ages = Int32Array::from(vec![25, 30, 35]);
         let salaries = Float64Array::from(vec![50000.0, 60000.0, 70000.0]);
@@ -336,14 +216,12 @@ mod tests {
             vec![Arc::new(names), Arc::new(ages), Arc::new(salaries)],
         )?;
 
-        // Write to Parquet
         let file = File::create(path)?;
         let props = WriterProperties::builder().build();
         let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
         writer.write(&batch)?;
         writer.close()?;
 
-        // Test analysis
         let report = analyze_parquet_with_quality(path)?;
 
         assert_eq!(report.column_profiles.len(), 3);
@@ -351,21 +229,19 @@ mod tests {
         assert_eq!(report.execution.columns_detected, 3);
         assert!(!report.execution.sampling_applied);
 
-        // Verify column names
         let column_names: Vec<_> = report
             .column_profiles
             .iter()
-            .map(|p| p.name.as_str())
+            .map(|profile| profile.name.as_str())
             .collect();
         assert!(column_names.contains(&"name"));
         assert!(column_names.contains(&"age"));
         assert!(column_names.contains(&"salary"));
 
-        // Verify age column statistics
         let age_profile = report
             .column_profiles
             .iter()
-            .find(|p| p.name == "age")
+            .find(|profile| profile.name == "age")
             .expect("Age column should exist");
         assert_eq!(age_profile.total_count, 3);
         assert_eq!(age_profile.null_count, 0);
@@ -375,7 +251,6 @@ mod tests {
 
     #[test]
     fn test_analyze_parquet_with_nulls() -> Result<()> {
-        // Create test file with nullable fields
         let temp_file = NamedTempFile::new()?;
         let path = temp_file.path();
 
@@ -389,20 +264,18 @@ mod tests {
 
         let batch = RecordBatch::try_new(schema.clone(), vec![Arc::new(ids), Arc::new(optional)])?;
 
-        // Write Parquet
         let file = File::create(path)?;
         let props = WriterProperties::builder().build();
         let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
         writer.write(&batch)?;
         writer.close()?;
 
-        // Analyze
         let report = analyze_parquet_with_quality(path)?;
 
         let optional_profile = report
             .column_profiles
             .iter()
-            .find(|p| p.name == "optional_field")
+            .find(|profile| profile.name == "optional_field")
             .expect("Optional field should exist");
 
         assert_eq!(optional_profile.total_count, 3);
@@ -413,7 +286,6 @@ mod tests {
 
     #[test]
     fn test_analyze_parquet_quality_metrics() -> Result<()> {
-        // Create test file
         let temp_file = NamedTempFile::new()?;
         let path = temp_file.path();
 
@@ -436,15 +308,12 @@ mod tests {
         writer.write(&batch)?;
         writer.close()?;
 
-        // Analyze and check quality metrics
         let report = analyze_parquet_with_quality(path)?;
 
-        // Should have quality metrics calculated
         let quality = report.quality.as_ref().expect("Quality should be present");
         assert!(quality.metrics.complete_records_ratio() >= 0.0);
         assert!(quality.metrics.complete_records_ratio() <= 100.0);
 
-        // Quality score should be reasonable
         let quality_score = report.quality_score().unwrap();
         assert!((0.0..=100.0).contains(&quality_score));
 
@@ -453,14 +322,12 @@ mod tests {
 
     #[test]
     fn test_analyze_parquet_empty_file() {
-        // Test with non-existent file
         let result = analyze_parquet_with_quality(Path::new("nonexistent.parquet"));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_is_parquet_file_detection() -> Result<()> {
-        // Create a valid Parquet file
         let temp_file = NamedTempFile::new()?;
         let path = temp_file.path();
 
@@ -478,7 +345,6 @@ mod tests {
         writer.write(&batch)?;
         writer.close()?;
 
-        // Should detect it as Parquet
         assert!(is_parquet_file(path));
 
         Ok(())
@@ -488,7 +354,6 @@ mod tests {
     fn test_is_parquet_file_false_positives() -> Result<()> {
         use std::io::Write;
 
-        // Test with a non-Parquet file
         let mut temp_file = NamedTempFile::new()?;
         writeln!(temp_file, "name,age")?;
         writeln!(temp_file, "Alice,25")?;
@@ -496,11 +361,9 @@ mod tests {
 
         assert!(!is_parquet_file(temp_file.path()));
 
-        // Test with empty file
         let empty_file = NamedTempFile::new()?;
         assert!(!is_parquet_file(empty_file.path()));
 
-        // Test with file that has PAR1 only at start
         let mut fake_file = NamedTempFile::new()?;
         fake_file.write_all(b"PAR1")?;
         fake_file.write_all(b"some other data")?;

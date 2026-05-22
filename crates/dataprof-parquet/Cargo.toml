@@ -1,0 +1,23 @@
+[package]
+name = "dataprof-parquet"
+version = "0.7.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "Parquet profiling support for dataprof"
+
+[features]
+default = []
+arrow = ["dep:arrow", "dataprof-core/arrow"]
+parquet = ["dep:parquet", "arrow"]
+
+[dependencies]
+anyhow = "1.0"
+arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+dataprof-core = { path = "../dataprof-core" }
+dataprof-metrics = { path = "../dataprof-metrics" }
+dataprof-runtime = { path = "../dataprof-runtime" }
+parquet = { version = "57.3.0", features = ["arrow"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.24"

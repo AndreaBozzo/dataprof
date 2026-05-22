@@ -5,7 +5,9 @@ pub mod json {
     pub use dataprof_json::*;
 }
 #[cfg(feature = "parquet")]
-pub mod parquet;
+pub mod parquet {
+    pub use dataprof_parquet::*;
+}
 #[cfg(feature = "parquet-async")]
 pub mod parquet_async;
 
