@@ -11,14 +11,14 @@ cargo install dataprof --features postgres         # PostgreSQL only
 cargo install dataprof --features mysql             # MySQL/MariaDB only
 cargo install dataprof --features sqlite            # SQLite only
 cargo install dataprof --features all-db            # All three
-cargo install dataprof --features full-cli          # CLI + Parquet + all databases
+cargo install dataprof --features full-cli          # CLI + all database connectors
 ```
 
 For Rust library usage:
 
 ```toml
 [dependencies]
-dataprof = { version = "0.6", features = ["postgres"] }
+dataprof = { version = "0.7", features = ["postgres"] }
 ```
 
 ## Supported Databases

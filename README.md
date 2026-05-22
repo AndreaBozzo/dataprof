@@ -17,7 +17,7 @@
 dataprof is a Rust library and CLI for profiling tabular data. It computes column-level statistics, detects data types and patterns, and evaluates data quality against the ISO 8000/25012 standard, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
 
 > [!NOTE]
-> This is a work in progress, the project is now over 6 months old and the API is not stable and may change in future versions. Please, report any issues or suggestions you may have.
+> dataprof is in beta. The CLI and Python package are intended for real use, while the Rust API may still change before 1.0. Please report issues or suggestions.
 
 ## Highlights
 
@@ -74,13 +74,22 @@ df = report.to_dataframe()
 report.save("report.json")
 ```
 
+## Which Interface Should I Use?
+
+| Use case | Start here |
+|---|---|
+| Inspect files from a terminal or CI job | CLI: `dataprof analyze data.csv` |
+| Add profiling to a Rust service or data tool | Rust API: `Profiler::new().analyze_file(...)` |
+| Work from notebooks, pandas, Polars, or PyArrow | Python: `dp.profile(...)` |
+| Profile PostgreSQL, MySQL, or SQLite | CLI or Rust with database feature flags |
+
 ## Installation
 
 ### CLI binary
 
 ```bash
-cargo install dataprof                        # default (CLI only)
-cargo install dataprof --features full-cli    # CLI + all formats + databases
+cargo install dataprof                        # installs the `dataprof` CLI
+cargo install dataprof --features full-cli    # CLI + all database connectors
 ```
 
 ### Rust library
@@ -104,7 +113,7 @@ pip install dataprof
 | Feature | Description |
 |---|---|
 | `cli` *(default)* | CLI binary with clap, colored output, progress bars |
-| `minimal` | CSV-only, no CLI -- fastest compile |
+| `minimal` | No optional interfaces; library only |
 | `async-streaming` | Async profiling engine with tokio |
 | `parquet-async` | Profile Parquet files over HTTP |
 | `database` | Database profiling (connection handling, retry, SSL) |
@@ -115,7 +124,7 @@ pip install dataprof
 | `datafusion` | DataFusion SQL engine integration |
 | `python` | Python bindings via PyO3 |
 | `python-async` | Async Python API (includes `python` + `async-streaming`) |
-| `full-cli` | CLI + Parquet + all databases |
+| `full-cli` | CLI + all database connectors |
 | `production` | PostgreSQL + MySQL (common deployment) |
 
 ## Supported Formats
@@ -152,6 +161,7 @@ An overall quality score (0 -- 100) is computed as a weighted average of dimensi
 - [Getting Started](docs/guides/getting-started.md) -- tutorial from zero to profiling
 - [Examples Cookbook](docs/guides/examples.md) -- copy-pasteable recipes (CLI, Python, Rust)
 - [Database Connectors](docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup
+- [Crate Redesign Notes](docs/architecture/crate-redesign.md) -- planned architecture direction
 - [Contributing](docs/CONTRIBUTING.md)
 - [Changelog](docs/CHANGELOG.md)
 

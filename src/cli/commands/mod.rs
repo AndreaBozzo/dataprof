@@ -27,7 +27,7 @@ pub fn is_parquet_file(path: &Path) -> bool {
     }
 }
 
-/// DataProf subcommands
+/// dataprof subcommands
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Full analysis with ISO 8000/25012 metrics

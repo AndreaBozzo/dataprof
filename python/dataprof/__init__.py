@@ -1,4 +1,4 @@
-"""DataProf — High-performance data profiling library."""
+"""dataprof - High-performance data profiling library."""
 
 from __future__ import annotations
 

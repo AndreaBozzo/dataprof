@@ -233,7 +233,7 @@ cargo clippy -- -W clippy::all
 cargo bench
 
 # Profile memory usage
-cargo build --release && valgrind ./target/release/dataprof-cli analyze data.csv
+cargo build --release && valgrind ./target/release/dataprof analyze data.csv
 ```
 
 ### Project Structure

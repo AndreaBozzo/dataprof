@@ -1,6 +1,6 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.6.2).
+Complete reference for the `dataprof` Python package (v0.7.1).
 
 ## Installation
 

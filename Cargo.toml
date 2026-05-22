@@ -129,7 +129,7 @@ serial_test = "3.4.0"
 predicates = "3.1"
 
 [[bin]]
-name = "dataprof-cli"
+name = "dataprof"
 path = "src/main.rs"
 required-features = ["cli"]
 
@@ -196,8 +196,8 @@ mysql = ["database", "dep:sqlx", "sqlx/mysql"]
 sqlite = ["database", "dep:sqlx", "sqlx/sqlite"]
 
 # Sensible feature combinations
-minimal = []                             # Just CSV processing - fastest builds
-full-cli = ["cli", "all-db"]  # CLI with all format + DB support
+minimal = []                             # No optional interfaces; library only
+full-cli = ["cli", "all-db"]  # CLI with all database connectors
 production = ["postgres", "mysql"]       
 all-db = ["postgres", "mysql", "sqlite"] 
 

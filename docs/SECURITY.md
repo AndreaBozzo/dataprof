@@ -2,16 +2,17 @@
 
 ## Supported Versions
 
-We actively support the following versions of DataProfiler:
+We actively support the following versions of dataprof:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.4.x   | :white_check_mark: |
-| < 0.4   | :x:                |
+| 0.7.x   | :white_check_mark: |
+| 0.6.x   | Security fixes     |
+| < 0.6   | :x:                |
 
 ## Reporting a Vulnerability
 
-We take the security of DataProfiler seriously. If you discover a security vulnerability, please report it responsibly.
+We take the security of dataprof seriously. If you discover a security vulnerability, please report it responsibly.
 
 ### How to Report
 
@@ -44,17 +45,17 @@ When reporting a security vulnerability, please include:
 
 ## Security Best Practices
 
-When using DataProfiler:
+When using dataprof:
 
 - Keep your Rust toolchain updated
-- Use the latest version of DataProfiler
+- Use the latest version of dataprof
 - Be cautious when analyzing untrusted data files
 - Review generated HTML reports before sharing them
 - Use appropriate file permissions for sensitive data
 
 ## Security Features
 
-DataProfiler includes several security considerations:
+dataprof includes several security considerations:
 
 - No network connections are made during analysis
 - Data is processed locally only
@@ -62,4 +63,4 @@ DataProfiler includes several security considerations:
 - No persistent storage of analyzed data
 - Memory-safe Rust implementation
 
-Thank you for helping keep DataProfiler secure!
+Thank you for helping keep dataprof secure!

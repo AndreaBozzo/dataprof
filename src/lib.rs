@@ -54,7 +54,7 @@ pub mod database;
 #[cfg(feature = "python")]
 pub mod python;
 
-// v0.6.0 unified public API
+// Unified public API
 pub use api::{
     EngineType, Profiler, ProfilerConfig, quick_quality_check, quick_quality_check_source,
 };

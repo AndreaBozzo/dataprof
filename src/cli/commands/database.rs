@@ -63,7 +63,7 @@ fn run_database_analysis(args: &DatabaseArgs, connection_string: &str) -> Result
     println!(
         "{}",
         format!(
-            "DataProfiler v{} - Database Analysis",
+            "dataprof v{} - Database Analysis",
             env!("CARGO_PKG_VERSION")
         )
         .bright_blue()

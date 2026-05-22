@@ -500,7 +500,7 @@ pub fn generate_performance_hints(
 
 /// Create a fancy startup banner
 pub fn display_startup_banner(version: &str, _colored: bool) {
-    println!("DataProfiler CLI v{}", version);
+    println!("dataprof CLI v{}", version);
     println!("High-performance data profiling with ISO 8000/25012 quality metrics");
 }
 

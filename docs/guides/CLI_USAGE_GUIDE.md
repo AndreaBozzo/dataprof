@@ -1,12 +1,12 @@
 # CLI Usage Guide
 
-Complete reference for the `dataprof` command-line interface (v0.6.0).
+Complete reference for the `dataprof` command-line interface (v0.7.1).
 
 ## Installation
 
 ```bash
-cargo install dataprof                        # default features
-cargo install dataprof --features full-cli    # includes Parquet + all databases
+cargo install dataprof                        # installs the `dataprof` CLI
+cargo install dataprof --features full-cli    # includes all database connectors
 ```
 
 ## Subcommands

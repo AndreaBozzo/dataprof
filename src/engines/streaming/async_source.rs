@@ -16,7 +16,7 @@ use crate::types::{FileFormat, StreamSourceSystem};
 pub struct AsyncSourceInfo {
     /// Human-readable label (e.g., URL, topic name, filename)
     pub label: String,
-    /// Format of the incoming data (CSV-only for now; #218 adds JSON/Parquet)
+    /// Format of the incoming data. Async streaming currently supports CSV.
     pub format: FileFormat,
     /// Optional total size in bytes — enables progress percentage calculation
     pub size_hint: Option<u64>,
