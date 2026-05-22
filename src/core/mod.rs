@@ -1,13 +1,22 @@
 pub mod config;
 pub mod errors;
 pub mod memory_tracker;
-pub mod profile_builder;
 pub mod progress;
-pub mod report_assembler;
 pub mod sampling;
 pub mod stop_condition;
-pub mod streaming_stats;
 pub mod validation;
+
+pub mod profile_builder {
+    pub use dataprof_runtime::profile_builder::*;
+}
+
+pub mod report_assembler {
+    pub use dataprof_runtime::report_assembler::*;
+}
+
+pub mod streaming_stats {
+    pub use dataprof_runtime::streaming_stats::*;
+}
 
 // Re-export core types
 pub use config::*;

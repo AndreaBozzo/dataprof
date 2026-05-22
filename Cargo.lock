@@ -1606,6 +1606,7 @@ dependencies = [
  "dataprof-core",
  "dataprof-json",
  "dataprof-metrics",
+ "dataprof-runtime",
  "env_logger",
  "futures",
  "glob",
@@ -1674,6 +1675,20 @@ dependencies = [
  "serde",
  "serde_json",
  "wide",
+]
+
+[[package]]
+name = "dataprof-runtime"
+version = "0.7.1"
+dependencies = [
+ "chrono",
+ "dataprof-core",
+ "dataprof-metrics",
+ "log",
+ "rand 0.9.3",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

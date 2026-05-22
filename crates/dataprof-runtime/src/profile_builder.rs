@@ -5,13 +5,15 @@
 //! [`build_column_profile`] instead of constructing one manually.
 //! This ensures consistent stats calculation and pattern detection.
 
-use crate::analysis::patterns::looks_like_date;
-use crate::core::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
-use crate::types::{ColumnProfile, ColumnStats, DataType, TextStats};
-
 use std::collections::HashMap;
 
-// ── Canonical builder ───────────────────────────────────────────────────
+use dataprof_core::{BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, TextStats};
+use dataprof_metrics::{
+    analysis::patterns::looks_like_date, calculate_datetime_stats, calculate_numeric_stats,
+    calculate_text_stats, detect_patterns,
+};
+
+use crate::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
 
 /// Inputs that every engine can provide for centralized profile construction.
 pub struct ColumnProfileInput<'a> {
@@ -52,14 +54,10 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         ColumnStats::None
     } else {
         match input.data_type {
-            DataType::Integer | DataType::Float => {
-                crate::stats::numeric::calculate_numeric_stats(input.sample_values)
-            }
+            DataType::Integer | DataType::Float => calculate_numeric_stats(input.sample_values),
             DataType::Date => {
-                // Produce real datetime stats when sample values are available;
-                // fall back to text lengths for engines that only tracked lengths.
                 if !input.sample_values.is_empty() {
-                    crate::stats::datetime::calculate_datetime_stats(input.sample_values)
+                    calculate_datetime_stats(input.sample_values)
                 } else if let Some(tl) = &input.text_lengths {
                     ColumnStats::Text(TextStats::from_lengths(
                         tl.min_length,
@@ -67,7 +65,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                         tl.avg_length,
                     ))
                 } else {
-                    ColumnStats::DateTime(crate::types::DateTimeStats::empty())
+                    ColumnStats::DateTime(DateTimeStats::empty())
                 }
             }
             DataType::Boolean => {
@@ -96,7 +94,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                 } else {
                     0.0
                 };
-                ColumnStats::Boolean(crate::types::BooleanStats {
+                ColumnStats::Boolean(BooleanStats {
                     true_count,
                     false_count,
                     true_ratio,
@@ -110,7 +108,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                         tl.avg_length,
                     ))
                 } else {
-                    crate::stats::text::calculate_text_stats(input.sample_values)
+                    calculate_text_stats(input.sample_values)
                 }
             }
         }
@@ -119,7 +117,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     let patterns = if input.skip_patterns {
         Vec::new()
     } else {
-        crate::detect_patterns(input.sample_values, input.locale)
+        detect_patterns(input.sample_values, input.locale)
     };
 
     ColumnProfile {
@@ -132,8 +130,6 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         patterns,
     }
 }
-
-// ── Streaming helpers ───────────────────────────────────────────────────
 
 /// Convert all columns in a [`StreamingColumnCollection`] into [`ColumnProfile`]s.
 pub fn profiles_from_streaming(
@@ -224,7 +220,6 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
             return DataType::Date;
         }
 
-        // Boolean detection: string literals (true/false/yes/no variants)
         let bool_count = non_empty
             .iter()
             .filter(|s| {
@@ -274,7 +269,7 @@ pub fn quality_check_samples(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::streaming_stats::StreamingColumnCollection;
+    use crate::streaming_stats::StreamingColumnCollection;
 
     #[test]
     fn test_profiles_from_streaming() {
@@ -324,7 +319,7 @@ mod tests {
         });
 
         match &profile.stats {
-            crate::types::ColumnStats::Boolean(b) => {
+            ColumnStats::Boolean(b) => {
                 assert_eq!(b.true_count, 2);
                 assert_eq!(b.false_count, 1);
                 assert!((b.true_ratio - 2.0 / 3.0).abs() < 0.001);
@@ -348,14 +343,14 @@ mod tests {
             unique_count: Some(2),
             sample_values: &samples,
             text_lengths: None,
-            boolean_counts: None, // forces fallback path
+            boolean_counts: None,
             skip_statistics: false,
             skip_patterns: false,
             locale: None,
         });
 
         match &profile.stats {
-            crate::types::ColumnStats::Boolean(b) => {
+            ColumnStats::Boolean(b) => {
                 assert_eq!(b.true_count, 2);
                 assert_eq!(b.false_count, 1);
                 assert!((b.true_ratio - 2.0 / 3.0).abs() < 0.001);
@@ -381,8 +376,7 @@ mod tests {
             locale: None,
         });
 
-        assert!(matches!(profile.stats, crate::types::ColumnStats::None));
-        // Patterns should still be computed
+        assert!(matches!(profile.stats, ColumnStats::None));
         assert_eq!(profile.data_type, DataType::Integer);
     }
 
@@ -404,8 +398,7 @@ mod tests {
         });
 
         assert!(profile.patterns.is_empty());
-        // Stats should still be computed
-        assert!(matches!(profile.stats, crate::types::ColumnStats::Text(_)));
+        assert!(matches!(profile.stats, ColumnStats::Text(_)));
     }
 
     #[test]
@@ -425,10 +418,7 @@ mod tests {
             locale: None,
         });
 
-        assert!(matches!(
-            profile.stats,
-            crate::types::ColumnStats::Numeric(_)
-        ));
+        assert!(matches!(profile.stats, ColumnStats::Numeric(_)));
         assert_eq!(profile.data_type, DataType::Integer);
     }
 }

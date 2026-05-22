@@ -1,5 +1,10 @@
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
+
+use crate::profile_builder::infer_data_type_streaming;
+
 /// Incremental statistics computation for streaming data processing.
 ///
 /// This module provides bounded-memory statistical computation using:
@@ -8,19 +13,12 @@ use rand::{Rng, SeedableRng};
 /// - **Reservoir sampling** for unbiased samples (fixed capacity; total memory
 ///   depends on the capacity and the length of sampled strings)
 /// - **Streaming text-length tracking** with min/max/mean/histogram (O(1) memory)
-use std::collections::HashMap;
-use std::hash::{BuildHasher, Hasher};
 
-// ─── Welford accumulator ─────────────────────────────────────────────
-
-/// Numerically stable online variance via Welford's algorithm.
-///
-/// Supports single-pass updates and parallel merging (Chan's formula).
 #[derive(Debug, Clone)]
 pub struct WelfordAccumulator {
     count: u64,
     mean: f64,
-    m2: f64, // sum of squared differences from running mean
+    m2: f64,
 }
 
 impl WelfordAccumulator {
@@ -32,7 +30,6 @@ impl WelfordAccumulator {
         }
     }
 
-    /// Add a single observation.
     #[inline]
     pub fn update(&mut self, value: f64) {
         self.count += 1;
@@ -42,13 +39,11 @@ impl WelfordAccumulator {
         self.m2 += delta * delta2;
     }
 
-    /// Running mean.
     #[inline]
     pub fn mean(&self) -> f64 {
         if self.count == 0 { 0.0 } else { self.mean }
     }
 
-    /// Population variance.
     pub fn variance(&self) -> f64 {
         if self.count < 2 {
             0.0
@@ -57,12 +52,10 @@ impl WelfordAccumulator {
         }
     }
 
-    /// Population standard deviation.
     pub fn std_dev(&self) -> f64 {
         self.variance().sqrt()
     }
 
-    /// Merge another accumulator into this one (Chan's parallel algorithm).
     pub fn merge(&mut self, other: &WelfordAccumulator) {
         if other.count == 0 {
             return;
@@ -91,10 +84,6 @@ impl Default for WelfordAccumulator {
     }
 }
 
-// ─── Reservoir sampler ───────────────────────────────────────────────
-
-/// Algorithm R reservoir sampling — every item has equal probability of being
-/// in the final sample, using O(`capacity`) memory.
 #[derive(Debug, Clone)]
 pub(crate) struct StreamReservoirSampler {
     reservoir: Vec<String>,
@@ -106,14 +95,13 @@ pub(crate) struct StreamReservoirSampler {
 impl StreamReservoirSampler {
     pub fn new(capacity: usize) -> Self {
         Self {
-            reservoir: Vec::with_capacity(capacity.min(1024)), // lazy grow
+            reservoir: Vec::with_capacity(capacity.min(1024)),
             capacity,
             count: 0,
             rng: SmallRng::from_os_rng(),
         }
     }
 
-    /// Create a sampler with a fixed seed for deterministic / reproducible results.
     #[cfg(test)]
     pub fn seed(capacity: usize, seed: u64) -> Self {
         Self {
@@ -124,24 +112,19 @@ impl StreamReservoirSampler {
         }
     }
 
-    /// Offer an item to the reservoir.
     #[inline]
     pub fn offer(&mut self, value: String) {
         self.count += 1;
         if self.reservoir.len() < self.capacity {
             self.reservoir.push(value);
         } else {
-            let j = self.rng.random_range(0..self.count as usize);
-            if j < self.capacity {
-                self.reservoir[j] = value;
+            let index = self.rng.random_range(0..self.count as usize);
+            if index < self.capacity {
+                self.reservoir[index] = value;
             }
         }
     }
 
-    /// Shrink the reservoir to a new (smaller) capacity, dropping excess items.
-    ///
-    /// Also releases the backing buffer via `shrink_to_fit` to reduce heap
-    /// fragmentation in long-running streaming processes.
     pub fn shrink_to(&mut self, new_capacity: usize) {
         let new_capacity = new_capacity.max(1);
         self.capacity = new_capacity;
@@ -149,42 +132,32 @@ impl StreamReservoirSampler {
         self.reservoir.shrink_to_fit();
     }
 
-    /// Current contents (unordered).
     pub fn samples(&self) -> &[String] {
         &self.reservoir
     }
 
-    /// Estimated heap memory used by the reservoir contents.
     pub fn memory_usage_bytes(&self) -> usize {
         self.reservoir
             .iter()
-            .map(|s| std::mem::size_of::<String>() + s.capacity())
+            .map(|value| std::mem::size_of::<String>() + value.capacity())
             .sum()
     }
 
-    /// Merge by concatenating reservoirs, then re-sampling to capacity.
-    ///
-    /// **Note:** This is an *approximate* merge — it produces a uniform
-    /// random subset of the union of the two reservoirs, but does *not*
-    /// guarantee a true uniform sample over the original combined stream.
-    /// For most profiling use-cases this is acceptable.
     pub fn merge(&mut self, other: &StreamReservoirSampler) {
         if other.count == 0 {
             return;
         }
 
-        // Combine both reservoirs
         let mut combined: Vec<String> = self.reservoir.drain(..).collect();
         combined.extend(other.reservoir.iter().cloned());
 
-        // Re-sample using Fisher-Yates partial shuffle
-        let n = combined.len();
-        if n <= self.capacity {
+        let total = combined.len();
+        if total <= self.capacity {
             self.reservoir = combined;
         } else {
-            for i in 0..self.capacity {
-                let j = self.rng.random_range(i..n);
-                combined.swap(i, j);
+            for index in 0..self.capacity {
+                let swap_with = self.rng.random_range(index..total);
+                combined.swap(index, swap_with);
             }
             combined.truncate(self.capacity);
             self.reservoir = combined;
@@ -194,18 +167,12 @@ impl StreamReservoirSampler {
     }
 }
 
-// ─── Streaming text-length stats ─────────────────────────────────────
-
-/// O(1)-memory text length tracking: min, max, mean/variance via Welford,
-/// plus a 32-bucket power-of-2 histogram.
 #[derive(Debug, Clone)]
 pub struct TextLengthStats {
     pub min_length: usize,
     pub max_length: usize,
     pub avg_length: f64,
     welford: WelfordAccumulator,
-    /// Power-of-2 histogram buckets: bucket i covers lengths [2^i, 2^(i+1)).
-    /// Bucket 0 = length 0, bucket 1 = length 1, bucket 2 = lengths 2-3, etc.
     histogram: [u64; 32],
 }
 
@@ -220,7 +187,6 @@ impl TextLengthStats {
         }
     }
 
-    /// Record a single text length.
     pub fn update(&mut self, length: usize) {
         self.min_length = self.min_length.min(length);
         self.max_length = self.max_length.max(length);
@@ -230,13 +196,11 @@ impl TextLengthStats {
         let bucket = if length == 0 {
             0
         } else {
-            // floor(log2(length)) + 1, clamped to 31
             (usize::BITS - length.leading_zeros()).min(31) as usize
         };
         self.histogram[bucket] += 1;
     }
 
-    /// Merge another `TextLengthStats` into this one.
     pub fn merge(&mut self, other: &TextLengthStats) {
         if other.welford.count == 0 {
             return;
@@ -251,12 +215,11 @@ impl TextLengthStats {
         self.welford.merge(&other.welford);
         self.avg_length = self.welford.mean();
 
-        for (a, b) in self.histogram.iter_mut().zip(other.histogram.iter()) {
-            *a += *b;
+        for (left, right) in self.histogram.iter_mut().zip(other.histogram.iter()) {
+            *left += *right;
         }
     }
 
-    /// Return a default "empty" stats object (used when no text values exist).
     pub fn empty() -> Self {
         Self {
             min_length: 0,
@@ -274,14 +237,6 @@ impl Default for TextLengthStats {
     }
 }
 
-// ─── Deterministic hasher for HLL ────────────────────────────────────
-
-/// Fixed-seed `BuildHasher` for HLL.
-///
-/// All `HllCounter` instances must share the same hashing scheme so that
-/// register merges are correct.  We use `DefaultHasher` (SipHash-1-3)
-/// whose `new()` constructor always seeds with (0, 0), giving excellent
-/// avalanche properties and deterministic output.
 struct HllBuildHasher;
 
 impl BuildHasher for HllBuildHasher {
@@ -292,16 +247,8 @@ impl BuildHasher for HllBuildHasher {
     }
 }
 
-// ─── HyperLogLog wrapper ─────────────────────────────────────────────
-
-/// HyperLogLog cardinality estimator with 14-bit precision.
-///
-/// Uses a deterministic hasher so that different `HllCounter` instances
-/// produce identical hashes for the same input — a prerequisite for
-/// correct register-level merging.
 #[derive(Clone)]
 struct HllCounter {
-    /// Raw HLL registers (2^14 = 16 384 registers).
     registers: Vec<u8>,
 }
 
@@ -316,7 +263,7 @@ impl std::fmt::Debug for HllCounter {
 
 impl HllCounter {
     const PRECISION: usize = 14;
-    const NUM_REGISTERS: usize = 1 << Self::PRECISION; // 16 384
+    const NUM_REGISTERS: usize = 1 << Self::PRECISION;
 
     fn new() -> Self {
         Self {
@@ -324,7 +271,6 @@ impl HllCounter {
         }
     }
 
-    /// Add a value.
     #[inline]
     fn insert(&mut self, value: &str) {
         let mut hasher = HllBuildHasher.build_hasher();
@@ -332,86 +278,60 @@ impl HllCounter {
         let hash = hasher.finish();
 
         let index = (hash as usize) & (Self::NUM_REGISTERS - 1);
-        let w = hash >> Self::PRECISION;
-
-        // ρ(w): number of leading zeros in the remaining bits, plus 1.
-        // `w` occupies the top (64 - PRECISION) bits of the original hash,
-        // so `w.leading_zeros()` includes PRECISION "extra" leading zeros
-        // from the shift.  We subtract those to get the true leading-zero
-        // count within the (64 - PRECISION)-bit window, then add 1.
-        //
-        // Maximum possible rank = (64 - PRECISION) + 1 = 51 when w == 0.
-        // This is a ~1-in-2^50 event and doesn't affect register size (u8).
-        let rank = (w.leading_zeros() - Self::PRECISION as u32 + 1) as u8;
+        let window = hash >> Self::PRECISION;
+        let rank = (window.leading_zeros() - Self::PRECISION as u32 + 1) as u8;
 
         if rank > self.registers[index] {
             self.registers[index] = rank;
         }
     }
 
-    /// Estimate cardinality using the HLL algorithm.
     fn count(&self) -> u64 {
-        let m = Self::NUM_REGISTERS as f64;
-        // α_m constant for m = 16384
-        let alpha_m = 0.7213 / (1.0 + 1.079 / m);
+        let register_count = Self::NUM_REGISTERS as f64;
+        let alpha = 0.7213 / (1.0 + 1.079 / register_count);
 
-        let raw_estimate: f64 = alpha_m * m * m
+        let raw_estimate: f64 = alpha * register_count * register_count
             / self
                 .registers
                 .iter()
-                .map(|&r| 2.0_f64.powi(-(r as i32)))
+                .map(|&register| 2.0_f64.powi(-(register as i32)))
                 .sum::<f64>();
 
-        if raw_estimate <= 2.5 * m {
-            // Small range correction
-            let zeros = self.registers.iter().filter(|&&r| r == 0).count() as f64;
+        if raw_estimate <= 2.5 * register_count {
+            let zeros = self
+                .registers
+                .iter()
+                .filter(|&&register| register == 0)
+                .count() as f64;
             if zeros > 0.0 {
-                (m * (m / zeros).ln()) as u64
+                (register_count * (register_count / zeros).ln()) as u64
             } else {
                 raw_estimate as u64
             }
         } else if raw_estimate <= (1u64 << 32) as f64 / 30.0 {
             raw_estimate as u64
         } else {
-            // Large range correction
             let two32 = (1u64 << 32) as f64;
             (-two32 * (1.0 - raw_estimate / two32).ln()) as u64
         }
     }
 
-    /// Merge another counter's registers (element-wise max).
     fn merge(&mut self, other: &HllCounter) {
-        for (a, b) in self.registers.iter_mut().zip(other.registers.iter()) {
-            *a = (*a).max(*b);
+        for (left, right) in self.registers.iter_mut().zip(other.registers.iter()) {
+            *left = (*left).max(*right);
         }
     }
 }
 
-// ─── StreamingStatistics ─────────────────────────────────────────────
-
-/// Streaming statistical aggregator with bounded memory.
-///
-/// Uses O(1) accumulators for numeric stats (Welford), cardinality (HLL),
-/// text lengths, and a fixed-capacity reservoir for sample values.
 #[derive(Debug, Clone)]
 pub struct StreamingStatistics {
-    /// Count of processed values
     pub count: usize,
-    /// Count of null/empty values
     pub null_count: usize,
-    /// Minimum numeric value seen
     pub min: f64,
-    /// Maximum numeric value seen
     pub max: f64,
-
-    // ── Bounded accumulators ──
-    /// Welford's online accumulator for mean / variance / stddev
     welford: WelfordAccumulator,
-    /// HyperLogLog for approximate unique-value counting
     hll: HllCounter,
-    /// Reservoir sampler for unbiased samples
     sampler: StreamReservoirSampler,
-    /// Streaming text-length tracker
     text_length_tracker: TextLengthStats,
 }
 
@@ -429,7 +349,6 @@ impl StreamingStatistics {
         }
     }
 
-    /// Create a `StreamingStatistics` with a custom reservoir capacity.
     pub fn with_sample_capacity(max_sample: usize) -> Self {
         Self {
             sampler: StreamReservoirSampler::new(max_sample),
@@ -437,7 +356,6 @@ impl StreamingStatistics {
         }
     }
 
-    /// Process a single value incrementally.
     pub fn update(&mut self, value: &str) {
         self.count += 1;
 
@@ -446,24 +364,17 @@ impl StreamingStatistics {
             return;
         }
 
-        // HLL cardinality (always, O(1))
         self.hll.insert(value);
-
-        // Reservoir sample
         self.sampler.offer(value.to_string());
-
-        // Text length tracking (O(1))
         self.text_length_tracker.update(value.len());
 
-        // Numeric statistics via Welford (skip NaN / ±Inf)
-        if let Some(num_val) = value.parse::<f64>().ok().filter(|v| v.is_finite()) {
-            self.welford.update(num_val);
-            self.min = self.min.min(num_val);
-            self.max = self.max.max(num_val);
+        if let Some(number) = value.parse::<f64>().ok().filter(|num| num.is_finite()) {
+            self.welford.update(number);
+            self.min = self.min.min(number);
+            self.max = self.max.max(number);
         }
     }
 
-    /// Merge statistics from another streaming aggregator.
     pub fn merge(&mut self, other: &StreamingStatistics) {
         self.count += other.count;
         self.null_count += other.null_count;
@@ -481,39 +392,30 @@ impl StreamingStatistics {
         self.text_length_tracker.merge(&other.text_length_tracker);
     }
 
-    /// Calculate mean (Welford).
     pub fn mean(&self) -> f64 {
         self.welford.mean()
     }
 
-    /// Calculate population variance (Welford).
     pub fn variance(&self) -> f64 {
         self.welford.variance()
     }
 
-    /// Calculate standard deviation (Welford).
     pub fn std_dev(&self) -> f64 {
         self.welford.std_dev()
     }
 
-    /// Approximate unique-value count (HyperLogLog).
     pub fn unique_count(&self) -> usize {
         self.hll.count() as usize
     }
 
-    /// Returns `true` when the unique count is an HLL estimate rather than
-    /// an exact value.  For very small cardinalities (≤ 100) the HLL small-range
-    /// correction is near-exact, so we report `false`.
     pub fn unique_count_is_approximate(&self) -> bool {
         self.hll.count() > 100
     }
 
-    /// Unbiased sample values from reservoir sampling.
     pub fn sample_values(&self) -> &[String] {
         self.sampler.samples()
     }
 
-    /// O(1) text-length statistics (min, max, avg).
     pub fn text_length_stats(&self) -> TextLengthStats {
         if self.text_length_tracker.welford.count == 0 {
             return TextLengthStats::empty();
@@ -521,19 +423,13 @@ impl StreamingStatistics {
         self.text_length_tracker.clone()
     }
 
-    /// Halve the reservoir capacity to reduce memory pressure.
     pub fn reduce_sample_capacity(&mut self) {
         self.sampler.shrink_to(self.sampler.capacity / 2);
     }
 
-    /// Memory usage estimate in bytes.
-    ///
-    /// HLL registers are fixed at ~16 KB.  The reservoir is bounded by
-    /// `capacity` items, but each item is a heap-allocated `String` whose
-    /// length depends on the data.
     pub fn memory_usage_bytes(&self) -> usize {
         let struct_size = std::mem::size_of::<Self>();
-        let hll_size = self.hll.registers.len(); // 16 KB
+        let hll_size = self.hll.registers.len();
         let reservoir_size = self.sampler.memory_usage_bytes();
 
         struct_size + hll_size + reservoir_size
@@ -546,12 +442,8 @@ impl Default for StreamingStatistics {
     }
 }
 
-// ─── StreamingColumnCollection ───────────────────────────────────────
-
-/// Collection of streaming statistics for all columns.
 pub struct StreamingColumnCollection {
     columns: HashMap<String, StreamingStatistics>,
-    /// Column names in source order (insertion order).
     ordered_names: Vec<String>,
     memory_limit_bytes: usize,
 }
@@ -561,7 +453,7 @@ impl StreamingColumnCollection {
         Self {
             columns: HashMap::new(),
             ordered_names: Vec::new(),
-            memory_limit_bytes: 100 * 1024 * 1024, // 100 MB default
+            memory_limit_bytes: 100 * 1024 * 1024,
         }
     }
 
@@ -573,8 +465,6 @@ impl StreamingColumnCollection {
         }
     }
 
-    /// Initialize columns from header names, preserving source order.
-    /// Columns that already exist are not re-added.
     pub fn init_columns(&mut self, headers: &[String]) {
         for header in headers {
             if !self.columns.contains_key(header) {
@@ -585,7 +475,6 @@ impl StreamingColumnCollection {
         }
     }
 
-    /// Process a record (row) of data.
     pub fn process_record<I>(&mut self, headers: &[String], values: I)
     where
         I: IntoIterator<Item = String>,
@@ -599,30 +488,25 @@ impl StreamingColumnCollection {
         }
     }
 
-    /// Get statistics for a specific column.
     pub fn get_column_stats(&self, column_name: &str) -> Option<&StreamingStatistics> {
         self.columns.get(column_name)
     }
 
-    /// Get all column names in source (insertion) order.
     pub fn column_names(&self) -> Vec<String> {
         self.ordered_names.clone()
     }
 
-    /// Get total memory usage.
     pub fn memory_usage_bytes(&self) -> usize {
-        self.columns.values().map(|s| s.memory_usage_bytes()).sum()
+        self.columns
+            .values()
+            .map(|stats| stats.memory_usage_bytes())
+            .sum()
     }
 
-    /// Check if memory usage is approaching the limit.
     pub fn is_memory_pressure(&self) -> bool {
         self.memory_usage_bytes() > (self.memory_limit_bytes * 80 / 100)
     }
 
-    /// Reduce memory usage by halving the reservoir capacity.
-    ///
-    /// Lowers both the stored samples *and* the capacity so that future
-    /// insertions do not immediately re-fill the reservoir.
     pub fn reduce_memory_usage(&mut self) {
         for stats in self.columns.values_mut() {
             stats.reduce_sample_capacity();
@@ -631,33 +515,28 @@ impl StreamingColumnCollection {
 
     /// Fingerprint of each column's currently inferred data type.
     ///
-    /// Returns a `u64` hash suitable for cheap comparison in
-    /// [`SchemaStabilityTracker`](crate::core::stop_condition::SchemaStabilityTracker).
+    /// Returns a `u64` hash suitable for cheap comparison in a schema
+    /// stability tracker.
     pub fn column_type_fingerprint(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-
-        use crate::core::profile_builder::infer_data_type_streaming;
 
         let mut hasher = DefaultHasher::new();
         let mut names: Vec<&String> = self.columns.keys().collect();
         names.sort();
         for name in names {
             let stats = &self.columns[name];
-            let dt = infer_data_type_streaming(stats);
+            let data_type = infer_data_type_streaming(stats);
             name.hash(&mut hasher);
-            std::mem::discriminant(&dt).hash(&mut hasher);
+            std::mem::discriminant(&data_type).hash(&mut hasher);
         }
         hasher.finish()
     }
 
-    /// Merge another collection into this one.
     pub fn merge(&mut self, other: StreamingColumnCollection) {
         for (column_name, other_stats) in other.columns {
             match self.columns.get_mut(&column_name) {
-                Some(existing_stats) => {
-                    existing_stats.merge(&other_stats);
-                }
+                Some(existing_stats) => existing_stats.merge(&other_stats),
                 None => {
                     self.columns.insert(column_name, other_stats);
                 }
@@ -672,8 +551,6 @@ impl Default for StreamingColumnCollection {
     }
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,13 +562,12 @@ mod tests {
         stats.update("10.5");
         stats.update("20.0");
         stats.update("15.5");
-        stats.update(""); // null value
+        stats.update("");
 
         assert_eq!(stats.count, 4);
         assert_eq!(stats.null_count, 1);
-        // HLL gives approximate counts — for 3 distinct values it should be close
-        let uc = stats.unique_count();
-        assert!((2..=5).contains(&uc), "unique_count {uc} not in [2,5]");
+        let unique_count = stats.unique_count();
+        assert!((2..=5).contains(&unique_count));
         assert!((stats.mean() - 15.333333333333334).abs() < 1e-10);
         assert_eq!(stats.min, 10.5);
         assert_eq!(stats.max, 20.0);
@@ -710,9 +586,8 @@ mod tests {
         stats1.merge(&stats2);
 
         assert_eq!(stats1.count, 4);
-        // HLL approximate: 4 distinct values
-        let uc = stats1.unique_count();
-        assert!((3..=6).contains(&uc), "unique_count {uc} not in [3,6]");
+        let unique_count = stats1.unique_count();
+        assert!((3..=6).contains(&unique_count));
         assert!((stats1.mean() - 25.0).abs() < 1e-10);
         assert_eq!(stats1.min, 10.0);
         assert_eq!(stats1.max, 40.0);
@@ -726,126 +601,91 @@ mod tests {
         collection.process_record(&headers, vec!["Alice".to_string(), "25".to_string()]);
         collection.process_record(&headers, vec!["Bob".to_string(), "30".to_string()]);
 
-        let age_stats = collection
-            .get_column_stats("age")
-            .expect("Age column should exist in test");
+        let age_stats = collection.get_column_stats("age").unwrap();
         assert_eq!(age_stats.count, 2);
         assert!((age_stats.mean() - 27.5).abs() < 1e-10);
     }
 
     #[test]
     fn test_welford_accuracy() {
-        let mut w = WelfordAccumulator::new();
-        // Known distribution: 1..=1000
-        for i in 1..=1000 {
-            w.update(i as f64);
+        let mut accumulator = WelfordAccumulator::new();
+        for value in 1..=1000 {
+            accumulator.update(value as f64);
         }
         let expected_mean = 500.5;
-        let expected_var = (1000.0 * 1000.0 - 1.0) / 12.0; // population variance of 1..N
-        assert!(
-            (w.mean() - expected_mean).abs() < 1e-6,
-            "mean {} != {}",
-            w.mean(),
-            expected_mean
-        );
-        assert!(
-            (w.variance() - expected_var).abs() < 1.0,
-            "variance {} != {}",
-            w.variance(),
-            expected_var
-        );
+        let expected_variance = (1000.0 * 1000.0 - 1.0) / 12.0;
+        assert!((accumulator.mean() - expected_mean).abs() < 1e-6);
+        assert!((accumulator.variance() - expected_variance).abs() < 1.0);
     }
 
     #[test]
     fn test_welford_merge() {
-        let mut a = WelfordAccumulator::new();
-        let mut b = WelfordAccumulator::new();
+        let mut left = WelfordAccumulator::new();
+        let mut right = WelfordAccumulator::new();
         let mut full = WelfordAccumulator::new();
 
-        for i in 1..=500 {
-            a.update(i as f64);
-            full.update(i as f64);
+        for value in 1..=500 {
+            left.update(value as f64);
+            full.update(value as f64);
         }
-        for i in 501..=1000 {
-            b.update(i as f64);
-            full.update(i as f64);
+        for value in 501..=1000 {
+            right.update(value as f64);
+            full.update(value as f64);
         }
 
-        a.merge(&b);
-        assert!(
-            (a.mean() - full.mean()).abs() < 1e-10,
-            "merged mean {} != {}",
-            a.mean(),
-            full.mean()
-        );
-        assert!(
-            (a.variance() - full.variance()).abs() < 1e-6,
-            "merged var {} != {}",
-            a.variance(),
-            full.variance()
-        );
+        left.merge(&right);
+        assert!((left.mean() - full.mean()).abs() < 1e-10);
+        assert!((left.variance() - full.variance()).abs() < 1e-6);
     }
 
     #[test]
     fn test_hll_cardinality() {
-        let mut hll = HllCounter::new();
-        let n = 100_000;
-        for i in 0..n {
-            hll.insert(&format!("item_{i}"));
+        let mut counter = HllCounter::new();
+        let total = 100_000;
+        for index in 0..total {
+            counter.insert(&format!("item_{index}"));
         }
-        let est = hll.count();
-        let error = (est as f64 - n as f64).abs() / n as f64;
-        assert!(
-            error < 0.05,
-            "HLL estimate {est} deviates {:.1}% from {n}",
-            error * 100.0
-        );
+        let estimate = counter.count();
+        let error = (estimate as f64 - total as f64).abs() / total as f64;
+        assert!(error < 0.05);
     }
 
     #[test]
     fn test_reservoir_uniformity() {
         let mut sampler = StreamReservoirSampler::seed(1000, 42);
-        let n = 100_000;
-        for i in 0..n {
-            sampler.offer(i.to_string());
+        let total = 100_000;
+        for index in 0..total {
+            sampler.offer(index.to_string());
         }
 
         assert_eq!(sampler.samples().len(), 1000);
-
-        // Check that the reservoir contains items from across the full range,
-        // not just the first 1000
         let values: Vec<usize> = sampler
             .samples()
             .iter()
-            .map(|s| s.parse().unwrap())
+            .map(|value| value.parse().unwrap())
             .collect();
-        let max_val = *values.iter().max().unwrap();
-        assert!(
-            max_val > n / 2,
-            "reservoir max {max_val} should be > {}, not biased toward early items",
-            n / 2
-        );
+        let max_value = *values.iter().max().unwrap();
+        assert!(max_value > total / 2);
     }
 
     #[test]
     fn test_text_length_stats_streaming() {
-        let mut tls = TextLengthStats::new();
-        for &len in &[3, 5, 10, 1, 7] {
-            tls.update(len);
+        let mut stats = TextLengthStats::new();
+        for &length in &[3, 5, 10, 1, 7] {
+            stats.update(length);
         }
-        assert_eq!(tls.min_length, 1);
-        assert_eq!(tls.max_length, 10);
-        assert!((tls.avg_length - 5.2).abs() < 1e-10);
+        assert_eq!(stats.min_length, 1);
+        assert_eq!(stats.max_length, 10);
+        assert!((stats.avg_length - 5.2).abs() < 1e-10);
     }
 
     #[test]
     fn test_memory_usage_bounded() {
         let mut stats = StreamingStatistics::new();
-        for i in 0..50_000 {
-            stats.update(&format!("value_{i}"));
+        for index in 0..50_000 {
+            stats.update(&format!("value_{index}"));
         }
-        // With bounded accumulators, memory should be well under 1 MB
         let usage = stats.memory_usage_bytes();
-        assert!(usage < 1_000_000, "memory {usage} bytes exceeds 1 MB bound");
+        assert!(usage < 1_000_000);
     }
 }

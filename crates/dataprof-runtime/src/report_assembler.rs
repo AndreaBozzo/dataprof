@@ -4,38 +4,17 @@
 //! It replaces the scattered report construction calls across parsers, engines,
 //! and database connectors, centralizing quality metric calculation and confidence
 //! tracking in one place.
-//!
-//! ## Bifurcated metrics (streaming)
-//!
-//! When the assembler detects a streaming context (sample size < rows processed,
-//! or sampling was applied), it automatically bifurcates quality metric computation:
-//!
-//! - **Phase A (exact)**: Completeness and key uniqueness from global `ColumnProfile`
-//!   counters (exact even for infinite streams).
-//! - **Phase B (sampled)**: Consistency, accuracy, timeliness, and duplicate rows
-//!   from the bounded reservoir sample.
-//!
-//! The resulting [`QualityAssessment`] uses [`MetricConfidence::Mixed`] to record
-//! which dimensions are exact vs sampled.
 
 use std::collections::HashMap;
 
-use crate::analysis::MetricsCalculator;
-use crate::analysis::metrics::BifurcatedResult;
-use crate::types::{
-    ColumnProfile, DataSource, ExecutionMetadata, MetricConfidence, ProfileReport,
-    QualityAssessment, QualityDimension,
+use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, QualityDimension};
+use dataprof_metrics::{
+    MetricConfidence, MetricsCalculator, QualityAssessment, analysis::metrics::BifurcatedResult,
 };
 
+use crate::ProfileReport;
+
 /// Builder for constructing a [`ProfileReport`].
-///
-/// # Example
-/// ```ignore
-/// let report = ReportAssembler::new(data_source, execution)
-///     .columns(column_profiles)
-///     .with_quality_data(sample_columns)
-///     .build();
-/// ```
 pub struct ReportAssembler {
     source: DataSource,
     execution: ExecutionMetadata,
@@ -67,48 +46,30 @@ impl ReportAssembler {
     }
 
     /// Provide sample data for quality metric calculation.
-    ///
-    /// If provided, `build()` will compute ISO 8000/25012 quality metrics.
-    /// When the assembler detects a streaming context, it automatically uses
-    /// bifurcated computation (Phase A exact + Phase B sampled).
     pub fn with_quality_data(mut self, data: HashMap<String, Vec<String>>) -> Self {
         self.quality_data = Some(data);
         self
     }
 
     /// Override the default metric confidence level.
-    ///
-    /// By default, confidence is determined automatically:
-    /// - `Mixed` for streaming contexts (sample < total rows, or `sampling_applied`)
-    /// - `Exact` when sample covers the full dataset with no sampling
     pub fn with_confidence(mut self, confidence: MetricConfidence) -> Self {
         self.confidence = Some(confidence);
         self
     }
 
     /// Explicitly skip quality metric calculation.
-    ///
-    /// Use this for partial analysis APIs (schema inference, row counting)
-    /// where quality metrics are not meaningful.
     pub fn skip_quality(mut self) -> Self {
         self.skip_quality = true;
         self
     }
 
     /// Set the quality dimensions to compute.
-    ///
-    /// Only the listed dimensions will be evaluated. Unlisted dimensions
-    /// appear as `None` in the resulting `QualityMetrics`.
     pub fn with_requested_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.requested_dimensions = Some(dims);
         self
     }
 
     /// Build the final [`ProfileReport`].
-    ///
-    /// Quality metrics are computed if `quality_data` was provided and
-    /// `skip_quality` was not called. Streaming contexts automatically
-    /// use bifurcated metrics with [`MetricConfidence::Mixed`].
     pub fn build(self) -> ProfileReport {
         let quality = if self.skip_quality {
             None
@@ -121,35 +82,25 @@ impl ReportAssembler {
         ProfileReport::new(self.source, self.columns, self.execution, quality)
     }
 
-    /// Compute quality assessment, choosing between bifurcated and uniform paths.
     fn compute_quality(&self, data: &HashMap<String, Vec<String>>) -> Option<QualityAssessment> {
         let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
         let is_streaming = self.is_streaming_context(sample_size);
 
         if is_streaming {
-            self.compute_bifurcated_quality(data, sample_size)
+            self.compute_bifurcated_quality(data)
         } else {
             self.compute_uniform_quality(data)
         }
     }
 
-    /// Detect whether this is a streaming context where bifurcation improves accuracy.
-    ///
-    /// Uses `sampling_applied` from execution metadata as the primary signal.
-    /// Falls back to comparing the largest sample column against `rows_processed`
-    /// (max is used because sample vectors may differ in length when engines
-    /// exclude nulls from samples — the longest column best represents the
-    /// true sample size).
     fn is_streaming_context(&self, sample_size: usize) -> bool {
         self.execution.sampling_applied
             || (sample_size > 0 && sample_size < self.execution.rows_processed)
     }
 
-    /// Bifurcated path: Phase A (exact from profiles) + Phase B (sampled).
     fn compute_bifurcated_quality(
         &self,
         data: &HashMap<String, Vec<String>>,
-        _sample_size: usize,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
         match calculator.calculate_bifurcated_metrics(
@@ -167,14 +118,13 @@ impl ReportAssembler {
                     confidence,
                 })
             }
-            Err(e) => {
-                log::warn!("Bifurcated quality metrics calculation failed: {e}");
+            Err(error) => {
+                log::warn!("Bifurcated quality metrics calculation failed: {error}");
                 None
             }
         }
     }
 
-    /// Uniform path: all metrics from the same data source (batch engines).
     fn compute_uniform_quality(
         &self,
         data: &HashMap<String, Vec<String>>,
@@ -192,14 +142,13 @@ impl ReportAssembler {
                     confidence,
                 })
             }
-            Err(e) => {
-                log::warn!("Quality metrics calculation failed: {e}");
+            Err(error) => {
+                log::warn!("Quality metrics calculation failed: {error}");
                 None
             }
         }
     }
 
-    /// Build [`MetricConfidence::Mixed`] from bifurcated result provenance.
     fn mixed_confidence(&self, result: &BifurcatedResult) -> MetricConfidence {
         MetricConfidence::Mixed {
             exact_dimensions: result.exact_dimensions.clone(),
@@ -212,7 +161,7 @@ impl ReportAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::FileFormat;
+    use dataprof_core::FileFormat;
 
     fn test_source() -> DataSource {
         DataSource::File {
@@ -230,7 +179,7 @@ mod tests {
             ReportAssembler::new(test_source(), ExecutionMetadata::new(100, 3, 50)).build();
 
         assert_eq!(report.execution.rows_processed, 100);
-        assert!(report.quality.is_none()); // No quality data provided
+        assert!(report.quality.is_none());
         assert!(report.column_profiles.is_empty());
     }
 
@@ -252,7 +201,6 @@ mod tests {
         let mut data = HashMap::new();
         data.insert("col".to_string(), vec!["a".to_string(), "b".to_string()]);
 
-        // sample_size (2) == rows_processed (2) → batch/exact path
         let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(2, 1, 10))
             .with_quality_data(data)
             .build();
@@ -267,7 +215,6 @@ mod tests {
         let mut data = HashMap::new();
         data.insert("col".to_string(), vec!["a".to_string(), "b".to_string()]);
 
-        // sample_size (2) < rows_processed (1000) → streaming/bifurcated path
         let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(1000, 1, 50))
             .with_quality_data(data)
             .build();

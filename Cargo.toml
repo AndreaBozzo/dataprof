@@ -3,6 +3,7 @@ members = [
     "crates/dataprof-core",
     "crates/dataprof-metrics",
     "crates/dataprof-json",
+    "crates/dataprof-runtime",
 ]
 resolver = "3"
 
@@ -50,6 +51,7 @@ serde = { version = "1.0", features = ["derive"] }
 dataprof-core = { path = "crates/dataprof-core" }
 dataprof-metrics = { path = "crates/dataprof-metrics" }
 dataprof-json = { path = "crates/dataprof-json" }
+dataprof-runtime = { path = "crates/dataprof-runtime" }
 
 # CLI (optional — only needed for the binary)
 clap = { version = "4.5.54", features = ["derive"], optional = true }
