@@ -2,6 +2,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
+use dataprof::Profiler;
+
 use super::config::PyProfilerConfig;
 use super::types::PyProfileReport;
 
@@ -21,7 +23,7 @@ pub fn analyze_file(
 ) -> PyResult<PyProfileReport> {
     let profiler = match config {
         Some(cfg) => cfg.to_profiler(),
-        None => dataprof::api::Profiler::new(),
+        None => Profiler::new(),
     };
 
     let path = path.to_string();

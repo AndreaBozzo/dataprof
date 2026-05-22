@@ -2,8 +2,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
-use dataprof::api::partial;
-use dataprof::types::{CountMethod, DataType, RowCountEstimate, SchemaResult};
+use dataprof::{CountMethod, DataType, RowCountEstimate, SchemaResult};
 
 /// Result of fast schema inference.
 #[pyclass(name = "SchemaResult")]
@@ -145,7 +144,7 @@ impl PyRowCountEstimate {
 /// (or just metadata for Parquet).
 #[pyfunction]
 pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
-    let result = partial::infer_schema(Path::new(path))
+    let result = dataprof::infer_schema(Path::new(path))
         .map_err(|e| PyRuntimeError::new_err(format!("Schema inference failed: {}", e)))?;
     Ok(PySchemaResult { inner: result })
 }
@@ -156,7 +155,7 @@ pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
 /// for large CSV/JSON files via sampling.
 #[pyfunction]
 pub fn quick_row_count(path: &str) -> PyResult<PyRowCountEstimate> {
-    let result = partial::quick_row_count(Path::new(path))
+    let result = dataprof::quick_row_count(Path::new(path))
         .map_err(|e| PyRuntimeError::new_err(format!("Row count failed: {}", e)))?;
     Ok(PyRowCountEstimate { inner: result })
 }

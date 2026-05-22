@@ -1,7 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use dataprof::core::sampling::SamplingStrategy;
+use dataprof::SamplingStrategy;
 
 /// Python-friendly wrapper for sampling strategies.
 ///

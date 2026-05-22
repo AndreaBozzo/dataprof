@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 
-use dataprof::core::progress::{ProgressEvent, ProgressSink};
+use dataprof::{ProgressEvent, ProgressSink};
 
 /// A progress event emitted during profiling.
 ///

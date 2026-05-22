@@ -1689,6 +1689,7 @@ dependencies = [
  "bytes",
  "dataprof",
  "dataprof-parquet",
+ "dataprof-runtime",
  "pyo3",
  "pyo3-async-runtimes",
  "serde_json",

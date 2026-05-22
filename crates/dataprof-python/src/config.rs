@@ -4,10 +4,9 @@ use pyo3::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dataprof::api::{EngineType, Profiler};
-use dataprof::core::sampling::ChunkSize;
-use dataprof::core::stop_condition::StopCondition;
-use dataprof::types::{FileFormat, MetricPack, QualityDimension};
+use dataprof::{
+    ChunkSize, EngineType, FileFormat, MetricPack, Profiler, QualityDimension, StopCondition,
+};
 
 use super::progress::py_callback_to_sink;
 use super::sampling::PySamplingStrategy;

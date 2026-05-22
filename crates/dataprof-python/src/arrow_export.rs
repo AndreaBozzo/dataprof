@@ -28,12 +28,12 @@ use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 
-use dataprof::core::report_assembler::ReportAssembler;
-use dataprof::types::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, ExecutionMetadata, MetricPack,
-    TruncationReason,
+use dataprof::{
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, EngineType, ExecutionMetadata,
+    FileFormat, MetricPack, Profiler, TruncationReason,
 };
 use dataprof_parquet::record_batch_analyzer::RecordBatchAnalyzer;
+use dataprof_runtime::ReportAssembler;
 
 use super::config::PyProfilerConfig;
 
@@ -311,12 +311,12 @@ impl PyRecordBatch {
 /// as an Arrow RecordBatch, enabling zero-copy transfer to pandas/polars.
 #[pyfunction]
 pub fn analyze_csv_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
-    use dataprof::engines::columnar::arrow_profiler::ArrowProfiler;
     use std::path::Path;
 
-    let profiler = ArrowProfiler::new();
-    let report = profiler
-        .analyze_csv_file(Path::new(path))
+    let report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .format(FileFormat::Csv)
+        .analyze_file(Path::new(path))
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     // Convert column profiles to RecordBatch

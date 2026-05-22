@@ -6,9 +6,7 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use dataprof::api::Profiler;
-use dataprof::engines::streaming::async_source::{AsyncSourceInfo, BytesSource};
-use dataprof::types::FileFormat;
+use dataprof::{AsyncSourceInfo, BytesSource, FileFormat, Profiler};
 
 use super::config::PyProfilerConfig;
 use super::partial::{PyRowCountEstimate, PySchemaResult};

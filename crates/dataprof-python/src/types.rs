@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use dataprof::types::{
+use dataprof::{
     ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport, QualityMetrics,
     TruncationReason,
 };
