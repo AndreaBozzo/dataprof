@@ -8,8 +8,15 @@ description = "Shared runtime helpers and composed report types for dataprof"
 
 [features]
 default = []
-async-streaming = ["dep:async-trait", "dep:bytes", "dep:tokio"]
-parquet-async = ["async-streaming", "dep:futures", "dep:reqwest", "dep:tokio-util"]
+async-streaming = [
+	"dep:async-trait",
+	"dep:bytes",
+	"dep:futures",
+	"dep:reqwest",
+	"dep:tokio",
+	"dep:tokio-util",
+]
+parquet-async = ["async-streaming"]
 
 [dependencies]
 async-trait = { version = "0.1", optional = true }

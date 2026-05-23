@@ -136,13 +136,13 @@ impl AsyncDataSource for (tokio::fs::File, AsyncSourceInfo) {
 ///
 /// Wraps a `reqwest::Response` so that remote CSV, JSON, and JSONL streams can
 /// be profiled via the public async facade.
-#[cfg(feature = "parquet-async")]
+#[cfg(feature = "async-streaming")]
 pub struct ReqwestSource {
     response: reqwest::Response,
     info: AsyncSourceInfo,
 }
 
-#[cfg(feature = "parquet-async")]
+#[cfg(feature = "async-streaming")]
 impl ReqwestSource {
     /// Create a new source from an HTTP response and its metadata.
     pub fn new(response: reqwest::Response, info: AsyncSourceInfo) -> Self {
@@ -150,7 +150,7 @@ impl ReqwestSource {
     }
 }
 
-#[cfg(feature = "parquet-async")]
+#[cfg(feature = "async-streaming")]
 #[async_trait::async_trait]
 impl AsyncDataSource for ReqwestSource {
     async fn into_async_read(

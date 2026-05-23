@@ -155,9 +155,9 @@ pub fn quick_row_count_stream_async<'py>(
 
 /// Profile data from a remote URL asynchronously.
 ///
-/// Supports all formats. Parquet uses HTTP Range requests.
+/// Supports CSV, JSON, and JSONL with `async-streaming`. Remote Parquet uses
+/// HTTP Range requests and additionally requires the `parquet-async` feature.
 /// Format is auto-detected from URL extension; use `format` to override.
-#[cfg(feature = "parquet-async")]
 #[pyfunction]
 #[pyo3(signature = (url, format=None, config=None))]
 pub fn profile_url_async<'py>(

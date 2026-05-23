@@ -7,7 +7,7 @@ pub mod profile_report;
 pub mod report_assembler;
 pub mod streaming_stats;
 
-#[cfg(feature = "parquet-async")]
+#[cfg(feature = "async-streaming")]
 pub use async_source::ReqwestSource;
 #[cfg(feature = "async-streaming")]
 pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};

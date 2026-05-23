@@ -153,6 +153,7 @@ database = ["dep:dataprof-db", "dataprof-core/database"]
 async-streaming = [
     "dep:tokio",
     "dep:bytes",
+    "dep:reqwest",
     "dataprof-core/async-streaming",
     "dataprof-runtime/async-streaming",
     "dataprof-engines/async-streaming",

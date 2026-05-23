@@ -736,13 +736,14 @@ impl Profiler {
     }
 }
 
-#[cfg(feature = "parquet-async")]
+#[cfg(feature = "async-streaming")]
 impl Profiler {
     /// Profile data from a remote URL.
     ///
-    /// Supports all formats. For Parquet, HTTP Range requests are used to read
-    /// the footer without downloading the entire file. For CSV/JSON/JSONL, the
-    /// response body is streamed incrementally.
+    /// Supports CSV, JSON, and JSONL when `async-streaming` is enabled. Remote
+    /// Parquet additionally requires the `parquet-async` feature so the footer
+    /// can be fetched via HTTP Range requests without downloading the entire
+    /// file.
     ///
     /// Format is detected from the URL path extension. Use [`.format()`](Self::format)
     /// to override when the URL has no extension (e.g., API endpoints).
@@ -775,12 +776,22 @@ impl Profiler {
 
         match format {
             FileFormat::Parquet => {
-                dataprof_parquet::analyze_parquet_async_http_dims(
-                    url,
-                    &dataprof_parquet::ParquetConfig::default(),
-                    self.config.quality_dimensions.clone(),
-                )
-                .await
+                #[cfg(feature = "parquet-async")]
+                {
+                    return dataprof_parquet::analyze_parquet_async_http_dims(
+                        url,
+                        &dataprof_parquet::ParquetConfig::default(),
+                        self.config.quality_dimensions.clone(),
+                    )
+                    .await;
+                }
+
+                #[cfg(not(feature = "parquet-async"))]
+                {
+                    return Err(DataProfilerError::UnsupportedDataSource {
+                        message: "Remote Parquet profiling requires the 'parquet-async' feature. Rebuild with 'parquet-async' to read Parquet over HTTP.".to_string(),
+                    });
+                }
             }
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
                 let response =

@@ -53,7 +53,7 @@ pub use dataprof_parquet::{
 pub use dataprof_partial::{infer_schema, quick_row_count};
 pub use dataprof_runtime::ProfileReport;
 
-#[cfg(feature = "parquet-async")]
+#[cfg(feature = "async-streaming")]
 pub use dataprof_engines::streaming::ReqwestSource;
 #[cfg(feature = "async-streaming")]
 pub use dataprof_engines::streaming::{

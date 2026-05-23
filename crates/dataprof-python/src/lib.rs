@@ -87,6 +87,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         m.add_function(wrap_pyfunction!(async_streaming::profile_bytes_async, m)?)?;
         m.add_function(wrap_pyfunction!(async_streaming::profile_file_async, m)?)?;
+        m.add_function(wrap_pyfunction!(async_streaming::profile_url_async, m)?)?;
         m.add_function(wrap_pyfunction!(
             async_streaming::infer_schema_stream_async,
             m
@@ -95,10 +96,6 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
             async_streaming::quick_row_count_stream_async,
             m
         )?)?;
-    }
-    #[cfg(all(feature = "python-async", feature = "parquet-async"))]
-    {
-        m.add_function(wrap_pyfunction!(async_streaming::profile_url_async, m)?)?;
     }
 
     Ok(())
