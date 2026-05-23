@@ -15,34 +15,32 @@ from typing import Any, Iterator
 from ._dataprof import (
     ColumnProfile,
     DataQualityMetrics,
-    # Configuration
     ProfilerConfig,
     ProgressEvent,
-    # Arrow interop
     RecordBatch,
     RowCountEstimate,
-    # Sampling, stop conditions, progress
     SamplingStrategy,
-    # Partial analysis
     SchemaResult,
     StopCondition,
     __version__,
-    infer_schema,
-    quick_row_count,
 )
 from ._dataprof import (
-    # Result types (internal names)
     ProfileReport as _RustProfileReport,
 )
 from ._dataprof import (
-    # Internal dispatch targets
     analyze_file as _analyze_file,
+)
+from ._dataprof import (
+    infer_schema as _infer_schema,
 )
 from ._dataprof import (
     profile_arrow as _profile_arrow,
 )
 from ._dataprof import (
     profile_dataframe as _profile_dataframe,
+)
+from ._dataprof import (
+    quick_row_count as _quick_row_count,
 )
 
 __all__ = [
@@ -106,6 +104,26 @@ def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     if q is None:
         return None
     return {k: _half_up(v, 2) for k, v in q.items()}
+
+
+def _normalize_pathlike(path: str | pathlib.PurePath, *, arg_name: str = "path") -> str:
+    """Normalize Python path-like input to the string form expected by Rust."""
+    if isinstance(path, (str, pathlib.PurePath)):
+        return str(path)
+    raise TypeError(
+        f"argument '{arg_name}': expected str or pathlib-compatible path, "
+        f"got {type(path).__module__}.{type(path).__name__}"
+    )
+
+
+def infer_schema(path: str | pathlib.PurePath) -> SchemaResult:
+    """Infer a file schema from a string path or pathlib path object."""
+    return _infer_schema(_normalize_pathlike(path))
+
+
+def quick_row_count(path: str | pathlib.PurePath) -> RowCountEstimate:
+    """Estimate or count rows from a string path or pathlib path object."""
+    return _quick_row_count(_normalize_pathlike(path))
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +258,7 @@ def profile(
             metrics=metrics,
             locale=locale,
         )
-        rust_report = _analyze_file(str(source), config)
+        rust_report = _analyze_file(_normalize_pathlike(source, arg_name="source"), config)
         return ProfileReport(rust_report)
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale

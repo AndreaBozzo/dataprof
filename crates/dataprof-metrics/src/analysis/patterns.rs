@@ -420,13 +420,13 @@ struct PatternMatch<'a> {
 
 /// Compute confidence score from pattern specificity, match rate, and validator pass rate.
 ///
-/// Formula: `clamp((specificity / 100) × clamp(match_percentage / 50, 0.5, 1.0) × validator_pass_rate, 0.0, 1.0)`
+/// Formula: `clamp((specificity / 100) × clamp(match_percentage / 50, 0.0, 1.0) × validator_pass_rate, 0.0, 1.0)`
 ///
 /// The validator_pass_rate penalizes patterns where the regex matches but the values
 /// fail semantic validation (e.g. 11-digit numbers that aren't valid P.IVA).
 fn compute_confidence(specificity: u8, match_percentage: f64, validator_pass_rate: f64) -> f64 {
     let base = specificity as f64 / 100.0;
-    let match_factor = (match_percentage / 50.0).clamp(0.5, 1.0);
+    let match_factor = (match_percentage / 50.0).clamp(0.0, 1.0);
     (base * match_factor * validator_pass_rate).clamp(0.0, 1.0)
 }
 
@@ -1074,6 +1074,22 @@ mod tests {
 
         assert_eq!(patterns.len(), 1);
         assert!(patterns[0].confidence > 0.0 && patterns[0].confidence <= 1.0);
+    }
+
+    #[test]
+    fn test_confidence_stays_low_for_singleton_like_matches() {
+        let mut data = vec!["user@example.com".to_string()];
+        for _ in 0..29 {
+            data.push("random text".to_string());
+        }
+
+        let patterns = detect_patterns(&data, None);
+
+        assert_eq!(patterns.len(), 1);
+        assert!(
+            patterns[0].confidence < 0.1,
+            "singleton-like matches should not look highly confident"
+        );
     }
 
     // ---- Validator integration tests ----

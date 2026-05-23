@@ -71,6 +71,14 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 tempfile = "3.24"
 anyhow = "1.0"
 env_logger = "0.11"
+arrow = { version = "57.3.0", features = ["ffi"] }
+parquet = { version = "57.3.0", features = ["arrow"] }
+sqlx = { version = "0.8.1", features = [
+    "runtime-tokio-rustls",
+    "chrono",
+    "uuid",
+    "sqlite",
+], default-features = false }
 
 proptest = "1.9"  # Updated: 1.8.0 -> 1.10.0 (minor bump, backward compatible)
 
@@ -129,11 +137,6 @@ opt-level = 1
 [features]
 default = ["parquet"]
 
-# Deprecated compatibility alias. The CLI binary has been retired from this
-# library-first branch.
-cli = []
-
-# Individual features
 arrow = [
     "dataprof-core/arrow",
     "dep:dataprof-parquet",
@@ -146,10 +149,6 @@ parquet = [
     "dataprof-engines/parquet",
     "dataprof-partial/parquet",
 ]
-# Deprecated compatibility aliases. Python bindings now live in
-# crates/dataprof-python and are built through pyproject/maturin.
-python = []
-python-async = ["python"]
 database = ["dep:dataprof-db", "dataprof-core/database"]
 async-streaming = [
     "dep:tokio",
@@ -171,10 +170,6 @@ postgres = ["database", "dep:tokio", "dataprof-db/postgres"]
 mysql = ["database", "dep:tokio", "dataprof-db/mysql"]
 sqlite = ["database", "dep:tokio", "dataprof-db/sqlite"]
 
-# Sensible feature combinations
-minimal = []                             # No optional interfaces; library only
-full-cli = ["all-db"]                    # Deprecated alias; no CLI binary is built
-production = ["postgres", "mysql"]       
 all-db = ["postgres", "mysql", "sqlite"] 
 
 

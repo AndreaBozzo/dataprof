@@ -16,23 +16,57 @@
 
 dataprof is a Rust and Python library for profiling tabular data. It computes column-level statistics, detects data types and patterns, and evaluates data quality against the ISO 8000/25012 standard, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
 
+It is built for the first ten minutes with unfamiliar data: find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious values before they turn into pipeline bugs.
+
 > [!NOTE]
-> dataprof is in beta. This branch is library-first: the old CLI has been retired, while Rust and Python APIs remain the primary supported interfaces.
+> dataprof is in beta. Current releases ship a Rust crate and a Python package. The historical CLI remains documented only for older releases.
 
-## Highlights
+## What dataprof answers quickly
 
-- **Rust core** -- fast columnar and streaming engines
-- **ISO 8000/25012 quality assessment** -- five dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
-- **Multi-format** -- CSV (auto-delimiter detection), JSON, JSONL, Parquet, databases, DataFrames, Arrow
-- **Boolean Support** -- Native profiling of boolean columns with true/false statistics
-- **True streaming** -- bounded-memory profiling with online algorithms (Incremental engine)
-- **Library-first interfaces** -- Rust crate and Python package
-- **New Python Ecosystem** -- Export to pandas, Polars, Arrow, and JSON with rounding consistency
-- **Async-ready** -- `async/await` API for embedding in web services and stream pipelines
+| Question | What you get back |
+|---|---|
+| Which columns are thin, empty, or structurally broken? | Null counts, completeness metrics, and schema shape in one pass |
+| Did this feed drift or spike somewhere suspicious? | Numeric summaries, outlier signals, and range checks |
+| Are these IDs really unique or just pretending to be keys? | Distinct counts, uniqueness ratios, and duplicate warnings |
+| Are my timestamps plausible and fresh? | Future-date detection, stale-data signals, and timeliness scoring |
+| Did parsing silently go wrong? | Type inference, pattern matches, format violations, and source metadata |
 
-## Quick Start
+## Pick your entry point
+
+| You are doing this | Start with |
+|---|---|
+| Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof@0.8` and `Profiler::new().analyze_file(...)` |
+| Inspecting files in notebooks, validation scripts, or data apps | `uv pip install dataprof` and `dp.profile(...)` |
+| Profiling streams, remote Parquet, or database queries | Rust feature flags or Python async helpers such as `profile_url(...)` |
+
+## Start in 30 Seconds
+
+### Python
+
+```bash
+uv pip install dataprof
+```
+
+```python
+import dataprof as dp
+
+report = dp.profile("data.csv", metrics=["schema", "statistics", "quality"])
+print(f"{report.rows} rows, {report.columns} columns")
+print(f"quality={report.quality_score:.1f}")
+
+age = report["age"]
+print(age.data_type, age.mean, age.null_percentage)
+
+report.save("report.json")
+```
 
 ### Rust
+
+```toml
+[dependencies]
+dataprof = "0.8"
+# or: dataprof = { version = "0.8", default-features = false }
+```
 
 ```rust
 use dataprof::Profiler;
@@ -42,52 +76,18 @@ println!("Rows: {}", report.execution.rows_processed);
 println!("Quality: {:.1}%", report.quality_score().unwrap_or(0.0));
 
 for col in &report.column_profiles {
-    println!("  {} ({:?}): {} nulls", col.name, col.data_type, col.null_count);
+  println!("{} {:?} nulls={}", col.name, col.data_type, col.null_count);
 }
 ```
 
-### Python
+## Why it feels modern
 
-```python
-import dataprof as dp
-
-# Profile with selective metrics for speed
-report = dp.profile("data.csv", metrics=["schema", "statistics"])
-print(f"{report.rows} rows, {report.columns} columns")
-
-# Dict-like access and export to pandas/Polars
-age_stats = report["age"]
-print(f"Mean age: {age_stats.mean}")
-
-df = report.to_dataframe()
-report.save("report.json")
-```
-
-## Which Interface Should I Use?
-
-| Use case | Start here |
-|---|---|
-| Add profiling to a Rust service or data tool | Rust API: `Profiler::new().analyze_file(...)` |
-| Work from notebooks, pandas, Polars, or PyArrow | Python: `dp.profile(...)` |
-| Profile PostgreSQL, MySQL, or SQLite | Rust or Python with database feature flags |
-
-## Installation
-
-### Rust library
-
-```toml
-[dependencies]
-dataprof = "0.8"                  # core library (no CLI deps)
-dataprof = { version = "0.8", features = ["async-streaming"] }
-```
-
-### Python package
-
-```bash
-uv pip install dataprof
-# or
-pip install dataprof
-```
+- **Fast first-pass signal** -- surface null pockets, type drift, duplicate keys, and outliers quickly
+- **True streaming** -- bounded-memory profiling with online algorithms for files bigger than RAM
+- **Multi-format by default** -- move from CSV and JSON to Parquet, live databases, DataFrames, and Arrow batches without changing tools
+- **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
+- **Async-ready** -- `async/await` APIs for stream pipelines, services, and remote Parquet sources
+- **ISO 8000/25012 quality assessment** -- five dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
 
 ## Feature Flags
 
@@ -95,7 +95,6 @@ pip install dataprof
 |---|---|
 | `arrow` | Arrow-backed columnar engine |
 | `parquet` *(default)* | Parquet profiling; includes `arrow` |
-| `minimal` | No optional interfaces; library only |
 | `async-streaming` | Async profiling engine with tokio |
 | `parquet-async` | Profile Parquet files over HTTP; includes `parquet` and `async-streaming` |
 | `database` | Database profiling (connection handling, retry, SSL) |
@@ -103,11 +102,8 @@ pip install dataprof
 | `mysql` | MySQL/MariaDB connector (includes `database`) |
 | `sqlite` | SQLite connector (includes `database`) |
 | `all-db` | All three database connectors |
-| `python` | Deprecated facade alias; real bindings live in `crates/dataprof-python` |
-| `python-async` | Deprecated facade alias; async Python bindings live in `crates/dataprof-python` |
-| `cli` | Deprecated compatibility alias; no CLI binary is built |
-| `full-cli` | Deprecated compatibility alias for database features; no CLI binary is built |
-| `production` | PostgreSQL + MySQL (common deployment) |
+
+For the leanest Rust build, use `default-features = false` or `cargo --no-default-features` instead of a separate `minimal` alias.
 
 ## Supported Formats
 
@@ -138,14 +134,25 @@ An overall quality score (0 -- 100) is computed as a weighted average of dimensi
 
 ## Documentation
 
-- [Legacy CLI Usage Guide](docs/archive/CLI_USAGE_GUIDE.md) -- retained for historical reference
-- [Python API Guide](docs/python/README.md) -- `profile()`, report types, async, databases
-- [Getting Started](docs/guides/getting-started.md) -- tutorial from zero to profiling
-- [Examples Cookbook](docs/guides/examples.md) -- copy-pasteable recipes for Python and Rust
-- [Database Connectors](docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup
-- [Crate Redesign Notes](docs/architecture/crate-redesign.md) -- planned architecture direction
+### Start here
+
+- [Getting Started](docs/guides/getting-started.md) -- the shortest path from mystery dataset to useful signal
+- [Examples Cookbook](docs/guides/examples.md) -- focused Rust and Python recipes you can adapt quickly
+
+### Integrate it
+
+- [Python API Guide](docs/python/README.md) -- files, DataFrames, async streams, exports, and databases
+- [Database Connectors](docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup and connection patterns
+
+### Understand it
+
+- [Crate Redesign Notes](docs/architecture/crate-redesign.md) -- what the facade owns and why the workspace is split this way
 - [Contributing](docs/CONTRIBUTING.md)
 - [Changelog](docs/CHANGELOG.md)
+
+### Historical
+
+- [Archived CLI Guide](docs/archive/CLI_USAGE_GUIDE.md) -- pre-0.8 reference only
 
 ## Academic Work
 

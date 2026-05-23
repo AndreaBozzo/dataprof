@@ -79,9 +79,9 @@ jobs:
           echo ""
           echo "### Rust Status"
           echo "- **Crates.io**: \`cargo add dataprof@$VERSION\`"
-          echo "- The published \`dataprof\` crate is the stable library-first facade."
+          echo "- The published \`dataprof\` crate is the stable Rust facade for profiling files, streams, tables, and database queries."
           echo "- Internal workspace crates are published so the facade can depend on versioned packages."
-          echo "- CLI binaries are not shipped on this library-first branch."
+          echo "- This release ships libraries and Python packages; a CLI binary is not part of the release surface."
           echo ""
           echo "## Installation"
           echo ""
@@ -132,7 +132,7 @@ jobs:
       with:
         cache-prefix: rust-release
         components: ''
-    - name: Verify library-first release surface
+    - name: Verify released facade surface
       run: |
         cargo check --locked -p dataprof --all-features
         cargo check --locked -p dataprof --lib --no-default-features

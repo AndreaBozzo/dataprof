@@ -21,6 +21,12 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
             .expect("BUG: Invalid hardcoded regex pattern for YYYY/MM/DD date"),
         Regex::new(r"^\d{2}\.\d{2}\.\d{4}$")
             .expect("BUG: Invalid hardcoded regex pattern for DD.MM.YYYY date"),
+        Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$")
+            .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
+        Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+            .expect("BUG: Invalid hardcoded regex pattern for spaced ISO datetime"),
+        Regex::new(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$")
+            .expect("BUG: Invalid hardcoded regex pattern for DD/MM/YYYY datetime"),
     ]
 });
 
@@ -85,16 +91,18 @@ pub fn infer_type(data: &[String]) -> DataType {
         return DataType::Boolean;
     }
 
-    // Check dates after boolean (70% threshold, consistent with streaming inference)
-    for regex in DATE_REGEXES.iter() {
-        let date_matches = non_empty
-            .iter()
-            .filter(|s| regex.is_match(s.trim()))
-            .count();
+    // Check dates after boolean (70% threshold, consistent with streaming inference).
+    // Treat supported date formats cumulatively so mixed date columns still infer as dates.
+    let date_matches = non_empty
+        .iter()
+        .filter(|s| {
+            let trimmed = s.trim();
+            DATE_REGEXES.iter().any(|regex| regex.is_match(trimmed))
+        })
+        .count();
 
-        if date_matches as f64 / non_empty.len() as f64 > 0.7 {
-            return DataType::Date;
-        }
+    if date_matches as f64 / non_empty.len() as f64 > 0.7 {
+        return DataType::Date;
     }
 
     DataType::String
@@ -174,6 +182,33 @@ mod tests {
             "2023-05-15".to_string(),
             "not a date".to_string(),
             "also not".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Date));
+    }
+
+    #[test]
+    fn test_infer_mixed_date_formats() {
+        let data = vec![
+            "2024-01-15".to_string(),
+            "15/01/2024".to_string(),
+            "2024-01-16".to_string(),
+            "16-01-2024".to_string(),
+            "2024-01-17".to_string(),
+            "2024-01-18".to_string(),
+            "2024/01/19".to_string(),
+            "19/01/2024".to_string(),
+            "".to_string(),
+            "2024-01-20".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Date));
+    }
+
+    #[test]
+    fn test_infer_iso_datetime() {
+        let data = vec![
+            "2024-01-15T10:00:00".to_string(),
+            "2024-01-15T10:15:00".to_string(),
+            "2024-01-15T10:30:00".to_string(),
         ];
         assert!(matches!(infer_type(&data), DataType::Date));
     }
@@ -336,6 +371,6 @@ mod tests {
     fn test_date_regex_patterns_are_valid() {
         // Validate that all hardcoded regex patterns compile successfully
         // This test will fail at initialization if any pattern is invalid
-        assert_eq!(DATE_REGEXES.len(), 5);
+        assert_eq!(DATE_REGEXES.len(), 8);
     }
 }

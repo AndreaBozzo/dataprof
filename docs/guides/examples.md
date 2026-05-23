@@ -1,8 +1,8 @@
 # Examples Cookbook
 
-Copy-pasteable recipes for common dataprof tasks, organized by interface. The
-legacy CLI examples moved to the archived CLI guide while dataprof is
-library-first.
+Copy-pasteable recipes for common dataprof tasks, organized by interface.
+These examples focus on the current Rust crate and Python package; pre-0.8 CLI
+usage lives in the archived guide.
 
 ## Python Recipes
 

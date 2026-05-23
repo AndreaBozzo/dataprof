@@ -33,7 +33,6 @@ implementation crates change.
 | `database` | `DatabaseConfig`, `DatabaseConnector`, `DatabaseCredentials`, `MySqlConnector`, `PostgresConnector`, `RetryConfig`, `SamplingConfig`, `DbSamplingStrategy`, `SqliteConnector`, `SslConfig`, `analyze_database`, `create_connector` |
 | `async-streaming` | `AsyncDataSource`, `AsyncSourceInfo`, `AsyncStreamingProfiler`, `BytesSource` |
 | `parquet-async` | `ReqwestSource`, `HttpParquetReader`, `analyze_parquet_async_http` |
-| `python` | Deprecated feature alias; the extension is built from `dataprof-python` through maturin |
 
 ## Internal-Only Candidates
 
@@ -60,8 +59,7 @@ Public API compile coverage should exercise:
 - `--features database`
 - `--features all-db`
 - `--features async-streaming`
-- deprecated CLI feature aliases such as `--features cli` and
-  `--features full-cli`
+- `--features parquet-async`
 
 The coverage should prove that paths compile. Behavioral tests can remain
 focused on the owning crates and the end-to-end facade workflows.

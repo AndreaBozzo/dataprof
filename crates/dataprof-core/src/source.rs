@@ -202,8 +202,10 @@ impl DataSource {
             Self::Query {
                 engine, statement, ..
             } => {
-                let truncated = if statement.len() > 50 {
-                    format!("{}...", &statement[..47])
+                let truncated = if statement.chars().count() > 50 {
+                    let mut prefix: String = statement.chars().take(47).collect();
+                    prefix.push_str("...");
+                    prefix
                 } else {
                     statement.clone()
                 };

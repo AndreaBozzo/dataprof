@@ -47,7 +47,8 @@ impl ConsistencyCalculator {
         for profile in column_profiles {
             if let Some(column_data) = data.get(&profile.name) {
                 for value in column_data {
-                    if value.is_empty() {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
                         continue; // Skip null values in consistency check
                     }
 
@@ -55,13 +56,15 @@ impl ConsistencyCalculator {
 
                     // Check if value is consistent with inferred type
                     let is_consistent = match profile.data_type {
-                        DataType::Integer => value.parse::<i64>().is_ok(),
-                        DataType::Float => value.parse::<f64>().is_ok(),
-                        DataType::Date => is_valid_date_format(value),
+                        DataType::Integer => trimmed.parse::<i64>().is_ok(),
+                        DataType::Float => trimmed.parse::<f64>().is_ok(),
+                        DataType::Date => is_valid_date_format(trimmed),
                         DataType::Boolean => {
-                            matches!(value.as_str(), "True" | "False" | "true" | "false")
+                            matches!(trimmed, "True" | "False" | "true" | "false")
                         }
-                        DataType::String => true, // String type is always consistent
+                        DataType::String => {
+                            !is_likely_date_column(&profile.name) || is_valid_date_format(trimmed)
+                        }
                     };
 
                     if is_consistent {
@@ -199,5 +202,44 @@ impl ConsistencyCalculator {
         // Common encoding artifacts
         let artifacts = ["Ã¡", "Ã©", "Ã\u{AD}", "Ã³", "Ãº", "Ã±", "Ã§"];
         artifacts.iter().any(|artifact| text.contains(artifact))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ColumnStats;
+
+    fn string_profile(name: &str) -> ColumnProfile {
+        ColumnProfile {
+            name: name.to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 0,
+            unique_count: None,
+            stats: ColumnStats::None,
+            patterns: vec![],
+        }
+    }
+
+    #[test]
+    fn test_likely_date_string_column_is_not_automatically_consistent() {
+        let data = HashMap::from([(
+            "event_date".to_string(),
+            vec![
+                "2024-01-01".to_string(),
+                "not-a-date".to_string(),
+                "15/01/2024".to_string(),
+            ],
+        )]);
+        let profiles = vec![string_profile("event_date")];
+
+        let metrics = ConsistencyCalculator::calculate(&data, &profiles)
+            .expect("consistency metrics should be computed");
+
+        assert!(
+            metrics.data_type_consistency < 100.0,
+            "likely date columns inferred as strings should still lose consistency when values are malformed"
+        );
     }
 }

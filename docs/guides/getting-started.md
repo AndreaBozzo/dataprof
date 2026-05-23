@@ -1,6 +1,6 @@
 # Getting Started with dataprof
 
-This guide walks you through installing dataprof, running your first profile, and understanding the results. By the end you'll know how to use the Python and Rust library interfaces, interpret quality metrics, and handle large datasets.
+This guide walks you through installing dataprof, running your first profile, and understanding the results. By the end you'll know how to move from a mystery dataset to a report that shows where the data is thin, duplicated, inconsistent, or stale.
 
 ## What is Data Profiling?
 
@@ -24,7 +24,7 @@ uv pip install dataprof
 # or: pip install dataprof
 
 # Rust library -- add to Cargo.toml
-# dataprof = "0.7"
+# dataprof = "0.8"
 ```
 
 ## Your First Profile

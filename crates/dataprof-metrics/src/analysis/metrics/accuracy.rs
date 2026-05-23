@@ -3,7 +3,7 @@
 //! Measures the correctness of data values (syntactic and semantic accuracy).
 //! Key metrics: outlier ratio, range violations, negative values in positive fields.
 
-use super::utils::{calculate_percentile, validate_sample_size};
+use super::utils::calculate_percentile;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
@@ -64,10 +64,7 @@ impl<'a> AccuracyCalculator<'a> {
                     .filter(|v| !v.is_empty() && v.parse::<f64>().is_ok())
                     .count();
 
-                // Validate sample size before outlier detection
-                let validation = validate_sample_size(numeric_count, "outlier_detection");
-                if !validation.sufficient_sample {
-                    // Skip outlier detection for insufficient sample size
+                if numeric_count < self.thresholds.outlier_min_samples {
                     continue;
                 }
 
@@ -210,5 +207,53 @@ impl<'a> AccuracyCalculator<'a> {
         }
 
         Ok(violations)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ColumnStats;
+
+    fn numeric_profile(name: &str) -> ColumnProfile {
+        ColumnProfile {
+            name: name.to_string(),
+            data_type: DataType::Float,
+            null_count: 0,
+            total_count: 0,
+            unique_count: None,
+            stats: ColumnStats::None,
+            patterns: vec![],
+        }
+    }
+
+    #[test]
+    fn test_outlier_ratio_uses_iso_min_samples_not_generic_30() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = AccuracyCalculator::new(&thresholds);
+        let data = HashMap::from([(
+            "temperature".to_string(),
+            vec![
+                "22.5".to_string(),
+                "23.1".to_string(),
+                "22.8".to_string(),
+                "999.9".to_string(),
+                "23.2".to_string(),
+                "22.9".to_string(),
+                "23.0".to_string(),
+                "22.7".to_string(),
+                "23.1".to_string(),
+            ],
+        )]);
+        let profiles = vec![numeric_profile("temperature")];
+
+        let metrics = calc
+            .calculate(&data, &profiles)
+            .expect("accuracy metrics should be computed");
+
+        assert!(
+            metrics.outlier_ratio > 0.0,
+            "small numeric samples above outlier_min_samples should still detect obvious outliers"
+        );
     }
 }

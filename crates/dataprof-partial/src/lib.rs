@@ -284,6 +284,7 @@ fn count_from_reader<R: Read>(
             // quoted fields with embedded newlines, unlike raw line counting.
             let mut csv_reader = csv::ReaderBuilder::new()
                 .has_headers(true)
+                .flexible(true)
                 .from_reader(buf_reader);
             let mut count: u64 = 0;
             for result in csv_reader.records() {
@@ -391,16 +392,20 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
     let reader = BufReader::new(file);
 
     if file_size < FULL_SCAN_THRESHOLD {
-        // Full scan — exact count (subtract 1 for header)
-        let mut line_count: usize = 0;
-        for line in reader.lines() {
-            let _line = line.map_err(|e| DataProfilerError::io_error(&e))?;
-            line_count += 1;
+        // Full scan — exact count using the CSV parser so embedded newlines in
+        // quoted fields do not inflate the row count.
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(reader);
+        let mut count: u64 = 0;
+        for result in csv_reader.records() {
+            let _record = result?;
+            count += 1;
         }
-        let count = if line_count > 0 { line_count - 1 } else { 0 };
 
         Ok(RowCountEstimate {
-            count: count as u64,
+            count,
             exact: true,
             method: CountMethod::FullScan,
             count_time_ms: start.elapsed().as_millis(),
@@ -909,6 +914,26 @@ mod tests {
     #[test]
     fn test_quick_row_count_csv_small() {
         let f = write_temp_csv("a,b\n1,2\n3,4\n5,6\n");
+        let result = quick_row_count(f.path()).unwrap();
+
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+        assert_eq!(result.method, CountMethod::FullScan);
+    }
+
+    #[test]
+    fn test_quick_row_count_csv_with_quoted_newlines() {
+        let f = write_temp_csv("id,text\n1,\"hello\"\n2,\"line1\nline2\"\n3,\"bye\"\n");
+        let result = quick_row_count(f.path()).unwrap();
+
+        assert_eq!(result.count, 3);
+        assert!(result.exact);
+        assert_eq!(result.method, CountMethod::FullScan);
+    }
+
+    #[test]
+    fn test_quick_row_count_csv_with_inconsistent_fields() {
+        let f = write_temp_csv("a,b\n1,2\n3,4,5\n6,7\n");
         let result = quick_row_count(f.path()).unwrap();
 
         assert_eq!(result.count, 3);

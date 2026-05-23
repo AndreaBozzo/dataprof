@@ -750,6 +750,7 @@ name = "dataprof"
 version = "0.8.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "bytes",
  "criterion",
  "dataprof-core",
@@ -762,11 +763,13 @@ dependencies = [
  "dataprof-partial",
  "dataprof-runtime",
  "env_logger",
+ "parquet",
  "predicates",
  "proptest",
  "reqwest",
  "serde_json",
  "serial_test",
+ "sqlx",
  "tempfile",
  "tokio",
 ]

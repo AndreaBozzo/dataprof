@@ -24,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available as top-level exports, while lower-level modules are available from
   their owning workspace crates.
 - Move async HTTP Parquet profiling into `dataprof-parquet`.
-- Prepare the workspace for the 0.8.0 library-first release.
-- Document the library-first release story, retired CLI compatibility aliases,
+- Prepare the workspace for the 0.8.0 Rust facade and Python package release.
+- Refresh release-facing docs around the compact facade, retired CLI surface,
   and current crate-boundary status.
 
 ## [0.5.10] - 2026-02-01

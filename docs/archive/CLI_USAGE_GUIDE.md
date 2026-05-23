@@ -6,11 +6,14 @@
 
 Complete reference for the `dataprof` command-line interface (v0.7.1).
 
-## Installation
+## Historical Installation
+
+These commands apply to the pre-0.8 CLI release line only. The current
+library-first branch does not ship a `dataprof` binary.
 
 ```bash
-cargo install dataprof                        # installs the `dataprof` CLI
-cargo install dataprof --features full-cli    # includes all database connectors
+cargo install dataprof@0.7.1                        # installs the archived `dataprof` CLI
+cargo install dataprof@0.7.1 --features full-cli    # includes all database connectors
 ```
 
 ## Subcommands

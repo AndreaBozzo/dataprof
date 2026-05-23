@@ -104,12 +104,17 @@ impl ArrowProfiler {
         let mut arrow_builder = ReaderBuilder::new(schema.clone())
             .with_header(true)
             .with_batch_size(self.batch_size);
-        if let Some(ref config) = self.csv_config
-            && let Some(delim) = config.delimiter
-        {
-            arrow_builder = arrow_builder.with_delimiter(delim);
+        if let Some(ref config) = self.csv_config {
+            if let Some(delim) = config.delimiter {
+                arrow_builder = arrow_builder.with_delimiter(delim);
+            }
+            arrow_builder = arrow_builder
+                .with_quote(config.quote_char)
+                .with_truncated_rows(config.flexible);
         }
-        let csv_reader = arrow_builder.build(file)?;
+        let csv_reader = arrow_builder
+            .build(file)
+            .map_err(|error| map_arrow_csv_error(file_path, &error))?;
 
         // Process data in columnar batches
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
@@ -125,7 +130,7 @@ impl ArrowProfiler {
         let mut total_rows = 0;
 
         for batch_result in csv_reader {
-            let batch = batch_result?;
+            let batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, &error))?;
             total_rows += batch.num_rows();
 
             // Process each column in the batch
@@ -188,6 +193,22 @@ impl ArrowProfiler {
 
         Ok(assembler.build())
     }
+}
+
+fn map_arrow_csv_error(file_path: &Path, error: &arrow::error::ArrowError) -> DataProfilerError {
+    let message = error.to_string();
+
+    if message.contains("incorrect number of fields") {
+        return DataProfilerError::CsvParsingError {
+            message,
+            suggestion: format!(
+                "The explicit columnar CSV engine currently requires rectangular rows. '{}' contains ragged records that the Arrow backend cannot recover from. Use engine='auto' or engine='incremental' for malformed CSV, or clean the file before forcing engine='columnar'.",
+                file_path.display()
+            ),
+        };
+    }
+
+    DataProfilerError::ArrowError { message }
 }
 
 impl Default for ArrowProfiler {
@@ -909,6 +930,56 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_allows_truncated_rows_when_flexible() -> Result<(), DataProfilerError> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30")?;
+        temp_file.flush()?;
+
+        let profiler = ArrowProfiler::new().csv_config(CsvParserConfig::default());
+        let report = profiler.analyze_csv_file(temp_file.path())?;
+
+        let city_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "city")
+            .expect("city column should exist");
+
+        assert_eq!(report.column_profiles.len(), 3);
+        assert_eq!(city_col.total_count, 2);
+        assert_eq!(city_col.null_count, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_reports_clear_error_for_extra_fields() {
+        let mut temp_file = NamedTempFile::new().expect("temp file should be created");
+        writeln!(temp_file, "name,age,city").expect("header should write");
+        writeln!(temp_file, "Alice,25,Rome").expect("row should write");
+        writeln!(temp_file, "Bob,30,Milan,unexpected").expect("ragged row should write");
+        temp_file.flush().expect("temp file should flush");
+
+        let profiler = ArrowProfiler::new().csv_config(CsvParserConfig::default());
+        let error = profiler
+            .analyze_csv_file(temp_file.path())
+            .expect_err("extra fields should still fail in the Arrow CSV backend");
+
+        match error {
+            DataProfilerError::CsvParsingError {
+                message,
+                suggestion,
+            } => {
+                assert!(message.contains("incorrect number of fields"));
+                assert!(suggestion.contains("engine='auto'"));
+                assert!(suggestion.contains("engine='incremental'"));
+            }
+            other => panic!("expected CsvParsingError, got {other:?}"),
+        }
     }
 
     #[test]

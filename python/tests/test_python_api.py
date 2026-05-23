@@ -82,6 +82,31 @@ class TestProfileDataFrame:
         assert r.rows == 3
         assert r.columns == 2
 
+
+class TestInterop:
+    def test_analyze_file_path_object(self):
+        import dataprof.interop as interop
+
+        report = interop.analyze_file(Path(CSV_FILE))
+        assert report.rows_processed > 0
+        assert report.columns_detected > 0
+
+    def test_analyze_csv_to_arrow_path_object(self):
+        import dataprof.interop as interop
+
+        batch = interop.analyze_csv_to_arrow(Path(CSV_FILE))
+        assert batch.num_rows > 0
+        assert batch.num_columns > 0
+
+    def test_analyze_parquet_to_arrow_path_object(self):
+        import dataprof.interop as interop
+
+        if not os.path.exists(PARQUET_FILE):
+            pytest.skip("fixture missing")
+        batch = interop.analyze_parquet_to_arrow(Path(PARQUET_FILE))
+        assert batch.num_rows > 0
+        assert batch.num_columns > 0
+
     def test_polars(self):
         pl = pytest.importorskip("polars")
         df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
@@ -173,11 +198,19 @@ class TestPartialAnalysis:
         assert len(result.column_names) == result.num_columns
         assert result.rows_sampled > 0
 
+    def test_infer_schema_path_object(self):
+        result = dataprof.infer_schema(Path(CSV_FILE))
+        assert result.num_columns > 0
+
     def test_quick_row_count(self):
         result = dataprof.quick_row_count(CSV_FILE)
         assert result.count > 0
         assert isinstance(result.exact, bool)
         assert isinstance(result.method, str)
+
+    def test_quick_row_count_path_object(self):
+        result = dataprof.quick_row_count(Path(CSV_FILE))
+        assert result.count > 0
 
 
 # ─────────────────────────────────────────────────

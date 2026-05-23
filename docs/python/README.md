@@ -1,6 +1,8 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.7.1).
+Complete reference for the `dataprof` Python package (v0.8.0).
+
+The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
 ## Installation
 

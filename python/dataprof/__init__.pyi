@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from os import PathLike
 from typing import Any, Callable, Iterator
 
 # Version
@@ -140,6 +141,14 @@ def profile(
     locale: str | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
+    ...
+
+def infer_schema(path: str | PathLike[str]) -> SchemaResult:
+    """Infer the schema of a file from a string or path-like object."""
+    ...
+
+def quick_row_count(path: str | PathLike[str]) -> RowCountEstimate:
+    """Estimate or count rows from a string or path-like object."""
     ...
 
 class Profiler:
@@ -348,14 +357,6 @@ class RowCountEstimate:
     def method(self) -> str: ...
     @property
     def count_time_ms(self) -> int: ...
-
-def infer_schema(path: str) -> SchemaResult:
-    """Infer the schema of a file (fast, reads only a small sample)."""
-    ...
-
-def quick_row_count(path: str) -> RowCountEstimate:
-    """Quick row count (exact for small files/Parquet, estimated for large files)."""
-    ...
 
 # --- Database (async) ---
 
