@@ -1,19 +1,17 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::core::errors::DataProfilerError;
-use crate::core::profile_builder;
-use crate::core::progress::{ProgressSink, ProgressTracker};
-use crate::core::report_assembler::ReportAssembler;
-use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
-use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::engines::common::MemoryConfig;
-use crate::engines::streaming::MemoryMappedCsvReader;
-use crate::parsers::csv::CsvParserConfig;
-use crate::types::{
-    DataSource, ExecutionMetadata, FileFormat, MetricPack, ProfileReport, QualityDimension,
+use dataprof_core::{
+    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
+    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, StopCondition,
+    StopEvaluator,
 };
+use dataprof_csv::{CsvParserConfig, MemoryMappedCsvReader};
+use dataprof_runtime::{
+    MemoryConfig, ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
+};
+
+use crate::progress_tracker::ProgressTracker;
 
 /// Incremental profiler that processes data without loading everything into memory
 /// Uses online/streaming algorithms and memory mapping for maximum efficiency.
@@ -122,7 +120,7 @@ impl IncrementalProfiler {
 
         progress_tracker.emit_started(Some(estimated_data_rows), Some(file_size_bytes));
 
-        let mut headers: Option<csv::StringRecord> = None;
+        let mut headers = None;
         let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
         let mut offset = 0u64;
@@ -351,8 +349,8 @@ impl Default for IncrementalProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::DataType;
     use anyhow::Result;
+    use dataprof_core::{ColumnStats, DataType, TruncationReason};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -385,7 +383,7 @@ mod tests {
 
         // Verify advanced numeric stats are computed
         match &age_column.stats {
-            crate::types::ColumnStats::Numeric(n) => {
+            ColumnStats::Numeric(n) => {
                 assert!(n.std_dev > 0.0, "std_dev should be positive");
                 assert!(n.median.is_some(), "median should be computed");
                 assert!(n.skewness.is_some(), "skewness should be computed");
@@ -444,7 +442,7 @@ mod tests {
         assert!(!report.execution.source_exhausted);
         assert!(matches!(
             report.execution.truncation_reason,
-            Some(crate::types::TruncationReason::MaxRows(100))
+            Some(TruncationReason::MaxRows(100))
         ));
 
         Ok(())

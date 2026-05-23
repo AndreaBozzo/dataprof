@@ -7,10 +7,10 @@ pub mod profile_report;
 pub mod report_assembler;
 pub mod streaming_stats;
 
-#[cfg(feature = "async-streaming")]
-pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};
 #[cfg(feature = "parquet-async")]
 pub use async_source::ReqwestSource;
+#[cfg(feature = "async-streaming")]
+pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};
 pub use memory_config::MemoryConfig;
 pub use profile_builder::{
     ColumnProfileInput, TextLengths, build_column_profile, infer_data_type_streaming,

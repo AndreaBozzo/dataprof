@@ -377,8 +377,7 @@ impl DataprofConfig {
         ];
 
         // User config directory - cross-platform
-        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))
-        {
+        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
             let user_config = PathBuf::from(home)
                 .join(".config")
                 .join("dataprof")

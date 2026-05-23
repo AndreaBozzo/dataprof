@@ -274,7 +274,8 @@ mod tests {
         let mut first = true;
 
         loop {
-            let (headers, records, bytes) = reader.read_csv_chunk(offset, chunk_size, first, None)?;
+            let (headers, records, bytes) =
+                reader.read_csv_chunk(offset, chunk_size, first, None)?;
             if records.is_empty() && bytes == 0 {
                 break;
             }

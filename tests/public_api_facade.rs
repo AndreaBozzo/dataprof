@@ -65,6 +65,28 @@ fn parser_and_metrics_reexports_compile() {
     );
 }
 
+#[test]
+fn engine_compatibility_paths_compile() {
+    use dataprof::engines::streaming::incremental::IncrementalProfiler;
+    use dataprof::engines::streaming::memmap::MemoryMappedCsvReader;
+
+    let _profiler = IncrementalProfiler::new()
+        .chunk_size(ChunkSize::Fixed(256))
+        .sampling(SamplingStrategy::None)
+        .stop_condition(StopCondition::Never);
+    let _reader_type_size = std::mem::size_of::<MemoryMappedCsvReader>();
+}
+
+#[cfg(feature = "arrow")]
+#[test]
+fn columnar_engine_compatibility_paths_compile() {
+    use dataprof::engines::columnar::arrow_profiler::ArrowProfiler;
+    use dataprof::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
+
+    let _profiler = ArrowProfiler::new();
+    let _analyzer_type_size = std::mem::size_of::<RecordBatchAnalyzer>();
+}
+
 #[cfg(feature = "parquet")]
 #[test]
 fn parquet_facade_reexports_compile() {

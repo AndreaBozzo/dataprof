@@ -5,6 +5,22 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add `dataprof-engines` for adaptive, incremental, and async streaming engine
+  ownership behind the stable `dataprof` facade.
+- Add facade feature-combination checks for no-default and async-streaming
+  builds in CI.
+
+### Changed
+
+- Keep legacy engine module paths as compatibility shims while `src/api` routes
+  directly to the owning workspace crates.
+- Document the library-first release story, retired CLI compatibility aliases,
+  and current crate-boundary status.
+
 ## [0.5.10] - 2026-02-01
 
 ### Added
@@ -1034,4 +1050,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implement comprehensive data quality analysis system by @AndreaBozzo
 
 ## [0.1.0] - 2025-09-02
-

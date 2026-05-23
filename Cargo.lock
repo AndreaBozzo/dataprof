@@ -759,6 +759,7 @@ dependencies = [
  "dataprof-core",
  "dataprof-csv",
  "dataprof-db",
+ "dataprof-engines",
  "dataprof-json",
  "dataprof-metrics",
  "dataprof-parquet",
@@ -839,6 +840,26 @@ dependencies = [
  "sqlx",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "dataprof-engines"
+version = "0.7.1"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "csv",
+ "dataprof-core",
+ "dataprof-csv",
+ "dataprof-parquet",
+ "dataprof-runtime",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

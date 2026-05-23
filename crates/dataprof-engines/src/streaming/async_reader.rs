@@ -2,19 +2,17 @@ use std::io::Read;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::core::errors::DataProfilerError;
-use crate::core::profile_builder;
-use crate::core::progress::{ProgressSink, ProgressTracker};
-use crate::core::report_assembler::ReportAssembler;
-use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::core::stop_condition::{SchemaStabilityTracker, StopCondition, StopEvaluator};
-use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::types::{
-    DataSource, ExecutionMetadata, FileFormat, MetricPack, ProfileReport, QualityDimension,
-    StreamSourceSystem,
+use dataprof_core::{
+    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
+    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, StopCondition,
+    StopEvaluator, StreamSourceSystem, TruncationReason,
+};
+use dataprof_runtime::{
+    ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
 
 use super::async_source::AsyncDataSource;
+use crate::progress_tracker::ProgressTracker;
 
 /// A chunk of parsed records sent through the bounded channel.
 struct ParsedChunk {
@@ -543,7 +541,7 @@ impl AsyncStreamingProfiler {
             usize,
             usize,
             u64,
-            Option<crate::types::TruncationReason>,
+            Option<TruncationReason>,
         ),
         DataProfilerError,
     > {
@@ -561,7 +559,7 @@ impl AsyncStreamingProfiler {
             stop_eval = stop_eval.with_estimated_total(est);
         }
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
-        let mut truncation_reason: Option<crate::types::TruncationReason> = None;
+        let mut truncation_reason: Option<TruncationReason> = None;
 
         // First chunk is always headers
         let header_chunk = rx
@@ -688,8 +686,8 @@ impl Default for AsyncStreamingProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::streaming::async_source::{AsyncSourceInfo, BytesSource};
-    use crate::types::DataType;
+    use dataprof_core::DataType;
+    use dataprof_runtime::{AsyncSourceInfo, BytesSource};
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
@@ -790,7 +788,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_progress_events_fire() {
-        use crate::core::progress::{ProgressEvent, ProgressSink};
+        use dataprof_core::{ProgressEvent, ProgressSink};
         use std::sync::Arc;
 
         let progress_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -852,7 +850,7 @@ mod tests {
         assert!(!report.execution.source_exhausted);
         assert!(matches!(
             report.execution.truncation_reason,
-            Some(crate::types::TruncationReason::MaxRows(100))
+            Some(TruncationReason::MaxRows(100))
         ));
     }
 }

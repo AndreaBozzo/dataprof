@@ -96,6 +96,15 @@ jobs:
           cargo clippy --lib --tests --all-features -- -D warnings
           echo "Clippy analysis passed"
 
+      - name: Check facade feature combinations
+        run: |
+          echo "Checking facade feature combinations..."
+          cargo check --no-default-features
+          cargo check --no-default-features --features async-streaming
+          cargo test --test public_api_facade --no-default-features
+          cargo test --test public_api_facade --all-features
+          echo "Facade feature combinations passed"
+
       - name: Check documentation
         run: |
           echo "Checking documentation..."
@@ -217,4 +226,3 @@ jobs:
 
       - name: Run Python database tests
         run: uv run pytest python/tests/test_database_api.py -v -ra
-

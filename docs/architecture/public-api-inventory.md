@@ -49,11 +49,13 @@ rather than the preferred ownership boundary.
 | `dataprof::parsers::csv::*` | `dataprof-csv` |
 | `dataprof::parsers::json::*` | `dataprof-json` |
 | `dataprof::parsers::parquet::*` | `dataprof-parquet` |
-| `dataprof::engines::columnar::arrow_profiler::*` | `dataprof-parquet` |
-| `dataprof::engines::columnar::record_batch_analyzer::*` | `dataprof-parquet` |
-| `dataprof::engines::streaming::memmap::*` | `dataprof-csv` |
-| `dataprof::engines::streaming::async_source::*` | `dataprof-runtime` |
-| `dataprof::engines::common::*` | `dataprof-runtime` |
+| `dataprof::engines::columnar::arrow_profiler::*` | `dataprof-engines` shim over `dataprof-parquet` |
+| `dataprof::engines::columnar::record_batch_analyzer::*` | `dataprof-engines` shim over `dataprof-parquet` |
+| `dataprof::engines::streaming::incremental::*` | `dataprof-engines` |
+| `dataprof::engines::streaming::async_reader::*` | `dataprof-engines` |
+| `dataprof::engines::streaming::memmap::*` | `dataprof-engines` shim over `dataprof-csv` |
+| `dataprof::engines::streaming::async_source::*` | `dataprof-engines` shim over `dataprof-runtime` |
+| `dataprof::engines::common::*` | `dataprof-engines` shim over `dataprof-runtime` |
 | `dataprof::database::*` | `dataprof-db` |
 | `dataprof::core::profile_builder::*` | `dataprof-runtime` |
 | `dataprof::core::report_assembler::*` | `dataprof-runtime` |
@@ -80,7 +82,8 @@ Public API compile coverage should exercise:
 
 - default facade imports and builder methods
 - parser and metrics re-export paths
-- `--no-default-features --features minimal`
+- `--no-default-features`
+- `--no-default-features --features async-streaming`
 - `--features parquet`
 - `--features database`
 - `--features all-db`
@@ -90,3 +93,7 @@ Public API compile coverage should exercise:
 
 The coverage should prove that paths compile. Behavioral tests can remain
 focused on the owning crates and the end-to-end facade workflows.
+
+CI now enforces the lean facade combinations with `cargo check` and
+`public_api_facade` integration-test runs so compatibility shims cannot drift
+silently during future crate moves.

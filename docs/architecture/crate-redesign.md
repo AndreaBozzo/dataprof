@@ -42,7 +42,7 @@ That breadth is useful, but it creates adoption friction:
 6. Make benchmarks and paper artifacts reproducible without making the main
    package feel research-only.
 
-## Status After The Core, Metrics, Runtime, Parser, Parquet, DB, And Python Split
+## Status After The Core, Metrics, Runtime, Parser, Parquet, DB, Python, And Engine Split
 
 The redesign is now past the packaging-only stage and into a real workspace
 layout:
@@ -63,8 +63,10 @@ layout:
    JSON/JSONL report-building flow
 - `dataprof-parquet` now owns the synchronous Parquet parser plus the shared
   `RecordBatchAnalyzer` used by Parquet-backed and Arrow-backed batch analysis
-- `dataprof-parquet` now also owns `ArrowProfiler`, leaving the old columnar
-   engine path as a facade shim
+- `dataprof-engines` now owns adaptive engine selection plus the incremental
+   and async streaming profilers, while preserving old facade module paths
+- `dataprof-parquet` still owns the Arrow-backed profiler implementation used
+   by the columnar engine path
 - `dataprof-db` now owns database configuration, connector traits, SQL
   validation/security helpers, retry/sampling/streaming helpers, and the
   feature-gated PostgreSQL, MySQL, and SQLite connectors
@@ -83,14 +85,16 @@ layout:
   shim modules
 - `src/database` no longer owns implementations; database compatibility is now
   provided through a lightweight shim module
-- `src/engines/common`, `src/engines/streaming/memmap`,
-   `src/engines/streaming/async_source`, and the old
-   `src/engines/columnar/arrow_profiler` path no longer own implementations;
-   these are now compatibility shims over workspace crates
+- `src/engines/common`, `src/engines/adaptive`,
+   `src/engines/streaming/incremental`, `src/engines/streaming/async_reader`,
+   `src/engines/streaming/memmap`, `src/engines/streaming/async_source`, and
+   the old `src/engines/columnar/arrow_profiler` path no longer own
+   implementations; these are now compatibility shims over workspace crates
 
 That is a meaningful architectural milestone. The remaining work is no longer
-"create a place for shared code". The remaining work is to keep moving the
-engine and remaining Arrow-heavy ownership behind the same facade pattern.
+"create a place for shared code". The remaining work is to finish release
+validation, decide the async HTTP Parquet ownership slice, and keep the facade
+stable while smaller crates own behavior.
 
 ## Current Boundary Status
 
@@ -99,14 +103,14 @@ of real boundaries instead of hypothetical ones:
 
 | Area | What is already true | What is still coupled |
 | --- | --- | --- |
-| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, `dataprof-parquet`, `dataprof-db`, and `dataprof-python`, and the facade crate supports meaningful library builds | There is still no dedicated crate for full engine orchestration |
-| Shared model | Core report and profiling DTOs live in `dataprof-core`, `MemoryTracker` lives in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Some engine code still reaches runtime helpers through facade module shims instead of depending on smaller leaf crates directly |
+| Packaging | The repo is now a workspace with `dataprof-core`, `dataprof-metrics`, `dataprof-runtime`, `dataprof-csv`, `dataprof-json`, `dataprof-parquet`, `dataprof-engines`, `dataprof-db`, and `dataprof-python`, and the facade crate supports meaningful library builds | The facade still owns the high-level `Profiler` orchestration API |
+| Shared model | Core report and profiling DTOs live in `dataprof-core`, `MemoryTracker` lives in `dataprof-core`, and `ProfileReport` plus report assembly live in `dataprof-runtime` | Async HTTP Parquet still crosses parser/runtime/facade boundaries |
 | Parser boundary | Standard CSV, JSON/JSONL, synchronous Parquet parsing, and the memory-mapped CSV reader now live outside the facade crate, and the facade parser/reader modules are shims | Async Parquet HTTP handling, parser dispatch, and non-parser product code are still in `src/` |
 | Metrics boundary | `analysis/`, `stats/`, quality result types, pattern detection, and validators now live in `dataprof-metrics` | Parser and engine code still reach metrics through runtime or facade re-exports rather than a smaller explicit adapter boundary |
-| Public API | Existing top-level exports remain available through facade re-exports and compatibility shims, including async source types and columnar engine entry points | `src/api/mod.rs` still dispatches through facade parser and engine modules instead of thinner crate-specific adapters |
+| Public API | Existing top-level exports remain available through facade re-exports and compatibility shims, including async source types and columnar engine entry points | `src/api/partial.rs` and async HTTP Parquet still contain facade-owned format glue |
 | Database boundary | Database config, connector traits, SQL validation/security helpers, retry/sampling/streaming helpers, and concrete SQL connectors now live in `dataprof-db`; `src/database` is a shim | `dataprof-python` depends on the facade/database surface for Python async database bindings |
 | Python boundary | PyO3 classes, functions, and extension registration now live in `dataprof-python`; the root `python` feature is a deprecated alias | Python wrappers still depend on the facade API rather than smaller leaf crates directly |
-| Product surfaces | The facade crate is increasingly a shell around internal crates; several engine helper paths are already shim-only | Engine orchestration and the streaming engine implementations still ship from the same facade crate |
+| Product surfaces | The facade crate is increasingly a shell around internal crates; engine implementations now live in `dataprof-engines` with old paths as shims | The high-level `Profiler` builder remains facade-owned by design |
 
 ## End-State Workspace
 
@@ -120,6 +124,7 @@ The likely workspace shape is:
 | `dataprof-csv` | Standard CSV parsing, delimiter detection, robust CSV recovery helpers, diagnostics, memory-mapped CSV reading, and CSV report assembly |
 | `dataprof-json` | JSON and JSONL scanning plus JSON report assembly |
 | `dataprof-parquet` | Synchronous Parquet profiling plus shared Arrow `RecordBatchAnalyzer` and `ArrowProfiler` support used by Parquet-adjacent paths |
+| `dataprof-engines` | Adaptive selection plus incremental and async streaming engine implementations |
 | `dataprof-db` | PostgreSQL, MySQL, SQLite connectors and SQL validation |
 | `dataprof-python` | PyO3 extension and Python report wrappers |
 | `dataprof` | Facade crate for common Rust users, re-exporting stable APIs behind features |
@@ -139,14 +144,14 @@ branch now gives enough evidence to sequence the work more clearly:
 | 2 | `dataprof-metrics` | Completed. `analysis/` and `stats/` proved isolated enough to move behind the new core boundary with facade shims |
 | 3 | `dataprof-runtime`, `dataprof-csv`, and full `dataprof-json` ownership | Completed. Shared report-building helpers moved first, then standard CSV and JSON parser ownership followed behind facade shims |
 | 4 | `dataprof-parquet` | Completed. The synchronous Parquet reader and shared `RecordBatchAnalyzer` moved behind a new crate while facade module paths stayed stable |
-| 5 | `dataprof-db`, `dataprof-python`, facade polish | `dataprof-db` is completed behind a facade shim, `dataprof-python` owns the PyO3 extension, and legacy CLI code has been removed. Leave engine-library slices and final facade polish for the remaining work |
+| 5 | `dataprof-db`, `dataprof-python`, `dataprof-engines`, facade polish | Completed for this redesign slice. Database, Python, engine implementations, and legacy CLI removal are behind stable facade shims; remaining work is release validation and the async HTTP Parquet ownership decision |
 
 ## Feature Boundary Proposal
 
 As of the current redesign branch, `minimal = []` no longer pulls in Arrow,
-Parquet, or database connector dependencies. The remaining work is to finish
-moving product boundaries from module-level `cfg` checks into crate-level
-dependencies with clearer ownership:
+Parquet, engine optional dependencies, or database connector dependencies. The
+main product boundaries now live at crate level; the remaining work is release
+validation and any future async HTTP Parquet ownership slice:
 
 | Feature | Intended dependency boundary |
 | --- | --- |
@@ -221,16 +226,27 @@ Completed for the extracted reader crates on this branch:
 - The first engine-helper follow-up is now complete: `ArrowProfiler` moved into
    `dataprof-parquet`, `MemoryMappedCsvReader` moved into `dataprof-csv`, and
    `MemoryConfig` plus async source types moved into `dataprof-runtime`.
-- Move the remaining streaming and adaptive engine implementations after these
-   helper extractions validate the approach.
+- The remaining streaming and adaptive engine implementations have moved into
+   `dataprof-engines`.
+- Fully evaluate what's left of the src/ folder and move any remaining product code into workspace crates behind facade shims. ( es. parquet async HTTP handling, parser dispatch, and non-parser product code )
+- Run hygiene and architectural review of the new crate graph, new repository structure, fix any issues, and update documentation to reflect the new structure.
 - Keep `dataprof` as the stable discovery package and dependency facade.
 
 ### Phase 5: Release Story
 
-- Publish a release that is explicitly about usability and packaging.
-- Document old command/API compatibility.
-- Publish benchmark results separately from the main README, linked but not
-  dominant.
+- Publish a release that is explicitly about usability and packaging, with
+   `dataprof` positioned as a library-first facade.
+- Document old command/API compatibility through the README, changelog, and
+   public API inventory rather than reviving the legacy CLI implementation.
+- Keep benchmark results separate from the main README, linked but not
+   dominant, improve the current benches (must still run on free gh runners) and enhance the page deploy to make it more navigable and user friendly.
+- Finish the work started on release.yml.
+- Version bump 0.8.0.
+- Run explicit facade feature checks before release:
+   `cargo check --no-default-features`,
+   `cargo check --no-default-features --features async-streaming`,
+   `cargo test --test public_api_facade --no-default-features`, and
+   `cargo test --test public_api_facade --all-features`.
 
 ## What Not To Do Yet
 
@@ -242,16 +258,10 @@ Completed for the extracted reader crates on this branch:
 
 ## Near-Term Next Steps
 
-1. Add a public API inventory document from `src/lib.rs`, grouped into
-   "must stay stable", "re-export during migration", and "internal-only".
-   This now lives in [`public-api-inventory.md`](public-api-inventory.md).
-2. Turn the current manual validation workflow into explicit compile-test
-   coverage for facade re-exports and feature combinations.
-3. Keep tightening the `dataprof-db` and `dataprof-python` split by validating
-   feature combinations and removing facade-only assumptions from Python callers.
-4. Continue with library-oriented crate boundaries: `AsyncStreamingProfiler`,
-   the incremental/adaptive engine implementations, and the final
-   engine-orchestration surface in `src/api/mod.rs`.
-5. Decide whether the async HTTP Parquet path should stay facade-owned for a
+1. Keep tightening the `dataprof-db` and `dataprof-python` split by removing
+   facade-only assumptions from Python callers where it is practical.
+2. Decide whether the async HTTP Parquet path should stay facade-owned for a
    while longer or move behind `dataprof-parquet` in a later network-aware
    slice.
+3. Review the full branch diff against `master`, fix PR-readiness issues, and
+   open the release-oriented redesign PR.

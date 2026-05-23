@@ -10,11 +10,11 @@ use crate::core::sampling::{ChunkSize, SamplingStrategy};
 use crate::core::stop_condition::StopCondition;
 #[cfg(feature = "database")]
 use crate::database::DatabaseConfig;
-use crate::engines::adaptive::AdaptiveProfiler;
 use crate::types::{
     DataSource, FileFormat, MetricPack, ProfileReport, QualityDimension, RowCountEstimate,
     SchemaResult,
 };
+use dataprof_engines::adaptive::AdaptiveProfiler;
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -360,8 +360,8 @@ impl Profiler {
     }
 
     /// Build a `CsvParserConfig` from the profiler's CSV settings.
-    fn csv_parser_config(&self) -> crate::parsers::csv::CsvParserConfig {
-        let mut csv_config = crate::parsers::csv::CsvParserConfig::default();
+    fn csv_parser_config(&self) -> dataprof_csv::CsvParserConfig {
+        let mut csv_config = dataprof_csv::CsvParserConfig::default();
         if let Some(d) = self.config.csv_delimiter {
             csv_config = csv_config.with_delimiter(d);
         }
@@ -373,13 +373,12 @@ impl Profiler {
 
     /// Build a `CsvParserConfig` for a CSV file, auto-detecting the delimiter
     /// when none was explicitly configured.
-    fn csv_config_for_file(&self, file_path: &Path) -> crate::parsers::csv::CsvParserConfig {
+    fn csv_config_for_file(&self, file_path: &Path) -> dataprof_csv::CsvParserConfig {
         if self.has_csv_config() {
             self.csv_parser_config()
         } else {
-            let detected =
-                crate::parsers::csv::detect_delimiter_from_path(file_path).unwrap_or(b',');
-            crate::parsers::csv::CsvParserConfig::default().with_delimiter(detected)
+            let detected = dataprof_csv::detect_delimiter_from_path(file_path).unwrap_or(b',');
+            dataprof_csv::CsvParserConfig::default().with_delimiter(detected)
         }
     }
 
@@ -392,9 +391,9 @@ impl Profiler {
         let dims = self.config.quality_dimensions.as_deref();
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                crate::parsers::json::analyze_json_file_with_dimensions(
+                dataprof_json::analyze_json_file_with_dimensions(
                     file_path,
-                    &crate::parsers::json::JsonParserConfig::default(),
+                    &dataprof_json::JsonParserConfig::default(),
                     dims,
                 )
             }
@@ -426,15 +425,15 @@ impl Profiler {
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                return crate::parsers::json::analyze_json_file_with_dimensions(
+                return dataprof_json::analyze_json_file_with_dimensions(
                     file_path,
-                    &crate::parsers::json::JsonParserConfig::default(),
+                    &dataprof_json::JsonParserConfig::default(),
                     dims,
                 );
             }
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return crate::parsers::parquet::analyze_parquet_with_quality_dims(file_path, dims);
+                return dataprof_parquet::analyze_parquet_with_quality_dims(file_path, dims);
                 #[cfg(not(feature = "parquet"))]
                 return Err(DataProfilerError::UnsupportedFormat {
                     format: "parquet (enable the `parquet` feature)".to_string(),
@@ -443,7 +442,7 @@ impl Profiler {
             _ => {}
         }
 
-        use crate::engines::streaming::IncrementalProfiler;
+        use dataprof_engines::streaming::IncrementalProfiler;
 
         let mut profiler = IncrementalProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
@@ -475,16 +474,16 @@ impl Profiler {
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return crate::parsers::parquet::analyze_parquet_with_quality_dims(file_path, dims);
+                return dataprof_parquet::analyze_parquet_with_quality_dims(file_path, dims);
                 #[cfg(not(feature = "parquet"))]
                 return Err(DataProfilerError::UnsupportedFormat {
                     format: "parquet (enable the `parquet` feature)".to_string(),
                 });
             }
             FileFormat::Json | FileFormat::Jsonl => {
-                return crate::parsers::json::analyze_json_file_with_dimensions(
+                return dataprof_json::analyze_json_file_with_dimensions(
                     file_path,
-                    &crate::parsers::json::JsonParserConfig::default(),
+                    &dataprof_json::JsonParserConfig::default(),
                     dims,
                 );
             }
@@ -494,7 +493,7 @@ impl Profiler {
         // CSV — use ArrowProfiler
         #[cfg(feature = "arrow")]
         {
-            use crate::engines::columnar::ArrowProfiler;
+            use dataprof_engines::columnar::ArrowProfiler;
             let mut profiler = ArrowProfiler::new();
             if let Some(mb) = self.config.memory_limit_mb {
                 profiler = profiler.memory_limit_mb(mb);
@@ -636,9 +635,9 @@ impl Profiler {
     /// ```
     pub async fn profile_stream(
         &self,
-        source: impl crate::engines::streaming::AsyncDataSource,
+        source: impl dataprof_engines::streaming::AsyncDataSource,
     ) -> Result<ProfileReport, DataProfilerError> {
-        use crate::engines::streaming::AsyncStreamingProfiler;
+        use dataprof_engines::streaming::AsyncStreamingProfiler;
 
         let mut profiler = AsyncStreamingProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
@@ -676,7 +675,7 @@ impl Profiler {
         &self,
         file_path: P,
     ) -> Result<ProfileReport, DataProfilerError> {
-        use crate::engines::streaming::async_source::AsyncSourceInfo;
+        use dataprof_engines::streaming::async_source::AsyncSourceInfo;
 
         let path = file_path.as_ref();
         let format = self
@@ -693,10 +692,7 @@ impl Profiler {
                     let path = path.to_path_buf();
                     let dims = self.config.quality_dimensions.clone();
                     tokio::task::spawn_blocking(move || {
-                        crate::parsers::parquet::analyze_parquet_with_quality_dims(
-                            &path,
-                            dims.as_deref(),
-                        )
+                        dataprof_parquet::analyze_parquet_with_quality_dims(&path, dims.as_deref())
                     })
                     .await
                     .map_err(|e| DataProfilerError::StreamingError {
@@ -742,7 +738,7 @@ impl Profiler {
     /// CSV/JSON/JSONL. Parquet is not supported (requires seeking).
     pub async fn infer_schema_stream(
         &self,
-        source: impl crate::engines::streaming::AsyncDataSource,
+        source: impl dataprof_engines::streaming::AsyncDataSource,
     ) -> Result<SchemaResult, DataProfilerError> {
         partial::infer_schema_stream(source).await
     }
@@ -753,7 +749,7 @@ impl Profiler {
     /// unknown). Parquet is not supported (requires seeking).
     pub async fn quick_row_count_stream(
         &self,
-        source: impl crate::engines::streaming::AsyncDataSource,
+        source: impl dataprof_engines::streaming::AsyncDataSource,
     ) -> Result<RowCountEstimate, DataProfilerError> {
         partial::quick_row_count_stream(source).await
     }
@@ -784,7 +780,7 @@ impl Profiler {
     /// # }
     /// ```
     pub async fn profile_url(&self, url: &str) -> Result<ProfileReport, DataProfilerError> {
-        use crate::engines::streaming::async_source::{AsyncSourceInfo, ReqwestSource};
+        use dataprof_engines::streaming::async_source::{AsyncSourceInfo, ReqwestSource};
 
         // Detect format from URL path, respecting format_override.
         // Extract the last path segment to avoid OS-specific Path parsing issues
@@ -800,7 +796,7 @@ impl Profiler {
             FileFormat::Parquet => {
                 crate::parsers::parquet_async::analyze_parquet_async_http_dims(
                     url,
-                    &crate::parsers::parquet::ParquetConfig::default(),
+                    &dataprof_parquet::ParquetConfig::default(),
                     self.config.quality_dimensions.clone(),
                 )
                 .await
