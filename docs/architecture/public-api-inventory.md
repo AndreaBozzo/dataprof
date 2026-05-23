@@ -55,7 +55,6 @@ rather than the preferred ownership boundary.
 | `dataprof::engines::streaming::async_reader::*` | `dataprof-engines` |
 | `dataprof::engines::streaming::memmap::*` | `dataprof-engines` shim over `dataprof-csv` |
 | `dataprof::engines::streaming::async_source::*` | `dataprof-engines` shim over `dataprof-runtime` |
-| `dataprof::engines::common::*` | `dataprof-engines` shim over `dataprof-runtime` |
 | `dataprof::database::*` | `dataprof-db` |
 | `dataprof::core::profile_builder::*` | `dataprof-runtime` |
 | `dataprof::core::report_assembler::*` | `dataprof-runtime` |
