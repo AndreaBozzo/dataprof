@@ -96,23 +96,46 @@ jobs:
           cargo clippy --lib --tests --all-features -- -D warnings
           echo "Clippy analysis passed"
 
-      - name: Check facade feature combinations
-        run: |
-          echo "Checking facade feature combinations..."
-          cargo check --no-default-features
-          cargo check --no-default-features --features async-streaming
-          cargo test --test public_api_facade --no-default-features
-          cargo test --test public_api_facade --all-features
-          cargo test -p dataprof-engines --all-features
-          cargo test -p dataprof-parquet --all-features
-          cargo test -p dataprof-partial --all-features
-          echo "Facade feature combinations passed"
-
       - name: Check documentation
         run: |
           echo "Checking documentation..."
           cargo doc --no-deps --document-private-items
           echo "Documentation check passed"
+
+  feature-checks:
+    name: Feature Checks (${{ matrix.scope }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scope: minimal-facade
+            commands: |
+              cargo check --no-default-features
+              cargo test --test public_api_facade --no-default-features
+          - scope: async-streaming
+            commands: |
+              cargo check --no-default-features --features async-streaming
+              cargo test --test public_api_facade --no-default-features --features async-streaming
+              cargo test --no-default-features --features async-streaming --test async_streaming -- profile_url
+          - scope: all-features-crates
+            commands: |
+              cargo test --test public_api_facade --all-features
+              cargo test -p dataprof-engines --all-features
+              cargo test -p dataprof-parquet --all-features
+              cargo test -p dataprof-partial --all-features
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-features-${{ matrix.scope }}
+
+      - name: Run feature checks
+        run: ${{ matrix.commands }}
 
   python-quality:
     name: Python Lint & Format
@@ -158,6 +181,39 @@ jobs:
 
       - name: Run Python tests
         run: uv run pytest python/tests/ -v -ra
+
+  python-async-url-tests:
+    name: Python Async URL Tests (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: async-streaming
+            features: "python,async-streaming"
+          - variant: parquet-async
+            features: "python,parquet-async"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-python-url-${{ matrix.variant }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Build Python bindings
+        run: uv run maturin develop --features "${{ matrix.features }}"
+
+      - name: Run async URL tests
+        run: uv run pytest python/tests/test_async_url_api.py -v -ra
 
   db-integration-tests:
     name: Database Integration Tests
