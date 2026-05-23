@@ -32,6 +32,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
@@ -54,6 +57,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -79,6 +85,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust

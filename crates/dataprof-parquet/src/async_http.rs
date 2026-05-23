@@ -47,7 +47,8 @@ impl HttpParquetReader {
     ) -> Result<usize, DataProfilerError> {
         let head_failure = match client.head(url).send().await {
             Ok(head_res) if head_res.status().is_success() => {
-                if let Some(content_length) = Self::content_length_from_headers(head_res.headers()) {
+                if let Some(content_length) = Self::content_length_from_headers(head_res.headers())
+                {
                     return Ok(content_length);
                 }
                 "Server did not provide Content-Length header on HEAD".to_string()
@@ -88,10 +89,7 @@ impl HttpParquetReader {
         total_size.parse::<usize>().ok()
     }
 
-    async fn probe_content_length_with_range(
-        client: &Client,
-        url: &str,
-    ) -> Result<usize, String> {
+    async fn probe_content_length_with_range(client: &Client, url: &str) -> Result<usize, String> {
         let response = client
             .get(url)
             .header(reqwest::header::RANGE, "bytes=0-0")
@@ -104,7 +102,10 @@ impl HttpParquetReader {
                 reqwest::StatusCode::OK => {
                     "server ignored Range header during size probe and returned 200 OK".to_string()
                 }
-                status => format!("expected 206 Partial Content from size probe, got {}", status),
+                status => format!(
+                    "expected 206 Partial Content from size probe, got {}",
+                    status
+                ),
             });
         }
 
@@ -377,7 +378,8 @@ mod tests {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         idle_loops = 0;
-                        let request = read_http_request(&mut stream).expect("mock server read failed");
+                        let request =
+                            read_http_request(&mut stream).expect("mock server read failed");
 
                         if request.starts_with("HEAD") {
                             let response = match head_behavior {
