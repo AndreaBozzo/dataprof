@@ -44,9 +44,9 @@
 //! ### How to Add a New Dimension
 //! 1. Create `metrics/{dimension}.rs` with `{Dimension}Metrics` struct + `{Dimension}Calculator`
 //! 2. Add `mod {dimension};` and `use {dimension}::...;` in this file
-//! 3. Extend `QualityMetrics` in `src/types.rs` with new fields
+//! 3. Extend `QualityMetrics` in `dataprof-metrics` with new fields
 //! 4. Call the calculator in `calculate_comprehensive_metrics()` and map fields
-//! 5. Update `IsoQualityConfig` in `src/core/config.rs` if configurable thresholds needed
+//! 5. Update `IsoQualityConfig` in `dataprof-core` if configurable thresholds are needed
 //!
 //! ### References
 //! - ISO 25012: <https://iso25000.com/index.php/en/iso-25000-standards/iso-25012>

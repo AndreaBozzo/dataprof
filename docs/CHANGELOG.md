@@ -10,14 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add `dataprof-engines` for adaptive, incremental, and async streaming engine
-  ownership behind the stable `dataprof` facade.
+  ownership behind the compact `dataprof` facade.
+- Add `dataprof-partial` for schema inference and quick row-count ownership
+  behind the compact `dataprof` facade.
 - Add facade feature-combination checks for no-default and async-streaming
   builds in CI.
 
 ### Changed
 
-- Keep legacy engine module paths as compatibility shims while `src/api` routes
-  directly to the owning workspace crates.
+- Move the public `dataprof` facade source to `crates/dataprof/src` and remove
+  the legacy `src/` shell before the 0.8.0 release.
+- Drop broad legacy module-path shims from the facade; common APIs remain
+  available as top-level exports, while lower-level modules are available from
+  their owning workspace crates.
+- Move async HTTP Parquet profiling into `dataprof-parquet`.
+- Prepare the workspace for the 0.8.0 library-first release.
 - Document the library-first release story, retired CLI compatibility aliases,
   and current crate-boundary status.
 

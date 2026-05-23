@@ -4,17 +4,19 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'src/**'
+      - 'crates/**'
       - 'benches/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/benchmarks.yml'
 
   pull_request:
     branches: [main, master]
     paths:
-      - 'src/**'
+      - 'crates/**'
       - 'benches/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
 
   workflow_dispatch:
     inputs:
@@ -55,7 +57,13 @@ jobs:
       - name: Run benchmarks
         run: |
           mkdir -p benchmark-results
-          cargo bench --bench benchmarks 2>&1 | tee benchmark-results/output.txt
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_benchmark }}" = "true" ]; then
+            echo "Running full benchmark suite"
+            cargo bench --bench benchmarks 2>&1 | tee benchmark-results/output.txt
+          else
+            echo "Running quick benchmark suite for CI"
+            cargo bench --bench benchmarks -- 'csv_parsing|throughput_metrics' 2>&1 | tee benchmark-results/output.txt
+          fi
 
       - name: Upload results
         uses: actions/upload-artifact@v7
@@ -71,5 +79,5 @@ jobs:
           echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          grep -E "(csv_analysis|time:|thrpt:)" benchmark-results/output.txt | head -50 >> $GITHUB_STEP_SUMMARY || echo "No results found"
+          grep -E "(csv_parsing|throughput_metrics|time:|thrpt:)" benchmark-results/output.txt | head -80 >> $GITHUB_STEP_SUMMARY || echo "No results found"
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -77,8 +77,8 @@ report.save("report.json")
 
 ```toml
 [dependencies]
-dataprof = "0.7"                  # core library (no CLI deps)
-dataprof = { version = "0.7", features = ["async-streaming"] }
+dataprof = "0.8"                  # core library (no CLI deps)
+dataprof = { version = "0.8", features = ["async-streaming"] }
 ```
 
 ### Python package

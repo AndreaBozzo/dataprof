@@ -28,7 +28,7 @@ use anyhow::Result;
 use criterion::{
     BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
 };
-use dataprof::types::ProfileReport;
+use dataprof::ProfileReport;
 use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;

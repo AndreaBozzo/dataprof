@@ -104,6 +104,8 @@ jobs:
           cargo test --test public_api_facade --no-default-features
           cargo test --test public_api_facade --all-features
           cargo test -p dataprof-engines --all-features
+          cargo test -p dataprof-parquet --all-features
+          cargo test -p dataprof-partial --all-features
           echo "Facade feature combinations passed"
 
       - name: Check documentation

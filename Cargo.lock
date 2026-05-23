@@ -747,15 +747,11 @@ dependencies = [
 
 [[package]]
 name = "dataprof"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
- "arrow",
- "async-trait",
  "bytes",
- "chrono",
  "criterion",
- "csv",
  "dataprof-core",
  "dataprof-csv",
  "dataprof-db",
@@ -763,37 +759,21 @@ dependencies = [
  "dataprof-json",
  "dataprof-metrics",
  "dataprof-parquet",
+ "dataprof-partial",
  "dataprof-runtime",
  "env_logger",
- "futures",
- "glob",
- "log",
- "memmap2",
- "num_cpus",
- "parquet",
  "predicates",
  "proptest",
- "rand 0.9.3",
- "rand_chacha 0.9.0",
- "rand_distr",
- "rayon",
  "reqwest",
- "serde",
  "serde_json",
  "serial_test",
- "sqlx",
- "sysinfo",
  "tempfile",
- "thiserror",
  "tokio",
- "tokio-util",
- "toml",
- "uuid",
 ]
 
 [[package]]
 name = "dataprof-core"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -814,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-csv"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "csv",
@@ -827,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-db"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "dataprof-core",
@@ -844,7 +824,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-engines"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -864,7 +844,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-json"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "dataprof-core",
  "dataprof-runtime",
@@ -875,7 +855,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-metrics"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "dataprof-core",
@@ -888,22 +868,45 @@ dependencies = [
 
 [[package]]
 name = "dataprof-parquet"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arrow",
+ "bytes",
  "csv",
  "dataprof-core",
  "dataprof-csv",
  "dataprof-metrics",
  "dataprof-runtime",
+ "futures",
  "parquet",
+ "reqwest",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "dataprof-partial"
+version = "0.8.0"
+dependencies = [
+ "arrow",
+ "bytes",
+ "csv",
+ "dataprof-core",
+ "dataprof-csv",
+ "dataprof-json",
+ "dataprof-runtime",
+ "parquet",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
 name = "dataprof-python"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -918,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-runtime"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2517,16 +2520,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
-]
-
-[[package]]
-name = "rand_distr"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
-dependencies = [
- "num-traits",
- "rand 0.9.3",
 ]
 
 [[package]]

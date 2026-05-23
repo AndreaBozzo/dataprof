@@ -65,28 +65,6 @@ fn parser_and_metrics_reexports_compile() {
     );
 }
 
-#[test]
-fn engine_compatibility_paths_compile() {
-    use dataprof::engines::streaming::incremental::IncrementalProfiler;
-    use dataprof::engines::streaming::memmap::MemoryMappedCsvReader;
-
-    let _profiler = IncrementalProfiler::new()
-        .chunk_size(ChunkSize::Fixed(256))
-        .sampling(SamplingStrategy::None)
-        .stop_condition(StopCondition::Never);
-    let _reader_type_size = std::mem::size_of::<MemoryMappedCsvReader>();
-}
-
-#[cfg(feature = "arrow")]
-#[test]
-fn columnar_engine_compatibility_paths_compile() {
-    use dataprof::engines::columnar::arrow_profiler::ArrowProfiler;
-    use dataprof::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-
-    let _profiler = ArrowProfiler::new();
-    let _analyzer_type_size = std::mem::size_of::<RecordBatchAnalyzer>();
-}
-
 #[cfg(feature = "parquet")]
 #[test]
 fn parquet_facade_reexports_compile() {
@@ -101,8 +79,6 @@ fn parquet_facade_reexports_compile() {
 #[test]
 fn database_facade_reexports_compile() {
     use dataprof::{DataProfilerError, DatabaseConfig, DatabaseConnector, create_connector};
-    #[allow(unused_imports)]
-    use dataprof::{process_rows_to_columns, streaming_profile_loop};
 
     let _config = DatabaseConfig {
         connection_string: "sqlite::memory:".to_string(),
@@ -118,8 +94,14 @@ fn database_facade_reexports_compile() {
 #[test]
 fn async_streaming_facade_reexports_compile() {
     use dataprof::{AsyncSourceInfo, AsyncStreamingProfiler, BytesSource};
+    use dataprof_engines::streaming::{IncrementalProfiler, MemoryMappedCsvReader};
 
     let info = AsyncSourceInfo::new("inline", FileFormat::Csv).size_hint(Some(4));
     let _source = BytesSource::new(bytes::Bytes::from_static(b"a\n1\n"), info);
     let _profiler = AsyncStreamingProfiler::new();
+    let _incremental = IncrementalProfiler::new()
+        .chunk_size(ChunkSize::Fixed(256))
+        .sampling(SamplingStrategy::None)
+        .stop_condition(StopCondition::Never);
+    let _reader_type_size = std::mem::size_of::<MemoryMappedCsvReader>();
 }

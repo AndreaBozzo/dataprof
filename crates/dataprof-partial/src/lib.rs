@@ -13,16 +13,14 @@ use std::time::Instant;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::Deserialize;
 
-use crate::core::errors::DataProfilerError;
-use crate::core::profile_builder;
-use crate::core::streaming_stats::StreamingColumnCollection;
-use crate::parsers::csv::CsvParserConfig;
-use crate::parsers::json::JsonParserConfig;
 #[cfg(feature = "parquet")]
-use crate::types::DataType;
-use crate::types::{ColumnSchema, CountMethod, FileFormat, RowCountEstimate, SchemaResult};
-
-use super::Profiler;
+use dataprof_core::DataType;
+use dataprof_core::{
+    ColumnSchema, CountMethod, DataProfilerError, FileFormat, RowCountEstimate, SchemaResult,
+};
+use dataprof_csv::CsvParserConfig;
+use dataprof_json::JsonParserConfig;
+use dataprof_runtime::{StreamingColumnCollection, profile_builder};
 
 /// Schema inference sample size (rows to read for CSV/JSON).
 const SCHEMA_SAMPLE_ROWS: usize = 1000;
@@ -44,14 +42,14 @@ const ROW_SAMPLE_LINES: usize = 10_000;
 ///
 /// # Example
 /// ```no_run
-/// let schema = dataprof::infer_schema("data.csv").unwrap();
+/// let schema = dataprof_partial::infer_schema("data.csv").unwrap();
 /// for col in &schema.columns {
 ///     println!("{}: {:?}", col.name, col.data_type);
 /// }
 /// ```
 pub fn infer_schema<P: AsRef<Path>>(path: P) -> Result<SchemaResult, DataProfilerError> {
     let path = path.as_ref();
-    let format = Profiler::detect_format(path);
+    let format = detect_format(path);
     infer_schema_with_format(path, format)
 }
 
@@ -62,20 +60,35 @@ pub fn infer_schema<P: AsRef<Path>>(path: P) -> Result<SchemaResult, DataProfile
 ///
 /// # Example
 /// ```no_run
-/// let est = dataprof::quick_row_count("data.csv").unwrap();
+/// let est = dataprof_partial::quick_row_count("data.csv").unwrap();
 /// println!("{} rows (exact={})", est.count, est.exact);
 /// ```
 pub fn quick_row_count<P: AsRef<Path>>(path: P) -> Result<RowCountEstimate, DataProfilerError> {
     let path = path.as_ref();
-    let format = Profiler::detect_format(path);
+    let format = detect_format(path);
     quick_row_count_with_format(path, format)
+}
+
+/// Detect file format from extension.
+pub fn detect_format(file_path: &Path) -> FileFormat {
+    file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| match ext.to_ascii_lowercase().as_str() {
+            "csv" | "tsv" | "txt" => FileFormat::Csv,
+            "json" => FileFormat::Json,
+            "jsonl" | "ndjson" => FileFormat::Jsonl,
+            "parquet" => FileFormat::Parquet,
+            other => FileFormat::Unknown(other.to_string()),
+        })
+        .unwrap_or(FileFormat::Csv)
 }
 
 // ---------------------------------------------------------------------------
 // Format-aware internals (also used by Profiler methods)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn infer_schema_with_format(
+pub fn infer_schema_with_format(
     path: &Path,
     format: FileFormat,
 ) -> Result<SchemaResult, DataProfilerError> {
@@ -102,7 +115,7 @@ pub(crate) fn infer_schema_with_format(
     }
 }
 
-pub(crate) fn quick_row_count_with_format(
+pub fn quick_row_count_with_format(
     path: &Path,
     format: FileFormat,
 ) -> Result<RowCountEstimate, DataProfilerError> {
@@ -198,7 +211,7 @@ fn infer_schema_from_csv_reader<R: Read>(
         .has_header(has_header)
         .max_rows(Some(SCHEMA_SAMPLE_ROWS));
     let (_profiles, column_stats, rows_read, headers) =
-        crate::parsers::csv::analyze_csv_from_reader(reader, &config)?;
+        dataprof_csv::analyze_csv_from_reader(reader, &config)?;
 
     Ok(schema_from_streaming_stats(
         &column_stats,
@@ -219,7 +232,7 @@ fn infer_schema_from_json_reader<R: BufRead>(
         _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS),
     };
     let (_profiles, column_stats, rows_read, _malformed_lines, _detected_format) =
-        crate::parsers::json::analyze_json_from_reader(reader, &config)?;
+        dataprof_json::analyze_json_from_reader(reader, &config)?;
 
     // column_names() returns HashMap keys in arbitrary order. Sort
     // alphabetically so the output is deterministic across runs.
@@ -689,7 +702,8 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
 ///
 /// # Example
 /// ```no_run
-/// use dataprof::{AsyncSourceInfo, BytesSource, FileFormat};
+/// use dataprof_core::FileFormat;
+/// use dataprof_runtime::{AsyncSourceInfo, BytesSource};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let csv = b"name,age\nAlice,30\nBob,25\n";
@@ -697,13 +711,13 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
 ///     bytes::Bytes::from_static(csv),
 ///     AsyncSourceInfo::new("api-body", FileFormat::Csv),
 /// );
-/// let schema = dataprof::infer_schema_stream(source).await?;
+/// let schema = dataprof_partial::infer_schema_stream(source).await?;
 /// # Ok(())
 /// # }
 /// ```
 #[cfg(feature = "async-streaming")]
 pub async fn infer_schema_stream(
-    source: impl crate::engines::streaming::AsyncDataSource,
+    source: impl dataprof_runtime::AsyncDataSource,
 ) -> Result<SchemaResult, DataProfilerError> {
     let info = source.source_info();
     let format = info.format.clone();
@@ -732,7 +746,8 @@ pub async fn infer_schema_stream(
 ///
 /// # Example
 /// ```no_run
-/// use dataprof::{AsyncSourceInfo, BytesSource, FileFormat};
+/// use dataprof_core::FileFormat;
+/// use dataprof_runtime::{AsyncSourceInfo, BytesSource};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let csv = b"name,age\nAlice,30\nBob,25\n";
@@ -740,13 +755,13 @@ pub async fn infer_schema_stream(
 ///     bytes::Bytes::from_static(csv),
 ///     AsyncSourceInfo::new("api-body", FileFormat::Csv),
 /// );
-/// let est = dataprof::quick_row_count_stream(source).await?;
+/// let est = dataprof_partial::quick_row_count_stream(source).await?;
 /// # Ok(())
 /// # }
 /// ```
 #[cfg(feature = "async-streaming")]
 pub async fn quick_row_count_stream(
-    source: impl crate::engines::streaming::AsyncDataSource,
+    source: impl dataprof_runtime::AsyncDataSource,
 ) -> Result<RowCountEstimate, DataProfilerError> {
     let info = source.source_info();
     let format = info.format.clone();
@@ -772,7 +787,7 @@ pub async fn quick_row_count_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::DataType;
+    use dataprof_core::DataType;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -1048,9 +1063,8 @@ mod tests {
 #[cfg(all(test, feature = "async-streaming"))]
 mod async_tests {
     use super::*;
-    use crate::engines::streaming::BytesSource;
-    use crate::engines::streaming::async_source::AsyncSourceInfo;
-    use crate::types::{DataType, FileFormat};
+    use dataprof_core::{DataType, FileFormat};
+    use dataprof_runtime::{AsyncSourceInfo, BytesSource};
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(

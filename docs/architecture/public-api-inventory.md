@@ -1,8 +1,9 @@
 # Public API Inventory
 
-This inventory records the facade API currently exposed from `src/lib.rs`.
-It is a migration guide for the crate redesign: the public `dataprof` package
-can keep stable paths while implementation moves into smaller workspace crates.
+This inventory records the facade API currently exposed from
+`crates/dataprof/src/lib.rs`. It is a release guide for the 0.8 crate redesign:
+the public `dataprof` package keeps a compact top-level API while implementation
+ownership lives in smaller workspace crates.
 
 ## Must Stay Stable
 
@@ -30,69 +31,42 @@ implementation crates change.
 | --- | --- |
 | `parquet` | `ParquetConfig`, `analyze_parquet_with_config`, `analyze_parquet_with_quality`, `is_parquet_file` |
 | `database` | `DatabaseConfig`, `DatabaseConnector`, `DatabaseCredentials`, `MySqlConnector`, `PostgresConnector`, `RetryConfig`, `SamplingConfig`, `DbSamplingStrategy`, `SqliteConnector`, `SslConfig`, `analyze_database`, `create_connector` |
-| `database` compatibility | `process_rows_to_columns`, `streaming_profile_loop` |
 | `async-streaming` | `AsyncDataSource`, `AsyncSourceInfo`, `AsyncStreamingProfiler`, `BytesSource` |
-| `parquet-async` | `ReqwestSource` |
-| `python` | `python` module for PyO3 extension builds |
-
-## Migration Re-Exports
-
-These modules preserve old paths while implementation lives elsewhere. They are
-valuable during the redesign, but should be documented as compatibility layers
-rather than the preferred ownership boundary.
-
-| Facade path | Current owner |
-| --- | --- |
-| `dataprof::types::*` | `dataprof-core`, `dataprof-metrics`, `dataprof-runtime` |
-| `dataprof::analysis::*` | `dataprof-metrics` |
-| `dataprof::stats::*` | `dataprof-metrics` |
-| `dataprof::parsers::csv::*` | `dataprof-csv` |
-| `dataprof::parsers::json::*` | `dataprof-json` |
-| `dataprof::parsers::parquet::*` | `dataprof-parquet` |
-| `dataprof::engines::columnar::arrow_profiler::*` | `dataprof-engines` shim over `dataprof-parquet` |
-| `dataprof::engines::columnar::record_batch_analyzer::*` | `dataprof-engines` shim over `dataprof-parquet` |
-| `dataprof::engines::streaming::incremental::*` | `dataprof-engines` |
-| `dataprof::engines::streaming::async_reader::*` | `dataprof-engines` |
-| `dataprof::engines::streaming::memmap::*` | `dataprof-engines` shim over `dataprof-csv` |
-| `dataprof::engines::streaming::async_source::*` | `dataprof-engines` shim over `dataprof-runtime` |
-| `dataprof::database::*` | `dataprof-db` |
-| `dataprof::core::profile_builder::*` | `dataprof-runtime` |
-| `dataprof::core::report_assembler::*` | `dataprof-runtime` |
-| `dataprof::core::streaming_stats::*` | `dataprof-runtime` |
-| `dataprof::core::memory_tracker::*` | `dataprof-core` |
+| `parquet-async` | `ReqwestSource`, `HttpParquetReader`, `analyze_parquet_async_http` |
+| `python` | Deprecated feature alias; the extension is built from `dataprof-python` through maturin |
 
 ## Internal-Only Candidates
 
-These are public today because the crate historically exposed broad module
-access. During facade polish, decide whether to keep them documented, gate them,
-or move them behind narrower public entry points.
+These surfaces intentionally do not belong to the 0.8 facade. They remain
+available through their owning workspace crates when needed.
 
 | Surface | Reason to review |
 | --- | --- |
-| `acceleration` module | Low-level implementation detail around SIMD helpers. |
-| `engines` module | Users should normally go through `Profiler` and `EngineType`; several subpaths are already shim-only compatibility layers. |
-| `serde_helpers` module | Serialization plumbing, not a user workflow. |
-| `check_memory_leaks`, `get_memory_usage_stats` | Diagnostics helpers with unclear facade-level stability contract. |
-| Database row-processing macros | Useful for compatibility, but not an ideal long-term public API. |
+| Engine implementation modules | Users should normally go through `Profiler` and `EngineType`; direct engine work belongs in `dataprof-engines`. |
+| Parser submodules | Format implementations belong in `dataprof-csv`, `dataprof-json`, and `dataprof-parquet`; the facade exposes only common entry points. |
+| Runtime assembly helpers | Report assembly and streaming stats belong in `dataprof-runtime`. |
+| Low-level acceleration and serialization helpers | Implementation details owned by `dataprof-metrics` and `dataprof-core`. |
+| Database row-processing helpers | Internal database pipeline details owned by `dataprof-db`. |
 
 ## Coverage Expectations
 
 Public API compile coverage should exercise:
 
 - default facade imports and builder methods
-- parser and metrics re-export paths
+- parser and metrics top-level re-exports
 - `--no-default-features`
 - `--no-default-features --features async-streaming`
 - `--features parquet`
 - `--features database`
 - `--features all-db`
 - `--features async-streaming`
-- deprecated compatibility aliases such as `--features cli` and
+- deprecated CLI feature aliases such as `--features cli` and
   `--features full-cli`
 
 The coverage should prove that paths compile. Behavioral tests can remain
 focused on the owning crates and the end-to-end facade workflows.
 
-CI now enforces the lean facade combinations with `cargo check` and
-`public_api_facade` integration-test runs so compatibility shims cannot drift
-silently during future crate moves.
+CI now enforces the lean facade combinations with `cargo check`,
+`public_api_facade` integration-test runs, and owning-crate unit tests for
+`dataprof-engines`, `dataprof-parquet`, and `dataprof-partial` so the facade
+cannot accidentally grow implementation ownership again.

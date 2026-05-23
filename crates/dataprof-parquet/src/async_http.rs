@@ -1,10 +1,15 @@
 //! Asynchronous Parquet HTTP reading module
-use crate::core::errors::DataProfilerError;
 use bytes::Bytes;
+use dataprof_core::{
+    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityDimension,
+};
+use dataprof_runtime::{ProfileReport, ReportAssembler};
 use futures::future::BoxFuture;
 use parquet::arrow::async_reader::AsyncFileReader;
 use reqwest::{Client, header};
 use std::ops::Range;
+
+use crate::{ParquetConfig, RecordBatchAnalyzer};
 
 /// An asynchronous reader that fetches byte ranges from an HTTP server
 /// using HTTP Range requests. Designed specifically for remote Parquet parsing.
@@ -137,12 +142,6 @@ impl AsyncFileReader for HttpParquetReader {
     }
 }
 
-use crate::core::report_assembler::ReportAssembler;
-use crate::engines::columnar::record_batch_analyzer::RecordBatchAnalyzer;
-use crate::parsers::parquet::ParquetConfig;
-use crate::types::{
-    DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, ProfileReport, QualityDimension,
-};
 use futures::StreamExt;
 use parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
 

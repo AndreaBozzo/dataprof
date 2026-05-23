@@ -85,7 +85,7 @@ if let Some(quality) = &report.quality {
 
 ```rust
 use dataprof::{DatabaseConfig, analyze_database};
-use dataprof::database::{RetryConfig, SslConfig};
+use dataprof::{RetryConfig, SslConfig};
 
 let config = DatabaseConfig {
     connection_string: "postgres://user:pass@localhost/mydb".to_string(),
@@ -173,7 +173,7 @@ Adjust `batch_size` based on your dataset:
 For very large tables, configure sampling to analyze a representative subset:
 
 ```rust
-use dataprof::database::SamplingConfig;
+use dataprof::SamplingConfig;
 
 // Quick random sample
 let config = DatabaseConfig {
@@ -205,7 +205,7 @@ let config = DatabaseConfig {
 ### SSL/TLS Encryption
 
 ```rust
-use dataprof::database::SslConfig;
+use dataprof::SslConfig;
 
 // Production: requires SSL with certificate verification
 let ssl = SslConfig::production();

@@ -1,6 +1,6 @@
 [package]
 name = "dataprof-engines"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Andrea Bozzo"]
@@ -24,10 +24,10 @@ parquet-async = ["async-streaming", "dataprof-runtime/parquet-async"]
 
 [dependencies]
 csv = { version = "1.4", optional = true }
-dataprof-core = { path = "../dataprof-core" }
-dataprof-csv = { path = "../dataprof-csv" }
-dataprof-parquet = { path = "../dataprof-parquet", optional = true, default-features = false }
-dataprof-runtime = { path = "../dataprof-runtime" }
+dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
+dataprof-csv = { version = "0.8.0", path = "../dataprof-csv" }
+dataprof-parquet = { version = "0.8.0", path = "../dataprof-parquet", optional = true, default-features = false }
+dataprof-runtime = { version = "0.8.0", path = "../dataprof-runtime" }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0.149", optional = true }

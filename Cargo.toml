@@ -6,6 +6,7 @@ members = [
     "crates/dataprof-json",
     "crates/dataprof-parquet",
     "crates/dataprof-engines",
+    "crates/dataprof-partial",
     "crates/dataprof-db",
     "crates/dataprof-python",
     "crates/dataprof-runtime",
@@ -14,7 +15,7 @@ resolver = "3"
 
 [package]
 name = "dataprof"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Andrea Bozzo"]
@@ -50,71 +51,21 @@ all = "deny"
 
 
 [dependencies]
-# CSV parsing
-csv = "1.4"  # Updated: 1.3.1 -> 1.4.0 (minor bump, backward compatible)
-serde = { version = "1.0", features = ["derive"] }
-dataprof-core = { path = "crates/dataprof-core" }
-dataprof-metrics = { path = "crates/dataprof-metrics" }
-dataprof-csv = { path = "crates/dataprof-csv" }
-dataprof-engines = { path = "crates/dataprof-engines", default-features = false }
-dataprof-json = { path = "crates/dataprof-json" }
-dataprof-parquet = { path = "crates/dataprof-parquet", optional = true, default-features = false }
-dataprof-db = { path = "crates/dataprof-db", optional = true, default-features = false }
-dataprof-runtime = { path = "crates/dataprof-runtime" }
-
-# Error handling
-anyhow = "1.0"
-thiserror = "2.0"
-
-# JSON support
-serde_json = "1.0.149"
-
-# Configuration & logging
-toml = "0.9.8"
-log = "0.4"
-
-
-# System info for adaptive chunking
-sysinfo = "0.38"
-
-# Rayon for parallel processing
-rayon = "1.8"
-
-# Memory mapping for large files
-memmap2 = "0.9"  # Latest: 0.9.9 (patch available via cargo update)
-
-# Statistical analysis and benchmarking
-rand_distr = "0.5"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4"] }
+dataprof-core = { version = "0.8.0", path = "crates/dataprof-core" }
+dataprof-metrics = { version = "0.8.0", path = "crates/dataprof-metrics" }
+dataprof-csv = { version = "0.8.0", path = "crates/dataprof-csv" }
+dataprof-engines = { version = "0.8.0", path = "crates/dataprof-engines", default-features = false }
+dataprof-json = { version = "0.8.0", path = "crates/dataprof-json" }
+dataprof-parquet = { version = "0.8.0", path = "crates/dataprof-parquet", optional = true, default-features = false }
+dataprof-partial = { version = "0.8.0", path = "crates/dataprof-partial", default-features = false }
+dataprof-db = { version = "0.8.0", path = "crates/dataprof-db", optional = true, default-features = false }
+dataprof-runtime = { version = "0.8.0", path = "crates/dataprof-runtime" }
 
 # Note: Async support is available via async-streaming and database feature flags.
 
-# Random number generation for sampling
-rand = { version = "0.9.3", features = ["small_rng"] }  # 0.9.3 patches RUSTSEC-2026-0097
-rand_chacha = "0.9"
-
-# Batch processing support
-glob = "0.3"
-num_cpus = "1.16"
-
-
-
 tokio = { version = "1.49", features = ["full"], optional = true }  # Latest: 1.48.0 (patch available via cargo update)
-async-trait = { version = "0.1", optional = true }
 bytes = { version = "1.10", optional = true }
-tokio-util = { version = "0.7", features = ["io-util"], optional = true }
-sqlx = { version = "0.8.1", features = [
-    "runtime-tokio-rustls",
-    "chrono",
-    "uuid",
-], optional = true, default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
-
-
-arrow = { version = "57.3.0", features = ["ffi"], optional = true }
-parquet = { version = "57.3.0", features = ["arrow"], optional = true }
-futures = "0.3.31"
 
 [dev-dependencies]
 tempfile = "3.24"
@@ -184,17 +135,16 @@ cli = []
 
 # Individual features
 arrow = [
-    "dep:arrow",
     "dataprof-core/arrow",
     "dep:dataprof-parquet",
     "dataprof-parquet/arrow",
     "dataprof-engines/arrow",
 ]
 parquet = [
-    "dep:parquet",
     "arrow",
     "dataprof-parquet/parquet",
     "dataprof-engines/parquet",
+    "dataprof-partial/parquet",
 ]
 # Deprecated compatibility aliases. Python bindings now live in
 # crates/dataprof-python and are built through pyproject/maturin.
@@ -203,24 +153,23 @@ python-async = ["python"]
 database = ["dep:dataprof-db", "dataprof-core/database"]
 async-streaming = [
     "dep:tokio",
-    "dep:async-trait",
     "dep:bytes",
-    "dep:tokio-util",
     "dataprof-core/async-streaming",
     "dataprof-runtime/async-streaming",
     "dataprof-engines/async-streaming",
+    "dataprof-partial/async-streaming",
 ]
 parquet-async = [
     "parquet",
-    "parquet/async",
     "dep:reqwest",
     "async-streaming",
+    "dataprof-parquet/parquet-async",
     "dataprof-runtime/parquet-async",
     "dataprof-engines/parquet-async",
 ]
-postgres = ["database", "dep:tokio", "dep:sqlx", "sqlx/postgres", "dataprof-db/postgres"]
-mysql = ["database", "dep:tokio", "dep:sqlx", "sqlx/mysql", "dataprof-db/mysql"]
-sqlite = ["database", "dep:tokio", "dep:sqlx", "sqlx/sqlite", "dataprof-db/sqlite"]
+postgres = ["database", "dep:tokio", "dataprof-db/postgres"]
+mysql = ["database", "dep:tokio", "dataprof-db/mysql"]
+sqlite = ["database", "dep:tokio", "dataprof-db/sqlite"]
 
 # Sensible feature combinations
 minimal = []                             # No optional interfaces; library only
@@ -233,4 +182,5 @@ all-db = ["postgres", "mysql", "sqlite"]
 # Python extension builds live in crates/dataprof-python.
 [lib]
 name = "dataprof"
+path = "crates/dataprof/src/lib.rs"
 crate-type = ["rlib"]

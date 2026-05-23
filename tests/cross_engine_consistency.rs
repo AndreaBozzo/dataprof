@@ -5,8 +5,9 @@
 
 use std::io::Write;
 
-use dataprof::parsers::csv::{CsvParserConfig, analyze_csv_file};
-use dataprof::types::{ColumnStats, DataType, MetricConfidence, QualityDimension};
+use dataprof::{
+    ColumnStats, CsvParserConfig, DataType, MetricConfidence, QualityDimension, analyze_csv_file,
+};
 use dataprof::{EngineType, Profiler};
 use tempfile::NamedTempFile;
 

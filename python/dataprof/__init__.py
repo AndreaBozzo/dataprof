@@ -65,7 +65,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Rounding helpers — match the convention in src/serde_helpers.rs
+# Rounding helpers — match the convention in dataprof-core serde helpers.
 # ---------------------------------------------------------------------------
 
 

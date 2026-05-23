@@ -1,20 +1,16 @@
-pub mod partial;
-
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::core::errors::DataProfilerError;
-use crate::core::progress::{ProgressEvent, ProgressSink};
-use crate::core::sampling::{ChunkSize, SamplingStrategy};
-use crate::core::stop_condition::StopCondition;
-#[cfg(feature = "database")]
-use crate::database::DatabaseConfig;
-use crate::types::{
-    DataSource, FileFormat, MetricPack, ProfileReport, QualityDimension, RowCountEstimate,
-    SchemaResult,
+use dataprof_core::{
+    ChunkSize, DataProfilerError, DataSource, FileFormat, MetricPack, ProgressEvent, ProgressSink,
+    QualityDimension, RowCountEstimate, SamplingStrategy, SchemaResult, StopCondition,
 };
+#[cfg(feature = "database")]
+use dataprof_db::DatabaseConfig;
 use dataprof_engines::adaptive::AdaptiveProfiler;
+use dataprof_partial as partial;
+use dataprof_runtime::ProfileReport;
 
 /// Which engine to use for profiling
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -340,18 +336,8 @@ impl Profiler {
     }
 
     /// Detect file format from extension
-    pub(crate) fn detect_format(file_path: &Path) -> FileFormat {
-        file_path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| match ext.to_ascii_lowercase().as_str() {
-                "csv" | "tsv" | "txt" => FileFormat::Csv,
-                "json" => FileFormat::Json,
-                "jsonl" | "ndjson" => FileFormat::Jsonl,
-                "parquet" => FileFormat::Parquet,
-                other => FileFormat::Unknown(other.to_string()),
-            })
-            .unwrap_or(FileFormat::Csv) // default to CSV for extensionless files
+    pub fn detect_format(file_path: &Path) -> FileFormat {
+        partial::detect_format(file_path)
     }
 
     /// Whether custom CSV config options are set.
@@ -565,13 +551,8 @@ impl Profiler {
                     .to_string(),
         })?;
 
-        crate::database::analyze_database(
-            config,
-            query,
-            true,
-            self.config.quality_dimensions.clone(),
-        )
-        .await
+        dataprof_db::analyze_database(config, query, true, self.config.quality_dimensions.clone())
+            .await
     }
 
     /// Profile a database query without computing quality metrics.
@@ -592,7 +573,7 @@ impl Profiler {
                     .to_string(),
         })?;
 
-        crate::database::analyze_database(config, query, false, None).await
+        dataprof_db::analyze_database(config, query, false, None).await
     }
 }
 
@@ -721,7 +702,7 @@ impl Profiler {
                         })?;
                 let info = AsyncSourceInfo::new(path.display().to_string(), format)
                     .size_hint(Some(metadata.len()))
-                    .source_system(crate::types::StreamSourceSystem::Custom("file".into()));
+                    .source_system(dataprof_core::StreamSourceSystem::Custom("file".into()));
                 self.profile_stream((file, info)).await
             }
             FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedDataSource {
@@ -794,7 +775,7 @@ impl Profiler {
 
         match format {
             FileFormat::Parquet => {
-                crate::parsers::parquet_async::analyze_parquet_async_http_dims(
+                dataprof_parquet::analyze_parquet_async_http_dims(
                     url,
                     &dataprof_parquet::ParquetConfig::default(),
                     self.config.quality_dimensions.clone(),
@@ -821,7 +802,7 @@ impl Profiler {
                     response,
                     AsyncSourceInfo::new(url.to_string(), format)
                         .size_hint(size_hint)
-                        .source_system(crate::types::StreamSourceSystem::Http),
+                        .source_system(dataprof_core::StreamSourceSystem::Http),
                 );
                 self.profile_stream(source).await
             }
