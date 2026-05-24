@@ -203,43 +203,103 @@ jobs:
         CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
       run: |
         set -euo pipefail
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        PUBLISH_COOLDOWN_SECONDS=60
 
         if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
           echo "CRATES_TOKEN is required to publish Rust crates"
           exit 1
         fi
 
-        publish_crate() {
+        crate_already_published() {
           local crate="$1"
-          echo "Publishing ${crate}..."
-          set +e
-          output=$(cargo publish -p "${crate}" --locked 2>&1)
-          status=$?
-          set -e
-          echo "${output}"
-
-          if [ "${status}" -ne 0 ]; then
-            if echo "${output}" | grep -Eiq 'already (uploaded|exists)|crate version .* is already uploaded'; then
-              echo "${crate} is already published; continuing"
-            else
-              exit "${status}"
-            fi
-          fi
-
-          # Give the crates.io index enough time before publishing dependents.
-          sleep 45
+          curl --silent --show-error --fail \
+            "https://crates.io/api/v1/crates/${crate}/${VERSION}" >/dev/null 2>&1
         }
 
-        publish_crate dataprof-core
-        publish_crate dataprof-metrics
-        publish_crate dataprof-runtime
-        publish_crate dataprof-csv
-        publish_crate dataprof-json
-        publish_crate dataprof-db
-        publish_crate dataprof-parquet
-        publish_crate dataprof-engines
-        publish_crate dataprof-partial
-        publish_crate dataprof
+        wait_for_rate_limit_window() {
+          local output="$1"
+          local retry_after
+          local now_ts
+          local retry_ts
+          local sleep_seconds
+
+          retry_after=$(printf '%s\n' "${output}" | sed -n 's/.*Please try again after \(.* GMT\).*/\1/p' | tail -n 1)
+          if [ -z "${retry_after}" ]; then
+            return 1
+          fi
+
+          now_ts=$(date -u +%s)
+          retry_ts=$(date -u -d "${retry_after}" +%s 2>/dev/null || true)
+          if [ -z "${retry_ts}" ]; then
+            return 1
+          fi
+
+          sleep_seconds=$((retry_ts - now_ts + 5))
+          if [ "${sleep_seconds}" -lt 5 ]; then
+            sleep_seconds=5
+          fi
+
+          echo "crates.io rate limit hit; waiting ${sleep_seconds}s until ${retry_after} before retrying..."
+          sleep "${sleep_seconds}"
+          return 0
+        }
+
+        publish_crate() {
+          local crate="$1"
+          if crate_already_published "${crate}"; then
+            echo "${crate} v${VERSION} is already published; skipping"
+            return 0
+          fi
+
+          while true; do
+            echo "Publishing ${crate}..."
+            set +e
+            output=$(cargo publish -p "${crate}" --locked 2>&1)
+            status=$?
+            set -e
+            echo "${output}"
+
+            if [ "${status}" -eq 0 ]; then
+              return 0
+            fi
+
+            if echo "${output}" | grep -Eiq 'already (uploaded|exists)|crate version .* is already uploaded'; then
+              echo "${crate} is already published; continuing"
+              return 0
+            fi
+
+            if echo "${output}" | grep -q 'status 429 Too Many Requests'; then
+              if wait_for_rate_limit_window "${output}"; then
+                continue
+              fi
+            fi
+
+            exit "${status}"
+          done
+        }
+
+        crates=(
+          dataprof-core
+          dataprof-metrics
+          dataprof-runtime
+          dataprof-csv
+          dataprof-json
+          dataprof-db
+          dataprof-parquet
+          dataprof-engines
+          dataprof-partial
+          dataprof
+        )
+
+        for index in "${!crates[@]}"; do
+          publish_crate "${crates[$index]}"
+
+          if [ "$index" -lt $((${#crates[@]} - 1)) ]; then
+            echo "Cooling down ${PUBLISH_COOLDOWN_SECONDS}s before the next crates.io publish attempt..."
+            sleep "${PUBLISH_COOLDOWN_SECONDS}"
+          fi
+        done
       shell: bash
 
   # Step 5: Build Python wheels for the base public package API.
