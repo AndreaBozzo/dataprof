@@ -90,6 +90,30 @@ fn database_facade_reexports_compile() {
         create_connector;
 }
 
+/// Regression: `Profiler::format()` must override extension-based detection,
+/// even on the auto engine path that previously short-circuited to Parquet
+/// based on the `.parquet` file extension.
+#[test]
+fn format_override_beats_extension() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".parquet")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(tmp, "city,population").unwrap();
+    writeln!(tmp, "Rome,2873").unwrap();
+    writeln!(tmp, "Milan,1352").unwrap();
+    tmp.flush().unwrap();
+
+    let report = Profiler::new()
+        .format(FileFormat::Csv)
+        .analyze_file(tmp.path())
+        .expect("forced CSV parse of .parquet-named file should succeed");
+
+    assert_eq!(report.execution.columns_detected, 2);
+}
+
 #[cfg(feature = "async-streaming")]
 #[test]
 fn async_streaming_facade_reexports_compile() {

@@ -8,6 +8,7 @@ import functools
 import html as _html
 import json
 import math
+import os
 import pathlib
 import warnings
 from typing import Any, Iterator
@@ -106,23 +107,27 @@ def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     return {k: _half_up(v, 2) for k, v in q.items()}
 
 
-def _normalize_pathlike(path: str | pathlib.PurePath, *, arg_name: str = "path") -> str:
+def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
     """Normalize Python path-like input to the string form expected by Rust."""
-    if isinstance(path, (str, pathlib.PurePath)):
-        return str(path)
+    if isinstance(path, str):
+        return path
+    if isinstance(path, os.PathLike):
+        normalized = os.fspath(path)
+        if isinstance(normalized, str):
+            return normalized
     raise TypeError(
-        f"argument '{arg_name}': expected str or pathlib-compatible path, "
+        f"argument '{arg_name}': expected str or path-like object, "
         f"got {type(path).__module__}.{type(path).__name__}"
     )
 
 
-def infer_schema(path: str | pathlib.PurePath) -> SchemaResult:
-    """Infer a file schema from a string path or pathlib path object."""
+def infer_schema(path: str | os.PathLike[str]) -> SchemaResult:
+    """Infer a file schema from a string path or path-like object."""
     return _infer_schema(_normalize_pathlike(path))
 
 
-def quick_row_count(path: str | pathlib.PurePath) -> RowCountEstimate:
-    """Estimate or count rows from a string path or pathlib path object."""
+def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
+    """Estimate or count rows from a string path or path-like object."""
     return _quick_row_count(_normalize_pathlike(path))
 
 

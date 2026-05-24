@@ -31,8 +31,8 @@ implementation crates change.
 | --- | --- |
 | `parquet` | `ParquetConfig`, `analyze_parquet_with_config`, `analyze_parquet_with_quality`, `is_parquet_file` |
 | `database` | `DatabaseConfig`, `DatabaseConnector`, `DatabaseCredentials`, `MySqlConnector`, `PostgresConnector`, `RetryConfig`, `SamplingConfig`, `DbSamplingStrategy`, `SqliteConnector`, `SslConfig`, `analyze_database`, `create_connector` |
-| `async-streaming` | `AsyncDataSource`, `AsyncSourceInfo`, `AsyncStreamingProfiler`, `BytesSource` |
-| `parquet-async` | `ReqwestSource`, `HttpParquetReader`, `analyze_parquet_async_http` |
+| `async-streaming` | `AsyncDataSource`, `AsyncSourceInfo`, `AsyncStreamingProfiler`, `BytesSource`, `ReqwestSource` |
+| `parquet-async` | `HttpParquetReader`, `analyze_parquet_async_http` |
 
 ## Internal-Only Candidates
 

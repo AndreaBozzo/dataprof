@@ -17,15 +17,15 @@ import threading
 from pathlib import Path
 
 import pytest
+from dataprof.asyncio import _HAS_URL, profile_url
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES = REPO_ROOT / "examples"
 CSV_BYTES = b"city,population\nRome,2873\nMilan,1352\n"
 PARQUET_FILE = FIXTURES / "test_data" / "simple.parquet"
 
-try:
-    from dataprof.asyncio import profile_url
-except ImportError:
+
+if not _HAS_URL:
     pytest.skip(
         "Async URL profiling not compiled. Build with --features 'python,async-streaming'.",
         allow_module_level=True,

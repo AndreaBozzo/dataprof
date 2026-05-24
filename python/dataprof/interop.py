@@ -4,6 +4,8 @@ These are direct bindings to the Rust profiling engine, without the
 high-level dispatch and wrapping provided by ``dataprof.profile()``.
 """
 
+from __future__ import annotations
+
 import os
 
 from dataprof._dataprof import (  # type: ignore[import-not-found]

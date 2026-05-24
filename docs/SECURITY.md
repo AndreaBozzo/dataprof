@@ -57,8 +57,11 @@ When using dataprof:
 
 dataprof includes several security considerations:
 
-- No network connections are made during analysis
-- Data is processed locally only
+- Local file profiling makes no network connections; data is processed locally only
+- Remote URL profiling (`async-streaming` / `parquet-async` features) and database
+  profiling (`postgres`, `mysql`, `sqlite` features) do make outbound network
+  connections to the configured endpoints — review URLs and connection strings
+  before profiling untrusted sources
 - HTML reports contain only analysis results, not raw data
 - No persistent storage of analyzed data
 - Memory-safe Rust implementation

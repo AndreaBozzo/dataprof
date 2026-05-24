@@ -368,7 +368,11 @@ impl Profiler {
         }
     }
 
-    /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON
+    /// Dispatch via AdaptiveProfiler, with format-aware routing for JSON/Parquet.
+    ///
+    /// Format dispatch happens here (not inside the adaptive engine) so that an
+    /// explicit `.format()` override is respected even when the path extension
+    /// would otherwise pick a different parser.
     fn run_auto(
         &self,
         file_path: &Path,
@@ -383,6 +387,18 @@ impl Profiler {
                     dims,
                 )
             }
+            FileFormat::Parquet => {
+                #[cfg(feature = "parquet")]
+                {
+                    dataprof_parquet::analyze_parquet_with_quality_dims(file_path, dims)
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    Err(DataProfilerError::UnsupportedFormat {
+                        format: "parquet (enable the `parquet` feature)".to_string(),
+                    })
+                }
+            }
             _ => {
                 let mut profiler = AdaptiveProfiler::new();
                 if let Some(d) = &self.config.quality_dimensions {
@@ -396,7 +412,9 @@ impl Profiler {
                 }
                 let csv_config = self.csv_config_for_file(file_path);
                 profiler = profiler.csv_config(csv_config);
-                profiler.analyze_file(file_path)
+                // Format already resolved here; skip the engine's extension-based
+                // Parquet redetection so explicit `.format()` overrides win.
+                profiler.analyze_csv_file(file_path)
             }
         }
     }
