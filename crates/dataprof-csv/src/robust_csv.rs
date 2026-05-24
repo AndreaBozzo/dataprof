@@ -119,8 +119,8 @@ impl RobustCsvParser {
         match self.parse_csv(file_path) {
             Ok(result) => Ok(result),
             Err(initial_error) => {
-                eprintln!(
-                    "Initial parsing failed: {}. Attempting auto-recovery...",
+                log::warn!(
+                    "Initial CSV parsing failed: {}. Attempting auto-recovery...",
                     initial_error
                 );
 
@@ -470,7 +470,7 @@ impl RobustCsvParser {
 
                     let enhanced_error =
                         DataProfilerError::csv_parsing(&error.to_string(), "current file");
-                    eprintln!("Row {}: {}", row_index + 2, enhanced_error);
+                    log::warn!("Row {}: {}", row_index + 2, enhanced_error);
 
                     if error_count > max_errors {
                         return Err(DataProfilerError::csv_parsing(
@@ -484,7 +484,7 @@ impl RobustCsvParser {
         }
 
         if error_count > 0 {
-            eprintln!(
+            log::warn!(
                 "Successfully parsed {} rows with {} errors skipped.",
                 records.len(),
                 error_count
@@ -537,7 +537,7 @@ impl RobustCsvParser {
                 Err(error) => {
                     error_count += 1;
                     if error_count <= 10 {
-                        eprintln!("Chunk row {}: {}", row_index + 1, error);
+                        log::warn!("Chunk row {}: {}", row_index + 1, error);
                     }
                 }
             }

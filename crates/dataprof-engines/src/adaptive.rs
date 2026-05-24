@@ -83,10 +83,7 @@ impl AdaptiveProfiler {
     /// CSV-only adaptive analysis: skips Parquet extension detection so callers
     /// that have already resolved the format (e.g. via an explicit override)
     /// are not silently re-routed to the Parquet parser.
-    pub fn analyze_csv_file(
-        &self,
-        file_path: &Path,
-    ) -> Result<ProfileReport, DataProfilerError> {
+    pub fn analyze_csv_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let engine = self.select_engine(file_path);
         log::info!("Engine selected: {:?}", engine);
 

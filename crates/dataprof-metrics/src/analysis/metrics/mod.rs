@@ -156,9 +156,10 @@ impl MetricsCalculator {
         // Validate sample size for statistical reliability
         let validation = Self::validate_sample_size(sample_size, "general");
         if !validation.sufficient_sample {
-            eprintln!(
-                "Warning: Sample size ({}) is below recommended minimum ({}) for reliable statistics",
-                validation.actual_sample_size, validation.min_sample_size
+            log::warn!(
+                "Sample size ({}) is below recommended minimum ({}) for reliable statistics",
+                validation.actual_sample_size,
+                validation.min_sample_size
             );
         }
 

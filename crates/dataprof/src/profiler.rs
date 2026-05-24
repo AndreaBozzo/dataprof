@@ -782,6 +782,17 @@ impl Profiler {
     pub async fn profile_url(&self, url: &str) -> Result<ProfileReport, DataProfilerError> {
         use dataprof_engines::streaming::async_source::{AsyncSourceInfo, ReqwestSource};
 
+        // Validate URL shape up-front so callers get a clear error instead of
+        // reqwest's opaque "builder error" when the scheme is missing or wrong.
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err(DataProfilerError::UnsupportedDataSource {
+                message: format!(
+                    "Invalid URL '{url}': expected an http:// or https:// scheme. \
+                     For local files use `analyze_file()` instead."
+                ),
+            });
+        }
+
         // Detect format from URL path, respecting format_override.
         // Extract the last path segment to avoid OS-specific Path parsing issues
         // (e.g., Windows treating "https:" as a drive prefix).

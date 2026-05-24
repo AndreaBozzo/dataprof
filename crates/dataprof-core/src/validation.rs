@@ -87,7 +87,7 @@ impl InputValidator {
         if chunk_size == 0 {
             return Err(ValidationError {
                 message: "Chunk size cannot be zero".to_string(),
-                suggestion: "Use a positive chunk size (e.g., --chunk-size 1000) or omit for adaptive sizing".to_string(),
+                suggestion: "Use a positive chunk size (e.g. `ChunkSize::Fixed(1000)`) or `ChunkSize::Adaptive` for automatic sizing".to_string(),
                 error_code: 22,
             });
         }

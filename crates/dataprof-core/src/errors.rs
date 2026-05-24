@@ -70,7 +70,9 @@ pub enum DataProfilerError {
         recommendation: String,
     },
 
-    #[error("Streaming processing failed: {message}\nTry using --chunk-size with a smaller value")]
+    #[error(
+        "Streaming processing failed: {message}\nTry setting a smaller chunk size on the profiler builder (e.g. `.chunk_size(ChunkSize::Fixed(1000))`)"
+    )]
     StreamingError { message: String },
 
     #[error("SIMD acceleration not available: {reason}\nFalling back to standard processing")]
