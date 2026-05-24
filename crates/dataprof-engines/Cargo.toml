@@ -11,7 +11,6 @@ default = []
 arrow = ["dep:dataprof-parquet", "dataprof-parquet/arrow"]
 parquet = ["arrow", "dataprof-parquet/parquet"]
 async-streaming = [
-    "dep:csv",
     "dep:serde",
     "dep:serde_json",
     "dep:tokio",
@@ -23,7 +22,7 @@ async-streaming = [
 parquet-async = ["async-streaming", "dataprof-runtime/parquet-async"]
 
 [dependencies]
-csv = { version = "1.4", optional = true }
+csv = "1.4"
 dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
 dataprof-csv = { version = "0.8.0", path = "../dataprof-csv" }
 dataprof-parquet = { version = "0.8.0", path = "../dataprof-parquet", optional = true, default-features = false }

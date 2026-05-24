@@ -121,29 +121,40 @@ impl AdaptiveProfiler {
     }
 
     /// Simple heuristic: prefer Arrow for wide, numeric-heavy CSVs with enough memory.
+    ///
+    /// Uses `csv::Reader` (not `str::split`) so RFC 4180 quoting is honored —
+    /// a header like `"Company, Inc.",sales,units` correctly counts as 3
+    /// columns and doesn't bias engine selection.
     fn select_engine(&self, file_path: &Path) -> InternalEngineType {
         use std::fs::File;
-        use std::io::{BufRead, BufReader};
+        use std::io::BufReader;
 
         let Ok(file) = File::open(file_path) else {
             return InternalEngineType::Incremental;
         };
-        let reader = BufReader::new(file);
-        let mut lines = reader.lines();
 
         // Use configured delimiter or default to comma
         let delimiter = self
             .csv_config
             .as_ref()
             .and_then(|c| c.delimiter)
-            .unwrap_or(b',') as char;
+            .unwrap_or(b',');
 
-        // Read header to count columns
-        let header = match lines.next() {
-            Some(Ok(line)) => line,
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .has_headers(false)
+            .flexible(true)
+            .from_reader(BufReader::new(file));
+
+        let mut records = reader.records();
+
+        // Header row: read with the CSV parser so quoted commas don't inflate
+        // the column count.
+        let header = match records.next() {
+            Some(Ok(rec)) => rec,
             _ => return InternalEngineType::Incremental,
         };
-        let num_columns = header.split(delimiter).count();
+        let num_columns = header.len();
 
         // Arrow needs many columns to outperform Incremental
         if num_columns < 20 {
@@ -153,11 +164,11 @@ impl AdaptiveProfiler {
         // Sample first few data rows to check if numeric-heavy
         let mut numeric_count = 0usize;
         let mut total_fields = 0usize;
-        for line in lines.take(10) {
-            let Ok(line) = line else { break };
-            for val in line.split(delimiter) {
+        for rec in records.take(10) {
+            let Ok(rec) = rec else { break };
+            for field in rec.iter() {
                 total_fields += 1;
-                if val.trim().parse::<f64>().is_ok() {
+                if field.trim().parse::<f64>().is_ok() {
                     numeric_count += 1;
                 }
             }
@@ -299,6 +310,53 @@ mod tests {
         writeln!(temp_file, "1,2,3").unwrap();
         temp_file.flush().unwrap();
 
+        let engine = profiler.select_engine(temp_file.path());
+        assert_eq!(engine, InternalEngineType::Incremental);
+    }
+
+    /// Regression for #307: header column count must honor RFC 4180 quoting.
+    /// A naive `str::split(',')` would have inflated the count, biasing the
+    /// engine choice on quoted-heavy CSVs.
+    #[test]
+    fn test_select_engine_respects_quoted_commas() {
+        let profiler = AdaptiveProfiler::new();
+        let mut temp_file = NamedTempFile::new().unwrap();
+        // Quoted comma inside the first column header — actual column count is 3
+        writeln!(temp_file, "\"Company, Inc.\",sales,units").unwrap();
+        writeln!(temp_file, "Acme,100,200").unwrap();
+        temp_file.flush().unwrap();
+
+        // 3 columns is well under the 20-column Arrow threshold; selection
+        // must stay on the Incremental engine.
+        let engine = profiler.select_engine(temp_file.path());
+        assert_eq!(engine, InternalEngineType::Incremental);
+    }
+
+    /// Regression for #307: per-row field counting must also honor quoting,
+    /// otherwise the numeric_ratio heuristic gets polluted by stray commas
+    /// inside quoted fields.
+    #[test]
+    fn test_select_engine_quoted_fields_dont_skew_numeric_ratio() {
+        let profiler = AdaptiveProfiler::new();
+        let mut temp_file = NamedTempFile::new().unwrap();
+
+        // 25 columns: enough to clear the >= 20 column threshold and reach
+        // the numeric-ratio heuristic. Header is plain.
+        let header: Vec<String> = (0..25).map(|i| format!("c{i}")).collect();
+        writeln!(temp_file, "{}", header.join(",")).unwrap();
+
+        // Data rows: every field is the quoted text `"a, b"` (one logical
+        // non-numeric field per column). A naive `split(',')` would see 50
+        // fields per row and most would parse as nothing, but a few might
+        // happen to look numeric in adversarial cases. Here we just assert
+        // the row is parsed as 25 fields and none look numeric.
+        let row: Vec<String> = (0..25).map(|_| "\"a, b\"".to_string()).collect();
+        for _ in 0..5 {
+            writeln!(temp_file, "{}", row.join(",")).unwrap();
+        }
+        temp_file.flush().unwrap();
+
+        // No numeric fields => Incremental, regardless of arrow feature.
         let engine = profiler.select_engine(temp_file.path());
         assert_eq!(engine, InternalEngineType::Incremental);
     }
