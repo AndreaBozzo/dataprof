@@ -893,9 +893,7 @@ class TestBooleanColumns:
 
     def test_mixed_case_boolean_with_null_like_tokens(self, tmp_path):
         path = tmp_path / "booleans_nulls.csv"
-        path.write_text(
-            "flag,label\ntrue,a\nFALSE,b\nTRUE,c\nfalse,d\nnull,e\nNULL,f\nnan,g\n,h\n"
-        )
+        path.write_text("flag,label\ntrue,a\nFALSE,b\nTRUE,c\nfalse,d\nnull,e\nNULL,f\nnan,g\n,h\n")
         r = dataprof.profile(str(path))
         flag = r["flag"]
         assert flag.data_type == "boolean"
