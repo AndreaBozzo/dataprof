@@ -50,6 +50,7 @@ __all__ = [
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
+    "column_to_dict",
     "DataQualityMetrics",
     "SamplingStrategy",
     "StopCondition",
@@ -136,6 +137,89 @@ def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
 # ---------------------------------------------------------------------------
 
 
+def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
+    """Convert a single ColumnProfile to the nested dict layout used by
+    :meth:`ProfileReport.to_dict`.
+
+    The shape matches one element of ``report.to_dict()["columns"]``:
+
+    .. code-block:: python
+
+        {
+          "name": ..., "data_type": ..., "total_count": ..., "null_count": ...,
+          "null_percentage": ..., "unique_count": ..., "uniqueness_ratio": ...,
+          "stats": {"min": ..., "max": ..., ...},      # numeric / text / boolean
+          "patterns": [{"name": ..., "regex": ..., ...}, ...]
+        }
+
+    Floating-point values are rounded to match the Rust serialization
+    (2dp for percentages, 4dp for statistics).
+    """
+    col_data: dict[str, Any] = {
+        "name": col.name,
+        "data_type": col.data_type,
+        "total_count": col.total_count,
+        "null_count": col.null_count,
+        "null_percentage": _r2(col.null_percentage),
+        "unique_count": col.unique_count,
+        "uniqueness_ratio": _r2(col.uniqueness_ratio),
+    }
+    if col.min is not None:
+        col_data["stats"] = {
+            k: v
+            for k, v in {
+                "min": _r4(col.min),
+                "max": _r4(col.max),
+                "mean": _r4(col.mean),
+                "std_dev": _r4(col.std_dev),
+                "variance": _r4(col.variance),
+                "median": _r4(col.median),
+                "mode": _r4(col.mode),
+                "skewness": _r4(col.skewness),
+                "kurtosis": _r4(col.kurtosis),
+                "coefficient_of_variation": _r4(col.coefficient_of_variation),
+                "quartiles": _round_quartiles(col.quartiles),
+                "is_approximate": col.is_approximate,
+                "outlier_count": col.outlier_count,
+            }.items()
+            if v is not None
+        }
+    if col.min_length is not None:
+        if "stats" not in col_data:
+            col_data["stats"] = {}
+        col_data["stats"].update(
+            {
+                k: v
+                for k, v in {
+                    "min_length": col.min_length,
+                    "max_length": col.max_length,
+                    "avg_length": _r4(col.avg_length),
+                }.items()
+                if v is not None
+            }
+        )
+    if col.true_count is not None:
+        if "stats" not in col_data:
+            col_data["stats"] = {}
+        col_data["stats"]["true_count"] = col.true_count
+        col_data["stats"]["false_count"] = col.false_count
+        col_data["stats"]["true_ratio"] = _r4(col.true_ratio)
+
+    if col.patterns is not None:
+        col_data["patterns"] = [
+            {
+                "name": p.name,
+                "regex": p.regex,
+                "match_count": p.match_count,
+                "match_percentage": _r2(p.match_percentage),
+                "category": p.category,
+                "confidence": round(p.confidence, 4),
+            }
+            for p in col.patterns
+        ]
+    return col_data
+
+
 def _column_record(col: ColumnProfile) -> dict[str, Any]:
     """Build a flat dict of all column stats with proper rounding.
 
@@ -177,6 +261,7 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "q3": rq["q3"] if rq else None,
         "iqr": rq["iqr"] if rq else None,
         "is_approximate": col.is_approximate,
+        "outlier_count": col.outlier_count,
         "min_length": col.min_length,
         "max_length": col.max_length,
         "avg_length": _r4(col.avg_length),
@@ -525,6 +610,16 @@ class ProfileReport:
         return self._report.quality
 
     @property
+    def low_sample_warning(self) -> bool:
+        """True when the sample used was below the recommended minimum (10 rows).
+
+        When set, treat ``quality_score`` and the per-dimension ratios as
+        directional rather than reliable.
+        """
+        q = self._report.quality
+        return bool(q is not None and q.low_sample_warning)
+
+    @property
     def execution_time_ms(self) -> int:
         return self._report.scan_time_ms
 
@@ -579,70 +674,7 @@ class ProfileReport:
         All floating-point values are rounded (2dp for percentages, 4dp for
         statistics) to match the Rust report serialization.
         """
-        cols = []
-        for col in self._report.column_profiles:
-            col_data: dict[str, Any] = {
-                "name": col.name,
-                "data_type": col.data_type,
-                "total_count": col.total_count,
-                "null_count": col.null_count,
-                "null_percentage": _r2(col.null_percentage),
-                "unique_count": col.unique_count,
-                "uniqueness_ratio": _r2(col.uniqueness_ratio),
-            }
-            if col.min is not None:
-                col_data["stats"] = {
-                    k: v
-                    for k, v in {
-                        "min": _r4(col.min),
-                        "max": _r4(col.max),
-                        "mean": _r4(col.mean),
-                        "std_dev": _r4(col.std_dev),
-                        "variance": _r4(col.variance),
-                        "median": _r4(col.median),
-                        "mode": _r4(col.mode),
-                        "skewness": _r4(col.skewness),
-                        "kurtosis": _r4(col.kurtosis),
-                        "coefficient_of_variation": _r4(col.coefficient_of_variation),
-                        "quartiles": _round_quartiles(col.quartiles),
-                        "is_approximate": col.is_approximate,
-                    }.items()
-                    if v is not None
-                }
-            if col.min_length is not None:
-                if "stats" not in col_data:
-                    col_data["stats"] = {}
-                col_data["stats"].update(
-                    {
-                        k: v
-                        for k, v in {
-                            "min_length": col.min_length,
-                            "max_length": col.max_length,
-                            "avg_length": _r4(col.avg_length),
-                        }.items()
-                        if v is not None
-                    }
-                )
-            if col.true_count is not None:
-                if "stats" not in col_data:
-                    col_data["stats"] = {}
-                col_data["stats"]["true_count"] = col.true_count
-                col_data["stats"]["false_count"] = col.false_count
-                col_data["stats"]["true_ratio"] = _r4(col.true_ratio)
-
-            if col.patterns is not None:
-                col_data["patterns"] = [
-                    {
-                        "name": p.name,
-                        "regex": p.regex,
-                        "match_count": p.match_count,
-                        "match_percentage": _r2(p.match_percentage),
-                        "category": p.category,
-                        "confidence": round(p.confidence, 4),
-                    }
-                    for p in col.patterns
-                ]
-            cols.append(col_data)
+        cols = [column_to_dict(col) for col in self._report.column_profiles]
 
         quality_dict = None
         q = self._report.quality
@@ -650,6 +682,8 @@ class ProfileReport:
             quality_dict = {
                 "overall_score": _r2(q.overall_quality_score()),
             }
+            if q.low_sample_warning:
+                quality_dict["low_sample_warning"] = True
             comp = q.completeness
             if comp is not None:
                 quality_dict["completeness"] = comp

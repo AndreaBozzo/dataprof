@@ -237,6 +237,7 @@ impl MetricsCalculator {
             uniqueness,
             accuracy,
             timeliness,
+            low_sample_warning: !validation.sufficient_sample,
         })
     }
 
@@ -295,6 +296,7 @@ impl MetricsCalculator {
             } else {
                 None
             },
+            low_sample_warning: false,
         }
     }
 
@@ -423,12 +425,23 @@ impl MetricsCalculator {
             None
         };
 
+        // total_rows reflects the full stream — that's what the user cares about
+        // for whether the quality metrics are reliable. Fall back to sample_rows
+        // when total_rows is unknown (e.g. profile arrays mode).
+        let reliability_sample = if total_rows > 0 {
+            total_rows
+        } else {
+            sample_rows
+        };
+        let validation = Self::validate_sample_size(reliability_sample, "general");
+
         let metrics = QualityMetrics {
             completeness,
             consistency,
             uniqueness,
             accuracy,
             timeliness,
+            low_sample_warning: !validation.sufficient_sample,
         };
 
         Ok(BifurcatedResult {

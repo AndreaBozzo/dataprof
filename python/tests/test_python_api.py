@@ -367,6 +367,7 @@ class TestNamespace:
             "ProfileReport",
             "ProfilerConfig",
             "ColumnProfile",
+            "column_to_dict",
             "DataQualityMetrics",
             "SamplingStrategy",
             "StopCondition",
@@ -984,3 +985,52 @@ class TestMetricPacks:
         table = pa.table({"a": [1, 2, 3]})
         r = dataprof.profile(table, metrics=["schema", "statistics"])
         assert r.quality_score is None
+
+
+class TestColumnLevelOutliers:
+    """Regression: per-column `outlier_count` should surface IQR outliers."""
+
+    def test_outlier_count_flags_spike(self, tmp_path):
+        path = tmp_path / "spiky.csv"
+        # 9 baseline rows around 22 + one obvious spike at 999.9
+        path.write_text(
+            "value\n"
+            + "\n".join(["22.5", "23.1", "22.8", "23.2", "22.9", "23.0", "22.7", "23.1", "999.9"])
+            + "\n"
+        )
+        r = dataprof.profile(str(path))
+        assert r["value"].outlier_count is not None
+        assert r["value"].outlier_count >= 1
+
+    def test_outlier_count_zero_on_uniform_column(self, tmp_path):
+        path = tmp_path / "flat.csv"
+        path.write_text("value\n" + "\n".join(["10.0"] * 12) + "\n")
+        r = dataprof.profile(str(path))
+        assert r["value"].outlier_count == 0
+
+
+class TestColumnToDict:
+    def test_column_to_dict_shape_matches_report(self, tmp_path):
+        path = tmp_path / "data.csv"
+        path.write_text("x\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+        r = dataprof.profile(str(path))
+        col = r["x"]
+        d = dataprof.column_to_dict(col)
+        from_report = r.to_dict()["columns"][0]
+        assert d == from_report
+
+
+class TestLowSampleWarning:
+    def test_low_sample_warning_set_on_tiny_csv(self, tmp_path):
+        path = tmp_path / "tiny.csv"
+        path.write_text("x\n1\n2\n3\n")
+        r = dataprof.profile(str(path))
+        assert r.low_sample_warning is True
+        assert r.to_dict()["quality"].get("low_sample_warning") is True
+
+    def test_low_sample_warning_clear_on_normal_csv(self, tmp_path):
+        path = tmp_path / "fine.csv"
+        path.write_text("x\n" + "\n".join(str(i) for i in range(50)) + "\n")
+        r = dataprof.profile(str(path))
+        assert r.low_sample_warning is False
+        assert "low_sample_warning" not in r.to_dict()["quality"]

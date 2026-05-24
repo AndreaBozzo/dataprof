@@ -15,6 +15,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind the compact `dataprof` facade.
 - Add facade feature-combination checks for no-default and async-streaming
   builds in CI.
+- Per-column `outlier_count` (Tukey IQR rule, same k=1.5 as the global
+  `accuracy.outlier_ratio`) on `NumericStats` / `ColumnProfile` to make outlier
+  triage actionable at the column level instead of only the aggregate.
+- `QualityMetrics.low_sample_warning` (also surfaced as
+  `ProfileReport.low_sample_warning` in Python) flags reports built from fewer
+  than 10 rows so consumers can decide whether to trust the score.
+- Python: `dataprof.column_to_dict(col)` returns the same nested dict shape as
+  one element of `report.to_dict()["columns"]`, for piping individual columns
+  into downstream systems without serializing the whole report.
+
+### Changed
+
+- `Profiler::format()` override now wins over extension-based detection on
+  the auto engine path (previously a `.parquet` filename would route to the
+  Parquet parser even when `FileFormat::Csv` was forced). Adds the
+  `AdaptiveProfiler::analyze_csv_file()` entry that bypasses Parquet
+  redetection for callers that have already resolved the format.
+- Remote URL profiling (`Profiler::profile_url`) validates the URL scheme
+  up-front: malformed inputs like `not-a-url` now return a clear
+  "expected http(s)://" error instead of reqwest's opaque "builder error".
+- Library noise: small-sample warnings and CSV recovery messages moved from
+  `eprintln!` to `log::warn!` so library users opt in via env_logger.
+- Dropped lingering `--chunk-size` CLI-flag advice from `StreamingError` and
+  `ValidationError` (CLI was retired); messages now reference the builder API.
 
 ### Changed
 

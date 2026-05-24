@@ -151,6 +151,10 @@ def quick_row_count(path: str | PathLike[str]) -> RowCountEstimate:
     """Estimate or count rows from a string or path-like object."""
     ...
 
+def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
+    """Convert a ColumnProfile to the nested dict layout used in ``report.to_dict()['columns']``."""
+    ...
+
 class Profiler:
     """Builder-style profiler configuration.
 
@@ -207,6 +211,8 @@ class ProfileReport:
     def quality_score(self) -> float | None: ...
     @property
     def quality(self) -> DataQualityMetrics | None: ...
+    @property
+    def low_sample_warning(self) -> bool: ...
     @property
     def execution_time_ms(self) -> int: ...
     @property
@@ -282,6 +288,7 @@ class ColumnProfile:
     coefficient_of_variation: float | None
     quartiles: dict[str, float] | None
     is_approximate: bool | None
+    outlier_count: int | None
     min_length: int | None
     max_length: int | None
     avg_length: float | None
@@ -314,6 +321,7 @@ class DataQualityMetrics:
     future_dates_count: int
     stale_data_ratio: float
     temporal_violations: int
+    low_sample_warning: bool
 
     # Nested dimension accessors (None when dimension was not requested)
     @property
@@ -407,6 +415,7 @@ __all__ = [
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
+    "column_to_dict",
     "DataQualityMetrics",
     "SamplingStrategy",
     "StopCondition",

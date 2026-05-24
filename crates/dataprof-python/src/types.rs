@@ -79,6 +79,8 @@ pub struct PyColumnProfile {
     pub quartiles: Option<std::collections::HashMap<String, f64>>,
     #[pyo3(get)]
     pub is_approximate: Option<bool>,
+    #[pyo3(get)]
+    pub outlier_count: Option<usize>,
     // Text statistics (None for non-text columns)
     #[pyo3(get)]
     pub min_length: Option<usize>,
@@ -162,6 +164,11 @@ impl From<&ColumnProfile> for PyColumnProfile {
             ),
         };
 
+        let outlier_count = match &profile.stats {
+            ColumnStats::Numeric(n) => n.outlier_count,
+            _ => None,
+        };
+
         let (min_length, max_length, avg_length) = match &profile.stats {
             ColumnStats::Text(t) => (Some(t.min_length), Some(t.max_length), Some(t.avg_length)),
             _ => (None, None, None),
@@ -206,6 +213,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             coefficient_of_variation,
             quartiles,
             is_approximate,
+            outlier_count,
             min_length,
             max_length,
             avg_length,
@@ -297,6 +305,14 @@ impl PyDataQualityMetrics {
     #[getter]
     fn temporal_violations(&self) -> usize {
         self.inner.temporal_violations()
+    }
+
+    /// True when the underlying sample was below the recommended minimum
+    /// (10 rows). Treat quality scores as directional rather than reliable
+    /// when this is set.
+    #[getter]
+    fn low_sample_warning(&self) -> bool {
+        self.inner.low_sample_warning
     }
 
     // -- Nested dimension accessors (composable API) --

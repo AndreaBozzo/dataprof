@@ -80,6 +80,14 @@ pub struct NumericStats {
     pub kurtosis: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_approximate: Option<bool>,
+    /// Number of values flagged as IQR-based outliers in this column.
+    ///
+    /// Uses the same Tukey-style detection (Q1 − k·IQR, Q3 + k·IQR with
+    /// k = 1.5 by default) that feeds the global `accuracy.outlier_ratio`.
+    /// `None` when outlier detection didn't run (sample below the configured
+    /// minimum or non-numeric column).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outlier_count: Option<usize>,
 }
 
 impl NumericStats {
@@ -97,6 +105,7 @@ impl NumericStats {
             skewness: None,
             kurtosis: None,
             is_approximate: None,
+            outlier_count: None,
         }
     }
 }
@@ -217,6 +226,7 @@ mod tests {
                 skewness: Some(0.0),
                 kurtosis: Some(-1.2),
                 is_approximate: Some(false),
+                outlier_count: Some(0),
             }),
             patterns: vec![],
         };

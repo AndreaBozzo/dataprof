@@ -52,7 +52,7 @@ pub struct TimelinessMetrics {
 }
 
 /// Comprehensive data quality metrics following industry standards.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QualityMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completeness: Option<CompletenessMetrics>,
@@ -64,6 +64,16 @@ pub struct QualityMetrics {
     pub accuracy: Option<AccuracyMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeliness: Option<TimelinessMetrics>,
+    /// True when the sample used to compute these metrics was below the
+    /// minimum recommended size (10 rows). When set, the quality scores and
+    /// per-dimension ratios should be treated as directional rather than
+    /// reliable. Backwards-compatible: defaults to `false`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub low_sample_warning: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl QualityMetrics {
@@ -94,6 +104,7 @@ impl QualityMetrics {
                 stale_data_ratio: 0.0,
                 temporal_violations: 0,
             }),
+            low_sample_warning: false,
         }
     }
 
@@ -323,6 +334,7 @@ mod tests {
                 stale_data_ratio: 100.0,
                 ..TimelinessMetrics::default()
             }),
+            ..QualityMetrics::default()
         };
 
         assert!((metrics.overall_score() - 0.0).abs() < 0.01);
@@ -336,10 +348,7 @@ mod tests {
                 missing_values_ratio: 0.0,
                 null_columns: vec![],
             }),
-            consistency: None,
-            uniqueness: None,
-            accuracy: None,
-            timeliness: None,
+            ..QualityMetrics::default()
         };
 
         assert!(metrics.completeness.is_some());
@@ -357,13 +366,11 @@ mod tests {
                 complete_records_ratio: 50.0,
                 ..CompletenessMetrics::default()
             }),
-            consistency: None,
             uniqueness: Some(UniquenessMetrics {
                 key_uniqueness: 80.0,
                 ..UniquenessMetrics::default()
             }),
-            accuracy: None,
-            timeliness: None,
+            ..QualityMetrics::default()
         };
 
         assert!((metrics.overall_score() - 62.0).abs() < 0.01);
@@ -371,13 +378,7 @@ mod tests {
 
     #[test]
     fn test_all_dimensions_none_score_zero() {
-        let metrics = QualityMetrics {
-            completeness: None,
-            consistency: None,
-            uniqueness: None,
-            accuracy: None,
-            timeliness: None,
-        };
+        let metrics = QualityMetrics::default();
 
         assert!((metrics.overall_score() - 0.0).abs() < 0.01);
     }
@@ -386,10 +387,7 @@ mod tests {
     fn test_partial_dimensions_json_skips_none() {
         let metrics = QualityMetrics {
             completeness: Some(CompletenessMetrics::default()),
-            consistency: None,
-            uniqueness: None,
-            accuracy: None,
-            timeliness: None,
+            ..QualityMetrics::default()
         };
 
         let json = serde_json::to_string(&metrics).unwrap();
@@ -402,13 +400,7 @@ mod tests {
 
     #[test]
     fn test_partial_dimensions_flat_accessors_return_defaults() {
-        let metrics = QualityMetrics {
-            completeness: None,
-            consistency: None,
-            uniqueness: None,
-            accuracy: None,
-            timeliness: None,
-        };
+        let metrics = QualityMetrics::default();
 
         assert!((metrics.complete_records_ratio() - 100.0).abs() < 0.01);
         assert!((metrics.data_type_consistency() - 100.0).abs() < 0.01);

@@ -280,6 +280,13 @@ import sys
 import dataprof as dp
 
 report = dp.profile("s3_landing/orders_2024-03-17.csv")
+
+# 0.8.0: bail out early on tiny samples — the score is computed but not
+# statistically meaningful below 10 rows.
+if report.low_sample_warning:
+    print(f"WARN: sample too small ({report.rows} rows), skipping quality gate")
+    sys.exit(0)
+
 score = report.quality_score or 0.0
 
 if score < 0.90:
@@ -296,6 +303,47 @@ if score < 0.90:
 
 print(f"ACCEPTED (score={score:.2f}), {report.rows} rows")
 ```
+
+### Per-column outlier triage (0.8.0)
+
+The global `accuracy.outlier_ratio` tells you *something* is suspicious, but
+per-column `outlier_count` tells you *where* to look.
+
+```python
+import dataprof as dp
+
+report = dp.profile("sensor_readings.csv")
+
+# Surface the worst offenders
+suspicious = sorted(
+    (
+        (name, report[name].outlier_count, report[name].min, report[name].max)
+        for name in report
+        if report[name].outlier_count
+    ),
+    key=lambda row: row[1],
+    reverse=True,
+)
+
+for name, n_outliers, lo, hi in suspicious[:5]:
+    print(f"{name:30} {n_outliers:>4} outliers  range=[{lo}, {hi}]")
+```
+
+### Serialize a single column (0.8.0)
+
+For piping individual column profiles into Airflow XCom, Prometheus, a
+warehouse, etc., without dragging the whole report along:
+
+```python
+import json
+import dataprof as dp
+
+report = dp.profile("data.csv")
+payload = dp.column_to_dict(report["amount"])
+print(json.dumps(payload, indent=2))
+```
+
+The shape is identical to one element of ``report.to_dict()["columns"]``.
 
 ### Profile before and after a cleaning step
 

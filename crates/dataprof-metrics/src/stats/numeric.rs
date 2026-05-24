@@ -69,6 +69,11 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
     let skewness = calculate_skewness(&sample_data, mean, std_dev);
     let kurtosis = calculate_kurtosis(&sample_data, mean, std_dev);
 
+    // Per-column outlier count using the same Tukey IQR rule as the global
+    // accuracy.outlier_ratio dimension (k = 1.5). Returns `None` for tiny
+    // samples to mirror the global metric's behaviour.
+    let outlier_count = count_outliers_iqr(&numbers, quartiles.as_ref(), 4);
+
     NumericStats {
         min,
         max,
@@ -82,7 +87,24 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
         skewness,
         kurtosis,
         is_approximate,
+        outlier_count,
     }
+}
+
+/// Count IQR outliers given pre-computed quartiles. Returns `None` when the
+/// sample is too small to produce a meaningful estimate.
+fn count_outliers_iqr(
+    values: &[f64],
+    quartiles: Option<&Quartiles>,
+    min_samples: usize,
+) -> Option<usize> {
+    if values.len() < min_samples {
+        return None;
+    }
+    let q = quartiles?;
+    let lower = q.q1 - 1.5 * q.iqr;
+    let upper = q.q3 + 1.5 * q.iqr;
+    Some(values.iter().filter(|&&v| v < lower || v > upper).count())
 }
 
 /// Calculate variance using sum of squares
