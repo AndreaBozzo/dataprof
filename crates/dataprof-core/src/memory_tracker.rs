@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 #[cfg(debug_assertions)]
 use std::backtrace::Backtrace;
@@ -54,7 +54,11 @@ pub struct MemoryTracker {
 #[derive(Debug, Clone)]
 struct AllocationInfo {
     size_bytes: usize,
-    timestamp: u64,
+    /// Monotonic timestamp captured at allocation. Using `Instant` rather than
+    /// `SystemTime` avoids u64 underflow panics if the wall clock jumps
+    /// backward (NTP correction, manual clock changes, suspend/resume) between
+    /// the allocation and the leak-detection scan.
+    created_at: Instant,
     resource_type: String,
     #[cfg(debug_assertions)]
     stack_trace: String,
@@ -87,17 +91,12 @@ impl MemoryTracker {
 
     /// Track a memory allocation
     pub fn track_allocation(&self, resource_id: String, size_bytes: usize, resource_type: &str) {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_secs();
-
         #[cfg(debug_assertions)]
         let stack_trace = capture_stack_trace();
 
         let info = AllocationInfo {
             size_bytes,
-            timestamp,
+            created_at: Instant::now(),
             resource_type: resource_type.to_string(),
             #[cfg(debug_assertions)]
             stack_trace,
@@ -117,18 +116,14 @@ impl MemoryTracker {
 
     /// Check for potential memory leaks
     pub fn detect_leaks(&self) -> Vec<MemoryLeak> {
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_secs();
-
         let threshold_bytes = self.leak_threshold_mb * 1024 * 1024;
 
         if let Ok(allocations) = self.allocations.lock() {
             allocations
                 .iter()
                 .filter_map(|(id, info)| {
-                    let age_seconds = current_time - info.timestamp;
+                    // Monotonic — cannot underflow even under clock skew.
+                    let age_seconds = info.created_at.elapsed().as_secs();
 
                     // Consider it a leak if:
                     // - Size is above threshold OR

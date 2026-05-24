@@ -71,23 +71,26 @@ impl<'a> AccuracyCalculator<'a> {
             }
 
             if let Some(column_data) = data.get(&profile.name) {
-                let numeric_count = column_data
+                // Parse once into a numeric vector; the helper below operates
+                // on the pre-parsed values directly to avoid a second pass.
+                let numeric_values: Vec<f64> = column_data
                     .iter()
-                    .filter(|v| {
+                    .filter_map(|v| {
                         if is_null_like_token(v.trim()) {
-                            return false;
+                            None
+                        } else {
+                            v.parse::<f64>().ok().filter(|n| n.is_finite())
                         }
-                        v.parse::<f64>().is_ok_and(f64::is_finite)
                     })
-                    .count();
+                    .collect();
 
-                if numeric_count < self.thresholds.outlier_min_samples {
+                if numeric_values.len() < self.thresholds.outlier_min_samples {
                     continue;
                 }
 
-                let outliers = self.detect_outliers_in_column(column_data);
-                total_outliers += outliers.len();
-                total_numeric_values += numeric_count;
+                let outlier_count = self.count_outliers_preparsed(&numeric_values);
+                total_outliers += outlier_count;
+                total_numeric_values += numeric_values.len();
             }
         }
 
@@ -98,54 +101,32 @@ impl<'a> AccuracyCalculator<'a> {
         }
     }
 
-    /// Detect outliers in a numeric column using ISO 25012 compliant IQR method
+    /// Count IQR outliers in a pre-parsed numeric vector using the Tukey rule
+    /// (`Q1 − k·IQR`, `Q3 + k·IQR` with configurable `k`, default 1.5).
     ///
-    /// Uses configurable IQR multiplier (default: 1.5) from ISO thresholds.
-    /// Values outside [Q1 - k*IQR, Q3 + k*IQR] are considered outliers.
-    ///
-    /// Uses proper percentile calculation with linear interpolation (Type 7 - Excel/R default)
-    /// as per NIST Engineering Statistics Handbook.
-    ///
-    /// # Arguments
-    /// * `values` - Column values as strings
-    ///
-    /// # Returns
-    /// Vector of outlier values detected
-    fn detect_outliers_in_column(&self, values: &[String]) -> Vec<f64> {
-        let numeric_values: Vec<f64> = values
-            .iter()
-            .filter_map(|v| {
-                if is_null_like_token(v.trim()) {
-                    None
-                } else {
-                    v.parse::<f64>().ok().filter(|n| n.is_finite())
-                }
-            })
-            .collect();
-
-        // Use configurable minimum sample size (default: 4)
+    /// Operates on pre-parsed `f64` to avoid a second `parse::<f64>()` pass
+    /// on every value — the caller already paid that cost while counting.
+    fn count_outliers_preparsed(&self, numeric_values: &[f64]) -> usize {
         if numeric_values.len() < self.thresholds.outlier_min_samples {
-            return vec![]; // Insufficient data for outlier detection
+            return 0;
         }
 
-        let mut sorted = numeric_values.clone();
+        let mut sorted = numeric_values.to_vec();
         // Safe total ordering: NaN/Infinity values are placed at the end (IEEE 754)
         sorted.sort_by(|a, b| a.total_cmp(b));
 
-        // Calculate Q1 and Q3 using linear interpolation (percentile method Type 7)
         let q1 = calculate_percentile(&sorted, 25.0);
         let q3 = calculate_percentile(&sorted, 75.0);
         let iqr = q3 - q1;
 
-        // Use configurable IQR multiplier (ISO 25012: default 1.5)
         let k = self.thresholds.outlier_iqr_multiplier;
         let lower_bound = q1 - k * iqr;
         let upper_bound = q3 + k * iqr;
 
         numeric_values
-            .into_iter()
-            .filter(|&value| value < lower_bound || value > upper_bound)
-            .collect()
+            .iter()
+            .filter(|&&value| value < lower_bound || value > upper_bound)
+            .count()
     }
 
     /// Count values outside expected ranges
