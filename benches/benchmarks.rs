@@ -5,9 +5,9 @@
 //!
 //! ## Struttura Gerarchica
 //!
-//! - **csv_parsing**: Core CSV parsing performance across file sizes
-//! - **full_analysis**: End-to-end analysis with statistics
-//! - **throughput_metrics**: Rows/sec and MB/s performance
+//! - **csv_parsing**: Streaming CSV scan and column profiling
+//! - **full_analysis**: End-to-end facade profiling and report assembly
+//! - **throughput_metrics**: Fast row-count throughput across dataset sizes
 //! - **scaling_behavior**: Linear vs non-linear scaling tests
 //! - **large_scale**: Stress tests with 100k+ rows (optional)
 //!
@@ -28,9 +28,9 @@ use anyhow::Result;
 use criterion::{
     BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
 };
-use dataprof::ProfileReport;
+use dataprof::{CsvParserConfig, ProfileReport, analyze_csv_from_reader, quick_row_count};
 use std::hint::black_box;
-use std::io::Write;
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -113,7 +113,7 @@ fn generate_benchmark_csv(size: DatasetSize) -> PathBuf {
 // ============================================================================
 
 /// Core CSV parsing performance across multiple file sizes.
-/// This group tests the fundamental parsing performance independent of analysis.
+/// This group isolates the CSV scan and column profiling phase before report assembly.
 ///
 /// **Metrics**: Time (ms), Throughput (MB/s)
 fn bench_csv_parsing(c: &mut Criterion) {
@@ -135,7 +135,7 @@ fn bench_csv_parsing(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("parse", size.name()), &path, |b, path| {
             b.iter(|| {
-                let result = analyze_csv(black_box(path)).expect("CSV analysis failed");
+                let result = parse_csv_phase(black_box(path)).expect("CSV parsing failed");
                 black_box(result)
             })
         });
@@ -148,8 +148,8 @@ fn bench_csv_parsing(c: &mut Criterion) {
 // Benchmark Group 2: Full Analysis Pipeline
 // ============================================================================
 
-/// End-to-end analysis including type detection, statistics, and profiling.
-/// Tests the complete pipeline performance from raw CSV to final report.
+/// End-to-end analysis including type detection, statistics, and report assembly.
+/// Tests the complete facade path from raw CSV to final profile report.
 ///
 /// **Metrics**: Time (ms), Throughput (MB/s)
 fn bench_full_analysis(c: &mut Criterion) {
@@ -170,7 +170,7 @@ fn bench_full_analysis(c: &mut Criterion) {
             &path,
             |b, path| {
                 b.iter(|| {
-                    let result = analyze_csv(black_box(path)).expect("Full analysis failed");
+                    let result = analyze_full_report(black_box(path)).expect("Full analysis failed");
                     black_box(result)
                 })
             },
@@ -184,10 +184,10 @@ fn bench_full_analysis(c: &mut Criterion) {
 // Benchmark Group 3: Throughput Metrics
 // ============================================================================
 
-/// Tests maximum throughput across different data patterns.
-/// Simulates high-volume data processing scenarios.
+/// Tests fast row counting throughput across representative dataset sizes.
+/// This isolates the lightweight cardinality path from CSV parsing and full profiling.
 ///
-/// **Metrics**: Rows/sec, MB/s
+/// **Metrics**: Rows/sec
 fn bench_throughput_metrics(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput_metrics");
 
@@ -196,17 +196,22 @@ fn bench_throughput_metrics(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
     group.warm_up_time(Duration::from_secs(2));
 
-    let path = generate_benchmark_csv(DatasetSize::Medium);
-    let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    for size in [DatasetSize::Small, DatasetSize::Medium, DatasetSize::Large] {
+        let path = generate_benchmark_csv(size);
 
-    group.throughput(Throughput::Bytes(file_size));
+        group.throughput(Throughput::Elements(size.rows() as u64));
 
-    group.bench_function("medium_dataset_throughput", |b| {
-        b.iter(|| {
-            let result = analyze_csv(black_box(&path)).expect("Throughput test failed");
-            black_box(result)
-        })
-    });
+        group.bench_with_input(
+            BenchmarkId::new("row_count", size.name()),
+            &path,
+            |b, path| {
+                b.iter(|| {
+                    let result = count_rows_phase(black_box(path)).expect("Throughput test failed");
+                    black_box(result)
+                })
+            },
+        );
+    }
 
     group.finish();
 }
@@ -241,7 +246,7 @@ fn bench_scaling_behavior(c: &mut Criterion) {
             &path,
             |b, path| {
                 b.iter(|| {
-                    let result = analyze_csv(black_box(path)).expect("Scaling test failed");
+                    let result = analyze_full_report(black_box(path)).expect("Scaling test failed");
                     black_box(result)
                 })
             },
@@ -274,7 +279,7 @@ fn bench_large_scale(c: &mut Criterion) {
 
     group.bench_function("large_dataset_100k_rows", |b| {
         b.iter(|| {
-            let result = analyze_csv(black_box(&path)).expect("Large dataset test failed");
+            let result = analyze_full_report(black_box(&path)).expect("Large dataset test failed");
             black_box(result)
         })
     });
@@ -286,19 +291,19 @@ fn bench_large_scale(c: &mut Criterion) {
 // Criterion Configuration & Main
 // ============================================================================
 
-// Quick suite: for CI/CD, includes only the fastest groups
-// Runs: csv_parsing, throughput_metrics
+// Quick suite: for CI/CD, covers parser-only and full end-to-end profiling
+// Runs: csv_parsing, full_analysis
 criterion_group! {
     name = quick_benches;
     config = Criterion::default()
         .sample_size(20)
         .measurement_time(Duration::from_secs(3))
         .warm_up_time(Duration::from_secs(1));
-    targets = bench_csv_parsing, bench_throughput_metrics
+    targets = bench_csv_parsing, bench_full_analysis
 }
 
 // Full suite: comprehensive set for local runs
-// Runs: full_analysis, scaling_behavior, large_scale
+// Runs: throughput_metrics, scaling_behavior, large_scale
 criterion_group! {
     name = full_benches;
     config = Criterion::default()
@@ -306,7 +311,7 @@ criterion_group! {
         .measurement_time(Duration::from_secs(5))
         .warm_up_time(Duration::from_secs(2));
     targets =
-        bench_full_analysis,
+        bench_throughput_metrics,
         bench_scaling_behavior,
         bench_large_scale
 }
@@ -315,12 +320,26 @@ criterion_group! {
 criterion_main!(quick_benches, full_benches);
 
 // ============================================================================
-// Local helper: analyze CSV without exposing a public facade
+// Local helpers: benchmark the core phases directly without widening the public API surface
 // ============================================================================
 
-fn analyze_csv(path: &std::path::Path) -> Result<ProfileReport> {
+fn parse_csv_phase(path: &std::path::Path) -> Result<(usize, usize)> {
+    let file = std::fs::File::open(path)?;
+    let reader = BufReader::new(file);
+    let config = CsvParserConfig::default();
+    let (profiles, _stats, rows_read, _headers) = analyze_csv_from_reader(reader, &config)?;
+
+    Ok((profiles.len(), rows_read))
+}
+
+fn analyze_full_report(path: &std::path::Path) -> Result<ProfileReport> {
     use dataprof::Profiler;
 
     let report = Profiler::new().analyze_file(path)?;
     Ok(report)
+}
+
+fn count_rows_phase(path: &std::path::Path) -> Result<u64> {
+    let estimate = quick_row_count(path)?;
+    Ok(estimate.count)
 }

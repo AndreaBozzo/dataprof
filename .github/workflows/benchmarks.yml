@@ -65,7 +65,7 @@ jobs:
             cargo bench --bench benchmarks 2>&1 | tee benchmark-results/output.txt
           else
             echo "Running quick benchmark suite for CI"
-            cargo bench --bench benchmarks -- 'csv_parsing|throughput_metrics' 2>&1 | tee benchmark-results/output.txt
+            cargo bench --bench benchmarks -- 'csv_parsing|full_analysis' 2>&1 | tee benchmark-results/output.txt
           fi
 
       - name: Upload results
@@ -82,5 +82,5 @@ jobs:
           echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          grep -E "(csv_parsing|throughput_metrics|time:|thrpt:)" benchmark-results/output.txt | head -80 >> $GITHUB_STEP_SUMMARY || echo "No results found"
+          grep -E "(csv_parsing|full_analysis|throughput_metrics|time:|thrpt:)" benchmark-results/output.txt | head -80 >> $GITHUB_STEP_SUMMARY || echo "No results found"
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
