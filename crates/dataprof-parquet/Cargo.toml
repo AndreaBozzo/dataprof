@@ -1,0 +1,30 @@
+[package]
+name = "dataprof-parquet"
+version = "0.8.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "Parquet profiling support for dataprof"
+
+[features]
+default = []
+arrow = ["dep:arrow", "dep:csv", "dep:dataprof-csv", "dataprof-core/arrow"]
+parquet = ["dep:parquet", "arrow"]
+parquet-async = ["parquet", "parquet/async", "dep:bytes", "dep:futures", "dep:reqwest"]
+
+[dependencies]
+anyhow = "1.0"
+arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+bytes = { version = "1.10", optional = true }
+csv = { version = "1.4", optional = true }
+dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
+dataprof-csv = { version = "0.8.0", path = "../dataprof-csv", optional = true }
+dataprof-metrics = { version = "0.8.0", path = "../dataprof-metrics" }
+dataprof-runtime = { version = "0.8.0", path = "../dataprof-runtime" }
+futures = { version = "0.3.31", optional = true }
+parquet = { version = "57.3.0", features = ["arrow"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.24"
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread"] }

@@ -4,6 +4,8 @@ These return the *Rust* ProfileReport (from ``_dataprof``), not the
 high-level Python ``dataprof.ProfileReport`` wrapper.
 """
 
+from os import PathLike
+
 from ._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
     DataQualityMetrics,
@@ -12,7 +14,7 @@ from ._dataprof import (  # type: ignore[import-not-found]
     RecordBatch,
 )
 
-def analyze_file(path: str, config: ProfilerConfig | None = None) -> ProfileReport:
+def analyze_file(path: str | PathLike[str], config: ProfilerConfig | None = None) -> ProfileReport:
     """Analyze a file with optional config. Format auto-detected from extension."""
     ...
 
@@ -32,11 +34,11 @@ def profile_arrow(
     """Profile a PyArrow Table or RecordBatch directly."""
     ...
 
-def analyze_csv_to_arrow(path: str) -> RecordBatch:
+def analyze_csv_to_arrow(path: str | PathLike[str]) -> RecordBatch:
     """Analyze CSV and return column stats as Arrow RecordBatch."""
     ...
 
-def analyze_parquet_to_arrow(path: str) -> RecordBatch:
+def analyze_parquet_to_arrow(path: str | PathLike[str]) -> RecordBatch:
     """Analyze Parquet and return column stats as Arrow RecordBatch."""
     ...
 

@@ -1,0 +1,88 @@
+use std::io::Write;
+
+use dataprof::{ColumnStats, DataType, EngineType, Profiler};
+use tempfile::NamedTempFile;
+
+fn write_csv(content: &str) -> NamedTempFile {
+    let mut file = NamedTempFile::with_suffix(".csv").unwrap();
+    write!(file, "{content}").unwrap();
+    file.flush().unwrap();
+    file
+}
+
+#[test]
+fn positive_columns_drive_negative_values_in_positive() {
+    let csv = write_csv("pressure,temperature_delta\n101325,1\n-500,-2\n100900,3\n");
+
+    let without_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    assert_eq!(
+        without_hint
+            .quality
+            .as_ref()
+            .unwrap()
+            .metrics
+            .negative_values_in_positive(),
+        0
+    );
+
+    let with_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .positive_columns(vec!["pressure".to_string()])
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    assert_eq!(
+        with_hint
+            .quality
+            .as_ref()
+            .unwrap()
+            .metrics
+            .negative_values_in_positive(),
+        1
+    );
+}
+
+#[test]
+fn identifier_columns_are_semantic_strings_and_excluded_from_outliers() {
+    let csv = write_csv("order_id\n1\n2\n3\n10000\n");
+
+    let without_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    let plain_id = without_hint
+        .column_profiles
+        .iter()
+        .find(|col| col.name == "order_id")
+        .unwrap();
+    assert_eq!(plain_id.data_type, DataType::Integer);
+    assert!(matches!(plain_id.stats, ColumnStats::Numeric(_)));
+    assert!(
+        without_hint
+            .quality
+            .as_ref()
+            .unwrap()
+            .metrics
+            .outlier_ratio()
+            > 0.0
+    );
+
+    let with_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .identifier_columns(vec!["order_id".to_string()])
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    let hinted_id = with_hint
+        .column_profiles
+        .iter()
+        .find(|col| col.name == "order_id")
+        .unwrap();
+    assert_eq!(hinted_id.data_type, DataType::Identifier);
+    assert!(matches!(hinted_id.stats, ColumnStats::Text(_)));
+    assert_eq!(
+        with_hint.quality.as_ref().unwrap().metrics.outlier_ratio(),
+        0.0
+    );
+}

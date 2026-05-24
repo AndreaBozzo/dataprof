@@ -1,6 +1,8 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.6.2).
+Complete reference for the `dataprof` Python package (v0.8.0).
+
+The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
 ## Installation
 
@@ -10,7 +12,19 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows.
+Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, and report exports.
+
+Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
+
+```bash
+uv run maturin develop --features "python,python-async,async-streaming"
+
+# Add parquet-async for remote Parquet support
+uv run maturin develop --features "python,python-async,async-streaming,parquet-async"
+
+# Add database plus a connector when needed
+uv run maturin develop --features "python,python-async,database,sqlite"
+```
 
 ## Quick Start
 
@@ -57,6 +71,9 @@ dp.profile(
     progress_interval_ms=None,       # int -- ms between progress events
     metrics=None,                    # list[str] -- "schema", "statistics", "patterns", "quality"
     quality_dimensions=None,         # list[str] -- subset of dimensions to compute
+    locale=None,                     # str -- pattern locale hint, e.g. "IT"
+    positive_columns=None,           # list[str] -- columns expected to be non-negative
+    identifier_columns=None,         # list[str] -- semantic IDs, not measures
 ) -> ProfileReport
 ```
 
@@ -136,7 +153,7 @@ Per-column profiling statistics.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Column name |
-| `data_type` | `str` | Inferred type: `"String"`, `"Integer"`, `"Float"`, `"Date"` |
+| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"` |
 | `total_count` | `int` | Total number of values |
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |
@@ -187,6 +204,8 @@ config = dp.ProfilerConfig(
     max_rows=100000,
     csv_delimiter=";",
     quality_dimensions=["completeness", "uniqueness"],
+    positive_columns=["pressure"],
+    identifier_columns=["order_id", "customer_id"],
 )
 ```
 
@@ -267,6 +286,11 @@ print(q.uniqueness)      # {"duplicate_rows": ..., "key_uniqueness": ..., "high_
 print(q.accuracy)        # {"outlier_ratio": ..., "range_violations": ..., "negative_values_in_positive": ...}
 print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., "temporal_violations": ...}
 ```
+
+`negative_values_in_positive` is driven by explicit `positive_columns`; dataprof
+does not infer positive-only domains from column names. `identifier_columns`
+marks numeric-looking IDs as semantic strings so numeric stats and outlier
+metrics do not treat them as measures.
 
 **Selective dimensions** -- compute only what you need:
 
@@ -364,9 +388,9 @@ print(f"{result.count} rows ({'exact' if result.exact else 'estimated'})")
 print(f"Method: {result.method}, took {result.count_time_ms}ms")
 ```
 
-## Async API
+## Optional Async API (Source Build)
 
-The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts.
+The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts. These helpers require a source build with `python-async` and `async-streaming` enabled.
 
 ```python
 from dataprof.asyncio import profile_file, profile_bytes, profile_url
@@ -390,9 +414,15 @@ schema = await infer_schema_stream(csv_bytes, format="csv")
 count = await quick_row_count_stream(csv_bytes, format="csv")
 ```
 
-## Database Profiling
+## Optional Database Profiling (Source Build)
 
-Async database functions for PostgreSQL, MySQL, and SQLite:
+Async database functions for PostgreSQL, MySQL, and SQLite require a source build with `python-async`, `database`, and the relevant connector features enabled:
+
+```bash
+uv run maturin develop --features "python,python-async,database,sqlite"
+```
+
+Then the following APIs become available:
 
 ```python
 import asyncio

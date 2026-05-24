@@ -1,0 +1,32 @@
+[package]
+name = "dataprof-core"
+version = "0.8.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "Shared core types for dataprof"
+
+[dependencies]
+anyhow = "1.0"
+csv = "1.4"
+glob = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0"
+toml = "0.9.8"
+log = "0.4"
+num_cpus = "1.16"
+rand = { version = "0.9.3", features = ["small_rng"] }
+rand_chacha = "0.9"
+sysinfo = "0.38"
+arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+tokio = { version = "1.49", features = ["sync"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.24"
+
+[features]
+default = []
+arrow = ["dep:arrow"]
+async-streaming = ["dep:tokio"]
+database = []

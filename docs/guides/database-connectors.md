@@ -4,21 +4,19 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with ISO 8000
 
 ## Feature Requirements
 
-Database support requires feature flags at compile time:
-
-```bash
-cargo install dataprof --features postgres         # PostgreSQL only
-cargo install dataprof --features mysql             # MySQL/MariaDB only
-cargo install dataprof --features sqlite            # SQLite only
-cargo install dataprof --features all-db            # All three
-cargo install dataprof --features full-cli          # CLI + Parquet + all databases
-```
-
-For Rust library usage:
+Database support requires feature flags at compile time. Enable them on the
+Rust crate or on the Python extension build, depending on the interface you
+ship.
 
 ```toml
 [dependencies]
-dataprof = { version = "0.6", features = ["postgres"] }
+dataprof = { version = "0.8", features = ["postgres"] }
+```
+
+For local Python extension development:
+
+```bash
+uv run maturin develop --features "python,python-async,database,sqlite"
 ```
 
 ## Supported Databases
@@ -31,33 +29,15 @@ dataprof = { version = "0.6", features = ["postgres"] }
 
 ## Quick Start
 
-### CLI
-
-```bash
-# PostgreSQL -- profile a table with quality metrics
-dataprof database postgres://user:pass@localhost/mydb --table users --quality
-
-# MySQL -- custom query
-dataprof database mysql://root:pass@localhost/shop --query "SELECT * FROM orders WHERE status = 'active'"
-
-# SQLite
-dataprof database sqlite:///data.db --table events
-```
-
-CLI flags:
-
-| Flag | Description | Default |
-|---|---|---|
-| `--table <NAME>` | Table to profile (generates `SELECT * FROM <table>`) | -- |
-| `--query <SQL>` | Custom SQL query | -- |
-| `--batch-size <N>` | Rows per streaming batch | `10000` |
-| `--quality` | Compute ISO 8000/25012 quality metrics | off |
-
-You must provide either `--table` or `--query`.
-
 ### Python
 
-Python database functions are async:
+Python database functions are async and are not included in the default PyPI wheel. Build the extension from source with `python-async`, `database`, and the connector feature you need first:
+
+```bash
+uv run maturin develop --features "python,python-async,database,sqlite"
+```
+
+Then the following APIs become available:
 
 ```python
 import asyncio
@@ -111,7 +91,7 @@ if let Some(quality) = &report.quality {
 
 ```rust
 use dataprof::{DatabaseConfig, analyze_database};
-use dataprof::database::{RetryConfig, SslConfig};
+use dataprof::{RetryConfig, SslConfig};
 
 let config = DatabaseConfig {
     connection_string: "postgres://user:pass@localhost/mydb".to_string(),
@@ -199,7 +179,7 @@ Adjust `batch_size` based on your dataset:
 For very large tables, configure sampling to analyze a representative subset:
 
 ```rust
-use dataprof::database::SamplingConfig;
+use dataprof::SamplingConfig;
 
 // Quick random sample
 let config = DatabaseConfig {
@@ -231,7 +211,7 @@ let config = DatabaseConfig {
 ### SSL/TLS Encryption
 
 ```rust
-use dataprof::database::SslConfig;
+use dataprof::SslConfig;
 
 // Production: requires SSL with certificate verification
 let ssl = SslConfig::production();

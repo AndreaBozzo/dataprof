@@ -4,9 +4,11 @@
 //! then asserts that numeric stats match within tolerance.
 
 use std::io::Write;
+use std::path::Path;
 
-use dataprof::parsers::csv::{CsvParserConfig, analyze_csv_file};
-use dataprof::types::{ColumnStats, DataType, MetricConfidence, QualityDimension};
+use dataprof::{
+    ColumnStats, CsvParserConfig, DataType, MetricConfidence, QualityDimension, analyze_csv_file,
+};
 use dataprof::{EngineType, Profiler};
 use tempfile::NamedTempFile;
 
@@ -184,6 +186,55 @@ fn test_mixed_data_column_type_consistency() {
             std_col.data_type, arrow_col.data_type,
             "Type mismatch for column '{}': std={:?}, arrow={:?}",
             std_col.name, std_col.data_type, arrow_col.data_type
+        );
+    }
+}
+
+#[test]
+fn test_problematic_date_columns_stay_consistent_across_engines() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/test_datasets");
+
+    for (file_name, column_name) in [
+        ("sales_data_problematic.csv", "order_date"),
+        ("sensor_data_outliers.csv", "timestamp"),
+    ] {
+        let path = root.join(file_name);
+
+        let std_report =
+            analyze_csv_file(&path, &CsvParserConfig::default()).unwrap_or_else(|err| {
+                panic!("standard CSV analysis failed for {}: {}", file_name, err)
+            });
+        let arrow_report = Profiler::new()
+            .engine(EngineType::Columnar)
+            .analyze_file(&path)
+            .unwrap_or_else(|err| panic!("Arrow CSV analysis failed for {}: {}", file_name, err));
+
+        let std_col = std_report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == column_name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Column '{}' missing from standard report for {}",
+                    column_name, file_name
+                )
+            });
+        let arrow_col = arrow_report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == column_name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Column '{}' missing from Arrow report for {}",
+                    column_name, file_name
+                )
+            });
+
+        assert_eq!(std_col.data_type, DataType::Date);
+        assert_eq!(
+            std_col.data_type, arrow_col.data_type,
+            "Type mismatch for '{}' in {}: std={:?}, arrow={:?}",
+            column_name, file_name, std_col.data_type, arrow_col.data_type
         );
     }
 }

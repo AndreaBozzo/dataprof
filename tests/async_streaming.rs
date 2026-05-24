@@ -1,11 +1,81 @@
 #![cfg(feature = "async-streaming")]
 
 use std::io::Write;
+use std::net::{TcpListener, TcpStream};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use dataprof::{
     AsyncSourceInfo, AsyncStreamingProfiler, BytesSource, EngineType, FileFormat, Profiler,
     StopCondition,
 };
+
+struct MockHttpServer {
+    url: String,
+    handle: JoinHandle<()>,
+}
+
+impl MockHttpServer {
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn join(self) {
+        self.handle.join().unwrap();
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> std::io::Result<String> {
+    use std::io::Read;
+
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+
+    let mut request = Vec::new();
+    let mut buffer = [0; 1024];
+    loop {
+        let bytes_read = stream.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        request.extend_from_slice(&buffer[..bytes_read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+
+    Ok(String::from_utf8_lossy(&request).into_owned())
+}
+
+fn spawn_csv_server(body: &'static [u8]) -> MockHttpServer {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("mock server accept failed");
+        let request = read_http_request(&mut stream).expect("mock server read failed");
+        assert!(
+            request.starts_with("GET /data.csv "),
+            "unexpected request: {request}"
+        );
+
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("mock server response headers failed");
+        stream
+            .write_all(body)
+            .expect("mock server response body failed");
+    });
+
+    MockHttpServer {
+        url: format!("http://127.0.0.1:{port}/data.csv"),
+        handle,
+    }
+}
 
 /// Compare async profiling of a CSV file against the sync IncrementalProfiler.
 /// Column counts and row counts must match; data types should agree.
@@ -165,6 +235,7 @@ async fn test_profiler_profile_file_csv() {
 }
 
 /// Verify `Profiler::profile_file()` handles Parquet via spawn_blocking.
+#[cfg(feature = "parquet")]
 #[tokio::test]
 async fn test_profiler_profile_file_parquet() {
     use arrow::array::{Int32Array, StringArray};
@@ -244,4 +315,30 @@ async fn test_profiler_profile_stream_rejects_parquet() {
         err.contains("Parquet"),
         "Error should mention Parquet, got: {err}"
     );
+}
+
+#[tokio::test]
+async fn test_profiler_profile_url_csv() {
+    let server = spawn_csv_server(b"city,pop\nRome,2873\nMilan,1352\n");
+
+    let report = Profiler::new().profile_url(server.url()).await.unwrap();
+
+    assert_eq!(report.execution.rows_processed, 2);
+    assert_eq!(report.column_profiles.len(), 2);
+    assert!(report.data_source.is_stream());
+
+    server.join();
+}
+
+#[cfg(not(feature = "parquet-async"))]
+#[tokio::test]
+async fn test_profiler_profile_url_rejects_parquet_without_feature() {
+    let error = Profiler::new()
+        .format(FileFormat::Parquet)
+        .profile_url("https://example.com/data.parquet")
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("parquet-async"), "unexpected error: {error}");
 }

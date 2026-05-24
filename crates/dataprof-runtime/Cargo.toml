@@ -1,0 +1,38 @@
+[package]
+name = "dataprof-runtime"
+version = "0.8.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "Shared runtime helpers and composed report types for dataprof"
+
+[features]
+default = []
+async-streaming = [
+	"dep:async-trait",
+	"dep:bytes",
+	"dep:futures",
+	"dep:reqwest",
+	"dep:tokio",
+	"dep:tokio-util",
+]
+parquet-async = ["async-streaming"]
+
+[dependencies]
+async-trait = { version = "0.1", optional = true }
+bytes = { version = "1.10", optional = true }
+chrono = { version = "0.4", features = ["serde"] }
+dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
+dataprof-metrics = { version = "0.8.0", path = "../dataprof-metrics" }
+futures = { version = "0.3.31", optional = true }
+log = "0.4"
+rand = { version = "0.9.3", features = ["small_rng"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49", features = ["full"], optional = true }
+tokio-util = { version = "0.7", features = ["io-util"], optional = true }
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.24"

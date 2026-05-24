@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from os import PathLike
 from typing import Any, Callable, Iterator
 
 # Version
@@ -28,6 +29,8 @@ class ProfilerConfig:
         quality_dimensions: list[str] | None = None,
         metrics: list[str] | None = None,
         locale: str | None = None,
+        positive_columns: list[str] | None = None,
+        identifier_columns: list[str] | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
@@ -41,6 +44,10 @@ class ProfilerConfig:
     def max_rows(self) -> int | None: ...
     @property
     def locale(self) -> str | None: ...
+    @property
+    def positive_columns(self) -> list[str]: ...
+    @property
+    def identifier_columns(self) -> list[str]: ...
 
 # --- Sampling ---
 
@@ -138,8 +145,22 @@ def profile(
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
     locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
+    ...
+
+def infer_schema(path: str | PathLike[str]) -> SchemaResult:
+    """Infer the schema of a file from a string or path-like object."""
+    ...
+
+def quick_row_count(path: str | PathLike[str]) -> RowCountEstimate:
+    """Estimate or count rows from a string or path-like object."""
+    ...
+
+def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
+    """Convert a ColumnProfile to the nested dict layout used in ``report.to_dict()['columns']``."""
     ...
 
 class Profiler:
@@ -169,6 +190,8 @@ class Profiler:
     def stop_when(self, condition: StopCondition | str) -> Profiler: ...
     def metrics(self, packs: list[str]) -> Profiler: ...
     def locale(self, locale: str) -> Profiler: ...
+    def positive_columns(self, columns: list[str]) -> Profiler: ...
+    def identifier_columns(self, columns: list[str]) -> Profiler: ...
     def profile(self, source: Any) -> ProfileReport: ...
 
 # --- Result Types ---
@@ -198,6 +221,8 @@ class ProfileReport:
     def quality_score(self) -> float | None: ...
     @property
     def quality(self) -> DataQualityMetrics | None: ...
+    @property
+    def low_sample_warning(self) -> bool: ...
     @property
     def execution_time_ms(self) -> int: ...
     @property
@@ -273,6 +298,7 @@ class ColumnProfile:
     coefficient_of_variation: float | None
     quartiles: dict[str, float] | None
     is_approximate: bool | None
+    outlier_count: int | None
     min_length: int | None
     max_length: int | None
     avg_length: float | None
@@ -305,6 +331,7 @@ class DataQualityMetrics:
     future_dates_count: int
     stale_data_ratio: float
     temporal_violations: int
+    low_sample_warning: bool
 
     # Nested dimension accessors (None when dimension was not requested)
     @property
@@ -349,37 +376,6 @@ class RowCountEstimate:
     @property
     def count_time_ms(self) -> int: ...
 
-def infer_schema(path: str) -> SchemaResult:
-    """Infer the schema of a file (fast, reads only a small sample)."""
-    ...
-
-def quick_row_count(path: str) -> RowCountEstimate:
-    """Quick row count (exact for small files/Parquet, estimated for large files)."""
-    ...
-
-# --- Database (async) ---
-
-async def analyze_database_async(
-    connection_string: str,
-    query: str,
-    batch_size: int = 10000,
-    calculate_quality: bool = False,
-) -> ProfileReport:
-    """Analyze a database query asynchronously. Returns a ProfileReport."""
-    ...
-
-async def test_connection_async(connection_string: str) -> bool:
-    """Test an async database connection. Returns True if successful."""
-    ...
-
-async def get_table_schema_async(connection_string: str, table_name: str) -> list[str]:
-    """Get column names for a table asynchronously."""
-    ...
-
-async def count_table_rows_async(connection_string: str, table_name: str) -> int:
-    """Count rows in a table asynchronously."""
-    ...
-
 # --- Arrow Interop ---
 
 class RecordBatch:
@@ -406,6 +402,7 @@ __all__ = [
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
+    "column_to_dict",
     "DataQualityMetrics",
     "SamplingStrategy",
     "StopCondition",

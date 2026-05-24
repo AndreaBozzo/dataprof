@@ -1,4 +1,4 @@
-"""DataProf — High-performance data profiling library."""
+"""dataprof - High-performance data profiling library."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import functools
 import html as _html
 import json
 import math
+import os
 import pathlib
 import warnings
 from typing import Any, Iterator
@@ -15,34 +16,32 @@ from typing import Any, Iterator
 from ._dataprof import (
     ColumnProfile,
     DataQualityMetrics,
-    # Configuration
     ProfilerConfig,
     ProgressEvent,
-    # Arrow interop
     RecordBatch,
     RowCountEstimate,
-    # Sampling, stop conditions, progress
     SamplingStrategy,
-    # Partial analysis
     SchemaResult,
     StopCondition,
     __version__,
-    infer_schema,
-    quick_row_count,
 )
 from ._dataprof import (
-    # Result types (internal names)
     ProfileReport as _RustProfileReport,
 )
 from ._dataprof import (
-    # Internal dispatch targets
     analyze_file as _analyze_file,
+)
+from ._dataprof import (
+    infer_schema as _infer_schema,
 )
 from ._dataprof import (
     profile_arrow as _profile_arrow,
 )
 from ._dataprof import (
     profile_dataframe as _profile_dataframe,
+)
+from ._dataprof import (
+    quick_row_count as _quick_row_count,
 )
 
 __all__ = [
@@ -51,6 +50,7 @@ __all__ = [
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
+    "column_to_dict",
     "DataQualityMetrics",
     "SamplingStrategy",
     "StopCondition",
@@ -65,7 +65,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Rounding helpers — match the convention in src/serde_helpers.rs
+# Rounding helpers — match the convention in dataprof-core serde helpers.
 # ---------------------------------------------------------------------------
 
 
@@ -73,7 +73,7 @@ def _half_up(v: float, ndigits: int) -> float:
     """Round using half-away-from-zero, matching Rust f64::round() semantics.
 
     Python's built-in round() uses bankers rounding (ties-to-even), which can
-    disagree with the CLI JSON on edge cases like 1.005.
+    disagree with the Rust report serialization on edge cases like 1.005.
     """
     with _decimal.localcontext() as ctx:
         ctx.rounding = _decimal.ROUND_HALF_UP
@@ -108,9 +108,116 @@ def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     return {k: _half_up(v, 2) for k, v in q.items()}
 
 
+def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
+    """Normalize Python path-like input to the string form expected by Rust."""
+    if isinstance(path, str):
+        return path
+    if isinstance(path, os.PathLike):
+        normalized = os.fspath(path)
+        if isinstance(normalized, str):
+            return normalized
+    raise TypeError(
+        f"argument '{arg_name}': expected str or path-like object, "
+        f"got {type(path).__module__}.{type(path).__name__}"
+    )
+
+
+def infer_schema(path: str | os.PathLike[str]) -> SchemaResult:
+    """Infer a file schema from a string path or path-like object."""
+    return _infer_schema(_normalize_pathlike(path))
+
+
+def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
+    """Estimate or count rows from a string path or path-like object."""
+    return _quick_row_count(_normalize_pathlike(path))
+
+
 # ---------------------------------------------------------------------------
 # Shared column record builder
 # ---------------------------------------------------------------------------
+
+
+def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
+    """Convert a single ColumnProfile to the nested dict layout used by
+    :meth:`ProfileReport.to_dict`.
+
+    The shape matches one element of ``report.to_dict()["columns"]``:
+
+    .. code-block:: python
+
+        {
+          "name": ..., "data_type": ..., "total_count": ..., "null_count": ...,
+          "null_percentage": ..., "unique_count": ..., "uniqueness_ratio": ...,
+          "stats": {"min": ..., "max": ..., ...},      # numeric / text / boolean
+          "patterns": [{"name": ..., "regex": ..., ...}, ...]
+        }
+
+    Floating-point values are rounded to match the Rust serialization
+    (2dp for percentages, 4dp for statistics).
+    """
+    col_data: dict[str, Any] = {
+        "name": col.name,
+        "data_type": col.data_type,
+        "total_count": col.total_count,
+        "null_count": col.null_count,
+        "null_percentage": _r2(col.null_percentage),
+        "unique_count": col.unique_count,
+        "uniqueness_ratio": _r2(col.uniqueness_ratio),
+    }
+    if col.min is not None:
+        col_data["stats"] = {
+            k: v
+            for k, v in {
+                "min": _r4(col.min),
+                "max": _r4(col.max),
+                "mean": _r4(col.mean),
+                "std_dev": _r4(col.std_dev),
+                "variance": _r4(col.variance),
+                "median": _r4(col.median),
+                "mode": _r4(col.mode),
+                "skewness": _r4(col.skewness),
+                "kurtosis": _r4(col.kurtosis),
+                "coefficient_of_variation": _r4(col.coefficient_of_variation),
+                "quartiles": _round_quartiles(col.quartiles),
+                "is_approximate": col.is_approximate,
+                "outlier_count": col.outlier_count,
+            }.items()
+            if v is not None
+        }
+    if col.min_length is not None:
+        if "stats" not in col_data:
+            col_data["stats"] = {}
+        col_data["stats"].update(
+            {
+                k: v
+                for k, v in {
+                    "min_length": col.min_length,
+                    "max_length": col.max_length,
+                    "avg_length": _r4(col.avg_length),
+                }.items()
+                if v is not None
+            }
+        )
+    if col.true_count is not None:
+        if "stats" not in col_data:
+            col_data["stats"] = {}
+        col_data["stats"]["true_count"] = col.true_count
+        col_data["stats"]["false_count"] = col.false_count
+        col_data["stats"]["true_ratio"] = _r4(col.true_ratio)
+
+    if col.patterns is not None:
+        col_data["patterns"] = [
+            {
+                "name": p.name,
+                "regex": p.regex,
+                "match_count": p.match_count,
+                "match_percentage": _r2(p.match_percentage),
+                "category": p.category,
+                "confidence": round(p.confidence, 4),
+            }
+            for p in col.patterns
+        ]
+    return col_data
 
 
 def _column_record(col: ColumnProfile) -> dict[str, Any]:
@@ -154,6 +261,7 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "q3": rq["q3"] if rq else None,
         "iqr": rq["iqr"] if rq else None,
         "is_approximate": col.is_approximate,
+        "outlier_count": col.outlier_count,
         "min_length": col.min_length,
         "max_length": col.max_length,
         "avg_length": _r4(col.avg_length),
@@ -185,6 +293,8 @@ def profile(
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
     locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -218,6 +328,10 @@ def profile(
         locale: ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT",
             "US", "GB"). Boosts confidence for locale-matching patterns and
             suppresses non-matching locale patterns. None = no preference.
+        positive_columns: Columns whose numeric values are expected to be
+            non-negative.
+        identifier_columns: Numeric-looking columns to treat as semantic
+            identifiers instead of measures.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -239,19 +353,33 @@ def profile(
             quality_dimensions=quality_dimensions,
             metrics=metrics,
             locale=locale,
+            positive_columns=positive_columns,
+            identifier_columns=identifier_columns,
         )
-        rust_report = _analyze_file(str(source), config)
+        rust_report = _analyze_file(_normalize_pathlike(source, arg_name="source"), config)
         return ProfileReport(rust_report)
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
     def _df_config() -> ProfilerConfig | None:
         """Build a ProfilerConfig if any DataFrame-relevant options are set."""
-        if any(v is not None for v in (max_rows, quality_dimensions, metrics, locale)):
+        if any(
+            v is not None
+            for v in (
+                max_rows,
+                quality_dimensions,
+                metrics,
+                locale,
+                positive_columns,
+                identifier_columns,
+            )
+        ):
             return ProfilerConfig(
                 max_rows=max_rows,
                 quality_dimensions=quality_dimensions,
                 metrics=metrics,
                 locale=locale,
+                positive_columns=positive_columns,
+                identifier_columns=identifier_columns,
             )
         return None
 
@@ -416,6 +544,16 @@ class Profiler:
         self._kwargs["locale"] = locale
         return self
 
+    def positive_columns(self, columns: list[str]) -> Profiler:
+        """Mark columns whose numeric values are expected to be non-negative."""
+        self._kwargs["positive_columns"] = columns
+        return self
+
+    def identifier_columns(self, columns: list[str]) -> Profiler:
+        """Mark columns to profile as semantic identifiers."""
+        self._kwargs["identifier_columns"] = columns
+        return self
+
     def metrics(self, packs: list[str]) -> Profiler:
         """Select metric packs to compute.
 
@@ -502,6 +640,16 @@ class ProfileReport:
         return self._report.quality
 
     @property
+    def low_sample_warning(self) -> bool:
+        """True when the sample used was below the recommended minimum (10 rows).
+
+        When set, treat ``quality_score`` and the per-dimension ratios as
+        directional rather than reliable.
+        """
+        q = self._report.quality
+        return bool(q is not None and q.low_sample_warning)
+
+    @property
     def execution_time_ms(self) -> int:
         return self._report.scan_time_ms
 
@@ -554,72 +702,9 @@ class ProfileReport:
         """Convert the report to a nested Python dict.
 
         All floating-point values are rounded (2dp for percentages, 4dp for
-        statistics) to match the CLI JSON output.
+        statistics) to match the Rust report serialization.
         """
-        cols = []
-        for col in self._report.column_profiles:
-            col_data: dict[str, Any] = {
-                "name": col.name,
-                "data_type": col.data_type,
-                "total_count": col.total_count,
-                "null_count": col.null_count,
-                "null_percentage": _r2(col.null_percentage),
-                "unique_count": col.unique_count,
-                "uniqueness_ratio": _r2(col.uniqueness_ratio),
-            }
-            if col.min is not None:
-                col_data["stats"] = {
-                    k: v
-                    for k, v in {
-                        "min": _r4(col.min),
-                        "max": _r4(col.max),
-                        "mean": _r4(col.mean),
-                        "std_dev": _r4(col.std_dev),
-                        "variance": _r4(col.variance),
-                        "median": _r4(col.median),
-                        "mode": _r4(col.mode),
-                        "skewness": _r4(col.skewness),
-                        "kurtosis": _r4(col.kurtosis),
-                        "coefficient_of_variation": _r4(col.coefficient_of_variation),
-                        "quartiles": _round_quartiles(col.quartiles),
-                        "is_approximate": col.is_approximate,
-                    }.items()
-                    if v is not None
-                }
-            if col.min_length is not None:
-                if "stats" not in col_data:
-                    col_data["stats"] = {}
-                col_data["stats"].update(
-                    {
-                        k: v
-                        for k, v in {
-                            "min_length": col.min_length,
-                            "max_length": col.max_length,
-                            "avg_length": _r4(col.avg_length),
-                        }.items()
-                        if v is not None
-                    }
-                )
-            if col.true_count is not None:
-                if "stats" not in col_data:
-                    col_data["stats"] = {}
-                col_data["stats"]["true_count"] = col.true_count
-                col_data["stats"]["false_count"] = col.false_count
-                col_data["stats"]["true_ratio"] = _r4(col.true_ratio)
-
-            if col.patterns is not None:
-                col_data["patterns"] = [
-                    {
-                        "name": p.name,
-                        "regex": p.regex,
-                        "match_count": p.match_count,
-                        "match_percentage": _r2(p.match_percentage),
-                        "category": p.category,
-                        "confidence": round(p.confidence, 4),
-                    }
-                    for p in col.patterns
-                ]
-            cols.append(col_data)
+        cols = [column_to_dict(col) for col in self._report.column_profiles]
 
         quality_dict = None
         q = self._report.quality
@@ -627,6 +712,8 @@ class ProfileReport:
             quality_dict = {
                 "overall_score": _r2(q.overall_quality_score()),
             }
+            if q.low_sample_warning:
+                quality_dict["low_sample_warning"] = True
             comp = q.completeness
             if comp is not None:
                 quality_dict["completeness"] = comp

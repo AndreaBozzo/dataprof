@@ -5,6 +5,57 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add `dataprof-engines` for adaptive, incremental, and async streaming engine
+  ownership behind the compact `dataprof` facade.
+- Add `dataprof-partial` for schema inference and quick row-count ownership
+  behind the compact `dataprof` facade.
+- Add facade feature-combination checks for no-default and async-streaming
+  builds in CI.
+- Per-column `outlier_count` (Tukey IQR rule, same k=1.5 as the global
+  `accuracy.outlier_ratio`) on `NumericStats` / `ColumnProfile` to make outlier
+  triage actionable at the column level instead of only the aggregate.
+- `QualityMetrics.low_sample_warning` (also surfaced as
+  `ProfileReport.low_sample_warning` in Python) flags reports built from fewer
+  than 10 rows so consumers can decide whether to trust the score.
+- Python: `dataprof.column_to_dict(col)` returns the same nested dict shape as
+  one element of `report.to_dict()["columns"]`, for piping individual columns
+  into downstream systems without serializing the whole report.
+- Add explicit `positive_columns` and `identifier_columns` hints across the
+  Rust and Python profilers. Positive columns drive
+  `accuracy.negative_values_in_positive`; identifier columns are reported as
+  `identifier` and excluded from numeric stats/outlier metrics (#304, #305).
+
+### Changed
+
+- `Profiler::format()` override now wins over extension-based detection on
+  the auto engine path (previously a `.parquet` filename would route to the
+  Parquet parser even when `FileFormat::Csv` was forced). Adds the
+  `AdaptiveProfiler::analyze_csv_file()` entry that bypasses Parquet
+  redetection for callers that have already resolved the format.
+- Remote URL profiling (`Profiler::profile_url`) validates the URL scheme
+  up-front: malformed inputs like `not-a-url` now return a clear
+  "expected http(s)://" error instead of reqwest's opaque "builder error".
+- Library noise: small-sample warnings and CSV recovery messages moved from
+  `eprintln!` to `log::warn!` so library users opt in via env_logger.
+- Dropped lingering `--chunk-size` CLI-flag advice from `StreamingError` and
+  `ValidationError` (CLI was retired); messages now reference the builder API.
+- Boolean inference now treats `true`/`false` case-insensitively and ignores
+  empty/`null`/`nan` tokens; `yes`/`no` remain strings by default (#303).
+
+- Move the public `dataprof` facade source to `crates/dataprof/src` and remove
+  the legacy `src/` shell before the 0.8.0 release.
+- Drop broad legacy module-path shims from the facade; common APIs remain
+  available as top-level exports, while lower-level modules are available from
+  their owning workspace crates.
+- Move async HTTP Parquet profiling into `dataprof-parquet`.
+- Prepare the workspace for the 0.8.0 Rust facade and Python package release.
+- Refresh release-facing docs around the compact facade, retired CLI surface,
+  and current crate-boundary status.
+
 ## [0.5.10] - 2026-02-01
 
 ### Added
@@ -1034,4 +1085,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implement comprehensive data quality analysis system by @AndreaBozzo
 
 ## [0.1.0] - 2025-09-02
-

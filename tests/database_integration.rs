@@ -5,8 +5,9 @@
 
 #![cfg(feature = "sqlite")]
 
-use dataprof::Profiler;
-use dataprof::database::{DatabaseConfig, analyze_database, create_connector};
+use dataprof::{
+    DataSource, DatabaseConfig, Profiler, QueryEngine, analyze_database, create_connector,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -368,8 +369,8 @@ mod profiler_builder_tests {
         let (_dir, conn_str) = create_test_db();
         populate_test_db(&conn_str).await;
 
-        let source = dataprof::types::DataSource::Query {
-            engine: dataprof::types::QueryEngine::Sqlite,
+        let source = DataSource::Query {
+            engine: QueryEngine::Sqlite,
             statement: "SELECT * FROM test_users".to_string(),
             database: None,
             execution_id: None,

@@ -1,0 +1,18 @@
+[package]
+name = "dataprof-csv"
+version = "0.8.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "CSV parsing and profiling support for dataprof"
+
+[dependencies]
+anyhow = "1.0"
+csv = "1.4"
+dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
+dataprof-runtime = { version = "0.8.0", path = "../dataprof-runtime" }
+log = "0.4"
+memmap2 = "0.9"
+
+[dev-dependencies]
+tempfile = "3.24"

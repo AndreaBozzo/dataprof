@@ -2,20 +2,19 @@
 * @AndreaBozzo
 
 # Core library code - critical paths
-/src/ @AndreaBozzo
+/crates/ @AndreaBozzo
 /Cargo.toml @AndreaBozzo
 /Cargo.lock @AndreaBozzo
 
 # API changes require careful review
-/src/api/ @AndreaBozzo
-/src/lib.rs @AndreaBozzo
+/crates/dataprof/src/ @AndreaBozzo
 
 # Performance-critical components
-/src/engines/ @AndreaBozzo
-/src/acceleration/ @AndreaBozzo
+/crates/dataprof-engines/ @AndreaBozzo
+/crates/dataprof-metrics/src/acceleration/ @AndreaBozzo
 
 # Database connectors
-/src/database/ @AndreaBozzo
+/crates/dataprof-db/ @AndreaBozzo
 
 # Configuration and workflow changes
 /.github/ @AndreaBozzo

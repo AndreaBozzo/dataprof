@@ -23,7 +23,7 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       changelog: ${{ steps.changelog.outputs.changelog }}
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v5.0.0
       with:
         fetch-depth: 0  # Need full history for changelog
 
@@ -51,6 +51,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         CLIFF_OUTPUT: ${{ steps.git-cliff.outputs.content }}
       run: |
+        TAG="${{ steps.tag.outputs.tag }}"
         VERSION="${{ steps.tag.outputs.version }}"
 
         echo "git-cliff content:"
@@ -69,28 +70,27 @@ jobs:
           echo ""
           echo "## Assets"
           echo ""
-          echo "### CLI Binaries"
-          echo "- **Linux (x86_64)**: \`dataprof-$VERSION-x86_64-unknown-linux-gnu\`"
-          echo "- **Linux (ARM64)**: \`dataprof-$VERSION-aarch64-unknown-linux-gnu\`"
-          echo "- **macOS (Intel)**: \`dataprof-$VERSION-x86_64-apple-darwin\`"
-          echo "- **macOS (Apple Silicon)**: \`dataprof-$VERSION-aarch64-apple-darwin\`"
-          echo "- **Windows**: \`dataprof-$VERSION-x86_64-pc-windows-msvc.exe\`"
-          echo ""
-          echo "### Python Package"
+          echo "### Python Packages"
           echo "- **PyPI**: \`pip install dataprof==$VERSION\`"
-          echo "- **GitHub Releases**: Additional optimized wheels available"
+          echo "- **GitHub Releases**: Baseline and optimized wheels are attached as release assets"
           echo ""
-          echo "### Rust Crate"
-          echo "- **crates.io**: \`cargo add dataprof@$VERSION\`"
+          echo "### Source Archives"
+          echo "- GitHub automatically attaches source \`.tar.gz\` and \`.zip\` archives for this tag"
+          echo ""
+          echo "### Rust Status"
+          echo "- **Crates.io**: \`cargo add dataprof@$VERSION\`"
+          echo "- The published \`dataprof\` crate is the stable Rust facade for profiling files, streams, tables, and database queries."
+          echo "- Internal workspace crates are published so the facade can depend on versioned packages."
+          echo "- This release ships libraries and Python packages; a CLI binary is not part of the release surface."
           echo ""
           echo "## Installation"
           echo ""
           echo "\`\`\`bash"
-          echo "# CLI via Cargo"
-          echo "cargo install dataprof@$VERSION"
-          echo ""
           echo "# Python package"
           echo "pip install dataprof==$VERSION"
+          echo ""
+          echo "# Rust library"
+          echo "cargo add dataprof@$VERSION"
           echo "\`\`\`"
           echo ""
           echo "---"
@@ -105,144 +105,146 @@ jobs:
     - name: Create GitHub Release
       run: |
         echo "Creating release ${{ steps.tag.outputs.tag }}..."
-        gh release create ${{ steps.tag.outputs.tag }} \
-          --title "dataprof ${{ steps.tag.outputs.tag }}" \
-          --notes-file release_notes.md \
-          --draft
+        if gh release view ${{ steps.tag.outputs.tag }} >/dev/null 2>&1; then
+          gh release edit ${{ steps.tag.outputs.tag }} \
+            --title "dataprof ${{ steps.tag.outputs.tag }}" \
+            --notes-file release_notes.md \
+            --draft=true
+        else
+          gh release create ${{ steps.tag.outputs.tag }} \
+            --title "dataprof ${{ steps.tag.outputs.tag }}" \
+            --notes-file release_notes.md \
+            --draft
+        fi
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Step 2: Build CLI binaries for multiple platforms
-  build-binaries:
-    name: Build CLI Binary (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
+  # Step 2: Validate the Rust release surfaces before publishing crates.
+  rust-release-checks:
+    name: Validate Rust Release Surface
+    runs-on: ubuntu-latest
     needs: create-release
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: dataprof-linux-x64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: dataprof-linux-arm64
-            cross: true
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-            name: dataprof-macos-x64
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: dataprof-macos-arm64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            name: dataprof-windows-x64.exe
-
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v5.0.0
 
     - name: Setup Rust
       uses: ./.github/actions/setup-rust
       with:
         cache-prefix: rust-release
         components: ''
-        targets: ${{ matrix.target }}
-
-    - name: Install cross-compilation tools
-      if: matrix.cross
+    - name: Verify released facade surface
       run: |
-        echo "Installing cross-compilation tools..."
-        cargo install cross
-        echo "Cross-compilation tools installed"
-
-    - name: Build binary
-      run: |
-        # Use baseline CPU target for maximum compatibility (x86_64 only)
-        if [[ "${{ matrix.target }}" == x86_64* ]]; then
-          export RUSTFLAGS="-C target-cpu=x86-64"
-        fi
-
-        if [ "${{ matrix.cross }}" = "true" ]; then
-          cross build --release --target ${{ matrix.target }} --bin dataprof-cli
-        else
-          cargo build --release --target ${{ matrix.target }} --bin dataprof-cli
-        fi
+        cargo check --locked -p dataprof --all-features
+        cargo check --locked -p dataprof --lib --no-default-features
+        cargo check --locked -p dataprof --lib --no-default-features --features async-streaming
+        cargo test --locked --test public_api_facade --no-default-features
+        cargo test --locked --test public_api_facade --no-default-features --features async-streaming
+        cargo test --locked --test public_api_facade --all-features
+        cargo test --locked -p dataprof-engines --all-features
+        cargo test --locked -p dataprof-parquet --all-features
+        cargo test --locked -p dataprof-partial --all-features
+        cargo check --locked -p dataprof-python --all-features
       shell: bash
 
-    - name: Prepare binary for upload
-      run: |
-        TAG="${{ needs.create-release.outputs.tag }}"
-        VERSION=$(echo "$TAG" | sed 's/^v//')
-        echo "Tag: $TAG, Version: $VERSION"
-
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}.exe"
-          cp "target/${{ matrix.target }}/release/dataprof-cli.exe" "$BINARY_NAME"
-          echo "Created Windows binary: $BINARY_NAME"
-        else
-          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}"
-          cp "target/${{ matrix.target }}/release/dataprof-cli" "$BINARY_NAME"
-          echo "Created binary: $BINARY_NAME"
-        fi
-
-        # Verify file exists
-        if [ -f "$BINARY_NAME" ]; then
-          echo "Binary created successfully: $BINARY_NAME"
-          ls -la "$BINARY_NAME"
-        else
-          echo "Binary not found: $BINARY_NAME"
-          exit 1
-        fi
-      shell: bash
-
-    - name: Upload binary to release
-      run: |
-        TAG="${{ needs.create-release.outputs.tag }}"
-        VERSION=$(echo "$TAG" | sed 's/^v//')
-
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}.exe"
-        else
-          BINARY_NAME="dataprof-$VERSION-${{ matrix.target }}"
-        fi
-
-        echo "Uploading binary: $BINARY_NAME"
-        ls -la "$BINARY_NAME"
-        gh release upload "$TAG" "$BINARY_NAME"
-      shell: bash
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Step 2: Publish to Crates.io
-  crates-publish:
-    name: Publish to Crates.io
+  # Step 3: Verify every crate packages cleanly before the first real publish.
+  rust-publish-dry-run:
+    name: Dry Run Rust Publish
     runs-on: ubuntu-latest
-    needs: create-release
+    needs: rust-release-checks
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v5.0.0
+
+    - name: Setup Rust
+      uses: ./.github/actions/setup-rust
+      with:
+        cache-prefix: rust-publish-dry-run
+        components: ''
+
+    - name: Dry run workspace crate publish order
+      run: |
+        set -euo pipefail
+
+        dry_run_publish() {
+          local crate="$1"
+          echo "Dry-running ${crate}..."
+          cargo publish -p "${crate}" --locked --dry-run
+        }
+
+        dry_run_publish dataprof-core
+        dry_run_publish dataprof-metrics
+        dry_run_publish dataprof-runtime
+        dry_run_publish dataprof-csv
+        dry_run_publish dataprof-json
+        dry_run_publish dataprof-db
+        dry_run_publish dataprof-parquet
+        dry_run_publish dataprof-engines
+        dry_run_publish dataprof-partial
+        dry_run_publish dataprof
+      shell: bash
+
+  # Step 4: Publish versioned Rust crates in dependency order.
+  rust-crates:
+    name: Publish Rust Crates
+    runs-on: ubuntu-latest
+    needs: rust-publish-dry-run
+    steps:
+    - uses: actions/checkout@v5.0.0
+
     - name: Setup Rust
       uses: ./.github/actions/setup-rust
       with:
         cache-prefix: rust-publish
         components: ''
 
-    - name: Publish to crates.io
+    - name: Publish workspace crates
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
       run: |
-        echo "Publishing to crates.io..."
-        cargo publish --token ${{ secrets.CRATES_TOKEN }} || {
-          EXIT_CODE=$?
-          if [ $EXIT_CODE -eq 101 ]; then
-            echo "Version already exists on crates.io, skipping"
-          else
-            echo "Failed to publish to crates.io (exit code: $EXIT_CODE)"
-            exit $EXIT_CODE
+        set -euo pipefail
+
+        if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+          echo "CRATES_IO_TOKEN is required to publish Rust crates"
+          exit 1
+        fi
+
+        publish_crate() {
+          local crate="$1"
+          echo "Publishing ${crate}..."
+          set +e
+          output=$(cargo publish -p "${crate}" --locked 2>&1)
+          status=$?
+          set -e
+          echo "${output}"
+
+          if [ "${status}" -ne 0 ]; then
+            if echo "${output}" | grep -Eiq 'already (uploaded|exists)|crate version .* is already uploaded'; then
+              echo "${crate} is already published; continuing"
+            else
+              exit "${status}"
+            fi
           fi
+
+          # Give the crates.io index enough time before publishing dependents.
+          sleep 45
         }
 
-  # Step 3: Build Python Wheels with CPU Compatibility
+        publish_crate dataprof-core
+        publish_crate dataprof-metrics
+        publish_crate dataprof-runtime
+        publish_crate dataprof-csv
+        publish_crate dataprof-json
+        publish_crate dataprof-db
+        publish_crate dataprof-parquet
+        publish_crate dataprof-engines
+        publish_crate dataprof-partial
+        publish_crate dataprof
+      shell: bash
+
+  # Step 5: Build Python wheels for the base public package API.
   python-wheels:
     name: Build Python Wheels (${{ matrix.os }}-${{ matrix.target }}-${{ matrix.cpu_profile }})
     runs-on: ${{ matrix.os }}
-    needs: create-release
+    needs: [create-release, rust-release-checks]
     strategy:
       matrix:
         include:
@@ -287,7 +289,7 @@ jobs:
             rustflags: "-C target-cpu=native"
 
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v5.0.0
     - uses: actions/setup-python@v6
       with:
         python-version: '3.10'
@@ -379,18 +381,56 @@ jobs:
         for wheel in *.whl; do
           if [ -f "$wheel" ]; then
             echo "Uploading wheel: $wheel"
-            gh release upload ${{ needs.create-release.outputs.tag }} "$wheel"
+            gh release upload ${{ needs.create-release.outputs.tag }} "$wheel" --clobber
           fi
         done
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Step 4: Publish to PyPI (baseline wheels only for maximum compatibility)
+  # Step 6: Build an sdist so unsupported environments still have an install path.
+  python-sdist:
+    name: Build Python sdist
+    runs-on: ubuntu-latest
+    needs: [create-release, rust-release-checks]
+    steps:
+    - uses: actions/checkout@v5.0.0
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.10'
+
+    - name: Build sdist
+      uses: PyO3/maturin-action@v1
+      with:
+        command: sdist
+        args: --out dist
+        manylinux: auto
+        rust-toolchain: stable
+
+    - name: Upload sdist as artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: python-sdist
+        path: dist/*.tar.gz
+
+    - name: Upload sdist to release
+      run: |
+        cd dist
+        for sdist in *.tar.gz; do
+          if [ -f "$sdist" ]; then
+            echo "Uploading sdist: $sdist"
+            gh release upload ${{ needs.create-release.outputs.tag }} "$sdist" --clobber
+          fi
+        done
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Step 7: Publish to PyPI after Rust crates are published.
   pypi-publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: python-wheels
+    needs: [rust-crates, python-wheels, python-sdist]
     permissions:
       id-token: write
     steps:
@@ -399,6 +439,12 @@ jobs:
       with:
         pattern: wheels-*-baseline
         merge-multiple: true
+        path: dist
+
+    - name: Download sdist
+      uses: actions/download-artifact@v8
+      with:
+        name: python-sdist
         path: dist
 
     - name: Verify wheels for PyPI compatibility
@@ -414,10 +460,12 @@ jobs:
           fi
         done
 
-        wheel_count=$(ls -1 *.whl 2>/dev/null | wc -l)
+        wheel_count=$(find . -maxdepth 1 -name '*.whl' | wc -l)
+        sdist_count=$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)
         echo "Total wheels for PyPI: $wheel_count"
-        if [ "$wheel_count" -eq 0 ]; then
-          echo "No wheels found for PyPI publishing"
+        echo "Total sdists for PyPI: $sdist_count"
+        if [ "$wheel_count" -eq 0 ] && [ "$sdist_count" -eq 0 ]; then
+          echo "No Python distributions found for PyPI publishing"
           exit 1
         fi
 
@@ -428,13 +476,13 @@ jobs:
         skip-existing: true
         print-hash: true
 
-  # Step 5: Finalize release (make it public)
+  # Step 8: Finalize release (make it public)
   finalize-release:
     name: Finalize Release
     runs-on: ubuntu-latest
-    needs: [create-release, build-binaries, crates-publish, pypi-publish]
+    needs: [create-release, rust-crates, pypi-publish]
     steps:
-    - uses: actions/checkout@v6.0.2
+    - uses: actions/checkout@v5.0.0
 
     - name: Mark release as published
       run: |

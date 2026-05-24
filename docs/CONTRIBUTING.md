@@ -232,17 +232,18 @@ cargo clippy -- -W clippy::all
 # Run benchmarks
 cargo bench
 
-# Profile memory usage
-cargo build --release && valgrind ./target/release/dataprof-cli analyze data.csv
+# Run library checks
+cargo check --workspace --all-targets
 ```
 
 ### Project Structure
 
-- `src/` - Main Rust library code
-- `src/cli/` - Command-line interface
-- `src/database/` - Database integration
-- `src/analysis/` - Core analysis logic
-- `python/` - Python bindings
+- `crates/dataprof/src/` - Public `dataprof` facade source
+- `crates/` - Workspace crates that own core, parser, engine, database, metrics, and runtime code
+- `crates/dataprof-db/` - Database connectors
+- `crates/dataprof-metrics/` - Core analysis and statistics logic
+- `crates/dataprof-python/` - PyO3 extension crate
+- `python/` - Python package sources and tests
 - `tests/` - Integration tests
 - `docs/` - Documentation
 

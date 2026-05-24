@@ -1,95 +1,8 @@
 # Examples Cookbook
 
 Copy-pasteable recipes for common dataprof tasks, organized by interface.
-
----
-
-## CLI Recipes
-
-### Profile a CSV file
-
-```bash
-dataprof analyze data.csv
-```
-
-### Detailed quality report with strict thresholds
-
-```bash
-dataprof analyze data.csv --detailed --threshold-profile strict
-```
-
-### Export analysis as JSON for CI/CD
-
-```bash
-dataprof analyze data.csv --format json -o report.json
-
-# Check quality score in a script
-SCORE=$(dataprof analyze data.csv --format json | jq '.quality.overall_score')
-echo "Quality: $SCORE"
-```
-
-### Quick schema check before loading
-
-```bash
-dataprof schema data.csv
-dataprof schema data.parquet --format json
-```
-
-### Count rows in a file
-
-```bash
-dataprof count data.csv
-dataprof count data.parquet    # instant: reads Parquet metadata only
-```
-
-### Profile with sampling for large files
-
-```bash
-dataprof analyze huge.csv --sample 50000 --progress
-```
-
-### Profile with a configuration file
-
-```bash
-# .dataprof.toml
-# [output]
-# format = "json"
-# show_progress = true
-
-dataprof analyze data.csv --config .dataprof.toml
-```
-
-### Selective profiling (Performance)
-
-```bash
-# Skip expensive pattern detection and quality assessment
-dataprof analyze data.csv --metrics schema --metrics statistics
-
-# Compute only schema (fastest)
-dataprof analyze data.csv --metrics schema
-```
-
-### Boolean Analysis
-
-```bash
-dataprof analyze data.csv --detailed | grep -A 5 "Boolean"
-```
-
-### Profile a database table
-
-```bash
-dataprof database postgres://user:pass@localhost/mydb --table users --quality
-dataprof database sqlite:///data.db --query "SELECT * FROM events WHERE date > '2024-01-01'"
-```
-
-### Pipe-friendly plain output
-
-```bash
-dataprof analyze data.csv --format plain | grep "null_count"
-dataprof schema data.csv --format json | jq '.columns[] | .name'
-```
-
----
+These examples focus on the current Rust crate and Python package; pre-0.8 CLI
+usage lives in the archived guide.
 
 ## Python Recipes
 
@@ -201,7 +114,7 @@ report = (dp.Profiler()
 report = dp.profile("data.csv")
 active_col = report["is_active"]
 
-if active_col.data_type == "Boolean":
+if active_col.data_type == "boolean":
     print(f"True: {active_col.true_count} ({active_col.true_ratio:.1%})")
     print(f"False: {active_col.false_count}")
 ```
@@ -312,7 +225,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### Async URL profiling
+### Async URL profiling (source build)
+
+Build the Python extension with `python-async,async-streaming` before using this recipe.
 
 ```python
 import asyncio
@@ -325,7 +240,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### Database profiling from Python
+### Database profiling from Python (source build)
+
+Build the Python extension with `python-async,database` and the connector feature you need before using this recipe.
 
 ```python
 import asyncio
@@ -367,22 +284,83 @@ import sys
 import dataprof as dp
 
 report = dp.profile("s3_landing/orders_2024-03-17.csv")
+
+# 0.8.0: bail out early on tiny samples — the score is computed but not
+# statistically meaningful below 10 rows.
+if report.low_sample_warning:
+    print(f"WARN: sample too small ({report.rows} rows), skipping quality gate")
+    sys.exit(0)
+
 score = report.quality_score or 0.0
 
-if score < 0.90:
+if score < 90.0:
     q = report.quality
     failures = []
-    if q.missing_values_ratio > 0.1:
-        failures.append(f"missing values: {q.missing_values_ratio:.1%}")
+    if q.missing_values_ratio > 10.0:
+        failures.append(f"missing values: {q.missing_values_ratio:.1f}%")
     if q.duplicate_rows > 0:
         failures.append(f"{q.duplicate_rows} duplicate rows")
-    if q.outlier_ratio > 0.05:
-        failures.append(f"outlier ratio: {q.outlier_ratio:.1%}")
+    if q.outlier_ratio > 5.0:
+        failures.append(f"outlier ratio: {q.outlier_ratio:.1f}%")
     print(f"REJECTED (score={score:.2f}): {', '.join(failures)}")
     sys.exit(1)
 
 print(f"ACCEPTED (score={score:.2f}), {report.rows} rows")
 ```
+
+### Per-column outlier triage (0.8.0)
+
+The global `accuracy.outlier_ratio` tells you *something* is suspicious, but
+per-column `outlier_count` tells you *where* to look.
+
+```python
+import dataprof as dp
+
+report = dp.profile("sensor_readings.csv")
+
+# Surface the worst offenders
+suspicious = sorted(
+    (
+        (name, report[name].outlier_count, report[name].min, report[name].max)
+        for name in report
+        if report[name].outlier_count
+    ),
+    key=lambda row: row[1],
+    reverse=True,
+)
+
+for name, n_outliers, lo, hi in suspicious[:5]:
+    print(f"{name:30} {n_outliers:>4} outliers  range=[{lo}, {hi}]")
+```
+
+### Domain hints for IDs and positive values (0.8.0)
+
+```python
+report = dp.profile(
+    "orders.csv",
+    identifier_columns=["order_id", "customer_id"],
+    positive_columns=["total_amount"],
+)
+
+assert report["order_id"].data_type == "identifier"
+print(report.quality.negative_values_in_positive)
+```
+
+### Serialize a single column (0.8.0)
+
+For piping individual column profiles into Airflow XCom, Prometheus, a
+warehouse, etc., without dragging the whole report along:
+
+```python
+import json
+import dataprof as dp
+
+report = dp.profile("data.csv")
+payload = dp.column_to_dict(report["amount"])
+print(json.dumps(payload, indent=2))
+```
+
+The shape is identical to one element of ``report.to_dict()["columns"]``.
 
 ### Profile before and after a cleaning step
 
@@ -416,7 +394,7 @@ for f in files:
     r = dp.profile(str(f), quality_dimensions=["completeness", "uniqueness"])
     q = r.quality
     print(f"{f.name:40s}  rows={r.rows:>8d}  "
-          f"complete={q.complete_records_ratio:.1%}  "
+          f"complete={q.complete_records_ratio:.1f}%  "
           f"dupes={q.duplicate_rows}")
 ```
 
@@ -495,7 +473,9 @@ async def profile_upload(file: UploadFile):
     }
 ```
 
-### Compare database vs file quality
+### Compare database vs file quality (source build)
+
+Build the Python extension with `python-async,database` and the connector feature you need before using this recipe.
 
 ```python
 import asyncio

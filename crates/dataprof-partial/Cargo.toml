@@ -1,0 +1,35 @@
+[package]
+name = "dataprof-partial"
+version = "0.8.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Andrea Bozzo"]
+description = "Fast schema inference and row-count APIs for dataprof"
+
+[features]
+default = []
+parquet = ["dep:arrow", "dep:parquet", "dataprof-core/arrow"]
+async-streaming = [
+    "dep:bytes",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dataprof-core/async-streaming",
+    "dataprof-runtime/async-streaming",
+]
+
+[dependencies]
+arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+bytes = { version = "1.10", optional = true }
+csv = "1.4"
+dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
+dataprof-csv = { version = "0.8.0", path = "../dataprof-csv" }
+dataprof-json = { version = "0.8.0", path = "../dataprof-json" }
+dataprof-runtime = { version = "0.8.0", path = "../dataprof-runtime" }
+parquet = { version = "57.3.0", features = ["arrow"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49", features = ["full"], optional = true }
+tokio-util = { version = "0.7", features = ["io-util"], optional = true }
+
+[dev-dependencies]
+tempfile = "3.24"

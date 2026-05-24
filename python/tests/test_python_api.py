@@ -82,6 +82,31 @@ class TestProfileDataFrame:
         assert r.rows == 3
         assert r.columns == 2
 
+
+class TestInterop:
+    def test_analyze_file_path_object(self):
+        import dataprof.interop as interop
+
+        report = interop.analyze_file(Path(CSV_FILE))
+        assert report.rows_processed > 0
+        assert report.columns_detected > 0
+
+    def test_analyze_csv_to_arrow_path_object(self):
+        import dataprof.interop as interop
+
+        batch = interop.analyze_csv_to_arrow(Path(CSV_FILE))
+        assert batch.num_rows > 0
+        assert batch.num_columns > 0
+
+    def test_analyze_parquet_to_arrow_path_object(self):
+        import dataprof.interop as interop
+
+        if not os.path.exists(PARQUET_FILE):
+            pytest.skip("fixture missing")
+        batch = interop.analyze_parquet_to_arrow(Path(PARQUET_FILE))
+        assert batch.num_rows > 0
+        assert batch.num_columns > 0
+
     def test_polars(self):
         pl = pytest.importorskip("polars")
         df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
@@ -173,11 +198,19 @@ class TestPartialAnalysis:
         assert len(result.column_names) == result.num_columns
         assert result.rows_sampled > 0
 
+    def test_infer_schema_path_object(self):
+        result = dataprof.infer_schema(Path(CSV_FILE))
+        assert result.num_columns > 0
+
     def test_quick_row_count(self):
         result = dataprof.quick_row_count(CSV_FILE)
         assert result.count > 0
         assert isinstance(result.exact, bool)
         assert isinstance(result.method, str)
+
+    def test_quick_row_count_path_object(self):
+        result = dataprof.quick_row_count(Path(CSV_FILE))
+        assert result.count > 0
 
 
 # ─────────────────────────────────────────────────
@@ -195,6 +228,14 @@ class TestProfilerConfig:
     def test_engine_override(self):
         cfg = dataprof.ProfilerConfig(engine="incremental")
         assert cfg.engine == "incremental"
+
+    def test_semantic_hint_config(self):
+        cfg = dataprof.ProfilerConfig(
+            positive_columns=["pressure"],
+            identifier_columns=["order_id", "customer_id"],
+        )
+        assert cfg.positive_columns == ["pressure"]
+        assert cfg.identifier_columns == ["order_id", "customer_id"]
 
     def test_max_rows(self):
         if not os.path.exists(CSV_LARGE_FILE):
@@ -334,6 +375,7 @@ class TestNamespace:
             "ProfileReport",
             "ProfilerConfig",
             "ColumnProfile",
+            "column_to_dict",
             "DataQualityMetrics",
             "SamplingStrategy",
             "StopCondition",
@@ -382,6 +424,8 @@ class TestNamespace:
             "quality_dimensions",
             "metrics",
             "locale",
+            "positive_columns",
+            "identifier_columns",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (
@@ -841,6 +885,22 @@ class TestBooleanColumns:
         count_col = report["count"]
         assert count_col.data_type == "integer"
 
+    def test_yes_no_stays_string(self, tmp_path):
+        path = tmp_path / "yes_no.csv"
+        path.write_text("subscribed\nyes\nno\nyes\nno\n")
+        r = dataprof.profile(str(path))
+        assert r["subscribed"].data_type == "string"
+
+    def test_mixed_case_boolean_with_null_like_tokens(self, tmp_path):
+        path = tmp_path / "booleans_nulls.csv"
+        path.write_text("flag,label\ntrue,a\nFALSE,b\nTRUE,c\nfalse,d\nnull,e\nNULL,f\nnan,g\n,h\n")
+        r = dataprof.profile(str(path))
+        flag = r["flag"]
+        assert flag.data_type == "boolean"
+        assert flag.null_count == 4
+        assert flag.true_count == 2
+        assert flag.false_count == 2
+
 
 # ─────────────────────────────────────────────────
 #  16. Profiler builder class
@@ -902,6 +962,8 @@ class TestProfilerBuilder:
         assert p.max_rows(10) is p
         assert p.csv_delimiter(",") is p
         assert p.quality_dimensions(["completeness"]) is p
+        assert p.positive_columns(["pressure"]) is p
+        assert p.identifier_columns(["order_id"]) is p
 
     def test_csv_delimiter(self):
         if not os.path.exists(SEMICOLON_FILE):
@@ -951,3 +1013,94 @@ class TestMetricPacks:
         table = pa.table({"a": [1, 2, 3]})
         r = dataprof.profile(table, metrics=["schema", "statistics"])
         assert r.quality_score is None
+
+
+class TestColumnLevelOutliers:
+    """Regression: per-column `outlier_count` should surface IQR outliers."""
+
+    def test_outlier_count_flags_spike(self, tmp_path):
+        path = tmp_path / "spiky.csv"
+        # 9 baseline rows around 22 + one obvious spike at 999.9
+        path.write_text(
+            "value\n"
+            + "\n".join(["22.5", "23.1", "22.8", "23.2", "22.9", "23.0", "22.7", "23.1", "999.9"])
+            + "\n"
+        )
+        r = dataprof.profile(str(path))
+        assert r["value"].outlier_count is not None
+        assert r["value"].outlier_count >= 1
+
+    def test_outlier_count_zero_on_uniform_column(self, tmp_path):
+        path = tmp_path / "flat.csv"
+        path.write_text("value\n" + "\n".join(["10.0"] * 12) + "\n")
+        r = dataprof.profile(str(path))
+        assert r["value"].outlier_count == 0
+
+
+class TestSemanticHints:
+    def test_positive_columns_drive_negative_values_metric(self, tmp_path):
+        path = tmp_path / "pressure.csv"
+        path.write_text("pressure,temperature_delta\n101325,1\n-500,-2\n100900,3\n")
+
+        without_hint = dataprof.profile(str(path), engine="incremental")
+        assert without_hint.quality.negative_values_in_positive == 0
+
+        with_hint = dataprof.profile(
+            str(path),
+            engine="incremental",
+            positive_columns=["pressure"],
+        )
+        assert with_hint.quality.negative_values_in_positive == 1
+
+    def test_identifier_columns_omit_numeric_stats(self, tmp_path):
+        path = tmp_path / "orders.csv"
+        path.write_text("order_id\n1\n2\n3\n10000\n")
+
+        report = dataprof.profile(
+            str(path),
+            engine="incremental",
+            identifier_columns=["order_id"],
+        )
+        order_id = report["order_id"]
+        assert order_id.data_type == "identifier"
+        assert order_id.mean is None
+        assert order_id.outlier_count is None
+        assert report.quality.outlier_ratio == 0.0
+
+    def test_dataframe_hints(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"order_id": [1, 2, 3], "pressure": [1, -1, 2]})
+        report = dataprof.profile(
+            df,
+            identifier_columns=["order_id"],
+            positive_columns=["pressure"],
+        )
+        assert report["order_id"].data_type == "identifier"
+        assert report.quality.negative_values_in_positive == 1
+
+
+class TestColumnToDict:
+    def test_column_to_dict_shape_matches_report(self, tmp_path):
+        path = tmp_path / "data.csv"
+        path.write_text("x\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+        r = dataprof.profile(str(path))
+        col = r["x"]
+        d = dataprof.column_to_dict(col)
+        from_report = r.to_dict()["columns"][0]
+        assert d == from_report
+
+
+class TestLowSampleWarning:
+    def test_low_sample_warning_set_on_tiny_csv(self, tmp_path):
+        path = tmp_path / "tiny.csv"
+        path.write_text("x\n1\n2\n3\n")
+        r = dataprof.profile(str(path))
+        assert r.low_sample_warning is True
+        assert r.to_dict()["quality"].get("low_sample_warning") is True
+
+    def test_low_sample_warning_clear_on_normal_csv(self, tmp_path):
+        path = tmp_path / "fine.csv"
+        path.write_text("x\n" + "\n".join(str(i) for i in range(50)) + "\n")
+        r = dataprof.profile(str(path))
+        assert r.low_sample_warning is False
+        assert "low_sample_warning" not in r.to_dict()["quality"]

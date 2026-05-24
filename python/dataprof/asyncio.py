@@ -108,8 +108,9 @@ async def profile_url(
 ) -> ProfileReport:
     """Profile data from a remote URL asynchronously.
 
-    Supports all formats. Parquet uses HTTP Range requests.
-    Requires the ``parquet-async`` feature.
+    Supports CSV, JSON, and JSONL when async streaming is compiled in.
+    Remote Parquet uses HTTP Range requests and additionally requires the
+    ``parquet-async`` feature.
 
     Args:
         url: URL to profile.
@@ -122,7 +123,8 @@ async def profile_url(
     if not _HAS_URL:
         raise ImportError(
             "URL profiling not available. Rebuild dataprof with "
-            "--features 'python-async,parquet-async'."
+            "--features 'python-async,async-streaming'. Remote Parquet "
+            "also requires 'parquet-async'."
         )
     config = ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_url_async(url, format, config)
