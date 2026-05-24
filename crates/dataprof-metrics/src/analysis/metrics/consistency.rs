@@ -4,6 +4,7 @@
 //! Key metrics: data type consistency, format violations, encoding issues.
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column, is_valid_date_format};
+use crate::analysis::inference::{is_null_like_token, parse_strict_boolean_token};
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
 use std::collections::HashMap;
@@ -48,7 +49,7 @@ impl ConsistencyCalculator {
             if let Some(column_data) = data.get(&profile.name) {
                 for value in column_data {
                     let trimmed = value.trim();
-                    if trimmed.is_empty() {
+                    if is_null_like_token(trimmed) {
                         continue; // Skip null values in consistency check
                     }
 
@@ -59,10 +60,8 @@ impl ConsistencyCalculator {
                         DataType::Integer => trimmed.parse::<i64>().is_ok(),
                         DataType::Float => trimmed.parse::<f64>().is_ok(),
                         DataType::Date => is_valid_date_format(trimmed),
-                        DataType::Boolean => {
-                            matches!(trimmed, "True" | "False" | "true" | "false")
-                        }
-                        DataType::String => {
+                        DataType::Boolean => parse_strict_boolean_token(trimmed).is_some(),
+                        DataType::String | DataType::Identifier => {
                             !is_likely_date_column(&profile.name) || is_valid_date_format(trimmed)
                         }
                     };

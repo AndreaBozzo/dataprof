@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use dataprof_core::{DataProfilerError, MetricPack, QualityDimension};
+use dataprof_core::{DataProfilerError, MetricPack, QualityDimension, SemanticHints};
 use dataprof_csv::CsvParserConfig;
 use dataprof_runtime::ProfileReport;
 
@@ -25,6 +25,7 @@ pub struct AdaptiveProfiler {
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<String>,
+    semantic_hints: SemanticHints,
 }
 
 impl AdaptiveProfiler {
@@ -34,6 +35,7 @@ impl AdaptiveProfiler {
             metric_packs: None,
             csv_config: None,
             locale: None,
+            semantic_hints: SemanticHints::default(),
         }
     }
 
@@ -57,6 +59,11 @@ impl AdaptiveProfiler {
         self
     }
 
+    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
+        self.semantic_hints = hints;
+        self
+    }
+
     /// Analyze a file, auto-selecting the best engine.
     ///
     /// Parquet files bypass engine selection entirely (native parser).
@@ -64,9 +71,10 @@ impl AdaptiveProfiler {
         // Parquet has its own parser — short-circuit
         #[cfg(feature = "parquet")]
         if is_parquet(file_path) {
-            return dataprof_parquet::analyze_parquet_with_quality_dims(
+            return dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
                 file_path,
                 self.quality_dimensions.as_deref(),
+                &self.semantic_hints,
             );
         }
 
@@ -197,6 +205,7 @@ impl AdaptiveProfiler {
                 if let Some(ref l) = self.locale {
                     profiler = profiler.locale(l.clone());
                 }
+                profiler = profiler.semantic_hints(self.semantic_hints.clone());
                 profiler.analyze_csv_file(file_path)
             }
             InternalEngineType::Incremental => {
@@ -213,6 +222,7 @@ impl AdaptiveProfiler {
                 if let Some(ref l) = self.locale {
                     profiler = profiler.locale(l.clone());
                 }
+                profiler = profiler.semantic_hints(self.semantic_hints.clone());
                 profiler.analyze_file(file_path)
             }
         }

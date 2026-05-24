@@ -59,6 +59,9 @@ dp.profile(
     progress_interval_ms=None,       # int -- ms between progress events
     metrics=None,                    # list[str] -- "schema", "statistics", "patterns", "quality"
     quality_dimensions=None,         # list[str] -- subset of dimensions to compute
+    locale=None,                     # str -- pattern locale hint, e.g. "IT"
+    positive_columns=None,           # list[str] -- columns expected to be non-negative
+    identifier_columns=None,         # list[str] -- semantic IDs, not measures
 ) -> ProfileReport
 ```
 
@@ -138,7 +141,7 @@ Per-column profiling statistics.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Column name |
-| `data_type` | `str` | Inferred type: `"String"`, `"Integer"`, `"Float"`, `"Date"` |
+| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"` |
 | `total_count` | `int` | Total number of values |
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |
@@ -189,6 +192,8 @@ config = dp.ProfilerConfig(
     max_rows=100000,
     csv_delimiter=";",
     quality_dimensions=["completeness", "uniqueness"],
+    positive_columns=["pressure"],
+    identifier_columns=["order_id", "customer_id"],
 )
 ```
 
@@ -269,6 +274,11 @@ print(q.uniqueness)      # {"duplicate_rows": ..., "key_uniqueness": ..., "high_
 print(q.accuracy)        # {"outlier_ratio": ..., "range_violations": ..., "negative_values_in_positive": ...}
 print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., "temporal_violations": ...}
 ```
+
+`negative_values_in_positive` is driven by explicit `positive_columns`; dataprof
+does not infer positive-only domains from column names. `identifier_columns`
+marks numeric-looking IDs as semantic strings so numeric stats and outlier
+metrics do not treat them as measures.
 
 **Selective dimensions** -- compute only what you need:
 

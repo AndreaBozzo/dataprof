@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, FileFormat, MetricPack, ProgressEvent, ProgressSink,
-    QualityDimension, RowCountEstimate, SamplingStrategy, SchemaResult, StopCondition,
+    QualityDimension, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints,
+    StopCondition,
 };
 #[cfg(feature = "database")]
 use dataprof_db::DatabaseConfig;
@@ -53,6 +54,10 @@ pub struct ProfilerConfig {
     /// Database-backed (`analyze_query`) and async streaming entry points do not
     /// currently forward this setting.
     pub locale: Option<String>,
+    /// Columns whose numeric values are expected to be non-negative.
+    pub positive_columns: Vec<String>,
+    /// Columns that should be treated as semantic identifiers, not measures.
+    pub identifier_columns: Vec<String>,
     /// Database connection configuration. Required for `analyze_query()`.
     #[cfg(feature = "database")]
     pub database_config: Option<DatabaseConfig>,
@@ -73,6 +78,8 @@ impl Default for ProfilerConfig {
             quality_dimensions: None,
             metric_packs: None,
             locale: None,
+            positive_columns: Vec::new(),
+            identifier_columns: Vec::new(),
             #[cfg(feature = "database")]
             database_config: None,
         }
@@ -218,6 +225,18 @@ impl Profiler {
         self
     }
 
+    /// Mark columns whose numeric values are expected to be non-negative.
+    pub fn positive_columns(mut self, columns: Vec<String>) -> Self {
+        self.config.positive_columns = columns;
+        self
+    }
+
+    /// Mark numeric-looking columns that should be profiled as identifiers.
+    pub fn identifier_columns(mut self, columns: Vec<String>) -> Self {
+        self.config.identifier_columns = columns;
+        self
+    }
+
     /// Set the progress update interval (default: 500ms)
     pub fn progress_interval(mut self, interval: Duration) -> Self {
         self.config.progress_interval = interval;
@@ -357,6 +376,13 @@ impl Profiler {
         csv_config
     }
 
+    fn semantic_hints(&self) -> SemanticHints {
+        SemanticHints::new(
+            self.config.positive_columns.clone(),
+            self.config.identifier_columns.clone(),
+        )
+    }
+
     /// Build a `CsvParserConfig` for a CSV file, auto-detecting the delimiter
     /// when none was explicitly configured.
     fn csv_config_for_file(&self, file_path: &Path) -> dataprof_csv::CsvParserConfig {
@@ -379,18 +405,24 @@ impl Profiler {
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
         let dims = self.config.quality_dimensions.as_deref();
+        let semantic_hints = self.semantic_hints();
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                dataprof_json::analyze_json_file_with_dimensions(
+                dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
                     &dataprof_json::JsonParserConfig::default(),
                     dims,
+                    &semantic_hints,
                 )
             }
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
                 {
-                    dataprof_parquet::analyze_parquet_with_quality_dims(file_path, dims)
+                    dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                        file_path,
+                        dims,
+                        &semantic_hints,
+                    )
                 }
                 #[cfg(not(feature = "parquet"))]
                 {
@@ -410,6 +442,7 @@ impl Profiler {
                 if let Some(l) = &self.config.locale {
                     profiler = profiler.locale(l.clone());
                 }
+                profiler = profiler.semantic_hints(semantic_hints);
                 let csv_config = self.csv_config_for_file(file_path);
                 profiler = profiler.csv_config(csv_config);
                 // Format already resolved here; skip the engine's extension-based
@@ -426,18 +459,24 @@ impl Profiler {
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
         let dims = self.config.quality_dimensions.as_deref();
+        let semantic_hints = self.semantic_hints();
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
-                return dataprof_json::analyze_json_file_with_dimensions(
+                return dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
                     &dataprof_json::JsonParserConfig::default(),
                     dims,
+                    &semantic_hints,
                 );
             }
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return dataprof_parquet::analyze_parquet_with_quality_dims(file_path, dims);
+                return dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                    file_path,
+                    dims,
+                    &semantic_hints,
+                );
                 #[cfg(not(feature = "parquet"))]
                 return Err(DataProfilerError::UnsupportedFormat {
                     format: "parquet (enable the `parquet` feature)".to_string(),
@@ -462,6 +501,7 @@ impl Profiler {
         if let Some(l) = &self.config.locale {
             profiler = profiler.locale(l.clone());
         }
+        profiler = profiler.semantic_hints(semantic_hints);
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);
 
@@ -475,20 +515,26 @@ impl Profiler {
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
         let dims = self.config.quality_dimensions.as_deref();
+        let semantic_hints = self.semantic_hints();
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return dataprof_parquet::analyze_parquet_with_quality_dims(file_path, dims);
+                return dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                    file_path,
+                    dims,
+                    &semantic_hints,
+                );
                 #[cfg(not(feature = "parquet"))]
                 return Err(DataProfilerError::UnsupportedFormat {
                     format: "parquet (enable the `parquet` feature)".to_string(),
                 });
             }
             FileFormat::Json | FileFormat::Jsonl => {
-                return dataprof_json::analyze_json_file_with_dimensions(
+                return dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
                     &dataprof_json::JsonParserConfig::default(),
                     dims,
+                    &semantic_hints,
                 );
             }
             _ => {}
@@ -511,6 +557,7 @@ impl Profiler {
             if let Some(l) = &self.config.locale {
                 profiler = profiler.locale(l.clone());
             }
+            profiler = profiler.semantic_hints(semantic_hints);
             let csv_config = self.csv_config_for_file(file_path);
             profiler = profiler.csv_config(csv_config);
             profiler.analyze_csv_file(file_path)
@@ -559,6 +606,12 @@ impl Profiler {
     /// # }
     /// ```
     pub async fn analyze_query(&self, query: &str) -> Result<ProfileReport, DataProfilerError> {
+        let semantic_hints = self.semantic_hints();
+        if !semantic_hints.is_empty() {
+            return Err(DataProfilerError::UnsupportedDataSource {
+                message: "positive_columns and identifier_columns are not supported for database profiling yet".to_string(),
+            });
+        }
         let config = self
             .config
             .database_config
@@ -581,6 +634,12 @@ impl Profiler {
         &self,
         query: &str,
     ) -> Result<ProfileReport, DataProfilerError> {
+        let semantic_hints = self.semantic_hints();
+        if !semantic_hints.is_empty() {
+            return Err(DataProfilerError::UnsupportedDataSource {
+                message: "positive_columns and identifier_columns are not supported for database profiling yet".to_string(),
+            });
+        }
         let config = self
             .config
             .database_config
@@ -650,6 +709,10 @@ impl Profiler {
         if let Some(ref d) = self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
+        if let Some(ref p) = self.config.metric_packs {
+            profiler = profiler.metric_packs(p.clone());
+        }
+        profiler = profiler.semantic_hints(self.semantic_hints());
 
         profiler.analyze_stream(source).await
     }
@@ -690,8 +753,13 @@ impl Profiler {
                     // Parquet requires seeking — delegate to sync parser on a blocking thread.
                     let path = path.to_path_buf();
                     let dims = self.config.quality_dimensions.clone();
+                    let semantic_hints = self.semantic_hints();
                     tokio::task::spawn_blocking(move || {
-                        dataprof_parquet::analyze_parquet_with_quality_dims(&path, dims.as_deref())
+                        dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                            &path,
+                            dims.as_deref(),
+                            &semantic_hints,
+                        )
                     })
                     .await
                     .map_err(|e| DataProfilerError::StreamingError {
@@ -807,10 +875,11 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet-async")]
                 {
-                    return dataprof_parquet::analyze_parquet_async_http_dims(
+                    return dataprof_parquet::analyze_parquet_async_http_dims_with_hints(
                         url,
                         &dataprof_parquet::ParquetConfig::default(),
                         self.config.quality_dimensions.clone(),
+                        &self.semantic_hints(),
                     )
                     .await;
                 }

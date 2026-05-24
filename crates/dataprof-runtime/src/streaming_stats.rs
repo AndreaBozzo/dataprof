@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 
 use crate::profile_builder::infer_data_type_streaming;
+use dataprof_metrics::analysis::inference::is_null_like_token;
 
 /// Incremental statistics computation for streaming data processing.
 ///
@@ -359,7 +360,7 @@ impl StreamingStatistics {
     pub fn update(&mut self, value: &str) {
         self.count += 1;
 
-        if value.is_empty() {
+        if is_null_like_token(value) {
             self.null_count += 1;
             return;
         }

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof::{
-    ChunkSize, EngineType, FileFormat, MetricPack, Profiler, QualityDimension, StopCondition,
+    ChunkSize, EngineType, FileFormat, MetricPack, Profiler, QualityDimension, SemanticHints,
+    StopCondition,
 };
 
 use super::progress::py_callback_to_sink;
@@ -32,6 +33,8 @@ pub struct PyProfilerConfig {
     pub(crate) quality_dimensions: Option<Vec<QualityDimension>>,
     pub(crate) metric_packs: Option<Vec<MetricPack>>,
     pub(crate) locale: Option<String>,
+    pub(crate) positive_columns: Vec<String>,
+    pub(crate) identifier_columns: Vec<String>,
 }
 
 #[pymethods]
@@ -52,6 +55,8 @@ impl PyProfilerConfig {
         quality_dimensions = None,
         metrics = None,
         locale = None,
+        positive_columns = None,
+        identifier_columns = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -69,6 +74,8 @@ impl PyProfilerConfig {
         quality_dimensions: Option<Vec<String>>,
         metrics: Option<Vec<String>>,
         locale: Option<String>,
+        positive_columns: Option<Vec<String>>,
+        identifier_columns: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -135,6 +142,8 @@ impl PyProfilerConfig {
             quality_dimensions,
             metric_packs,
             locale,
+            positive_columns: positive_columns.unwrap_or_default(),
+            identifier_columns: identifier_columns.unwrap_or_default(),
         })
     }
 
@@ -188,6 +197,18 @@ impl PyProfilerConfig {
     #[getter]
     fn locale(&self) -> Option<&str> {
         self.locale.as_deref()
+    }
+
+    /// Columns expected to contain non-negative numeric values
+    #[getter]
+    fn positive_columns(&self) -> Vec<String> {
+        self.positive_columns.clone()
+    }
+
+    /// Columns that should be treated as semantic identifiers
+    #[getter]
+    fn identifier_columns(&self) -> Vec<String> {
+        self.identifier_columns.clone()
     }
 
     fn __repr__(&self) -> String {
@@ -254,8 +275,21 @@ impl PyProfilerConfig {
         if let Some(ref l) = self.locale {
             profiler = profiler.locale(l);
         }
+        if !self.positive_columns.is_empty() {
+            profiler = profiler.positive_columns(self.positive_columns.clone());
+        }
+        if !self.identifier_columns.is_empty() {
+            profiler = profiler.identifier_columns(self.identifier_columns.clone());
+        }
 
         profiler
+    }
+
+    pub(crate) fn semantic_hints(&self) -> SemanticHints {
+        SemanticHints::new(
+            self.positive_columns.clone(),
+            self.identifier_columns.clone(),
+        )
     }
 }
 

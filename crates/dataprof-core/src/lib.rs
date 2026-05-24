@@ -10,6 +10,7 @@ pub mod profile;
 pub mod progress;
 pub mod quality;
 pub mod sampling;
+pub mod semantic;
 pub mod serde_helpers;
 pub mod source;
 pub mod stop_condition;
@@ -38,6 +39,7 @@ pub use sampling::{
     ChunkSize, MultiReservoirSampler, ReservoirSampler, ReservoirStats, SamplingState,
     SamplingStrategy, WeightedReservoirSampler,
 };
+pub use semantic::SemanticHints;
 pub use source::{
     DataFrameLibrary, DataSource, FileFormat, ParquetMetadata, QueryEngine, StreamSourceSystem,
 };

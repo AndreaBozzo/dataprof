@@ -4,6 +4,7 @@
 //! Key metrics: outlier ratio, range violations, negative values in positive fields.
 
 use super::utils::calculate_percentile;
+use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
@@ -33,9 +34,20 @@ impl<'a> AccuracyCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
     ) -> Result<AccuracyMetrics, DataProfilerError> {
+        self.calculate_with_positive_columns(data, column_profiles, &[])
+    }
+
+    /// Calculate accuracy dimension metrics with explicit positive-only columns.
+    pub fn calculate_with_positive_columns(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        positive_columns: &[String],
+    ) -> Result<AccuracyMetrics, DataProfilerError> {
         let outlier_ratio = self.calculate_outlier_ratio(data, column_profiles)?;
         let range_violations = Self::count_range_violations(data)?;
-        let negative_values_in_positive = Self::count_negative_in_positive_fields(data)?;
+        let negative_values_in_positive =
+            Self::count_negative_in_positive_fields(data, positive_columns)?;
 
         Ok(AccuracyMetrics {
             outlier_ratio,
@@ -61,7 +73,12 @@ impl<'a> AccuracyCalculator<'a> {
             if let Some(column_data) = data.get(&profile.name) {
                 let numeric_count = column_data
                     .iter()
-                    .filter(|v| !v.is_empty() && v.parse::<f64>().is_ok())
+                    .filter(|v| {
+                        if is_null_like_token(v.trim()) {
+                            return false;
+                        }
+                        v.parse::<f64>().is_ok_and(f64::is_finite)
+                    })
                     .count();
 
                 if numeric_count < self.thresholds.outlier_min_samples {
@@ -98,10 +115,10 @@ impl<'a> AccuracyCalculator<'a> {
         let numeric_values: Vec<f64> = values
             .iter()
             .filter_map(|v| {
-                if v.is_empty() {
+                if is_null_like_token(v.trim()) {
                     None
                 } else {
-                    v.parse::<f64>().ok()
+                    v.parse::<f64>().ok().filter(|n| n.is_finite())
                 }
             })
             .collect();
@@ -150,7 +167,7 @@ impl<'a> AccuracyCalculator<'a> {
         let mut violations = 0;
 
         for value in values {
-            if value.is_empty() {
+            if is_null_like_token(value.trim()) {
                 continue;
             }
 
@@ -185,22 +202,24 @@ impl<'a> AccuracyCalculator<'a> {
     /// Count negative values in positive-only fields
     fn count_negative_in_positive_fields(
         data: &HashMap<String, Vec<String>>,
+        positive_columns: &[String],
     ) -> Result<usize, DataProfilerError> {
-        let positive_field_patterns = [
-            "age", "price", "cost", "amount", "count", "quantity", "salary", "revenue", "profit",
-            "distance", "weight", "height", "length", "width", "area", "volume",
-        ];
         let mut violations = 0;
 
         for (column_name, values) in data {
-            let is_positive_field = positive_field_patterns
+            if positive_columns
                 .iter()
-                .any(|pattern| column_name.to_lowercase().contains(pattern));
-
-            if is_positive_field {
+                .any(|candidate| candidate == column_name)
+            {
                 violations += values
                     .iter()
-                    .filter_map(|v| v.parse::<f64>().ok())
+                    .filter_map(|v| {
+                        if is_null_like_token(v.trim()) {
+                            None
+                        } else {
+                            v.parse::<f64>().ok()
+                        }
+                    })
                     .filter(|&num| num < 0.0)
                     .count();
             }
@@ -255,5 +274,30 @@ mod tests {
             metrics.outlier_ratio > 0.0,
             "small numeric samples above outlier_min_samples should still detect obvious outliers"
         );
+    }
+
+    #[test]
+    fn test_negative_values_require_positive_column_hint() {
+        let thresholds = IsoQualityConfig::default();
+        let calc = AccuracyCalculator::new(&thresholds);
+        let data = HashMap::from([(
+            "pressure".to_string(),
+            vec![
+                "101325".to_string(),
+                "-500".to_string(),
+                "100900".to_string(),
+            ],
+        )]);
+        let profiles = vec![numeric_profile("pressure")];
+
+        let without_hint = calc
+            .calculate(&data, &profiles)
+            .expect("accuracy metrics should compute");
+        assert_eq!(without_hint.negative_values_in_positive, 0);
+
+        let with_hint = calc
+            .calculate_with_positive_columns(&data, &profiles, &["pressure".to_string()])
+            .expect("accuracy metrics should compute");
+        assert_eq!(with_hint.negative_values_in_positive, 1);
     }
 }

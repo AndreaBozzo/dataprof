@@ -5,7 +5,8 @@ use std::path::Path;
 
 use crate::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_core::{
-    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityDimension,
+    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
+    QualityDimension, SemanticHints,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 
@@ -85,6 +86,19 @@ pub fn analyze_parquet_with_quality_dims(
     analyze_parquet_with_config_dims(file_path, &ParquetConfig::default(), quality_dimensions)
 }
 
+pub fn analyze_parquet_with_quality_dims_and_hints(
+    file_path: &Path,
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
+    analyze_parquet_with_config_dims_and_hints(
+        file_path,
+        &ParquetConfig::default(),
+        quality_dimensions,
+        semantic_hints,
+    )
+}
+
 pub fn analyze_parquet_with_config(
     file_path: &Path,
     config: &ParquetConfig,
@@ -96,6 +110,20 @@ pub fn analyze_parquet_with_config_dims(
     file_path: &Path,
     config: &ParquetConfig,
     quality_dimensions: Option<&[QualityDimension]>,
+) -> Result<ProfileReport, DataProfilerError> {
+    analyze_parquet_with_config_dims_and_hints(
+        file_path,
+        config,
+        quality_dimensions,
+        &SemanticHints::default(),
+    )
+}
+
+pub fn analyze_parquet_with_config_dims_and_hints(
+    file_path: &Path,
+    config: &ParquetConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
 ) -> Result<ProfileReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
@@ -150,7 +178,7 @@ pub fn analyze_parquet_with_config_dims(
         analyzer.process_batch(&batch)?;
     }
 
-    let column_profiles = analyzer.to_profiles(false, false, None);
+    let column_profiles = analyzer.to_profiles_with_hints(false, false, None, semantic_hints);
     let total_rows = analyzer.total_rows();
     let sample_columns = analyzer.create_sample_columns();
     let scan_time_ms = start.elapsed().as_millis();
@@ -177,7 +205,8 @@ pub fn analyze_parquet_with_config_dims(
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns);
+    .with_quality_data(sample_columns)
+    .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }

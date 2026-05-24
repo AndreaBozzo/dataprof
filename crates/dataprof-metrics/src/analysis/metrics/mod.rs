@@ -144,6 +144,22 @@ impl MetricsCalculator {
         column_profiles: &[ColumnProfile],
         requested_dimensions: Option<&[QualityDimension]>,
     ) -> Result<QualityMetrics, DataProfilerError> {
+        self.calculate_comprehensive_metrics_with_positive_columns(
+            data,
+            column_profiles,
+            requested_dimensions,
+            &[],
+        )
+    }
+
+    /// Calculate comprehensive metrics with explicit positive-only column hints.
+    pub fn calculate_comprehensive_metrics_with_positive_columns(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
+        positive_columns: &[String],
+    ) -> Result<QualityMetrics, DataProfilerError> {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset(
                 &requested_dimensions,
@@ -209,7 +225,16 @@ impl MetricsCalculator {
 
         // Accuracy dimension
         let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
-            let a = AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
+            let accuracy_calculator = AccuracyCalculator::new(&self.thresholds);
+            let a = if positive_columns.is_empty() {
+                accuracy_calculator.calculate(data, column_profiles)?
+            } else {
+                accuracy_calculator.calculate_with_positive_columns(
+                    data,
+                    column_profiles,
+                    positive_columns,
+                )?
+            };
             Some(AccuracyMetrics {
                 outlier_ratio: a.outlier_ratio,
                 range_violations: a.range_violations,
@@ -317,6 +342,22 @@ impl MetricsCalculator {
         column_profiles: &[ColumnProfile],
         requested_dimensions: Option<&[QualityDimension]>,
     ) -> Result<BifurcatedResult, DataProfilerError> {
+        self.calculate_bifurcated_metrics_with_positive_columns(
+            data,
+            column_profiles,
+            requested_dimensions,
+            &[],
+        )
+    }
+
+    /// Calculate bifurcated metrics with explicit positive-only column hints.
+    pub fn calculate_bifurcated_metrics_with_positive_columns(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
+        positive_columns: &[String],
+    ) -> Result<BifurcatedResult, DataProfilerError> {
         if data.is_empty() && column_profiles.is_empty() {
             return Ok(BifurcatedResult {
                 metrics: Self::default_metrics_for_empty_dataset(&requested_dimensions),
@@ -387,7 +428,11 @@ impl MetricsCalculator {
 
         let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
             let a = if !data.is_empty() {
-                AccuracyCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+                AccuracyCalculator::new(&self.thresholds).calculate_with_positive_columns(
+                    data,
+                    column_profiles,
+                    positive_columns,
+                )?
             } else {
                 accuracy::AccuracyMetrics {
                     outlier_ratio: 0.0,

@@ -293,6 +293,8 @@ def profile(
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
     locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -326,6 +328,10 @@ def profile(
         locale: ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT",
             "US", "GB"). Boosts confidence for locale-matching patterns and
             suppresses non-matching locale patterns. None = no preference.
+        positive_columns: Columns whose numeric values are expected to be
+            non-negative.
+        identifier_columns: Numeric-looking columns to treat as semantic
+            identifiers instead of measures.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -347,6 +353,8 @@ def profile(
             quality_dimensions=quality_dimensions,
             metrics=metrics,
             locale=locale,
+            positive_columns=positive_columns,
+            identifier_columns=identifier_columns,
         )
         rust_report = _analyze_file(_normalize_pathlike(source, arg_name="source"), config)
         return ProfileReport(rust_report)
@@ -354,12 +362,24 @@ def profile(
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
     def _df_config() -> ProfilerConfig | None:
         """Build a ProfilerConfig if any DataFrame-relevant options are set."""
-        if any(v is not None for v in (max_rows, quality_dimensions, metrics, locale)):
+        if any(
+            v is not None
+            for v in (
+                max_rows,
+                quality_dimensions,
+                metrics,
+                locale,
+                positive_columns,
+                identifier_columns,
+            )
+        ):
             return ProfilerConfig(
                 max_rows=max_rows,
                 quality_dimensions=quality_dimensions,
                 metrics=metrics,
                 locale=locale,
+                positive_columns=positive_columns,
+                identifier_columns=identifier_columns,
             )
         return None
 
@@ -522,6 +542,16 @@ class Profiler:
     def locale(self, locale: str) -> Profiler:
         """Set locale for pattern detection (e.g. "IT", "US", "GB")."""
         self._kwargs["locale"] = locale
+        return self
+
+    def positive_columns(self, columns: list[str]) -> Profiler:
+        """Mark columns whose numeric values are expected to be non-negative."""
+        self._kwargs["positive_columns"] = columns
+        return self
+
+    def identifier_columns(self, columns: list[str]) -> Profiler:
+        """Mark columns to profile as semantic identifiers."""
+        self._kwargs["identifier_columns"] = columns
         return self
 
     def metrics(self, packs: list[str]) -> Profiler:

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
-    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, StopCondition,
-    StopEvaluator,
+    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, SemanticHints,
+    StopCondition, StopEvaluator,
 };
 use dataprof_csv::{CsvParserConfig, MemoryMappedCsvReader};
 use dataprof_runtime::{
@@ -27,6 +27,7 @@ pub struct IncrementalProfiler {
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<String>,
+    semantic_hints: SemanticHints,
 }
 
 impl IncrementalProfiler {
@@ -42,6 +43,7 @@ impl IncrementalProfiler {
             metric_packs: None,
             csv_config: None,
             locale: None,
+            semantic_hints: SemanticHints::default(),
         }
     }
 
@@ -88,6 +90,11 @@ impl IncrementalProfiler {
 
     pub fn locale(mut self, locale: String) -> Self {
         self.locale = Some(locale);
+        self
+    }
+
+    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
+        self.semantic_hints = hints;
         self
     }
 
@@ -245,11 +252,12 @@ impl IncrementalProfiler {
         let packs = self.metric_packs.as_deref();
         let skip_stats = !MetricPack::include_statistics(packs);
         let skip_patterns = !MetricPack::include_patterns(packs);
-        let column_profiles = profile_builder::profiles_from_streaming(
+        let column_profiles = profile_builder::profiles_from_streaming_with_hints(
             &column_stats,
             skip_stats,
             skip_patterns,
             self.locale.as_deref(),
+            &self.semantic_hints,
         );
 
         // Calculate quality metrics from sample data
@@ -300,7 +308,9 @@ impl IncrementalProfiler {
         .columns(column_profiles);
 
         if MetricPack::include_quality(packs) {
-            assembler = assembler.with_quality_data(sample_columns);
+            assembler = assembler
+                .with_quality_data(sample_columns)
+                .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {
                 assembler = assembler.with_requested_dimensions(dims.clone());
             }

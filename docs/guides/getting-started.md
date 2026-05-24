@@ -119,7 +119,7 @@ Measures whether values fall within expected ranges.
 
 - `outlier_ratio` -- fraction of values outside the interquartile range
 - `range_violations` -- values outside expected bounds
-- `negative_values_in_positive` -- negative numbers in columns that should be positive
+- `negative_values_in_positive` -- negative numbers in explicit `positive_columns`
 
 ### Timeliness
 

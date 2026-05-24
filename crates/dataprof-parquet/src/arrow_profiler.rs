@@ -3,10 +3,10 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat,
-    MetricPack, QualityDimension,
+    MetricPack, QualityDimension, SemanticHints,
 };
 use dataprof_csv::CsvParserConfig;
-use dataprof_metrics::analysis::inference::infer_type;
+use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
 use dataprof_runtime::{
     ColumnProfileInput, ProfileReport, ReportAssembler, TextLengths, build_column_profile,
 };
@@ -25,6 +25,7 @@ pub struct ArrowProfiler {
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<String>,
+    semantic_hints: SemanticHints,
 }
 
 impl ArrowProfiler {
@@ -36,6 +37,7 @@ impl ArrowProfiler {
             metric_packs: None,
             csv_config: None,
             locale: None,
+            semantic_hints: SemanticHints::default(),
         }
     }
 
@@ -66,6 +68,11 @@ impl ArrowProfiler {
 
     pub fn locale(mut self, locale: String) -> Self {
         self.locale = Some(locale);
+        self
+    }
+
+    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
+        self.semantic_hints = hints;
         self
     }
 
@@ -161,6 +168,7 @@ impl ArrowProfiler {
                     skip_stats,
                     skip_patterns,
                     self.locale.as_deref(),
+                    &self.semantic_hints,
                 );
                 column_profiles.push(profile);
                 sample_columns.insert(name, analyzer.get_sample_values());
@@ -183,7 +191,9 @@ impl ArrowProfiler {
         .columns(column_profiles);
 
         if MetricPack::include_quality(packs) {
-            assembler = assembler.with_quality_data(sample_columns);
+            assembler = assembler
+                .with_quality_data(sample_columns)
+                .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {
                 assembler = assembler.with_requested_dimensions(dims.clone());
             }
@@ -462,6 +472,10 @@ impl ColumnAnalyzer {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
+                if is_null_like_token(value) {
+                    self.null_count += 1;
+                    continue;
+                }
                 self.update_text_stats(value);
 
                 if self.unique_values.len() < 1000 {
@@ -483,6 +497,10 @@ impl ColumnAnalyzer {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
+                if is_null_like_token(value) {
+                    self.null_count += 1;
+                    continue;
+                }
                 self.update_text_stats(value);
 
                 if self.unique_values.len() < 1000 {
@@ -750,8 +768,13 @@ impl ColumnAnalyzer {
         skip_statistics: bool,
         skip_patterns: bool,
         locale: Option<&str>,
+        semantic_hints: &SemanticHints,
     ) -> ColumnProfile {
-        let data_type = self.infer_data_type();
+        let data_type = if semantic_hints.is_identifier_column(&name) {
+            DataType::Identifier
+        } else {
+            self.infer_data_type()
+        };
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64
         } else {
@@ -1009,7 +1032,13 @@ mod tests {
         assert_eq!(analyzer.true_count, 3);
         assert_eq!(analyzer.false_count, 2);
 
-        let profile = analyzer.to_column_profile("flag".to_string(), false, false, None);
+        let profile = analyzer.to_column_profile(
+            "flag".to_string(),
+            false,
+            false,
+            None,
+            &SemanticHints::default(),
+        );
         assert_eq!(profile.data_type, DataType::Boolean);
         assert_eq!(profile.total_count, 6);
         assert_eq!(profile.null_count, 1);

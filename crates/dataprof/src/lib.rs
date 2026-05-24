@@ -28,8 +28,8 @@ pub use dataprof_core::{
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
     InputValidator, MetricPack, NumericStats, OutputFormat, ParquetMetadata, Pattern,
     PatternCategory, ProgressEvent, ProgressSink, QualityDimension, Quartiles, QueryEngine,
-    RowCountEstimate, SamplingStrategy, SchemaResult, StopCondition, StopEvaluator, TextStats,
-    TruncationReason, ValidationError,
+    RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints, StopCondition, StopEvaluator,
+    TextStats, TruncationReason, ValidationError,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
+    SemanticHints,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -175,6 +176,23 @@ pub fn analyze_csv_from_reader<R: Read>(
     ),
     DataProfilerError,
 > {
+    analyze_csv_from_reader_with_hints(reader, config, &SemanticHints::default())
+}
+
+/// Analyze CSV data from any `Read` source while applying semantic hints.
+pub fn analyze_csv_from_reader_with_hints<R: Read>(
+    reader: R,
+    config: &CsvParserConfig,
+    semantic_hints: &SemanticHints,
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        Vec<String>,
+    ),
+    DataProfilerError,
+> {
     let mut csv_builder = ReaderBuilder::new();
     csv_builder.has_headers(config.has_header);
     csv_builder.flexible(config.flexible);
@@ -237,7 +255,13 @@ pub fn analyze_csv_from_reader<R: Read>(
         rows_read += 1;
     }
 
-    let profiles = profile_builder::profiles_from_streaming(&column_stats, false, false, None);
+    let profiles = profile_builder::profiles_from_streaming_with_hints(
+        &column_stats,
+        false,
+        false,
+        None,
+        semantic_hints,
+    );
 
     Ok((profiles, column_stats, rows_read, header_names))
 }
@@ -259,6 +283,20 @@ pub fn analyze_csv_file_with_dimensions(
     config: &CsvParserConfig,
     quality_dimensions: Option<&[QualityDimension]>,
 ) -> Result<ProfileReport, DataProfilerError> {
+    analyze_csv_file_with_dimensions_and_hints(
+        file_path,
+        config,
+        quality_dimensions,
+        &SemanticHints::default(),
+    )
+}
+
+pub fn analyze_csv_file_with_dimensions_and_hints(
+    file_path: &Path,
+    config: &CsvParserConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     let start = std::time::Instant::now();
 
@@ -266,7 +304,7 @@ pub fn analyze_csv_file_with_dimensions(
     let buf_reader = std::io::BufReader::new(file);
 
     let (column_profiles, column_stats, rows_read, header_names) =
-        analyze_csv_from_reader(buf_reader, config)?;
+        analyze_csv_from_reader_with_hints(buf_reader, config, semantic_hints)?;
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -294,7 +332,8 @@ pub fn analyze_csv_file_with_dimensions(
         ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns);
+    .with_quality_data(sample_columns)
+    .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }

@@ -138,7 +138,7 @@ fn test_columnar_engine_detects_boolean_columns() {
 }
 
 #[test]
-fn test_boolean_yes_no_detection() {
+fn test_boolean_yes_no_stays_string_by_default() {
     let mut f = NamedTempFile::with_suffix(".csv").unwrap();
     writeln!(f, "subscribed").unwrap();
     for i in 0..50 {
@@ -152,18 +152,40 @@ fn test_boolean_yes_no_detection() {
     let col = &report.column_profiles[0];
     assert_eq!(
         col.data_type,
-        DataType::Boolean,
-        "yes/no values should be detected as Boolean"
+        DataType::String,
+        "yes/no values should remain strings unless extended boolean tokens are added explicitly"
     );
+}
+
+#[test]
+fn test_boolean_mixed_case_with_null_like_tokens() {
+    let mut f = NamedTempFile::with_suffix(".csv").unwrap();
+    writeln!(f, "flag,label").unwrap();
+    writeln!(f, "true,a").unwrap();
+    writeln!(f, "FALSE,b").unwrap();
+    writeln!(f, "TRUE,c").unwrap();
+    writeln!(f, "false,d").unwrap();
+    writeln!(f, "null,e").unwrap();
+    writeln!(f, "NULL,f").unwrap();
+    writeln!(f, "nan,g").unwrap();
+    writeln!(f, ",h").unwrap();
+    f.flush().unwrap();
+
+    let report = analyze_csv_file(f.path(), &CsvParserConfig::default())
+        .expect("CSV analysis should succeed");
+
+    let col = report
+        .column_profiles
+        .iter()
+        .find(|col| col.name == "flag")
+        .unwrap();
+    assert_eq!(col.data_type, DataType::Boolean);
+    assert_eq!(col.null_count, 4);
     match &col.stats {
         ColumnStats::Boolean(b) => {
-            assert_eq!(b.true_count, 25, "yes values should count as true");
-            assert_eq!(b.false_count, 25, "no values should count as false");
-            assert!(
-                (b.true_ratio - 0.5).abs() < 1e-9,
-                "expected true_ratio to be 0.5, got {}",
-                b.true_ratio
-            );
+            assert_eq!(b.true_count, 2);
+            assert_eq!(b.false_count, 2);
+            assert!((b.true_ratio - 0.5).abs() < 1e-9);
         }
         other => panic!("Expected Boolean stats, got {:?}", other),
     }

@@ -193,6 +193,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
                 DataType::Integer => "integer".to_string(),
                 DataType::Float => "float".to_string(),
                 DataType::String => "string".to_string(),
+                DataType::Identifier => "identifier".to_string(),
                 DataType::Date => "date".to_string(),
                 DataType::Boolean => "boolean".to_string(),
             },

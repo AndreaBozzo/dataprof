@@ -3,6 +3,8 @@
 pub enum DataType {
     /// Text or string values.
     String,
+    /// Identifier values that should be treated as semantic strings.
+    Identifier,
     /// Whole numbers in the i64 range.
     Integer,
     /// Floating-point numbers.

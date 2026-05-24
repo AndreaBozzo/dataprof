@@ -7,10 +7,13 @@
 
 use std::collections::HashMap;
 
-use dataprof_core::{BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, TextStats};
+use dataprof_core::{
+    BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, SemanticHints, TextStats,
+};
 use dataprof_metrics::{
-    analysis::patterns::looks_like_date, calculate_datetime_stats, calculate_numeric_stats,
-    calculate_text_stats, detect_patterns,
+    analysis::inference::{is_null_like_token, parse_strict_boolean_token},
+    analysis::patterns::looks_like_date,
+    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats, detect_patterns,
 };
 
 use crate::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
@@ -73,18 +76,12 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                     let tc = input
                         .sample_values
                         .iter()
-                        .filter(|v| {
-                            let t = v.trim();
-                            t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-                        })
+                        .filter(|v| parse_strict_boolean_token(v.trim()) == Some(true))
                         .count();
                     let fc = input
                         .sample_values
                         .iter()
-                        .filter(|v| {
-                            let t = v.trim();
-                            t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
-                        })
+                        .filter(|v| parse_strict_boolean_token(v.trim()) == Some(false))
                         .count();
                     (tc, fc)
                 });
@@ -100,7 +97,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                     true_ratio,
                 })
             }
-            DataType::String => {
+            DataType::String | DataType::Identifier => {
                 if let Some(tl) = &input.text_lengths {
                     ColumnStats::Text(TextStats::from_lengths(
                         tl.min_length,
@@ -138,12 +135,35 @@ pub fn profiles_from_streaming(
     skip_patterns: bool,
     locale: Option<&str>,
 ) -> Vec<ColumnProfile> {
+    profiles_from_streaming_with_hints(
+        column_stats,
+        skip_statistics,
+        skip_patterns,
+        locale,
+        &SemanticHints::default(),
+    )
+}
+
+/// Convert all columns into [`ColumnProfile`]s while applying semantic hints.
+pub fn profiles_from_streaming_with_hints(
+    column_stats: &StreamingColumnCollection,
+    skip_statistics: bool,
+    skip_patterns: bool,
+    locale: Option<&str>,
+    semantic_hints: &SemanticHints,
+) -> Vec<ColumnProfile> {
     let mut profiles = Vec::new();
 
     for column_name in column_stats.column_names() {
         if let Some(stats) = column_stats.get_column_stats(&column_name) {
-            let profile =
-                profile_from_stats(&column_name, stats, skip_statistics, skip_patterns, locale);
+            let profile = profile_from_stats_with_hints(
+                &column_name,
+                stats,
+                skip_statistics,
+                skip_patterns,
+                locale,
+                semantic_hints,
+            );
             profiles.push(profile);
         }
     }
@@ -159,7 +179,30 @@ pub fn profile_from_stats(
     skip_patterns: bool,
     locale: Option<&str>,
 ) -> ColumnProfile {
-    let data_type = infer_data_type_streaming(stats);
+    profile_from_stats_with_hints(
+        name,
+        stats,
+        skip_statistics,
+        skip_patterns,
+        locale,
+        &SemanticHints::default(),
+    )
+}
+
+/// Convert a single column into a [`ColumnProfile`] while applying semantic hints.
+pub fn profile_from_stats_with_hints(
+    name: &str,
+    stats: &StreamingStatistics,
+    skip_statistics: bool,
+    skip_patterns: bool,
+    locale: Option<&str>,
+    semantic_hints: &SemanticHints,
+) -> ColumnProfile {
+    let data_type = if semantic_hints.is_identifier_column(name) {
+        DataType::Identifier
+    } else {
+        infer_data_type_streaming(stats)
+    };
     let text_stats = stats.text_length_stats();
 
     build_column_profile(ColumnProfileInput {
@@ -185,7 +228,10 @@ pub fn profile_from_stats(
 pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
     if stats.min.is_finite() && stats.max.is_finite() {
         let sample_values = stats.sample_values();
-        let non_empty: Vec<&String> = sample_values.iter().filter(|s| !s.is_empty()).collect();
+        let non_empty: Vec<&String> = sample_values
+            .iter()
+            .filter(|s| !is_null_like_token(s.trim()))
+            .collect();
 
         if !non_empty.is_empty() {
             let all_integers = non_empty.iter().all(|s| s.parse::<i64>().is_ok());
@@ -206,7 +252,7 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
     let sample_values = stats.sample_values();
     let non_empty: Vec<&String> = sample_values
         .iter()
-        .filter(|s| !s.trim().is_empty())
+        .filter(|s| !is_null_like_token(s.trim()))
         .collect();
 
     if !non_empty.is_empty() {
@@ -222,23 +268,7 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
 
         let bool_count = non_empty
             .iter()
-            .filter(|s| {
-                matches!(
-                    s.trim(),
-                    "true"
-                        | "false"
-                        | "True"
-                        | "False"
-                        | "TRUE"
-                        | "FALSE"
-                        | "yes"
-                        | "no"
-                        | "Yes"
-                        | "No"
-                        | "YES"
-                        | "NO"
-                )
-            })
+            .filter(|s| parse_strict_boolean_token(s.trim()).is_some())
             .count();
 
         if bool_count as f64 / non_empty.len() as f64 >= 0.9 {

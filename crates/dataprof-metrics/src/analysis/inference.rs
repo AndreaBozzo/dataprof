@@ -31,8 +31,11 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 });
 
 pub fn infer_type(data: &[String]) -> DataType {
-    // Filter empty and whitespace-only strings for more robust inference
-    let non_empty: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
+    // Filter null-like strings for more robust inference.
+    let non_empty: Vec<&String> = data
+        .iter()
+        .filter(|s| !is_null_like_token(s.trim()))
+        .collect();
 
     if non_empty.is_empty() {
         return DataType::String;
@@ -64,27 +67,11 @@ pub fn infer_type(data: &[String]) -> DataType {
         return DataType::Float;
     }
 
-    // Check booleans after numeric — string literals only (pure 0/1 columns
+    // Check booleans after numeric — strict string literals only (pure 0/1 columns
     // already matched as Integer above). 90% threshold to tolerate a few nulls.
     let bool_count = non_empty
         .iter()
-        .filter(|s| {
-            matches!(
-                s.trim(),
-                "true"
-                    | "false"
-                    | "True"
-                    | "False"
-                    | "TRUE"
-                    | "FALSE"
-                    | "yes"
-                    | "no"
-                    | "Yes"
-                    | "No"
-                    | "YES"
-                    | "NO"
-            )
-        })
+        .filter(|s| parse_strict_boolean_token(s.trim()).is_some())
         .count();
 
     if bool_count as f64 / non_empty.len() as f64 >= 0.9 {
@@ -106,6 +93,24 @@ pub fn infer_type(data: &[String]) -> DataType {
     }
 
     DataType::String
+}
+
+pub fn is_null_like_token(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("null")
+        || trimmed.eq_ignore_ascii_case("nan")
+}
+
+pub fn parse_strict_boolean_token(value: &str) -> Option<bool> {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if trimmed.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -301,7 +306,7 @@ mod tests {
     #[test]
     fn test_infer_boolean_yes_no() {
         let data = vec!["yes".to_string(), "no".to_string(), "yes".to_string()];
-        assert!(matches!(infer_type(&data), DataType::Boolean));
+        assert!(matches!(infer_type(&data), DataType::String));
     }
 
     #[test]
@@ -365,6 +370,20 @@ mod tests {
             "1".to_string(),
         ];
         assert!(matches!(infer_type(&data), DataType::Integer));
+    }
+
+    #[test]
+    fn test_infer_boolean_with_null_like_tokens() {
+        let data = vec![
+            "true".to_string(),
+            "FALSE".to_string(),
+            "null".to_string(),
+            "NULL".to_string(),
+            "nan".to_string(),
+            "NaN".to_string(),
+            "".to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Boolean));
     }
 
     #[test]

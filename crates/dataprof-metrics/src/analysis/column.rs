@@ -1,6 +1,6 @@
 use crate::types::{ColumnProfile, ColumnStats, DataType};
 
-use crate::analysis::inference::infer_type;
+use crate::analysis::inference::{infer_type, is_null_like_token, parse_strict_boolean_token};
 use crate::analysis::patterns::detect_patterns;
 use crate::stats::{calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats};
 
@@ -31,7 +31,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     let total_count = data.len();
 
     // Aligned with inference.rs: whitespace-only strings are treated as null
-    let null_count = data.iter().filter(|s| s.trim().is_empty()).count();
+    let null_count = data.iter().filter(|s| is_null_like_token(s.trim())).count();
 
     // Infer type (uses same whitespace logic internally)
     let data_type = infer_type(data);
@@ -41,20 +41,13 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
         DataType::Integer | DataType::Float => calculate_numeric_stats(data),
         DataType::Date => calculate_datetime_stats(data),
         DataType::Boolean => {
-            let non_null: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
-            let tc = non_null
+            let tc = data
                 .iter()
-                .filter(|v| {
-                    let t = v.trim();
-                    t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes")
-                })
+                .filter(|v| parse_strict_boolean_token(v.trim()) == Some(true))
                 .count();
-            let fc = non_null
+            let fc = data
                 .iter()
-                .filter(|v| {
-                    let t = v.trim();
-                    t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no")
-                })
+                .filter(|v| parse_strict_boolean_token(v.trim()) == Some(false))
                 .count();
             let total = tc + fc;
             let true_ratio = if total > 0 {
@@ -68,7 +61,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
                 true_ratio,
             })
         }
-        DataType::String => calculate_text_stats(data),
+        DataType::String | DataType::Identifier => calculate_text_stats(data),
     };
 
     // Skip expensive operations in fast mode
@@ -84,7 +77,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
         // Count unique non-null values (aligned with whitespace logic)
         Some(
             data.iter()
-                .filter(|s| !s.trim().is_empty())
+                .filter(|s| !is_null_like_token(s.trim()))
                 .collect::<std::collections::HashSet<_>>()
                 .len(),
         )

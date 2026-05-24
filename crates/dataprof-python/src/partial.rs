@@ -33,6 +33,7 @@ impl PySchemaResult {
                         DataType::Integer => "integer",
                         DataType::Float => "float",
                         DataType::String => "string",
+                        DataType::Identifier => "identifier",
                         DataType::Date => "date",
                         DataType::Boolean => "boolean",
                     }

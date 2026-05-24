@@ -114,7 +114,7 @@ report = (dp.Profiler()
 report = dp.profile("data.csv")
 active_col = report["is_active"]
 
-if active_col.data_type == "Boolean":
+if active_col.data_type == "boolean":
     print(f"True: {active_col.true_count} ({active_col.true_ratio:.1%})")
     print(f"False: {active_col.false_count}")
 ```
@@ -289,15 +289,15 @@ if report.low_sample_warning:
 
 score = report.quality_score or 0.0
 
-if score < 0.90:
+if score < 90.0:
     q = report.quality
     failures = []
-    if q.missing_values_ratio > 0.1:
-        failures.append(f"missing values: {q.missing_values_ratio:.1%}")
+    if q.missing_values_ratio > 10.0:
+        failures.append(f"missing values: {q.missing_values_ratio:.1f}%")
     if q.duplicate_rows > 0:
         failures.append(f"{q.duplicate_rows} duplicate rows")
-    if q.outlier_ratio > 0.05:
-        failures.append(f"outlier ratio: {q.outlier_ratio:.1%}")
+    if q.outlier_ratio > 5.0:
+        failures.append(f"outlier ratio: {q.outlier_ratio:.1f}%")
     print(f"REJECTED (score={score:.2f}): {', '.join(failures)}")
     sys.exit(1)
 
@@ -327,6 +327,19 @@ suspicious = sorted(
 
 for name, n_outliers, lo, hi in suspicious[:5]:
     print(f"{name:30} {n_outliers:>4} outliers  range=[{lo}, {hi}]")
+```
+
+### Domain hints for IDs and positive values (0.8.0)
+
+```python
+report = dp.profile(
+    "orders.csv",
+    identifier_columns=["order_id", "customer_id"],
+    positive_columns=["total_amount"],
+)
+
+assert report["order_id"].data_type == "identifier"
+print(report.quality.negative_values_in_positive)
 ```
 
 ### Serialize a single column (0.8.0)
@@ -377,7 +390,7 @@ for f in files:
     r = dp.profile(str(f), quality_dimensions=["completeness", "uniqueness"])
     q = r.quality
     print(f"{f.name:40s}  rows={r.rows:>8d}  "
-          f"complete={q.complete_records_ratio:.1%}  "
+          f"complete={q.complete_records_ratio:.1f}%  "
           f"dupes={q.duplicate_rows}")
 ```
 

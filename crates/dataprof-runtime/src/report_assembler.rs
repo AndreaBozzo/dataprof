@@ -7,7 +7,9 @@
 
 use std::collections::HashMap;
 
-use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, QualityDimension};
+use dataprof_core::{
+    ColumnProfile, DataSource, ExecutionMetadata, QualityDimension, SemanticHints,
+};
 use dataprof_metrics::{
     MetricConfidence, MetricsCalculator, QualityAssessment, analysis::metrics::BifurcatedResult,
 };
@@ -23,6 +25,7 @@ pub struct ReportAssembler {
     confidence: Option<MetricConfidence>,
     skip_quality: bool,
     requested_dimensions: Option<Vec<QualityDimension>>,
+    semantic_hints: SemanticHints,
 }
 
 impl ReportAssembler {
@@ -36,6 +39,7 @@ impl ReportAssembler {
             confidence: None,
             skip_quality: false,
             requested_dimensions: None,
+            semantic_hints: SemanticHints::default(),
         }
     }
 
@@ -66,6 +70,12 @@ impl ReportAssembler {
     /// Set the quality dimensions to compute.
     pub fn with_requested_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.requested_dimensions = Some(dims);
+        self
+    }
+
+    /// Set semantic hints used by quality metrics.
+    pub fn with_semantic_hints(mut self, hints: SemanticHints) -> Self {
+        self.semantic_hints = hints;
         self
     }
 
@@ -103,10 +113,11 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_bifurcated_metrics(
+        match calculator.calculate_bifurcated_metrics_with_positive_columns(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
+            &self.semantic_hints.positive_columns,
         ) {
             Ok(result) => {
                 let confidence = self
@@ -130,10 +141,11 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_comprehensive_metrics(
+        match calculator.calculate_comprehensive_metrics_with_positive_columns(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
+            &self.semantic_hints.positive_columns,
         ) {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);

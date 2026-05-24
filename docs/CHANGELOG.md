@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python: `dataprof.column_to_dict(col)` returns the same nested dict shape as
   one element of `report.to_dict()["columns"]`, for piping individual columns
   into downstream systems without serializing the whole report.
+- Add explicit `positive_columns` and `identifier_columns` hints across the
+  Rust and Python profilers. Positive columns drive
+  `accuracy.negative_values_in_positive`; identifier columns are reported as
+  `identifier` and excluded from numeric stats/outlier metrics (#304, #305).
 
 ### Changed
 
@@ -39,8 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `eprintln!` to `log::warn!` so library users opt in via env_logger.
 - Dropped lingering `--chunk-size` CLI-flag advice from `StreamingError` and
   `ValidationError` (CLI was retired); messages now reference the builder API.
-
-### Changed
+- Boolean inference now treats `true`/`false` case-insensitively and ignores
+  empty/`null`/`nan` tokens; `yes`/`no` remain strings by default (#303).
 
 - Move the public `dataprof` facade source to `crates/dataprof/src` and remove
   the legacy `src/` shell before the 0.8.0 release.

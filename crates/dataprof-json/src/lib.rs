@@ -4,6 +4,7 @@ use std::path::Path;
 
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
+    SemanticHints,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -292,6 +293,23 @@ pub fn analyze_json_from_reader<R: BufRead>(
     ),
     DataProfilerError,
 > {
+    analyze_json_from_reader_with_hints(reader, config, &SemanticHints::default())
+}
+
+pub fn analyze_json_from_reader_with_hints<R: BufRead>(
+    reader: R,
+    config: &JsonParserConfig,
+    semantic_hints: &SemanticHints,
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        usize,
+        FileFormat,
+    ),
+    DataProfilerError,
+> {
     let mut column_stats = StreamingColumnCollection::new();
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
@@ -305,7 +323,13 @@ pub fn analyze_json_from_reader<R: BufRead>(
         );
     })?;
 
-    let profiles = profile_builder::profiles_from_streaming(&column_stats, false, false, None);
+    let profiles = profile_builder::profiles_from_streaming_with_hints(
+        &column_stats,
+        false,
+        false,
+        None,
+        semantic_hints,
+    );
 
     Ok((
         profiles,
@@ -330,6 +354,20 @@ pub fn analyze_json_file_with_dimensions(
     config: &JsonParserConfig,
     quality_dimensions: Option<&[QualityDimension]>,
 ) -> Result<ProfileReport, DataProfilerError> {
+    analyze_json_file_with_dimensions_and_hints(
+        file_path,
+        config,
+        quality_dimensions,
+        &SemanticHints::default(),
+    )
+}
+
+pub fn analyze_json_file_with_dimensions_and_hints(
+    file_path: &Path,
+    config: &JsonParserConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     let start = std::time::Instant::now();
 
@@ -337,7 +375,7 @@ pub fn analyze_json_file_with_dimensions(
     let buf_reader = std::io::BufReader::new(file);
 
     let (column_profiles, column_stats, rows_read, malformed_lines, format) =
-        analyze_json_from_reader(buf_reader, config)?;
+        analyze_json_from_reader_with_hints(buf_reader, config, semantic_hints)?;
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -371,7 +409,8 @@ pub fn analyze_json_file_with_dimensions(
         ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns);
+    .with_quality_data(sample_columns)
+    .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }

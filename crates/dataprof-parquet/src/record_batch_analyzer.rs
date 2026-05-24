@@ -4,7 +4,8 @@ use anyhow::Result;
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
-use dataprof_core::{ColumnProfile, DataType};
+use dataprof_core::{ColumnProfile, DataType, SemanticHints};
+use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::infer_type;
 use dataprof_runtime::{ColumnProfileInput, TextLengths, build_column_profile};
 use std::collections::HashMap;
@@ -54,6 +55,21 @@ impl RecordBatchAnalyzer {
         skip_patterns: bool,
         locale: Option<&str>,
     ) -> Vec<ColumnProfile> {
+        self.to_profiles_with_hints(
+            skip_statistics,
+            skip_patterns,
+            locale,
+            &SemanticHints::default(),
+        )
+    }
+
+    pub fn to_profiles_with_hints(
+        &self,
+        skip_statistics: bool,
+        skip_patterns: bool,
+        locale: Option<&str>,
+        semantic_hints: &SemanticHints,
+    ) -> Vec<ColumnProfile> {
         let mut profiles = Vec::new();
         for (name, analyzer) in &self.column_analyzers {
             profiles.push(analyzer.to_column_profile(
@@ -61,6 +77,7 @@ impl RecordBatchAnalyzer {
                 skip_statistics,
                 skip_patterns,
                 locale,
+                semantic_hints,
             ));
         }
         profiles
@@ -433,6 +450,10 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
+                if is_null_like_token(value) {
+                    self.null_count += 1;
+                    continue;
+                }
                 self.update_text_stats(value);
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
@@ -449,6 +470,10 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
+                if is_null_like_token(value) {
+                    self.null_count += 1;
+                    continue;
+                }
                 self.update_text_stats(value);
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
@@ -797,8 +822,13 @@ impl ColumnAnalyzer {
         skip_statistics: bool,
         skip_patterns: bool,
         locale: Option<&str>,
+        semantic_hints: &SemanticHints,
     ) -> ColumnProfile {
-        let data_type = self.infer_data_type();
+        let data_type = if semantic_hints.is_identifier_column(&name) {
+            DataType::Identifier
+        } else {
+            self.infer_data_type()
+        };
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64
         } else {

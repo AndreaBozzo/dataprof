@@ -4,8 +4,8 @@ use tokio::sync::mpsc;
 
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
-    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, StopCondition,
-    StopEvaluator, StreamSourceSystem, TruncationReason,
+    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, SemanticHints,
+    StopCondition, StopEvaluator, StreamSourceSystem, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -45,6 +45,7 @@ pub struct AsyncStreamingProfiler {
     stop_condition: StopCondition,
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
+    semantic_hints: SemanticHints,
 }
 
 impl AsyncStreamingProfiler {
@@ -59,6 +60,7 @@ impl AsyncStreamingProfiler {
             stop_condition: StopCondition::Never,
             quality_dimensions: None,
             metric_packs: None,
+            semantic_hints: SemanticHints::default(),
         }
     }
 
@@ -100,6 +102,11 @@ impl AsyncStreamingProfiler {
 
     pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
         self.metric_packs = Some(packs);
+        self
+    }
+
+    pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
+        self.semantic_hints = hints;
         self
     }
 
@@ -175,11 +182,12 @@ impl AsyncStreamingProfiler {
         let skip_stats = !MetricPack::include_statistics(packs);
         let skip_patterns = !MetricPack::include_patterns(packs);
 
-        let column_profiles = profile_builder::profiles_from_streaming(
+        let column_profiles = profile_builder::profiles_from_streaming_with_hints(
             &column_stats,
             skip_stats,
             skip_patterns,
             None,
+            &self.semantic_hints,
         );
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let scan_time_ms = start.elapsed().as_millis();
@@ -210,7 +218,8 @@ impl AsyncStreamingProfiler {
 
         let mut assembler = ReportAssembler::new(data_source, execution)
             .columns(column_profiles)
-            .with_quality_data(sample_columns);
+            .with_quality_data(sample_columns)
+            .with_semantic_hints(self.semantic_hints.clone());
         if let Some(ref dims) = self.quality_dimensions {
             assembler = assembler.with_requested_dimensions(dims.clone());
         }

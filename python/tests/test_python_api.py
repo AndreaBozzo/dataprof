@@ -229,6 +229,14 @@ class TestProfilerConfig:
         cfg = dataprof.ProfilerConfig(engine="incremental")
         assert cfg.engine == "incremental"
 
+    def test_semantic_hint_config(self):
+        cfg = dataprof.ProfilerConfig(
+            positive_columns=["pressure"],
+            identifier_columns=["order_id", "customer_id"],
+        )
+        assert cfg.positive_columns == ["pressure"]
+        assert cfg.identifier_columns == ["order_id", "customer_id"]
+
     def test_max_rows(self):
         if not os.path.exists(CSV_LARGE_FILE):
             pytest.skip("fixture missing")
@@ -416,6 +424,8 @@ class TestNamespace:
             "quality_dimensions",
             "metrics",
             "locale",
+            "positive_columns",
+            "identifier_columns",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (
@@ -875,6 +885,24 @@ class TestBooleanColumns:
         count_col = report["count"]
         assert count_col.data_type == "integer"
 
+    def test_yes_no_stays_string(self, tmp_path):
+        path = tmp_path / "yes_no.csv"
+        path.write_text("subscribed\nyes\nno\nyes\nno\n")
+        r = dataprof.profile(str(path))
+        assert r["subscribed"].data_type == "string"
+
+    def test_mixed_case_boolean_with_null_like_tokens(self, tmp_path):
+        path = tmp_path / "booleans_nulls.csv"
+        path.write_text(
+            "flag,label\ntrue,a\nFALSE,b\nTRUE,c\nfalse,d\nnull,e\nNULL,f\nnan,g\n,h\n"
+        )
+        r = dataprof.profile(str(path))
+        flag = r["flag"]
+        assert flag.data_type == "boolean"
+        assert flag.null_count == 4
+        assert flag.true_count == 2
+        assert flag.false_count == 2
+
 
 # ─────────────────────────────────────────────────
 #  16. Profiler builder class
@@ -936,6 +964,8 @@ class TestProfilerBuilder:
         assert p.max_rows(10) is p
         assert p.csv_delimiter(",") is p
         assert p.quality_dimensions(["completeness"]) is p
+        assert p.positive_columns(["pressure"]) is p
+        assert p.identifier_columns(["order_id"]) is p
 
     def test_csv_delimiter(self):
         if not os.path.exists(SEMICOLON_FILE):
@@ -1007,6 +1037,48 @@ class TestColumnLevelOutliers:
         path.write_text("value\n" + "\n".join(["10.0"] * 12) + "\n")
         r = dataprof.profile(str(path))
         assert r["value"].outlier_count == 0
+
+
+class TestSemanticHints:
+    def test_positive_columns_drive_negative_values_metric(self, tmp_path):
+        path = tmp_path / "pressure.csv"
+        path.write_text("pressure,temperature_delta\n101325,1\n-500,-2\n100900,3\n")
+
+        without_hint = dataprof.profile(str(path), engine="incremental")
+        assert without_hint.quality.negative_values_in_positive == 0
+
+        with_hint = dataprof.profile(
+            str(path),
+            engine="incremental",
+            positive_columns=["pressure"],
+        )
+        assert with_hint.quality.negative_values_in_positive == 1
+
+    def test_identifier_columns_omit_numeric_stats(self, tmp_path):
+        path = tmp_path / "orders.csv"
+        path.write_text("order_id\n1\n2\n3\n10000\n")
+
+        report = dataprof.profile(
+            str(path),
+            engine="incremental",
+            identifier_columns=["order_id"],
+        )
+        order_id = report["order_id"]
+        assert order_id.data_type == "identifier"
+        assert order_id.mean is None
+        assert order_id.outlier_count is None
+        assert report.quality.outlier_ratio == 0.0
+
+    def test_dataframe_hints(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"order_id": [1, 2, 3], "pressure": [1, -1, 2]})
+        report = dataprof.profile(
+            df,
+            identifier_columns=["order_id"],
+            positive_columns=["pressure"],
+        )
+        assert report["order_id"].data_type == "identifier"
+        assert report.quality.negative_values_in_positive == 1
 
 
 class TestColumnToDict:

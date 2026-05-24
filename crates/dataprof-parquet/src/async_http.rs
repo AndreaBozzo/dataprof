@@ -1,7 +1,8 @@
 //! Asynchronous Parquet HTTP reading module
 use bytes::Bytes;
 use dataprof_core::{
-    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata, QualityDimension,
+    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
+    QualityDimension, SemanticHints,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 use futures::future::BoxFuture;
@@ -210,6 +211,21 @@ pub async fn analyze_parquet_async_http_dims(
     config: &ParquetConfig,
     quality_dimensions: Option<Vec<QualityDimension>>,
 ) -> Result<ProfileReport, DataProfilerError> {
+    analyze_parquet_async_http_dims_with_hints(
+        url,
+        config,
+        quality_dimensions,
+        &SemanticHints::default(),
+    )
+    .await
+}
+
+pub async fn analyze_parquet_async_http_dims_with_hints(
+    url: &str,
+    config: &ParquetConfig,
+    quality_dimensions: Option<Vec<QualityDimension>>,
+    semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
     let start = std::time::Instant::now();
 
     let reader = HttpParquetReader::try_new(url).await?;
@@ -255,7 +271,7 @@ pub async fn analyze_parquet_async_http_dims(
         analyzer.process_batch(&batch)?;
     }
 
-    let column_profiles = analyzer.to_profiles(false, false, None);
+    let column_profiles = analyzer.to_profiles_with_hints(false, false, None, semantic_hints);
     let total_rows = analyzer.total_rows();
 
     let sample_columns = analyzer.create_sample_columns();
@@ -284,7 +300,8 @@ pub async fn analyze_parquet_async_http_dims(
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
-    .with_quality_data(sample_columns);
+    .with_quality_data(sample_columns)
+    .with_semantic_hints(semantic_hints.clone());
     if let Some(dims) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dims);
     }

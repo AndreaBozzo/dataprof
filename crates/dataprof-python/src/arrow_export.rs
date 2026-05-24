@@ -29,8 +29,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, EngineType, ExecutionMetadata,
-    FileFormat, MetricPack, Profiler, TruncationReason,
+    ColumnProfile, ColumnStats, DataFrameLibrary, DataSource, DataType, EngineType,
+    ExecutionMetadata, FileFormat, MetricPack, Profiler, TruncationReason,
 };
 use dataprof_parquet::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_runtime::ReportAssembler;
@@ -393,7 +393,9 @@ pub fn profile_dataframe(
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
-    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns, locale);
+    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
+    let column_profiles =
+        analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = if include_quality {
         analyzer.create_sample_columns()
     } else {
@@ -427,7 +429,9 @@ pub fn profile_dataframe(
     .columns(column_profiles);
 
     if include_quality {
-        assembler = assembler.with_quality_data(sample_columns);
+        assembler = assembler
+            .with_quality_data(sample_columns)
+            .with_semantic_hints(semantic_hints);
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
         }
@@ -497,7 +501,9 @@ pub fn profile_arrow(
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
-    let column_profiles = analyzer.to_profiles(skip_statistics, skip_patterns, locale);
+    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
+    let column_profiles =
+        analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = analyzer.create_sample_columns();
 
     let scan_time_ms = start.elapsed().as_millis();
@@ -523,7 +529,9 @@ pub fn profile_arrow(
     .columns(column_profiles);
 
     if include_quality {
-        assembler = assembler.with_quality_data(sample_columns);
+        assembler = assembler
+            .with_quality_data(sample_columns)
+            .with_semantic_hints(semantic_hints);
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
         }
@@ -571,7 +579,16 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let names: StringArray = profiles.iter().map(|p| Some(p.name.as_str())).collect();
     let types: StringArray = profiles
         .iter()
-        .map(|p| Some(format!("{:?}", p.data_type)))
+        .map(|p| {
+            Some(match p.data_type {
+                DataType::Integer => "integer",
+                DataType::Float => "float",
+                DataType::String => "string",
+                DataType::Identifier => "identifier",
+                DataType::Date => "date",
+                DataType::Boolean => "boolean",
+            })
+        })
         .collect();
     let totals: UInt64Array = profiles
         .iter()
