@@ -170,7 +170,8 @@ fn bench_full_analysis(c: &mut Criterion) {
             &path,
             |b, path| {
                 b.iter(|| {
-                    let result = analyze_full_report(black_box(path)).expect("Full analysis failed");
+                    let result =
+                        analyze_full_report(black_box(path)).expect("Full analysis failed");
                     black_box(result)
                 })
             },
