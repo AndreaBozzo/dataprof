@@ -36,16 +36,121 @@ jobs:
 
       - name: Prepare Pages content
         run: |
+          set -euo pipefail
+
           mkdir -p pages-content
           if [ -d "benchmark-reports/target/criterion" ]; then
-            cp -r benchmark-reports/target/criterion/* pages-content/
+            cp -r benchmark-reports/target/criterion/. pages-content/
           else
             echo "Error: Criterion reports not found"
             exit 1
           fi
 
-          # Create a small landing page that links into Criterion's report.
-          cat > pages-content/index.html << 'EOF'
+          create_redirect_page() {
+            local redirect_path="$1"
+            local target_path="$2"
+            local title="$3"
+
+            mkdir -p "$(dirname "$redirect_path")"
+            cat > "$redirect_path" <<EOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=${target_path}">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>${title}</title>
+            <link rel="canonical" href="${target_path}">
+          </head>
+          <body>
+            <p>Redirecting to <a href="${target_path}">${title}</a>...</p>
+          </body>
+          </html>
+          EOF
+          }
+
+          describe_group() {
+            case "$1" in
+              csv_parsing)
+                echo "Parser and facade throughput across file sizes"
+                ;;
+              throughput_metrics)
+                echo "Rows and bytes per second on representative datasets"
+                ;;
+              full_analysis)
+                echo "End-to-end profiling pipeline timings"
+                ;;
+              scaling_behavior)
+                echo "Scaling behavior as dataset size increases"
+                ;;
+              large_scale)
+                echo "Stress tests for larger benchmark datasets"
+                ;;
+              *)
+                echo "Criterion benchmark group"
+                ;;
+            esac
+          }
+
+          pretty_group_name() {
+            echo "$1" | tr '_' ' ' | sed 's/\b\(.\)/\u\1/g'
+          }
+
+          # Criterion only creates <group>/report/index.html for grouped benchmarks.
+          # For single-benchmark groups, create a stable alias so deep links stay valid.
+          while IFS= read -r -d '' group_dir; do
+            group_name="$(basename "$group_dir")"
+
+            if [ -f "$group_dir/report/index.html" ]; then
+              continue
+            fi
+
+            mapfile -t child_reports < <(find "$group_dir" -mindepth 3 -maxdepth 3 -path '*/report/index.html' -type f | sort)
+            if [ "${#child_reports[@]}" -eq 1 ]; then
+              child_name="$(basename "$(dirname "$(dirname "${child_reports[0]}")")")"
+              create_redirect_page \
+                "$group_dir/report/index.html" \
+                "../${child_name}/report/index.html" \
+                "$(pretty_group_name "$group_name")"
+            fi
+          done < <(find pages-content -mindepth 1 -maxdepth 1 -type d ! -name report -print0 | sort -z)
+
+          nav_items_file="$(mktemp)"
+
+          if [ -f "pages-content/report/index.html" ]; then
+            cat >> "$nav_items_file" <<'EOF'
+                <a href="report/index.html">
+                  Complete Criterion Report<br>
+                  <small>Interactive overview and cross-group comparisons</small>
+                </a>
+          EOF
+          fi
+
+          while IFS= read -r -d '' group_dir; do
+            group_name="$(basename "$group_dir")"
+            group_report="$group_dir/report/index.html"
+
+            if [ ! -f "$group_report" ]; then
+              continue
+            fi
+
+            group_label="$(pretty_group_name "$group_name")"
+            group_description="$(describe_group "$group_name")"
+
+            cat >> "$nav_items_file" <<EOF
+                <a href="${group_name}/report/index.html">
+                  ${group_label}<br>
+                  <small>${group_description}</small>
+                </a>
+          EOF
+          done < <(find pages-content -mindepth 1 -maxdepth 1 -type d ! -name report -print0 | sort -z)
+
+          if [ ! -s "$nav_items_file" ]; then
+            echo "Error: no benchmark report pages were found after preparing Pages content"
+            exit 1
+          fi
+
+          cat > pages-content/index.html <<'EOF'
           <!DOCTYPE html>
           <html lang="en">
           <head>
@@ -56,7 +161,9 @@ jobs:
               body {
                 margin: 0;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                background: #f8fafc;
+                background:
+                  radial-gradient(circle at top, rgba(14, 165, 233, 0.12), transparent 35%),
+                  linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%);
                 color: #0f172a;
               }
               main {
@@ -64,12 +171,27 @@ jobs:
                 margin: 0 auto;
                 padding: 48px 24px;
               }
+              .eyebrow {
+                display: inline-block;
+                padding: 6px 10px;
+                border-radius: 999px;
+                background: rgba(14, 165, 233, 0.1);
+                color: #0369a1;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+              }
               h1 {
-                margin: 0 0 8px;
-                font-size: 32px;
+                margin: 16px 0 8px;
+                font-size: 36px;
                 line-height: 1.15;
               }
-              p { color: #475569; }
+              p {
+                max-width: 680px;
+                color: #475569;
+                line-height: 1.6;
+              }
               nav {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -80,36 +202,44 @@ jobs:
                 display: block;
                 padding: 16px;
                 border: 1px solid #cbd5e1;
-                border-radius: 6px;
+                border-radius: 14px;
                 color: #0f172a;
-                background: white;
+                background: rgba(255, 255, 255, 0.88);
+                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
                 text-decoration: none;
+                transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
               }
               a:hover {
                 border-color: #2563eb;
                 color: #1d4ed8;
+                transform: translateY(-2px);
+                box-shadow: 0 18px 38px rgba(37, 99, 235, 0.12);
               }
               small { color: #64748b; }
+              .note {
+                margin-top: 24px;
+                padding: 14px 16px;
+                border-left: 4px solid #38bdf8;
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.75);
+              }
             </style>
           </head>
           <body>
             <main>
+              <span class="eyebrow">GitHub Pages</span>
               <h1>dataprof Benchmark Reports</h1>
-              <p>Criterion reports from the latest successful benchmark workflow on master.</p>
+              <p>Criterion reports from the latest successful benchmark workflow on <code>master</code>. This page is generated from the published artifact tree, so benchmark links stay aligned with the actual report layout.</p>
               <nav>
-                <a href="report/index.html">
-                  Complete Criterion Report<br>
-                  <small>Interactive overview and comparisons</small>
-                </a>
-                <a href="csv_parsing/report/index.html">
-                  CSV Parsing<br>
-                  <small>Parser and facade throughput</small>
-                </a>
-                <a href="throughput_metrics/report/index.html">
-                  Throughput Metrics<br>
-                  <small>Medium dataset rows and bytes per second</small>
-                </a>
+          EOF
+
+          cat "$nav_items_file" >> pages-content/index.html
+
+          cat >> pages-content/index.html <<'EOF'
               </nav>
+              <div class="note">
+                Some Criterion groups only emit per-benchmark reports. When that happens, deployment creates a stable group-level redirect so links like <code>throughput_metrics/report/index.html</code> keep working.
+              </div>
             </main>
           </body>
           </html>
