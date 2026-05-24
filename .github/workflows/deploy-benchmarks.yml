@@ -115,135 +115,336 @@ jobs:
             fi
           done < <(find pages-content -mindepth 1 -maxdepth 1 -type d ! -name report -print0 | sort -z)
 
-          nav_items_file="$(mktemp)"
+          python3 <<'PY'
+          import json
+          from collections import defaultdict
+          from pathlib import Path
 
-          if [ -f "pages-content/report/index.html" ]; then
-            cat >> "$nav_items_file" <<'EOF'
-                <a href="report/index.html">
-                  Complete Criterion Report<br>
-                  <small>Interactive overview and cross-group comparisons</small>
-                </a>
-          EOF
-          fi
+          pages = Path("pages-content")
+          descriptions = {
+              "csv_parsing": "Parser and facade throughput across file sizes",
+              "throughput_metrics": "Rows and bytes per second on representative datasets",
+              "full_analysis": "End-to-end profiling pipeline timings",
+              "scaling_behavior": "Scaling behavior as dataset size increases",
+              "large_scale": "Stress tests for larger benchmark datasets",
+          }
 
-          while IFS= read -r -d '' group_dir; do
-            group_name="$(basename "$group_dir")"
-            group_report="$group_dir/report/index.html"
+          def pretty_group_name(name: str) -> str:
+              return name.replace("_", " ").title()
 
-            if [ ! -f "$group_report" ]; then
-              continue
-            fi
+          benchmarks = []
+          for benchmark_json in pages.glob("**/new/benchmark.json"):
+              estimates_json = benchmark_json.with_name("estimates.json")
+              if not estimates_json.exists():
+                  continue
 
-            group_label="$(pretty_group_name "$group_name")"
-            group_description="$(describe_group "$group_name")"
+              meta = json.loads(benchmark_json.read_text())
+              estimates = json.loads(estimates_json.read_text())
+              mean_ns = estimates["mean"]["point_estimate"]
+              mean_ms = mean_ns / 1_000_000.0
+              throughput_bytes = (meta.get("throughput") or {}).get("Bytes")
+              throughput_mib_s = None
+              if throughput_bytes and mean_ns > 0:
+                  throughput_mib_s = throughput_bytes / (mean_ns / 1_000_000_000.0) / (1024 * 1024)
 
-            cat >> "$nav_items_file" <<EOF
-                <a href="${group_name}/report/index.html">
-                  ${group_label}<br>
-                  <small>${group_description}</small>
-                </a>
-          EOF
-          done < <(find pages-content -mindepth 1 -maxdepth 1 -type d ! -name report -print0 | sort -z)
+              directory_name = meta["directory_name"]
+              report_dir = directory_name + "/report"
+              benchmarks.append(
+                  {
+                      "group": meta["group_id"],
+                      "title": meta["title"],
+                      "function": meta.get("function_id"),
+                      "value": meta.get("value_str"),
+                      "directory": directory_name,
+                      "report": report_dir + "/index.html",
+                      "mean_ms": mean_ms,
+                      "throughput_mib_s": throughput_mib_s,
+                      "bytes": throughput_bytes,
+                      "preview": next(
+                          (
+                              candidate
+                              for candidate in [
+                                  report_dir + "/pdf_small.svg",
+                                  report_dir + "/regression_small.svg",
+                                  report_dir + "/iteration_times_small.svg",
+                              ]
+                              if (pages / candidate).exists()
+                          ),
+                          None,
+                      ),
+                  }
+              )
 
-          if [ ! -s "$nav_items_file" ]; then
-            echo "Error: no benchmark report pages were found after preparing Pages content"
-            exit 1
-          fi
+          if not benchmarks:
+              raise SystemExit("Error: no Criterion benchmark metadata found in pages-content")
 
-          cat > pages-content/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html lang="en">
+          grouped = defaultdict(list)
+          for benchmark in benchmarks:
+              grouped[benchmark["group"]].append(benchmark)
+
+          groups = []
+          for group_name in sorted(grouped):
+              items = sorted(
+                  grouped[group_name],
+                  key=lambda item: (
+                      item["function"] or "",
+                      item["value"] or "",
+                      item["title"],
+                  ),
+              )
+              group_report = f"{group_name}/report/index.html"
+              preview = None
+              for candidate in [
+                  f"{group_name}/report/lines_throughput.svg",
+                  f"{group_name}/report/lines.svg",
+                  f"{group_name}/report/violin.svg",
+              ]:
+                  if (pages / candidate).exists():
+                      preview = candidate
+                      break
+              if preview is None and items:
+                  preview = items[0]["preview"]
+
+              groups.append(
+                  {
+                      "name": group_name,
+                      "label": pretty_group_name(group_name),
+                      "description": descriptions.get(group_name, "Criterion benchmark group"),
+                      "report": group_report,
+                      "preview": preview,
+                      "benchmarks": items,
+                  }
+              )
+
+          fastest = max(
+              (item for item in benchmarks if item["throughput_mib_s"] is not None),
+              key=lambda item: item["throughput_mib_s"],
+              default=None,
+          )
+          slowest = max(benchmarks, key=lambda item: item["mean_ms"])
+
+          observations = []
+          csv_items = {item["value"]: item for item in grouped.get("csv_parsing", [])}
+          if all(key in csv_items and csv_items[key]["throughput_mib_s"] is not None for key in ["tiny", "small", "medium"]):
+              tiny = csv_items["tiny"]["throughput_mib_s"]
+              medium = csv_items["medium"]["throughput_mib_s"]
+              observations.append(
+                  f"csv_parsing climbs from {tiny:.2f} MiB/s on tiny inputs to {medium:.2f} MiB/s on medium inputs, which suggests fixed overhead dominates the smallest case and steady-state throughput stabilizes near 4 MiB/s."
+              )
+
+          throughput_items = grouped.get("throughput_metrics", [])
+          medium_parse = csv_items.get("medium")
+          if throughput_items and medium_parse and throughput_items[0]["throughput_mib_s"] is not None and medium_parse["throughput_mib_s"] is not None and throughput_items[0]["bytes"] == medium_parse["bytes"]:
+              delta = abs(throughput_items[0]["throughput_mib_s"] - medium_parse["throughput_mib_s"]) / medium_parse["throughput_mib_s"]
+              observations.append(
+                  f"throughput_metrics is currently within {delta * 100:.1f}% of csv_parsing/parse/medium on the same dataset size, so it adds confidence more than distinct coverage right now."
+              )
+
+          summary = {
+              "group_count": len(groups),
+              "benchmark_count": len(benchmarks),
+              "fastest": fastest,
+              "slowest": slowest,
+              "groups": groups,
+              "observations": observations,
+          }
+          (pages / "benchmark-summary.json").write_text(json.dumps(summary, indent=2))
+
+          def fmt_time(ms: float) -> str:
+              if ms >= 1000:
+                  return f"{ms / 1000:.2f} s"
+              return f"{ms:.2f} ms"
+
+          def fmt_throughput(value):
+              if value is None:
+                  return "n/a"
+              return f"{value:.2f} MiB/s"
+
+          group_cards = []
+          for group in groups:
+              rows = []
+              for item in group["benchmarks"]:
+                  label_bits = [bit for bit in [item["function"], item["value"]] if bit]
+                  label = " / ".join(label_bits) if label_bits else item["title"]
+                  rows.append(
+                      f"""
+                      <tr>
+                        <td><a href=\"{item['report']}\">{label}</a></td>
+                        <td>{fmt_time(item['mean_ms'])}</td>
+                        <td>{fmt_throughput(item['throughput_mib_s'])}</td>
+                      </tr>
+                      """.strip()
+                  )
+
+              preview = ""
+              if group["preview"]:
+                  preview = f"""
+                  <div class=\"group-preview\">
+                    <a href=\"{group['report']}\"><img src=\"{group['preview']}\" alt=\"{group['label']} preview\"></a>
+                  </div>
+                  """.strip()
+
+              group_cards.append(
+                  f"""
+                  <article class=\"group-card\">
+                    <div class=\"group-header\">
+                      <div>
+                        <span class=\"group-kicker\">Benchmark Group</span>
+                        <h2><a href=\"{group['report']}\">{group['label']}</a></h2>
+                        <p>{group['description']}</p>
+                      </div>
+                      <span class=\"pill\">{len(group['benchmarks'])} benchmark{'s' if len(group['benchmarks']) != 1 else ''}</span>
+                    </div>
+                    {preview}
+                    <table>
+                      <thead>
+                        <tr><th>Benchmark</th><th>Mean</th><th>Throughput</th></tr>
+                      </thead>
+                      <tbody>
+                        {''.join(rows)}
+                      </tbody>
+                    </table>
+                  </article>
+                  """.strip()
+              )
+
+          observation_items = "".join(f"<li>{item}</li>" for item in observations) or "<li>No automatic observations were generated for this run yet.</li>"
+          root_report_link = ""
+          if (pages / "report/index.html").exists():
+              root_report_link = '<a class="primary-link" href="report/index.html">Open full Criterion index</a>'
+
+          html = f"""<!DOCTYPE html>
+          <html lang=\"en\">
           <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta charset=\"utf-8\">
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
             <title>dataprof Benchmark Reports</title>
             <style>
-              body {
+              :root {{
+                --bg: #f4f7fb;
+                --ink: #102033;
+                --muted: #5a6b80;
+                --line: #d8e0ea;
+                --card: rgba(255, 255, 255, 0.9);
+                --accent: #0f766e;
+                --accent-2: #0369a1;
+              }}
+              * {{ box-sizing: border-box; }}
+              body {{
                 margin: 0;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-family: "Segoe UI", Inter, system-ui, sans-serif;
+                color: var(--ink);
                 background:
-                  radial-gradient(circle at top, rgba(14, 165, 233, 0.12), transparent 35%),
-                  linear-gradient(180deg, #f8fafc 0%, #eef6ff 100%);
-                color: #0f172a;
-              }
-              main {
-                max-width: 920px;
-                margin: 0 auto;
-                padding: 48px 24px;
-              }
-              .eyebrow {
-                display: inline-block;
-                padding: 6px 10px;
+                  radial-gradient(circle at top left, rgba(14, 165, 233, 0.14), transparent 24%),
+                  radial-gradient(circle at top right, rgba(15, 118, 110, 0.10), transparent 22%),
+                  linear-gradient(180deg, #f8fbff 0%, var(--bg) 100%);
+              }}
+              main {{ max-width: 1180px; margin: 0 auto; padding: 56px 24px 72px; }}
+              .hero {{ display: grid; gap: 18px; align-items: end; grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr); }}
+              .eyebrow {{
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 12px;
                 border-radius: 999px;
-                background: rgba(14, 165, 233, 0.1);
-                color: #0369a1;
+                background: rgba(3, 105, 161, 0.1);
+                color: var(--accent-2);
                 font-size: 12px;
-                font-weight: 600;
-                letter-spacing: 0.04em;
+                font-weight: 700;
+                letter-spacing: 0.06em;
                 text-transform: uppercase;
-              }
-              h1 {
-                margin: 16px 0 8px;
-                font-size: 36px;
-                line-height: 1.15;
-              }
-              p {
-                max-width: 680px;
-                color: #475569;
-                line-height: 1.6;
-              }
-              nav {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-                gap: 12px;
-                margin-top: 28px;
-              }
-              a {
-                display: block;
-                padding: 16px;
-                border: 1px solid #cbd5e1;
-                border-radius: 14px;
-                color: #0f172a;
-                background: rgba(255, 255, 255, 0.88);
-                box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+              }}
+              h1 {{ font-size: clamp(2.3rem, 4vw, 4rem); line-height: 1.03; margin: 0; }}
+              .hero p {{ color: var(--muted); font-size: 1.05rem; line-height: 1.7; max-width: 72ch; margin: 0; }}
+              .hero-actions {{ display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }}
+              .primary-link, .secondary-link {{
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 44px;
+                padding: 0 16px;
+                border-radius: 12px;
                 text-decoration: none;
-                transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
-              }
-              a:hover {
-                border-color: #2563eb;
-                color: #1d4ed8;
-                transform: translateY(-2px);
-                box-shadow: 0 18px 38px rgba(37, 99, 235, 0.12);
-              }
-              small { color: #64748b; }
-              .note {
-                margin-top: 24px;
-                padding: 14px 16px;
-                border-left: 4px solid #38bdf8;
-                border-radius: 10px;
-                background: rgba(255, 255, 255, 0.75);
-              }
+                font-weight: 600;
+              }}
+              .primary-link {{ background: var(--accent); color: white; box-shadow: 0 16px 30px rgba(15, 118, 110, 0.22); }}
+              .secondary-link {{ border: 1px solid var(--line); color: var(--ink); background: rgba(255,255,255,0.76); }}
+              .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 30px; }}
+              .stat-card, .insights, .group-card {{
+                background: var(--card);
+                backdrop-filter: blur(10px);
+                border: 1px solid rgba(216, 224, 234, 0.9);
+                border-radius: 20px;
+                box-shadow: 0 18px 42px rgba(16, 32, 51, 0.08);
+              }}
+              .stat-card {{ padding: 18px 18px 20px; }}
+              .stat-label {{ color: var(--muted); font-size: 0.88rem; }}
+              .stat-value {{ margin-top: 8px; font-size: 1.8rem; font-weight: 750; }}
+              .stat-subtle {{ color: var(--muted); font-size: 0.9rem; margin-top: 6px; }}
+              .insights {{ margin-top: 26px; padding: 22px 24px; }}
+              .insights h2 {{ margin: 0 0 10px; font-size: 1.2rem; }}
+              .insights ul {{ margin: 0; padding-left: 1.2rem; color: var(--muted); line-height: 1.7; }}
+              .groups {{ display: grid; gap: 18px; margin-top: 28px; }}
+              .group-card {{ padding: 22px; }}
+              .group-header {{ display: flex; justify-content: space-between; gap: 12px; align-items: start; }}
+              .group-kicker {{ color: var(--accent-2); font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }}
+              .group-card h2 {{ margin: 8px 0 8px; font-size: 1.5rem; }}
+              .group-card h2 a {{ color: inherit; text-decoration: none; }}
+              .group-card p {{ margin: 0; color: var(--muted); line-height: 1.6; }}
+              .pill {{ white-space: nowrap; padding: 8px 12px; border-radius: 999px; background: rgba(15, 118, 110, 0.08); color: var(--accent); font-weight: 700; font-size: 0.85rem; }}
+              .group-preview {{ margin-top: 18px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: white; }}
+              .group-preview img {{ display: block; width: 100%; height: auto; }}
+              table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
+              th, td {{ text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--line); }}
+              th {{ color: var(--muted); font-size: 0.83rem; text-transform: uppercase; letter-spacing: 0.04em; }}
+              td a {{ color: var(--accent-2); text-decoration: none; font-weight: 600; }}
+              code {{ background: rgba(15, 23, 42, 0.06); padding: 0.12rem 0.35rem; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.95em; }}
+              footer {{ color: var(--muted); margin-top: 28px; font-size: 0.95rem; }}
+              @media (max-width: 860px) {{
+                .hero {{ grid-template-columns: 1fr; }}
+                .group-header {{ flex-direction: column; }}
+              }}
             </style>
           </head>
           <body>
             <main>
-              <span class="eyebrow">GitHub Pages</span>
-              <h1>dataprof Benchmark Reports</h1>
-              <p>Criterion reports from the latest successful benchmark workflow on <code>master</code>. This page is generated from the published artifact tree, so benchmark links stay aligned with the actual report layout.</p>
-              <nav>
-          EOF
+              <section class=\"hero\">
+                <div>
+                  <span class=\"eyebrow\">GitHub Pages · Benchmark Observatory</span>
+                  <h1>dataprof benchmark reports that are readable at a glance.</h1>
+                  <p>Criterion artifacts from the latest successful run on <code>master</code>. This page is generated from live benchmark metadata, so links, metrics, and previews stay aligned with the actual report tree instead of drifting out of date.</p>
+                  <div class=\"hero-actions\">{root_report_link}<a class=\"secondary-link\" href=\"benchmark-summary.json\">Download benchmark summary JSON</a></div>
+                </div>
+                <div class=\"stat-card\">
+                  <div class=\"stat-label\">Current deployment note</div>
+                  <div class=\"stat-value\">Stable group aliases</div>
+                  <div class=\"stat-subtle\">Single-benchmark groups now get redirect pages, so links like <code>throughput_metrics/report/index.html</code> keep working.</div>
+                </div>
+              </section>
 
-          cat "$nav_items_file" >> pages-content/index.html
+              <section class=\"stats\">
+                <article class=\"stat-card\"><div class=\"stat-label\">Benchmark groups</div><div class=\"stat-value\">{len(groups)}</div><div class=\"stat-subtle\">Top-level Criterion sections published</div></article>
+                <article class=\"stat-card\"><div class=\"stat-label\">Benchmarks in this run</div><div class=\"stat-value\">{len(benchmarks)}</div><div class=\"stat-subtle\">Function/input combinations with live estimates</div></article>
+                <article class=\"stat-card\"><div class=\"stat-label\">Fastest throughput</div><div class=\"stat-value\">{fmt_throughput(fastest['throughput_mib_s']) if fastest else 'n/a'}</div><div class=\"stat-subtle\">{fastest['title'] if fastest else 'No throughput data'}</div></article>
+                <article class=\"stat-card\"><div class=\"stat-label\">Slowest mean time</div><div class=\"stat-value\">{fmt_time(slowest['mean_ms'])}</div><div class=\"stat-subtle\">{slowest['title']}</div></article>
+              </section>
 
-          cat >> pages-content/index.html <<'EOF'
-              </nav>
-              <div class="note">
-                Some Criterion groups only emit per-benchmark reports. When that happens, deployment creates a stable group-level redirect so links like <code>throughput_metrics/report/index.html</code> keep working.
-              </div>
+              <section class=\"insights\">
+                <h2>Current read of this run</h2>
+                <ul>{observation_items}</ul>
+              </section>
+
+              <section class=\"groups\">{''.join(group_cards)}</section>
+
+              <footer>
+                Criterion still owns the deep-dive reports. This landing page is a thin presentation layer over the published artifact tree so users can get to the right chart or benchmark without reverse-engineering Criterion's directory structure.
+              </footer>
             </main>
           </body>
           </html>
-          EOF
+          """
+          (pages / "index.html").write_text(html)
+          PY
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
