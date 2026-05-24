@@ -12,7 +12,19 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows.
+Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, and report exports.
+
+Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
+
+```bash
+uv run maturin develop --features "python,python-async,async-streaming"
+
+# Add parquet-async for remote Parquet support
+uv run maturin develop --features "python,python-async,async-streaming,parquet-async"
+
+# Add database plus a connector when needed
+uv run maturin develop --features "python,python-async,database,sqlite"
+```
 
 ## Quick Start
 
@@ -376,9 +388,9 @@ print(f"{result.count} rows ({'exact' if result.exact else 'estimated'})")
 print(f"Method: {result.method}, took {result.count_time_ms}ms")
 ```
 
-## Async API
+## Optional Async API (Source Build)
 
-The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts.
+The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts. These helpers require a source build with `python-async` and `async-streaming` enabled.
 
 ```python
 from dataprof.asyncio import profile_file, profile_bytes, profile_url
@@ -402,9 +414,15 @@ schema = await infer_schema_stream(csv_bytes, format="csv")
 count = await quick_row_count_stream(csv_bytes, format="csv")
 ```
 
-## Database Profiling
+## Optional Database Profiling (Source Build)
 
-Async database functions for PostgreSQL, MySQL, and SQLite:
+Async database functions for PostgreSQL, MySQL, and SQLite require a source build with `python-async`, `database`, and the relevant connector features enabled:
+
+```bash
+uv run maturin develop --features "python,python-async,database,sqlite"
+```
+
+Then the following APIs become available:
 
 ```python
 import asyncio

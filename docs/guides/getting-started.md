@@ -27,6 +27,8 @@ uv pip install dataprof
 # dataprof = "0.8"
 ```
 
+The published Python wheels cover the base package API for local files, DataFrames, and Arrow objects. If you need async URL profiling or database helpers, build the extension from source with the corresponding Rust features.
+
 ## Your First Profile
 
 ### With Python
@@ -212,6 +214,8 @@ When embedding dataprof in a web service or processing live streams, use the asy
 
 ### Python
 
+Build the Python extension from source with `python-async,async-streaming` before using these helpers.
+
 ```python
 from dataprof.asyncio import profile_file, profile_url
 
@@ -241,6 +245,8 @@ let report = Profiler::new().profile_stream(source).await?;
 Profile data directly from PostgreSQL, MySQL, or SQLite without exporting to files.
 
 ### Python
+
+Build the Python extension from source with `python-async,database` and the connector feature you need before using this API.
 
 ```python
 report = await dp.analyze_database_async(

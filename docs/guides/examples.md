@@ -225,7 +225,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### Async URL profiling
+### Async URL profiling (source build)
+
+Build the Python extension with `python-async,async-streaming` before using this recipe.
 
 ```python
 import asyncio
@@ -238,7 +240,9 @@ async def main():
 asyncio.run(main())
 ```
 
-### Database profiling from Python
+### Database profiling from Python (source build)
+
+Build the Python extension with `python-async,database` and the connector feature you need before using this recipe.
 
 ```python
 import asyncio
@@ -469,7 +473,9 @@ async def profile_upload(file: UploadFile):
     }
 ```
 
-### Compare database vs file quality
+### Compare database vs file quality (source build)
+
+Build the Python extension with `python-async,database` and the connector feature you need before using this recipe.
 
 ```python
 import asyncio

@@ -31,7 +31,13 @@ uv run maturin develop --features "python,python-async,database,sqlite"
 
 ### Python
 
-Python database functions are async:
+Python database functions are async and are not included in the default PyPI wheel. Build the extension from source with `python-async`, `database`, and the connector feature you need first:
+
+```bash
+uv run maturin develop --features "python,python-async,database,sqlite"
+```
+
+Then the following APIs become available:
 
 ```python
 import asyncio

@@ -37,7 +37,7 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 |---|---|
 | Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof@0.8` and `Profiler::new().analyze_file(...)` |
 | Inspecting files in notebooks, validation scripts, or data apps | `uv pip install dataprof` and `dp.profile(...)` |
-| Profiling streams, remote Parquet, or database queries | Rust feature flags or Python async helpers such as `profile_url(...)` |
+| Profiling streams, remote Parquet, or database queries | Rust feature flags, or a source-built Python extension with async/database features enabled |
 
 ## Start in 30 Seconds
 
@@ -46,6 +46,8 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 ```bash
 uv pip install dataprof
 ```
+
+Pre-built PyPI wheels ship the base Python API for local files, DataFrames, and Arrow objects. Async URL profiling and database helpers remain opt-in source builds.
 
 ```python
 import dataprof as dp
@@ -86,7 +88,7 @@ for col in &report.column_profiles {
 - **True streaming** -- bounded-memory profiling with online algorithms for files bigger than RAM
 - **Multi-format by default** -- move from CSV and JSON to Parquet, live databases, DataFrames, and Arrow batches without changing tools
 - **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
-- **Async-ready** -- `async/await` APIs for stream pipelines, services, and remote Parquet sources
+- **Async-ready** -- Rust async APIs and opt-in Python extension builds cover stream pipelines, services, and remote Parquet sources
 - **ISO 8000/25012 quality assessment** -- five dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
 
 ## Feature Flags
@@ -141,7 +143,7 @@ An overall quality score (0 -- 100) is computed as a weighted average of dimensi
 
 ### Integrate it
 
-- [Python API Guide](docs/python/README.md) -- files, DataFrames, async streams, exports, and databases
+- [Python API Guide](docs/python/README.md) -- files, DataFrames, Arrow interop, exports, and optional source-built async/database features
 - [Database Connectors](docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup and connection patterns
 
 ### Understand it

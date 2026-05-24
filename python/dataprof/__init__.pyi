@@ -376,29 +376,6 @@ class RowCountEstimate:
     @property
     def count_time_ms(self) -> int: ...
 
-# --- Database (async) ---
-
-async def analyze_database_async(
-    connection_string: str,
-    query: str,
-    batch_size: int = 10000,
-    calculate_quality: bool = False,
-) -> ProfileReport:
-    """Analyze a database query asynchronously. Returns a ProfileReport."""
-    ...
-
-async def test_connection_async(connection_string: str) -> bool:
-    """Test an async database connection. Returns True if successful."""
-    ...
-
-async def get_table_schema_async(connection_string: str, table_name: str) -> list[str]:
-    """Get column names for a table asynchronously."""
-    ...
-
-async def count_table_rows_async(connection_string: str, table_name: str) -> int:
-    """Count rows in a table asynchronously."""
-    ...
-
 # --- Arrow Interop ---
 
 class RecordBatch:
