@@ -680,6 +680,8 @@ class ProfileReport:
     # -- Mapping protocol --
 
     def __getitem__(self, key: str) -> ColumnProfile:
+        if not isinstance(key, str):
+            raise TypeError("ProfileReport keys must be strings")
         profiles = self.column_profiles
         if key not in profiles:
             raise KeyError(key)

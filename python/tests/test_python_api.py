@@ -556,6 +556,10 @@ class TestProfileReportMapping:
         with pytest.raises(KeyError):
             report["nonexistent_column"]
 
+    def test_getitem_non_string_raises_type_error(self, report):
+        with pytest.raises(TypeError, match="keys must be strings"):
+            report[0]  # type: ignore[index]
+
     def test_contains(self, report):
         assert "name" in report
         assert "nonexistent_column" not in report
