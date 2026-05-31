@@ -70,6 +70,12 @@ class TestProfileFile:
         r = dataprof.profile(Path(CSV_FILE))
         assert r.rows > 0
 
+    def test_missing_file_raises_file_not_found(self):
+        missing = str(FIXTURES / "does_not_exist.csv")
+        with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
+            dataprof.profile(missing)
+        assert excinfo.value.filename == missing
+
     def test_unsupported_type_raises(self):
         with pytest.raises(TypeError, match="Unsupported source type"):
             dataprof.profile(42)
@@ -169,6 +175,19 @@ class TestProfileReport:
         assert hasattr(col, "null_count")
         assert hasattr(col, "null_percentage")
 
+    def test_column_profile_repr(self, report):
+        r = repr(report["name"])
+        assert "ColumnProfile" in r
+        assert "name='name'" in r
+        assert "type=" in r
+        assert "nulls=" in r
+
+    def test_quality_repr(self, report):
+        r = repr(report.quality)
+        assert "DataQualityMetrics" in r
+        assert "score=" in r
+        assert "dimensions=" in r
+
     def test_to_dict(self, report):
         d = report.to_dict()
         assert "source" in d
@@ -238,6 +257,15 @@ class TestPartialAnalysis:
     def test_quick_row_count_path_object(self):
         result = dataprof.quick_row_count(Path(CSV_FILE))
         assert result.count > 0
+
+    def test_missing_file_raises_file_not_found(self):
+        missing = str(FIXTURES / "does_not_exist.csv")
+        with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
+            dataprof.infer_schema(missing)
+        assert excinfo.value.filename == missing
+        with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
+            dataprof.quick_row_count(missing)
+        assert excinfo.value.filename == missing
 
 
 # ─────────────────────────────────────────────────

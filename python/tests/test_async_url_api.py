@@ -1,10 +1,10 @@
 """Async URL profiling regression tests.
 
 These tests require building with async URL features:
-    uv run maturin develop --features "python,async-streaming"
+    uv run maturin develop --features "python,python-async,async-streaming"
 
 For remote Parquet coverage:
-    uv run maturin develop --features "python,parquet-async"
+    uv run maturin develop --features "python,python-async,parquet-async"
 """
 
 from __future__ import annotations
@@ -17,17 +17,27 @@ import threading
 from pathlib import Path
 
 import pytest
-from dataprof.asyncio import _HAS_URL, profile_url
+from dataprof.asyncio import (
+    _HAS_URL,
+    infer_schema_stream,
+    profile_bytes,
+    profile_file,
+    profile_url,
+    quick_row_count_stream,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES = REPO_ROOT / "examples"
-CSV_BYTES = b"city,population\nRome,2873\nMilan,1352\n"
+DOGFOOD = REPO_ROOT / "python" / "tests" / "fixtures" / "dogfood"
+INCIDENTS_CSV = DOGFOOD / "incidents.csv"
+CHECKOUT_JSONL = DOGFOOD / "checkout_events.jsonl"
 PARQUET_FILE = FIXTURES / "test_data" / "simple.parquet"
 
 
 if not _HAS_URL:
     pytest.skip(
-        "Async URL profiling not compiled. Build with --features 'python,async-streaming'.",
+        "Async URL profiling not compiled. Build with --features "
+        "'python,python-async,async-streaming'.",
         allow_module_level=True,
     )
 
@@ -46,6 +56,8 @@ class _ThreadingTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 @pytest.fixture()
 def url_server():
+    incidents_csv = INCIDENTS_CSV.read_bytes()
+    checkout_jsonl = CHECKOUT_JSONL.read_bytes()
     parquet_bytes = PARQUET_FILE.read_bytes()
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -89,8 +101,10 @@ def url_server():
             return
 
         def _payload(self):
-            if self.path == "/data.csv":
-                return CSV_BYTES
+            if self.path == "/incidents.csv":
+                return incidents_csv
+            if self.path == "/checkout_events.jsonl":
+                return checkout_jsonl
             if self.path == "/data.parquet":
                 return parquet_bytes
             raise AssertionError(f"unexpected path: {self.path}")
@@ -102,7 +116,8 @@ def url_server():
     try:
         port = server.server_address[1]
         yield {
-            "csv": f"http://127.0.0.1:{port}/data.csv",
+            "csv": f"http://127.0.0.1:{port}/incidents.csv",
+            "jsonl": f"http://127.0.0.1:{port}/checkout_events.jsonl",
             "parquet": f"http://127.0.0.1:{port}/data.parquet",
         }
     finally:
@@ -113,12 +128,47 @@ def url_server():
 
 
 class TestAsyncUrlProfiling:
+    def test_profile_file_with_dogfood_csv(self):
+        report = _run(profile_file, INCIDENTS_CSV)
+
+        assert report.rows == 30
+        assert report.columns == 12
+        assert report["email"].null_count == 3
+        assert report["sla_breached"].true_count == 12
+
+    def test_profile_bytes_with_dogfood_jsonl(self):
+        report = _run(profile_bytes, CHECKOUT_JSONL.read_bytes(), format="jsonl")
+
+        assert report.rows == 25
+        assert report.columns == 10
+        assert report["coupon_code"].null_count == 14
+        assert report["successful"].true_count == 19
+
+    def test_stream_utilities_with_dogfood_csv(self):
+        data = INCIDENTS_CSV.read_bytes()
+
+        schema = _run(infer_schema_stream, data, format="csv")
+        count = _run(quick_row_count_stream, data, format="csv")
+
+        assert schema.num_columns == 12
+        assert "ticket_id" in schema.column_names
+        assert count.count == 30
+
     def test_profile_csv_url(self, url_server):
         report = _run(profile_url, url_server["csv"])
 
-        assert report.rows == 2
-        assert report.columns == 2
+        assert report.rows == 30
+        assert report.columns == 12
         assert report.source_type == "stream"
+        assert report["response_minutes"].max == 1440
+
+    def test_profile_jsonl_url(self, url_server):
+        report = _run(profile_url, url_server["jsonl"])
+
+        assert report.rows == 25
+        assert report.columns == 10
+        assert report.source_type == "stream"
+        assert report["risk_score"].max == 0.98
 
     def test_profile_parquet_url(self, url_server):
         try:

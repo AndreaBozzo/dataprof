@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv as _csv
 import decimal as _decimal
+import errno as _errno
 import functools
 import html as _html
 import io as _io
@@ -144,14 +145,23 @@ def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.B
     return _io.BytesIO(bytes(source))
 
 
+def _normalize_existing_file(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
+    normalized = _normalize_pathlike(path, arg_name=arg_name)
+    try:
+        pathlib.Path(normalized).stat()
+    except FileNotFoundError:
+        raise FileNotFoundError(_errno.ENOENT, os.strerror(_errno.ENOENT), normalized) from None
+    return normalized
+
+
 def infer_schema(path: str | os.PathLike[str]) -> SchemaResult:
     """Infer a file schema from a string path or path-like object."""
-    return _infer_schema(_normalize_pathlike(path))
+    return _infer_schema(_normalize_existing_file(path))
 
 
 def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
     """Estimate or count rows from a string path or path-like object."""
-    return _quick_row_count(_normalize_pathlike(path))
+    return _quick_row_count(_normalize_existing_file(path))
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +371,7 @@ def profile(
     """
     # File path — build config and delegate to Rust
     if isinstance(source, (str, pathlib.PurePath)):
+        path = _normalize_existing_file(source, arg_name="source")
         config = ProfilerConfig(
             engine=engine,
             chunk_size=chunk_size,
@@ -379,7 +390,7 @@ def profile(
             positive_columns=positive_columns,
             identifier_columns=identifier_columns,
         )
-        rust_report = _analyze_file(_normalize_pathlike(source, arg_name="source"), config)
+        rust_report = _analyze_file(path, config)
         return ProfileReport(rust_report)
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
