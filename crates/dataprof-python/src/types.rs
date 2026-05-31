@@ -226,6 +226,31 @@ impl From<&ColumnProfile> for PyColumnProfile {
     }
 }
 
+#[pymethods]
+impl PyColumnProfile {
+    fn __repr__(&self) -> String {
+        let mut parts = vec![
+            format!("name='{}'", self.name),
+            format!("type='{}'", self.data_type),
+            format!("nulls={:.1}%", self.null_percentage),
+        ];
+
+        if let Some(unique) = self.unique_count {
+            parts.push(format!("unique={}", unique));
+        }
+        if let Some(mean) = self.mean {
+            parts.push(format!("mean={:.4}", mean));
+        } else if let Some(avg_length) = self.avg_length {
+            parts.push(format!("avg_len={:.4}", avg_length));
+        } else if let Some(true_count) = self.true_count {
+            let true_pct = self.true_ratio.unwrap_or(0.0) * 100.0;
+            parts.push(format!("true={}({:.0}%)", true_count, true_pct));
+        }
+
+        format!("ColumnProfile({})", parts.join(", "))
+    }
+}
+
 /// Python wrapper for QualityMetrics — ISO 8000/25012 quality dimensions.
 ///
 /// Exposes both flat backward-compatible properties and new nested dimension
@@ -490,6 +515,32 @@ impl PyDataQualityMetrics {
             self.inner.complete_records_ratio(),
             self.inner.data_type_consistency(),
             self.inner.key_uniqueness(),
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        let mut dimensions = Vec::new();
+        if self.inner.completeness.is_some() {
+            dimensions.push("completeness");
+        }
+        if self.inner.consistency.is_some() {
+            dimensions.push("consistency");
+        }
+        if self.inner.uniqueness.is_some() {
+            dimensions.push("uniqueness");
+        }
+        if self.inner.accuracy.is_some() {
+            dimensions.push("accuracy");
+        }
+        if self.inner.timeliness.is_some() {
+            dimensions.push("timeliness");
+        }
+
+        format!(
+            "DataQualityMetrics(score={:.1}%, dimensions=[{}], low_sample_warning={})",
+            self.inner.overall_score(),
+            dimensions.join(", "),
+            self.inner.low_sample_warning,
         )
     }
 }
