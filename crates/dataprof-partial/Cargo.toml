@@ -1,6 +1,6 @@
 [package]
 name = "dataprof-partial"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Andrea Bozzo"]
@@ -21,10 +21,10 @@ async-streaming = [
 arrow = { version = "57.3.0", features = ["ffi"], optional = true }
 bytes = { version = "1.10", optional = true }
 csv = "1.4"
-dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
-dataprof-csv = { version = "0.8.0", path = "../dataprof-csv" }
-dataprof-json = { version = "0.8.0", path = "../dataprof-json" }
-dataprof-runtime = { version = "0.8.0", path = "../dataprof-runtime" }
+dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
+dataprof-csv = { version = "0.8.1", path = "../dataprof-csv" }
+dataprof-json = { version = "0.8.1", path = "../dataprof-json" }
+dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
 parquet = { version = "57.3.0", features = ["arrow"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.149"

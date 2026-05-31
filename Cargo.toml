@@ -15,7 +15,7 @@ resolver = "3"
 
 [package]
 name = "dataprof"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Andrea Bozzo"]
@@ -51,15 +51,15 @@ all = "deny"
 
 
 [dependencies]
-dataprof-core = { version = "0.8.0", path = "crates/dataprof-core" }
-dataprof-metrics = { version = "0.8.0", path = "crates/dataprof-metrics" }
-dataprof-csv = { version = "0.8.0", path = "crates/dataprof-csv" }
-dataprof-engines = { version = "0.8.0", path = "crates/dataprof-engines", default-features = false }
-dataprof-json = { version = "0.8.0", path = "crates/dataprof-json" }
-dataprof-parquet = { version = "0.8.0", path = "crates/dataprof-parquet", optional = true, default-features = false }
-dataprof-partial = { version = "0.8.0", path = "crates/dataprof-partial", default-features = false }
-dataprof-db = { version = "0.8.0", path = "crates/dataprof-db", optional = true, default-features = false }
-dataprof-runtime = { version = "0.8.0", path = "crates/dataprof-runtime" }
+dataprof-core = { version = "0.8.1", path = "crates/dataprof-core" }
+dataprof-metrics = { version = "0.8.1", path = "crates/dataprof-metrics" }
+dataprof-csv = { version = "0.8.1", path = "crates/dataprof-csv" }
+dataprof-engines = { version = "0.8.1", path = "crates/dataprof-engines", default-features = false }
+dataprof-json = { version = "0.8.1", path = "crates/dataprof-json" }
+dataprof-parquet = { version = "0.8.1", path = "crates/dataprof-parquet", optional = true, default-features = false }
+dataprof-partial = { version = "0.8.1", path = "crates/dataprof-partial", default-features = false }
+dataprof-db = { version = "0.8.1", path = "crates/dataprof-db", optional = true, default-features = false }
+dataprof-runtime = { version = "0.8.1", path = "crates/dataprof-runtime" }
 
 # Note: Async support is available via async-streaming and database feature flags.
 

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-31
+
+### Added
+
+- Python: accept dict, list-of-dicts, bytes, and BytesIO inputs in
+  `dp.profile()` for notebook-friendly profiling.
+- Python: add dogfooding coverage for sync, async, byte-stream, and local
+  remote-URL profiling with tracked CSV/JSONL fixtures.
+
+### Fixed
+
+- Python: `ProfileReport.__getitem__` now raises `TypeError` for non-string
+  keys instead of `KeyError(0)`.
+- Python: missing file paths now raise standard `FileNotFoundError` from the
+  Python boundary for `profile()`, `infer_schema()`, and `quick_row_count()`.
+- Python: `ColumnProfile` and `DataQualityMetrics` now have useful `repr()`
+  output for notebook inspection.
+
+## [0.8.0] - 2026-05-24
+
 ### Added
 
 - Add `dataprof-engines` for adaptive, incremental, and async streaming engine

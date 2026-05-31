@@ -1,6 +1,6 @@
 [package]
 name = "dataprof-db"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Andrea Bozzo"]
@@ -15,9 +15,9 @@ all-db = ["postgres", "mysql", "sqlite"]
 
 [dependencies]
 async-trait = "0.1"
-dataprof-core = { version = "0.8.0", path = "../dataprof-core" }
-dataprof-metrics = { version = "0.8.0", path = "../dataprof-metrics" }
-dataprof-runtime = { version = "0.8.0", path = "../dataprof-runtime" }
+dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
+dataprof-metrics = { version = "0.8.1", path = "../dataprof-metrics" }
+dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
 log = "0.4"
 rand = { version = "0.9.3", features = ["small_rng"] }
 regex = "1.12"
