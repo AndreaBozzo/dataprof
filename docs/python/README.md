@@ -2,7 +2,7 @@
 
 Complete reference for the `dataprof` Python package (v0.8.0).
 
-The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, or database query and get back a report you can slice, export, and wire into notebooks or checks.
+The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
 ## Installation
 
@@ -12,7 +12,7 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, and report exports.
+Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, ad-hoc dict/bytes inputs, and report exports.
 
 Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
 
@@ -45,6 +45,11 @@ import pandas as pd
 df = pd.read_csv("data.csv")
 report = dp.profile(df)
 
+# Profile ad-hoc notebook data
+report = dp.profile({"age": [31, 42, 29], "city": ["Rome", "Milan", "Rome"]})
+report = dp.profile([{"age": 31, "city": "Rome"}, {"age": 42, "city": "Milan"}])
+report = dp.profile(b"age,city\n31,Rome\n", format="csv")
+
 # Profile a PyArrow table
 import pyarrow.parquet as pq
 table = pq.read_table("data.parquet")
@@ -55,7 +60,7 @@ report = dp.profile(table)
 
 ```python
 dp.profile(
-    source,                          # str, Path, DataFrame, or Arrow object
+    source,                          # str, Path, DataFrame, Arrow, dict, rows, or bytes
     *,
     engine="auto",                   # "auto", "incremental", "columnar"
     chunk_size=None,                 # int -- custom chunk size
@@ -85,6 +90,11 @@ dp.profile(
 | pandas `DataFrame` | In-memory DataFrame |
 | polars `DataFrame` | In-memory Polars DataFrame |
 | PyArrow `Table` or `RecordBatch` | Zero-copy via PyCapsule interface |
+| `dict[str, list]` | Convenience path through pandas `DataFrame(source)` |
+| `list[dict]` | Row-oriented notebook data via pandas `DataFrame(source)` |
+| `bytes` or `io.BytesIO` | In-memory file contents; requires `format="csv"`, `"json"`, `"jsonl"`, or `"parquet"` |
+
+Dict, row-dict, and bytes inputs require pandas because the sync API converts them to a DataFrame before profiling. For async byte streams, use `dataprof.asyncio.profile_bytes()`.
 
 **Engine options:**
 

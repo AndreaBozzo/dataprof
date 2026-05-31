@@ -6,6 +6,7 @@ import csv as _csv
 import decimal as _decimal
 import functools
 import html as _html
+import io as _io
 import json
 import math
 import os
@@ -120,6 +121,27 @@ def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path")
         f"argument '{arg_name}': expected str or path-like object, "
         f"got {type(path).__module__}.{type(path).__name__}"
     )
+
+
+def _require_pandas(feature: str):
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError(
+            f"pandas is required to profile {feature}. "
+            "Install it with: pip install dataprof[pandas]"
+        ) from exc
+    return pd
+
+
+def _is_list_of_dicts(source: object) -> bool:
+    return isinstance(source, list) and all(isinstance(row, dict) for row in source)
+
+
+def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.BytesIO:
+    if isinstance(source, _io.BytesIO):
+        return _io.BytesIO(source.getvalue())
+    return _io.BytesIO(bytes(source))
 
 
 def infer_schema(path: str | os.PathLike[str]) -> SchemaResult:
@@ -299,7 +321,8 @@ def profile(
     """Profile a data source and return a report.
 
     Accepts file paths (str/Path), pandas DataFrames, polars DataFrames,
-    or any object implementing the Arrow PyCapsule protocol.
+    Arrow PyCapsule-compatible objects, dict/list-of-dicts, and bytes-like
+    file contents when ``format=`` is provided.
 
     Args:
         source: Data source to profile.
@@ -406,18 +429,46 @@ def profile(
                 stacklevel=3,
             )
 
+    def _profile_python_dataframe(df: object, default_name: str) -> ProfileReport:
+        rust_report = _profile_dataframe(df, name or default_name, max_rows, _df_config())
+        return ProfileReport(rust_report)
+
+    if isinstance(source, dict) or _is_list_of_dicts(source):
+        _warn_if_config_ignored()
+        pd = _require_pandas("dict and list-of-dicts inputs")
+        return _profile_python_dataframe(pd.DataFrame(source), "dataframe")
+
+    if isinstance(source, (bytes, bytearray, memoryview, _io.BytesIO)):
+        if format is None:
+            raise ValueError(
+                "bytes and BytesIO sources require format='csv', 'json', 'jsonl', or 'parquet'. "
+                "For async byte streams, use dataprof.asyncio.profile_bytes(data, format='csv')."
+            )
+        pd = _require_pandas("bytes and BytesIO inputs")
+        fmt = format.lower()
+        buffer = _bytes_buffer(source)
+        if fmt == "csv":
+            df = pd.read_csv(buffer, sep=csv_delimiter or ",")
+        elif fmt == "json":
+            df = pd.read_json(buffer)
+        elif fmt == "jsonl":
+            df = pd.read_json(buffer, lines=True)
+        elif fmt == "parquet":
+            df = pd.read_parquet(buffer)
+        else:
+            raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
+        return _profile_python_dataframe(df, f"{fmt}_bytes")
+
     # DataFrame detection via module name
     source_module = type(source).__module__ or ""
 
     if source_module.startswith("pandas"):
         _warn_if_config_ignored()
-        rust_report = _profile_dataframe(source, name or "dataframe", max_rows, _df_config())
-        return ProfileReport(rust_report)
+        return _profile_python_dataframe(source, "dataframe")
 
     if source_module.startswith("polars"):
         _warn_if_config_ignored()
-        rust_report = _profile_dataframe(source, name or "dataframe", max_rows, _df_config())
-        return ProfileReport(rust_report)
+        return _profile_python_dataframe(source, "dataframe")
 
     # PyArrow objects (Table, RecordBatch) or any Arrow PyCapsule-compatible object
     if source_module.startswith("pyarrow") or hasattr(source, "__arrow_c_array__"):
@@ -428,7 +479,8 @@ def profile(
     raise TypeError(
         f"Unsupported source type: {type(source).__module__}.{type(source).__name__}. "
         "Expected a file path (str/Path), pandas DataFrame, polars DataFrame, "
-        "or an object implementing the Arrow PyCapsule protocol."
+        "an object implementing the Arrow PyCapsule protocol, dict/list-of-dicts, "
+        "or bytes/BytesIO with format=."
     )
 
 

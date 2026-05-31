@@ -47,7 +47,7 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 uv pip install dataprof
 ```
 
-Pre-built PyPI wheels ship the base Python API for local files, DataFrames, and Arrow objects. Async URL profiling and database helpers remain opt-in source builds.
+Pre-built PyPI wheels ship the base Python API for local files, DataFrames, Arrow objects, and notebook-friendly ad-hoc inputs such as dicts, row dicts, and bytes buffers. Async URL profiling and database helpers remain opt-in source builds.
 
 ```python
 import dataprof as dp
@@ -60,6 +60,10 @@ age = report["age"]
 print(age.data_type, age.mean, age.null_percentage)
 
 report.save("report.json")
+
+# Notebook-friendly ad-hoc inputs also work
+scratch = dp.profile({"age": [31, 42, 29], "city": ["Rome", "Milan", "Rome"]})
+incoming = dp.profile(b"age,city\n31,Rome\n", format="csv")
 ```
 
 ### Rust
@@ -118,6 +122,7 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 | Database query | Async | PostgreSQL, MySQL, SQLite via connection string |
 | pandas / polars DataFrame | Columnar | Python API only |
 | Arrow RecordBatch | Columnar | Via PyCapsule (zero-copy) or Rust API |
+| dict / list of dicts / bytes | Columnar | Python convenience path; bytes require `format=` |
 | Async byte stream | Incremental | Any `AsyncRead` source (HTTP, WebSocket, etc.) |
 
 ## Quality Metrics

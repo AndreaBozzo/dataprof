@@ -50,6 +50,35 @@ for name in report:
     print(f"{col.name}: {col.data_type}, {col.null_percentage:.1f}% null")
 ```
 
+### Profile ad-hoc notebook data
+
+```python
+import dataprof as dp
+
+# Column-oriented scratch data, like pandas.DataFrame({...})
+report = dp.profile({"age": [31, 42, 29], "city": ["Rome", "Milan", "Rome"]})
+
+# Row-oriented records, common after API calls or lightweight transforms
+report = dp.profile([
+    {"age": 31, "city": "Rome"},
+    {"age": 42, "city": "Milan"},
+])
+
+print(report.rows, report.columns, report["city"].unique_count)
+```
+
+### Profile in-memory file bytes
+
+```python
+import io
+import dataprof as dp
+
+csv_bytes = b"age,city\n31,Rome\n42,Milan\n"
+
+# The sync byte path needs an explicit format because there is no filename.
+report = dp.profile(io.BytesIO(csv_bytes), format="csv")
+```
+
 ### Profile a Polars DataFrame
 
 ```python

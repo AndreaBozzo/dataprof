@@ -7,6 +7,7 @@ Run after building the extension:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
@@ -113,6 +114,32 @@ class TestInterop:
         r = dataprof.profile(df)
         assert r.rows == 3
         assert r.columns == 2
+
+
+class TestProfileAdHocInputs:
+    def test_dict_input(self):
+        pytest.importorskip("pandas")
+        r = dataprof.profile({"a": [1, 2, 3]})
+        assert r.rows == 3
+        assert r.columns == 1
+        assert r["a"].name == "a"
+
+    def test_list_of_dicts_input(self):
+        pytest.importorskip("pandas")
+        r = dataprof.profile([{"a": 1}, {"a": 2}])
+        assert r.rows == 2
+        assert r.columns == 1
+        assert r["a"].name == "a"
+
+    def test_bytesio_csv_input(self):
+        pytest.importorskip("pandas")
+        r = dataprof.profile(io.BytesIO(b"a,b\n1,2\n"), format="csv")
+        assert r.rows == 1
+        assert r.columns == 2
+
+    def test_bytes_input_requires_format(self):
+        with pytest.raises(ValueError, match="dataprof.asyncio.profile_bytes"):
+            dataprof.profile(b"a,b\n1,2\n")
 
 
 # ─────────────────────────────────────────────────
