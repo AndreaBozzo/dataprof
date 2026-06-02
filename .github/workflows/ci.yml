@@ -55,7 +55,7 @@ jobs:
             skip-on-draft: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
@@ -80,7 +80,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
@@ -133,7 +133,7 @@ jobs:
               cargo test -p dataprof-partial --all-features
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
@@ -152,7 +152,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
@@ -177,7 +177,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
@@ -215,7 +215,7 @@ jobs:
             features: "python,python-async,parquet-async"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
@@ -277,7 +277,7 @@ jobs:
       MYSQL_TEST_URL: "mysql://dataprof:dev_password_123@127.0.0.1:3306/dataprof_test"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
