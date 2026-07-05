@@ -734,10 +734,20 @@ class _DictColumn:
         self.null_percentage = d.get("null_percentage")
         self.unique_count = d.get("unique_count")
         self.uniqueness_ratio = d.get("uniqueness_ratio")
-        for key, value in (d.get("stats") or {}).items():
-            setattr(self, key, value)
+        # Overlay only known stat attributes — never setattr arbitrary keys from
+        # (possibly malformed) input, which could inject unexpected/dunder names.
+        stats = d.get("stats")
+        if isinstance(stats, dict):
+            allowed = set(self._STAT_ATTRS)
+            for key, value in stats.items():
+                if key in allowed:
+                    setattr(self, key, value)
         patterns = d.get("patterns")
-        self.patterns = [_DictPattern(p) for p in patterns] if patterns is not None else None
+        self.patterns = (
+            [_DictPattern(p) for p in patterns if isinstance(p, dict)]
+            if isinstance(patterns, list)
+            else None
+        )
 
 
 class _DictQuality:
@@ -790,8 +800,8 @@ class _DictBackedReport:
         self.sampling_applied = bool(execution.get("sampling_applied", False))
         self.sampling_ratio = execution.get("sampling_ratio")
         quality = d.get("quality")
-        self.quality = _DictQuality(quality) if quality is not None else None
-        self.quality_score = quality.get("overall_score") if quality is not None else None
+        self.quality = _DictQuality(quality) if isinstance(quality, dict) else None
+        self.quality_score = quality.get("overall_score") if isinstance(quality, dict) else None
         self.column_profiles = [_DictColumn(c) for c in d.get("columns", [])]
 
 
@@ -1244,6 +1254,11 @@ class ProfileReport:
                 "from_dict() expects a mapping produced by ProfileReport.to_dict() "
                 "(with 'source', 'columns', and 'execution' keys)."
             )
+        if not isinstance(data["execution"], dict):
+            raise ValueError("from_dict(): 'execution' must be a mapping.")
+        columns = data["columns"]
+        if not isinstance(columns, list) or not all(isinstance(c, dict) for c in columns):
+            raise ValueError("from_dict(): 'columns' must be a list of mappings.")
         return cls(_DictBackedReport(data))
 
     @classmethod
@@ -1251,8 +1266,15 @@ class ProfileReport:
         """Rebuild a read-only ProfileReport from JSON produced by :meth:`to_json`.
 
         See :meth:`from_dict` for the reconstruction semantics.
+
+        Raises:
+            ValueError: if ``text`` is not valid JSON from ``to_json()``.
         """
-        return cls.from_dict(json.loads(text))
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"from_json() received invalid JSON: {exc}") from exc
+        return cls.from_dict(data)
 
     def __repr__(self) -> str:
         qs = self.quality_score

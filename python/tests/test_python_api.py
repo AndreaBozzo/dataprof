@@ -289,6 +289,29 @@ class TestReportErgonomics:
         with pytest.raises(ValueError, match="to_dict"):
             dataprof.ProfileReport.from_dict({"not": "a report"})
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"source": "x", "columns": [], "execution": []},  # execution not a mapping
+            {"source": "x", "columns": None, "execution": {}},  # columns not a list
+            {"source": "x", "columns": [1, 2], "execution": {}},  # columns not mappings
+        ],
+    )
+    def test_from_dict_rejects_wrong_types(self, bad):
+        with pytest.raises(ValueError):
+            dataprof.ProfileReport.from_dict(bad)
+
+    def test_from_json_rejects_invalid_json(self):
+        with pytest.raises(ValueError, match="invalid JSON"):
+            dataprof.ProfileReport.from_json("{not valid json")
+
+    def test_from_dict_ignores_unknown_stat_keys(self, report):
+        d = report.to_dict()
+        d["columns"][0].setdefault("stats", {})["__evil__"] = "nope"
+        reloaded = dataprof.ProfileReport.from_dict(d)
+        col = reloaded[d["columns"][0]["name"]]
+        assert not hasattr(col, "__evil__")
+
     def test_compare_identical_is_zero(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
         delta = report.compare(reloaded)
