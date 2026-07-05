@@ -1,0 +1,5 @@
+# Canonicalize commit author identities.
+# All of these are the same person (same email); this normalizes the
+# display name so `git shortlog`/`git log` and GitHub stats show one author.
+AndreaBozzo <andreabozzo92@gmail.com> poinT92 <andreabozzo92@gmail.com>
+AndreaBozzo <andreabozzo92@gmail.com> Andrea Bozzo <andreabozzo92@gmail.com>
