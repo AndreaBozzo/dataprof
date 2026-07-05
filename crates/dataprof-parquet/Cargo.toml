@@ -14,7 +14,7 @@ parquet-async = ["parquet", "parquet/async", "dep:bytes", "dep:futures", "dep:re
 
 [dependencies]
 anyhow = "1.0"
-arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+arrow = { version = "58.1.0", features = ["ffi"], optional = true }
 bytes = { version = "1.10", optional = true }
 csv = { version = "1.4", optional = true }
 dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
@@ -22,7 +22,7 @@ dataprof-csv = { version = "0.8.1", path = "../dataprof-csv", optional = true }
 dataprof-metrics = { version = "0.8.1", path = "../dataprof-metrics" }
 dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
 futures = { version = "0.3.31", optional = true }
-parquet = { version = "57.3.0", features = ["arrow"], optional = true }
+parquet = { version = "58.1.0", features = ["arrow"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
 
 [dev-dependencies]

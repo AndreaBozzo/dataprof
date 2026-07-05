@@ -18,14 +18,14 @@ async-streaming = [
 ]
 
 [dependencies]
-arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+arrow = { version = "58.1.0", features = ["ffi"], optional = true }
 bytes = { version = "1.10", optional = true }
 csv = "1.4"
 dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
 dataprof-csv = { version = "0.8.1", path = "../dataprof-csv" }
 dataprof-json = { version = "0.8.1", path = "../dataprof-json" }
 dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
-parquet = { version = "57.3.0", features = ["arrow"], optional = true }
+parquet = { version = "58.1.0", features = ["arrow"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.149"
 tokio = { version = "1.49", features = ["full"], optional = true }
