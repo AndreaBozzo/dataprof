@@ -146,9 +146,16 @@ report.to_polars()               # polars DataFrame -- all stats (requires polar
 report.to_arrow()                # PyArrow Table -- all stats (requires pyarrow)
 report.describe()                # transposed summary like pandas describe()
 report.quality_summary()         # single-row dict for quality tracking
+report.to_html()                 # standalone HTML (same as the notebook display)
+report.to_markdown()             # GitHub-flavored markdown table
+report.compare(other)            # dict of quality/schema/null deltas vs another report
 report.save("report.json")      # save to JSON
 report.save("report.csv")       # save column profiles to CSV
 report.save("report.parquet")   # save column profiles to Parquet (requires pyarrow)
+
+# Round-trip a saved report without re-profiling (read-only view)
+reloaded = dp.ProfileReport.from_json(report.to_json())
+reloaded = dp.ProfileReport.from_dict(report.to_dict())
 ```
 
 **Rounding:** All floating-point values in exported data are rounded to match the CLI
@@ -368,6 +375,53 @@ import pandas as pd
 rows = [dp.profile(f).quality_summary() for f in files]
 history = pd.DataFrame(rows)
 ```
+
+### `to_html()` / `to_markdown()`
+
+Render the report for sharing outside a notebook:
+
+```python
+html = report.to_html()          # same rich table Jupyter shows, as a string
+open("report.html", "w").write(html)
+
+md = report.to_markdown()        # GitHub-flavored markdown table
+# Paste straight into a PR comment, issue, or Slack message
+```
+
+### `from_json()` / `from_dict()`
+
+Rebuild a report from previously exported data without re-profiling. The
+reconstructed report is a **read-only view** backed by the exported values, but
+all export methods (`to_json`, `to_markdown`, `to_dataframe`, `describe`,
+`quality_summary`, mapping access, …) work as usual:
+
+```python
+report.save("report.json")
+# ...later...
+reloaded = dp.ProfileReport.from_json(open("report.json").read())
+reloaded.quality_score          # == the original report's quality_score
+reloaded["email"].null_percentage
+```
+
+### `compare()`
+
+Detect quality drift or schema changes between two profiles (e.g. the same
+dataset before and after a pipeline run):
+
+```python
+before = dp.profile("data_v1.csv")
+after = dp.profile("data_v2.csv")
+delta = before.compare(after)
+# {
+#   "quality_score": {"a": 92.3, "b": 88.1, "abs": -4.2, "rel_pct": -4.55},
+#   "dimensions": {"completeness": {...}, "consistency": {...}, ...},
+#   "columns": {"email": {"null_pct_a": 1.0, "null_pct_b": 6.5, "null_pct_delta": 5.5}, ...},
+#   "schema": {"added": ["phone"], "removed": [], "common": ["id", "email", ...]},
+# }
+```
+
+> The `compare()` result shape is provisional and will align with the Rust-side
+> `QualityDelta` type once it lands.
 
 ### `save()`
 

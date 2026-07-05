@@ -307,6 +307,35 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
     }
 
 
+def _stats_cell(col: ColumnProfile) -> str:
+    """Compact stats summary for a column, shared by the HTML/markdown/text views.
+
+    Numeric columns show mean/std/median; boolean columns show true count and
+    ratio; text columns show average length. Returns "" when none apply.
+    """
+    parts: list[str] = []
+    if col.mean is not None:
+        parts.append(f"mean={_r4(col.mean)}")
+        if col.std_dev is not None:
+            parts.append(f"std={_r4(col.std_dev)}")
+        if col.median is not None:
+            parts.append(f"median={_r4(col.median)}")
+    elif col.true_count is not None:
+        pct = _r2(col.true_ratio * 100) if col.true_ratio is not None else 0
+        parts.append(f"true={col.true_count} ({pct:.0f}%)")
+    elif col.avg_length is not None:
+        parts.append(f"avg_len={_r4(col.avg_length)}")
+    return ", ".join(parts)
+
+
+def _pattern_cell(col: ColumnProfile) -> str:
+    """Highest-confidence detected pattern for a column, as "Name (pct%)"."""
+    if col.patterns:
+        best = max(col.patterns, key=lambda p: p.confidence)
+        return f"{best.name} ({_r2(best.match_percentage):.0f}%)"
+    return ""
+
+
 def profile(
     source: Any,
     *,
@@ -646,6 +675,136 @@ class Profiler:
         return f"Profiler({settings})"
 
 
+# ---------------------------------------------------------------------------
+# Read-only proxy backing ProfileReport.from_dict() / from_json().
+#
+# The native ProfileReport can't be constructed from Python, so these classes
+# mimic the attribute surface the export methods read (self._report.<attr> and
+# self._report.column_profiles) closely enough that every ProfileReport method
+# works unchanged on a reloaded report.
+# ---------------------------------------------------------------------------
+
+
+class _DictPattern:
+    """Read-only stand-in for a native Pattern, built from a to_dict() entry."""
+
+    def __init__(self, d: dict[str, Any]):
+        self.name = d.get("name")
+        self.regex = d.get("regex")
+        self.match_count = d.get("match_count")
+        self.match_percentage = d.get("match_percentage")
+        self.category = d.get("category")
+        self.confidence = d.get("confidence", 0.0)
+
+
+class _DictColumn:
+    """Read-only stand-in for a native ColumnProfile, built from to_dict()."""
+
+    # Optional stat attributes, all defaulting to None; a subset is overlaid
+    # from the nested "stats" dict depending on the column's data type.
+    _STAT_ATTRS = (
+        "min",
+        "max",
+        "mean",
+        "std_dev",
+        "variance",
+        "median",
+        "mode",
+        "skewness",
+        "kurtosis",
+        "coefficient_of_variation",
+        "quartiles",
+        "is_approximate",
+        "outlier_count",
+        "min_length",
+        "max_length",
+        "avg_length",
+        "true_count",
+        "false_count",
+        "true_ratio",
+    )
+
+    def __init__(self, d: dict[str, Any]):
+        for attr in self._STAT_ATTRS:
+            setattr(self, attr, None)
+        self.name = d.get("name")
+        self.data_type = d.get("data_type")
+        self.total_count = d.get("total_count")
+        self.null_count = d.get("null_count")
+        self.null_percentage = d.get("null_percentage")
+        self.unique_count = d.get("unique_count")
+        self.uniqueness_ratio = d.get("uniqueness_ratio")
+        # Overlay only known stat attributes — never setattr arbitrary keys from
+        # (possibly malformed) input, which could inject unexpected/dunder names.
+        stats = d.get("stats")
+        if isinstance(stats, dict):
+            allowed = set(self._STAT_ATTRS)
+            for key, value in stats.items():
+                if key in allowed:
+                    setattr(self, key, value)
+        patterns = d.get("patterns")
+        self.patterns = (
+            [_DictPattern(p) for p in patterns if isinstance(p, dict)]
+            if isinstance(patterns, list)
+            else None
+        )
+
+
+class _DictQuality:
+    """Read-only stand-in for native DataQualityMetrics, built from to_dict()."""
+
+    def __init__(self, d: dict[str, Any]):
+        self._d = d
+        self.low_sample_warning = bool(d.get("low_sample_warning", False))
+
+    @property
+    def completeness(self) -> dict[str, Any] | None:
+        return self._d.get("completeness")
+
+    @property
+    def consistency(self) -> dict[str, Any] | None:
+        return self._d.get("consistency")
+
+    @property
+    def uniqueness(self) -> dict[str, Any] | None:
+        return self._d.get("uniqueness")
+
+    @property
+    def accuracy(self) -> dict[str, Any] | None:
+        return self._d.get("accuracy")
+
+    @property
+    def timeliness(self) -> dict[str, Any] | None:
+        return self._d.get("timeliness")
+
+    def overall_quality_score(self) -> float | None:
+        return self._d.get("overall_score")
+
+
+class _DictBackedReport:
+    """Read-only stand-in for the native ProfileReport, built from to_dict()."""
+
+    def __init__(self, d: dict[str, Any]):
+        execution = d.get("execution") or {}
+        self.source = d.get("source")
+        self.source_type = d.get("source_type")
+        self.rows_processed = execution.get("rows_processed")
+        self.columns_detected = execution.get("columns_detected")
+        self.scan_time_ms = execution.get("scan_time_ms")
+        self.source_exhausted = execution.get("source_exhausted")
+        self.truncation_reason = execution.get("truncation_reason")
+        self.bytes_consumed = execution.get("bytes_consumed")
+        self.throughput_rows_sec = execution.get("throughput_rows_sec")
+        self.memory_peak_mb = execution.get("memory_peak_mb")
+        self.error_count = execution.get("error_count")
+        self.sampling_applied = bool(execution.get("sampling_applied", False))
+        self.sampling_ratio = execution.get("sampling_ratio")
+        quality = d.get("quality")
+        self.quality = _DictQuality(quality) if isinstance(quality, dict) else None
+        self.quality_score = quality.get("overall_score") if isinstance(quality, dict) else None
+        self.column_profiles = [_DictColumn(c) for c in d.get("columns", [])]
+
+
 class ProfileReport:
     """High-level wrapper around the Rust ProfileReport with export methods.
 
@@ -967,6 +1126,156 @@ class ProfileReport:
             raise ValueError("Unsupported format. Use .json, .csv, or .parquet")
         return self
 
+    def to_html(self) -> str:
+        """Return the standalone HTML representation of the report.
+
+        Identical to Jupyter's rich display (``_repr_html_``), exposed as a
+        public method for saving standalone HTML files, embedding in CI
+        summaries, or sharing outside a notebook.
+        """
+        return self._repr_html_()
+
+    def to_markdown(self) -> str:
+        """Render the report as a GitHub-flavored markdown table.
+
+        Suitable for issue bodies, pull-request comments, Slack posts, or
+        README snippets. Uses the same per-column summary as the HTML view.
+        """
+
+        def esc(value: object) -> str:
+            return str(value).replace("|", "\\|")
+
+        qs = self.quality_score
+        qs_str = f"{qs:.1f}%" if qs is not None else "N/A"
+        lines = [
+            f"**Source:** {esc(self.source)} | **Rows:** {self.rows:,} | "
+            f"**Columns:** {self.columns} | **Quality:** {qs_str} | "
+            f"**Time:** {self.execution_time_ms}ms",
+            "",
+            "| Column | Type | Count | Null % | Unique | Stats | Pattern |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for col in self._report.column_profiles:
+            unique_str = f"{col.unique_count:,}" if col.unique_count is not None else ""
+            row = [
+                esc(col.name),
+                esc(col.data_type),
+                f"{col.total_count:,}",
+                f"{_r2(col.null_percentage):.1f}%",
+                unique_str,
+                esc(_stats_cell(col)),
+                esc(_pattern_cell(col)),
+            ]
+            lines.append("| " + " | ".join(row) + " |")
+        return "\n".join(lines)
+
+    def compare(self, other: ProfileReport) -> dict[str, Any]:
+        """Compare this report with another and return a dict of deltas.
+
+        The result captures quality drift and schema differences between two
+        profiles (e.g. the same dataset before and after a pipeline change):
+
+        - ``quality_score``: overall score for each side plus absolute and
+          relative-percent change.
+        - ``dimensions``: the same a/b/abs/rel_pct shape per ISO 25012
+          dimension (completeness, consistency, uniqueness, accuracy,
+          timeliness), sourced from :meth:`quality_summary`.
+        - ``columns``: per-column null-percentage drift over the union of
+          column names (missing on one side → ``None``).
+        - ``schema``: column names ``added`` / ``removed`` / ``common``.
+
+        .. note::
+            The exact shape is provisional and will align with the Rust-side
+            ``QualityDelta`` type (#310) once it lands.
+        """
+
+        def _delta(a: float | None, b: float | None) -> dict[str, float | None]:
+            abs_change = None if a is None or b is None else _r2(b - a)
+            if a is None or b is None or a == 0:
+                rel_pct = None
+            else:
+                rel_pct = _r2((b - a) / abs(a) * 100.0)
+            return {"a": a, "b": b, "abs": abs_change, "rel_pct": rel_pct}
+
+        a_summary = self.quality_summary()
+        b_summary = other.quality_summary()
+
+        dimensions = {
+            dim: _delta(a_summary.get(dim), b_summary.get(dim))
+            for dim in ("completeness", "consistency", "uniqueness", "accuracy", "timeliness")
+        }
+
+        a_cols = self.column_profiles
+        b_cols = other.column_profiles
+        a_names = set(a_cols)
+        b_names = set(b_cols)
+
+        def _null_pct(cols: dict[str, ColumnProfile], name: str) -> float | None:
+            col = cols.get(name)
+            return _r2(col.null_percentage) if col is not None else None
+
+        columns: dict[str, dict[str, float | None]] = {}
+        for name in sorted(a_names | b_names):
+            null_a = _null_pct(a_cols, name)
+            null_b = _null_pct(b_cols, name)
+            null_delta = None if null_a is None or null_b is None else _r2(null_b - null_a)
+            columns[name] = {
+                "null_pct_a": null_a,
+                "null_pct_b": null_b,
+                "null_pct_delta": null_delta,
+            }
+
+        return {
+            "quality_score": _delta(self.quality_score, other.quality_score),
+            "dimensions": dimensions,
+            "columns": columns,
+            "schema": {
+                "added": sorted(b_names - a_names),
+                "removed": sorted(a_names - b_names),
+                "common": sorted(a_names & b_names),
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ProfileReport:
+        """Rebuild a read-only ProfileReport from a dict produced by :meth:`to_dict`.
+
+        The reconstructed report is backed by a lightweight proxy rather than
+        the native engine, so it is read-only, but all export methods
+        (``to_json``, ``to_markdown``, ``to_dataframe``, ``describe``,
+        ``quality_summary``, mapping access, …) work as usual. Useful for
+        reloading a report saved yesterday without re-profiling the data.
+
+        Raises:
+            ValueError: if ``data`` is not a mapping produced by ``to_dict()``.
+        """
+        if not isinstance(data, dict) or not {"source", "columns", "execution"} <= data.keys():
+            raise ValueError(
+                "from_dict() expects a mapping produced by ProfileReport.to_dict() "
+                "(with 'source', 'columns', and 'execution' keys)."
+            )
+        if not isinstance(data["execution"], dict):
+            raise ValueError("from_dict(): 'execution' must be a mapping.")
+        columns = data["columns"]
+        if not isinstance(columns, list) or not all(isinstance(c, dict) for c in columns):
+            raise ValueError("from_dict(): 'columns' must be a list of mappings.")
+        return cls(_DictBackedReport(data))
+
+    @classmethod
+    def from_json(cls, text: str) -> ProfileReport:
+        """Rebuild a read-only ProfileReport from JSON produced by :meth:`to_json`.
+
+        See :meth:`from_dict` for the reconstruction semantics.
+
+        Raises:
+            ValueError: if ``text`` is not valid JSON from ``to_json()``.
+        """
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"from_json() received invalid JSON: {exc}") from exc
+        return cls.from_dict(data)
+
     def __repr__(self) -> str:
         qs = self.quality_score
         qs_str = f"{qs:.1f}%" if qs is not None else "N/A"
@@ -1025,27 +1334,8 @@ class ProfileReport:
         col_rows = ""
         for i, col in enumerate(self._report.column_profiles):
             bg = "#f9fafb" if i % 2 else "#ffffff"
-            # Stats cell
-            stats_parts: list[str] = []
-            if col.mean is not None:
-                stats_parts.append(f"mean={_r4(col.mean)}")
-                if col.std_dev is not None:
-                    stats_parts.append(f"std={_r4(col.std_dev)}")
-                if col.median is not None:
-                    stats_parts.append(f"median={_r4(col.median)}")
-            elif col.true_count is not None:
-                pct = _r2(col.true_ratio * 100) if col.true_ratio is not None else 0
-                stats_parts.append(f"true={col.true_count} ({pct:.0f}%)")
-            elif col.avg_length is not None:
-                stats_parts.append(f"avg_len={_r4(col.avg_length)}")
-            stats = ", ".join(stats_parts)
-
-            # Pattern cell
-            pattern = ""
-            if col.patterns:
-                best = max(col.patterns, key=lambda p: p.confidence)
-                pattern = f"{_html.escape(best.name)} ({_r2(best.match_percentage):.0f}%)"
-
+            stats = _stats_cell(col)
+            pattern = _html.escape(_pattern_cell(col))
             unique_str = f"{col.unique_count:,}" if col.unique_count is not None else ""
 
             col_rows += (
