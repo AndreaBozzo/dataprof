@@ -19,7 +19,7 @@ num_cpus = "1.16"
 rand = { version = "0.9.3", features = ["small_rng"] }
 rand_chacha = "0.9"
 sysinfo = "0.38"
-arrow = { version = "57.3.0", features = ["ffi"], optional = true }
+arrow = { version = "58.1.0", features = ["ffi"], optional = true }
 tokio = { version = "1.49", features = ["sync"], optional = true }
 
 [dev-dependencies]
