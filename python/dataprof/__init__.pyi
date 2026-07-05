@@ -265,6 +265,23 @@ class ProfileReport:
     def save(self, path: str) -> ProfileReport:
         """Save report to file (.json, .csv, or .parquet)."""
         ...
+    def to_html(self) -> str:
+        """Standalone HTML representation (same as Jupyter's rich display)."""
+        ...
+    def to_markdown(self) -> str:
+        """GitHub-flavored markdown table of the column profiles."""
+        ...
+    def compare(self, other: ProfileReport) -> dict[str, Any]:
+        """Dict of quality/schema/null deltas versus another report."""
+        ...
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ProfileReport:
+        """Rebuild a read-only ProfileReport from a to_dict() mapping."""
+        ...
+    @classmethod
+    def from_json(cls, text: str) -> ProfileReport:
+        """Rebuild a read-only ProfileReport from a to_json() string."""
+        ...
 
 class Pattern:
     """Detected pattern statistics."""

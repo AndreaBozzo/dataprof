@@ -233,6 +233,91 @@ class TestProfileReport:
 
 
 # ─────────────────────────────────────────────────
+#  2b. Report ergonomics: to_html / to_markdown / round-trip / compare
+# ─────────────────────────────────────────────────
+
+
+class TestReportErgonomics:
+    @pytest.fixture()
+    def report(self):
+        return dataprof.profile(CSV_FILE)
+
+    def test_to_html_matches_repr_html(self, report):
+        assert report.to_html() == report._repr_html_()
+        assert "<table" in report.to_html()
+
+    def test_to_markdown_structure(self, report):
+        md = report.to_markdown()
+        lines = md.splitlines()
+        header_idx = next(i for i, line in enumerate(lines) if line.startswith("| Column |"))
+        assert lines[header_idx + 1].startswith("|---")
+        data_rows = [line for line in lines[header_idx + 2 :] if line.startswith("|")]
+        assert len(data_rows) == report.columns
+        assert "**Source:**" in lines[0]
+
+    def test_to_markdown_escapes_pipe(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a|b": [1, 2, 3], "c": [4, 5, 6]})
+        md = dataprof.profile(df).to_markdown()
+        assert "a\\|b" in md
+        # No unescaped pipe leaks into a cell and breaks the table
+        assert "| a|b |" not in md
+
+    def test_from_json_round_trip_quality_score(self, report):
+        reloaded = dataprof.ProfileReport.from_json(report.to_json())
+        assert reloaded.quality_score == report.quality_score
+
+    def test_from_dict_round_trip_idempotent(self, report):
+        reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
+        assert reloaded.to_dict() == report.to_dict()
+
+    def test_reloaded_report_supports_exports(self, report):
+        reloaded = dataprof.ProfileReport.from_json(report.to_json())
+        # Rendering + mapping access work on the read-only view
+        assert reloaded.to_markdown() == report.to_markdown()
+        assert "name" in reloaded
+        assert reloaded["name"].name == "name"
+        assert reloaded.columns == report.columns
+
+    def test_reloaded_report_to_dataframe(self, report):
+        pytest.importorskip("pandas")
+        reloaded = dataprof.ProfileReport.from_json(report.to_json())
+        df = reloaded.to_dataframe()
+        assert len(df) == report.columns
+
+    def test_from_dict_rejects_malformed(self):
+        with pytest.raises(ValueError, match="to_dict"):
+            dataprof.ProfileReport.from_dict({"not": "a report"})
+
+    def test_compare_identical_is_zero(self, report):
+        reloaded = dataprof.ProfileReport.from_json(report.to_json())
+        delta = report.compare(reloaded)
+        assert delta["quality_score"]["abs"] == 0
+        assert delta["schema"]["added"] == []
+        assert delta["schema"]["removed"] == []
+        assert set(delta["schema"]["common"]) == set(report.column_profiles)
+        for col in delta["columns"].values():
+            assert col["null_pct_delta"] == 0
+
+    def test_compare_schema_diff(self):
+        pd = pytest.importorskip("pandas")
+        a = dataprof.profile(pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]}))
+        b = dataprof.profile(pd.DataFrame({"x": [1, 2, 3], "z": [7, 8, 9]}))
+        delta = a.compare(b)
+        assert delta["schema"]["added"] == ["z"]
+        assert delta["schema"]["removed"] == ["y"]
+        assert delta["schema"]["common"] == ["x"]
+        assert "quality_score" in delta
+        assert set(delta["dimensions"]) == {
+            "completeness",
+            "consistency",
+            "uniqueness",
+            "accuracy",
+            "timeliness",
+        }
+
+
+# ─────────────────────────────────────────────────
 #  3. Partial analysis
 # ─────────────────────────────────────────────────
 
@@ -526,6 +611,11 @@ class TestNamespace:
             "describe",
             "quality_summary",
             "save",
+            "to_html",
+            "to_markdown",
+            "compare",
+            "from_dict",
+            "from_json",
             "__getitem__",
             "__contains__",
             "__iter__",
