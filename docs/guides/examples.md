@@ -324,13 +324,16 @@ score = report.quality_score or 0.0
 
 if score < 90.0:
     q = report.quality
+    completeness = q.completeness if q else None
+    uniqueness = q.uniqueness if q else None
+    accuracy = q.accuracy if q else None
     failures = []
-    if q.missing_values_ratio > 10.0:
-        failures.append(f"missing values: {q.missing_values_ratio:.1f}%")
-    if q.duplicate_rows > 0:
-        failures.append(f"{q.duplicate_rows} duplicate rows")
-    if q.outlier_ratio > 5.0:
-        failures.append(f"outlier ratio: {q.outlier_ratio:.1f}%")
+    if completeness and completeness["missing_values_ratio"] > 10.0:
+        failures.append(f"missing values: {completeness['missing_values_ratio']:.1f}%")
+    if uniqueness and uniqueness["duplicate_rows"] > 0:
+        failures.append(f"{uniqueness['duplicate_rows']} duplicate rows")
+    if accuracy and accuracy["outlier_ratio"] > 5.0:
+        failures.append(f"outlier ratio: {accuracy['outlier_ratio']:.1f}%")
     print(f"REJECTED (score={score:.2f}): {', '.join(failures)}")
     sys.exit(1)
 
@@ -372,7 +375,8 @@ report = dp.profile(
 )
 
 assert report["order_id"].data_type == "identifier"
-print(report.quality.negative_values_in_positive)
+if report.quality and report.quality.accuracy:
+    print(report.quality.accuracy["negative_values_in_positive"])
 ```
 
 ### Serialize a single column (0.8.0)

@@ -759,6 +759,96 @@ class _DictQuality:
         self._d = d
         self.low_sample_warning = bool(d.get("low_sample_warning", False))
 
+    def _warn_flat_accessor(self, name: str) -> None:
+        warnings.warn(
+            f"DataQualityMetrics.{name} is deprecated; use the nested dimension "
+            "properties such as completeness, consistency, uniqueness, accuracy, "
+            "or timeliness instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    def _dimension_value(self, dimension: str, key: str, default: Any) -> Any:
+        value = self._d.get(dimension)
+        if isinstance(value, dict):
+            return value.get(key, default)
+        return default
+
+    @property
+    def missing_values_ratio(self) -> float:
+        self._warn_flat_accessor("missing_values_ratio")
+        return self._dimension_value("completeness", "missing_values_ratio", 0.0)
+
+    @property
+    def complete_records_ratio(self) -> float:
+        self._warn_flat_accessor("complete_records_ratio")
+        return self._dimension_value("completeness", "complete_records_ratio", 100.0)
+
+    @property
+    def null_columns(self) -> list[str]:
+        self._warn_flat_accessor("null_columns")
+        return self._dimension_value("completeness", "null_columns", [])
+
+    @property
+    def data_type_consistency(self) -> float:
+        self._warn_flat_accessor("data_type_consistency")
+        return self._dimension_value("consistency", "data_type_consistency", 100.0)
+
+    @property
+    def format_violations(self) -> int:
+        self._warn_flat_accessor("format_violations")
+        return self._dimension_value("consistency", "format_violations", 0)
+
+    @property
+    def encoding_issues(self) -> int:
+        self._warn_flat_accessor("encoding_issues")
+        return self._dimension_value("consistency", "encoding_issues", 0)
+
+    @property
+    def duplicate_rows(self) -> int:
+        self._warn_flat_accessor("duplicate_rows")
+        return self._dimension_value("uniqueness", "duplicate_rows", 0)
+
+    @property
+    def key_uniqueness(self) -> float:
+        self._warn_flat_accessor("key_uniqueness")
+        return self._dimension_value("uniqueness", "key_uniqueness", 100.0)
+
+    @property
+    def high_cardinality_warning(self) -> bool:
+        self._warn_flat_accessor("high_cardinality_warning")
+        return self._dimension_value("uniqueness", "high_cardinality_warning", False)
+
+    @property
+    def outlier_ratio(self) -> float:
+        self._warn_flat_accessor("outlier_ratio")
+        return self._dimension_value("accuracy", "outlier_ratio", 0.0)
+
+    @property
+    def range_violations(self) -> int:
+        self._warn_flat_accessor("range_violations")
+        return self._dimension_value("accuracy", "range_violations", 0)
+
+    @property
+    def negative_values_in_positive(self) -> int:
+        self._warn_flat_accessor("negative_values_in_positive")
+        return self._dimension_value("accuracy", "negative_values_in_positive", 0)
+
+    @property
+    def future_dates_count(self) -> int:
+        self._warn_flat_accessor("future_dates_count")
+        return self._dimension_value("timeliness", "future_dates_count", 0)
+
+    @property
+    def stale_data_ratio(self) -> float:
+        self._warn_flat_accessor("stale_data_ratio")
+        return self._dimension_value("timeliness", "stale_data_ratio", 0.0)
+
+    @property
+    def temporal_violations(self) -> int:
+        self._warn_flat_accessor("temporal_violations")
+        return self._dimension_value("timeliness", "temporal_violations", 0)
+
     @property
     def completeness(self) -> dict[str, Any] | None:
         return self._d.get("completeness")

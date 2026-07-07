@@ -409,4 +409,108 @@ mod tests {
         assert_eq!(metrics.duplicate_rows(), 0);
         assert!(!metrics.high_cardinality_warning());
     }
+
+    #[test]
+    fn test_partial_dimension_flat_defaults_table() {
+        struct Case {
+            name: &'static str,
+            metrics: QualityMetrics,
+            has_completeness: bool,
+            has_uniqueness: bool,
+            has_accuracy: bool,
+            missing_values_ratio: f64,
+            key_uniqueness: f64,
+            outlier_ratio: f64,
+        }
+
+        let cases = [
+            Case {
+                name: "only completeness",
+                metrics: QualityMetrics {
+                    completeness: Some(CompletenessMetrics {
+                        missing_values_ratio: 12.5,
+                        complete_records_ratio: 87.5,
+                        null_columns: vec!["email".to_string()],
+                    }),
+                    ..QualityMetrics::default()
+                },
+                has_completeness: true,
+                has_uniqueness: false,
+                has_accuracy: false,
+                missing_values_ratio: 12.5,
+                key_uniqueness: 100.0,
+                outlier_ratio: 0.0,
+            },
+            Case {
+                name: "only uniqueness",
+                metrics: QualityMetrics {
+                    uniqueness: Some(UniquenessMetrics {
+                        duplicate_rows: 2,
+                        key_uniqueness: 92.0,
+                        high_cardinality_warning: true,
+                    }),
+                    ..QualityMetrics::default()
+                },
+                has_completeness: false,
+                has_uniqueness: true,
+                has_accuracy: false,
+                missing_values_ratio: 0.0,
+                key_uniqueness: 92.0,
+                outlier_ratio: 0.0,
+            },
+            Case {
+                name: "only accuracy",
+                metrics: QualityMetrics {
+                    accuracy: Some(AccuracyMetrics {
+                        outlier_ratio: 6.25,
+                        range_violations: 1,
+                        negative_values_in_positive: 1,
+                    }),
+                    ..QualityMetrics::default()
+                },
+                has_completeness: false,
+                has_uniqueness: false,
+                has_accuracy: true,
+                missing_values_ratio: 0.0,
+                key_uniqueness: 100.0,
+                outlier_ratio: 6.25,
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                case.metrics.completeness.is_some(),
+                case.has_completeness,
+                "{} completeness presence",
+                case.name
+            );
+            assert_eq!(
+                case.metrics.uniqueness.is_some(),
+                case.has_uniqueness,
+                "{} uniqueness presence",
+                case.name
+            );
+            assert_eq!(
+                case.metrics.accuracy.is_some(),
+                case.has_accuracy,
+                "{} accuracy presence",
+                case.name
+            );
+            assert!(
+                (case.metrics.missing_values_ratio() - case.missing_values_ratio).abs() < 0.01,
+                "{} missing_values_ratio",
+                case.name
+            );
+            assert!(
+                (case.metrics.key_uniqueness() - case.key_uniqueness).abs() < 0.01,
+                "{} key_uniqueness",
+                case.name
+            );
+            assert!(
+                (case.metrics.outlier_ratio() - case.outlier_ratio).abs() < 0.01,
+                "{} outlier_ratio",
+                case.name
+            );
+        }
+    }
 }
