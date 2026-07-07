@@ -14,17 +14,11 @@ from dataprof._dataprof import (  # type: ignore[import-not-found]
     ProfilerConfig,
     ProfileReport,
     RecordBatch,
+    analyze_csv_to_arrow as _analyze_csv_to_arrow,
+    analyze_file as _analyze_file,
+    analyze_parquet_to_arrow as _analyze_parquet_to_arrow,
     profile_arrow,
     profile_dataframe,
-)
-from dataprof._dataprof import (
-    analyze_csv_to_arrow as _analyze_csv_to_arrow,
-)
-from dataprof._dataprof import (
-    analyze_file as _analyze_file,
-)
-from dataprof._dataprof import (
-    analyze_parquet_to_arrow as _analyze_parquet_to_arrow,
 )
 
 

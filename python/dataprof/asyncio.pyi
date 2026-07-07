@@ -7,6 +7,10 @@ from typing import Any
 
 from . import ProfileReport, RowCountEstimate, SchemaResult
 
+# True when the extension was built with the corresponding feature flags.
+_HAS_ASYNC: bool
+_HAS_URL: bool
+
 async def profile_bytes(
     data: bytes,
     *,

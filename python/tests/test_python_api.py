@@ -1215,6 +1215,7 @@ class TestSemanticHints:
         path.write_text("pressure,temperature_delta\n101325,1\n-500,-2\n100900,3\n")
 
         without_hint = dataprof.profile(str(path), engine="incremental")
+        assert without_hint.quality is not None
         assert without_hint.quality.negative_values_in_positive == 0
 
         with_hint = dataprof.profile(
@@ -1222,6 +1223,7 @@ class TestSemanticHints:
             engine="incremental",
             positive_columns=["pressure"],
         )
+        assert with_hint.quality is not None
         assert with_hint.quality.negative_values_in_positive == 1
 
     def test_identifier_columns_omit_numeric_stats(self, tmp_path):
@@ -1237,6 +1239,7 @@ class TestSemanticHints:
         assert order_id.data_type == "identifier"
         assert order_id.mean is None
         assert order_id.outlier_count is None
+        assert report.quality is not None
         assert report.quality.outlier_ratio == 0.0
 
     def test_dataframe_hints(self):
@@ -1248,6 +1251,7 @@ class TestSemanticHints:
             positive_columns=["pressure"],
         )
         assert report["order_id"].data_type == "identifier"
+        assert report.quality is not None
         assert report.quality.negative_values_in_positive == 1
 
 

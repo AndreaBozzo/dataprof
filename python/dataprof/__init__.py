@@ -13,12 +13,14 @@ import math
 import os
 import pathlib
 import warnings
-from typing import Any, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from ._dataprof import (
     ColumnProfile,
     DataQualityMetrics,
     ProfilerConfig,
+    ProfileReport as _RustProfileReport,
     ProgressEvent,
     RecordBatch,
     RowCountEstimate,
@@ -26,23 +28,10 @@ from ._dataprof import (
     SchemaResult,
     StopCondition,
     __version__,
-)
-from ._dataprof import (
-    ProfileReport as _RustProfileReport,
-)
-from ._dataprof import (
     analyze_file as _analyze_file,
-)
-from ._dataprof import (
     infer_schema as _infer_schema,
-)
-from ._dataprof import (
     profile_arrow as _profile_arrow,
-)
-from ._dataprof import (
     profile_dataframe as _profile_dataframe,
-)
-from ._dataprof import (
     quick_row_count as _quick_row_count,
 )
 
@@ -231,11 +220,10 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
             }
         )
     if col.true_count is not None:
-        if "stats" not in col_data:
-            col_data["stats"] = {}
-        col_data["stats"]["true_count"] = col.true_count
-        col_data["stats"]["false_count"] = col.false_count
-        col_data["stats"]["true_ratio"] = _r4(col.true_ratio)
+        bool_stats: dict[str, Any] = col_data.setdefault("stats", {})
+        bool_stats["true_count"] = col.true_count
+        bool_stats["false_count"] = col.false_count
+        bool_stats["true_ratio"] = _r4(col.true_ratio)
 
     if col.patterns is not None:
         col_data["patterns"] = [
@@ -349,7 +337,7 @@ def profile(
     csv_flexible: bool | None = None,
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
-    on_progress: object | None = None,
+    on_progress: Callable[[ProgressEvent], None] | None = None,
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
@@ -627,7 +615,9 @@ class Profiler:
                     f"Unknown stop_when shorthand: {condition!r}. "
                     f"Valid shorthands: {sorted(_STOP_SHORTHANDS)}"
                 )
-            condition = factory()
+            # factory is non-None here (guarded above); ty 0.0.x doesn't narrow
+            # the dict.get() result through the raise.
+            condition = factory()  # ty: ignore[call-non-callable]
         self._kwargs["stop_condition"] = condition
         return self
 
@@ -1259,7 +1249,9 @@ class ProfileReport:
         columns = data["columns"]
         if not isinstance(columns, list) or not all(isinstance(c, dict) for c in columns):
             raise ValueError("from_dict(): 'columns' must be a list of mappings.")
-        return cls(_DictBackedReport(data))
+        # _DictBackedReport is a read-only proxy that duck-types the raw Rust
+        # report; it intentionally isn't a nominal _RustProfileReport.
+        return cls(_DictBackedReport(data))  # ty: ignore[invalid-argument-type]
 
     @classmethod
     def from_json(cls, text: str) -> ProfileReport:
