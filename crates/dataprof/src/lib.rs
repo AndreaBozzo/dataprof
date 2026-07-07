@@ -29,7 +29,7 @@ pub use dataprof_core::{
     InputValidator, MetricPack, NumericStats, OutputFormat, ParquetMetadata, Pattern,
     PatternCategory, ProgressEvent, ProgressSink, QualityDimension, Quartiles, QueryEngine,
     RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints, StopCondition, StopEvaluator,
-    TextStats, TruncationReason, ValidationError,
+    StructureColumnSummary, StructureReport, TextStats, TruncationReason, ValidationError,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
@@ -50,7 +50,7 @@ pub use dataprof_parquet::{
     ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality,
     analyze_parquet_with_quality_dims, is_parquet_file,
 };
-pub use dataprof_partial::{infer_schema, quick_row_count};
+pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::ProfileReport;
 
 #[cfg(feature = "async-streaming")]

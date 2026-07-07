@@ -27,8 +27,11 @@ from ._dataprof import (
     SamplingStrategy,
     SchemaResult,
     StopCondition,
+    StructureColumnSummary,
+    StructureReport,
     __version__,
     analyze_file as _analyze_file,
+    analyze_structure as _analyze_structure,
     infer_schema as _infer_schema,
     profile_arrow as _profile_arrow,
     profile_dataframe as _profile_dataframe,
@@ -48,8 +51,11 @@ __all__ = [
     "ProgressEvent",
     "infer_schema",
     "quick_row_count",
+    "analyze_structure",
     "SchemaResult",
     "RowCountEstimate",
+    "StructureColumnSummary",
+    "StructureReport",
     "RecordBatch",
     "__version__",
 ]
@@ -151,6 +157,14 @@ def infer_schema(path: str | os.PathLike[str]) -> SchemaResult:
 def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
     """Estimate or count rows from a string path or path-like object."""
     return _quick_row_count(_normalize_existing_file(path))
+
+
+def analyze_structure(
+    path: str | os.PathLike[str],
+    max_rows: int = 1000,
+) -> StructureReport:
+    """Analyze file structure with a bounded, lightweight pass."""
+    return _analyze_structure(_normalize_existing_file(path), max_rows)
 
 
 # ---------------------------------------------------------------------------

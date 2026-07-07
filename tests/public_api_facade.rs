@@ -3,7 +3,7 @@ use std::time::Duration;
 use dataprof::{
     ChunkSize, CsvParserConfig, DataSource, DataType, EngineType, FileFormat, JsonFormat,
     JsonParserConfig, MetricPack, OutputFormat, Profiler, ProfilerConfig, ProgressSink,
-    QualityDimension, SamplingStrategy, StopCondition, analyze_column_fast,
+    QualityDimension, SamplingStrategy, StopCondition, analyze_column_fast, analyze_structure,
     calculate_numeric_stats, calculate_text_stats, detect_patterns, infer_type,
 };
 
@@ -112,6 +112,34 @@ fn format_override_beats_extension() {
         .expect("forced CSV parse of .parquet-named file should succeed");
 
     assert_eq!(report.execution.columns_detected, 2);
+}
+
+#[test]
+fn analyze_structure_facade_compiles() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".csv")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(tmp, "name,age").unwrap();
+    writeln!(tmp, "Alice,30").unwrap();
+    writeln!(tmp, "Bob,").unwrap();
+    tmp.flush().unwrap();
+
+    let report = analyze_structure(tmp.path(), Some(10)).expect("free function");
+    assert_eq!(report.columns.len(), 2);
+    assert_eq!(report.rows_sampled, 2);
+
+    let via_profiler = Profiler::new()
+        .format(FileFormat::Csv)
+        .analyze_structure(tmp.path(), Some(1))
+        .expect("profiler method");
+    assert!(via_profiler.truncated);
+    assert_eq!(
+        via_profiler.truncation_reason.as_deref(),
+        Some("max_rows(1)")
+    );
 }
 
 #[cfg(feature = "async-streaming")]

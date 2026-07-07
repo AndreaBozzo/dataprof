@@ -1,4 +1,4 @@
-use crate::classification::DataType;
+use crate::{classification::DataType, source::FileFormat};
 
 /// Result of fast schema inference — column names paired with inferred data types.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -23,8 +23,52 @@ pub struct ColumnSchema {
     pub data_type: DataType,
 }
 
+/// Lightweight structural summary for a file.
+///
+/// This intentionally sits between `quick_row_count()` / `infer_schema()` and a
+/// full profile: it reports shape and sampled per-column counters, not quality
+/// scores, pattern detection, recommendations, or raw values.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StructureReport {
+    /// Source identifier, currently the file path passed by the caller.
+    pub source: String,
+    /// Detected or explicitly provided file format.
+    pub format: FileFormat,
+    /// Exact or estimated row count for the source.
+    pub row_count: RowCountEstimate,
+    /// Number of rows consumed for the structural column summaries.
+    pub rows_sampled: usize,
+    /// True when the structural pass consumed the whole source.
+    pub source_exhausted: bool,
+    /// True when the structural pass stopped at the row sample cap.
+    pub truncated: bool,
+    /// Human-readable reason for truncation, if any.
+    pub truncation_reason: Option<String>,
+    /// CSV delimiter used for parsing, when applicable.
+    pub delimiter: Option<String>,
+    /// Per-column structural summaries.
+    pub columns: Vec<StructureColumnSummary>,
+    /// Non-fatal caveats, such as estimated row counts.
+    pub warnings: Vec<String>,
+}
+
+/// Sample-derived or metadata-derived structural summary for one column.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StructureColumnSummary {
+    pub name: String,
+    pub data_type: DataType,
+    pub total_count: Option<usize>,
+    pub null_count: Option<usize>,
+    pub null_ratio: Option<f64>,
+    pub unique_count: Option<usize>,
+    pub uniqueness_ratio: Option<f64>,
+    pub distinct_count_approximate: Option<bool>,
+    /// `"sample"` for CSV/JSON/JSONL, `"metadata"` for Parquet.
+    pub provenance: String,
+}
+
 /// Result of a quick row count operation.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RowCountEstimate {
     /// The estimated or exact row count.
     pub count: u64,

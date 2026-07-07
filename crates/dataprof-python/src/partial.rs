@@ -2,7 +2,20 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
-use dataprof::{CountMethod, DataType, RowCountEstimate, SchemaResult};
+use dataprof::{
+    CountMethod, DataType, RowCountEstimate, SchemaResult, StructureColumnSummary, StructureReport,
+};
+
+fn data_type_name(data_type: &DataType) -> &'static str {
+    match data_type {
+        DataType::Integer => "integer",
+        DataType::Float => "float",
+        DataType::String => "string",
+        DataType::Identifier => "identifier",
+        DataType::Date => "date",
+        DataType::Boolean => "boolean",
+    }
+}
 
 /// Result of fast schema inference.
 #[pyclass(name = "SchemaResult")]
@@ -29,15 +42,7 @@ impl PySchemaResult {
                 m.insert("name".to_string(), c.name.clone());
                 m.insert(
                     "data_type".to_string(),
-                    match c.data_type {
-                        DataType::Integer => "integer",
-                        DataType::Float => "float",
-                        DataType::String => "string",
-                        DataType::Identifier => "identifier",
-                        DataType::Date => "date",
-                        DataType::Boolean => "boolean",
-                    }
-                    .to_string(),
+                    data_type_name(&c.data_type).to_string(),
                 );
                 m
             })
@@ -81,6 +86,157 @@ impl PySchemaResult {
             self.inner.rows_sampled,
             self.inner.schema_stable,
             self.inner.inference_time_ms,
+        )
+    }
+}
+
+/// Structural summary for one column.
+#[pyclass(name = "StructureColumnSummary")]
+#[derive(Clone)]
+pub struct PyStructureColumnSummary {
+    inner: StructureColumnSummary,
+}
+
+impl PyStructureColumnSummary {
+    pub fn from_inner(inner: StructureColumnSummary) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyStructureColumnSummary {
+    #[getter]
+    fn name(&self) -> &str {
+        &self.inner.name
+    }
+
+    #[getter]
+    fn data_type(&self) -> &str {
+        data_type_name(&self.inner.data_type)
+    }
+
+    #[getter]
+    fn total_count(&self) -> Option<usize> {
+        self.inner.total_count
+    }
+
+    #[getter]
+    fn null_count(&self) -> Option<usize> {
+        self.inner.null_count
+    }
+
+    #[getter]
+    fn null_ratio(&self) -> Option<f64> {
+        self.inner.null_ratio
+    }
+
+    #[getter]
+    fn unique_count(&self) -> Option<usize> {
+        self.inner.unique_count
+    }
+
+    #[getter]
+    fn uniqueness_ratio(&self) -> Option<f64> {
+        self.inner.uniqueness_ratio
+    }
+
+    #[getter]
+    fn distinct_count_approximate(&self) -> Option<bool> {
+        self.inner.distinct_count_approximate
+    }
+
+    #[getter]
+    fn provenance(&self) -> &str {
+        &self.inner.provenance
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "StructureColumnSummary(name='{}', type='{}', provenance='{}')",
+            self.inner.name,
+            data_type_name(&self.inner.data_type),
+            self.inner.provenance,
+        )
+    }
+}
+
+/// Lightweight structural report for a file.
+#[pyclass(name = "StructureReport")]
+pub struct PyStructureReport {
+    inner: StructureReport,
+}
+
+impl PyStructureReport {
+    pub fn from_inner(inner: StructureReport) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyStructureReport {
+    #[getter]
+    fn source(&self) -> &str {
+        &self.inner.source
+    }
+
+    #[getter]
+    fn format(&self) -> String {
+        self.inner.format.to_string()
+    }
+
+    #[getter]
+    fn row_count(&self) -> PyRowCountEstimate {
+        PyRowCountEstimate::from_inner(self.inner.row_count.clone())
+    }
+
+    #[getter]
+    fn rows_sampled(&self) -> usize {
+        self.inner.rows_sampled
+    }
+
+    #[getter]
+    fn source_exhausted(&self) -> bool {
+        self.inner.source_exhausted
+    }
+
+    #[getter]
+    fn truncated(&self) -> bool {
+        self.inner.truncated
+    }
+
+    #[getter]
+    fn truncation_reason(&self) -> Option<String> {
+        self.inner.truncation_reason.clone()
+    }
+
+    #[getter]
+    fn delimiter(&self) -> Option<String> {
+        self.inner.delimiter.clone()
+    }
+
+    #[getter]
+    fn columns(&self) -> Vec<PyStructureColumnSummary> {
+        self.inner
+            .columns
+            .iter()
+            .cloned()
+            .map(PyStructureColumnSummary::from_inner)
+            .collect()
+    }
+
+    #[getter]
+    fn warnings(&self) -> Vec<String> {
+        self.inner.warnings.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "StructureReport(source='{}', format='{}', columns={}, rows_sampled={}, truncated={})",
+            self.inner.source,
+            self.inner.format,
+            self.inner.columns.len(),
+            self.inner.rows_sampled,
+            self.inner.truncated,
         )
     }
 }
@@ -159,4 +315,12 @@ pub fn quick_row_count(path: &str) -> PyResult<PyRowCountEstimate> {
     let result = dataprof::quick_row_count(Path::new(path))
         .map_err(|e| PyRuntimeError::new_err(format!("Row count failed: {}", e)))?;
     Ok(PyRowCountEstimate { inner: result })
+}
+
+/// Analyze a file's structure with a bounded, lightweight pass.
+#[pyfunction(signature = (path, max_rows=None))]
+pub fn analyze_structure(path: &str, max_rows: Option<usize>) -> PyResult<PyStructureReport> {
+    let result = dataprof::analyze_structure(Path::new(path), max_rows)
+        .map_err(|e| PyRuntimeError::new_err(format!("Structure analysis failed: {}", e)))?;
+    Ok(PyStructureReport { inner: result })
 }

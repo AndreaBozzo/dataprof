@@ -21,7 +21,10 @@ pub use arrow_export::{
     PyRecordBatch, analyze_csv_to_arrow, analyze_parquet_to_arrow, profile_arrow, profile_dataframe,
 };
 pub use config::PyProfilerConfig;
-pub use partial::{PyRowCountEstimate, PySchemaResult, infer_schema, quick_row_count};
+pub use partial::{
+    PyRowCountEstimate, PySchemaResult, PyStructureColumnSummary, PyStructureReport,
+    analyze_structure, infer_schema, quick_row_count,
+};
 pub use progress::PyProgressEvent;
 pub use sampling::PySamplingStrategy;
 pub use stop_condition::PyStopCondition;
@@ -52,6 +55,8 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Partial analysis types
     m.add_class::<PySchemaResult>()?;
     m.add_class::<PyRowCountEstimate>()?;
+    m.add_class::<PyStructureReport>()?;
+    m.add_class::<PyStructureColumnSummary>()?;
 
     // Sampling, stop conditions, and progress
     m.add_class::<PySamplingStrategy>()?;
@@ -72,6 +77,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Partial analysis
     m.add_function(wrap_pyfunction!(infer_schema, m)?)?;
     m.add_function(wrap_pyfunction!(quick_row_count, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_structure, m)?)?;
 
     // Async database functions (feature-gated)
     #[cfg(all(feature = "python-async", feature = "database"))]
