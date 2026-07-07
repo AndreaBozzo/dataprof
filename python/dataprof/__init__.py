@@ -1266,6 +1266,39 @@ class ProfileReport:
             raise ValueError(f"from_json() received invalid JSON: {exc}") from exc
         return cls.from_dict(data)
 
+    @classmethod
+    def load(cls, path: str | os.PathLike[str]) -> ProfileReport:
+        """Reload a report previously written with :meth:`save`.
+
+        This is the path-based counterpart to :meth:`from_json` (which takes a
+        JSON *string*) and :meth:`from_dict` (which takes a *dict*)::
+
+            before.save("before.json")
+            loaded = dp.ProfileReport.load("before.json")
+
+        Only ``.json`` files carry a full report and can be reloaded. The
+        ``.csv`` / ``.parquet`` outputs of :meth:`save` store only column
+        profiles, not the full report, so they cannot round-trip.
+
+        Args:
+            path: Path to a ``.json`` file produced by ``save()``.
+
+        Raises:
+            ValueError: if the file is ``.csv`` / ``.parquet`` (profiles only)
+                or has an unsupported extension.
+            FileNotFoundError: if the file does not exist.
+        """
+        path = _normalize_pathlike(path)
+        if path.endswith(".json"):
+            with open(path, encoding="utf-8") as f:
+                return cls.from_json(f.read())
+        if path.endswith((".csv", ".parquet")):
+            raise ValueError(
+                f"Cannot reload a full report from '{path}': .csv/.parquet store "
+                "only column profiles. Save and load with .json to round-trip a report."
+            )
+        raise ValueError("Unsupported format. Use .json (produced by save()).")
+
     def __repr__(self) -> str:
         qs = self.quality_score
         qs_str = f"{qs:.1f}%" if qs is not None else "N/A"

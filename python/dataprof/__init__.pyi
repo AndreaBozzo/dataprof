@@ -180,6 +180,10 @@ class ProfileReport:
     def from_json(cls, text: str) -> ProfileReport:
         """Rebuild a read-only ProfileReport from a to_json() string."""
         ...
+    @classmethod
+    def load(cls, path: str | PathLike[str]) -> ProfileReport:
+        """Reload a report from a .json file written by save()."""
+        ...
 
 # --- Exports ---
 

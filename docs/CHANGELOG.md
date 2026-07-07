@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python: `ProfileReport.load(path)` — reload a report saved with `save()` from a
+  `.json` file path (the path-based counterpart to `from_json()`/`from_dict()`).
+  `.csv`/`.parquet` paths raise a clear `ValueError` since they store column
+  profiles only. (#325)
 - Python: type stubs for the compiled extension (`dataprof/_dataprof.pyi`), so
   type checkers and IDEs can resolve the native core. The public stubs now
   re-export these types instead of duplicating them.
