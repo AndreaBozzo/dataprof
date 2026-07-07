@@ -154,8 +154,9 @@ report.save("report.csv")       # save column profiles to CSV
 report.save("report.parquet")   # save column profiles to Parquet (requires pyarrow)
 
 # Round-trip a saved report without re-profiling (read-only view)
-reloaded = dp.ProfileReport.from_json(report.to_json())
-reloaded = dp.ProfileReport.from_dict(report.to_dict())
+reloaded = dp.ProfileReport.load("report.json")   # from a saved .json file
+reloaded = dp.ProfileReport.from_json(report.to_json())  # from a JSON string
+reloaded = dp.ProfileReport.from_dict(report.to_dict())  # from a dict
 ```
 
 **Rounding:** All floating-point values in exported data are rounded to match the CLI
@@ -388,19 +389,31 @@ md = report.to_markdown()        # GitHub-flavored markdown table
 # Paste straight into a PR comment, issue, or Slack message
 ```
 
-### `from_json()` / `from_dict()`
+### `load()` / `from_json()` / `from_dict()`
 
 Rebuild a report from previously exported data without re-profiling. The
 reconstructed report is a **read-only view** backed by the exported values, but
 all export methods (`to_json`, `to_markdown`, `to_dataframe`, `describe`,
-`quality_summary`, mapping access, …) work as usual:
+`quality_summary`, mapping access, …) work as usual.
+
+`load(path)` is the path-based entry point — the natural counterpart to
+`save()`. Only `.json` files carry a full report; `.csv` / `.parquet` store
+column profiles only and cannot round-trip:
 
 ```python
 report.save("report.json")
 # ...later...
-reloaded = dp.ProfileReport.from_json(open("report.json").read())
+reloaded = dp.ProfileReport.load("report.json")
 reloaded.quality_score          # == the original report's quality_score
 reloaded["email"].null_percentage
+```
+
+`from_json(text)` and `from_dict(data)` take an in-memory JSON string or dict
+instead of a file path:
+
+```python
+reloaded = dp.ProfileReport.from_json(report.to_json())
+reloaded = dp.ProfileReport.from_dict(report.to_dict())
 ```
 
 ### `compare()`

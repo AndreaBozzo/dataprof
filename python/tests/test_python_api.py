@@ -305,6 +305,41 @@ class TestReportErgonomics:
         with pytest.raises(ValueError, match="invalid JSON"):
             dataprof.ProfileReport.from_json("{not valid json")
 
+    def test_load_json_round_trip(self, report):
+        # The 0.9.0 acceptance snippet: save → load → same quality_score.
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+        try:
+            report.save(path)
+            loaded = dataprof.ProfileReport.load(path)
+            assert loaded.quality_score == report.quality_score
+            assert loaded.to_dict() == report.to_dict()
+        finally:
+            os.unlink(path)
+
+    def test_load_accepts_pathlike(self, report):
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        try:
+            report.save(str(path))
+            loaded = dataprof.ProfileReport.load(path)
+            assert loaded.quality_score == report.quality_score
+        finally:
+            os.unlink(path)
+
+    @pytest.mark.parametrize("suffix", [".csv", ".parquet"])
+    def test_load_profiles_only_formats_raise(self, suffix):
+        with pytest.raises(ValueError, match=r"\.json"):
+            dataprof.ProfileReport.load(f"report{suffix}")
+
+    def test_load_unsupported_ext_raises(self):
+        with pytest.raises(ValueError, match="Unsupported format"):
+            dataprof.ProfileReport.load("report.html")
+
+    def test_load_missing_file_raises(self):
+        with pytest.raises(FileNotFoundError):
+            dataprof.ProfileReport.load("does_not_exist_12345.json")
+
     def test_from_dict_ignores_unknown_stat_keys(self, report):
         d = report.to_dict()
         d["columns"][0].setdefault("stats", {})["__evil__"] = "nope"
@@ -639,6 +674,7 @@ class TestNamespace:
             "compare",
             "from_dict",
             "from_json",
+            "load",
             "__getitem__",
             "__contains__",
             "__iter__",
