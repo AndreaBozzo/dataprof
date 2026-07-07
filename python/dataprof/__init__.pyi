@@ -18,6 +18,8 @@ from ._dataprof import (
     SamplingStrategy as SamplingStrategy,
     SchemaResult as SchemaResult,
     StopCondition as StopCondition,
+    StructureColumnSummary as StructureColumnSummary,
+    StructureReport as StructureReport,
     __version__ as __version__,
 )
 
@@ -53,6 +55,10 @@ def infer_schema(path: str | PathLike[str]) -> SchemaResult:
 
 def quick_row_count(path: str | PathLike[str]) -> RowCountEstimate:
     """Estimate or count rows from a string or path-like object."""
+    ...
+
+def analyze_structure(path: str | PathLike[str], max_rows: int | None = None) -> StructureReport:
+    """Analyze file structure with a bounded, lightweight pass."""
     ...
 
 def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
@@ -200,8 +206,11 @@ __all__ = [
     "ProgressEvent",
     "infer_schema",
     "quick_row_count",
+    "analyze_structure",
     "SchemaResult",
     "RowCountEstimate",
+    "StructureColumnSummary",
+    "StructureReport",
     "RecordBatch",
     "__version__",
 ]

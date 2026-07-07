@@ -5,7 +5,7 @@ use std::time::Duration;
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, FileFormat, MetricPack, ProgressEvent, ProgressSink,
     QualityDimension, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints,
-    StopCondition,
+    StopCondition, StructureReport,
 };
 #[cfg(feature = "database")]
 use dataprof_db::DatabaseConfig;
@@ -352,6 +352,25 @@ impl Profiler {
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
         partial::quick_row_count_with_format(path, format)
+    }
+
+    /// Analyze file structure with a bounded, lightweight pass.
+    ///
+    /// Respects the builder's format override. This returns schema, row count,
+    /// and sampled per-column counters without running full profiling, quality
+    /// metrics, pattern detection, or recommendations.
+    pub fn analyze_structure<P: AsRef<Path>>(
+        &self,
+        path: P,
+        max_rows: Option<usize>,
+    ) -> Result<StructureReport, DataProfilerError> {
+        let path = path.as_ref();
+        let format = self
+            .config
+            .format_override
+            .clone()
+            .unwrap_or_else(|| Self::detect_format(path));
+        partial::analyze_structure_with_format(path, format, max_rows)
     }
 
     /// Detect file format from extension

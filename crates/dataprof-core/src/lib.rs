@@ -27,7 +27,10 @@ pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConf
 pub use execution::{ExecutionMetadata, TruncationReason};
 pub use memory_tracker::{MemoryLeak, MemoryTracker};
 pub use output::OutputFormat;
-pub use partial::{ColumnSchema, CountMethod, RowCountEstimate, SchemaResult};
+pub use partial::{
+    ColumnSchema, CountMethod, RowCountEstimate, SchemaResult, StructureColumnSummary,
+    StructureReport,
+};
 pub use pattern::Pattern;
 pub use profile::{
     BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, FrequencyItem, NumericStats,

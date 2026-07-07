@@ -16,7 +16,8 @@ use serde::Deserialize;
 #[cfg(feature = "parquet")]
 use dataprof_core::DataType;
 use dataprof_core::{
-    ColumnSchema, CountMethod, DataProfilerError, FileFormat, RowCountEstimate, SchemaResult,
+    ColumnProfile, ColumnSchema, CountMethod, DataProfilerError, FileFormat, RowCountEstimate,
+    SchemaResult, StructureColumnSummary, StructureReport,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_json::JsonParserConfig;
@@ -30,6 +31,9 @@ const FULL_SCAN_THRESHOLD: u64 = 10 * 1024 * 1024;
 
 /// Number of lines to sample for row estimation.
 const ROW_SAMPLE_LINES: usize = 10_000;
+
+/// Default row cap for `analyze_structure()`.
+const STRUCTURE_SAMPLE_ROWS: usize = 1000;
 
 // ---------------------------------------------------------------------------
 // Public free functions
@@ -67,6 +71,20 @@ pub fn quick_row_count<P: AsRef<Path>>(path: P) -> Result<RowCountEstimate, Data
     let path = path.as_ref();
     let format = detect_format(path);
     quick_row_count_with_format(path, format)
+}
+
+/// Analyze a file's structure with a bounded, lightweight pass.
+///
+/// This composes the existing partial-analysis primitives and parser-level
+/// streaming counters. It does not compute quality scores, pattern detection,
+/// recommendations, or raw sample values.
+pub fn analyze_structure<P: AsRef<Path>>(
+    path: P,
+    max_rows: Option<usize>,
+) -> Result<StructureReport, DataProfilerError> {
+    let path = path.as_ref();
+    let format = detect_format(path);
+    analyze_structure_with_format(path, format, max_rows)
 }
 
 /// Detect file format from extension.
@@ -136,6 +154,29 @@ pub fn quick_row_count_with_format(
         }
         FileFormat::Csv => count_csv(path, start),
         FileFormat::Json | FileFormat::Jsonl => count_json(path, format, start),
+        FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
+            format: ext.clone(),
+        }),
+    }
+}
+
+pub fn analyze_structure_with_format(
+    path: &Path,
+    format: FileFormat,
+    max_rows: Option<usize>,
+) -> Result<StructureReport, DataProfilerError> {
+    // Establish file existence up front so all formats return the same
+    // path-specific error shape as the existing partial APIs.
+    fs::metadata(path).map_err(|_| DataProfilerError::FileNotFound {
+        path: path.display().to_string(),
+    })?;
+
+    let limit = max_rows.unwrap_or(STRUCTURE_SAMPLE_ROWS);
+
+    match format {
+        FileFormat::Csv => analyze_structure_csv(path, limit),
+        FileFormat::Json | FileFormat::Jsonl => analyze_structure_json(path, format, limit),
+        FileFormat::Parquet => analyze_structure_parquet(path),
         FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
         }),
@@ -605,9 +646,251 @@ fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, 
     }
 }
 
+fn analyze_structure_csv(
+    path: &Path,
+    max_rows: usize,
+) -> Result<StructureReport, DataProfilerError> {
+    let start = Instant::now();
+    let delimiter = dataprof_csv::detect_delimiter_from_path(path).ok();
+    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
+        path: path.display().to_string(),
+    })?;
+
+    let mut config = CsvParserConfig::default().max_rows(Some(max_rows));
+    if let Some(delimiter) = delimiter {
+        config = config.with_delimiter(delimiter);
+    }
+
+    let (profiles, column_stats, rows_sampled, headers) =
+        dataprof_csv::analyze_csv_from_reader(file, &config)?;
+    let row_count = if rows_sampled < max_rows {
+        exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
+    } else {
+        quick_row_count_with_format(path, FileFormat::Csv)?
+    };
+    let mut columns = structure_columns_from_profiles(&profiles, &column_stats, "sample");
+    if columns.is_empty() && !headers.is_empty() {
+        columns = empty_structure_columns_from_headers(&headers, "sample");
+    }
+
+    let (source_exhausted, truncated, truncation_reason) =
+        sample_status(&row_count, rows_sampled, max_rows);
+    let warnings = structure_warnings(&row_count, truncated, None);
+
+    Ok(StructureReport {
+        source: path.display().to_string(),
+        format: FileFormat::Csv,
+        row_count,
+        rows_sampled,
+        source_exhausted,
+        truncated,
+        truncation_reason,
+        delimiter: delimiter.map(delimiter_to_string),
+        columns,
+        warnings,
+    })
+}
+
+fn analyze_structure_json(
+    path: &Path,
+    format: FileFormat,
+    max_rows: usize,
+) -> Result<StructureReport, DataProfilerError> {
+    let start = Instant::now();
+    let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
+        path: path.display().to_string(),
+    })?;
+    let reader = BufReader::new(file);
+    let config = match format {
+        FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(max_rows),
+        FileFormat::Json => JsonParserConfig::json_array().with_max_rows(max_rows),
+        _ => JsonParserConfig::default().with_max_rows(max_rows),
+    };
+
+    let (mut profiles, column_stats, rows_sampled, malformed_lines, detected_format) =
+        dataprof_json::analyze_json_from_reader(reader, &config)?;
+    profiles.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let row_count = if rows_sampled < max_rows && malformed_lines == 0 {
+        exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
+    } else {
+        quick_row_count_with_format(path, format)?
+    };
+    let (source_exhausted, truncated, truncation_reason) =
+        sample_status(&row_count, rows_sampled, max_rows);
+    let warnings = structure_warnings(&row_count, truncated, Some(malformed_lines));
+
+    Ok(StructureReport {
+        source: path.display().to_string(),
+        format: detected_format,
+        row_count,
+        rows_sampled,
+        source_exhausted,
+        truncated,
+        truncation_reason,
+        delimiter: None,
+        columns: structure_columns_from_profiles(&profiles, &column_stats, "sample"),
+        warnings,
+    })
+}
+
+fn analyze_structure_parquet(path: &Path) -> Result<StructureReport, DataProfilerError> {
+    #[cfg(feature = "parquet")]
+    {
+        let schema = infer_schema_with_format(path, FileFormat::Parquet)?;
+        let row_count = quick_row_count_with_format(path, FileFormat::Parquet)?;
+        let columns = schema
+            .columns
+            .into_iter()
+            .map(|column| StructureColumnSummary {
+                name: column.name,
+                data_type: column.data_type,
+                total_count: None,
+                null_count: None,
+                null_ratio: None,
+                unique_count: None,
+                uniqueness_ratio: None,
+                distinct_count_approximate: None,
+                provenance: "metadata".to_string(),
+            })
+            .collect();
+
+        Ok(StructureReport {
+            source: path.display().to_string(),
+            format: FileFormat::Parquet,
+            row_count,
+            rows_sampled: 0,
+            source_exhausted: true,
+            truncated: false,
+            truncation_reason: None,
+            delimiter: None,
+            columns,
+            warnings: Vec::new(),
+        })
+    }
+
+    #[cfg(not(feature = "parquet"))]
+    {
+        let _ = path;
+        Err(DataProfilerError::UnsupportedFormat {
+            format: "parquet (enable the `parquet` feature)".to_string(),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn structure_columns_from_profiles(
+    profiles: &[ColumnProfile],
+    column_stats: &StreamingColumnCollection,
+    provenance: &str,
+) -> Vec<StructureColumnSummary> {
+    profiles
+        .iter()
+        .map(|profile| {
+            let total_count = profile.total_count;
+            let null_ratio = ratio(profile.null_count, total_count);
+            let uniqueness_ratio = profile
+                .unique_count
+                .and_then(|unique| ratio(unique, total_count));
+            let distinct_count_approximate = column_stats
+                .get_column_stats(&profile.name)
+                .map(|stats| stats.unique_count_is_approximate());
+
+            StructureColumnSummary {
+                name: profile.name.clone(),
+                data_type: profile.data_type.clone(),
+                total_count: Some(total_count),
+                null_count: Some(profile.null_count),
+                null_ratio,
+                unique_count: profile.unique_count,
+                uniqueness_ratio,
+                distinct_count_approximate,
+                provenance: provenance.to_string(),
+            }
+        })
+        .collect()
+}
+
+fn empty_structure_columns_from_headers(
+    headers: &[String],
+    provenance: &str,
+) -> Vec<StructureColumnSummary> {
+    headers
+        .iter()
+        .map(|name| StructureColumnSummary {
+            name: name.clone(),
+            data_type: dataprof_core::DataType::String,
+            total_count: Some(0),
+            null_count: Some(0),
+            null_ratio: None,
+            unique_count: Some(0),
+            uniqueness_ratio: None,
+            distinct_count_approximate: Some(false),
+            provenance: provenance.to_string(),
+        })
+        .collect()
+}
+
+fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
+    if denominator == 0 {
+        None
+    } else {
+        Some(numerator as f64 / denominator as f64)
+    }
+}
+
+fn exact_row_count_from_sample(rows_sampled: usize, count_time_ms: u128) -> RowCountEstimate {
+    RowCountEstimate {
+        count: rows_sampled as u64,
+        exact: true,
+        method: CountMethod::FullScan,
+        count_time_ms,
+    }
+}
+
+fn sample_status(
+    row_count: &RowCountEstimate,
+    rows_sampled: usize,
+    max_rows: usize,
+) -> (bool, bool, Option<String>) {
+    let truncated = if row_count.exact {
+        (rows_sampled as u64) < row_count.count
+    } else {
+        rows_sampled >= max_rows
+    };
+    let truncation_reason = truncated.then(|| format!("max_rows({max_rows})"));
+    (!truncated, truncated, truncation_reason)
+}
+
+fn structure_warnings(
+    row_count: &RowCountEstimate,
+    truncated: bool,
+    malformed_lines: Option<usize>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !row_count.exact {
+        warnings.push("row_count_estimated".to_string());
+    }
+    if truncated {
+        warnings.push("structure_sample_truncated".to_string());
+    }
+    if let Some(count) = malformed_lines.filter(|count| *count > 0) {
+        warnings.push(format!("malformed_lines_skipped:{count}"));
+    }
+    warnings
+}
+
+fn delimiter_to_string(delimiter: u8) -> String {
+    match delimiter {
+        b'\t' => "\t".to_string(),
+        b'\n' => "\\n".to_string(),
+        b'\r' => "\\r".to_string(),
+        byte => char::from(byte).to_string(),
+    }
+}
 
 fn schema_from_streaming_stats(
     column_stats: &StreamingColumnCollection,
@@ -1060,6 +1343,85 @@ mod tests {
         assert_eq!(result.count, 0);
     }
 
+    #[test]
+    fn test_analyze_structure_csv() {
+        let f = write_temp_csv("name,age\nAlice,30\nBob,\nCharlie,40\n");
+        let report = analyze_structure(f.path(), Some(10)).unwrap();
+
+        assert_eq!(report.format, FileFormat::Csv);
+        assert_eq!(report.row_count.count, 3);
+        assert!(report.row_count.exact);
+        assert_eq!(report.rows_sampled, 3);
+        assert!(report.source_exhausted);
+        assert!(!report.truncated);
+        assert_eq!(report.delimiter.as_deref(), Some(","));
+
+        let age = report.columns.iter().find(|col| col.name == "age").unwrap();
+        assert_eq!(age.data_type, DataType::Integer);
+        assert_eq!(age.total_count, Some(3));
+        assert_eq!(age.null_count, Some(1));
+        assert!((age.null_ratio.unwrap() - (1.0 / 3.0)).abs() < 0.001);
+        assert_eq!(age.provenance, "sample");
+    }
+
+    #[test]
+    fn test_analyze_structure_jsonl() {
+        let f = write_temp_jsonl(
+            r#"{"name":"Alice","age":30}
+{"name":"Bob","age":25}
+"#,
+        );
+        let report = analyze_structure(f.path(), Some(10)).unwrap();
+
+        assert_eq!(report.format, FileFormat::Jsonl);
+        assert_eq!(report.row_count.count, 2);
+        assert_eq!(report.rows_sampled, 2);
+        assert_eq!(report.columns.len(), 2);
+        assert!(report.columns.iter().any(|col| col.name == "age"));
+    }
+
+    #[test]
+    fn test_analyze_structure_json_array() {
+        let f = write_temp_json(r#"[{"x":1,"y":"a"},{"x":2,"y":"b"}]"#);
+        let report = analyze_structure(f.path(), Some(10)).unwrap();
+
+        assert_eq!(report.format, FileFormat::Json);
+        assert_eq!(report.row_count.count, 2);
+        assert_eq!(report.rows_sampled, 2);
+        assert_eq!(
+            report
+                .columns
+                .iter()
+                .map(|col| col.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x", "y"]
+        );
+    }
+
+    #[test]
+    fn test_analyze_structure_truncates_at_max_rows() {
+        let f = write_temp_csv("a\n1\n2\n3\n");
+        let report = analyze_structure(f.path(), Some(2)).unwrap();
+
+        assert_eq!(report.row_count.count, 3);
+        assert_eq!(report.rows_sampled, 2);
+        assert!(!report.source_exhausted);
+        assert!(report.truncated);
+        assert_eq!(report.truncation_reason.as_deref(), Some("max_rows(2)"));
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w == "structure_sample_truncated")
+        );
+    }
+
+    #[test]
+    fn test_analyze_structure_missing_file() {
+        let err = analyze_structure("does_not_exist.csv", Some(10)).unwrap_err();
+        assert!(matches!(err, DataProfilerError::FileNotFound { .. }));
+    }
+
     #[cfg(feature = "parquet")]
     #[test]
     fn test_arrow_type_mapping() {
@@ -1082,6 +1444,51 @@ mod tests {
         );
         assert_eq!(arrow_type_to_dataprof(&AT::Utf8), DataType::String);
         assert_eq!(arrow_type_to_dataprof(&AT::Boolean), DataType::Boolean);
+    }
+
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn test_analyze_structure_parquet_metadata() {
+        use arrow::array::{Int32Array, StringArray};
+        use arrow::datatypes::{DataType as ArrowDT, Field, Schema};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+
+        let schema = Schema::new(vec![
+            Field::new("id", ArrowDT::Int32, false),
+            Field::new("label", ArrowDT::Utf8, false),
+        ]);
+
+        let batch = RecordBatch::try_new(
+            std::sync::Arc::new(schema),
+            vec![
+                std::sync::Arc::new(Int32Array::from(vec![1, 2])),
+                std::sync::Arc::new(StringArray::from(vec!["a", "b"])),
+            ],
+        )
+        .unwrap();
+
+        let mut f = NamedTempFile::with_suffix(".parquet").unwrap();
+        {
+            let mut writer = ArrowWriter::try_new(&mut f, batch.schema(), None).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+
+        let report = analyze_structure(f.path(), Some(1)).unwrap();
+        assert_eq!(report.format, FileFormat::Parquet);
+        assert_eq!(report.row_count.count, 2);
+        assert_eq!(report.rows_sampled, 0);
+        assert!(report.source_exhausted);
+        assert!(!report.truncated);
+        assert_eq!(report.columns.len(), 2);
+        assert!(
+            report
+                .columns
+                .iter()
+                .all(|col| col.provenance == "metadata")
+        );
+        assert!(report.columns.iter().all(|col| col.total_count.is_none()));
     }
 }
 

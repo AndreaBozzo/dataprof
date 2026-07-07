@@ -401,6 +401,63 @@ class TestPartialAnalysis:
         result = dataprof.quick_row_count(Path(CSV_FILE))
         assert result.count > 0
 
+    def test_analyze_structure_path_object(self):
+        result = dataprof.analyze_structure(Path(CSV_FILE))
+        assert result.source.endswith("small_comma.csv")
+        assert result.format == "csv"
+        assert result.row_count.count > 0
+        assert result.rows_sampled > 0
+        assert result.source_exhausted is True
+        assert result.truncated is False
+        assert result.delimiter == ","
+        assert result.columns
+        first = result.columns[0]
+        assert first.name
+        assert first.data_type in {
+            "integer",
+            "float",
+            "string",
+            "identifier",
+            "date",
+            "boolean",
+        }
+        assert first.provenance == "sample"
+
+    def test_analyze_structure_default_max_rows(self, tmp_path):
+        path = tmp_path / "many.csv"
+        path.write_text("x\n" + "\n".join(str(i) for i in range(1001)) + "\n")
+
+        result = dataprof.analyze_structure(path)
+        assert result.row_count.count == 1001
+        assert result.rows_sampled == 1000
+        assert result.source_exhausted is False
+        assert result.truncated is True
+        assert result.truncation_reason == "max_rows(1000)"
+        assert "structure_sample_truncated" in result.warnings
+
+    def test_analyze_structure_none_max_rows_uses_default(self, tmp_path):
+        path = tmp_path / "many.csv"
+        path.write_text("x\n" + "\n".join(str(i) for i in range(1001)) + "\n")
+
+        result = dataprof.analyze_structure(path, max_rows=None)
+        assert result.rows_sampled == 1000
+        assert result.truncated is True
+        assert result.truncation_reason == "max_rows(1000)"
+
+    def test_analyze_structure_column_summaries(self, tmp_path):
+        path = tmp_path / "summary.csv"
+        path.write_text("name,age\nAlice,30\nBob,\nCharlie,40\n")
+
+        result = dataprof.analyze_structure(path, max_rows=10)
+        age = next(col for col in result.columns if col.name == "age")
+        assert age.data_type == "integer"
+        assert age.total_count == 3
+        assert age.null_count == 1
+        assert abs(age.null_ratio - (1 / 3)) < 0.001
+        assert age.unique_count is not None
+        assert age.uniqueness_ratio is not None
+        assert age.distinct_count_approximate is False
+
     def test_missing_file_raises_file_not_found(self):
         missing = str(FIXTURES / "does_not_exist.csv")
         with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
@@ -408,6 +465,9 @@ class TestPartialAnalysis:
         assert excinfo.value.filename == missing
         with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
             dataprof.quick_row_count(missing)
+        assert excinfo.value.filename == missing
+        with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
+            dataprof.analyze_structure(missing)
         assert excinfo.value.filename == missing
 
 
@@ -580,8 +640,11 @@ class TestNamespace:
             "ProgressEvent",
             "infer_schema",
             "quick_row_count",
+            "analyze_structure",
             "SchemaResult",
             "RowCountEstimate",
+            "StructureColumnSummary",
+            "StructureReport",
             "RecordBatch",
             "__version__",
         }
