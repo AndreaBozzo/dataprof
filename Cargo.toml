@@ -13,14 +13,77 @@ members = [
 ]
 resolver = "3"
 
-[package]
-name = "dataprof"
+# Shared package metadata inherited by every workspace member via `field.workspace = true`.
+[workspace.package]
 version = "0.8.1"
 edition = "2024"
+rust-version = "1.96"
 license = "MIT OR Apache-2.0"
 authors = ["Andrea Bozzo"]
-description = "High-performance data profiler with ISO 8000/25012 quality metrics for CSV, JSON/JSONL, and Parquet files"
 repository = "https://github.com/AndreaBozzo/dataprof"
+
+# Single source of truth for dependency versions. Members reference these with
+# `dep.workspace = true` and may add `optional`, `features`, or `default-features` locally.
+[workspace.dependencies]
+# Internal crates
+dataprof = { version = "0.8.1", path = "." }
+dataprof-core = { version = "0.8.1", path = "crates/dataprof-core" }
+dataprof-metrics = { version = "0.8.1", path = "crates/dataprof-metrics" }
+dataprof-csv = { version = "0.8.1", path = "crates/dataprof-csv" }
+dataprof-json = { version = "0.8.1", path = "crates/dataprof-json" }
+dataprof-parquet = { version = "0.8.1", path = "crates/dataprof-parquet" }
+dataprof-engines = { version = "0.8.1", path = "crates/dataprof-engines" }
+dataprof-partial = { version = "0.8.1", path = "crates/dataprof-partial" }
+dataprof-db = { version = "0.8.1", path = "crates/dataprof-db" }
+dataprof-runtime = { version = "0.8.1", path = "crates/dataprof-runtime" }
+
+# External dependencies
+anyhow = "1.0"
+arrow = { version = "58.1.0", features = ["ffi"] }
+async-trait = "0.1"
+bytes = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+csv = "1.4"
+futures = "0.3.31"
+glob = "0.3"
+log = "0.4"
+memmap2 = "0.9"
+num_cpus = "1.16"
+parquet = { version = "58.1.0", features = ["arrow"] }
+pyo3 = { version = "0.27", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.27", features = ["tokio-runtime"] }
+rand = { version = "0.9.3", features = ["small_rng"] }
+rand_chacha = "0.9"
+regex = "1.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.149"
+sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio-rustls", "chrono", "uuid"] }
+sysinfo = "0.39"
+thiserror = "2.0"
+tokio = "1.49"
+tokio-util = { version = "0.7", features = ["io-util"] }
+toml = "0.9.8"
+url = "2.5.8"
+uuid = { version = "1.0", features = ["v4"] }
+wide = "1.2.0"
+# Dev dependencies
+criterion = { version = "0.8", features = ["html_reports"] }
+env_logger = "0.11"
+predicates = "3.1"
+proptest = "1.9"
+serial_test = "3.4.0"
+tempfile = "3.24"
+
+[package]
+name = "dataprof"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "High-performance data profiler with ISO 8000/25012 quality metrics for CSV, JSON/JSONL, and Parquet files"
 keywords = ["data", "analysis", "profiling", "data-quality", "parquet"]
 categories = ["data-structures"]
 readme = "README.md"
@@ -51,43 +114,33 @@ all = "deny"
 
 
 [dependencies]
-dataprof-core = { version = "0.8.1", path = "crates/dataprof-core" }
-dataprof-metrics = { version = "0.8.1", path = "crates/dataprof-metrics" }
-dataprof-csv = { version = "0.8.1", path = "crates/dataprof-csv" }
-dataprof-engines = { version = "0.8.1", path = "crates/dataprof-engines", default-features = false }
-dataprof-json = { version = "0.8.1", path = "crates/dataprof-json" }
-dataprof-parquet = { version = "0.8.1", path = "crates/dataprof-parquet", optional = true, default-features = false }
-dataprof-partial = { version = "0.8.1", path = "crates/dataprof-partial", default-features = false }
-dataprof-db = { version = "0.8.1", path = "crates/dataprof-db", optional = true, default-features = false }
-dataprof-runtime = { version = "0.8.1", path = "crates/dataprof-runtime" }
+dataprof-core = { workspace = true }
+dataprof-metrics = { workspace = true }
+dataprof-csv = { workspace = true }
+dataprof-engines = { workspace = true }
+dataprof-json = { workspace = true }
+dataprof-parquet = { workspace = true, optional = true }
+dataprof-partial = { workspace = true }
+dataprof-db = { workspace = true, optional = true }
+dataprof-runtime = { workspace = true }
 
 # Note: Async support is available via async-streaming and database feature flags.
-
-tokio = { version = "1.49", features = ["full"], optional = true }  # Latest: 1.48.0 (patch available via cargo update)
-bytes = { version = "1.10", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"], optional = true }
+tokio = { workspace = true, features = ["full"], optional = true }
+bytes = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile = "3.24"
-anyhow = "1.0"
-env_logger = "0.11"
-arrow = { version = "58.1.0", features = ["ffi"] }
-parquet = { version = "58.1.0", features = ["arrow"] }
-sqlx = { version = "0.8.1", features = [
-    "runtime-tokio-rustls",
-    "chrono",
-    "uuid",
-    "sqlite",
-], default-features = false }
-
-proptest = "1.9"  # Updated: 1.8.0 -> 1.10.0 (minor bump, backward compatible)
-
-
-criterion = { version = "0.8", features = ["html_reports"] }
-serde_json = "1.0"
-
-serial_test = "3.4.0"
-predicates = "3.1"
+tempfile = { workspace = true }
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+arrow = { workspace = true }
+parquet = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
+proptest = { workspace = true }
+criterion = { workspace = true }
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+predicates = { workspace = true }
 
 [[bench]]
 name = "benchmarks"
@@ -112,8 +165,11 @@ codegen-units = 256
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
-strip = true      
+# NOTE: do NOT set `panic = "abort"` here. This profile builds the PyO3 extension
+# wheel (release.yml uses `maturin --release`), and PyO3 relies on stack unwinding
+# to convert Rust panics into catchable Python exceptions. `panic = "abort"` would
+# turn any panic into a hard interpreter crash (SIGABRT) instead.
+strip = true
 
 
 [profile.release-lto]

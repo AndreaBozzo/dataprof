@@ -12,7 +12,7 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.8+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, ad-hoc dict/bytes inputs, and report exports.
+Requires Python 3.10+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, ad-hoc dict/bytes inputs, and report exports.
 
 Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
 

@@ -1,19 +1,21 @@
 [package]
 name = "dataprof-metrics"
-version = "0.8.1"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Andrea Bozzo"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "Metrics and statistical analysis engine for dataprof"
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
-dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
-log = "0.4"
-rand = { version = "0.9.3", features = ["small_rng"] }
-regex = "1.12"
-serde = { version = "1.0", features = ["derive"] }
-wide = "1.2.0"
+chrono = { workspace = true }
+dataprof-core = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+wide = { workspace = true }
 
 [dev-dependencies]
-serde_json = "1.0"
+serde_json = { workspace = true }

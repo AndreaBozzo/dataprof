@@ -1,2 +1,2 @@
-msrv = "1.88"
+# MSRV is inherited from `rust-version` in Cargo.toml (workspace.package); Clippy reads it automatically.
 cognitive-complexity-threshold = 30

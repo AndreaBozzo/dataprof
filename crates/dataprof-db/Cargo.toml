@@ -1,9 +1,11 @@
 [package]
 name = "dataprof-db"
-version = "0.8.1"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Andrea Bozzo"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "Database connectivity and query profiling support for dataprof"
 
 [features]
@@ -14,14 +16,14 @@ sqlite = ["dep:sqlx", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 
 [dependencies]
-async-trait = "0.1"
-dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
-dataprof-metrics = { version = "0.8.1", path = "../dataprof-metrics" }
-dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
-log = "0.4"
-rand = { version = "0.9.3", features = ["small_rng"] }
-regex = "1.12"
-serde = { version = "1.0", features = ["derive"] }
-sqlx = { version = "0.8.1", features = ["runtime-tokio-rustls", "chrono", "uuid"], optional = true, default-features = false }
-tokio = { version = "1.49", features = ["full"] }
-url = "2.5.8"
+async-trait = { workspace = true }
+dataprof-core = { workspace = true }
+dataprof-metrics = { workspace = true }
+dataprof-runtime = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["full"] }
+url = { workspace = true }

@@ -1,9 +1,11 @@
 [package]
 name = "dataprof-engines"
-version = "0.8.1"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Andrea Bozzo"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "Streaming and adaptive profiling engines for dataprof"
 
 [features]
@@ -22,19 +24,19 @@ async-streaming = [
 parquet-async = ["async-streaming", "dataprof-runtime/parquet-async"]
 
 [dependencies]
-csv = "1.4"
-dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
-dataprof-csv = { version = "0.8.1", path = "../dataprof-csv" }
-dataprof-parquet = { version = "0.8.1", path = "../dataprof-parquet", optional = true, default-features = false }
-dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
-log = "0.4"
-serde = { version = "1.0", features = ["derive"], optional = true }
-serde_json = { version = "1.0.149", optional = true }
-tokio = { version = "1.49", features = ["full"], optional = true }
-tokio-util = { version = "0.7", features = ["io-util"], optional = true }
-uuid = { version = "1.0", features = ["v4"], optional = true }
+csv = { workspace = true }
+dataprof-core = { workspace = true }
+dataprof-csv = { workspace = true }
+dataprof-parquet = { workspace = true, optional = true }
+dataprof-runtime = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["full"], optional = true }
+tokio-util = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-anyhow = "1.0"
-bytes = "1.10"
-tempfile = "3.24"
+anyhow = { workspace = true }
+bytes = { workspace = true }
+tempfile = { workspace = true }

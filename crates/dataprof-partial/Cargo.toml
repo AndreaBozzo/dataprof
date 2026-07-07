@@ -1,9 +1,11 @@
 [package]
 name = "dataprof-partial"
-version = "0.8.1"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Andrea Bozzo"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "Fast schema inference and row-count APIs for dataprof"
 
 [features]
@@ -18,18 +20,18 @@ async-streaming = [
 ]
 
 [dependencies]
-arrow = { version = "58.1.0", features = ["ffi"], optional = true }
-bytes = { version = "1.10", optional = true }
-csv = "1.4"
-dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
-dataprof-csv = { version = "0.8.1", path = "../dataprof-csv" }
-dataprof-json = { version = "0.8.1", path = "../dataprof-json" }
-dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
-parquet = { version = "58.1.0", features = ["arrow"], optional = true }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.149"
-tokio = { version = "1.49", features = ["full"], optional = true }
-tokio-util = { version = "0.7", features = ["io-util"], optional = true }
+arrow = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+csv = { workspace = true }
+dataprof-core = { workspace = true }
+dataprof-csv = { workspace = true }
+dataprof-json = { workspace = true }
+dataprof-runtime = { workspace = true }
+parquet = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"], optional = true }
+tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile = "3.24"
+tempfile = { workspace = true }

@@ -1,18 +1,20 @@
 [package]
 name = "dataprof-csv"
-version = "0.8.1"
-edition = "2024"
-license = "MIT OR Apache-2.0"
-authors = ["Andrea Bozzo"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "CSV parsing and profiling support for dataprof"
 
 [dependencies]
-anyhow = "1.0"
-csv = "1.4"
-dataprof-core = { version = "0.8.1", path = "../dataprof-core" }
-dataprof-runtime = { version = "0.8.1", path = "../dataprof-runtime" }
-log = "0.4"
-memmap2 = "0.9"
+anyhow = { workspace = true }
+csv = { workspace = true }
+dataprof-core = { workspace = true }
+dataprof-runtime = { workspace = true }
+log = { workspace = true }
+memmap2 = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.24"
+tempfile = { workspace = true }
