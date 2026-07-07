@@ -2,128 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from os import PathLike
-from typing import Any, Callable, Iterator
+from typing import Any
 
-# Version
-__version__: str
-
-# --- Configuration ---
-
-class ProfilerConfig:
-    """Profiler configuration with Python-friendly kwargs."""
-
-    def __init__(
-        self,
-        engine: str = "auto",
-        chunk_size: int | None = None,
-        memory_limit_mb: int | None = None,
-        format: str | None = None,
-        max_rows: int | None = None,
-        csv_delimiter: str | None = None,
-        csv_flexible: bool | None = None,
-        sampling: SamplingStrategy | None = None,
-        stop_condition: StopCondition | None = None,
-        on_progress: Callable[[ProgressEvent], None] | None = None,
-        progress_interval_ms: int | None = None,
-        quality_dimensions: list[str] | None = None,
-        metrics: list[str] | None = None,
-        locale: str | None = None,
-        positive_columns: list[str] | None = None,
-        identifier_columns: list[str] | None = None,
-    ) -> None: ...
-    @property
-    def engine(self) -> str: ...
-    @property
-    def chunk_size(self) -> int | None: ...
-    @property
-    def memory_limit_mb(self) -> int | None: ...
-    @property
-    def format(self) -> str | None: ...
-    @property
-    def max_rows(self) -> int | None: ...
-    @property
-    def locale(self) -> str | None: ...
-    @property
-    def positive_columns(self) -> list[str]: ...
-    @property
-    def identifier_columns(self) -> list[str]: ...
-
-# --- Sampling ---
-
-class SamplingStrategy:
-    """Sampling strategy for controlling how data is sampled during profiling."""
-
-    @staticmethod
-    def none() -> SamplingStrategy: ...
-    @staticmethod
-    def random(size: int) -> SamplingStrategy: ...
-    @staticmethod
-    def reservoir(size: int) -> SamplingStrategy: ...
-    @staticmethod
-    def stratified(key_columns: list[str], samples_per_stratum: int) -> SamplingStrategy: ...
-    @staticmethod
-    def progressive(
-        initial_size: int,
-        confidence_level: float = 0.95,
-        max_size: int = 100_000,
-    ) -> SamplingStrategy: ...
-    @staticmethod
-    def systematic(interval: int) -> SamplingStrategy: ...
-    @staticmethod
-    def importance(weight_threshold: float) -> SamplingStrategy: ...
-    @staticmethod
-    def multi_stage(stages: list[SamplingStrategy]) -> SamplingStrategy: ...
-    @staticmethod
-    def adaptive(total_rows: int | None = None, file_size_mb: float = 0.0) -> SamplingStrategy: ...
-
-# --- Stop Conditions ---
-
-class StopCondition:
-    """Composable stop condition for early termination.
-
-    Combine with ``|`` (any) or ``&`` (all) operators::
-
-        stop = StopCondition.max_rows(10000) | StopCondition.max_bytes(50_000_000)
-    """
-
-    @staticmethod
-    def max_rows(n: int) -> StopCondition: ...
-    @staticmethod
-    def max_bytes(n: int) -> StopCondition: ...
-    @staticmethod
-    def schema_stable(consecutive_stable_rows: int) -> StopCondition: ...
-    @staticmethod
-    def confidence_threshold(threshold: float) -> StopCondition: ...
-    @staticmethod
-    def memory_pressure(threshold: float) -> StopCondition: ...
-    @staticmethod
-    def never() -> StopCondition: ...
-    @staticmethod
-    def schema_inference() -> StopCondition: ...
-    @staticmethod
-    def quality_sample() -> StopCondition: ...
-    def __or__(self, other: StopCondition) -> StopCondition: ...
-    def __and__(self, other: StopCondition) -> StopCondition: ...
-
-# --- Progress ---
-
-class ProgressEvent:
-    """A progress event emitted during profiling."""
-
-    kind: str
-    rows_processed: int | None
-    bytes_consumed: int | None
-    elapsed_ms: int | None
-    processing_speed: float | None
-    percentage: float | None
-    column_names: list[str] | None
-    total_rows: int | None
-    total_bytes: int | None
-    truncated: bool | None
-    message: str | None
-    estimated_total_rows: int | None
-    estimated_total_bytes: int | None
+# Raw data types are provided by the compiled extension and re-exported here.
+from ._dataprof import (
+    ColumnProfile as ColumnProfile,
+    DataQualityMetrics as DataQualityMetrics,
+    Pattern as Pattern,
+    ProfilerConfig as ProfilerConfig,
+    ProgressEvent as ProgressEvent,
+    RecordBatch as RecordBatch,
+    RowCountEstimate as RowCountEstimate,
+    SamplingStrategy as SamplingStrategy,
+    SchemaResult as SchemaResult,
+    StopCondition as StopCondition,
+    __version__ as __version__,
+)
 
 # --- Primary API ---
 
@@ -199,7 +95,8 @@ class Profiler:
 class ProfileReport:
     """High-level profiling report with export methods.
 
-    Supports dict-like column access::
+    Wraps the raw ``dataprof._dataprof.ProfileReport`` (or a dict-backed proxy
+    for reloaded reports). Supports dict-like column access::
 
         report["column_name"]          # -> ColumnProfile
         "column_name" in report        # -> bool
@@ -207,6 +104,7 @@ class ProfileReport:
         len(report)                    # number of columns
     """
 
+    def __init__(self, report: Any) -> None: ...
     @property
     def source(self) -> str: ...
     @property
@@ -282,134 +180,6 @@ class ProfileReport:
     def from_json(cls, text: str) -> ProfileReport:
         """Rebuild a read-only ProfileReport from a to_json() string."""
         ...
-
-class Pattern:
-    """Detected pattern statistics."""
-
-    name: str
-    regex: str
-    match_count: int
-    match_percentage: float
-    category: str
-    confidence: float
-
-class ColumnProfile:
-    """Column-level profiling statistics."""
-
-    name: str
-    data_type: str
-    total_count: int
-    null_count: int
-    unique_count: int | None
-    null_percentage: float
-    uniqueness_ratio: float
-    min: float | None
-    max: float | None
-    mean: float | None
-    std_dev: float | None
-    variance: float | None
-    median: float | None
-    mode: float | None
-    skewness: float | None
-    kurtosis: float | None
-    coefficient_of_variation: float | None
-    quartiles: dict[str, float] | None
-    is_approximate: bool | None
-    outlier_count: int | None
-    min_length: int | None
-    max_length: int | None
-    avg_length: float | None
-    true_count: int | None
-    false_count: int | None
-    true_ratio: float | None
-    patterns: list[Pattern] | None
-
-class DataQualityMetrics:
-    """ISO 8000/25012 data quality metrics.
-
-    Flat accessors return defaults (0.0 / 0 / [] / False) for dimensions
-    not computed. Use the nested dimension properties to check which
-    dimensions were actually evaluated.
-    """
-
-    # Flat backward-compatible accessors
-    missing_values_ratio: float
-    complete_records_ratio: float
-    null_columns: list[str]
-    data_type_consistency: float
-    format_violations: int
-    encoding_issues: int
-    duplicate_rows: int
-    key_uniqueness: float
-    high_cardinality_warning: bool
-    outlier_ratio: float
-    range_violations: int
-    negative_values_in_positive: int
-    future_dates_count: int
-    stale_data_ratio: float
-    temporal_violations: int
-    low_sample_warning: bool
-
-    # Nested dimension accessors (None when dimension was not requested)
-    @property
-    def completeness(self) -> dict[str, Any] | None: ...
-    @property
-    def consistency(self) -> dict[str, Any] | None: ...
-    @property
-    def uniqueness(self) -> dict[str, Any] | None: ...
-    @property
-    def accuracy(self) -> dict[str, Any] | None: ...
-    @property
-    def timeliness(self) -> dict[str, Any] | None: ...
-    def overall_quality_score(self) -> float: ...
-
-# --- Partial Analysis ---
-
-class SchemaResult:
-    """Result of fast schema inference."""
-
-    @property
-    def columns(self) -> list[dict[str, str]]: ...
-    @property
-    def rows_sampled(self) -> int: ...
-    @property
-    def inference_time_ms(self) -> int: ...
-    @property
-    def schema_stable(self) -> bool: ...
-    @property
-    def num_columns(self) -> int: ...
-    @property
-    def column_names(self) -> list[str]: ...
-
-class RowCountEstimate:
-    """Result of a quick row count."""
-
-    @property
-    def count(self) -> int: ...
-    @property
-    def exact(self) -> bool: ...
-    @property
-    def method(self) -> str: ...
-    @property
-    def count_time_ms(self) -> int: ...
-
-# --- Arrow Interop ---
-
-class RecordBatch:
-    """Arrow RecordBatch with PyCapsule interface for zero-copy exchange."""
-
-    @property
-    def num_rows(self) -> int: ...
-    @property
-    def num_columns(self) -> int: ...
-    @property
-    def column_names(self) -> list[str]: ...
-    def to_pandas(self) -> Any: ...
-    def to_polars(self) -> Any: ...
-    def __arrow_c_schema__(self) -> object: ...
-    def __arrow_c_array__(
-        self, requested_schema: object | None = None
-    ) -> tuple[object, object]: ...
 
 # --- Exports ---
 

@@ -21,16 +21,10 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from ._dataprof import (
-        infer_schema_stream_async as _infer_schema_stream_async,
-    )
     from ._dataprof import (  # type: ignore[import-not-found]
+        infer_schema_stream_async as _infer_schema_stream_async,
         profile_bytes_async as _profile_bytes_async,
-    )
-    from ._dataprof import (
         profile_file_async as _profile_file_async,
-    )
-    from ._dataprof import (
         quick_row_count_stream_async as _quick_row_count_stream_async,
     )
 

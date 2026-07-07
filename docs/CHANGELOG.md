@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Python: type stubs for the compiled extension (`dataprof/_dataprof.pyi`), so
+  type checkers and IDEs can resolve the native core. The public stubs now
+  re-export these types instead of duplicating them.
+
+### Internal
+
+- Python: adopt [ty](https://github.com/astral-sh/ty) for static type checking,
+  wired into CI as an advisory (non-blocking) step while it is pre-1.0.
+
 ## [0.8.1] - 2026-05-31
 
 ### Added

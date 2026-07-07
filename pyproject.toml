@@ -49,6 +49,7 @@ dev = [
     "maturin>=1.5,<2.0",
     "pytest>=8.0",
     "ruff>=0.9",
+    "ty>=0.0.56",
     "pandas>=2.0.0",
     "polars>=1.0.0",
     "pyarrow>=14.0",
@@ -65,8 +66,17 @@ bindings = "pyo3"
 target-version = "py310"
 line-length = 100
 
+[tool.ty.environment]
+# Match requires-python floor; the extension module is stubbed in
+# python/dataprof/_dataprof.pyi so ty can resolve the compiled core.
+python-version = "3.10"
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP"]
+
+[tool.ruff.lint.isort]
+# Keep `from x import (a as a, b as b)` re-export blocks (e.g. __init__.pyi) combined.
+combine-as-imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]
