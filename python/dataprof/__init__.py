@@ -14,7 +14,7 @@ import os
 import pathlib
 import warnings
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import Any, cast
 
 from ._dataprof import (
     ColumnProfile,
@@ -513,7 +513,7 @@ def profile(
 
 
 # Stop-when shorthand strings for the Profiler builder
-_STOP_SHORTHANDS: dict[str, object] = {
+_STOP_SHORTHANDS: dict[str, Callable[[], StopCondition]] = {
     "schema_stable": lambda: StopCondition.schema_stable(1000),
     "schema_inference": lambda: StopCondition.schema_inference(),
     "quality_sample": lambda: StopCondition.quality_sample(),
@@ -615,9 +615,7 @@ class Profiler:
                     f"Unknown stop_when shorthand: {condition!r}. "
                     f"Valid shorthands: {sorted(_STOP_SHORTHANDS)}"
                 )
-            # factory is non-None here (guarded above); ty 0.0.x doesn't narrow
-            # the dict.get() result through the raise.
-            condition = factory()  # ty: ignore[call-non-callable]
+            condition = factory()
         self._kwargs["stop_condition"] = condition
         return self
 
@@ -1251,7 +1249,7 @@ class ProfileReport:
             raise ValueError("from_dict(): 'columns' must be a list of mappings.")
         # _DictBackedReport is a read-only proxy that duck-types the raw Rust
         # report; it intentionally isn't a nominal _RustProfileReport.
-        return cls(_DictBackedReport(data))  # ty: ignore[invalid-argument-type]
+        return cls(cast("_RustProfileReport", _DictBackedReport(data)))
 
     @classmethod
     def from_json(cls, text: str) -> ProfileReport:
