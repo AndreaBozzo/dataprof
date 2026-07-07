@@ -188,6 +188,73 @@ class TestProfileReport:
         assert "score=" in r
         assert "dimensions=" in r
 
+    @pytest.mark.parametrize(
+        ("attr", "dimension", "key", "default"),
+        [
+            ("missing_values_ratio", "completeness", "missing_values_ratio", 0.0),
+            ("complete_records_ratio", "completeness", "complete_records_ratio", 100.0),
+            ("null_columns", "completeness", "null_columns", []),
+            ("data_type_consistency", "consistency", "data_type_consistency", 100.0),
+            ("format_violations", "consistency", "format_violations", 0),
+            ("encoding_issues", "consistency", "encoding_issues", 0),
+            ("duplicate_rows", "uniqueness", "duplicate_rows", 0),
+            ("key_uniqueness", "uniqueness", "key_uniqueness", 100.0),
+            ("high_cardinality_warning", "uniqueness", "high_cardinality_warning", False),
+            ("outlier_ratio", "accuracy", "outlier_ratio", 0.0),
+            ("range_violations", "accuracy", "range_violations", 0),
+            ("negative_values_in_positive", "accuracy", "negative_values_in_positive", 0),
+            ("future_dates_count", "timeliness", "future_dates_count", 0),
+            ("stale_data_ratio", "timeliness", "stale_data_ratio", 0.0),
+            ("temporal_violations", "timeliness", "temporal_violations", 0),
+        ],
+    )
+    def test_quality_flat_accessors_warn_and_match_nested(
+        self, report, attr, dimension, key, default
+    ):
+        q = report.quality
+        assert q is not None
+        nested = getattr(q, dimension)
+        assert nested is not None
+
+        with pytest.warns(DeprecationWarning, match=f"DataQualityMetrics\\.{attr}"):
+            value = getattr(q, attr)
+
+        assert value == nested.get(key, default)
+
+    @pytest.mark.parametrize(
+        ("dims", "present", "absent"),
+        [
+            (["completeness"], "completeness", ["uniqueness", "accuracy"]),
+            (["uniqueness"], "uniqueness", ["completeness", "accuracy"]),
+            (["accuracy"], "accuracy", ["completeness", "uniqueness"]),
+        ],
+    )
+    def test_quality_dimensions_nested_none_semantics(self, dims, present, absent):
+        report = dataprof.profile(CSV_FILE, quality_dimensions=dims)
+        q = report.quality
+        assert q is not None
+        assert getattr(q, present) is not None
+        for dimension in absent:
+            assert getattr(q, dimension) is None
+
+    def test_skipped_flat_accessor_warns_and_returns_default(self):
+        report = dataprof.profile(CSV_FILE, quality_dimensions=["completeness"])
+        q = report.quality
+        assert q is not None
+        assert q.uniqueness is None
+
+        with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.key_uniqueness"):
+            assert q.key_uniqueness == 100.0
+
+    def test_reloaded_quality_flat_accessors_warn(self, report):
+        reloaded = dataprof.ProfileReport.from_json(report.to_json())
+        q = reloaded.quality
+        assert q is not None
+        assert q.completeness is not None
+
+        with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.missing_values_ratio"):
+            assert q.missing_values_ratio == q.completeness["missing_values_ratio"]
+
     def test_to_dict(self, report):
         d = report.to_dict()
         assert "source" in d
@@ -1315,7 +1382,8 @@ class TestSemanticHints:
 
         without_hint = dataprof.profile(str(path), engine="incremental")
         assert without_hint.quality is not None
-        assert without_hint.quality.negative_values_in_positive == 0
+        assert without_hint.quality.accuracy is not None
+        assert without_hint.quality.accuracy["negative_values_in_positive"] == 0
 
         with_hint = dataprof.profile(
             str(path),
@@ -1323,7 +1391,8 @@ class TestSemanticHints:
             positive_columns=["pressure"],
         )
         assert with_hint.quality is not None
-        assert with_hint.quality.negative_values_in_positive == 1
+        assert with_hint.quality.accuracy is not None
+        assert with_hint.quality.accuracy["negative_values_in_positive"] == 1
 
     def test_identifier_columns_omit_numeric_stats(self, tmp_path):
         path = tmp_path / "orders.csv"
@@ -1339,7 +1408,8 @@ class TestSemanticHints:
         assert order_id.mean is None
         assert order_id.outlier_count is None
         assert report.quality is not None
-        assert report.quality.outlier_ratio == 0.0
+        assert report.quality.accuracy is not None
+        assert report.quality.accuracy["outlier_ratio"] == 0.0
 
     def test_dataframe_hints(self):
         pd = pytest.importorskip("pandas")
@@ -1351,7 +1421,8 @@ class TestSemanticHints:
         )
         assert report["order_id"].data_type == "identifier"
         assert report.quality is not None
-        assert report.quality.negative_values_in_positive == 1
+        assert report.quality.accuracy is not None
+        assert report.quality.accuracy["negative_values_in_positive"] == 1
 
 
 class TestColumnToDict:

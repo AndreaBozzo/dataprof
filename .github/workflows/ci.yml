@@ -192,6 +192,11 @@ jobs:
         with:
           cache-prefix: rust-python
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -229,6 +234,11 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-prefix: rust-python-url-${{ matrix.variant }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -291,6 +301,11 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-prefix: rust-db
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
 
       - name: Initialize test databases
         run: |

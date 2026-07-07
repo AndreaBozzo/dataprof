@@ -1,3 +1,7 @@
+use std::ffi::CString;
+
+use pyo3::PyErr;
+use pyo3::exceptions::PyDeprecationWarning;
 use pyo3::prelude::*;
 
 use dataprof::{
@@ -268,69 +272,94 @@ impl From<&QualityMetrics> for PyDataQualityMetrics {
     }
 }
 
+fn warn_flat_quality_accessor(py: Python<'_>, name: &str) -> PyResult<()> {
+    let message = CString::new(format!(
+        "DataQualityMetrics.{name} is deprecated; use the nested dimension properties \
+         such as completeness, consistency, uniqueness, accuracy, or timeliness instead"
+    ))
+    .expect("warning message contains no nul bytes");
+    let category = py.get_type::<PyDeprecationWarning>();
+    PyErr::warn(py, &category, message.as_c_str(), 2)
+}
+
 #[pymethods]
 impl PyDataQualityMetrics {
-    // -- Backward-compatible flat properties --
+    // -- Deprecated flat properties --
 
     #[getter]
-    fn missing_values_ratio(&self) -> f64 {
-        self.inner.missing_values_ratio()
+    fn missing_values_ratio(&self, py: Python<'_>) -> PyResult<f64> {
+        warn_flat_quality_accessor(py, "missing_values_ratio")?;
+        Ok(self.inner.missing_values_ratio())
     }
     #[getter]
-    fn complete_records_ratio(&self) -> f64 {
-        self.inner.complete_records_ratio()
+    fn complete_records_ratio(&self, py: Python<'_>) -> PyResult<f64> {
+        warn_flat_quality_accessor(py, "complete_records_ratio")?;
+        Ok(self.inner.complete_records_ratio())
     }
     #[getter]
-    fn null_columns(&self) -> Vec<String> {
-        self.inner.null_columns().to_vec()
+    fn null_columns(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        warn_flat_quality_accessor(py, "null_columns")?;
+        Ok(self.inner.null_columns().to_vec())
     }
     #[getter]
-    fn data_type_consistency(&self) -> f64 {
-        self.inner.data_type_consistency()
+    fn data_type_consistency(&self, py: Python<'_>) -> PyResult<f64> {
+        warn_flat_quality_accessor(py, "data_type_consistency")?;
+        Ok(self.inner.data_type_consistency())
     }
     #[getter]
-    fn format_violations(&self) -> usize {
-        self.inner.format_violations()
+    fn format_violations(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "format_violations")?;
+        Ok(self.inner.format_violations())
     }
     #[getter]
-    fn encoding_issues(&self) -> usize {
-        self.inner.encoding_issues()
+    fn encoding_issues(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "encoding_issues")?;
+        Ok(self.inner.encoding_issues())
     }
     #[getter]
-    fn duplicate_rows(&self) -> usize {
-        self.inner.duplicate_rows()
+    fn duplicate_rows(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "duplicate_rows")?;
+        Ok(self.inner.duplicate_rows())
     }
     #[getter]
-    fn key_uniqueness(&self) -> f64 {
-        self.inner.key_uniqueness()
+    fn key_uniqueness(&self, py: Python<'_>) -> PyResult<f64> {
+        warn_flat_quality_accessor(py, "key_uniqueness")?;
+        Ok(self.inner.key_uniqueness())
     }
     #[getter]
-    fn high_cardinality_warning(&self) -> bool {
-        self.inner.high_cardinality_warning()
+    fn high_cardinality_warning(&self, py: Python<'_>) -> PyResult<bool> {
+        warn_flat_quality_accessor(py, "high_cardinality_warning")?;
+        Ok(self.inner.high_cardinality_warning())
     }
     #[getter]
-    fn outlier_ratio(&self) -> f64 {
-        self.inner.outlier_ratio()
+    fn outlier_ratio(&self, py: Python<'_>) -> PyResult<f64> {
+        warn_flat_quality_accessor(py, "outlier_ratio")?;
+        Ok(self.inner.outlier_ratio())
     }
     #[getter]
-    fn range_violations(&self) -> usize {
-        self.inner.range_violations()
+    fn range_violations(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "range_violations")?;
+        Ok(self.inner.range_violations())
     }
     #[getter]
-    fn negative_values_in_positive(&self) -> usize {
-        self.inner.negative_values_in_positive()
+    fn negative_values_in_positive(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "negative_values_in_positive")?;
+        Ok(self.inner.negative_values_in_positive())
     }
     #[getter]
-    fn future_dates_count(&self) -> usize {
-        self.inner.future_dates_count()
+    fn future_dates_count(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "future_dates_count")?;
+        Ok(self.inner.future_dates_count())
     }
     #[getter]
-    fn stale_data_ratio(&self) -> f64 {
-        self.inner.stale_data_ratio()
+    fn stale_data_ratio(&self, py: Python<'_>) -> PyResult<f64> {
+        warn_flat_quality_accessor(py, "stale_data_ratio")?;
+        Ok(self.inner.stale_data_ratio())
     }
     #[getter]
-    fn temporal_violations(&self) -> usize {
-        self.inner.temporal_violations()
+    fn temporal_violations(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "temporal_violations")?;
+        Ok(self.inner.temporal_violations())
     }
 
     /// True when the underlying sample was below the recommended minimum

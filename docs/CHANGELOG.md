@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   type checkers and IDEs can resolve the native core. The public stubs now
   re-export these types instead of duplicating them.
 
+### Changed
+
+- Python: flat `DataQualityMetrics` accessors such as
+  `missing_values_ratio`, `key_uniqueness`, and `outlier_ratio` now emit
+  `DeprecationWarning`. Use nested dimension properties such as
+  `quality.completeness`, `quality.uniqueness`, and `quality.accuracy`, which
+  are `None` when a dimension was not computed. The flat accessors keep their
+  0.8-compatible values for the 0.9 line. (#326)
+- Python: the supported runtime floor is Python 3.10+. Project metadata,
+  tooling, and CI now exercise that minimum explicitly. (#326)
+
 ### Internal
 
 - Python: adopt [ty](https://github.com/astral-sh/ty) for static type checking,

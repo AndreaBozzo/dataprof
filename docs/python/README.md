@@ -290,19 +290,24 @@ q = report.quality
 # Overall score
 print(q.overall_quality_score())
 
-# Flat accessors (return defaults when dimension not computed)
-print(q.missing_values_ratio)
-print(q.data_type_consistency)
-print(q.duplicate_rows)
-print(q.outlier_ratio)
-print(q.future_dates_count)
-
 # Nested dimension accessors (None when not computed)
 print(q.completeness)    # {"missing_values_ratio": ..., "complete_records_ratio": ..., "null_columns": [...]}
 print(q.consistency)     # {"data_type_consistency": ..., "format_violations": ..., "encoding_issues": ...}
 print(q.uniqueness)      # {"duplicate_rows": ..., "key_uniqueness": ..., "high_cardinality_warning": ...}
 print(q.accuracy)        # {"outlier_ratio": ..., "range_violations": ..., "negative_values_in_positive": ...}
 print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., "temporal_violations": ...}
+```
+
+Flat `DataQualityMetrics` accessors are deprecated in 0.9. Use nested
+dimensions so skipped dimensions are explicit:
+
+```python
+# Old
+q.missing_values_ratio
+
+# New
+if q.completeness is not None:
+    q.completeness["missing_values_ratio"]
 ```
 
 `negative_values_in_positive` is driven by explicit `positive_columns`; dataprof
