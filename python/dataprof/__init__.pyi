@@ -57,7 +57,7 @@ def quick_row_count(path: str | PathLike[str]) -> RowCountEstimate:
     """Estimate or count rows from a string or path-like object."""
     ...
 
-def analyze_structure(path: str | PathLike[str], max_rows: int = 1000) -> StructureReport:
+def analyze_structure(path: str | PathLike[str], max_rows: int | None = None) -> StructureReport:
     """Analyze file structure with a bounded, lightweight pass."""
     ...
 

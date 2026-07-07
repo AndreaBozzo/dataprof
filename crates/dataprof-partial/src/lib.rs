@@ -650,6 +650,7 @@ fn analyze_structure_csv(
     path: &Path,
     max_rows: usize,
 ) -> Result<StructureReport, DataProfilerError> {
+    let start = Instant::now();
     let delimiter = dataprof_csv::detect_delimiter_from_path(path).ok();
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
@@ -662,7 +663,11 @@ fn analyze_structure_csv(
 
     let (profiles, column_stats, rows_sampled, headers) =
         dataprof_csv::analyze_csv_from_reader(file, &config)?;
-    let row_count = quick_row_count_with_format(path, FileFormat::Csv)?;
+    let row_count = if rows_sampled < max_rows {
+        exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
+    } else {
+        quick_row_count_with_format(path, FileFormat::Csv)?
+    };
     let mut columns = structure_columns_from_profiles(&profiles, &column_stats, "sample");
     if columns.is_empty() && !headers.is_empty() {
         columns = empty_structure_columns_from_headers(&headers, "sample");
@@ -691,6 +696,7 @@ fn analyze_structure_json(
     format: FileFormat,
     max_rows: usize,
 ) -> Result<StructureReport, DataProfilerError> {
+    let start = Instant::now();
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
@@ -705,7 +711,11 @@ fn analyze_structure_json(
         dataprof_json::analyze_json_from_reader(reader, &config)?;
     profiles.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let row_count = quick_row_count_with_format(path, format)?;
+    let row_count = if rows_sampled < max_rows && malformed_lines == 0 {
+        exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
+    } else {
+        quick_row_count_with_format(path, format)?
+    };
     let (source_exhausted, truncated, truncation_reason) =
         sample_status(&row_count, rows_sampled, max_rows);
     let warnings = structure_warnings(&row_count, truncated, Some(malformed_lines));
@@ -829,6 +839,15 @@ fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
         None
     } else {
         Some(numerator as f64 / denominator as f64)
+    }
+}
+
+fn exact_row_count_from_sample(rows_sampled: usize, count_time_ms: u128) -> RowCountEstimate {
+    RowCountEstimate {
+        count: rows_sampled as u64,
+        exact: true,
+        method: CountMethod::FullScan,
+        count_time_ms,
     }
 }
 

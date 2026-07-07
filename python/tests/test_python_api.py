@@ -435,6 +435,15 @@ class TestPartialAnalysis:
         assert result.truncation_reason == "max_rows(1000)"
         assert "structure_sample_truncated" in result.warnings
 
+    def test_analyze_structure_none_max_rows_uses_default(self, tmp_path):
+        path = tmp_path / "many.csv"
+        path.write_text("x\n" + "\n".join(str(i) for i in range(1001)) + "\n")
+
+        result = dataprof.analyze_structure(path, max_rows=None)
+        assert result.rows_sampled == 1000
+        assert result.truncated is True
+        assert result.truncation_reason == "max_rows(1000)"
+
     def test_analyze_structure_column_summaries(self, tmp_path):
         path = tmp_path / "summary.csv"
         path.write_text("name,age\nAlice,30\nBob,\nCharlie,40\n")

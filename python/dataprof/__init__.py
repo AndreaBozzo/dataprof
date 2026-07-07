@@ -161,7 +161,7 @@ def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
 
 def analyze_structure(
     path: str | os.PathLike[str],
-    max_rows: int = 1000,
+    max_rows: int | None = None,
 ) -> StructureReport:
     """Analyze file structure with a bounded, lightweight pass."""
     return _analyze_structure(_normalize_existing_file(path), max_rows)
