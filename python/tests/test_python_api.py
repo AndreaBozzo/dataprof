@@ -216,7 +216,7 @@ class TestProfileReport:
         nested = getattr(q, dimension)
         assert nested is not None
 
-        with pytest.warns(DeprecationWarning, match=f"DataQualityMetrics.{attr}"):
+        with pytest.warns(DeprecationWarning, match=f"DataQualityMetrics\\.{attr}"):
             value = getattr(q, attr)
 
         assert value == nested.get(key, default)
@@ -243,7 +243,7 @@ class TestProfileReport:
         assert q is not None
         assert q.uniqueness is None
 
-        with pytest.warns(DeprecationWarning, match="DataQualityMetrics.key_uniqueness"):
+        with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.key_uniqueness"):
             assert q.key_uniqueness == 100.0
 
     def test_reloaded_quality_flat_accessors_warn(self, report):
@@ -252,7 +252,7 @@ class TestProfileReport:
         assert q is not None
         assert q.completeness is not None
 
-        with pytest.warns(DeprecationWarning, match="DataQualityMetrics.missing_values_ratio"):
+        with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.missing_values_ratio"):
             assert q.missing_values_ratio == q.completeness["missing_values_ratio"]
 
     def test_to_dict(self, report):
