@@ -20,6 +20,21 @@ struct PatternDef {
     validator: Option<fn(&str) -> bool>,
 }
 
+/// Public metadata for a pattern detector.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternMetadata {
+    /// Pattern name (e.g. "Email", "Phone (US)", "UUID").
+    pub name: String,
+    /// Regex used for detection.
+    pub regex: String,
+    /// Semantic category for the detected values.
+    pub category: PatternCategory,
+    /// ISO 3166-1 alpha-2 locale for locale-specific patterns.
+    pub locale: Option<String>,
+    /// Minimum percentage of non-null values that must match before reporting.
+    pub min_threshold: f64,
+}
+
 // Pre-compile pattern definitions with metadata for better detection accuracy.
 // Specificity values encode how structurally unique each regex is:
 //   95 = very specific (Codice Fiscale: letter/digit/letter alternation)
@@ -428,6 +443,29 @@ fn compute_confidence(specificity: u8, match_percentage: f64, validator_pass_rat
     let base = specificity as f64 / 100.0;
     let match_factor = (match_percentage / 50.0).clamp(0.0, 1.0);
     (base * match_factor * validator_pass_rate).clamp(0.0, 1.0)
+}
+
+/// List supported pattern detectors in detector order.
+///
+/// Passing a locale returns universal patterns plus patterns specific to that
+/// ISO 3166-1 alpha-2 locale. Locale matching is case-insensitive.
+pub fn list_patterns(locale: Option<&str>) -> Vec<PatternMetadata> {
+    let normalized_locale = locale.map(|l| l.trim().to_ascii_uppercase());
+
+    PATTERN_DEFS
+        .iter()
+        .filter(|def| match normalized_locale.as_deref() {
+            None => true,
+            Some(locale) => def.locale.is_none() || def.locale == Some(locale),
+        })
+        .map(|def| PatternMetadata {
+            name: def.name.to_string(),
+            regex: def.regex.as_str().to_string(),
+            category: def.category.clone(),
+            locale: def.locale.map(str::to_string),
+            min_threshold: def.min_threshold,
+        })
+        .collect()
 }
 
 /// Detect common data patterns in a column.
@@ -1342,6 +1380,51 @@ mod tests {
     #[test]
     fn test_pattern_defs_compiled() {
         assert_eq!(PATTERN_DEFS.len(), 35);
+    }
+
+    #[test]
+    fn test_list_patterns_returns_all_metadata() {
+        let patterns = list_patterns(None);
+        assert_eq!(patterns.len(), 35);
+
+        let email = &patterns[0];
+        assert_eq!(email.name, "Email");
+        assert_eq!(
+            email.regex,
+            r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        );
+        assert_eq!(email.category, PatternCategory::Contact);
+        assert_eq!(email.locale, None);
+        assert_eq!(email.min_threshold, 3.0);
+    }
+
+    #[test]
+    fn test_list_patterns_preserves_detector_order() {
+        let metadata_names: Vec<String> = list_patterns(None)
+            .into_iter()
+            .map(|pattern| pattern.name)
+            .collect();
+        let detector_names: Vec<String> = PATTERN_DEFS
+            .iter()
+            .map(|def| def.name.to_string())
+            .collect();
+
+        assert_eq!(metadata_names, detector_names);
+    }
+
+    #[test]
+    fn test_list_patterns_filters_locale_case_insensitive() {
+        let patterns = list_patterns(Some("it"));
+
+        assert!(patterns.iter().any(|pattern| pattern.name == "Email"));
+        assert!(patterns.iter().any(|pattern| pattern.name == "Phone (IT)"));
+        assert!(patterns.iter().all(|pattern| {
+            pattern
+                .locale
+                .as_deref()
+                .is_none_or(|locale| locale == "IT")
+        }));
+        assert!(!patterns.iter().any(|pattern| pattern.name == "Phone (US)"));
     }
 
     // ---- RegexSet tests ----

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from os import PathLike
+from types import ModuleType
 from typing import Any
 
 # Raw data types are provided by the compiled extension and re-exported here.
@@ -47,6 +48,33 @@ def profile(
     identifier_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
+    ...
+
+def profile_file(
+    path: str | PathLike[str],
+    *,
+    engine: str = "auto",
+    chunk_size: int | None = None,
+    memory_limit_mb: int | None = None,
+    format: str | None = None,
+    max_rows: int | None = None,
+    csv_delimiter: str | None = None,
+    csv_flexible: bool | None = None,
+    sampling: SamplingStrategy | None = None,
+    stop_condition: StopCondition | None = None,
+    on_progress: Callable[[ProgressEvent], None] | None = None,
+    progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
+) -> ProfileReport:
+    """Profile a file path with file-oriented options."""
+    ...
+
+def list_patterns(locale: str | None = None) -> list[dict[str, Any]]:
+    """List supported pattern detectors."""
     ...
 
 def infer_schema(path: str | PathLike[str]) -> SchemaResult:
@@ -167,7 +195,7 @@ class ProfileReport:
         """Single-row quality summary dict for easy aggregation."""
         ...
     def save(self, path: str) -> ProfileReport:
-        """Save report to file (.json, .csv, or .parquet)."""
+        """Save report to file (.json, .csv, or .parquet), returning self for chaining."""
         ...
     def to_html(self) -> str:
         """Standalone HTML representation (same as Jupyter's rich display)."""
@@ -202,15 +230,16 @@ class ProfileReport:
 
 __all__ = [
     "profile",
+    "profile_file",
     "Profiler",
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
-    "column_to_dict",
     "DataQualityMetrics",
     "SamplingStrategy",
     "StopCondition",
     "ProgressEvent",
+    "list_patterns",
     "infer_schema",
     "quick_row_count",
     "analyze_structure",
@@ -219,5 +248,8 @@ __all__ = [
     "StructureColumnSummary",
     "StructureReport",
     "RecordBatch",
+    "asyncio",
     "__version__",
 ]
+
+asyncio: ModuleType

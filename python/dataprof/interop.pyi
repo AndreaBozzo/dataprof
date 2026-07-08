@@ -6,6 +6,7 @@ high-level Python ``dataprof.ProfileReport`` wrapper.
 
 from os import PathLike
 
+from . import column_to_dict as column_to_dict
 from ._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
     DataQualityMetrics,
@@ -48,6 +49,7 @@ __all__ = [
     "profile_arrow",
     "analyze_csv_to_arrow",
     "analyze_parquet_to_arrow",
+    "column_to_dict",
     "ProfilerConfig",
     "ProfileReport",
     "ColumnProfile",

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+from dataprof import column_to_dict
 from dataprof._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
     DataQualityMetrics,
@@ -53,6 +54,7 @@ __all__ = [
     "profile_arrow",
     "analyze_csv_to_arrow",
     "analyze_parquet_to_arrow",
+    "column_to_dict",
     "ProfilerConfig",
     "ProfileReport",
     "ColumnProfile",
