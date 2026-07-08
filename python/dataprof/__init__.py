@@ -1549,10 +1549,12 @@ class ProfileReport:
         :param include_samples: When ``True``, include non-sensitive numeric
             extrema (column minima and maxima). Off by default because these
             are raw cell values. Extrema are emitted only for columns that
-            pattern detection scanned and cleared. Columns with a sensitive
-            detected pattern omit them -- and so do *all* columns when pattern
-            detection never ran, which is the case for reports profiled without
-            the ``"patterns"`` metric pack or reloaded from disk.
+            pattern detection scanned and cleared. A column omits them when a
+            sensitive pattern was detected, and *every* column omits them when
+            the report carries no pattern evidence at all -- profiled without
+            the ``"patterns"`` metric pack, or rebuilt from a payload whose
+            ``patterns`` key was absent. Evidence survives ``save()``/``load()``,
+            so a round-tripped report redacts exactly as the original did.
         :returns: A plain-text summary. Stable across runs for a given report.
         """
         qs = self.quality_score

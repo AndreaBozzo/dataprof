@@ -602,9 +602,13 @@ class TestToLlmContext:
 
     @pytest.fixture()
     def cards(self, tmp_path):
-        """Credit-card numbers, which infer as `integer` and so carry extrema."""
+        """A sensitive integer column beside an innocuous one.
+
+        Both infer as `integer` and so carry extrema; only `card` matches a
+        sensitive pattern. The pair distinguishes redaction from over-redaction.
+        """
         path = tmp_path / "cards.csv"
-        rows = ["card"] + [f"411111111111{1000 + i}" for i in range(10)]
+        rows = ["card,qty"] + [f"411111111111{1000 + i},{i}" for i in range(10)]
         path.write_text("\n".join(rows) + "\n", encoding="utf-8")
         return str(path)
 
@@ -622,13 +626,34 @@ class TestToLlmContext:
         assert "4111111111111000" not in out
         assert "4111111111111009" not in out
 
-    def test_include_samples_withholds_extremes_for_reloaded_report(self, cards, tmp_path):
-        """A report reloaded from disk carries no pattern evidence, so it redacts."""
+    def test_include_samples_withholds_extremes_when_reload_lacks_evidence(self, cards, tmp_path):
+        """A payload saved without pattern evidence redacts once reloaded."""
         saved = tmp_path / "report.json"
         dataprof.profile(cards, metrics=["schema", "statistics"]).save(str(saved))
 
-        out = dataprof.ProfileReport.load(str(saved)).to_llm_context(include_samples=True)
+        reloaded = dataprof.ProfileReport.load(str(saved))
+        assert reloaded["card"].patterns is None  # the key was never written
+
+        out = reloaded.to_llm_context(include_samples=True)
         assert "4111111111111000" not in out
+
+    def test_reload_preserves_pattern_evidence(self, cards, tmp_path):
+        """`save()`/`load()` round-trips the evidence, so redaction is unchanged.
+
+        A reloaded report is not automatically "unscanned": a sensitive column
+        still redacts *because* its pattern survived, and a cleared column still
+        shows extrema. Only a payload missing the key falls back to unknown.
+        """
+        saved = tmp_path / "report.json"
+        dataprof.profile(cards).save(str(saved))  # default metrics: patterns run
+
+        reloaded = dataprof.ProfileReport.load(str(saved))
+        assert reloaded["card"].patterns  # sensitive pattern survived the round-trip
+        assert reloaded["qty"].patterns == []  # scanned, clean, and still provably so
+
+        out = reloaded.to_llm_context(include_samples=True)
+        assert "4111111111111000" not in out  # still redacted
+        assert "qty: integer [0" in out  # still exposed
 
     def test_scanned_column_without_matches_still_shows_extremes(self, tmp_path):
         """Failing closed must not swallow the safe case: `[]` is evidence, `None` is not."""
