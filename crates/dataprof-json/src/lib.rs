@@ -4,7 +4,7 @@ use std::path::Path;
 
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints,
+    SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -404,13 +404,19 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    let mut assembler = ReportAssembler::new(
-        file_source,
-        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
-    )
-    .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .with_semantic_hints(semantic_hints.clone());
+    let mut execution = ExecutionMetadata::new(rows_read, num_columns, scan_time_ms);
+    // The scan loops stop as soon as `max_rows` is reached, so the source was not
+    // exhausted. Record that, or the report is indistinguishable from a full scan.
+    if let Some(max) = config.max_rows
+        && rows_read >= max
+    {
+        execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+    }
+
+    let mut assembler = ReportAssembler::new(file_source, execution)
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }

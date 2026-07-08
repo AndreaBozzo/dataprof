@@ -3,7 +3,7 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat,
-    MetricPack, QualityDimension, SemanticHints,
+    MetricPack, QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
@@ -136,8 +136,27 @@ impl ArrowProfiler {
 
         let mut total_rows = 0;
 
+        // The Arrow CSV reader has no row cap, so enforce it here: stop once the
+        // limit is reached and slice the batch that straddles it, keeping the row
+        // count exact rather than rounding up to a batch boundary.
+        let max_rows = self.csv_config.as_ref().and_then(|config| config.max_rows);
+        let mut truncated = false;
+
         for batch_result in csv_reader {
-            let batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, &error))?;
+            let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, &error))?;
+
+            if let Some(max) = max_rows {
+                if total_rows >= max {
+                    truncated = true;
+                    break;
+                }
+                let remaining = max - total_rows;
+                if batch.num_rows() > remaining {
+                    batch = batch.slice(0, remaining);
+                    truncated = true;
+                }
+            }
+
             total_rows += batch.num_rows();
 
             // Process each column in the batch
@@ -178,6 +197,11 @@ impl ArrowProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
+        let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms);
+        if truncated && let Some(max) = max_rows {
+            execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+        }
+
         let mut assembler = ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -186,7 +210,7 @@ impl ArrowProfiler {
                 modified_at: None,
                 parquet_metadata: None,
             },
-            ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
+            execution,
         )
         .columns(column_profiles);
 

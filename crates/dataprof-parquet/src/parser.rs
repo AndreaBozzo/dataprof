@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_core::{
     DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
-    QualityDimension, SemanticHints,
+    QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 
@@ -51,17 +51,31 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
 #[derive(Debug, Clone)]
 pub struct ParquetConfig {
     pub batch_size: usize,
+    /// Stop after this many rows. `None` reads the whole file.
+    pub max_rows: Option<usize>,
 }
 
 impl Default for ParquetConfig {
     fn default() -> Self {
-        Self { batch_size: 8192 }
+        Self {
+            batch_size: 8192,
+            max_rows: None,
+        }
     }
 }
 
 impl ParquetConfig {
     pub fn batch_size(batch_size: usize) -> Self {
-        Self { batch_size }
+        Self {
+            batch_size,
+            ..Default::default()
+        }
+    }
+
+    /// Cap the number of rows read from the file.
+    pub fn with_max_rows(mut self, max_rows: usize) -> Self {
+        self.max_rows = Some(max_rows);
+        self
     }
 
     pub fn adaptive_batch_size(file_size_bytes: u64) -> usize {
@@ -163,8 +177,11 @@ pub fn analyze_parquet_with_config_dims_and_hints(
 
     let schema_summary = format!("{}", builder.schema());
 
-    let reader = builder
-        .with_batch_size(config.batch_size)
+    let mut reader_builder = builder.with_batch_size(config.batch_size);
+    if let Some(max) = config.max_rows {
+        reader_builder = reader_builder.with_limit(max);
+    }
+    let reader = reader_builder
         .build()
         .map_err(|error| DataProfilerError::ParquetError {
             message: format!("Failed to build Parquet reader: {}", error),
@@ -194,6 +211,14 @@ pub fn analyze_parquet_with_config_dims_and_hints(
 
     let num_columns = column_profiles.len();
 
+    let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms);
+    // `with_limit` stops the reader at the cap, so the source was not exhausted.
+    if let Some(max) = config.max_rows
+        && total_rows >= max
+    {
+        execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+    }
+
     let mut assembler = ReportAssembler::new(
         DataSource::File {
             path: file_path.display().to_string(),
@@ -202,7 +227,7 @@ pub fn analyze_parquet_with_config_dims_and_hints(
             modified_at: None,
             parquet_metadata,
         },
-        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
+        execution,
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns)

@@ -324,13 +324,7 @@ impl IncrementalProfiler {
     /// Extract a top-level `MaxRows` limit from the stop condition (including
     /// inside `Any` composites) so we can check it per-row instead of per-chunk.
     fn extract_max_rows(condition: &StopCondition) -> Option<u64> {
-        match condition {
-            StopCondition::MaxRows(n) => Some(*n),
-            StopCondition::Any(conditions) | StopCondition::All(conditions) => {
-                conditions.iter().find_map(Self::extract_max_rows)
-            }
-            _ => None,
-        }
+        condition.max_rows()
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {

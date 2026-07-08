@@ -338,6 +338,110 @@ def _pattern_cell(col: ColumnProfile) -> str:
     return ""
 
 
+# --- LLM context helpers (see ProfileReport.to_llm_context) ---
+
+#: Characters per token. A deliberately rough, dependency-free approximation --
+#: real tokenizers vary by model. It runs slightly conservative for prose, which
+#: is the safe direction for a budget that must not be exceeded.
+_CHARS_PER_TOKEN = 4
+
+#: A column is flagged ``null-heavy`` at or above this null percentage.
+_NULL_HEAVY_PCT = 20.0
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate the token count of ``text`` as ``ceil(len(text) / 4)``.
+
+    Deterministic and dependency-free. See :data:`_CHARS_PER_TOKEN`.
+    """
+    return -(-len(text) // _CHARS_PER_TOKEN)
+
+
+def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
+    """Derive ``(severity, text)`` quality flags for one column.
+
+    Higher severity sorts first. Only high-signal, deterministic flags are
+    emitted -- a flag that fires on almost every column is noise, not signal.
+    """
+    flags: list[tuple[float, str]] = []
+    null_pct = col.null_percentage or 0.0
+
+    if null_pct >= 100.0:
+        flags.append((100.0, f"{col.name}: all-null"))
+    elif null_pct >= _NULL_HEAVY_PCT:
+        flags.append((null_pct, f"{col.name}: null-heavy ({_r2(null_pct):.1f}% null)"))
+
+    # A single distinct value carries no information. Suppress when the column
+    # is already reported as null-heavy, where it is a restatement, not a flag.
+    if col.unique_count == 1 and null_pct < _NULL_HEAVY_PCT and (col.total_count or 0) > 1:
+        flags.append((60.0, f"{col.name}: constant (1 distinct value)"))
+
+    outliers = col.outlier_count or 0
+    total = col.total_count or 0
+    if outliers > 0 and total > 0:
+        pct = 100.0 * outliers / total
+        flags.append((min(50.0, pct), f"{col.name}: {outliers} outliers ({pct:.1f}%)"))
+
+    return flags
+
+
+def _section_min_cost(header: str, items: list[str]) -> int:
+    """Tokens needed to show ``header`` plus at least one item (and a tail).
+
+    A section is worth nothing below this cost, so priority allocation reserves
+    it before handing budget to lower-priority sections.
+    """
+    if not items:
+        return 0
+    cost = _estimate_tokens(header) + _estimate_tokens(items[0])
+    if len(items) > 1:
+        cost += _estimate_tokens(f"... +{len(items) - 1} more")
+    return cost
+
+
+def _fit_section(header: str, items: list[str], budget: int) -> tuple[list[str], int]:
+    """Fit as many ``items`` as ``budget`` tokens allow under ``header``.
+
+    Returns ``(lines, tokens_used)``. Omitted items are summarized by a trailing
+    ``... +N more``, whose own cost is reserved before any item is admitted, so
+    the result never exceeds ``budget``. Emits nothing if the header alone
+    cannot fit.
+    """
+    if not items:
+        return [], 0
+
+    header_cost = _estimate_tokens(header)
+    if header_cost > budget:
+        return [], 0
+
+    lines = [header]
+    used = header_cost
+    admitted = 0
+
+    for i, item in enumerate(items):
+        remaining = len(items) - i
+        item_cost = _estimate_tokens(item)
+        # Reserve room for the tail we would need if this item does not fit.
+        tail_cost = _estimate_tokens(f"... +{remaining} more") if remaining else 0
+
+        if used + item_cost + (tail_cost if remaining > 1 else 0) <= budget:
+            lines.append(item)
+            used += item_cost
+            admitted += 1
+        else:
+            tail = f"... +{remaining} more"
+            if used + _estimate_tokens(tail) <= budget:
+                lines.append(tail)
+                used += _estimate_tokens(tail)
+            break
+
+    # A section header with no item beneath it spends tokens to say nothing --
+    # its "+N more" tail only restates the count already in the header.
+    if admitted == 0:
+        return [], 0
+    return lines, used
+
+
 def profile(
     source: Any,
     *,
@@ -1260,6 +1364,104 @@ class ProfileReport:
             ]
             lines.append("| " + " | ".join(row) + " |")
         return "\n".join(lines)
+
+    def to_llm_context(self, max_tokens: int = 1000, include_samples: bool = False) -> str:
+        """Render a token-bounded, agent-oriented summary of the report.
+
+        Answers "what is this dataset and what is wrong with it?" in a form an
+        LLM can consume cheaply::
+
+            report = dp.profile("orders.csv")
+            print(report.to_llm_context())
+
+        Emits structured signals only -- shape, provenance caveats, quality
+        flags, schema, and detected pattern names. No recommendations and no
+        generative prose; interpretation is the caller's job.
+
+        :param max_tokens: Approximate upper bound on the output, enforced by
+            deterministic truncation with a ``... +N more`` tail. Tokens are
+            estimated as ``ceil(len(text) / 4)``, not counted with a real
+            tokenizer, so treat this as a budget rather than an exact size. The
+            dataset header is always emitted even if it exceeds the budget.
+        :param include_samples: When ``True``, include values drawn from the
+            data (column minima and maxima). Off by default: these are raw cell
+            values and may be sensitive.
+        :returns: A plain-text summary. Stable across runs for a given report.
+        """
+        qs = self.quality_score
+        qs_str = f"{qs:.1f}/100" if qs is not None else "n/a"
+
+        header = [
+            f"dataset: {self.source} ({self.source_type})",
+            f"rows: {self.rows:,} | columns: {self.columns} | quality: {qs_str}",
+        ]
+
+        # Provenance caveats change how every number below should be read, so
+        # they ride with the header rather than competing for section budget.
+        if self.sampling_applied:
+            ratio = self.sampling_ratio
+            suffix = f" (ratio {ratio:.4g})" if ratio is not None else ""
+            header.append(f"caveat: profile is based on a sample{suffix}")
+        if self.truncation_reason:
+            header.append(f"caveat: scan stopped early ({self.truncation_reason})")
+        if self.low_sample_warning:
+            header.append("caveat: low sample size, quality metrics are unreliable")
+
+        header_text = "\n".join(header)
+        budget = max_tokens - _estimate_tokens(header_text)
+        if budget <= 0:
+            return header_text
+
+        cols = list(self._report.column_profiles)
+
+        flag_items = [
+            f"- {text}"
+            for _, text in sorted(
+                (f for col in cols for f in _column_flags(col)),
+                key=lambda f: (-f[0], f[1]),  # severity desc, then name for stability
+            )
+        ]
+
+        schema_items = []
+        for col in cols:
+            line = f"- {col.name}: {col.data_type}"
+            if include_samples and col.min is not None and col.max is not None:
+                line += f" [{col.min} .. {col.max}]"
+            schema_items.append(line)
+
+        pattern_items = [f"- {col.name}: {_pattern_cell(col)}" for col in cols if col.patterns]
+
+        # Flags are the reason an agent asked; schema is context; patterns are a
+        # bonus. Unused budget rolls forward, so a clean dataset spends its flag
+        # allowance on schema instead of wasting it.
+        sections: list[tuple[str, list[str], float]] = [
+            (f"flags ({len(flag_items)}):", flag_items, 0.45),
+            (f"schema ({len(schema_items)}):", schema_items, 0.40),
+            ("patterns:", pattern_items, 0.15),
+        ]
+
+        body: list[str] = []
+        remaining = budget
+        for i, (title, items, share) in enumerate(sections):
+            is_last = i == len(sections) - 1
+            # A section's share caps how much it may take, but it may always
+            # claim enough for one item -- otherwise a tight budget starves the
+            # high-priority sections and spends everything on the last one.
+            cap = remaining if is_last else max(0, int(budget * share))
+            floor = _section_min_cost(title, items) + 1  # +1 for the separator
+            allowance = min(remaining, max(cap, floor))
+            lines, used = _fit_section(title, items, max(0, allowance - 1))
+            if lines:
+                body.extend(["", *lines])
+                remaining -= used + 1
+            elif items:
+                # This section had something to say and no room to say it. Stop:
+                # rendering a lower-priority section now would let a reader infer
+                # that the omitted one was empty -- e.g. "patterns but no flags"
+                # reads as a clean dataset.
+                break
+
+        return "\n".join([*header, *body])
 
     def compare(self, other: ProfileReport) -> dict[str, Any]:
         """Compare this report with another and return a dict of deltas.

@@ -153,7 +153,16 @@ impl Profiler {
 
     /// Set a stop condition for early termination.
     ///
-    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
+    /// Fully evaluated for CSV sources by `EngineType::Auto` (which routes to the
+    /// incremental engine) and `EngineType::Incremental`, and by
+    /// [`Profiler::profile_stream`].
+    ///
+    /// The columnar engine and the JSON/Parquet parsers cannot evaluate a
+    /// condition per chunk, so they honour a plain row limit
+    /// ([`StopCondition::MaxRows`]) and reject richer conditions — byte caps,
+    /// schema stability, confidence thresholds — with
+    /// [`DataProfilerError::InvalidConfiguration`] rather than silently scanning
+    /// the whole source.
     pub fn stop_when(mut self, condition: StopCondition) -> Self {
         self.config.stop_condition = condition;
         self
@@ -402,6 +411,53 @@ impl Profiler {
         )
     }
 
+    /// Reject a stop condition richer than a plain row limit.
+    ///
+    /// Row-oriented parsers (JSON, Parquet, the Arrow CSV reader) can enforce a
+    /// row cap but cannot evaluate byte caps, schema stability, or confidence
+    /// thresholds. Silently ignoring those would leave the report claiming
+    /// `source_exhausted` with no truncation reason — indistinguishable from a
+    /// complete profile, which is exactly the wrong answer for a caller that
+    /// asked to stop early.
+    fn ensure_row_limit_only(&self, what: &str) -> Result<(), DataProfilerError> {
+        if self.config.stop_condition.is_row_limit_only() {
+            return Ok(());
+        }
+        Err(DataProfilerError::InvalidConfiguration {
+            message: format!(
+                "{what} supports only row-limit stop conditions (max_rows), not the one supplied"
+            ),
+            suggestion:
+                "Use StopCondition::MaxRows, profile a CSV source with the auto or incremental \
+                 engine, or remove the stop condition."
+                    .to_string(),
+        })
+    }
+
+    /// The row cap implied by the configured stop condition, if any.
+    fn stop_max_rows(&self) -> Option<usize> {
+        self.config.stop_condition.max_rows().map(|n| n as usize)
+    }
+
+    /// A JSON parser config carrying the configured row cap, if any.
+    fn json_config_for_stop(&self) -> dataprof_json::JsonParserConfig {
+        let config = dataprof_json::JsonParserConfig::default();
+        match self.stop_max_rows() {
+            Some(max) => config.with_max_rows(max),
+            None => config,
+        }
+    }
+
+    /// A Parquet config carrying the configured row cap, if any.
+    #[cfg(feature = "parquet")]
+    fn parquet_config_for_stop(&self) -> dataprof_parquet::ParquetConfig {
+        let config = dataprof_parquet::ParquetConfig::default();
+        match self.stop_max_rows() {
+            Some(max) => config.with_max_rows(max),
+            None => config,
+        }
+    }
+
     /// Build a `CsvParserConfig` for a CSV file, auto-detecting the delimiter
     /// when none was explicitly configured.
     fn csv_config_for_file(&self, file_path: &Path) -> dataprof_csv::CsvParserConfig {
@@ -427,9 +483,10 @@ impl Profiler {
         let semantic_hints = self.semantic_hints();
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
+                self.ensure_row_limit_only("the JSON parser")?;
                 dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
-                    &dataprof_json::JsonParserConfig::default(),
+                    &self.json_config_for_stop(),
                     dims,
                     &semantic_hints,
                 )
@@ -437,8 +494,10 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
                 {
-                    dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                    self.ensure_row_limit_only("the Parquet parser")?;
+                    dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
                         file_path,
+                        &self.parquet_config_for_stop(),
                         dims,
                         &semantic_hints,
                     )
@@ -451,6 +510,15 @@ impl Profiler {
                 }
             }
             _ => {
+                // AdaptiveProfiler cannot honour early-stop conditions. Auto's job
+                // is engine selection, so when the caller asked to stop early we
+                // select an engine that can deliver it rather than silently
+                // scanning the whole source (which also leaves the report claiming
+                // `source_exhausted` with no truncation reason).
+                if !matches!(self.config.stop_condition, StopCondition::Never) {
+                    return self.run_incremental(file_path, format);
+                }
+
                 let mut profiler = AdaptiveProfiler::new();
                 if let Some(d) = &self.config.quality_dimensions {
                     profiler = profiler.quality_dimensions(d.clone());
@@ -482,20 +550,25 @@ impl Profiler {
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
+                self.ensure_row_limit_only("the JSON parser")?;
                 return dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
-                    &dataprof_json::JsonParserConfig::default(),
+                    &self.json_config_for_stop(),
                     dims,
                     &semantic_hints,
                 );
             }
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
-                    file_path,
-                    dims,
-                    &semantic_hints,
-                );
+                {
+                    self.ensure_row_limit_only("the Parquet parser")?;
+                    return dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
+                        file_path,
+                        &self.parquet_config_for_stop(),
+                        dims,
+                        &semantic_hints,
+                    );
+                }
                 #[cfg(not(feature = "parquet"))]
                 return Err(DataProfilerError::UnsupportedFormat {
                     format: "parquet (enable the `parquet` feature)".to_string(),
@@ -535,11 +608,15 @@ impl Profiler {
     ) -> Result<ProfileReport, DataProfilerError> {
         let dims = self.config.quality_dimensions.as_deref();
         let semantic_hints = self.semantic_hints();
+        // Every columnar path enforces a row cap, but none can evaluate a richer
+        // stop condition per chunk.
+        self.ensure_row_limit_only("the columnar engine")?;
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                return dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
                     file_path,
+                    &self.parquet_config_for_stop(),
                     dims,
                     &semantic_hints,
                 );
@@ -551,7 +628,7 @@ impl Profiler {
             FileFormat::Json | FileFormat::Jsonl => {
                 return dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
-                    &dataprof_json::JsonParserConfig::default(),
+                    &self.json_config_for_stop(),
                     dims,
                     &semantic_hints,
                 );
@@ -577,7 +654,11 @@ impl Profiler {
                 profiler = profiler.locale(l.clone());
             }
             profiler = profiler.semantic_hints(semantic_hints);
-            let csv_config = self.csv_config_for_file(file_path);
+            // ArrowProfiler reads the row cap off the CSV config; the incremental
+            // engine evaluates the stop condition itself, so only set it here.
+            let csv_config = self
+                .csv_config_for_file(file_path)
+                .max_rows(self.stop_max_rows());
             profiler = profiler.csv_config(csv_config);
             profiler.analyze_csv_file(file_path)
         }

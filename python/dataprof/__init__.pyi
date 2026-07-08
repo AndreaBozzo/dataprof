@@ -175,6 +175,13 @@ class ProfileReport:
     def to_markdown(self) -> str:
         """GitHub-flavored markdown table of the column profiles."""
         ...
+    def to_llm_context(self, max_tokens: int = 1000, include_samples: bool = False) -> str:
+        """Token-bounded, agent-oriented summary: shape, caveats, flags, schema, patterns.
+
+        Tokens are estimated as ``ceil(len(text) / 4)``, not counted with a real
+        tokenizer. Raw cell values are excluded unless ``include_samples=True``.
+        """
+        ...
     def compare(self, other: ProfileReport) -> dict[str, Any]:
         """Dict of quality/schema/null deltas versus another report."""
         ...

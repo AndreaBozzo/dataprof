@@ -114,6 +114,231 @@ fn format_override_beats_extension() {
     assert_eq!(report.execution.columns_detected, 2);
 }
 
+/// Regression: the default `EngineType::Auto` silently ignored `stop_when`,
+/// scanning the whole file and reporting `source_exhausted` with no truncation
+/// reason. Auto must route to an engine that honours the stop condition.
+#[test]
+fn auto_engine_honours_stop_condition() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".csv")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(tmp, "n").unwrap();
+    for i in 0..500 {
+        writeln!(tmp, "{i}").unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Auto)
+        .stop_when(StopCondition::MaxRows(50))
+        .analyze_file(tmp.path())
+        .expect("auto engine should profile the csv");
+
+    assert!(
+        report.execution.rows_processed < 500,
+        "auto engine ignored max_rows: processed {} rows",
+        report.execution.rows_processed
+    );
+    assert!(
+        report.execution.truncation_reason.is_some(),
+        "early stop must record a truncation reason"
+    );
+    assert!(
+        !report.execution.source_exhausted,
+        "a truncated scan must not claim the source was exhausted"
+    );
+}
+
+/// The columnar engine enforces a row cap, slicing the batch that straddles the
+/// limit so the row count is exact rather than rounded to a batch boundary.
+#[test]
+fn columnar_engine_honours_max_rows() {
+    use std::io::Write;
+
+    let mut csv = tempfile::Builder::new()
+        .suffix(".csv")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(csv, "n").unwrap();
+    for i in 0..500 {
+        writeln!(csv, "{i}").unwrap();
+    }
+    csv.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .stop_when(StopCondition::MaxRows(50))
+        .analyze_file(csv.path())
+        .expect("columnar should profile the csv");
+
+    assert_eq!(report.execution.rows_processed, 50);
+    assert!(report.execution.truncation_reason.is_some());
+    assert!(!report.execution.source_exhausted);
+}
+
+/// The JSON parser enforces a row cap on every engine that routes to it.
+#[test]
+fn json_honours_max_rows() {
+    use std::io::Write;
+
+    let mut jsonl = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .expect("tmpfile");
+    for i in 0..500 {
+        writeln!(jsonl, "{{\"a\": {i}}}").unwrap();
+    }
+    jsonl.flush().unwrap();
+
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let report = Profiler::new()
+            .engine(engine)
+            .stop_when(StopCondition::MaxRows(50))
+            .analyze_file(jsonl.path())
+            .unwrap_or_else(|e| panic!("json profile failed for {engine:?}: {e}"));
+
+        assert_eq!(
+            report.execution.rows_processed, 50,
+            "json ignored max_rows on {engine:?}"
+        );
+        assert!(
+            report.execution.truncation_reason.is_some(),
+            "no truncation reason on {engine:?}"
+        );
+        assert!(!report.execution.source_exhausted, "exhausted on {engine:?}");
+    }
+}
+
+/// Parquet enforces a row cap via the reader's `with_limit`.
+#[cfg(feature = "parquet")]
+#[test]
+fn parquet_honours_max_rows() {
+    let path = std::path::Path::new("examples/test_data/sensors.parquet");
+    assert!(path.exists(), "fixture missing: {}", path.display());
+
+    let full = Profiler::new()
+        .analyze_file(path)
+        .expect("parquet profile should succeed");
+    assert_eq!(full.execution.rows_processed, 20);
+    assert!(full.execution.truncation_reason.is_none());
+
+    for engine in [EngineType::Auto, EngineType::Columnar] {
+        let report = Profiler::new()
+            .engine(engine)
+            .stop_when(StopCondition::MaxRows(5))
+            .analyze_file(path)
+            .unwrap_or_else(|e| panic!("parquet profile failed for {engine:?}: {e}"));
+
+        assert_eq!(
+            report.execution.rows_processed, 5,
+            "parquet ignored max_rows on {engine:?}"
+        );
+        assert!(
+            report.execution.truncation_reason.is_some(),
+            "no truncation reason on {engine:?}"
+        );
+        assert!(!report.execution.source_exhausted, "exhausted on {engine:?}");
+    }
+}
+
+/// A row cap must not fire when the source is smaller than the cap.
+#[test]
+fn max_rows_above_row_count_is_not_truncation() {
+    use std::io::Write;
+
+    let mut jsonl = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(jsonl, "{{\"a\": 1}}").unwrap();
+    writeln!(jsonl, "{{\"a\": 2}}").unwrap();
+    jsonl.flush().unwrap();
+
+    let report = Profiler::new()
+        .stop_when(StopCondition::MaxRows(1_000))
+        .analyze_file(jsonl.path())
+        .expect("json profile should succeed");
+
+    assert_eq!(report.execution.rows_processed, 2);
+    assert!(report.execution.truncation_reason.is_none());
+    assert!(report.execution.source_exhausted);
+}
+
+/// Row-capped parsers cannot evaluate richer conditions. Rejecting is correct;
+/// silently returning a full scan marked `source_exhausted` is not.
+#[test]
+fn non_row_limit_stop_condition_is_rejected_not_ignored() {
+    use std::io::Write;
+
+    let mut jsonl = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(jsonl, "{{\"a\": 1}}").unwrap();
+    writeln!(jsonl, "{{\"a\": 2}}").unwrap();
+    jsonl.flush().unwrap();
+
+    let err = Profiler::new()
+        .stop_when(StopCondition::MaxBytes(16))
+        .analyze_file(jsonl.path())
+        .expect_err("json must reject a byte-cap it cannot honour");
+    assert!(
+        err.to_string().contains("row-limit"),
+        "unexpected error: {err}"
+    );
+}
+
+/// The rejection must only fire when a stop condition is actually set.
+#[test]
+fn unsupported_combinations_still_profile_without_stop_condition() {
+    use std::io::Write;
+
+    let mut jsonl = tempfile::Builder::new()
+        .suffix(".jsonl")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(jsonl, "{{\"a\": 1}}").unwrap();
+    writeln!(jsonl, "{{\"a\": 2}}").unwrap();
+    jsonl.flush().unwrap();
+
+    let report = Profiler::new()
+        .analyze_file(jsonl.path())
+        .expect("json without a stop condition must still profile");
+    assert_eq!(report.execution.rows_processed, 2);
+}
+
+/// Auto must keep using the adaptive engine when no stop condition is set.
+#[test]
+fn auto_engine_without_stop_condition_reads_everything() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".csv")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(tmp, "n").unwrap();
+    for i in 0..100 {
+        writeln!(tmp, "{i}").unwrap();
+    }
+    tmp.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Auto)
+        .analyze_file(tmp.path())
+        .expect("auto engine should profile the csv");
+
+    assert_eq!(report.execution.rows_processed, 100);
+    assert!(report.execution.truncation_reason.is_none());
+    assert!(report.execution.source_exhausted);
+}
+
 #[test]
 fn analyze_structure_facade_compiles() {
     use std::io::Write;

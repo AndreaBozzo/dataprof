@@ -62,6 +62,29 @@ impl StopCondition {
             StopCondition::ConfidenceThreshold(0.95),
         ])
     }
+
+    /// The row limit this condition implies, if any.
+    ///
+    /// Used by parsers that can only enforce a row cap (JSON, Parquet, the Arrow
+    /// CSV reader) rather than evaluate the full condition per chunk. For `Any`
+    /// and `All`, the first nested row limit is returned.
+    pub fn max_rows(&self) -> Option<u64> {
+        match self {
+            StopCondition::MaxRows(n) => Some(*n),
+            StopCondition::Any(conditions) | StopCondition::All(conditions) => {
+                conditions.iter().find_map(StopCondition::max_rows)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this condition is expressible purely as a row limit.
+    ///
+    /// `Never` is trivially satisfiable; a bare `MaxRows` is a row cap. Anything
+    /// else (byte caps, schema stability, confidence) needs a real evaluator.
+    pub fn is_row_limit_only(&self) -> bool {
+        matches!(self, StopCondition::Never | StopCondition::MaxRows(_))
+    }
 }
 
 /// Runtime evaluator that checks a [`StopCondition`] against accumulated counters.
