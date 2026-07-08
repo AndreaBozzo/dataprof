@@ -76,8 +76,8 @@ env/
 #mypycache
 .mypy_cache/
 
-#dev scripts folder
-scripts/
+#dev scripts folder (root only -- .github/scripts holds versioned CI assets)
+/scripts/
 
 #claude settings (local settings ignored; versioned skills are not)
 .claude/*

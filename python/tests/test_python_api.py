@@ -145,22 +145,26 @@ class TestInterop:
 
 
 class TestProfileAdHocInputs:
+    """Ad-hoc inputs are part of the base-wheel contract: no pandas, ever.
+
+    These paths must never call `_require_pandas`, so none of these tests may
+    `importorskip("pandas")` -- doing so would let a regression to a pandas-only
+    implementation pass unnoticed in the environments that matter.
+    """
+
     def test_dict_input(self):
-        pytest.importorskip("pandas")
         r = dataprof.profile({"a": [1, 2, 3]})
         assert r.rows == 3
         assert r.columns == 1
         assert r["a"].name == "a"
 
     def test_list_of_dicts_input(self):
-        pytest.importorskip("pandas")
         r = dataprof.profile([{"a": 1}, {"a": 2}])
         assert r.rows == 2
         assert r.columns == 1
         assert r["a"].name == "a"
 
     def test_bytesio_csv_input(self):
-        pytest.importorskip("pandas")
         r = dataprof.profile(io.BytesIO(b"a,b\n1,2\n"), format="csv")
         assert r.rows == 1
         assert r.columns == 2
@@ -168,6 +172,88 @@ class TestProfileAdHocInputs:
     def test_bytes_input_requires_format(self):
         with pytest.raises(ValueError, match="dataprof.asyncio.profile_bytes"):
             dataprof.profile(b"a,b\n1,2\n")
+
+    def test_ad_hoc_inputs_do_not_import_pandas(self, monkeypatch):
+        """The base wheel has no dependencies; profiling must not reach for one."""
+
+        def explode(feature):
+            raise AssertionError(f"ad-hoc path called _require_pandas({feature!r})")
+
+        monkeypatch.setattr(dataprof, "_require_pandas", explode)
+        dataprof.profile({"a": [1, 2]})
+        dataprof.profile([{"a": 1}, {"a": 2}])
+        dataprof.profile(b"a\n1\n2\n", format="csv")
+        dataprof.profile(b'{"a": [1, 2]}', format="json")
+        dataprof.profile(b'{"a": 1}\n{"a": 2}\n', format="jsonl")
+
+    def test_dict_preserves_column_order(self):
+        """Column order follows the input, so reports are reproducible."""
+        r = dataprof.profile({"z": [1], "a": [2], "m": [3]})
+        assert list(r.column_profiles) == ["z", "a", "m"]
+
+    def test_dict_does_not_upcast_integers_with_nulls(self):
+        """Unlike a pandas round-trip, a null does not turn an int column float."""
+        r = dataprof.profile({"age": [31, 42, None, 29]})
+        assert r["age"].data_type == "integer"
+        assert r["age"].null_count == 1
+        assert r["age"].unique_count == 3
+
+    def test_dict_treats_null_like_tokens_as_missing(self):
+        """`""`, `"null"` and NaN are missing, matching the CSV and Arrow paths."""
+        r = dataprof.profile({"x": ["a", "", None, "null", float("nan")]})
+        assert r["x"].null_count == 4
+        assert r["x"].unique_count == 1
+
+    def test_dict_rejects_ragged_columns(self):
+        with pytest.raises(ValueError, match="differing lengths"):
+            dataprof.profile({"a": [1, 2], "b": [1]})
+
+    def test_dict_rejects_scalar_column(self):
+        with pytest.raises(TypeError, match="must be a list or tuple"):
+            dataprof.profile({"a": 1})
+
+    def test_list_of_dicts_fills_missing_keys_with_nulls(self):
+        r = dataprof.profile([{"a": 1}, {"b": 2}])
+        assert list(r.column_profiles) == ["a", "b"]
+        assert r["a"].null_count == 1
+        assert r["b"].null_count == 1
+
+    def test_csv_bytes_treat_empty_field_as_null(self):
+        r = dataprof.profile(b"a,b\n1,\n2,x\n", format="csv")
+        assert r["b"].null_count == 1
+
+    def test_csv_bytes_honour_delimiter(self):
+        r = dataprof.profile(b"a;b\n1;2\n", format="csv", csv_delimiter=";")
+        assert r.columns == 2
+
+    def test_csv_bytes_reject_ragged_rows(self):
+        with pytest.raises(ValueError, match="row 2 has 3 fields"):
+            dataprof.profile(b"a,b\n1,2,3\n", format="csv")
+
+    def test_json_bytes_accept_columns_or_records(self):
+        by_column = dataprof.profile(b'{"a": [1, 2]}', format="json")
+        by_record = dataprof.profile(b'[{"a": 1}, {"a": 2}]', format="json")
+        assert by_column.rows == by_record.rows == 2
+
+    def test_jsonl_bytes_input(self):
+        r = dataprof.profile(b'{"a": 1}\n{"a": 2}\n', format="jsonl")
+        assert r.rows == 2
+        assert r["a"].data_type == "integer"
+
+    def test_ad_hoc_report_matches_pandas_report(self):
+        """The native path must not quietly disagree with the DataFrame path."""
+        pd = pytest.importorskip("pandas")
+        data = {"city": ["Rome", "Milan", "Rome", ""], "score": [1.5, 2.0, 3.25, 4.0]}
+
+        native = dataprof.profile(data)
+        via_pandas = dataprof.profile(pd.DataFrame(data))
+
+        assert native.rows == via_pandas.rows
+        assert native.quality_score == via_pandas.quality_score
+        for col in ("city", "score"):
+            assert native[col].data_type == via_pandas[col].data_type
+            assert native[col].null_count == via_pandas[col].null_count
+            assert native[col].unique_count == via_pandas[col].unique_count
 
 
 # ─────────────────────────────────────────────────

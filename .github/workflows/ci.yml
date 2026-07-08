@@ -166,10 +166,10 @@ jobs:
             uv.lock
 
       - name: Check formatting
-        run: uv run ruff format --check python/
+        run: uv run ruff format --check python/ .github/scripts/
 
       - name: Lint
-        run: uv run ruff check python/
+        run: uv run ruff check python/ .github/scripts/
 
       # Advisory: ty is pre-1.0 (Astral's type checker). Non-blocking for now.
       - name: Type check (ty)
@@ -210,6 +210,117 @@ jobs:
 
       - name: Run Python tests
         run: uv run pytest python/tests/ -v -ra
+
+  python-wheel-smoke:
+    # The pytest job runs against an editable build inside the dev environment,
+    # so it cannot see packaging mistakes or an accidental dependency on pandas.
+    # This one installs the built wheel into a bare venv, the way a user would.
+    name: Wheel Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            venv_python: .smoke/bin/python
+          - os: macos-latest
+            venv_python: .smoke/bin/python
+          - os: windows-latest
+            venv_python: .smoke/Scripts/python
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          token: ${{ github.token }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-wheel-smoke
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Build wheel
+        run: uv run maturin build --out dist
+
+      - name: Install the wheel into a bare venv
+        # --no-index proves the wheel needs nothing from PyPI: the base package
+        # declares no dependencies, and the acceptance snippets must not need one.
+        run: |
+          python -m venv .smoke
+          ${{ matrix.venv_python }} -m pip install --upgrade pip
+          ${{ matrix.venv_python }} -m pip install --no-index --find-links dist dataprof
+
+      - name: Run acceptance snippets
+        # Run from outside the repo so `import dataprof` cannot resolve to python/.
+        run: |
+          cp .github/scripts/wheel_smoke.py "${{ runner.temp }}/wheel_smoke.py"
+          SMOKE_PYTHON="$PWD/${{ matrix.venv_python }}"
+          cd "${{ runner.temp }}"
+          "$SMOKE_PYTHON" wheel_smoke.py
+
+  examples-smoke:
+    # The examples print real profiler output, so they double as executable docs:
+    # a change to a metric's semantics breaks them here rather than in a user's
+    # first five minutes. Both languages must agree on the numbers they print.
+    name: Examples Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          token: ${{ github.token }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-examples
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Run Rust examples (default features)
+        run: |
+          cargo run --example messy_csv_inspection
+          cargo run --example etl_quality_gate
+          cargo run --example before_after_cleaning
+
+      - name: Build Python bindings
+        run: uv run maturin develop
+
+      - name: Run Python examples
+        run: |
+          uv run python python/examples/messy_csv_inspection.py
+          uv run python python/examples/etl_quality_gate.py
+          uv run python python/examples/before_after_cleaning.py
 
   python-async-url-tests:
     name: Python Async URL Tests (${{ matrix.variant }})

@@ -36,6 +36,7 @@ from ._dataprof import (
     infer_schema as _infer_schema,
     list_patterns as _list_patterns,
     profile_arrow as _profile_arrow,
+    profile_columns as _profile_columns,
     profile_dataframe as _profile_dataframe,
     quick_row_count as _quick_row_count,
 )
@@ -142,6 +143,87 @@ def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.B
     if isinstance(source, _io.BytesIO):
         return _io.BytesIO(source.getvalue())
     return _io.BytesIO(bytes(source))
+
+
+# --- Dependency-free columnar inputs (see _dataprof.profile_columns) ---
+#
+# dict, list-of-dicts, and decoded byte buffers all reduce to named columns of
+# optional strings, which the Rust core types and profiles directly. Keeping
+# these off pandas is what lets the base wheel honour its documented contract.
+
+#: One column handed to the core: its name and its cells, `None` for null.
+_Column = tuple[str, list[str | None]]
+
+
+def _cell_to_str(value: object) -> str | None:
+    """Render one Python cell as the string the core will type-infer.
+
+    ``None`` and float NaN become nulls here; the core additionally treats
+    null-like tokens (``""``, ``"null"``, ``"nan"``) as missing, so the result
+    matches what the CSV and Arrow paths report for the same data.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _columns_from_dict(source: dict[Any, Any]) -> list[_Column]:
+    """Convert a dict of equal-length sequences into columns."""
+    columns: list[_Column] = []
+    for key, values in source.items():
+        if isinstance(values, (str, bytes)) or not isinstance(values, (list, tuple)):
+            raise TypeError(
+                f"dict input: column {key!r} must be a list or tuple of cells, "
+                f"got {type(values).__name__}. For a single row, pass [{{...}}]."
+            )
+        columns.append((str(key), [_cell_to_str(v) for v in values]))
+
+    lengths = {len(cells) for _, cells in columns}
+    if len(lengths) > 1:
+        widths = ", ".join(f"{n}={len(c)}" for n, c in columns)
+        raise ValueError(f"dict input: columns have differing lengths ({widths}).")
+    return columns
+
+
+def _columns_from_records(rows: list[dict[Any, Any]]) -> list[_Column]:
+    """Convert a list of row dicts into columns, keyed in first-seen order.
+
+    Rows need not share keys; a row missing a key contributes a null there.
+    """
+    keys = list(dict.fromkeys(key for row in rows for key in row))
+    return [(str(key), [_cell_to_str(row.get(key)) for row in rows]) for key in keys]
+
+
+def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[_Column]:
+    """Parse CSV bytes into columns, treating an empty field as null.
+
+    This follows the file-based CSV engine, where an empty field is missing data
+    rather than an empty string.
+    """
+    text = buffer.getvalue().decode("utf-8")
+    reader = _csv.reader(_io.StringIO(text), delimiter=delimiter or ",")
+    try:
+        header = next(reader)
+    except StopIteration:
+        return []
+
+    cells: list[list[str | None]] = [[] for _ in header]
+    for row_num, row in enumerate(reader, start=2):
+        if len(row) != len(header):
+            raise ValueError(
+                f"csv bytes: row {row_num} has {len(row)} fields, "
+                f"expected {len(header)}. Write the data to a file to use "
+                f"the flexible CSV engine (csv_flexible=True)."
+            )
+        for i, field in enumerate(row):
+            cells[i].append(field if field != "" else None)
+    return [(str(name), cells[i]) for i, name in enumerate(header)]
 
 
 def _normalize_existing_file(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
@@ -728,10 +810,17 @@ def profile(
         rust_report = _profile_dataframe(df, name or default_name, max_rows, _df_config())
         return ProfileReport(rust_report)
 
-    if isinstance(source, dict) or _is_list_of_dicts(source):
+    def _profile_python_columns(columns: list[_Column], default_name: str) -> ProfileReport:
+        rust_report = _profile_columns(columns, name or default_name, max_rows, _df_config())
+        return ProfileReport(rust_report)
+
+    if isinstance(source, dict):
         _warn_if_config_ignored()
-        pd = _require_pandas("dict and list-of-dicts inputs")
-        return _profile_python_dataframe(pd.DataFrame(source), "dataframe")
+        return _profile_python_columns(_columns_from_dict(source), "dataframe")
+
+    if _is_list_of_dicts(source):
+        _warn_if_config_ignored()
+        return _profile_python_columns(_columns_from_records(source), "dataframe")
 
     if isinstance(source, (bytes, bytearray, memoryview, _io.BytesIO)):
         if format is None:
@@ -739,20 +828,34 @@ def profile(
                 "bytes and BytesIO sources require format='csv', 'json', 'jsonl', or 'parquet'. "
                 "For async byte streams, use dataprof.asyncio.profile_bytes(data, format='csv')."
             )
-        pd = _require_pandas("bytes and BytesIO inputs")
         fmt = format.lower()
         buffer = _bytes_buffer(source)
+
         if fmt == "csv":
-            df = pd.read_csv(buffer, sep=csv_delimiter or ",")
-        elif fmt == "json":
-            df = pd.read_json(buffer)
-        elif fmt == "jsonl":
-            df = pd.read_json(buffer, lines=True)
+            columns = _columns_from_csv_bytes(buffer, csv_delimiter)
+        elif fmt in ("json", "jsonl"):
+            text = buffer.getvalue().decode("utf-8")
+            if fmt == "jsonl":
+                rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+            else:
+                rows = json.loads(text)
+            if isinstance(rows, dict):
+                columns = _columns_from_dict(rows)
+            elif _is_list_of_dicts(rows):
+                columns = _columns_from_records(rows)
+            else:
+                raise ValueError(
+                    f"{fmt} bytes must decode to an object of columns or an array of "
+                    f"row objects, got {type(rows).__name__}."
+                )
         elif fmt == "parquet":
-            df = pd.read_parquet(buffer)
+            # Parquet needs a columnar reader; pandas pulls in pyarrow for us.
+            pd = _require_pandas("parquet byte buffers")
+            return _profile_python_dataframe(pd.read_parquet(buffer), "parquet_bytes")
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
-        return _profile_python_dataframe(df, f"{fmt}_bytes")
+
+        return _profile_python_columns(columns, f"{fmt}_bytes")
 
     # DataFrame detection via module name
     source_module = type(source).__module__ or ""

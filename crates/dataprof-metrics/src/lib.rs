@@ -8,7 +8,7 @@ pub mod types;
 
 pub use analysis::{
     MetricsCalculator, PatternMetadata, analyze_column, analyze_column_fast, detect_patterns,
-    infer_type, list_patterns,
+    infer_type, is_null_like_token, list_patterns,
 };
 pub use quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, QualityAssessment,
