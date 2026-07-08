@@ -67,6 +67,18 @@ class TestProfileFile:
         r = dataprof.profile(PARQUET_FILE)
         assert r.rows > 0
 
+    def test_parquet_nulls_excluded_from_numeric_stats(self, tmp_path):
+        """A null slot carries a physical value; it must not enter the statistics."""
+        pd = pytest.importorskip("pandas")
+        path = tmp_path / "nullable.parquet"
+        pd.DataFrame({"x": [100.0, None, 1.0, None, 2.0]}).to_parquet(path)
+
+        col = dataprof.profile(str(path))["x"]
+        assert col.null_count == 2
+        assert col.unique_count == 3
+        assert col.min == 1.0  # not 0.0, the buffer's value under the null
+        assert col.mean == pytest.approx(34.333333, rel=1e-6)  # (100 + 1 + 2) / 3
+
     def test_path_object(self):
         r = dataprof.profile(Path(CSV_FILE))
         assert r.rows > 0
