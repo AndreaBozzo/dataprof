@@ -42,11 +42,12 @@ uv run pytest python/tests/test_python_api.py -q
 
 # Run focused Rust tests
 cargo test -p dataprof-core
-cargo test -p dataprof-metrics
+cargo test -p dataprof-python
 
-# Check everything locally before submitting PR
+# Run formatting and lint checks before submitting PR
 cargo fmt --all
 uv run ruff check python/dataprof python/tests
+cargo clippy --all --all-targets -- -D warnings
 ```
 
 You do not need to run every expensive workspace check for a small docs or
@@ -75,6 +76,7 @@ Use descriptive branch names:
    ```bash
    uv run pytest python/tests/test_python_api.py -q
    cargo test -p dataprof-core
+   cargo test -p dataprof-python
    ```
 4. **Format code**:
    ```bash
