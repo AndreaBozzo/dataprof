@@ -241,7 +241,9 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-prefix: rust-wheel-smoke
+          # Keyed per OS: the three legs build different artifacts and must not
+          # race for one cache entry.
+          cache-prefix: rust-wheel-smoke-${{ matrix.os }}
 
       - name: Setup Python
         uses: actions/setup-python@v6
