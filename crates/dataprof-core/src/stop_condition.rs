@@ -62,6 +62,57 @@ impl StopCondition {
             StopCondition::ConfidenceThreshold(0.95),
         ])
     }
+
+    /// The row count at which this condition can first trigger on rows alone,
+    /// if any.
+    ///
+    /// Mirrors [`evaluate`]: `Any` fires as soon as one child fires, so it takes
+    /// the *minimum* of the children that a row count can trigger. `All` fires
+    /// only once every child has fired, so it takes the *maximum*, and yields
+    /// `None` if any child cannot be triggered by rows at all (a byte cap,
+    /// `Never`, …) — such a condition can never be satisfied by rows alone.
+    ///
+    /// Used two ways: parsers that can only enforce a row cap consult it after
+    /// checking [`is_row_limit_only`](Self::is_row_limit_only), and the
+    /// incremental engine uses it as a per-row guardrail alongside the real
+    /// evaluator.
+    pub fn max_rows(&self) -> Option<u64> {
+        match self {
+            StopCondition::MaxRows(n) => Some(*n),
+            // Earliest child cap wins: reaching it fires the whole `Any`.
+            StopCondition::Any(conditions) => {
+                conditions.iter().filter_map(StopCondition::max_rows).min()
+            }
+            // Every child must fire, so rows alone suffice only if every child is
+            // row-triggerable; then the last one to fire sets the bound.
+            StopCondition::All(conditions) => {
+                if conditions.is_empty() {
+                    return None; // `evaluate` never fires on an empty `All`
+                }
+                conditions
+                    .iter()
+                    .map(StopCondition::max_rows)
+                    .try_fold(0u64, |acc, cap| Some(acc.max(cap?)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether this condition is expressible purely as a row limit.
+    ///
+    /// `Never` never fires; a bare `MaxRows` is a row cap; a composite qualifies
+    /// when every leaf is one of those. Anything else (byte caps, schema
+    /// stability, confidence) needs a real evaluator, so a parser that can only
+    /// cap rows must not silently accept it.
+    pub fn is_row_limit_only(&self) -> bool {
+        match self {
+            StopCondition::Never | StopCondition::MaxRows(_) => true,
+            StopCondition::Any(conditions) | StopCondition::All(conditions) => {
+                conditions.iter().all(StopCondition::is_row_limit_only)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Runtime evaluator that checks a [`StopCondition`] against accumulated counters.
@@ -309,6 +360,90 @@ impl SchemaStabilityTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_max_rows_leaf_and_never() {
+        assert_eq!(StopCondition::MaxRows(10).max_rows(), Some(10));
+        assert_eq!(StopCondition::Never.max_rows(), None);
+        assert_eq!(StopCondition::MaxBytes(10).max_rows(), None);
+    }
+
+    #[test]
+    fn test_max_rows_any_takes_the_earliest_cap() {
+        // `Any` fires as soon as one child fires.
+        let condition =
+            StopCondition::Any(vec![StopCondition::MaxRows(20), StopCondition::MaxRows(10)]);
+        assert_eq!(condition.max_rows(), Some(10));
+
+        // Order must not matter.
+        let flipped =
+            StopCondition::Any(vec![StopCondition::MaxRows(10), StopCondition::MaxRows(20)]);
+        assert_eq!(flipped.max_rows(), Some(10));
+
+        // `Never` can never fire, so it does not constrain an `Any`.
+        let with_never = StopCondition::Any(vec![StopCondition::Never, StopCondition::MaxRows(10)]);
+        assert_eq!(with_never.max_rows(), Some(10));
+
+        // A row cap still fires the `Any` even beside a condition rows cannot trigger.
+        let mixed = StopCondition::Any(vec![
+            StopCondition::MaxBytes(1024),
+            StopCondition::MaxRows(10),
+        ]);
+        assert_eq!(mixed.max_rows(), Some(10));
+    }
+
+    #[test]
+    fn test_max_rows_all_needs_every_child_row_triggerable() {
+        // `All` fires only once every child has fired: the last cap bounds it.
+        let condition =
+            StopCondition::All(vec![StopCondition::MaxRows(10), StopCondition::MaxRows(20)]);
+        assert_eq!(condition.max_rows(), Some(20));
+
+        // A child rows cannot trigger means rows alone can never satisfy the `All`.
+        let with_bytes = StopCondition::All(vec![
+            StopCondition::MaxRows(10),
+            StopCondition::MaxBytes(1024),
+        ]);
+        assert_eq!(with_bytes.max_rows(), None);
+
+        let with_never = StopCondition::All(vec![StopCondition::MaxRows(10), StopCondition::Never]);
+        assert_eq!(with_never.max_rows(), None);
+
+        // `evaluate` never fires on an empty `All`.
+        assert_eq!(StopCondition::All(vec![]).max_rows(), None);
+        assert_eq!(StopCondition::Any(vec![]).max_rows(), None);
+    }
+
+    #[test]
+    fn test_is_row_limit_only_recurses() {
+        assert!(StopCondition::Never.is_row_limit_only());
+        assert!(StopCondition::MaxRows(10).is_row_limit_only());
+        assert!(!StopCondition::MaxBytes(10).is_row_limit_only());
+
+        // A composite of pure row caps stays expressible as a row cap.
+        assert!(
+            StopCondition::Any(vec![StopCondition::MaxRows(10), StopCondition::MaxRows(20)])
+                .is_row_limit_only()
+        );
+        assert!(
+            StopCondition::All(vec![StopCondition::Never, StopCondition::MaxRows(20)])
+                .is_row_limit_only()
+        );
+
+        // One non-row leaf disqualifies the whole tree.
+        assert!(
+            !StopCondition::Any(vec![
+                StopCondition::MaxRows(10),
+                StopCondition::MaxBytes(1024)
+            ])
+            .is_row_limit_only()
+        );
+
+        // The `schema_inference` preset mixes MaxRows with SchemaStable.
+        assert!(!StopCondition::schema_inference().is_row_limit_only());
+        // …but a row cap alone still fires its `Any`, so the guardrail holds.
+        assert_eq!(StopCondition::schema_inference().max_rows(), Some(10_000));
+    }
 
     #[test]
     fn test_max_rows_stops() {

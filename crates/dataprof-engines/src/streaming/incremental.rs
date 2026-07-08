@@ -190,9 +190,25 @@ impl IncrementalProfiler {
                         && analyzed_rows as u64 >= limit
                     {
                         iterated_rows += row_idx + 1;
-                        source_exhausted = false;
-                        stop_eval.update((row_idx + 1) as u64, actual_bytes as u64, 0.0);
                         hit_row_limit = true;
+
+                        // Reaching the cap is only truncation if a row actually
+                        // remains. A file holding exactly `limit` rows was read in
+                        // full, and must not report a truncation reason.
+                        let more_rows_remain = row_idx + 1 < records.len() || {
+                            let (_, next_records, next_bytes) = reader.read_csv_chunk(
+                                offset + actual_bytes as u64,
+                                chunk_size_bytes,
+                                false,
+                                self.csv_config.as_ref(),
+                            )?;
+                            !(next_records.is_empty() && next_bytes == 0)
+                        };
+
+                        if more_rows_remain {
+                            source_exhausted = false;
+                            stop_eval.update((row_idx + 1) as u64, actual_bytes as u64, 0.0);
+                        }
                         break;
                     }
                 }
@@ -324,13 +340,7 @@ impl IncrementalProfiler {
     /// Extract a top-level `MaxRows` limit from the stop condition (including
     /// inside `Any` composites) so we can check it per-row instead of per-chunk.
     fn extract_max_rows(condition: &StopCondition) -> Option<u64> {
-        match condition {
-            StopCondition::MaxRows(n) => Some(*n),
-            StopCondition::Any(conditions) | StopCondition::All(conditions) => {
-                conditions.iter().find_map(Self::extract_max_rows)
-            }
-            _ => None,
-        }
+        condition.max_rows()
     }
 
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints,
+    SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -59,10 +59,14 @@ pub type JsonObject = serde_json::Map<String, Value>;
 
 /// Summary of a JSON/JSONL scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct JsonScanSummary {
     pub rows_read: usize,
     pub malformed_lines: usize,
     pub format: FileFormat,
+    /// The scan stopped at `max_rows` while records still remained. A source
+    /// holding exactly `max_rows` records was read in full, so this stays false.
+    pub truncated: bool,
 }
 
 /// Scan JSON or JSONL input and invoke `on_object` for each object record.
@@ -89,12 +93,16 @@ where
 
     let mut rows_read = 0;
     let mut malformed_lines = 0;
+    let mut truncated = false;
 
     match format {
         FileFormat::Jsonl => loop {
             if let Some(max) = config.max_rows
                 && rows_read >= max
             {
+                // Reaching the cap is not truncation unless a record actually
+                // remains: a file with exactly `max_rows` rows was read in full.
+                truncated = consume_leading_whitespace(&mut reader)?.is_some();
                 break;
             }
 
@@ -180,6 +188,9 @@ where
                         if let Some(max) = config.max_rows
                             && rows_read >= max
                         {
+                            // `found_value` means a real element follows, not the
+                            // closing bracket, so the array was genuinely cut short.
+                            truncated = true;
                             break;
                         }
 
@@ -206,6 +217,7 @@ where
         rows_read,
         malformed_lines,
         format,
+        truncated,
     })
 }
 
@@ -310,6 +322,29 @@ pub fn analyze_json_from_reader_with_hints<R: BufRead>(
     ),
     DataProfilerError,
 > {
+    let (profiles, stats, rows_read, malformed_lines, format, _truncated) =
+        analyze_json_from_reader_full(reader, config, semantic_hints)?;
+    Ok((profiles, stats, rows_read, malformed_lines, format))
+}
+
+/// As [`analyze_json_from_reader_with_hints`], but also reports whether the scan
+/// stopped early. Kept private so the public tuple stays stable.
+#[allow(clippy::type_complexity)]
+fn analyze_json_from_reader_full<R: BufRead>(
+    reader: R,
+    config: &JsonParserConfig,
+    semantic_hints: &SemanticHints,
+) -> Result<
+    (
+        Vec<ColumnProfile>,
+        StreamingColumnCollection,
+        usize,
+        usize,
+        FileFormat,
+        bool,
+    ),
+    DataProfilerError,
+> {
     let mut column_stats = StreamingColumnCollection::new();
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
@@ -337,6 +372,7 @@ pub fn analyze_json_from_reader_with_hints<R: BufRead>(
         summary.rows_read,
         summary.malformed_lines,
         summary.format,
+        summary.truncated,
     ))
 }
 
@@ -374,8 +410,8 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let (column_profiles, column_stats, rows_read, malformed_lines, format) =
-        analyze_json_from_reader_with_hints(buf_reader, config, semantic_hints)?;
+    let (column_profiles, column_stats, rows_read, malformed_lines, format, truncated) =
+        analyze_json_from_reader_full(buf_reader, config, semantic_hints)?;
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -404,13 +440,17 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    let mut assembler = ReportAssembler::new(
-        file_source,
-        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
-    )
-    .columns(column_profiles)
-    .with_quality_data(sample_columns)
-    .with_semantic_hints(semantic_hints.clone());
+    let mut execution = ExecutionMetadata::new(rows_read, num_columns, scan_time_ms);
+    // `truncated` is set only when a record still remained at the cap, so a source
+    // holding exactly `max_rows` records is reported as fully read, not cut short.
+    if truncated && let Some(max) = config.max_rows {
+        execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+    }
+
+    let mut assembler = ReportAssembler::new(file_source, execution)
+        .columns(column_profiles)
+        .with_quality_data(sample_columns)
+        .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }
