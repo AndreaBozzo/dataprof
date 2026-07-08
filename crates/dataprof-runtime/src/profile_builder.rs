@@ -33,7 +33,7 @@ pub struct ColumnProfileInput<'a> {
     pub boolean_counts: Option<(usize, usize)>,
     /// When true, skip statistics computation (produce `ColumnStats::None`).
     pub skip_statistics: bool,
-    /// When true, skip pattern detection (produce empty patterns vec).
+    /// When true, skip pattern detection (produce `patterns: None`).
     pub skip_patterns: bool,
     /// Optional locale for pattern detection (e.g. "IT", "US").
     pub locale: Option<&'a str>,
@@ -112,9 +112,9 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     };
 
     let patterns = if input.skip_patterns {
-        Vec::new()
+        None
     } else {
-        detect_patterns(input.sample_values, input.locale)
+        Some(detect_patterns(input.sample_values, input.locale))
     };
 
     ColumnProfile {
@@ -427,8 +427,33 @@ mod tests {
             locale: None,
         });
 
-        assert!(profile.patterns.is_empty());
+        // skip_patterns must be distinguishable from "scanned, nothing matched",
+        // otherwise downstream redaction gates cannot fail closed.
+        assert!(profile.patterns.is_none());
         assert!(matches!(profile.stats, ColumnStats::Text(_)));
+    }
+
+    #[test]
+    fn test_scanned_without_matches_is_not_none() {
+        // The counterpart to `test_skip_patterns`: a column that *was* scanned
+        // and matched nothing yields `Some([])`, which downstream consumers may
+        // safely read as "no sensitive data here".
+        let samples = vec!["hello".to_string(), "world".to_string()];
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "text".to_string(),
+            data_type: DataType::String,
+            total_count: 2,
+            null_count: 0,
+            unique_count: Some(2),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None,
+            skip_statistics: false,
+            skip_patterns: false,
+            locale: None,
+        });
+
+        assert!(profile.patterns.is_some_and(|p| p.is_empty()));
     }
 
     #[test]

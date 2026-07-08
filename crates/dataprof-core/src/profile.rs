@@ -14,7 +14,13 @@ pub struct ColumnProfile {
     pub total_count: usize,
     pub unique_count: Option<usize>,
     pub stats: ColumnStats,
-    pub patterns: Vec<Pattern>,
+    /// Detected patterns, or `None` when pattern detection did not run.
+    ///
+    /// `None` and `Some(vec![])` are not interchangeable: the former means the
+    /// column was never scanned, the latter that it was scanned and nothing
+    /// matched. Consumers that gate on sensitivity -- redaction, agent-facing
+    /// output -- must treat `None` as "unknown", never as "no sensitive data".
+    pub patterns: Option<Vec<Pattern>>,
 }
 
 /// Quartile statistics for numeric distributions.
@@ -228,7 +234,7 @@ mod tests {
                 is_approximate: Some(false),
                 outlier_count: Some(0),
             }),
-            patterns: vec![],
+            patterns: Some(vec![]),
         };
 
         let json = serde_json::to_string(&profile).unwrap();
@@ -265,7 +271,7 @@ mod tests {
                 most_frequent: None,
                 least_frequent: None,
             }),
-            patterns: vec![],
+            patterns: Some(vec![]),
         };
 
         let json = serde_json::to_string(&profile).unwrap();

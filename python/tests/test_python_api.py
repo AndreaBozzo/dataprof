@@ -600,6 +600,45 @@ class TestToLlmContext:
         assert "123456789" not in out
         assert "127456789" not in out
 
+    @pytest.fixture()
+    def cards(self, tmp_path):
+        """Credit-card numbers, which infer as `integer` and so carry extrema."""
+        path = tmp_path / "cards.csv"
+        rows = ["card"] + [f"411111111111{1000 + i}" for i in range(10)]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_include_samples_withholds_extremes_when_patterns_not_scanned(self, cards):
+        """Redaction must fail closed when pattern detection never ran.
+
+        A `metrics=` selection without the "patterns" pack leaves every column
+        with `patterns is None`. Reading that as "nothing sensitive found" would
+        echo raw card numbers into an agent's context on an unrelated opt-out.
+        """
+        report = dataprof.profile(cards, metrics=["schema", "statistics", "quality"])
+        assert report["card"].patterns is None  # detection skipped, not "no match"
+
+        out = report.to_llm_context(include_samples=True)
+        assert "4111111111111000" not in out
+        assert "4111111111111009" not in out
+
+    def test_include_samples_withholds_extremes_for_reloaded_report(self, cards, tmp_path):
+        """A report reloaded from disk carries no pattern evidence, so it redacts."""
+        saved = tmp_path / "report.json"
+        dataprof.profile(cards, metrics=["schema", "statistics"]).save(str(saved))
+
+        out = dataprof.ProfileReport.load(str(saved)).to_llm_context(include_samples=True)
+        assert "4111111111111000" not in out
+
+    def test_scanned_column_without_matches_still_shows_extremes(self, tmp_path):
+        """Failing closed must not swallow the safe case: `[]` is evidence, `None` is not."""
+        path = tmp_path / "qty.csv"
+        path.write_text("qty\n7\n19\n42\n", encoding="utf-8")
+        report = dataprof.profile(str(path))
+        assert report["qty"].patterns == []  # scanned, nothing matched
+
+        assert "42" in report.to_llm_context(include_samples=True)
+
     def test_column_name_cannot_break_the_line_format(self, tmp_path):
         """A newline in a header must not split a schema entry across two lines.
 

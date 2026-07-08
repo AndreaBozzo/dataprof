@@ -173,7 +173,7 @@ mod tests {
             total_count: total,
             unique_count: Some(total - nulls),
             stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
-            patterns: vec![],
+            patterns: Some(vec![]),
         }
     }
 

@@ -165,6 +165,9 @@ class ColumnProfile:
     true_count: int | None
     false_count: int | None
     true_ratio: float | None
+    #: Detected patterns. ``None`` means detection did not run (no "patterns"
+    #: metric pack, or a reloaded report); ``[]`` means it ran and matched
+    #: nothing. Redaction gates must treat ``None`` as unknown, not as safe.
     patterns: list[Pattern] | None
 
 class DataQualityMetrics:

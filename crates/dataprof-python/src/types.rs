@@ -99,7 +99,7 @@ pub struct PyColumnProfile {
     pub false_count: Option<usize>,
     #[pyo3(get)]
     pub true_ratio: Option<f64>,
-    // Patterns
+    // Patterns. `None` = detection did not run; `Some([])` = ran, nothing matched.
     #[pyo3(get)]
     pub patterns: Option<Vec<PyPattern>>,
 }
@@ -185,11 +185,12 @@ impl From<&ColumnProfile> for PyColumnProfile {
             _ => (None, None, None),
         };
 
-        let patterns = if !profile.patterns.is_empty() {
-            Some(profile.patterns.iter().map(PyPattern::from).collect())
-        } else {
-            None
-        };
+        // Preserve the None/Some([]) distinction: `None` means detection never
+        // ran, so redaction gates downstream cannot infer the column is safe.
+        let patterns = profile
+            .patterns
+            .as_ref()
+            .map(|ps| ps.iter().map(PyPattern::from).collect());
 
         Self {
             name: profile.name.clone(),

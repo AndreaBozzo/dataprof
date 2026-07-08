@@ -405,14 +405,23 @@ def _one_line(value: object) -> str:
     )
 
 
-def _has_sensitive_pattern(col: ColumnProfile) -> bool:
-    """Return True when a detected pattern implies values may be sensitive."""
-    return bool(
-        col.patterns
-        and any(
-            (getattr(pattern, "category", "") or "").lower() in _SENSITIVE_PATTERN_CATEGORIES
-            for pattern in col.patterns
-        )
+def _may_expose_values(col: ColumnProfile) -> bool:
+    """Return True only when ``col``'s raw values are *provably* safe to echo.
+
+    Safety here is a positive claim, not the absence of a negative one. A column
+    qualifies only if pattern detection actually ran (``patterns is not None``)
+    and matched nothing sensitive. When detection was skipped -- ``fast_mode``,
+    or a ``metrics=`` selection without the ``"patterns"`` pack -- we cannot
+    tell a credit-card column from a quantity column, so we fail closed.
+
+    Deserialized reports whose ``patterns`` key was absent also arrive as
+    ``None`` and are likewise treated as unknown.
+    """
+    if col.patterns is None:
+        return False
+    return not any(
+        (getattr(pattern, "category", "") or "").lower() in _SENSITIVE_PATTERN_CATEGORIES
+        for pattern in col.patterns
     )
 
 
@@ -1539,8 +1548,11 @@ class ProfileReport:
             dataset header is always emitted even if it exceeds the budget.
         :param include_samples: When ``True``, include non-sensitive numeric
             extrema (column minima and maxima). Off by default because these
-            are raw cell values. Columns with sensitive detected patterns still
-            omit extrema.
+            are raw cell values. Extrema are emitted only for columns that
+            pattern detection scanned and cleared. Columns with a sensitive
+            detected pattern omit them -- and so do *all* columns when pattern
+            detection never ran, which is the case for reports profiled without
+            the ``"patterns"`` metric pack or reloaded from disk.
         :returns: A plain-text summary. Stable across runs for a given report.
         """
         qs = self.quality_score
@@ -1582,7 +1594,7 @@ class ProfileReport:
             line = f"- {_one_line(col.name)}: {col.data_type}"
             if (
                 include_samples
-                and not _has_sensitive_pattern(col)
+                and _may_expose_values(col)
                 and col.min is not None
                 and col.max is not None
             ):
