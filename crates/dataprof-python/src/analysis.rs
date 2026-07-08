@@ -1,8 +1,9 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use std::collections::HashMap;
 use std::path::Path;
 
-use dataprof::Profiler;
+use dataprof::{Profiler, list_patterns as dataprof_list_patterns};
 
 use super::config::PyProfilerConfig;
 use super::types::PyProfileReport;
@@ -32,4 +33,48 @@ pub fn analyze_file(
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     Ok(PyProfileReport::new(report))
+}
+
+/// List supported pattern detectors and their metadata.
+#[pyfunction]
+#[pyo3(signature = (locale=None))]
+pub fn list_patterns(
+    py: Python<'_>,
+    locale: Option<&str>,
+) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+    dataprof_list_patterns(locale)
+        .into_iter()
+        .map(|pattern| {
+            let mut item = HashMap::new();
+            item.insert(
+                "name".into(),
+                pattern.name.into_pyobject(py)?.unbind().into_any(),
+            );
+            item.insert(
+                "regex".into(),
+                pattern.regex.into_pyobject(py)?.unbind().into_any(),
+            );
+            item.insert(
+                "category".into(),
+                pattern
+                    .category
+                    .to_string()
+                    .into_pyobject(py)?
+                    .unbind()
+                    .into_any(),
+            );
+            item.insert(
+                "locale".into(),
+                match pattern.locale {
+                    Some(locale) => locale.into_pyobject(py)?.unbind().into_any(),
+                    None => py.None(),
+                },
+            );
+            item.insert(
+                "min_threshold".into(),
+                pattern.min_threshold.into_pyobject(py)?.unbind().into_any(),
+            );
+            Ok(item)
+        })
+        .collect()
 }

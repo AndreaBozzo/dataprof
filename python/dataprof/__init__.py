@@ -7,6 +7,7 @@ import decimal as _decimal
 import errno as _errno
 import functools
 import html as _html
+import importlib as _importlib
 import io as _io
 import json
 import math
@@ -33,6 +34,7 @@ from ._dataprof import (
     analyze_file as _analyze_file,
     analyze_structure as _analyze_structure,
     infer_schema as _infer_schema,
+    list_patterns as _list_patterns,
     profile_arrow as _profile_arrow,
     profile_dataframe as _profile_dataframe,
     quick_row_count as _quick_row_count,
@@ -40,15 +42,16 @@ from ._dataprof import (
 
 __all__ = [
     "profile",
+    "profile_file",
     "Profiler",
     "ProfileReport",
     "ProfilerConfig",
     "ColumnProfile",
-    "column_to_dict",
     "DataQualityMetrics",
     "SamplingStrategy",
     "StopCondition",
     "ProgressEvent",
+    "list_patterns",
     "infer_schema",
     "quick_row_count",
     "analyze_structure",
@@ -57,6 +60,7 @@ __all__ = [
     "StructureColumnSummary",
     "StructureReport",
     "RecordBatch",
+    "asyncio",
     "__version__",
 ]
 
@@ -165,6 +169,21 @@ def analyze_structure(
 ) -> StructureReport:
     """Analyze file structure with a bounded, lightweight pass."""
     return _analyze_structure(_normalize_existing_file(path), max_rows)
+
+
+def list_patterns(locale: str | None = None) -> list[dict[str, Any]]:
+    """List supported pattern detectors.
+
+    Args:
+        locale: Optional ISO 3166-1 alpha-2 locale. When provided, the result
+            includes universal patterns plus locale-specific patterns matching
+            the locale, case-insensitively.
+
+    Returns:
+        A list of dicts with ``name``, ``regex``, ``category``, ``locale``, and
+        ``min_threshold`` keys, in detector order.
+    """
+    return _list_patterns(locale)
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +480,87 @@ def _fit_section(header: str, items: list[str], budget: int) -> tuple[list[str],
     return lines, used
 
 
+def profile_file(
+    path: str | os.PathLike[str],
+    *,
+    engine: str = "auto",
+    chunk_size: int | None = None,
+    memory_limit_mb: int | None = None,
+    format: str | None = None,
+    max_rows: int | None = None,
+    csv_delimiter: str | None = None,
+    csv_flexible: bool | None = None,
+    sampling: SamplingStrategy | None = None,
+    stop_condition: StopCondition | None = None,
+    on_progress: Callable[[ProgressEvent], None] | None = None,
+    progress_interval_ms: int | None = None,
+    quality_dimensions: list[str] | None = None,
+    metrics: list[str] | None = None,
+    locale: str | None = None,
+    positive_columns: list[str] | None = None,
+    identifier_columns: list[str] | None = None,
+) -> ProfileReport:
+    """Profile a file path and return a report.
+
+    This is the explicit file-oriented counterpart to :func:`profile`, with
+    all file-only options kept in one place.
+
+    Args:
+        path: File path to profile.
+        engine: Engine to use ("auto", "incremental", "columnar").
+        chunk_size: Fixed chunk size for streaming (None = adaptive).
+        memory_limit_mb: Memory limit in MB.
+        format: Override format detection ("csv", "json", "jsonl", "parquet").
+        max_rows: Maximum rows to process before stopping.
+        csv_delimiter: Single-character CSV delimiter (default: comma).
+        csv_flexible: Allow variable-length CSV records.
+        sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
+        stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
+            Cannot be used together with max_rows.
+        on_progress: Callable receiving ProgressEvent objects during profiling.
+            Only effective with engine="incremental". Files that finish faster
+            than ``progress_interval_ms`` may emit only start and finish events.
+        progress_interval_ms: Minimum interval between progress events in ms
+            (default: 500).
+        quality_dimensions: List of ISO 25012 quality dimensions to evaluate.
+            Valid values: "completeness", "consistency", "uniqueness",
+            "accuracy", "timeliness". None = all dimensions (default).
+        metrics: List of metric packs to compute. Valid values: "schema"
+            (always included), "statistics", "patterns", "quality".
+            None = all packs (default).
+        locale: ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT",
+            "US", "GB").
+        positive_columns: Columns whose numeric values are expected to be
+            non-negative.
+        identifier_columns: Numeric-looking columns to treat as semantic
+            identifiers instead of measures.
+
+    Returns:
+        ProfileReport with analysis results and quality metrics.
+    """
+    normalized_path = _normalize_existing_file(path, arg_name="path")
+    config = ProfilerConfig(
+        engine=engine,
+        chunk_size=chunk_size,
+        memory_limit_mb=memory_limit_mb,
+        format=format,
+        max_rows=max_rows,
+        csv_delimiter=csv_delimiter,
+        csv_flexible=csv_flexible,
+        sampling=sampling,
+        stop_condition=stop_condition,
+        on_progress=on_progress,
+        progress_interval_ms=progress_interval_ms,
+        quality_dimensions=quality_dimensions,
+        metrics=metrics,
+        locale=locale,
+        positive_columns=positive_columns,
+        identifier_columns=identifier_columns,
+    )
+    rust_report = _analyze_file(normalized_path, config)
+    return ProfileReport(rust_report)
+
+
 def profile(
     source: Any,
     *,
@@ -502,7 +602,8 @@ def profile(
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.
         on_progress: Callable receiving ProgressEvent objects during profiling.
-            Only effective with engine="incremental".
+            Only effective with engine="incremental". Files that finish faster
+            than ``progress_interval_ms`` may emit only start and finish events.
         progress_interval_ms: Minimum interval between progress events in ms
             (default: 500).
         quality_dimensions: List of ISO 25012 quality dimensions to evaluate.
@@ -525,8 +626,8 @@ def profile(
     """
     # File path — build config and delegate to Rust
     if isinstance(source, (str, pathlib.PurePath)):
-        path = _normalize_existing_file(source, arg_name="source")
-        config = ProfilerConfig(
+        return profile_file(
+            source,
             engine=engine,
             chunk_size=chunk_size,
             memory_limit_mb=memory_limit_mb,
@@ -544,8 +645,6 @@ def profile(
             positive_columns=positive_columns,
             identifier_columns=identifier_columns,
         )
-        rust_report = _analyze_file(path, config)
-        return ProfileReport(rust_report)
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
     def _df_config() -> ProfilerConfig | None:
@@ -726,7 +825,11 @@ class Profiler:
         return self
 
     def on_progress(self, cb: object) -> Profiler:
-        """Set progress callback (engine="incremental" only)."""
+        """Set progress callback (engine="incremental" only).
+
+        Files that finish faster than ``progress_interval_ms`` may emit only
+        start and finish events.
+        """
         self._kwargs["on_progress"] = cb
         return self
 
@@ -1203,7 +1306,12 @@ class ProfileReport:
         Includes all available statistics (numeric, text, pattern) with
         proper rounding. Requires pandas.
         """
-        import pandas as pd
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError(
+                "pandas is required for to_dataframe(). Install it with: uv pip install pandas"
+            ) from None
 
         return pd.DataFrame(self._records())
 
@@ -1321,6 +1429,9 @@ class ProfileReport:
 
         Args:
             path: File path with one of the supported extensions.
+
+        Returns:
+            ``self`` for fluent chaining.
         """
         if path.endswith(".json"):
             with open(path, "w", encoding="utf-8") as f:
@@ -1719,3 +1830,6 @@ class ProfileReport:
             "</tr>"
             f"{col_rows}</table></div>"
         )
+
+
+asyncio = _importlib.import_module(f"{__name__}.asyncio")

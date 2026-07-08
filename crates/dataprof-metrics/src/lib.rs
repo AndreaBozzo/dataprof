@@ -7,7 +7,8 @@ pub mod stats;
 pub mod types;
 
 pub use analysis::{
-    MetricsCalculator, analyze_column, analyze_column_fast, detect_patterns, infer_type,
+    MetricsCalculator, PatternMetadata, analyze_column, analyze_column_fast, detect_patterns,
+    infer_type, list_patterns,
 };
 pub use quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, QualityAssessment,

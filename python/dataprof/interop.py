@@ -21,6 +21,8 @@ from dataprof._dataprof import (  # type: ignore[import-not-found]
     profile_dataframe,
 )
 
+from . import column_to_dict
+
 
 def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
     if isinstance(path, str):
@@ -53,6 +55,7 @@ __all__ = [
     "profile_arrow",
     "analyze_csv_to_arrow",
     "analyze_parquet_to_arrow",
+    "column_to_dict",
     "ProfilerConfig",
     "ProfileReport",
     "ColumnProfile",

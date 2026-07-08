@@ -16,7 +16,7 @@ pub mod database_async;
 pub mod async_streaming;
 
 // Re-exports for module registration
-pub use analysis::analyze_file;
+pub use analysis::{analyze_file, list_patterns};
 pub use arrow_export::{
     PyRecordBatch, analyze_csv_to_arrow, analyze_parquet_to_arrow, profile_arrow, profile_dataframe,
 };
@@ -65,6 +65,7 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Core analysis
     m.add_function(wrap_pyfunction!(analyze_file, m)?)?;
+    m.add_function(wrap_pyfunction!(list_patterns, m)?)?;
 
     // DataFrame/Arrow profiling
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;

@@ -7,6 +7,7 @@ Run after building the extension:
 
 from __future__ import annotations
 
+import builtins
 import io
 import json
 import os
@@ -69,6 +70,14 @@ class TestProfileFile:
     def test_path_object(self):
         r = dataprof.profile(Path(CSV_FILE))
         assert r.rows > 0
+
+    def test_profile_file_matches_profile_for_paths(self):
+        via_profile = dataprof.profile(CSV_FILE, max_rows=3)
+        via_profile_file = dataprof.profile_file(CSV_FILE, max_rows=3)
+
+        assert via_profile_file.rows == via_profile.rows
+        assert via_profile_file.columns == via_profile.columns
+        assert via_profile_file.to_dict()["columns"] == via_profile.to_dict()["columns"]
 
     def test_missing_file_raises_file_not_found(self):
         missing = str(FIXTURES / "does_not_exist.csv")
@@ -271,6 +280,21 @@ class TestProfileReport:
         pytest.importorskip("pandas")
         df = report.to_dataframe()
         assert len(df) == report.columns
+
+    def test_to_dataframe_missing_pandas_has_install_hint(self, report, monkeypatch):
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pandas":
+                raise ImportError("blocked pandas")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(
+            ImportError,
+            match=r"pandas is required for to_dataframe\(\).*uv pip install pandas",
+        ):
+            report.to_dataframe()
 
     def test_save_json(self, report):
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
@@ -854,15 +878,16 @@ class TestNamespace:
     def test_all_exports(self):
         expected = {
             "profile",
+            "profile_file",
             "Profiler",
             "ProfileReport",
             "ProfilerConfig",
             "ColumnProfile",
-            "column_to_dict",
             "DataQualityMetrics",
             "SamplingStrategy",
             "StopCondition",
             "ProgressEvent",
+            "list_patterns",
             "infer_schema",
             "quick_row_count",
             "analyze_structure",
@@ -871,6 +896,7 @@ class TestNamespace:
             "StructureColumnSummary",
             "StructureReport",
             "RecordBatch",
+            "asyncio",
             "__version__",
         }
         assert expected == set(dataprof.__all__), (
@@ -883,6 +909,25 @@ class TestNamespace:
         """Every name in __all__ must be importable from the package."""
         for name in dataprof.__all__:
             assert hasattr(dataprof, name), f"{name!r} in __all__ but not accessible"
+
+    def test_asyncio_discoverable(self):
+        assert hasattr(dataprof, "asyncio")
+        assert dataprof.asyncio.__name__ == "dataprof.asyncio"
+
+    def test_list_patterns_shape_and_locale_filter(self):
+        patterns = dataprof.list_patterns()
+        assert len(patterns) == 35
+        assert set(patterns[0]) == {"name", "regex", "category", "locale", "min_threshold"}
+        assert patterns[0]["name"] == "Email"
+        assert patterns[0]["category"] == "contact"
+        assert patterns[0]["locale"] is None
+
+        it_patterns = dataprof.list_patterns(locale="it")
+        names = {pattern["name"] for pattern in it_patterns}
+        assert "Email" in names
+        assert "Phone (IT)" in names
+        assert "Phone (US)" not in names
+        assert all(pattern["locale"] in {None, "IT"} for pattern in it_patterns)
 
     def test_version(self):
         assert isinstance(dataprof.__version__, str)
@@ -1592,6 +1637,17 @@ class TestColumnToDict:
         d = dataprof.column_to_dict(col)
         from_report = r.to_dict()["columns"][0]
         assert d == from_report
+
+    def test_column_to_dict_discoverable_from_interop_not_all(self, tmp_path):
+        import dataprof.interop as interop
+
+        path = tmp_path / "data.csv"
+        path.write_text("x\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n")
+        r = dataprof.profile(str(path))
+
+        assert hasattr(dataprof, "column_to_dict")
+        assert "column_to_dict" not in dataprof.__all__
+        assert interop.column_to_dict(r["x"]) == dataprof.column_to_dict(r["x"])
 
 
 class TestLowSampleWarning:

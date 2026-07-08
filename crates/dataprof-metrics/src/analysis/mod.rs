@@ -7,4 +7,4 @@ pub(crate) mod validators;
 pub use column::{analyze_column, analyze_column_fast};
 pub use inference::infer_type;
 pub use metrics::MetricsCalculator;
-pub use patterns::detect_patterns;
+pub use patterns::{PatternMetadata, detect_patterns, list_patterns};
