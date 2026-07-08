@@ -2,6 +2,7 @@
 
 pub mod analysis;
 pub mod arrow_export;
+pub mod columns;
 pub mod config;
 pub mod partial;
 pub mod progress;
@@ -20,6 +21,7 @@ pub use analysis::{analyze_file, list_patterns};
 pub use arrow_export::{
     PyRecordBatch, analyze_csv_to_arrow, analyze_parquet_to_arrow, profile_arrow, profile_dataframe,
 };
+pub use columns::profile_columns;
 pub use config::PyProfilerConfig;
 pub use partial::{
     PyRowCountEstimate, PySchemaResult, PyStructureColumnSummary, PyStructureReport,
@@ -70,6 +72,9 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // DataFrame/Arrow profiling
     m.add_function(wrap_pyfunction!(profile_dataframe, m)?)?;
     m.add_function(wrap_pyfunction!(profile_arrow, m)?)?;
+
+    // Dependency-free columnar profiling (dict, list-of-dicts, decoded bytes)
+    m.add_function(wrap_pyfunction!(profile_columns, m)?)?;
 
     // Arrow export
     m.add_function(wrap_pyfunction!(analyze_csv_to_arrow, m)?)?;

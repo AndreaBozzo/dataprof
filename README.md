@@ -35,7 +35,7 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 
 | You are doing this | Start with |
 |---|---|
-| Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof@0.8` and `Profiler::new().analyze_file(...)` |
+| Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof` and `Profiler::new().analyze_file(...)` |
 | Inspecting files in notebooks, validation scripts, or data apps | `uv pip install dataprof` and `dp.profile(...)` |
 | Profiling streams, remote Parquet, or database queries | Rust feature flags, or a source-built Python extension with async/database features enabled |
 
@@ -47,24 +47,79 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 uv pip install dataprof
 ```
 
-Pre-built PyPI wheels ship the base Python API for local files, DataFrames, Arrow objects, and notebook-friendly ad-hoc inputs such as dicts, row dicts, and bytes buffers. Async URL profiling and database helpers remain opt-in source builds.
+The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, bytes buffers, and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet *byte buffers*. Async URL profiling and database helpers are opt-in source builds.
+
+#### 1. Profile
 
 ```python
 import dataprof as dp
 
-report = dp.profile("data.csv", metrics=["schema", "statistics", "quality"])
+report = dp.profile("data.csv")
 print(f"{report.rows} rows, {report.columns} columns")
-print(f"quality={report.quality_score:.1f}")
 
-age = report["age"]
-print(age.data_type, age.mean, age.null_percentage)
-
-report.save("report.json")
-
-# Notebook-friendly ad-hoc inputs also work
+# Ad-hoc inputs work the same way, with no pandas involved
 scratch = dp.profile({"age": [31, 42, 29], "city": ["Rome", "Milan", "Rome"]})
 incoming = dp.profile(b"age,city\n31,Rome\n", format="csv")
 ```
+
+Too big to profile fully? Get the shape first, then commit:
+
+```python
+structure = dp.analyze_structure("data.csv")   # cheap first pass
+print(structure.format, len(structure.columns), structure.row_count.count)
+```
+
+#### 2. Interpret
+
+```python
+print(f"quality={report.quality_score:.1f}")   # 0-100, weighted across five ISO dimensions
+print(report.quality_summary())                # per-dimension scores
+
+age = report["age"]
+print(age.data_type, age.mean, age.null_percentage)
+```
+
+#### 3. Export
+
+```python
+report.save("report.json")       # full report, reloadable
+print(report.to_markdown())      # a table for a PR comment or a notebook
+```
+
+#### 4. Compare
+
+Profile before and after a cleaning step, or yesterday against today:
+
+```python
+before = dp.ProfileReport.load("report.json")
+after = dp.profile("data_clean.csv")
+
+delta = before.compare(after)    # what changed, per column
+```
+
+#### 5. Hand it to an agent
+
+A token-bounded summary of shape, quality flags, and schema. Values matching a
+sensitive pattern are never echoed, and no raw cell values are included unless
+you ask:
+
+```python
+print(report.to_llm_context(max_tokens=500))
+```
+
+## Three problems, solved end to end
+
+Each example generates its own data and runs from a clean checkout. Every number
+they print is real profiler output, and CI runs all six on every push.
+
+| Scenario | What it shows | Run it |
+|---|---|---|
+| [Messy CSV inspection](examples/messy_csv_inspection.rs) · [Python](python/examples/messy_csv_inspection.py) | A duplicated key, null-heavy columns, a negative price, and PII flagged but never printed | `cargo run --example messy_csv_inspection` |
+| [ETL quality gate](examples/etl_quality_gate.rs) · [Python](python/examples/etl_quality_gate.py) | Accept or reject a daily drop on thresholds, with the rejection reason in the log | `cargo run --example etl_quality_gate` |
+| [Before/after cleaning](examples/before_after_cleaning.rs) · [Python](python/examples/before_after_cleaning.py) | Save a baseline report, diff it against the cleaned data, and check the defects really went away | `cargo run --example before_after_cleaning` |
+
+See [examples/README.md](examples/README.md) for the Python commands and a note on
+two quality metrics that surprise people.
 
 ### Rust
 
@@ -122,7 +177,8 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 | Database query | Async | PostgreSQL, MySQL, SQLite via connection string |
 | pandas / polars DataFrame | Columnar | Python API only |
 | Arrow RecordBatch | Columnar | Via PyCapsule (zero-copy) or Rust API |
-| dict / list of dicts / bytes | Columnar | Python convenience path; bytes require `format=` |
+| dict / list of dicts | Columnar | Python API only; no dependencies |
+| bytes / BytesIO | Columnar | Python API only; requires `format=`. CSV, JSON and JSONL need no dependencies; Parquet bytes need the `pandas` extra |
 | Async byte stream | Incremental | Any `AsyncRead` source (HTTP, WebSocket, etc.) |
 
 ## Quality Metrics
@@ -131,7 +187,7 @@ dataprof evaluates data quality against the five dimensions defined in [ISO 8000
 
 | Dimension | What it measures |
 |---|---|
-| **Completeness** | Missing values ratio, complete records ratio, fully-null columns |
+| **Completeness** | Missing-cell percentage, share of rows with no nulls, columns past the null threshold |
 | **Consistency** | Data type consistency, format violations, encoding issues |
 | **Uniqueness** | Duplicate rows, key uniqueness, high-cardinality warnings |
 | **Accuracy** | Outlier ratio, range violations, negative values in positive-only columns |

@@ -12,7 +12,7 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.10+. The package ships pre-built wheels for Linux, macOS, and Windows for the base API: local file profiling, DataFrame inputs, Arrow interop, ad-hoc dict/bytes inputs, and report exports.
+Requires Python 3.10+. The package ships pre-built wheels for Linux, macOS, and Windows, and declares **no Python dependencies**. The base API needs nothing else: local file profiling, DataFrame and Arrow inputs, ad-hoc dict/bytes inputs, and report exports. Install the `pandas` extra only for pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet byte buffers.
 
 Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
 
@@ -90,11 +90,20 @@ dp.profile(
 | pandas `DataFrame` | In-memory DataFrame |
 | polars `DataFrame` | In-memory Polars DataFrame |
 | PyArrow `Table` or `RecordBatch` | Zero-copy via PyCapsule interface |
-| `dict[str, list]` | Convenience path through pandas `DataFrame(source)` |
-| `list[dict]` | Row-oriented notebook data via pandas `DataFrame(source)` |
+| `dict[str, list]` | Columns of cells; profiled natively, no dependencies |
+| `list[dict]` | Row-oriented notebook data; rows may omit keys, which read as nulls |
 | `bytes` or `io.BytesIO` | In-memory file contents; requires `format="csv"`, `"json"`, `"jsonl"`, or `"parquet"` |
 
-Dict, row-dict, and bytes inputs require pandas because the sync API converts them to a DataFrame before profiling. For async byte streams, use `dataprof.asyncio.profile_bytes()`.
+Dict, row-dict, and byte inputs are profiled by the Rust core directly, so they
+need no third-party package. The one exception is `format="parquet"` for byte
+buffers, which needs a columnar reader and therefore the `pandas` extra.
+
+A cell is missing when it is `None`, NaN, or a null-like token (`""`, `"null"`,
+`"nan"`) -- the same rule the CSV and Arrow paths use. Note that a `dict` is
+*not* round-tripped through pandas, so an integer column containing a null stays
+`integer` rather than being widened to `float`.
+
+For async byte streams, use `dataprof.asyncio.profile_bytes()`.
 
 **Engine options:**
 
