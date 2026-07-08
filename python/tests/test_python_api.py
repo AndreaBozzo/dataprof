@@ -69,9 +69,10 @@ class TestProfileFile:
 
     def test_parquet_nulls_excluded_from_numeric_stats(self, tmp_path):
         """A null slot carries a physical value; it must not enter the statistics."""
-        pd = pytest.importorskip("pandas")
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
         path = tmp_path / "nullable.parquet"
-        pd.DataFrame({"x": [100.0, None, 1.0, None, 2.0]}).to_parquet(path)
+        pq.write_table(pa.table({"x": pa.array([100.0, None, 1.0, None, 2.0])}), path)
 
         col = dataprof.profile(str(path))["x"]
         assert col.null_count == 2
