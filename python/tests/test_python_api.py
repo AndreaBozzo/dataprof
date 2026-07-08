@@ -579,12 +579,7 @@ class TestToLlmContext:
     def test_include_samples_withholds_sensitive_pattern_extremes(self, tmp_path):
         path = tmp_path / "ssn.csv"
         path.write_text(
-            "ssn\n"
-            "123456789\n"
-            "124456789\n"
-            "125456789\n"
-            "126456789\n"
-            "127456789\n",
+            "ssn\n123456789\n124456789\n125456789\n126456789\n127456789\n",
             encoding="utf-8",
         )
         out = dataprof.profile(str(path)).to_llm_context(include_samples=True)
