@@ -600,6 +600,70 @@ class TestToLlmContext:
         assert "123456789" not in out
         assert "127456789" not in out
 
+    @pytest.fixture()
+    def cards(self, tmp_path):
+        """A sensitive integer column beside an innocuous one.
+
+        Both infer as `integer` and so carry extrema; only `card` matches a
+        sensitive pattern. The pair distinguishes redaction from over-redaction.
+        """
+        path = tmp_path / "cards.csv"
+        rows = ["card,qty"] + [f"411111111111{1000 + i},{i}" for i in range(10)]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        return str(path)
+
+    def test_include_samples_withholds_extremes_when_patterns_not_scanned(self, cards):
+        """Redaction must fail closed when pattern detection never ran.
+
+        A `metrics=` selection without the "patterns" pack leaves every column
+        with `patterns is None`. Reading that as "nothing sensitive found" would
+        echo raw card numbers into an agent's context on an unrelated opt-out.
+        """
+        report = dataprof.profile(cards, metrics=["schema", "statistics", "quality"])
+        assert report["card"].patterns is None  # detection skipped, not "no match"
+
+        out = report.to_llm_context(include_samples=True)
+        assert "4111111111111000" not in out
+        assert "4111111111111009" not in out
+
+    def test_include_samples_withholds_extremes_when_reload_lacks_evidence(self, cards, tmp_path):
+        """A payload saved without pattern evidence redacts once reloaded."""
+        saved = tmp_path / "report.json"
+        dataprof.profile(cards, metrics=["schema", "statistics"]).save(str(saved))
+
+        reloaded = dataprof.ProfileReport.load(str(saved))
+        assert reloaded["card"].patterns is None  # the key was never written
+
+        out = reloaded.to_llm_context(include_samples=True)
+        assert "4111111111111000" not in out
+
+    def test_reload_preserves_pattern_evidence(self, cards, tmp_path):
+        """`save()`/`load()` round-trips the evidence, so redaction is unchanged.
+
+        A reloaded report is not automatically "unscanned": a sensitive column
+        still redacts *because* its pattern survived, and a cleared column still
+        shows extrema. Only a payload missing the key falls back to unknown.
+        """
+        saved = tmp_path / "report.json"
+        dataprof.profile(cards).save(str(saved))  # default metrics: patterns run
+
+        reloaded = dataprof.ProfileReport.load(str(saved))
+        assert reloaded["card"].patterns  # sensitive pattern survived the round-trip
+        assert reloaded["qty"].patterns == []  # scanned, clean, and still provably so
+
+        out = reloaded.to_llm_context(include_samples=True)
+        assert "4111111111111000" not in out  # still redacted
+        assert "qty: integer [0" in out  # still exposed
+
+    def test_scanned_column_without_matches_still_shows_extremes(self, tmp_path):
+        """Failing closed must not swallow the safe case: `[]` is evidence, `None` is not."""
+        path = tmp_path / "qty.csv"
+        path.write_text("qty\n7\n19\n42\n", encoding="utf-8")
+        report = dataprof.profile(str(path))
+        assert report["qty"].patterns == []  # scanned, nothing matched
+
+        assert "42" in report.to_llm_context(include_samples=True)
+
     def test_column_name_cannot_break_the_line_format(self, tmp_path):
         """A newline in a header must not split a schema entry across two lines.
 

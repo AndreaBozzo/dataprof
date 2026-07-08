@@ -66,9 +66,9 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
 
     // Skip expensive operations in fast mode
     let patterns = if fast_mode {
-        Vec::new()
+        None
     } else {
-        detect_patterns(data, None)
+        Some(detect_patterns(data, None))
     };
 
     let unique_count = if fast_mode {
@@ -159,7 +159,7 @@ mod tests {
         ];
         let profile = analyze_column_fast("test_col", &data);
 
-        assert_eq!(profile.patterns.len(), 0); // Fast mode skips patterns
+        assert!(profile.patterns.is_none()); // Fast mode skips patterns entirely
         assert_eq!(profile.unique_count, None); // Fast mode skips unique count
     }
 
@@ -172,7 +172,8 @@ mod tests {
         ];
         let profile = analyze_column("test_col", &data);
 
-        assert!(!profile.patterns.is_empty()); // Normal mode detects patterns
+        // Normal mode detects patterns
+        assert!(profile.patterns.is_some_and(|p| !p.is_empty()));
         assert_eq!(profile.unique_count, Some(3)); // Normal mode calculates unique count
     }
 
