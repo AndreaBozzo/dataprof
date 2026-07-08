@@ -154,6 +154,9 @@ fn auto_engine_honours_stop_condition() {
 
 /// The columnar engine enforces a row cap, slicing the batch that straddles the
 /// limit so the row count is exact rather than rounded to a batch boundary.
+///
+/// The columnar CSV path is the `ArrowProfiler`, so this needs the `arrow` feature.
+#[cfg(feature = "arrow")]
 #[test]
 fn columnar_engine_honours_max_rows() {
     use std::io::Write;
@@ -212,7 +215,10 @@ fn json_honours_max_rows() {
             report.execution.truncation_reason.is_some(),
             "no truncation reason on {engine:?}"
         );
-        assert!(!report.execution.source_exhausted, "exhausted on {engine:?}");
+        assert!(
+            !report.execution.source_exhausted,
+            "exhausted on {engine:?}"
+        );
     }
 }
 
@@ -244,7 +250,10 @@ fn parquet_honours_max_rows() {
             report.execution.truncation_reason.is_some(),
             "no truncation reason on {engine:?}"
         );
-        assert!(!report.execution.source_exhausted, "exhausted on {engine:?}");
+        assert!(
+            !report.execution.source_exhausted,
+            "exhausted on {engine:?}"
+        );
     }
 }
 

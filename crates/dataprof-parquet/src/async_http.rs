@@ -398,6 +398,13 @@ mod tests {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         idle_loops = 0;
+                        // The listener is non-blocking so this loop can poll for
+                        // shutdown, but on Windows the accepted stream inherits that
+                        // mode and the first read races the client's request
+                        // (WSAEWOULDBLOCK). Only the listener should be non-blocking.
+                        stream
+                            .set_nonblocking(false)
+                            .expect("mock server: reset accepted stream to blocking");
                         let request =
                             read_http_request(&mut stream).expect("mock server read failed");
 
