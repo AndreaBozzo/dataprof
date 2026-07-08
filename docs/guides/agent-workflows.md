@@ -1,0 +1,31 @@
+# Agent Workflows
+
+These snippets teach coding agents how to use `dataprof` without dumping raw rows into chat. Copy the format that matches your agent runner.
+
+## AGENTS.md snippet
+
+```markdown
+## dataprof workflow
+
+When analyzing tabular data with dataprof:
+
+1. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
+2. Use `dp.profile(path, metrics=["schema", "statistics", "quality"])` for full profiling.
+3. Export compact context with `report.to_markdown()`, `report.quality_summary()`, or selected fields from `report.to_dict()`.
+4. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
+5. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
+
+Always report the source path, metrics requested, and any sampling or max-row limit.
+```
+
+## Cursor rule
+
+Copy `.cursor/rules/dataprof.md` into a project that uses Cursor. It contains the same workflow in Cursor rule form.
+
+## Claude Code skill
+
+Copy `skills/dataprof/SKILL.md` into your Claude Code skills directory. It packages the structure -> profile -> summarize -> compare workflow as on-demand knowledge.
+
+## Why this order
+
+`analyze_structure()` is the cheap first look. It helps an agent avoid over-reading a dataset before it knows the shape. `profile()` is the full metrics pass. `to_markdown()`, `quality_summary()`, and selected fields from `to_dict()` keep the output compact enough for an LLM. `compare()` is the right tool when the question is about drift or whether a cleaning step helped.

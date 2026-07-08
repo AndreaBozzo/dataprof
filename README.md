@@ -145,6 +145,7 @@ An overall quality score (0 -- 100) is computed as a weighted average of dimensi
 
 - [Getting Started](docs/guides/getting-started.md) -- the shortest path from mystery dataset to useful signal
 - [Examples Cookbook](docs/guides/examples.md) -- focused Rust and Python recipes you can adapt quickly
+- [Agent Workflows](docs/guides/agent-workflows.md) -- copy-paste guidance for AGENTS.md, Cursor rules, and Claude Code skills
 
 ### Integrate it
 
