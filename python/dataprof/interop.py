@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 
-from dataprof import column_to_dict
 from dataprof._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
     DataQualityMetrics,
@@ -21,6 +20,8 @@ from dataprof._dataprof import (  # type: ignore[import-not-found]
     profile_arrow,
     profile_dataframe,
 )
+
+from . import column_to_dict
 
 
 def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
