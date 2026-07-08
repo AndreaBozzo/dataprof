@@ -207,7 +207,8 @@ class ProfileReport:
         """Token-bounded, agent-oriented summary: shape, caveats, flags, schema, patterns.
 
         Tokens are estimated as ``ceil(len(text) / 4)``, not counted with a real
-        tokenizer. Raw cell values are excluded unless ``include_samples=True``.
+        tokenizer. Raw cell values are excluded by default; ``include_samples=True``
+        only includes non-sensitive numeric extrema.
         """
         ...
     def compare(self, other: ProfileReport) -> dict[str, Any]:

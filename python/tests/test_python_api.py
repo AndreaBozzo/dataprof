@@ -571,10 +571,26 @@ class TestToLlmContext:
         assert "999777333" not in out
 
     def test_include_samples_surfaces_extremes(self, tmp_path):
-        path = tmp_path / "secret.csv"
-        path.write_text("salary\n999777333\n123\n456\n", encoding="utf-8")
+        path = tmp_path / "readings.csv"
+        path.write_text("reading\n999.75\n123.5\n456.25\n", encoding="utf-8")
         out = dataprof.profile(str(path)).to_llm_context(include_samples=True)
-        assert "999777333" in out
+        assert "999.75" in out
+
+    def test_include_samples_withholds_sensitive_pattern_extremes(self, tmp_path):
+        path = tmp_path / "ssn.csv"
+        path.write_text(
+            "ssn\n"
+            "123456789\n"
+            "124456789\n"
+            "125456789\n"
+            "126456789\n"
+            "127456789\n",
+            encoding="utf-8",
+        )
+        out = dataprof.profile(str(path)).to_llm_context(include_samples=True)
+        assert "SSN (US)" in out
+        assert "123456789" not in out
+        assert "127456789" not in out
 
     def test_column_name_cannot_break_the_line_format(self, tmp_path):
         """A newline in a header must not split a schema entry across two lines.
