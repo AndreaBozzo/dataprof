@@ -24,7 +24,9 @@ Copy `.cursor/rules/dataprof.mdc` into a project that uses Cursor. It contains t
 
 ## Claude Code skill
 
-Copy `skills/dataprof/SKILL.md` into your Claude Code skills directory. It packages the structure -> profile -> summarize -> compare workflow as on-demand knowledge.
+Copy this repo's `.claude/skills/dataprof/` directory so that it lands at `.claude/skills/dataprof/SKILL.md` in your own project, or at `~/.claude/skills/dataprof/SKILL.md` to make it available everywhere. Keep the `dataprof/` directory -- a bare `.claude/skills/SKILL.md` will not load.
+
+It packages the structure -> profile -> summarize -> compare workflow as on-demand knowledge, and it loads from that path in this repo too.
 
 ## Why this order
 

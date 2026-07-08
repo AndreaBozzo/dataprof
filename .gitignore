@@ -79,5 +79,6 @@ env/
 #dev scripts folder
 scripts/
 
-#claude settings
-.claude/
+#claude settings (local settings ignored; versioned skills are not)
+.claude/*
+!.claude/skills/
