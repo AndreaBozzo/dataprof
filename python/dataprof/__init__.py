@@ -367,6 +367,17 @@ _CHARS_PER_TOKEN = 4
 #: A column is flagged ``null-heavy`` at or above this null percentage.
 _NULL_HEAVY_PCT = 20.0
 
+#: Pattern categories whose concrete values should stay out of agent-facing
+#: output even when ``include_samples=True`` asks for numeric extrema.
+_SENSITIVE_PATTERN_CATEGORIES = {
+    "contact",
+    "identifier",
+    "financial",
+    "geographic",
+    "network",
+    "file_path",
+}
+
 
 def _estimate_tokens(text: str) -> int:
     """Estimate the token count of ``text`` as ``ceil(len(text) / 4)``.
@@ -391,6 +402,17 @@ def _one_line(value: object) -> str:
     return "".join(
         _ESCAPES[ch] if ch in _ESCAPES else (ch if ch.isprintable() else f"\\x{ord(ch):02x}")
         for ch in text
+    )
+
+
+def _has_sensitive_pattern(col: ColumnProfile) -> bool:
+    """Return True when a detected pattern implies values may be sensitive."""
+    return bool(
+        col.patterns
+        and any(
+            (getattr(pattern, "category", "") or "").lower() in _SENSITIVE_PATTERN_CATEGORIES
+            for pattern in col.patterns
+        )
     )
 
 
@@ -1505,17 +1527,20 @@ class ProfileReport:
             print(report.to_llm_context())
 
         Emits structured signals only -- shape, provenance caveats, quality
-        flags, schema, and detected pattern names. No recommendations and no
-        generative prose; interpretation is the caller's job.
+        flags, schema, and detected pattern names. Raw cell values are redacted
+        by default, and detected sensitive-pattern values are never echoed. No
+        recommendations and no generative prose; interpretation is the caller's
+        job.
 
         :param max_tokens: Approximate upper bound on the output, enforced by
             deterministic truncation with a ``... +N more`` tail. Tokens are
             estimated as ``ceil(len(text) / 4)``, not counted with a real
             tokenizer, so treat this as a budget rather than an exact size. The
             dataset header is always emitted even if it exceeds the budget.
-        :param include_samples: When ``True``, include values drawn from the
-            data (column minima and maxima). Off by default: these are raw cell
-            values and may be sensitive.
+        :param include_samples: When ``True``, include non-sensitive numeric
+            extrema (column minima and maxima). Off by default because these
+            are raw cell values. Columns with sensitive detected patterns still
+            omit extrema.
         :returns: A plain-text summary. Stable across runs for a given report.
         """
         qs = self.quality_score
@@ -1555,7 +1580,12 @@ class ProfileReport:
         schema_items = []
         for col in cols:
             line = f"- {_one_line(col.name)}: {col.data_type}"
-            if include_samples and col.min is not None and col.max is not None:
+            if (
+                include_samples
+                and not _has_sensitive_pattern(col)
+                and col.min is not None
+                and col.max is not None
+            ):
                 line += f" [{_one_line(col.min)} .. {_one_line(col.max)}]"
             schema_items.append(line)
 
