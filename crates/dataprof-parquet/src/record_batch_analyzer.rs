@@ -289,7 +289,8 @@ impl ColumnAnalyzer {
 
     fn process_float64_array(&mut self, array: &Float64Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 self.update_numeric_stats(value);
                 if self.unique_values.len() < 1000 {
                     self.unique_values.insert(value.to_string());
@@ -304,7 +305,8 @@ impl ColumnAnalyzer {
 
     fn process_float32_array(&mut self, array: &Float32Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -320,7 +322,8 @@ impl ColumnAnalyzer {
 
     fn process_int64_array(&mut self, array: &Int64Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -336,7 +339,8 @@ impl ColumnAnalyzer {
 
     fn process_int32_array(&mut self, array: &Int32Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -352,7 +356,8 @@ impl ColumnAnalyzer {
 
     fn process_int16_array(&mut self, array: &Int16Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -368,7 +373,8 @@ impl ColumnAnalyzer {
 
     fn process_int8_array(&mut self, array: &Int8Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -384,7 +390,8 @@ impl ColumnAnalyzer {
 
     fn process_uint64_array(&mut self, array: &UInt64Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -400,7 +407,8 @@ impl ColumnAnalyzer {
 
     fn process_uint32_array(&mut self, array: &UInt32Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -416,7 +424,8 @@ impl ColumnAnalyzer {
 
     fn process_uint16_array(&mut self, array: &UInt16Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -432,7 +441,8 @@ impl ColumnAnalyzer {
 
     fn process_uint8_array(&mut self, array: &UInt8Array) -> Result<()> {
         for index in 0..array.len() {
-            if let Some(value) = array.value(index).into() {
+            if !array.is_null(index) {
+                let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 if self.unique_values.len() < 1000 {
@@ -894,6 +904,54 @@ mod tests {
     use arrow::record_batch::RecordBatch;
     use dataprof_core::ColumnStats;
     use std::sync::Arc;
+
+    #[test]
+    fn test_nulls_are_excluded_from_numeric_stats() {
+        // A null slot still holds a physical value in its buffer -- 0.0 here.
+        // Folding that into the statistics silently corrupts min, mean and
+        // uniqueness for every nullable numeric column.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("score", ArrowDataType::Float64, true),
+            Field::new("rank", ArrowDataType::Int64, true),
+        ]));
+
+        let scores = Float64Array::from(vec![Some(100.0), None, Some(1.0), None, Some(2.0)]);
+        let ranks = Int64Array::from(vec![Some(7), None, Some(9), Some(8), None]);
+
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(scores), Arc::new(ranks)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let profiles = analyzer.to_profiles(false, false, None);
+
+        let score_col = profiles.iter().find(|p| p.name == "score").unwrap();
+        assert_eq!(score_col.null_count, 2);
+        assert_eq!(score_col.unique_count, Some(3));
+        match &score_col.stats {
+            ColumnStats::Numeric(stats) => {
+                assert!((stats.min - 1.0).abs() < 1e-9, "min was {}", stats.min);
+                assert!((stats.max - 100.0).abs() < 1e-9, "max was {}", stats.max);
+                // (100 + 1 + 2) / 3, not (100 + 0 + 1 + 0 + 2) / 5
+                assert!(
+                    (stats.mean - 34.333_333).abs() < 1e-5,
+                    "mean was {}",
+                    stats.mean
+                );
+            }
+            _ => panic!("Expected Numeric stats for score column"),
+        }
+
+        let rank_col = profiles.iter().find(|p| p.name == "rank").unwrap();
+        assert_eq!(rank_col.null_count, 2);
+        match &rank_col.stats {
+            ColumnStats::Numeric(stats) => {
+                assert!((stats.min - 7.0).abs() < 1e-9, "min was {}", stats.min);
+                // (7 + 9 + 8) / 3, not (7 + 0 + 9 + 8 + 0) / 5
+                assert!((stats.mean - 8.0).abs() < 1e-9, "mean was {}", stats.mean);
+            }
+            _ => panic!("Expected Numeric stats for rank column"),
+        }
+    }
 
     #[test]
     fn test_record_batch_analyzer_numeric_stats() {
