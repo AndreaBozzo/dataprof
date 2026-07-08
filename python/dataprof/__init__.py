@@ -357,6 +357,24 @@ def _estimate_tokens(text: str) -> int:
     return -(-len(text) // _CHARS_PER_TOKEN)
 
 
+_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def _one_line(value: object) -> str:
+    """Render ``value`` so it cannot break the line-oriented LLM context.
+
+    Column names and cell values come from the data, so a newline in a CSV
+    header would otherwise split one schema entry across two lines -- corrupting
+    the format and letting the source inject arbitrary text into an
+    agent-facing summary.
+    """
+    text = str(value)
+    return "".join(
+        _ESCAPES[ch] if ch in _ESCAPES else (ch if ch.isprintable() else f"\\x{ord(ch):02x}")
+        for ch in text
+    )
+
+
 def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     """Derive ``(severity, text)`` quality flags for one column.
 
@@ -365,22 +383,23 @@ def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     """
     flags: list[tuple[float, str]] = []
     null_pct = col.null_percentage or 0.0
+    name = _one_line(col.name)
 
     if null_pct >= 100.0:
-        flags.append((100.0, f"{col.name}: all-null"))
+        flags.append((100.0, f"{name}: all-null"))
     elif null_pct >= _NULL_HEAVY_PCT:
-        flags.append((null_pct, f"{col.name}: null-heavy ({_r2(null_pct):.1f}% null)"))
+        flags.append((null_pct, f"{name}: null-heavy ({_r2(null_pct):.1f}% null)"))
 
     # A single distinct value carries no information. Suppress when the column
     # is already reported as null-heavy, where it is a restatement, not a flag.
     if col.unique_count == 1 and null_pct < _NULL_HEAVY_PCT and (col.total_count or 0) > 1:
-        flags.append((60.0, f"{col.name}: constant (1 distinct value)"))
+        flags.append((60.0, f"{name}: constant (1 distinct value)"))
 
     outliers = col.outlier_count or 0
     total = col.total_count or 0
     if outliers > 0 and total > 0:
         pct = 100.0 * outliers / total
-        flags.append((min(50.0, pct), f"{col.name}: {outliers} outliers ({pct:.1f}%)"))
+        flags.append((min(50.0, pct), f"{name}: {outliers} outliers ({pct:.1f}%)"))
 
     return flags
 
@@ -1392,7 +1411,7 @@ class ProfileReport:
         qs_str = f"{qs:.1f}/100" if qs is not None else "n/a"
 
         header = [
-            f"dataset: {self.source} ({self.source_type})",
+            f"dataset: {_one_line(self.source)} ({self.source_type})",
             f"rows: {self.rows:,} | columns: {self.columns} | quality: {qs_str}",
         ]
 
@@ -1424,12 +1443,14 @@ class ProfileReport:
 
         schema_items = []
         for col in cols:
-            line = f"- {col.name}: {col.data_type}"
+            line = f"- {_one_line(col.name)}: {col.data_type}"
             if include_samples and col.min is not None and col.max is not None:
-                line += f" [{col.min} .. {col.max}]"
+                line += f" [{_one_line(col.min)} .. {_one_line(col.max)}]"
             schema_items.append(line)
 
-        pattern_items = [f"- {col.name}: {_pattern_cell(col)}" for col in cols if col.patterns]
+        pattern_items = [
+            f"- {_one_line(col.name)}: {_pattern_cell(col)}" for col in cols if col.patterns
+        ]
 
         # Flags are the reason an agent asked; schema is context; patterns are a
         # bonus. Unused budget rolls forward, so a clean dataset spends its flag

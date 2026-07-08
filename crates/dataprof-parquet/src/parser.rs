@@ -164,6 +164,9 @@ pub fn analyze_parquet_with_config_dims_and_hints(
 
     let num_row_groups = parquet_meta.num_row_groups();
     let version = file_metadata.version();
+    // Parquet knows its exact row count up front, so truncation can be decided on
+    // what the file holds rather than inferred from how many rows we read.
+    let file_rows = file_metadata.num_rows().max(0) as u64;
 
     let compression = if num_row_groups > 0 && parquet_meta.row_group(0).num_columns() > 0 {
         format!("{:?}", parquet_meta.row_group(0).column(0).compression())
@@ -212,9 +215,10 @@ pub fn analyze_parquet_with_config_dims_and_hints(
     let num_columns = column_profiles.len();
 
     let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms);
-    // `with_limit` stops the reader at the cap, so the source was not exhausted.
+    // A cap only truncates when the file actually holds more rows than the cap.
+    // A file with exactly `max_rows` rows was read in full, not cut short.
     if let Some(max) = config.max_rows
-        && total_rows >= max
+        && file_rows > max as u64
     {
         execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
     }
