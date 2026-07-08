@@ -1,3 +1,9 @@
+---
+description: How to use dataprof for tabular data, data-quality checks, and drift investigations
+globs: **/*.csv,**/*.parquet,**/*.jsonl
+alwaysApply: false
+---
+
 # dataprof Agent Workflow
 
 Use this rule when working with tabular data, data-quality checks, or drift investigations in a project that uses `dataprof`.
@@ -5,8 +11,8 @@ Use this rule when working with tabular data, data-quality checks, or drift inve
 ## Workflow
 
 1. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
-2. Run `dp.profile(path, metrics=["schema", "statistics", "quality"])` when you need full profiling metrics.
-3. Export compact context with `report.to_markdown()`, `report.quality_summary()`, or selected fields from `report.to_dict()`.
+2. Run `dp.profile(path)` when you need full profiling metrics. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
+3. Export compact context with `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`) -- its `columns` entry grows with table width.
 4. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
 5. Prefer summaries and quality metrics over raw row dumps.
 

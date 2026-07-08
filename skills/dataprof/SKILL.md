@@ -21,15 +21,29 @@ Use this skill when the user asks you to understand an unfamiliar dataset, inspe
 3. Run the full profile when structural inspection is not enough:
 
    ```python
-   report = dp.profile("data.csv", metrics=["schema", "statistics", "quality"])
+   report = dp.profile("data.csv")
+   ```
+
+   `profile()` computes every metric pack by default. Pass `metrics=[...]` only to
+   *narrow* the work — the packs are `schema`, `statistics`, `patterns`, and `quality`:
+
+   ```python
+   report = dp.profile("data.csv", metrics=["schema", "quality"])
    ```
 
 4. Summarize for the user or another agent with compact outputs:
 
    ```python
-   report.to_markdown()
-   report.quality_summary()
-   report.to_dict()
+   report.to_markdown()      # markdown table of column profiles
+   report.quality_summary()  # single-row quality dict
+   ```
+
+   `to_dict()` embeds a full per-column entry under `["columns"]`, so it grows with
+   table width. Select the top-level summary fields instead of surfacing the whole dict:
+
+   ```python
+   d = report.to_dict()
+   summary = {k: d[k] for k in ("source", "source_type", "execution", "quality")}
    ```
 
 5. Compare reports for before/after drift:
@@ -50,8 +64,8 @@ Use this skill when the user asks you to understand an unfamiliar dataset, inspe
 ## Useful APIs
 
 - `dp.analyze_structure(path, max_rows=None)`
-- `dp.profile(source, metrics=[...])`
+- `dp.profile(source, *, metrics=None, max_rows=None, ...)` -- `metrics=None` means all packs
 - `report.to_markdown()`
 - `report.quality_summary()`
-- `report.to_dict()`
+- `report.to_dict()` -- keys: `source`, `source_type`, `execution`, `columns`, `quality`
 - `report.compare(other_report)`
