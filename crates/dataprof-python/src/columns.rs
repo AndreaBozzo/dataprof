@@ -7,6 +7,7 @@
 
 use std::collections::HashSet;
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use dataprof::{
@@ -29,6 +30,8 @@ pub type PyColumn = (String, Vec<Option<String>>);
 ///
 /// Column order is preserved as given, so reports over the same input are
 /// byte-identical across processes.
+///
+/// Raises `ValueError` when the columns do not all have the same length.
 #[pyfunction]
 #[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None))]
 pub fn profile_columns(
@@ -50,7 +53,18 @@ pub fn profile_columns(
     let effective_max_rows =
         max_rows.or_else(|| config.and_then(|c| c.max_rows.map(|v| v as usize)));
 
+    // This function is reachable from Python without going through `dp.profile`,
+    // so ragged input must raise rather than panic across the FFI boundary --
+    // and a short first column must not silently truncate the rest.
     let source_rows = columns.first().map(|(_, cells)| cells.len()).unwrap_or(0);
+    if let Some((name, cells)) = columns.iter().find(|(_, c)| c.len() != source_rows) {
+        return Err(PyValueError::new_err(format!(
+            "profile_columns: every column must have the same number of cells; \
+             column {name:?} has {}, expected {source_rows}",
+            cells.len()
+        )));
+    }
+
     let num_rows = effective_max_rows
         .map(|cap| cap.min(source_rows))
         .unwrap_or(source_rows);

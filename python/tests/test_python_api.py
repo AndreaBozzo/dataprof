@@ -212,6 +212,22 @@ class TestProfileAdHocInputs:
         with pytest.raises(TypeError, match="must be a list or tuple"):
             dataprof.profile({"a": 1})
 
+    def test_raw_extension_rejects_ragged_columns(self):
+        """`profile_columns` is importable directly, so it validates its own input.
+
+        `dp.profile()` screens ragged dicts first, but the extension symbol is
+        reachable without it, and slicing past a short column would panic across
+        the FFI boundary instead of raising.
+        """
+        from dataprof import _dataprof
+
+        with pytest.raises(ValueError, match="same number of cells"):
+            _dataprof.profile_columns([("a", ["1", "2"]), ("b", ["1"])], "x", None, None)
+
+        # A short *first* column must raise too, not silently truncate the rest.
+        with pytest.raises(ValueError, match="same number of cells"):
+            _dataprof.profile_columns([("a", ["1"]), ("b", ["1", "2"])], "x", None, None)
+
     def test_list_of_dicts_fills_missing_keys_with_nulls(self):
         r = dataprof.profile([{"a": 1}, {"b": 2}])
         assert list(r.column_profiles) == ["a", "b"]
