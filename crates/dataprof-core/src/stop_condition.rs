@@ -282,13 +282,9 @@ fn evaluate(
             // All must have triggered — collect reasons, return first
             let mut first_reason = None;
             for c in conditions {
-                match evaluate(c, rows, bytes, memory_fraction, estimated_total) {
-                    Some(reason) => {
-                        if first_reason.is_none() {
-                            first_reason = Some(reason);
-                        }
-                    }
-                    None => return None,
+                let reason = evaluate(c, rows, bytes, memory_fraction, estimated_total)?;
+                if first_reason.is_none() {
+                    first_reason = Some(reason);
                 }
             }
             first_reason

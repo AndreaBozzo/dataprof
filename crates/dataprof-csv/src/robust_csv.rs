@@ -272,7 +272,7 @@ impl RobustCsvParser {
             lines.push(line?);
         }
 
-        let delimiters = [b',', b';', b'\t', b'|'];
+        let delimiters = *b",;\t|";
         let mut best_delimiter = b',';
         let mut max_consistency = 0;
         let mut max_field_count = 0;

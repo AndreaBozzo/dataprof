@@ -112,7 +112,7 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     let preamble_str = String::from_utf8_lossy(&preamble);
     let lines: Vec<String> = preamble_str.lines().map(|line| line.to_string()).collect();
 
-    let delimiters = [b',', b';', b'\t', b'|'];
+    let delimiters = *b",;\t|";
     let mut best_delimiter = b',';
     let mut max_consistency = 0;
     let mut max_fields = 0;
