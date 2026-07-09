@@ -9,7 +9,7 @@ use dataprof::{ProgressEvent, ProgressSink};
 /// The ``kind`` field discriminates the event type:
 /// ``"started"``, ``"chunk_processed"``, ``"schema_detected"``,
 /// ``"finished"``, or ``"warning"``.
-#[pyclass(name = "ProgressEvent")]
+#[pyclass(name = "ProgressEvent", from_py_object)]
 #[derive(Clone)]
 pub struct PyProgressEvent {
     #[pyo3(get)]

@@ -91,7 +91,7 @@ impl PySchemaResult {
 }
 
 /// Structural summary for one column.
-#[pyclass(name = "StructureColumnSummary")]
+#[pyclass(name = "StructureColumnSummary", from_py_object)]
 #[derive(Clone)]
 pub struct PyStructureColumnSummary {
     inner: StructureColumnSummary,

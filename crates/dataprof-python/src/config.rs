@@ -16,7 +16,7 @@ use super::stop_condition::PyStopCondition;
 /// Python-friendly profiler configuration.
 ///
 /// Maps Python kwargs to Rust `ProfilerConfig` fields with validation.
-#[pyclass(name = "ProfilerConfig")]
+#[pyclass(name = "ProfilerConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyProfilerConfig {
     pub(crate) engine: EngineType,

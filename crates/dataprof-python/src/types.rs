@@ -10,7 +10,7 @@ use dataprof::{
 };
 
 /// Python wrapper for Pattern metrics
-#[pyclass(name = "Pattern")]
+#[pyclass(name = "Pattern", from_py_object)]
 #[derive(Clone)]
 pub struct PyPattern {
     #[pyo3(get)]
@@ -41,7 +41,7 @@ impl From<&Pattern> for PyPattern {
 }
 
 /// Python wrapper for ColumnProfile — column-level statistics.
-#[pyclass(name = "ColumnProfile")]
+#[pyclass(name = "ColumnProfile", from_py_object)]
 #[derive(Clone)]
 pub struct PyColumnProfile {
     #[pyo3(get)]
@@ -261,7 +261,7 @@ impl PyColumnProfile {
 /// Exposes both flat backward-compatible properties and new nested dimension
 /// accessors (completeness, consistency, uniqueness, accuracy, timeliness).
 /// Un-computed dimensions are `None` at the Python level.
-#[pyclass(name = "DataQualityMetrics")]
+#[pyclass(name = "DataQualityMetrics", from_py_object)]
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
     inner: QualityMetrics,

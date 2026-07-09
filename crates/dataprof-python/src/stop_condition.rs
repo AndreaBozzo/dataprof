@@ -11,7 +11,7 @@ use dataprof::StopCondition;
 /// ```text
 /// stop = StopCondition.max_rows(10000) | StopCondition.max_bytes(50_000_000)
 /// ```
-#[pyclass(name = "StopCondition")]
+#[pyclass(name = "StopCondition", from_py_object)]
 #[derive(Clone)]
 pub struct PyStopCondition {
     pub(crate) inner: StopCondition,

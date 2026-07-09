@@ -7,7 +7,7 @@ use dataprof::SamplingStrategy;
 ///
 /// Use static constructors to create a strategy, then pass it to
 /// `ProfilerConfig(sampling=...)` or `profile(..., sampling=...)`.
-#[pyclass(name = "SamplingStrategy")]
+#[pyclass(name = "SamplingStrategy", from_py_object)]
 #[derive(Clone)]
 pub struct PySamplingStrategy {
     pub(crate) inner: SamplingStrategy,

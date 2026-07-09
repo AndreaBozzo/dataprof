@@ -920,6 +920,20 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
         .cast()
         .map_err(|_| PyTypeError::new_err("Expected PyCapsule for array"))?;
 
+    // Resolve the capsule pointers before entering the unsafe block. Both
+    // accessors validate the capsule name against the Arrow C Data Interface
+    // spec, so a capsule holding something other than the struct we are about to
+    // reinterpret is rejected here rather than transmuted below. They return
+    // `NonNull`, which is why no null check follows.
+    let ffi_schema_ptr = schema_cap
+        .pointer_checked(Some(c"arrow_schema"))
+        .map_err(|_| PyTypeError::new_err("Expected PyCapsule named \"arrow_schema\""))?
+        .as_ptr() as *mut FFI_ArrowSchema;
+    let ffi_array_ptr = array_cap
+        .pointer_checked(Some(c"arrow_array"))
+        .map_err(|_| PyTypeError::new_err("Expected PyCapsule named \"arrow_array\""))?
+        .as_ptr() as *mut FFI_ArrowArray;
+
     // Get raw pointers from capsules and properly consume them.
     //
     // Safety invariants:
@@ -935,16 +949,6 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
     //  5. No allocating or panicking calls exist between the two `from_raw`
     //     calls, so both are always consumed together.
     let array_data = unsafe {
-        // Get raw pointers - pointer() returns *mut c_void
-        #[allow(deprecated)]
-        let ffi_schema_ptr = schema_cap.pointer() as *mut FFI_ArrowSchema;
-        #[allow(deprecated)]
-        let ffi_array_ptr = array_cap.pointer() as *mut FFI_ArrowArray;
-
-        if ffi_schema_ptr.is_null() || ffi_array_ptr.is_null() {
-            return Err(PyRuntimeError::new_err("Null pointer in PyCapsule"));
-        }
-
         // from_raw: takes ownership by nullifying release at the source pointer.
         // No panicking code between these two calls.
         let ffi_array = FFI_ArrowArray::from_raw(ffi_array_ptr);
