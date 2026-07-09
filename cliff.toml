@@ -43,6 +43,16 @@ conventional_commits = true
 filter_unconventional = true
 split_commits = false
 
+# `filter_unconventional = true` silently drops commits whose subject is not
+# conventional. Two 0.9.0 squash merges landed on master with plain subjects and
+# would otherwise vanish from the generated notes, even though they carry the
+# release's largest API changes. Rewriting pushed history is not an option, so
+# normalize the subjects at changelog-render time instead.
+commit_preprocessors = [
+    { pattern = '^Implement Python 0\.9 quality metrics breaking pass', replace = "feat(python)!: nested DataQualityMetrics semantics and Python 3.10 floor" },
+    { pattern = '^Add minimal analyze_structure API', replace = "feat(python): analyze_structure() for lightweight structural profiling" },
+]
+
 commit_parsers = [
     # Skip merge commits
     { message = "^Merge pull request", skip = true },
@@ -68,6 +78,9 @@ commit_parsers = [
     # Dependencies - Dependabot patterns
     { message = "^deps\\(deps\\)", group = "Dependencies" },
     { message = "^chore\\(deps\\)", group = "Dependencies" },
+    # Hand-written dependency bumps use a bare `deps:` subject. Without this
+    # catch-all they match no parser and `filter_unconventional` drops them.
+    { message = "^deps", group = "Dependencies" },
 
     # Generic chore (excluding deps already captured)
     { message = "^chore", group = "Changed" },

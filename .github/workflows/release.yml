@@ -95,7 +95,9 @@ jobs:
           echo ""
           echo "---"
           echo ""
-          echo "**Full changelog**: [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/CHANGELOG.md)"
+          echo "**Full changelog**: [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CHANGELOG.md)"
+          echo ""
+          echo "**Release notes and migration guide**: [release-notes.md](https://github.com/AndreaBozzo/dataprof/blob/master/docs/release-notes.md)"
         } > release_notes.md
 
         echo "changelog<<EOF" >> $GITHUB_OUTPUT
