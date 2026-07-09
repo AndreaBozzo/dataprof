@@ -168,3 +168,47 @@ class TestDatabaseErrors:
                 sqlite_db,
                 "SELECT * FROM test_users; DROP TABLE test_users",
             )
+
+
+class TestPublicDatabaseSurface:
+    """The documented call path is `dataprof.<fn>`, not `dataprof._dataprof.<fn>`.
+
+    The tests above import from the private extension module, which is why the
+    missing top-level re-export went unnoticed.
+    """
+
+    def test_analyze_returns_wrapped_report(self, sqlite_db):
+        import dataprof as dp
+
+        report = _run(dp.analyze_database_async, sqlite_db, "SELECT * FROM test_users")
+        # The wrapper surface, not the raw core report (which exposes rows_processed).
+        assert isinstance(report, dp.ProfileReport)
+        assert report.rows == 5
+        assert report.columns == 5
+        assert report["name"].null_count == 0
+
+    def test_schema_and_count_shapes(self, sqlite_db):
+        import dataprof as dp
+
+        columns = _run(dp.get_table_schema_async, sqlite_db, "test_users")
+        assert isinstance(columns, list)
+        assert all(isinstance(c, str) for c in columns)
+        assert "salary" in columns
+
+        count = _run(dp.count_table_rows_async, sqlite_db, "test_users")
+        assert isinstance(count, int)
+        assert count == 5
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="Non-text columns decode to NULL: connectors read every column as "
+        "Option<String> and swallow the decode error with .ok(). Pre-existing "
+        "since 0.8.0, tracked separately.",
+    )
+    def test_numeric_columns_are_not_all_null(self, sqlite_db):
+        import dataprof as dp
+
+        report = _run(dp.analyze_database_async, sqlite_db, "SELECT * FROM test_users")
+        salary = report["salary"]
+        assert salary.null_count == 0
+        assert salary.data_type == "float"

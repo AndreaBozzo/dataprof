@@ -41,7 +41,59 @@ from ._dataprof import (
     quick_row_count as _quick_row_count,
 )
 
+# Database helpers are compiled in only when the extension is built with the
+# `database` feature and a connector. The published wheels omit them, so bind
+# stubs that explain how to get them rather than leaving an AttributeError.
+try:
+    from ._dataprof import (  # type: ignore[import-not-found]
+        analyze_database_async as _analyze_database_async,
+        count_table_rows_async,
+        get_table_schema_async,
+        test_connection_async,
+    )
+
+    _HAS_DATABASE = True
+
+    async def analyze_database_async(
+        connection_string: str,
+        query: str,
+        batch_size: int = 10000,
+        calculate_quality: bool = False,
+    ) -> ProfileReport:
+        """Profile the rows returned by ``query``.
+
+        The native call yields a raw core report; wrap it so the result carries
+        the same surface as every other ``ProfileReport`` in this package.
+        """
+        rust_report = await _analyze_database_async(
+            connection_string, query, batch_size, calculate_quality
+        )
+        return ProfileReport(rust_report)
+
+except ImportError:
+    _HAS_DATABASE = False
+
+    def _database_unavailable(name: str):
+        def _stub(*_args, **_kwargs):
+            raise ImportError(
+                f"{name}() requires database support, which is not compiled into "
+                "the published wheels. Rebuild from source with e.g. "
+                "maturin develop --features 'python,python-async,database,sqlite'"
+            )
+
+        _stub.__name__ = name
+        return _stub
+
+    analyze_database_async = _database_unavailable("analyze_database_async")
+    count_table_rows_async = _database_unavailable("count_table_rows_async")
+    get_table_schema_async = _database_unavailable("get_table_schema_async")
+    test_connection_async = _database_unavailable("test_connection_async")
+
 __all__ = [
+    "analyze_database_async",
+    "count_table_rows_async",
+    "get_table_schema_async",
+    "test_connection_async",
     "profile",
     "profile_file",
     "Profiler",

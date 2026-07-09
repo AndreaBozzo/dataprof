@@ -227,9 +227,28 @@ class ProfileReport:
         """Reload a report from a .json file written by save()."""
         ...
 
+# --- Database helpers ---
+#
+# Present only when the extension is built with the `database` feature and a
+# connector. In the published wheels these are stubs that raise ImportError.
+
+async def analyze_database_async(
+    connection_string: str,
+    query: str,
+    batch_size: int = 10000,
+    calculate_quality: bool = False,
+) -> ProfileReport: ...
+async def count_table_rows_async(connection_string: str, table_name: str) -> int: ...
+async def get_table_schema_async(connection_string: str, table_name: str) -> list[str]: ...
+async def test_connection_async(connection_string: str) -> bool: ...
+
 # --- Exports ---
 
 __all__ = [
+    "analyze_database_async",
+    "count_table_rows_async",
+    "get_table_schema_async",
+    "test_connection_async",
     "profile",
     "profile_file",
     "Profiler",

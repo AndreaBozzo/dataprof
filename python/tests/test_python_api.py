@@ -1088,6 +1088,12 @@ class TestNamespace:
             "RecordBatch",
             "asyncio",
             "__version__",
+            # Database helpers: exported unconditionally. Without a `database`
+            # feature build they are stubs that raise ImportError on call.
+            "analyze_database_async",
+            "count_table_rows_async",
+            "get_table_schema_async",
+            "test_connection_async",
         }
         assert expected == set(dataprof.__all__), (
             f"__all__ drift detected. "
@@ -1099,6 +1105,23 @@ class TestNamespace:
         """Every name in __all__ must be importable from the package."""
         for name in dataprof.__all__:
             assert hasattr(dataprof, name), f"{name!r} in __all__ but not accessible"
+
+    def test_database_helpers_exported_at_top_level(self):
+        """The documented call path is dp.<fn>, not dp._dataprof.<fn>."""
+        for name in (
+            "analyze_database_async",
+            "count_table_rows_async",
+            "get_table_schema_async",
+            "test_connection_async",
+        ):
+            assert callable(getattr(dataprof, name))
+
+    def test_database_helpers_fail_loudly_without_feature(self):
+        """On the published wheels the stubs must explain the rebuild, not AttributeError."""
+        if dataprof._HAS_DATABASE:
+            pytest.skip("built with database support; stubs not installed")
+        with pytest.raises(ImportError, match="requires database support"):
+            dataprof.test_connection_async("sqlite:x.db")
 
     def test_asyncio_discoverable(self):
         assert hasattr(dataprof, "asyncio")
