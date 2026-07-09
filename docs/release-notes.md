@@ -284,10 +284,30 @@ The type stubs for these four functions were also wrong and have been corrected:
 `config`, `get_table_schema_async` returns `list[str]`, and
 `count_table_rows_async` returns `int`.
 
-> **Known limitation.** Profiling a database query still reads every column as
-> text, so non-text columns are reported as all-null strings. This predates 0.9.0
-> and is not fixed in this release. Profile an export (CSV or Parquet) if you need
-> accurate statistics for numeric database columns.
+### Database queries returned all-null numeric columns
+
+Profiling a database query read every column as text. The connectors called
+`row.try_get::<String>(i)` and dropped the result with `.ok()`, so when sqlx
+failed to decode an `INTEGER` or `REAL` into a `String`, the **decode error
+became a `None`** — indistinguishable from SQL NULL. Every non-text column, on
+all three connectors, profiled as an all-null string column: `null_count` equal
+to the row count, no minimum, no mean. Text columns were unaffected, which is why
+this survived.
+
+This is the same failure as the Parquet bug above — an error silently reinterpreted
+as missing data — and it has been present since 0.8.0.
+
+Integer, float, and boolean columns now decode correctly, and a database profile
+agrees with profiling the same rows exported to CSV, down to the inferred column
+type. A `REAL` column of whole numbers still reports as a float rather than
+collapsing to an integer.
+
+**What to do:** any quality baseline taken from a database query is wrong for
+every non-text column and should be regenerated.
+
+> **Still unsupported.** `NUMERIC`/`DECIMAL`, date and time types, and `BLOB`
+> continue to profile as nulls: decoding them requires sqlx features this crate
+> does not enable. Profile an export if you need statistics for those.
 
 ### Other fixes
 

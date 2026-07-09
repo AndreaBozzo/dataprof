@@ -2,13 +2,13 @@
 
 Profile data directly from PostgreSQL, MySQL, and SQLite databases with ISO 8000/25012 quality assessment.
 
-> [!WARNING]
-> Query results are currently read one column at a time as text. Non-text columns
-> (integers, floats, booleans, dates) therefore profile as all-null string
-> columns: their `null_count` equals the row count and no numeric statistics are
-> produced. Text columns are unaffected. If you need accurate statistics for
-> numeric columns, profile an exported CSV or Parquet file instead. This affects
-> all three connectors and predates 0.9.0.
+> [!NOTE]
+> Before 0.9.0, every column was read as text and non-text columns profiled as
+> all-null strings. Integer, float, and boolean columns now decode correctly.
+> Types outside that set — `NUMERIC`/`DECIMAL`, dates and times, and `BLOB` —
+> still profile as nulls, because decoding them needs sqlx features this crate
+> does not enable. Profile an exported CSV or Parquet file if you need
+> statistics for those.
 
 ## Feature Requirements
 

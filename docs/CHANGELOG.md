@@ -80,6 +80,15 @@ migration guide.
   `ProfileReport` rather than the raw core report, so `report.rows` and the other
   wrapper accessors work as documented. Without a `database` feature build the
   names resolve to stubs that raise `ImportError` explaining the rebuild.
+- Database: decode non-text columns instead of reporting them as all-null. The
+  connectors read every column as `Option<String>` and dropped the decode error
+  with `.ok()`, so an `INTEGER` or `REAL` value was indistinguishable from SQL
+  NULL and every non-text column profiled as an all-null string on all three
+  connectors. Integer, float, and boolean columns now decode correctly, and
+  integral floats keep their decimal point so a `REAL` column is still inferred
+  as a float. `NUMERIC`/`DECIMAL`, date/time types, and `BLOB` remain
+  unsupported and still profile as nulls. Present since 0.8.0. **Regenerate any
+  quality baseline taken from a database query.**
 - Python: correct the type stubs for the database helpers.
   `analyze_database_async` takes `batch_size`/`calculate_quality` (not a
   `config`), `get_table_schema_async` returns `list[str]` (not `SchemaResult`),
