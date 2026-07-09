@@ -187,10 +187,16 @@ jobs:
       shell: bash
 
   # Step 4: Publish versioned Rust crates in dependency order.
+  #
+  # Gated on python-wheels as well as the package checks. A crates.io publish is
+  # irreversible -- a version can be yanked but never replaced -- so we do not
+  # spend it until every wheel has built. Otherwise a single flaky runner leaves
+  # the version live on crates.io with nothing on PyPI, and the only way out is a
+  # new version number.
   rust-crates:
     name: Publish Rust Crates
     runs-on: ubuntu-latest
-    needs: rust-package-checks
+    needs: [rust-package-checks, python-wheels]
     steps:
     - uses: actions/checkout@v6.0.3
 
@@ -310,6 +316,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: [create-release, rust-release-checks]
     strategy:
+      # One runner failing (sccache server startup on macos-15-intel timed out
+      # during the first v0.9.0 attempt) must not cancel the other eight wheels.
+      # Let them finish so a re-run only has to retry the one that broke.
+      fail-fast: false
       matrix:
         include:
           # Baseline compatibility builds (maximum compatibility)
