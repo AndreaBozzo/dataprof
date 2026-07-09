@@ -199,16 +199,30 @@ class TestPublicDatabaseSurface:
         assert isinstance(count, int)
         assert count == 5
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Non-text columns decode to NULL: connectors read every column as "
-        "Option<String> and swallow the decode error with .ok(). Pre-existing "
-        "since 0.8.0, tracked separately.",
-    )
     def test_numeric_columns_are_not_all_null(self, sqlite_db):
+        """Regression: the connectors read every column as ``Option<String>`` and
+        dropped the decode error with ``.ok()``, so an INTEGER or REAL value was
+        indistinguishable from SQL NULL and every non-text column profiled as an
+        all-null string.
+        """
         import dataprof as dp
 
         report = _run(dp.analyze_database_async, sqlite_db, "SELECT * FROM test_users")
+
+        # salary: 50000.0, 60000.0, NULL, 55000.0, 70000.0
         salary = report["salary"]
-        assert salary.null_count == 0
         assert salary.data_type == "float"
+        assert salary.null_count == 1
+        assert salary.mean == pytest.approx(58750.0)
+        assert salary.min == pytest.approx(50000.0)
+
+        # age: 25, 30, 35, NULL, 28 -- an integral column stays an integer.
+        age = report["age"]
+        assert age.data_type == "integer"
+        assert age.null_count == 1
+        assert age.mean == pytest.approx(29.5)
+
+        # Text columns were never affected; confirm they still decode.
+        assert report["name"].data_type == "string"
+        assert report["name"].null_count == 0
+        assert report["email"].null_count == 1

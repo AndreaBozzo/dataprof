@@ -18,6 +18,56 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
     DataProfilerError::database_feature_disabled(db_name, feature)
 }
 
+/// Render one column of one row as the string the profiler ingests.
+///
+/// The profiler consumes columns as `Vec<String>` and re-infers types from the
+/// textual form, so every SQL type has to be turned into a faithful string.
+/// sqlx offers no backend-agnostic "decode as whatever this is" call, so we try
+/// concrete types in order and take the first that decodes.
+///
+/// Order is load-bearing:
+///
+/// * `Option<String>` first. sqlx skips the type-compatibility check when the
+///   value is NULL, so a NULL of *any* SQL type decodes here as `Ok(None)`.
+///   That makes this arm the NULL detector as well as the text arm; everything
+///   below it is known to be a non-null value.
+/// * Integers before `bool`. SQLite stores booleans as INTEGER and will happily
+///   decode `42` as `true`, so trying `bool` early would render integers as
+///   "true"/"false".
+/// * Widest integer first, so an INT8/BIGINT is not truncated by a narrower arm.
+///
+/// A value whose type matches none of these arms (NUMERIC/DECIMAL, dates and
+/// times without the corresponding sqlx feature, BLOB) yields `None` and is
+/// recorded as a null, which is the pre-existing behaviour for those types.
+#[macro_export]
+macro_rules! db_column_to_string {
+    ($row:expr, $index:expr) => {{
+        let row = $row;
+        let index = $index;
+
+        if let Ok(v) = row.try_get::<Option<String>, _>(index) {
+            v
+        } else if let Ok(v) = row.try_get::<Option<i64>, _>(index) {
+            v.map(|x| x.to_string())
+        } else if let Ok(v) = row.try_get::<Option<i32>, _>(index) {
+            v.map(|x| x.to_string())
+        } else if let Ok(v) = row.try_get::<Option<i16>, _>(index) {
+            v.map(|x| x.to_string())
+        } else if let Ok(v) = row.try_get::<Option<f64>, _>(index) {
+            // `{:?}` keeps the decimal point on integral floats ("100.0", not
+            // "100"), so a REAL column of whole numbers is still inferred as a
+            // float downstream. It also stays compact at the extremes ("1e300").
+            v.map(|x| format!("{:?}", x))
+        } else if let Ok(v) = row.try_get::<Option<f32>, _>(index) {
+            v.map(|x| format!("{:?}", x))
+        } else if let Ok(v) = row.try_get::<Option<bool>, _>(index) {
+            v.map(|x| x.to_string())
+        } else {
+            None
+        }
+    }};
+}
+
 /// Macro to generate the streaming batch loop for profiling queries.
 #[macro_export]
 macro_rules! streaming_profile_loop {
@@ -53,7 +103,7 @@ macro_rules! streaming_profile_loop {
 
             for row in &rows {
                 for (i, col) in columns.iter().enumerate() {
-                    let value: Option<String> = row.try_get(i).ok();
+                    let value: Option<String> = $crate::db_column_to_string!(row, i);
                     if let Some(column_data) = batch_result.get_mut(col.name()) {
                         column_data.push(value.unwrap_or_default());
                     }
@@ -103,7 +153,7 @@ macro_rules! process_rows_to_columns {
 
             for row in &$rows {
                 for (i, col) in columns.iter().enumerate() {
-                    let value: Option<String> = row.try_get(i).ok();
+                    let value: Option<String> = $crate::db_column_to_string!(row, i);
                     if let Some(column_data) = result.get_mut(col.name()) {
                         column_data.push(value.unwrap_or_default());
                     }
