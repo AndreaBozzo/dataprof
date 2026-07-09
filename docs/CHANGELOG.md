@@ -75,6 +75,20 @@ migration guide.
 - Bump `crossbeam-epoch` to 0.9.20 for RUSTSEC-2026-0204. (#346)
 - Bump `arrow` and `parquet` from 57.3.0 to 58.x. (#324)
 
+### Security
+
+- Upgrade `pyo3` and `pyo3-async-runtimes` from 0.27 to 0.29, clearing a high
+  severity out-of-bounds read in the `nth`/`nth_back` iterator implementations
+  for `PyList` and `PyTuple` (GHSA-36hh-v3qg-5jq4) and a missing `Sync` bound on
+  `PyCFunction::new_closure` (GHSA-chgr-c6px-7xpp). dataprof never called the
+  affected iterator methods, so released versions were not exploitable through
+  the public API, but the vulnerable code was compiled into published wheels.
+- Arrow PyCapsule import now validates capsule names (`arrow_schema`,
+  `arrow_array`) before dereferencing the pointers, replacing pyo3's removed
+  unchecked `PyCapsule::pointer()` accessor with `pointer_checked()`. A capsule
+  carrying an unexpected payload is now rejected instead of reinterpreted.
+- Bump `quinn-proto` to 0.11.15 for RUSTSEC-2026-0185.
+
 ### Internal
 
 - Python: adopt [ty](https://github.com/astral-sh/ty) for static type checking,

@@ -234,10 +234,30 @@ and expected samples in your agent context, add the `"patterns"` pack.
 
 Fixed in #355 / #359.
 
+### pyo3 upgraded to 0.29 (security)
+
+`pyo3` and `pyo3-async-runtimes` move from 0.27 to 0.29, clearing a high-severity
+out-of-bounds read in the `nth`/`nth_back` iterator implementations for `PyList`
+and `PyTuple` (GHSA-36hh-v3qg-5jq4), plus a missing `Sync` bound on
+`PyCFunction::new_closure` (GHSA-chgr-c6px-7xpp).
+
+dataprof never called the affected iterator methods, so no released version was
+exploitable through the public API — but the vulnerable code was compiled into
+the wheels we publish, and 0.9.0 does not ship it.
+
+While adapting to the 0.29 API, the Arrow PyCapsule import path also became
+stricter. It now validates the capsule names (`arrow_schema`, `arrow_array`)
+before dereferencing, using `pointer_checked()` in place of pyo3's removed
+unchecked `PyCapsule::pointer()`. A capsule carrying an unexpected payload is
+rejected with a `TypeError` rather than reinterpreted as an Arrow struct.
+
+This is a Rust-side dependency change with no Python API impact.
+
 ### Other fixes
 
 - `crossbeam-epoch` bumped to 0.9.20 for RUSTSEC-2026-0204 (#346).
 - `arrow` and `parquet` bumped from 57.3.0 to 58.x (#324).
+- `quinn-proto` bumped to 0.11.15 for RUSTSEC-2026-0185.
 
 ---
 
