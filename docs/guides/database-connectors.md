@@ -2,6 +2,14 @@
 
 Profile data directly from PostgreSQL, MySQL, and SQLite databases with ISO 8000/25012 quality assessment.
 
+> [!WARNING]
+> Query results are currently read one column at a time as text. Non-text columns
+> (integers, floats, booleans, dates) therefore profile as all-null string
+> columns: their `null_count` equals the row count and no numeric statistics are
+> produced. Text columns are unaffected. If you need accurate statistics for
+> numeric columns, profile an exported CSV or Parquet file instead. This affects
+> all three connectors and predates 0.9.0.
+
 ## Feature Requirements
 
 Database support requires feature flags at compile time. Enable them on the
@@ -10,7 +18,7 @@ ship.
 
 ```toml
 [dependencies]
-dataprof = { version = "0.8", features = ["postgres"] }
+dataprof = { version = "0.9", features = ["postgres"] }
 ```
 
 For local Python extension development:

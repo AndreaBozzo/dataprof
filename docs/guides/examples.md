@@ -425,10 +425,11 @@ import dataprof as dp
 files = sorted(Path("warehouse/daily/").glob("orders_*.csv"))
 for f in files:
     r = dp.profile(str(f), quality_dimensions=["completeness", "uniqueness"])
-    q = r.quality
+    completeness = r.quality.completeness
+    uniqueness = r.quality.uniqueness
     print(f"{f.name:40s}  rows={r.rows:>8d}  "
-          f"complete={q.complete_records_ratio:.1f}%  "
-          f"dupes={q.duplicate_rows}")
+          f"complete={completeness['complete_records_ratio']:.1f}%  "
+          f"dupes={uniqueness['duplicate_rows']}")
 ```
 
 ### Profile a Polars DataFrame from a Parquet source

@@ -47,6 +47,8 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 uv pip install dataprof
 ```
 
+Requires Python 3.10 or newer.
+
 The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, bytes buffers, and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet *byte buffers*. Async URL profiling and database helpers are opt-in source builds.
 
 #### 1. Profile
@@ -125,9 +127,11 @@ two quality metrics that surprise people.
 
 ```toml
 [dependencies]
-dataprof = "0.8"
-# or: dataprof = { version = "0.8", default-features = false }
+dataprof = "0.9"
+# or: dataprof = { version = "0.9", default-features = false }
 ```
+
+Minimum supported Rust version: 1.96.
 
 ```rust
 use dataprof::Profiler;

@@ -253,11 +253,49 @@ rejected with a `TypeError` rather than reinterpreted as an Arrow struct.
 
 This is a Rust-side dependency change with no Python API impact.
 
+### Database helpers were never actually exported
+
+The database guide has always told you to call `dp.analyze_database_async(...)`
+after a source build. That name never existed on the `dataprof` package — the
+functions were only ever registered on the private `dataprof._dataprof` module,
+so the documented call raised `AttributeError` even when you built with the
+right features.
+
+They are now exported from `dataprof`, and `analyze_database_async()` returns a
+wrapped `ProfileReport` instead of the raw core report, so `report.rows` and the
+rest of the wrapper surface behave like every other report:
+
+```python
+report = await dp.analyze_database_async(
+    "postgres://user:pass@localhost/mydb",
+    "SELECT * FROM users",
+    batch_size=10000,
+    calculate_quality=True,
+)
+print(f"{report.rows} rows, quality: {report.quality_score}")
+```
+
+On the published wheels, which carry no database support, these names now resolve
+to stubs that raise `ImportError` telling you how to rebuild, rather than
+disappearing with an `AttributeError`.
+
+The type stubs for these four functions were also wrong and have been corrected:
+`analyze_database_async` takes `batch_size` and `calculate_quality` rather than a
+`config`, `get_table_schema_async` returns `list[str]`, and
+`count_table_rows_async` returns `int`.
+
+> **Known limitation.** Profiling a database query still reads every column as
+> text, so non-text columns are reported as all-null strings. This predates 0.9.0
+> and is not fixed in this release. Profile an export (CSV or Parquet) if you need
+> accurate statistics for numeric database columns.
+
 ### Other fixes
 
 - `crossbeam-epoch` bumped to 0.9.20 for RUSTSEC-2026-0204 (#346).
 - `arrow` and `parquet` bumped from 57.3.0 to 58.x (#324).
 - `quinn-proto` bumped to 0.11.15 for RUSTSEC-2026-0185.
+- Two clippy lints introduced by Rust 1.97 resolved (`question_mark`,
+  `byte_char_slices`).
 
 ---
 

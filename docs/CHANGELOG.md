@@ -72,6 +72,20 @@ migration guide.
 - Python: dict input whose columns have differing lengths raises `ValueError`
   instead of panicking. Row-dicts with differing keys remain accepted, taking the
   union of keys with nulls for the missing entries.
+- Python: the database helpers (`analyze_database_async`, `test_connection_async`,
+  `get_table_schema_async`, `count_table_rows_async`) are exported from the
+  `dataprof` package. They were documented as `dp.<fn>` but only ever existed on
+  the private `dataprof._dataprof` module, so every documented call raised
+  `AttributeError`. `analyze_database_async()` now returns a wrapped
+  `ProfileReport` rather than the raw core report, so `report.rows` and the other
+  wrapper accessors work as documented. Without a `database` feature build the
+  names resolve to stubs that raise `ImportError` explaining the rebuild.
+- Python: correct the type stubs for the database helpers.
+  `analyze_database_async` takes `batch_size`/`calculate_quality` (not a
+  `config`), `get_table_schema_async` returns `list[str]` (not `SchemaResult`),
+  and `count_table_rows_async` returns `int` (not `RowCountEstimate`).
+- Resolve two clippy lints introduced by Rust 1.97 (`question_mark` in
+  `dataprof-core`, `byte_char_slices` in `dataprof-csv`).
 - Bump `crossbeam-epoch` to 0.9.20 for RUSTSEC-2026-0204. (#346)
 - Bump `arrow` and `parquet` from 57.3.0 to 58.x. (#324)
 
