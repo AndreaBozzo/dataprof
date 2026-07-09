@@ -5,33 +5,84 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-07-09
+
+See [release-notes.md](release-notes.md) for the narrative 0.9.0 notes and the
+migration guide.
 
 ### Added
 
+- Python: `to_llm_context(max_tokens=1000, include_samples=False)` — a
+  token-bounded, agent-oriented report summary covering shape, provenance
+  caveats, derived quality flags, schema, and pattern names. Tokens are estimated
+  as `ceil(len / 4)`, so the output is deterministic and needs no tokenizer.
+  Sections are budgeted by priority. Raw cell values are withheld unless
+  `include_samples=True`. (#331)
+- Python: `analyze_structure(path, max_rows=None)` — lightweight structural
+  profiling returning a `StructureReport`, joining `infer_schema()` and
+  `quick_row_count()` on the partial analysis surface. (#319)
 - Python: `ProfileReport.load(path)` — reload a report saved with `save()` from a
   `.json` file path (the path-based counterpart to `from_json()`/`from_dict()`).
   `.csv`/`.parquet` paths raise a clear `ValueError` since they store column
   profiles only. (#325)
+- Python: report ergonomics — `to_html()`, `to_markdown()`, `compare()`,
+  `from_dict()`, and `from_json()`. The `compare()` return shape is provisional
+  and will be aligned with the Rust `QualityDelta` type (#310). (#316)
+- Python: `dp.profile()` accepts dict, list-of-dicts, and bytes inputs on the
+  base wheel, going straight to the Rust core via a new `profile_columns` entry
+  point rather than adapting over `pd.DataFrame`. Column order now follows the
+  input, and an integer column containing a null stays an integer instead of
+  being widened to float. (#360)
 - Python: type stubs for the compiled extension (`dataprof/_dataprof.pyi`), so
   type checkers and IDEs can resolve the native core. The public stubs now
   re-export these types instead of duplicating them.
 
 ### Changed
 
+- Python: the supported runtime floor is Python 3.10+ (3.8 and 3.9 are past
+  end-of-life). Rust MSRV is now 1.96. Project metadata, tooling, and CI exercise
+  both minimums explicitly. (#326)
 - Python: flat `DataQualityMetrics` accessors such as
   `missing_values_ratio`, `key_uniqueness`, and `outlier_ratio` now emit
   `DeprecationWarning`. Use nested dimension properties such as
   `quality.completeness`, `quality.uniqueness`, and `quality.accuracy`, which
   are `None` when a dimension was not computed. The flat accessors keep their
-  0.8-compatible values for the 0.9 line. (#326)
-- Python: the supported runtime floor is Python 3.10+. Project metadata,
-  tooling, and CI now exercise that minimum explicitly. (#326)
+  0.8-compatible values for the 0.9 line. `low_sample_warning` and
+  `overall_quality_score()` are report-level signals and are not deprecated.
+  (#326)
+- Remove `panic = "abort"` from the release profile. A panic in the Rust core
+  aborted the process and took the Python interpreter with it; panics now unwind
+  to the PyO3 boundary and surface as ordinary Python exceptions.
+
+### Fixed
+
+- Parquet/Arrow: exclude nulls from numeric column statistics. The ten numeric
+  array handlers guarded on `if let Some(value) = array.value(index).into()`, but
+  `impl<T> From<T> for Option<T>` makes that arm always taken, so the physical
+  value under a null (`0.0`) was folded into `min`, `mean`, `std_dev`, and
+  `unique_count`. This affected every nullable numeric column read through
+  Parquet, pandas, polars, or Arrow. **Statistics for such columns will change on
+  upgrade; regenerate any stored baselines.** (#358)
+- Python: `to_llm_context(include_samples=True)` fails closed when redaction
+  cannot prove safety. It previously printed raw credit-card numbers whenever
+  pattern detection had not run — any `metrics=` selection omitting the
+  `"patterns"` pack, or `fast_mode`, silently disabled the redaction gate.
+  `ColumnProfile.patterns` is now `Option<Vec<Pattern>>` end to end: `None` means
+  unscanned (samples withheld), `[]` means scanned and clean. (#355, #359)
+- Python: dict input whose columns have differing lengths raises `ValueError`
+  instead of panicking. Row-dicts with differing keys remain accepted, taking the
+  union of keys with nulls for the missing entries.
+- Bump `crossbeam-epoch` to 0.9.20 for RUSTSEC-2026-0204. (#346)
+- Bump `arrow` and `parquet` from 57.3.0 to 58.x. (#324)
 
 ### Internal
 
 - Python: adopt [ty](https://github.com/astral-sh/ty) for static type checking,
   wired into CI as an advisory (non-blocking) step while it is pre-1.0.
+- Centralize crate metadata and dependencies via `[workspace.package]` and
+  `[workspace.dependencies]`.
+- CI: smoke-install test for the Python wheel and Rust examples, as the 0.9.0
+  definition of done. (#328)
 
 ## [0.8.1] - 2026-05-31
 
