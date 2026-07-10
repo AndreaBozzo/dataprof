@@ -1083,4 +1083,26 @@ mod tests {
             other => panic!("expected Boolean stats, got {:?}", other),
         }
     }
+
+    #[test]
+    fn test_null_array_profiles_as_all_nulls() {
+        use arrow::array::NullArray;
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        let mut analyzer = ColumnAnalyzer::new(&ArrowDataType::Null);
+        analyzer
+            .process_array(&NullArray::new(5))
+            .expect("should process null array");
+
+        let profile = analyzer.to_column_profile(
+            "all_null".to_string(),
+            false,
+            false,
+            None,
+            &SemanticHints::default(),
+        );
+        assert_eq!(profile.total_count, 5);
+        assert_eq!(profile.null_count, 5);
+        assert_eq!(profile.unique_count, Some(0));
+    }
 }
