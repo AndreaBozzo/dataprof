@@ -593,7 +593,11 @@ impl AsyncStreamingProfiler {
 
         // decode-audit: impossible — `records` was checked non-empty above, and
         // an empty header row is rejected right below.
-        let headers: Vec<String> = header_chunk.records.into_iter().next().unwrap_or_default();
+        let headers: Vec<String> = header_chunk
+            .records
+            .into_iter()
+            .next()
+            .expect("non-empty header chunk has a first record");
 
         if headers.is_empty() {
             return Err(DataProfilerError::StreamingError {

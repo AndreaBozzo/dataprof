@@ -413,7 +413,7 @@ pub fn profile_dataframe(
     if truncated {
         // decode-audit: impossible — truncation only happens when max_rows was set.
         exec = exec.with_truncation(TruncationReason::MaxRows(
-            effective_max_rows.unwrap_or(0) as u64
+            effective_max_rows.expect("truncation requires a maximum row limit") as u64,
         ));
     }
 
@@ -518,7 +518,7 @@ pub fn profile_arrow(
     if truncated {
         // decode-audit: impossible — truncation only happens when max_rows was set.
         exec = exec.with_truncation(TruncationReason::MaxRows(
-            effective_max_rows.unwrap_or(0) as u64
+            effective_max_rows.expect("truncation requires a maximum row limit") as u64,
         ));
     }
 
