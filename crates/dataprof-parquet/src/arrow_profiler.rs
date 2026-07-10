@@ -295,9 +295,16 @@ impl ColumnAnalyzer {
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
         self.total_count += array.len();
-        self.null_count += array.null_count();
+        // logical_null_count, not null_count: a NullArray has no validity
+        // buffer, so the physical count reports 0 nulls for an all-null array.
+        self.null_count += array.logical_null_count();
 
         match array.data_type() {
+            arrow::datatypes::DataType::Null => {
+                // Every slot of a NullArray is null, but is_null() is false on
+                // all of them (no validity buffer), so the string fallback
+                // below would fabricate one value per null slot.
+            }
             arrow::datatypes::DataType::Float64 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
