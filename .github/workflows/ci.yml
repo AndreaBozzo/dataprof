@@ -446,4 +446,4 @@ jobs:
         run: uv run maturin develop --features "python,python-async,database,sqlite"
 
       - name: Run Python database tests
-        run: uv run pytest python/tests/test_database_api.py -v -ra
+        run: uv run pytest python/tests/test_database_api.py python/tests/test_engine_parity.py -v -ra

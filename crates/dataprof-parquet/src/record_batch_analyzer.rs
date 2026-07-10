@@ -137,9 +137,16 @@ impl ColumnAnalyzer {
 
     pub fn process_array(&mut self, array: &dyn Array) -> Result<()> {
         self.total_count += array.len();
-        self.null_count += array.null_count();
+        // logical_null_count, not null_count: a NullArray has no validity
+        // buffer, so the physical count reports 0 nulls for an all-null array.
+        self.null_count += array.logical_null_count();
 
         match array.data_type() {
+            arrow::datatypes::DataType::Null => {
+                // Every slot of a NullArray is null, but is_null() is false on
+                // all of them (no validity buffer), so the generic path below
+                // would fabricate one string value per null slot.
+            }
             arrow::datatypes::DataType::Float64 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
@@ -951,6 +958,29 @@ mod tests {
             }
             _ => panic!("Expected Numeric stats for rank column"),
         }
+    }
+
+    #[test]
+    fn test_all_null_column_profiles_as_all_nulls() {
+        // A NullArray has no validity buffer: physically null_count() is 0 and
+        // is_null() is false everywhere. Profiled naively, an all-null column
+        // reports zero nulls and one fabricated unique value.
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "all_null",
+            ArrowDataType::Null,
+            true,
+        )]));
+        let nulls = arrow::array::NullArray::new(5);
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(nulls)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let profiles = analyzer.to_profiles(false, false, None);
+
+        let col = profiles.iter().find(|p| p.name == "all_null").unwrap();
+        assert_eq!(col.total_count, 5);
+        assert_eq!(col.null_count, 5);
+        assert_eq!(col.unique_count, Some(0));
     }
 
     #[test]

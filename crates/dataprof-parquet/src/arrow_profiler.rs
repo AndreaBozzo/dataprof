@@ -295,9 +295,16 @@ impl ColumnAnalyzer {
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
         self.total_count += array.len();
-        self.null_count += array.null_count();
+        // logical_null_count, not null_count: a NullArray has no validity
+        // buffer, so the physical count reports 0 nulls for an all-null array.
+        self.null_count += array.logical_null_count();
 
         match array.data_type() {
+            arrow::datatypes::DataType::Null => {
+                // Every slot of a NullArray is null, but is_null() is false on
+                // all of them (no validity buffer), so the string fallback
+                // below would fabricate one value per null slot.
+            }
             arrow::datatypes::DataType::Float64 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
@@ -1075,5 +1082,27 @@ mod tests {
             }
             other => panic!("expected Boolean stats, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_null_array_profiles_as_all_nulls() {
+        use arrow::array::NullArray;
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        let mut analyzer = ColumnAnalyzer::new(&ArrowDataType::Null);
+        analyzer
+            .process_array(&NullArray::new(5))
+            .expect("should process null array");
+
+        let profile = analyzer.to_column_profile(
+            "all_null".to_string(),
+            false,
+            false,
+            None,
+            &SemanticHints::default(),
+        );
+        assert_eq!(profile.total_count, 5);
+        assert_eq!(profile.null_count, 5);
+        assert_eq!(profile.unique_count, Some(0));
     }
 }
