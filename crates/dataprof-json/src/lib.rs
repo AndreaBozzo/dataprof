@@ -262,8 +262,9 @@ fn json_value_to_string(value: &Value) -> String {
         Value::String(string) => string.to_string(),
         // decode-audit: impossible — serializing an in-memory Value back to a
         // string cannot fail; a panic here beats folding "" (= null) into stats.
-        Value::Array(_) | Value::Object(_) => serde_json::to_string(value)
-            .expect("re-serializing a parsed JSON value cannot fail"),
+        Value::Array(_) | Value::Object(_) => {
+            serde_json::to_string(value).expect("re-serializing a parsed JSON value cannot fail")
+        }
     }
 }
 
