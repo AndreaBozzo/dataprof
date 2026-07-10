@@ -40,15 +40,21 @@ PAGE_SHELL = """<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
-  <meta name="description" content="Criterion benchmark reports for dataprof, generated from the latest successful CI run.">
+  <meta name="description"
+        content="Criterion benchmark reports for dataprof, from the latest successful CI run.">
   <link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
   <link rel="stylesheet" href="../style.css">
   <style>
     .page-head {{ padding: 56px 0 8px; }}
-    .page-head h1 {{ font-size: clamp(1.9rem, 3.6vw, 2.7rem); margin: 12px 0 14px; font-weight: 800; }}
+    .page-head h1 {{
+      font-size: clamp(1.9rem, 3.6vw, 2.7rem); margin: 12px 0 14px; font-weight: 800;
+    }}
     .page-head p {{ color: var(--muted); font-size: 1.06rem; max-width: 72ch; margin: 0 0 20px; }}
     .page-actions {{ display: flex; flex-wrap: wrap; gap: 12px; }}
-    .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-top: 34px; }}
+    .stats {{
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 14px; margin-top: 34px;
+    }}
     .stat-card {{ padding: 18px 18px 20px; }}
     .stat-label {{ color: var(--muted); font-size: 0.86rem; font-weight: 600; }}
     .stat-value {{ margin-top: 6px; font-size: 1.7rem; font-weight: 780; letter-spacing: -0.02em; }}
@@ -58,12 +64,17 @@ PAGE_SHELL = """<!DOCTYPE html>
     .insights ul {{ margin: 0; padding-left: 1.2rem; color: var(--muted); line-height: 1.7; }}
     .groups {{ display: grid; gap: 18px; margin-top: 30px; }}
     .group-card {{ padding: 24px 26px; }}
-    .group-header {{ display: flex; justify-content: space-between; gap: 14px; align-items: start; }}
+    .group-header {{
+      display: flex; justify-content: space-between; gap: 14px; align-items: start;
+    }}
     .group-card h2 {{ margin: 8px 0; font-size: 1.4rem; }}
     .group-card h2 a {{ color: inherit; text-decoration: none; }}
     .group-card h2 a:hover {{ color: var(--accent-ink); }}
     .group-card > .group-header p {{ margin: 0; color: var(--muted); }}
-    .group-preview {{ margin-top: 16px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #fff; }}
+    .group-preview {{
+      margin-top: 16px; border-radius: 12px; overflow: hidden;
+      border: 1px solid var(--line); background: #fff;
+    }}
     .group-preview img {{ display: block; width: 100%; height: auto; }}
     .bench-table {{ overflow-x: auto; margin-top: 14px; }}
     .bench-table table {{ min-width: 480px; }}
@@ -99,7 +110,8 @@ PAGE_SHELL = """<!DOCTYPE html>
     <span class="spacer"></span>
     <a href="../">Home</a>
     <a href="https://github.com/AndreaBozzo/dataprof">GitHub</a>
-    <a href="https://github.com/AndreaBozzo/dataprof/actions/workflows/benchmarks.yml">Benchmark CI runs</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/actions/workflows/benchmarks.yml">
+      Benchmark CI runs</a>
   </div>
 </footer>
 
@@ -117,7 +129,8 @@ PLACEHOLDER_BODY = """
   <div class="card empty-card">
     <span class="eyebrow">Nothing here yet</span>
     <p>Benchmarks run on every push that touches the Rust crates. You can trigger or inspect runs
-      in the <a href="https://github.com/AndreaBozzo/dataprof/actions/workflows/benchmarks.yml">Benchmarks workflow</a>.</p>
+      in the <a href="https://github.com/AndreaBozzo/dataprof/actions/workflows/benchmarks.yml">
+      Benchmarks workflow</a>.</p>
   </div>
 """
 
@@ -286,19 +299,24 @@ def build_observations(grouped: dict[str, list[dict]]) -> list[str]:
             / medium_parse["throughput_mib_s"]
         )
         observations.append(
-            f"throughput_metrics is currently within {delta * 100:.1f}% of csv_parsing/parse/medium "
-            "on the same dataset size, so it adds confidence more than distinct coverage right now."
+            f"throughput_metrics is currently within {delta * 100:.1f}% of "
+            "csv_parsing/parse/medium on the same dataset size, so it adds confidence "
+            "more than distinct coverage right now."
         )
     return observations
 
 
-def render_index(pages: Path, benchmarks: list[dict], groups: list[dict], observations: list[str]) -> str:
+def render_index(
+    pages: Path, benchmarks: list[dict], groups: list[dict], observations: list[str]
+) -> str:
     fastest = max(
         (item for item in benchmarks if item["throughput_mib_s"] is not None),
         key=lambda item: item["throughput_mib_s"],
         default=None,
     )
     slowest = max(benchmarks, key=lambda item: item["mean_ms"])
+    fastest_value = fmt_throughput(fastest["throughput_mib_s"]) if fastest else "n/a"
+    fastest_label = html.escape(fastest["title"]) if fastest else "No throughput data"
 
     group_cards = []
     for group in groups:
@@ -308,34 +326,35 @@ def render_index(pages: Path, benchmarks: list[dict], groups: list[dict], observ
             label = " / ".join(label_bits) if label_bits else item["title"]
             rows.append(
                 f"""<tr>
-                  <td><a href="{item['report']}">{html.escape(label)}</a></td>
-                  <td>{fmt_time(item['mean_ms'])}</td>
-                  <td>{fmt_throughput(item['throughput_mib_s'])}</td>
+                  <td><a href="{item["report"]}">{html.escape(label)}</a></td>
+                  <td>{fmt_time(item["mean_ms"])}</td>
+                  <td>{fmt_throughput(item["throughput_mib_s"])}</td>
                 </tr>"""
             )
 
         preview = ""
         if group["preview"]:
             preview = f"""<div class="group-preview">
-              <a href="{group['report']}"><img src="{group['preview']}" alt="{html.escape(group['label'])} preview" loading="lazy"></a>
+              <a href="{group["report"]}"><img src="{group["preview"]}"
+                alt="{html.escape(group["label"])} preview" loading="lazy"></a>
             </div>"""
 
         count = len(group["benchmarks"])
         group_cards.append(
-            f"""<article class="card group-card" id="{group['name']}">
+            f"""<article class="card group-card" id="{group["name"]}">
               <div class="group-header">
                 <div>
                   <span class="eyebrow">Benchmark group</span>
-                  <h2><a href="{group['report']}">{html.escape(group['label'])}</a></h2>
-                  <p>{html.escape(group['description'])}</p>
+                  <h2><a href="{group["report"]}">{html.escape(group["label"])}</a></h2>
+                  <p>{html.escape(group["description"])}</p>
                 </div>
-                <span class="pill">{count} benchmark{'s' if count != 1 else ''}</span>
+                <span class="pill">{count} benchmark{"s" if count != 1 else ""}</span>
               </div>
               {preview}
               <div class="bench-table">
                 <table>
                   <thead><tr><th>Benchmark</th><th>Mean</th><th>Throughput</th></tr></thead>
-                  <tbody>{''.join(rows)}</tbody>
+                  <tbody>{"".join(rows)}</tbody>
                 </table>
               </div>
             </article>"""
@@ -347,7 +366,9 @@ def render_index(pages: Path, benchmarks: list[dict], groups: list[dict], observ
 
     full_index_link = ""
     if (pages / "report" / "index.html").exists():
-        full_index_link = '<a class="btn btn-primary" href="report/index.html">Open full Criterion index</a>'
+        full_index_link = (
+            '<a class="btn btn-primary" href="report/index.html">Open full Criterion index</a>'
+        )
 
     body = f"""
   <section class="page-head">
@@ -363,10 +384,26 @@ def render_index(pages: Path, benchmarks: list[dict], groups: list[dict], observ
   </section>
 
   <section class="stats">
-    <article class="card stat-card"><div class="stat-label">Benchmark groups</div><div class="stat-value">{len(groups)}</div><div class="stat-subtle">Top-level Criterion sections published</div></article>
-    <article class="card stat-card"><div class="stat-label">Benchmarks in this run</div><div class="stat-value">{len(benchmarks)}</div><div class="stat-subtle">Function/input combinations with live estimates</div></article>
-    <article class="card stat-card"><div class="stat-label">Fastest throughput</div><div class="stat-value">{fmt_throughput(fastest['throughput_mib_s']) if fastest else 'n/a'}</div><div class="stat-subtle">{html.escape(fastest['title']) if fastest else 'No throughput data'}</div></article>
-    <article class="card stat-card"><div class="stat-label">Slowest mean time</div><div class="stat-value">{fmt_time(slowest['mean_ms'])}</div><div class="stat-subtle">{html.escape(slowest['title'])}</div></article>
+    <article class="card stat-card">
+      <div class="stat-label">Benchmark groups</div>
+      <div class="stat-value">{len(groups)}</div>
+      <div class="stat-subtle">Top-level Criterion sections published</div>
+    </article>
+    <article class="card stat-card">
+      <div class="stat-label">Benchmarks in this run</div>
+      <div class="stat-value">{len(benchmarks)}</div>
+      <div class="stat-subtle">Function/input combinations with live estimates</div>
+    </article>
+    <article class="card stat-card">
+      <div class="stat-label">Fastest throughput</div>
+      <div class="stat-value">{fastest_value}</div>
+      <div class="stat-subtle">{fastest_label}</div>
+    </article>
+    <article class="card stat-card">
+      <div class="stat-label">Slowest mean time</div>
+      <div class="stat-value">{fmt_time(slowest["mean_ms"])}</div>
+      <div class="stat-subtle">{html.escape(slowest["title"])}</div>
+    </article>
   </section>
 
   <section class="card insights">
@@ -374,7 +411,7 @@ def render_index(pages: Path, benchmarks: list[dict], groups: list[dict], observ
     <ul>{observation_items}</ul>
   </section>
 
-  <section class="groups">{''.join(group_cards)}</section>
+  <section class="groups">{"".join(group_cards)}</section>
 """
     return PAGE_SHELL.format(title="dataprof benchmarks", body=body)
 
