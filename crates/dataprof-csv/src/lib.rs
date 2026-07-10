@@ -129,6 +129,8 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
             total_fields += count;
         }
 
+        // decode-audit: no-data — an empty sample scores 0 consistency for this
+        // delimiter candidate; nothing is fabricated.
         let consistency = counts.values().max().copied().unwrap_or(0);
         let avg_fields = total_fields.checked_div(sample_lines).unwrap_or(0);
 

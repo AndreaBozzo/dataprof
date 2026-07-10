@@ -10,6 +10,8 @@ pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
 
 /// Compute numeric stats and return the inner struct directly.
 pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
+    // decode-audit: no-data — cells that do not parse are non-numeric values
+    // (nulls, tokens like "N/A"), excluded from numeric stats by design.
     let numbers: Vec<f64> = data
         .iter()
         .filter_map(|s| s.parse::<f64>().ok())
@@ -202,6 +204,8 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
     }
 
     // Find all values with maximum frequency and return the smallest (deterministic)
+    // decode-audit: no-data — non-numeric tokens are excluded from the mode by
+    // design, same as the main numeric pass above.
     let mut modes: Vec<f64> = freq_map
         .iter()
         .filter(|(_, count)| **count == max_freq)

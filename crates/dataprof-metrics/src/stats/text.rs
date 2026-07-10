@@ -18,6 +18,8 @@ pub fn compute_text_stats(data: &[String]) -> TextStats {
 
     // Existing length calculations
     let lengths: Vec<usize> = non_empty.iter().map(|s| s.len()).collect();
+    // decode-audit: impossible — non_empty was checked non-empty above, so
+    // lengths always has a min and max.
     let min_length = lengths.iter().min().copied().unwrap_or(0);
     let max_length = lengths.iter().max().copied().unwrap_or(0);
     let avg_length = if lengths.is_empty() {

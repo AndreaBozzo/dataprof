@@ -260,7 +260,10 @@ fn json_value_to_string(value: &Value) -> String {
         Value::Bool(boolean) => boolean.to_string(),
         Value::Number(number) => number.to_string(),
         Value::String(string) => string.to_string(),
-        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+        // decode-audit: impossible — serializing an in-memory Value back to a
+        // string cannot fail; a panic here beats folding "" (= null) into stats.
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value)
+            .expect("re-serializing a parsed JSON value cannot fail"),
     }
 }
 
@@ -280,6 +283,8 @@ fn feed_json_object(
     let values: Vec<String> = known_columns
         .iter()
         .map(|column| {
+            // decode-audit: no-data — a key absent from this object is a
+            // missing field, and "" is the profiler's textual null.
             obj.get(column)
                 .map(json_value_to_string)
                 .unwrap_or_default()

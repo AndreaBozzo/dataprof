@@ -61,6 +61,8 @@ pub fn apply_sampling_if_needed(
         return Ok((columns, false));
     }
 
+    // decode-audit: no-data — an empty column map has zero rows; the sampling
+    // below then returns an empty result rather than fabricating data.
     let total_rows = columns.values().next().map(|v| v.len()).unwrap_or(0);
     let target_rows = (total_rows as f64 * sampling_ratio) as usize;
 
