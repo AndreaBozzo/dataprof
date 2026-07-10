@@ -892,6 +892,7 @@ class TestPartialAnalysis:
         assert age.data_type == "integer"
         assert age.total_count == 3
         assert age.null_count == 1
+        assert age.null_ratio is not None
         assert abs(age.null_ratio - (1 / 3)) < 0.001
         assert age.unique_count is not None
         assert age.uniqueness_ratio is not None
@@ -1121,7 +1122,9 @@ class TestNamespace:
         if dataprof._HAS_DATABASE:
             pytest.skip("built with database support; stubs not installed")
         with pytest.raises(ImportError, match="requires database support"):
-            dataprof.test_connection_async("sqlite:x.db")
+            # The ImportError stub raises at call time, before any coroutine
+            # exists; .close() only runs (and is a no-op) on a real build.
+            dataprof.test_connection_async("sqlite:x.db").close()
 
     def test_asyncio_discoverable(self):
         assert hasattr(dataprof, "asyncio")

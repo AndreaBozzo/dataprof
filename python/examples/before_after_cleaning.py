@@ -64,14 +64,18 @@ def main() -> None:
         before = dp.ProfileReport.load(str(baseline))
         after = profile(clean_path)
 
+        before_score = before.quality_score
+        after_score = after.quality_score
+        assert before_score is not None and after_score is not None
+
         print("## Cleaning summary\n")
         print("| | rows | quality |")
         print("|---|---:|---:|")
-        print(f"| before | {before.rows} | {before.quality_score:.1f} |")
-        print(f"| after | {after.rows} | {after.quality_score:.1f} |")
+        print(f"| before | {before.rows} | {before_score:.1f} |")
+        print(f"| after | {after.rows} | {after_score:.1f} |")
 
         dropped = before.rows - after.rows
-        gained = after.quality_score - before.quality_score
+        gained = after_score - before_score
         print(f"\n{dropped} row(s) dropped, {gained:+.1f} quality points\n")
 
         # `compare()` does the diffing for you: quality, schema, and per-column
@@ -101,12 +105,14 @@ def main() -> None:
         print("\n## Did the defects go away?\n")
         columns = after.column_profiles
         signup_id = columns["signup_id"]
+        quality = after.quality
+        assert quality is not None and quality.accuracy is not None
         checks = {
             "duplicate signup_id": (
                 signup_id.unique_count is not None
                 and signup_id.unique_count < signup_id.total_count - signup_id.null_count
             ),
-            "negative monthly_eur": after.quality.accuracy["negative_values_in_positive"] > 0,
+            "negative monthly_eur": quality.accuracy["negative_values_in_positive"] > 0,
             "missing email": columns["email"].null_count > 0,
         }
         for defect, still_present in checks.items():

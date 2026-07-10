@@ -94,7 +94,9 @@ def main() -> None:
         # A low completeness score is easy to misread. It scores *complete records*
         # -- rows with no null anywhere -- not the share of populated cells. Two
         # sparse columns are enough to make almost every row incomplete.
-        completeness = report.quality.completeness
+        quality = report.quality
+        assert quality is not None and quality.completeness is not None
+        completeness = quality.completeness
         print(
             f"\n  {completeness['complete_records_ratio']:.0f}% of rows are fully populated, "
             f"but only {completeness['missing_values_ratio']:.0f}% of cells are missing"

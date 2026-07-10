@@ -242,6 +242,17 @@ async def count_table_rows_async(connection_string: str, table_name: str) -> int
 async def get_table_schema_async(connection_string: str, table_name: str) -> list[str]: ...
 async def test_connection_async(connection_string: str) -> bool: ...
 
+# --- Internals ---
+#
+# Private, but part of the runtime module surface and exercised by the test
+# suite: _HAS_DATABASE records whether the database helpers are real or the
+# ImportError stubs, and _estimate_tokens is the budget model behind
+# ProfileReport.to_llm_context().
+
+_HAS_DATABASE: bool
+
+def _estimate_tokens(text: str) -> int: ...
+
 # --- Exports ---
 
 __all__ = [

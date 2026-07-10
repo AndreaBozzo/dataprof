@@ -60,7 +60,8 @@ def violations(report: dp.ProfileReport) -> list[str]:
         if required not in columns:
             reasons.append(f"missing required column `{required}`")
 
-    if report.quality_score is None:
+    quality = report.quality
+    if report.quality_score is None or quality is None or quality.completeness is None:
         return [*reasons, "quality assessment was skipped"]
 
     if report.quality_score < MIN_QUALITY_SCORE:
@@ -69,7 +70,7 @@ def violations(report: dp.ProfileReport) -> list[str]:
             f"the {MIN_QUALITY_SCORE:.1f} threshold"
         )
 
-    completeness = report.quality.completeness
+    completeness = quality.completeness
     # `missing_values_ratio` is reported as a percentage, not a 0..1 fraction.
     if completeness["missing_values_ratio"] > MAX_MISSING_PERCENTAGE:
         reasons.append(
@@ -93,7 +94,8 @@ def violations(report: dp.ProfileReport) -> list[str]:
         if key.null_count:
             reasons.append(f"key `{KEY_COLUMN}` has {key.null_count} null value(s)")
 
-    negatives = report.quality.accuracy["negative_values_in_positive"]
+    accuracy = quality.accuracy or {}
+    negatives = accuracy.get("negative_values_in_positive")
     if negatives:
         reasons.append(f"{negatives} negative value(s) in {POSITIVE_COLUMNS}")
 
