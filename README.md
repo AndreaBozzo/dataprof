@@ -10,6 +10,8 @@
   [![PyPI](https://img.shields.io/pypi/v/dataprof.svg)](https://pypi.org/project/dataprof/)
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
+  [Website](https://andreabozzo.github.io/dataprof/) · [Live benchmarks](https://andreabozzo.github.io/dataprof/benchmarks/) · [Getting started](docs/guides/getting-started.md)
+
 </div>
 
 ---

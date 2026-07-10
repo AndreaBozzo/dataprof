@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dataprof — high-performance data profiling for Rust and Python</title>
+  <meta name="description" content="dataprof profiles tabular data at Rust speed: column statistics, type and pattern detection, and ISO 8000/25012 quality scoring with bounded memory — from Python or Rust.">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
+  <link rel="stylesheet" href="style.css">
+  <meta property="og:title" content="dataprof — high-performance data profiling">
+  <meta property="og:description" content="Column statistics, type detection, and ISO 8000/25012 quality scoring with bounded memory. Rust crate and Python package.">
+  <meta property="og:image" content="https://andreabozzo.github.io/dataprof/assets/og-image.jpg">
+  <meta property="og:url" content="https://andreabozzo.github.io/dataprof/">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <style>
+    /* ---- hero ---- */
+    .hero { padding: 72px 0 24px; }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+      gap: 48px;
+      align-items: center;
+    }
+    .hero h1 {
+      font-size: clamp(2.2rem, 4.6vw, 3.4rem);
+      margin: 14px 0 18px;
+      font-weight: 800;
+    }
+    .hero h1 em {
+      font-style: normal;
+      color: var(--accent-ink);
+    }
+    .hero-sub { color: var(--muted); font-size: 1.12rem; max-width: 56ch; margin: 0 0 26px; }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
+    .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
+    .hero-meta .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--rust); display: inline-block; }
+
+    /* terminal card */
+    .terminal {
+      background: var(--terminal-bg);
+      color: var(--terminal-ink);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      overflow: hidden;
+      font-size: 0.86rem;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      color: #8b9cab;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .terminal-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; opacity: 0.85; }
+    .terminal pre { margin: 0; padding: 18px 20px 22px; overflow-x: auto; line-height: 1.62; }
+    .t-cm { color: #64788c; }
+    .t-kw { color: #7fb5e0; }
+    .t-str { color: #d9a06c; }
+    .t-fn { color: #8fd0b8; }
+    .t-out { color: #93a8ba; }
+    .t-num { color: #d8b06c; }
+
+    /* ---- sections ---- */
+    section.block { padding: 64px 0 0; }
+    .section-head { max-width: 68ch; margin-bottom: 34px; }
+    .section-head h2 { font-size: clamp(1.6rem, 3vw, 2.1rem); margin: 10px 0 12px; font-weight: 750; }
+    .section-head p { color: var(--muted); margin: 0; font-size: 1.05rem; }
+
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .qa-card { padding: 22px 24px; }
+    .qa-card h3 { font-size: 1.04rem; margin-bottom: 8px; }
+    .qa-card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+    /* quickstart */
+    .tabs { display: flex; gap: 6px; margin-bottom: -1px; position: relative; z-index: 1; }
+    .tab {
+      border: 1px solid var(--line);
+      border-bottom: none;
+      background: color-mix(in srgb, var(--bg-raised) 55%, var(--bg));
+      color: var(--muted);
+      font: inherit;
+      font-weight: 700;
+      font-size: 0.93rem;
+      padding: 10px 20px;
+      border-radius: 11px 11px 0 0;
+      cursor: pointer;
+    }
+    .tab[aria-selected="true"] { background: var(--bg-raised); color: var(--ink); }
+    .quickstart-panel { border-top-left-radius: 0; padding: 26px 28px 28px; }
+    .quickstart-panel[hidden] { display: none; }
+    .install-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--terminal-bg);
+      color: var(--terminal-ink);
+      border-radius: 10px;
+      padding: 4px 6px 4px 16px;
+      margin: 0 0 18px;
+      max-width: 560px;
+    }
+    .install-row code { flex: 1; overflow-x: auto; white-space: nowrap; padding: 8px 0; font-size: 0.9rem; }
+    .copy-btn {
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.06);
+      color: #b9c8d6;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .copy-btn:hover { color: #fff; border-color: rgba(255,255,255,0.4); }
+    .quickstart-panel pre {
+      margin: 0;
+      background: var(--terminal-bg);
+      color: var(--terminal-ink);
+      border-radius: 10px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      font-size: 0.87rem;
+      line-height: 1.6;
+    }
+    .quickstart-panel .note { color: var(--muted); font-size: 0.9rem; margin: 14px 0 0; }
+    .quickstart-panel .note a { font-weight: 600; }
+
+    /* features */
+    .feature-card { padding: 22px 24px; }
+    .feature-card .glyph {
+      width: 38px; height: 38px;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      background: color-mix(in srgb, var(--accent) 13%, transparent);
+      color: var(--accent-ink);
+      margin-bottom: 14px;
+    }
+    .feature-card .glyph svg { width: 20px; height: 20px; }
+    .feature-card h3 { font-size: 1.02rem; margin-bottom: 7px; }
+    .feature-card p { margin: 0; color: var(--muted); font-size: 0.94rem; }
+
+    /* quality dimensions */
+    .dims { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+    .dim { padding: 20px 20px 22px; border-top: 3px solid var(--accent); }
+    .dim:nth-child(even) { border-top-color: var(--rust); }
+    .dim h3 { font-size: 1rem; margin-bottom: 7px; }
+    .dim p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .dims-note { color: var(--muted); font-size: 0.95rem; margin: 18px 0 0; max-width: 72ch; }
+
+    /* formats */
+    .formats-card { padding: 8px 24px 14px; overflow-x: auto; }
+    .formats-card table { min-width: 560px; }
+
+    /* benchmarks band */
+    .bench-band {
+      margin-top: 72px;
+      padding: 44px 40px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) auto;
+      gap: 28px;
+      align-items: center;
+      background:
+        radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 42%),
+        radial-gradient(circle at 88% 100%, color-mix(in srgb, var(--rust) 13%, transparent), transparent 40%),
+        var(--bg-raised);
+    }
+    .bench-band h2 { font-size: 1.7rem; margin: 10px 0 10px; }
+    .bench-band p { margin: 0; color: var(--muted); max-width: 60ch; }
+
+    /* research */
+    .paper-card { padding: 28px 30px; }
+    .paper-card blockquote {
+      margin: 14px 0 16px;
+      padding-left: 18px;
+      border-left: 3px solid var(--rust);
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+    .paper-card details { margin-top: 14px; }
+    .paper-card summary { cursor: pointer; font-weight: 650; color: var(--accent-ink); }
+    .paper-card pre {
+      background: var(--terminal-bg);
+      color: var(--terminal-ink);
+      border-radius: 10px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-size: 0.84rem;
+      margin: 12px 0 0;
+    }
+
+    @media (max-width: 900px) {
+      .hero { padding-top: 48px; }
+      .hero-grid { grid-template-columns: 1fr; gap: 34px; }
+      .bench-band { grid-template-columns: 1fr; padding: 32px 26px; }
+      .site-nav a:not(.nav-cta) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="assets/logo-mark.png" alt="" width="30" height="30">
+      dataprof
+    </a>
+    <nav class="site-nav" aria-label="Site">
+      <a href="#answers">Why</a>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#quality">Quality model</a>
+      <a href="#research">Research</a>
+      <a href="benchmarks/">Benchmarks</a>
+      <a class="nav-cta" href="https://github.com/AndreaBozzo/dataprof">GitHub&nbsp;&rarr;</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero wrap">
+    <div class="hero-grid">
+      <div>
+        <span class="eyebrow">Rust core &middot; Python native &middot; ISO 8000/25012</span>
+        <h1>Know your data <em>before</em> it bites.</h1>
+        <p class="hero-sub">
+          dataprof profiles tabular data at Rust speed: column statistics, type and pattern
+          detection, and standards-based quality scoring &mdash; with bounded memory, so datasets
+          far larger than RAM are fair game.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#quickstart">Start in 30 seconds</a>
+          <a class="btn btn-ghost" href="benchmarks/">Live benchmarks</a>
+        </div>
+        <div class="hero-meta">
+          <span><i class="dot"></i><a href="https://crates.io/crates/dataprof">crates.io</a></span>
+          <span><i class="dot"></i><a href="https://pypi.org/project/dataprof/">PyPI</a></span>
+          <span><i class="dot"></i><a href="https://docs.rs/dataprof">docs.rs</a></span>
+          <span><i class="dot"></i>MIT or Apache-2.0</span>
+        </div>
+      </div>
+      <div class="terminal" aria-label="Python example">
+        <div class="terminal-bar">
+          <i style="background:#e0794c"></i><i style="background:#d8b06c"></i><i style="background:#8fd0b8"></i>
+          <span style="margin-left:6px">python</span>
+        </div>
+        <pre><code><span class="t-kw">import</span> dataprof <span class="t-kw">as</span> dp
+
+report = dp.<span class="t-fn">profile</span>(<span class="t-str">"orders.csv"</span>)
+
+report.rows, report.columns
+<span class="t-out">(1_048_576, 14)</span>
+
+report.quality_score
+<span class="t-out">87.4</span>  <span class="t-cm"># 0&ndash;100 across five ISO dimensions</span>
+
+age = report[<span class="t-str">"customer_age"</span>]
+age.data_type, age.null_percentage
+<span class="t-out">('integer', 2.31)</span>
+
+<span class="t-cm"># token-bounded summary for an agent, PII never echoed</span>
+<span class="t-fn">print</span>(report.<span class="t-fn">to_llm_context</span>(max_tokens=<span class="t-num">500</span>))</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="answers" class="block wrap">
+    <div class="section-head">
+      <span class="eyebrow">The first ten minutes</span>
+      <h2>Built for the questions you ask unfamiliar data</h2>
+      <p>Find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious
+        values before they turn into pipeline bugs.</p>
+    </div>
+    <div class="card-grid">
+      <article class="card qa-card">
+        <h3>Which columns are thin, empty, or structurally broken?</h3>
+        <p>Null counts, completeness metrics, and schema shape in one pass.</p>
+      </article>
+      <article class="card qa-card">
+        <h3>Did this feed drift or spike somewhere suspicious?</h3>
+        <p>Numeric summaries, outlier signals, and range checks.</p>
+      </article>
+      <article class="card qa-card">
+        <h3>Are these IDs really unique, or just pretending to be keys?</h3>
+        <p>Distinct counts, uniqueness ratios, and duplicate warnings.</p>
+      </article>
+      <article class="card qa-card">
+        <h3>Are my timestamps plausible and fresh?</h3>
+        <p>Future-date detection, stale-data signals, and timeliness scoring.</p>
+      </article>
+      <article class="card qa-card">
+        <h3>Did parsing silently go wrong?</h3>
+        <p>Type inference, pattern matches, format violations, and source metadata.</p>
+      </article>
+      <article class="card qa-card">
+        <h3>What changed since yesterday?</h3>
+        <p>Save a baseline report and diff it against today&rsquo;s data, column by column.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="quickstart" class="block wrap">
+    <div class="section-head">
+      <span class="eyebrow">Quickstart</span>
+      <h2>Two polished entry points</h2>
+      <p>A Python package that feels natural in notebooks, and a compact Rust facade for
+        services, ETL jobs, and batch tools.</p>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Language">
+      <button class="tab" role="tab" id="tab-python" aria-selected="true" aria-controls="panel-python">Python</button>
+      <button class="tab" role="tab" id="tab-rust" aria-selected="false" aria-controls="panel-rust">Rust</button>
+    </div>
+
+    <div class="card quickstart-panel" id="panel-python" role="tabpanel" aria-labelledby="tab-python">
+      <div class="install-row">
+        <code id="install-python">uv pip install dataprof</code>
+        <button class="copy-btn" data-copy="install-python">Copy</button>
+      </div>
+      <pre><code><span class="t-kw">import</span> dataprof <span class="t-kw">as</span> dp
+
+report = dp.<span class="t-fn">profile</span>(<span class="t-str">"data.csv"</span>)          <span class="t-cm"># files, dicts, bytes, DataFrames, Arrow</span>
+<span class="t-fn">print</span>(report.<span class="t-fn">quality_summary</span>())        <span class="t-cm"># per-dimension ISO scores</span>
+
+report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>)             <span class="t-cm"># full report, reloadable</span>
+<span class="t-fn">print</span>(report.<span class="t-fn">to_markdown</span>())            <span class="t-cm"># a table for a PR comment</span>
+
+before = dp.ProfileReport.<span class="t-fn">load</span>(<span class="t-str">"report.json"</span>)
+delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</span>(<span class="t-str">"data_clean.csv"</span>))</code></pre>
+      <p class="note">Python 3.10+. Pre-built wheels have <strong>zero Python dependencies</strong> &mdash;
+        pandas is optional, only for DataFrame-typed exports.
+        See the <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/python/README.md">Python API guide</a>.</p>
+    </div>
+
+    <div class="card quickstart-panel" id="panel-rust" role="tabpanel" aria-labelledby="tab-rust" hidden>
+      <div class="install-row">
+        <code id="install-rust">cargo add dataprof</code>
+        <button class="copy-btn" data-copy="install-rust">Copy</button>
+      </div>
+      <pre><code><span class="t-kw">use</span> dataprof::Profiler;
+
+<span class="t-kw">let</span> report = Profiler::<span class="t-fn">new</span>().<span class="t-fn">analyze_file</span>(<span class="t-str">"data.csv"</span>)?;
+<span class="t-fn">println!</span>(<span class="t-str">"Rows: {}"</span>, report.execution.rows_processed);
+<span class="t-fn">println!</span>(<span class="t-str">"Quality: {:.1}%"</span>, report.<span class="t-fn">quality_score</span>().<span class="t-fn">unwrap_or</span>(<span class="t-num">0.0</span>));
+
+<span class="t-kw">for</span> col <span class="t-kw">in</span> &amp;report.column_profiles {
+    <span class="t-fn">println!</span>(<span class="t-str">"{} {:?} nulls={}"</span>, col.name, col.data_type, col.null_count);
+}</code></pre>
+      <p class="note">MSRV 1.96. Feature flags cover Arrow, Parquet, async streaming, and
+        PostgreSQL / MySQL / SQLite connectors &mdash; or go lean with
+        <code>default-features = false</code>.
+        See <a href="https://docs.rs/dataprof">docs.rs</a>.</p>
+    </div>
+  </section>
+
+  <section class="block wrap">
+    <div class="section-head">
+      <span class="eyebrow">Why it feels modern</span>
+      <h2>Fast by construction, honest about memory</h2>
+    </div>
+    <div class="card-grid">
+      <article class="card feature-card">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+        <h3>Fast first-pass signal</h3>
+        <p>Surface null pockets, type drift, duplicate keys, and outliers quickly &mdash; before you commit to a full analysis.</p>
+      </article>
+      <article class="card feature-card">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-9 4 18 3-9h6"/></svg></div>
+        <h3>True streaming</h3>
+        <p>Bounded-memory profiling with online algorithms. Files bigger than RAM are a normal Tuesday.</p>
+      </article>
+      <article class="card feature-card">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+        <h3>Multi-format by default</h3>
+        <p>CSV, JSON, JSONL, Parquet, live databases, DataFrames, and Arrow batches &mdash; one tool across all of them.</p>
+      </article>
+      <article class="card feature-card">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/></svg></div>
+        <h3>Two polished entry points</h3>
+        <p>A compact Rust facade and a Python package that feels native in notebooks, scripts, and data apps.</p>
+      </article>
+      <article class="card feature-card">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <h3>Async-ready</h3>
+        <p>Rust async APIs and opt-in Python builds cover stream pipelines, services, and remote Parquet sources.</p>
+      </article>
+      <article class="card feature-card">
+        <div class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><path d="M12 3l7 4v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V7l7-4z"/></svg></div>
+        <h3>Agent-safe summaries</h3>
+        <p>Token-bounded LLM context with sensitive values never echoed &mdash; profiling that plugs into agent workflows.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="quality" class="block wrap">
+    <div class="section-head">
+      <span class="eyebrow">ISO 8000-8 &middot; ISO/IEC 25012</span>
+      <h2>A quality model you can point an auditor at</h2>
+      <p>Every profile scores data against the five dimensions defined by the international
+        data-quality standards, weighted into a single 0&ndash;100 score.</p>
+    </div>
+    <div class="dims">
+      <article class="card dim">
+        <h3>Completeness</h3>
+        <p>Missing-cell percentage, share of fully-populated rows, columns past the null threshold.</p>
+      </article>
+      <article class="card dim">
+        <h3>Consistency</h3>
+        <p>Data type consistency, format violations, encoding issues.</p>
+      </article>
+      <article class="card dim">
+        <h3>Uniqueness</h3>
+        <p>Duplicate rows, key uniqueness, high-cardinality warnings.</p>
+      </article>
+      <article class="card dim">
+        <h3>Accuracy</h3>
+        <p>Outlier ratio, range violations, negatives in positive-only columns.</p>
+      </article>
+      <article class="card dim">
+        <h3>Timeliness</h3>
+        <p>Future dates, stale-data ratio, temporal ordering violations.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="block wrap">
+    <div class="section-head">
+      <span class="eyebrow">Supported inputs</span>
+      <h2>Meet your data where it lives</h2>
+    </div>
+    <div class="card formats-card">
+      <table>
+        <thead>
+          <tr><th>Format</th><th>Engine</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>CSV</td><td>Incremental, Columnar</td><td>Auto-detects <code>,</code> <code>;</code> <code>|</code> <code>\t</code> delimiters</td></tr>
+          <tr><td>JSON / JSONL</td><td>Incremental</td><td>Array-of-objects or one object per line</td></tr>
+          <tr><td>Parquet</td><td>Columnar</td><td>Schema and counts from metadata, no row scan needed</td></tr>
+          <tr><td>Database query</td><td>Async</td><td>PostgreSQL, MySQL, SQLite via connection string</td></tr>
+          <tr><td>pandas / polars DataFrame</td><td>Columnar</td><td>Python API</td></tr>
+          <tr><td>Arrow RecordBatch</td><td>Columnar</td><td>Zero-copy via PyCapsule, or the Rust API</td></tr>
+          <tr><td>dict / bytes / BytesIO</td><td>Columnar</td><td>Python API, no dependencies</td></tr>
+          <tr><td>Async byte stream</td><td>Incremental</td><td>Any <code>AsyncRead</code> source (HTTP, WebSocket, &hellip;)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="card bench-band">
+      <div>
+        <span class="eyebrow">Measured, not promised</span>
+        <h2>Every change is benchmarked in CI</h2>
+        <p>Criterion runs on each push to <code>master</code>, and the full reports &mdash;
+          throughput, scaling behavior, end-to-end pipeline timings &mdash; are published here,
+          generated straight from the run&rsquo;s artifacts.</p>
+      </div>
+      <a class="btn btn-primary" href="benchmarks/">Browse benchmark reports</a>
+    </div>
+  </section>
+
+  <section id="research" class="block wrap">
+    <div class="section-head">
+      <span class="eyebrow">Academic work</span>
+      <h2>Peer-reviewed performance claims</h2>
+    </div>
+    <div class="card paper-card">
+      <p>dataprof is the subject of a paper submitted to <strong>IEEE ScalCom 2026</strong>,
+        benchmarking it against YData Profiling, Polars, and pandas across execution efficiency,
+        memory scalability, energy consumption, and zero-copy interoperability in constrained
+        Edge AI environments.</p>
+      <blockquote>
+        A. Bozzo, &ldquo;A Compiled Paradigm for Scalable and Sustainable Edge AI: Out-of-Core
+        Execution and SIMD Acceleration in Telemetry Profiling,&rdquo;
+        <em>IEEE ScalCom 2026</em> (under review).
+      </blockquote>
+      <p><a href="https://github.com/AndreaBozzo/scalcom2026-dataprof">Repository &amp; reproducible benchmarks &rarr;</a></p>
+      <details>
+        <summary>BibTeX</summary>
+        <pre><code>@inproceedings{bozzo2026compiled,
+  author={Bozzo, Andrea},
+  title={A Compiled Paradigm for Scalable and Sustainable Edge AI:
+         Out-of-Core Execution and SIMD Acceleration in Telemetry Profiling},
+  booktitle={2026 IEEE International Conference on Scalable Computing
+             and Communications (ScalCom)},
+  year={2026},
+  note={Under review}
+}</code></pre>
+      </details>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <span>dataprof &mdash; dual-licensed MIT or Apache-2.0</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/AndreaBozzo/dataprof">GitHub</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/getting-started.md">Getting started</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md">Contributing</a>
+    <a href="benchmarks/">Benchmarks</a>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (t) {
+        var selected = t === tab;
+        t.setAttribute('aria-selected', selected ? 'true' : 'false');
+        document.getElementById(t.getAttribute('aria-controls')).hidden = !selected;
+      });
+    });
+  });
+
+  document.querySelectorAll('.copy-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var text = document.getElementById(btn.dataset.copy).textContent;
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+      });
+    });
+  });
+</script>
+
+</body>
+</html>

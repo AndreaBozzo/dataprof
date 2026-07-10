@@ -1,0 +1,103 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+      - '.github/scripts/build_benchmark_pages.py'
+      - '.github/workflows/deploy-pages.yml'
+
+  workflow_run:
+    workflows: ["Benchmarks"]
+    types: [completed]
+    branches: [master]
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy site
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.3
+
+      - name: Resolve benchmark run
+        id: bench-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            run_id="${{ github.event.workflow_run.id }}"
+          else
+            # Site-only deploys reuse the newest successful benchmark run on master.
+            run_id="$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow benchmarks.yml \
+              --branch master \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')"
+          fi
+
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "Using benchmark run: ${run_id:-none found}"
+
+      - name: Download benchmark artifacts
+        id: bench-artifact
+        if: steps.bench-run.outputs.run_id != ''
+        continue-on-error: true # the artifact may have expired; the site still deploys
+        uses: actions/download-artifact@v8
+        with:
+          name: benchmark-results
+          path: benchmark-reports
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.bench-run.outputs.run_id }}
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+
+          mkdir -p pages-content
+          cp -r site/. pages-content/
+
+          if [ -d "benchmark-reports/target/criterion" ]; then
+            mkdir -p pages-content/benchmarks
+            cp -r benchmark-reports/target/criterion/. pages-content/benchmarks/
+            python3 .github/scripts/build_benchmark_pages.py pages-content/benchmarks
+          else
+            echo "No Criterion data available; publishing placeholder benchmarks page"
+            python3 .github/scripts/build_benchmark_pages.py pages-content/benchmarks --placeholder
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: pages-content
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

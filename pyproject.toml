@@ -34,7 +34,7 @@ readme = "README.md"
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/AndreaBozzo/dataprof"
+Homepage = "https://andreabozzo.github.io/dataprof/"
 Repository = "https://github.com/AndreaBozzo/dataprof"
 Issues = "https://github.com/AndreaBozzo/dataprof/issues"
 

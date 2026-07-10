@@ -88,7 +88,7 @@ keywords = ["data", "analysis", "profiling", "data-quality", "parquet"]
 categories = ["data-structures"]
 readme = "README.md"
 documentation = "https://docs.rs/dataprof"
-homepage = "https://github.com/AndreaBozzo/dataprof"
+homepage = "https://andreabozzo.github.io/dataprof/"
 exclude = [
     "assets/animations/*",
     "assets/images/*.png",
@@ -97,6 +97,7 @@ exclude = [
     ".mypy_cache/*",
     "python/*",
     ".github/*",
+    "site/*",
 ]
 
 # Configuration for docs.rs
