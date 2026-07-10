@@ -171,9 +171,9 @@ jobs:
       - name: Lint
         run: uv run ruff check python/ .github/scripts/
 
-      # Advisory: ty is pre-1.0 (Astral's type checker). Non-blocking for now.
+      # ty is pre-1.0 (Astral's type checker) but the codebase passes it, so
+      # keep it blocking to prevent regressions.
       - name: Type check (ty)
-        continue-on-error: true
         run: uv run ty check python/
 
   python-tests:
