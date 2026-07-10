@@ -345,13 +345,18 @@ impl AsyncStreamingProfiler {
             known_cols
                 .iter()
                 .map(|col| {
+                    // decode-audit: no-data — a key absent from this object is
+                    // a missing field, and "" is the profiler's textual null.
                     obj.get(col)
                         .map(|v| match v {
                             Value::Null => String::new(),
                             Value::Bool(b) => b.to_string(),
                             Value::Number(n) => n.to_string(),
                             Value::String(s) => s.to_string(),
-                            _ => serde_json::to_string(v).unwrap_or_default(),
+                            // decode-audit: impossible — re-serializing an
+                            // in-memory Value cannot fail; panic beats a fake null.
+                            _ => serde_json::to_string(v)
+                                .expect("re-serializing a parsed JSON value cannot fail"),
                         })
                         .unwrap_or_default()
                 })
@@ -586,7 +591,13 @@ impl AsyncStreamingProfiler {
             });
         }
 
-        let headers: Vec<String> = header_chunk.records.into_iter().next().unwrap_or_default();
+        // decode-audit: impossible — `records` was checked non-empty above, and
+        // an empty header row is rejected right below.
+        let headers: Vec<String> = header_chunk
+            .records
+            .into_iter()
+            .next()
+            .expect("non-empty header chunk has a first record");
 
         if headers.is_empty() {
             return Err(DataProfilerError::StreamingError {

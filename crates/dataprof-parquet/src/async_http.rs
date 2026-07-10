@@ -73,6 +73,9 @@ impl HttpParquetReader {
             })
     }
 
+    // decode-audit: no-data — an absent or malformed size header means "size
+    // unknown"; callers keep the None distinct and fall back to a range probe
+    // or fail with an explicit error, so nothing is fabricated.
     fn content_length_from_headers(headers: &header::HeaderMap) -> Option<usize> {
         headers
             .get(header::CONTENT_LENGTH)
@@ -80,6 +83,7 @@ impl HttpParquetReader {
             .and_then(|value| value.parse::<usize>().ok())
     }
 
+    // decode-audit: no-data — same contract as content_length_from_headers.
     fn content_length_from_content_range(headers: &header::HeaderMap) -> Option<usize> {
         let content_range = headers.get(header::CONTENT_RANGE)?.to_str().ok()?;
         let (_, total_size) = content_range.split_once('/')?;
@@ -375,6 +379,8 @@ mod tests {
         Ok(String::from_utf8_lossy(&request).into_owned())
     }
 
+    // decode-audit: no-data — test-only mock server; a request without a
+    // parseable Range header is served without one.
     fn parse_range_header(request: &str) -> Option<(usize, usize)> {
         let range_line = request
             .lines()

@@ -108,6 +108,11 @@ jobs:
           cargo doc --no-deps --document-private-items
           echo "Documentation check passed"
 
+      # Guard for issue #364: swallowed errors on decode paths must carry a
+      # decode-audit classification comment.
+      - name: Check decode-path error handling
+        run: python3 .github/scripts/check_decode_audit.py
+
   feature-checks:
     name: Feature Checks (${{ matrix.scope }})
     runs-on: ubuntu-latest

@@ -105,6 +105,9 @@ macro_rules! streaming_profile_loop {
                 for (i, col) in columns.iter().enumerate() {
                     let value: Option<String> = $crate::db_column_to_string!(row, i);
                     if let Some(column_data) = batch_result.get_mut(col.name()) {
+                        // decode-audit: no-data — None is SQL NULL (or a type
+                        // db_column_to_string documents as unsupported); "" is
+                        // the profiler's textual null.
                         column_data.push(value.unwrap_or_default());
                     }
                 }
@@ -155,6 +158,9 @@ macro_rules! process_rows_to_columns {
                 for (i, col) in columns.iter().enumerate() {
                     let value: Option<String> = $crate::db_column_to_string!(row, i);
                     if let Some(column_data) = result.get_mut(col.name()) {
+                        // decode-audit: no-data — None is SQL NULL (or a type
+                        // db_column_to_string documents as unsupported); "" is
+                        // the profiler's textual null.
                         column_data.push(value.unwrap_or_default());
                     }
                 }

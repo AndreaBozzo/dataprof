@@ -316,6 +316,8 @@ impl RobustCsvParser {
             *counts.entry(count).or_insert(0) += 1;
         }
 
+        // decode-audit: no-data — an empty sample scores 0 consistency for this
+        // delimiter candidate; nothing is fabricated.
         counts.values().max().copied().unwrap_or(0)
     }
 

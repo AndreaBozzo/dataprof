@@ -155,12 +155,19 @@ pub fn validate_iban(s: &str) -> bool {
         }
     }
 
-    // Compute mod 97 using chunked arithmetic to avoid big-integer math
+    // Compute mod 97 using chunked arithmetic to avoid big-integer math.
+    // `numeric` contains only ASCII digits (checked above), so the UTF-8 and
+    // parse steps cannot fail: remainder is at most 2 digits, the chunk at most
+    // 9, and an 11-digit number always fits in u64.
     let mut remainder: u64 = 0;
     for chunk in numeric.as_bytes().chunks(9) {
-        let chunk_str = std::str::from_utf8(chunk).unwrap_or("0");
+        let chunk_str =
+            std::str::from_utf8(chunk).expect("chunk of ASCII digits is always valid UTF-8");
         let combined = format!("{remainder}{chunk_str}");
-        remainder = combined.parse::<u64>().unwrap_or(0) % 97;
+        remainder = combined
+            .parse::<u64>()
+            .expect("at most 11 ASCII digits always parse as u64")
+            % 97;
     }
 
     remainder == 1
@@ -212,9 +219,10 @@ pub fn validate_ssn_us(s: &str) -> bool {
     if clean.len() != 9 {
         return false;
     }
-    let area: u16 = clean[0..3].parse().unwrap_or(0);
-    let group: u16 = clean[3..5].parse().unwrap_or(0);
-    let serial: u16 = clean[5..9].parse().unwrap_or(0);
+    // `clean` is exactly 9 ASCII digits (checked above), so these cannot fail.
+    let area: u16 = clean[0..3].parse().expect("3 ASCII digits parse as u16");
+    let group: u16 = clean[3..5].parse().expect("2 ASCII digits parse as u16");
+    let serial: u16 = clean[5..9].parse().expect("4 ASCII digits parse as u16");
 
     area != 0 && area != 666 && area < 900 && group != 0 && serial != 0
 }

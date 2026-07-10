@@ -182,7 +182,20 @@ pub async fn analyze_database(
     };
 
     let total_rows = if is_table {
-        connector.count_table_rows(query).await.unwrap_or(0)
+        // decode-audit: unknown — a failed COUNT means "row count unknown", not
+        // "zero rows". 0 disables sampling below, so log the failure instead of
+        // silently pretending the table is empty.
+        match connector.count_table_rows(query).await {
+            Ok(count) => count,
+            Err(e) => {
+                log::warn!(
+                    "count_table_rows failed for '{}': {}; row count unknown, sampling disabled",
+                    query,
+                    e
+                );
+                0
+            }
+        }
     } else {
         0
     };
@@ -234,6 +247,8 @@ pub async fn analyze_database(
     }
 
     let mut column_profiles = Vec::new();
+    // decode-audit: no-data — the empty-columns case returned early above, so
+    // this default is only a guard; every column vec has the same length.
     let actual_rows_processed = columns.values().next().map(|v| v.len()).unwrap_or(0);
 
     for (name, data) in &columns {

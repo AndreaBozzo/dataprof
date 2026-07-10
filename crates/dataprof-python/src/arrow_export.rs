@@ -393,6 +393,7 @@ pub fn profile_dataframe(
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
+    // decode-audit: no-data — absent config simply means no semantic hints.
     let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
@@ -410,8 +411,9 @@ pub fn profile_dataframe(
     // Build execution metadata, marking truncation if max_rows was applied
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
     if truncated {
+        // decode-audit: impossible — truncation only happens when max_rows was set.
         exec = exec.with_truncation(TruncationReason::MaxRows(
-            effective_max_rows.unwrap_or(0) as u64
+            effective_max_rows.expect("truncation requires a maximum row limit") as u64,
         ));
     }
 
@@ -489,6 +491,8 @@ pub fn profile_arrow(
     let num_cols = batch.num_columns();
 
     // Estimate memory from pyarrow's nbytes
+    // decode-audit: no-data — memory estimate is best-effort metadata; failure
+    // stays None (unknown), never a fabricated size.
     let memory_bytes: Option<u64> = bound
         .getattr("nbytes")
         .and_then(|v| v.extract::<u64>())
@@ -501,6 +505,7 @@ pub fn profile_arrow(
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
+    // decode-audit: no-data — absent config simply means no semantic hints.
     let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
@@ -511,8 +516,9 @@ pub fn profile_arrow(
     // Build execution metadata, marking truncation if max_rows was applied
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
     if truncated {
+        // decode-audit: impossible — truncation only happens when max_rows was set.
         exec = exec.with_truncation(TruncationReason::MaxRows(
-            effective_max_rows.unwrap_or(0) as u64
+            effective_max_rows.expect("truncation requires a maximum row limit") as u64,
         ));
     }
 
@@ -728,6 +734,8 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
 fn detect_dataframe_library(py: Python<'_>, df: &Py<PyAny>) -> PyResult<DataFrameLibrary> {
     let bound = df.bind(py);
     let type_name = bound.get_type().name()?.to_string();
+    // decode-audit: no-data — a type without __module__ falls through to the
+    // Custom library branch below; nothing is misclassified as pandas/polars.
     let module = bound
         .get_type()
         .getattr("__module__")
@@ -751,6 +759,8 @@ fn detect_dataframe_library(py: Python<'_>, df: &Py<PyAny>) -> PyResult<DataFram
 /// Estimate memory usage of a DataFrame using library-specific methods.
 ///
 /// Returns None if estimation fails (non-critical).
+// decode-audit: no-data — memory estimate is best-effort metadata; every
+// failure below stays None (unknown), never a fabricated size.
 fn estimate_memory_bytes(
     py: Python<'_>,
     df: &Py<PyAny>,
@@ -764,6 +774,7 @@ fn estimate_memory_bytes(
             // Note: deep=False (the default) reads only block metadata in O(1).
             // deep=True would give exact sizes for object/string columns but
             // blocks the GIL for O(n) traversal — unacceptable for large frames.
+            // decode-audit: no-data — failure stays None (size unknown).
             bound
                 .call_method0("memory_usage")
                 .ok()
@@ -772,6 +783,7 @@ fn estimate_memory_bytes(
         }
         DataFrameLibrary::Polars => {
             // polars: df.estimated_size()
+            // decode-audit: no-data — failure stays None (size unknown).
             bound
                 .call_method0("estimated_size")
                 .ok()
@@ -779,6 +791,7 @@ fn estimate_memory_bytes(
         }
         DataFrameLibrary::PyArrow => {
             // pyarrow: table.nbytes
+            // decode-audit: no-data — failure stays None (size unknown).
             bound
                 .getattr("nbytes")
                 .ok()
