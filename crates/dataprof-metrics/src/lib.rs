@@ -14,4 +14,7 @@ pub use quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, QualityAssessment,
     QualityMetrics, TimelinessMetrics, UniquenessMetrics,
 };
-pub use stats::{calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats};
+pub use stats::{
+    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, calculate_datetime_stats,
+    calculate_numeric_stats, calculate_text_stats,
+};

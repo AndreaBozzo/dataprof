@@ -5,6 +5,7 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{ColumnProfile, DataType, SemanticHints};
+use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::infer_type;
 use dataprof_runtime::{ColumnProfileInput, TextLengths, build_column_profile};
@@ -102,7 +103,7 @@ pub struct ColumnAnalyzer {
     data_type: arrow::datatypes::DataType,
     total_count: usize,
     null_count: usize,
-    unique_values: std::collections::HashSet<String>,
+    cardinality: CardinalityEstimator,
     min_value: Option<f64>,
     max_value: Option<f64>,
     sum: f64,
@@ -121,7 +122,7 @@ impl ColumnAnalyzer {
             data_type: data_type.clone(),
             total_count: 0,
             null_count: 0,
-            unique_values: std::collections::HashSet::new(),
+            cardinality: CardinalityEstimator::new(),
             min_value: None,
             max_value: None,
             sum: 0.0,
@@ -299,9 +300,7 @@ impl ColumnAnalyzer {
             if !array.is_null(index) {
                 let value = array.value(index);
                 self.update_numeric_stats(value);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -316,9 +315,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -333,9 +330,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -350,9 +345,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -367,9 +360,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -384,9 +375,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -401,9 +390,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -418,9 +405,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -435,9 +420,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -452,9 +435,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -472,9 +453,7 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(value);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -492,9 +471,7 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(value);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -513,9 +490,7 @@ impl ColumnAnalyzer {
                     self.false_count += 1;
                 }
                 let value_str = if value { "True" } else { "False" };
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value_str.to_string());
-                }
+                self.cardinality.insert(value_str);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value_str.to_string());
                 }
@@ -530,9 +505,7 @@ impl ColumnAnalyzer {
                 let days = array.value(index);
                 self.update_numeric_stats(days as f64);
                 let date_str = format!("1970-01-01+{}days", days);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(date_str.clone());
-                }
+                self.cardinality.insert(&date_str);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
                 }
@@ -547,9 +520,7 @@ impl ColumnAnalyzer {
                 let millis = array.value(index);
                 self.update_numeric_stats(millis as f64);
                 let datetime_str = format!("1970-01-01T00:00:00.000+{}ms", millis);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(datetime_str.clone());
-                }
+                self.cardinality.insert(&datetime_str);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(datetime_str);
                 }
@@ -570,9 +541,7 @@ impl ColumnAnalyzer {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(ts_str.clone());
-                    }
+                    self.cardinality.insert(&ts_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -587,9 +556,7 @@ impl ColumnAnalyzer {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(ts_str.clone());
-                    }
+                    self.cardinality.insert(&ts_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -604,9 +571,7 @@ impl ColumnAnalyzer {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(ts_str.clone());
-                    }
+                    self.cardinality.insert(&ts_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -621,9 +586,7 @@ impl ColumnAnalyzer {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(ts_str.clone());
-                    }
+                    self.cardinality.insert(&ts_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(ts_str);
                     }
@@ -640,9 +603,7 @@ impl ColumnAnalyzer {
                 let bytes = array.value(index);
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(format!("len:{}", len));
-                }
+                self.cardinality.insert(&format!("len:{}", len));
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
@@ -657,9 +618,7 @@ impl ColumnAnalyzer {
                 let bytes = array.value(index);
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(format!("len:{}", len));
-                }
+                self.cardinality.insert(&format!("len:{}", len));
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
@@ -674,9 +633,7 @@ impl ColumnAnalyzer {
                 let decimal_value = array.value(index);
                 self.update_numeric_stats(decimal_value as f64);
                 let decimal_str = format!("dec128:{}", decimal_value);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(decimal_str.clone());
-                }
+                self.cardinality.insert(&decimal_str);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(decimal_str);
                 }
@@ -690,9 +647,7 @@ impl ColumnAnalyzer {
             if !array.is_null(index) {
                 let decimal_str = format!("dec256:value_{}", index);
                 self.update_text_stats(&decimal_str);
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(decimal_str.clone());
-                }
+                self.cardinality.insert(&decimal_str);
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(decimal_str);
                 }
@@ -713,9 +668,7 @@ impl ColumnAnalyzer {
                     let dur_value = dur_array.value(index);
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ns", dur_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(dur_str.clone());
-                    }
+                    self.cardinality.insert(&dur_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -730,9 +683,7 @@ impl ColumnAnalyzer {
                     let dur_value = dur_array.value(index);
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}us", dur_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(dur_str.clone());
-                    }
+                    self.cardinality.insert(&dur_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -747,9 +698,7 @@ impl ColumnAnalyzer {
                     let dur_value = dur_array.value(index);
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ms", dur_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(dur_str.clone());
-                    }
+                    self.cardinality.insert(&dur_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -764,9 +713,7 @@ impl ColumnAnalyzer {
                     let dur_value = dur_array.value(index);
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}s", dur_value);
-                    if self.unique_values.len() < 1000 {
-                        self.unique_values.insert(dur_str.clone());
-                    }
+                    self.cardinality.insert(&dur_str);
                     if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                         self.sample_values.push(dur_str);
                     }
@@ -787,9 +734,7 @@ impl ColumnAnalyzer {
                         if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
-                        if self.unique_values.len() < 1000 {
-                            self.unique_values.insert(value_str);
-                        }
+                        self.cardinality.insert(&value_str);
                     }
                 }
             }
@@ -801,9 +746,7 @@ impl ColumnAnalyzer {
                         if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
-                        if self.unique_values.len() < 1000 {
-                            self.unique_values.insert(value_str);
-                        }
+                        self.cardinality.insert(&value_str);
                     }
                 }
             }
@@ -857,7 +800,7 @@ impl ColumnAnalyzer {
             data_type,
             total_count: self.total_count,
             null_count: self.null_count,
-            unique_count: Some(self.unique_values.len()),
+            unique_count: Some(self.cardinality.estimate()),
             sample_values: &self.sample_values,
             text_lengths: Some(TextLengths {
                 min_length: self.min_length,
@@ -1046,5 +989,42 @@ mod tests {
             ColumnStats::Text(..) => {}
             _ => panic!("Expected Text stats for label column"),
         }
+    }
+
+    fn unique_count_for_distinct_ints(distinct: i64) -> usize {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "id",
+            ArrowDataType::Int64,
+            false,
+        )]));
+        let ids = Int64Array::from((0..distinct).collect::<Vec<_>>());
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(ids)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let profiles = analyzer.to_profiles(false, false, None);
+        profiles
+            .iter()
+            .find(|p| p.name == "id")
+            .unwrap()
+            .unique_count
+            .unwrap()
+    }
+
+    #[test]
+    fn test_unique_count_is_not_capped_at_1000() {
+        // Regression for the columnar hard cap: a high-cardinality column used to
+        // report exactly 1,000 distinct values, corrupting quality scores. Small
+        // columns must stay exact; large ones must estimate near the truth and
+        // never freeze at the old cap.
+        assert_eq!(unique_count_for_distinct_ints(999), 999);
+        assert_eq!(unique_count_for_distinct_ints(1_000), 1_000);
+        assert_eq!(unique_count_for_distinct_ints(1_001), 1_001);
+        assert_eq!(unique_count_for_distinct_ints(10_000), 10_000);
+
+        let large = unique_count_for_distinct_ints(100_000);
+        assert_ne!(large, 1_000, "must not expose the old hard cap as exact");
+        let error = (large as f64 - 100_000.0).abs() / 100_000.0;
+        assert!(error < 0.05, "100k distinct estimated as {large}");
     }
 }

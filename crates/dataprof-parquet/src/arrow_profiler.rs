@@ -6,6 +6,7 @@ use dataprof_core::{
     MetricPack, QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_csv::CsvParserConfig;
+use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
 use dataprof_runtime::{
     ColumnProfileInput, ProfileReport, ReportAssembler, TextLengths, build_column_profile,
@@ -256,7 +257,7 @@ struct ColumnAnalyzer {
     data_type: arrow::datatypes::DataType,
     total_count: usize,
     null_count: usize,
-    unique_values: std::collections::HashSet<String>,
+    cardinality: CardinalityEstimator,
     // Numeric statistics
     min_value: Option<f64>,
     max_value: Option<f64>,
@@ -279,7 +280,7 @@ impl ColumnAnalyzer {
             data_type: data_type.clone(),
             total_count: 0,
             null_count: 0,
-            unique_values: std::collections::HashSet::new(),
+            cardinality: CardinalityEstimator::new(),
             min_value: None,
             max_value: None,
             sum: 0.0,
@@ -432,9 +433,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(value);
 
                 // Add to unique values (with limit)
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
 
                 // Keep samples for pattern detection
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
@@ -451,9 +450,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -469,9 +466,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -487,9 +482,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(&value.to_string());
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -509,9 +502,7 @@ impl ColumnAnalyzer {
                 }
                 self.update_text_stats(value);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(value);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -534,9 +525,7 @@ impl ColumnAnalyzer {
                 }
                 self.update_text_stats(value);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value.to_string());
-                }
+                self.cardinality.insert(value);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -557,9 +546,7 @@ impl ColumnAnalyzer {
                 }
                 let value_str = if value { "True" } else { "False" };
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value_str.to_string());
-                }
+                self.cardinality.insert(value_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value_str.to_string());
@@ -576,9 +563,7 @@ impl ColumnAnalyzer {
                 let date_str = format!("date32:{}", value);
                 self.update_text_stats(&date_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(date_str.clone());
-                }
+                self.cardinality.insert(&date_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
@@ -595,9 +580,7 @@ impl ColumnAnalyzer {
                 let date_str = format!("date64:{}", value);
                 self.update_text_stats(&date_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(date_str.clone());
-                }
+                self.cardinality.insert(&date_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(date_str);
@@ -616,9 +599,7 @@ impl ColumnAnalyzer {
                 let ts_str = format!("timestamp_ns:{}", value);
                 self.update_text_stats(&ts_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(ts_str.clone());
-                }
+                self.cardinality.insert(&ts_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
@@ -637,9 +618,7 @@ impl ColumnAnalyzer {
                 let ts_str = format!("timestamp_us:{}", value);
                 self.update_text_stats(&ts_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(ts_str.clone());
-                }
+                self.cardinality.insert(&ts_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
@@ -658,9 +637,7 @@ impl ColumnAnalyzer {
                 let ts_str = format!("timestamp_ms:{}", value);
                 self.update_text_stats(&ts_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(ts_str.clone());
-                }
+                self.cardinality.insert(&ts_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
@@ -679,9 +656,7 @@ impl ColumnAnalyzer {
                 let ts_str = format!("timestamp_s:{}", value);
                 self.update_text_stats(&ts_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(ts_str.clone());
-                }
+                self.cardinality.insert(&ts_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(ts_str);
@@ -706,9 +681,7 @@ impl ColumnAnalyzer {
                 );
                 self.update_text_stats(&hex_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(hex_str.clone());
-                }
+                self.cardinality.insert(&hex_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(hex_str);
@@ -736,9 +709,7 @@ impl ColumnAnalyzer {
                 );
                 self.update_text_stats(&hex_str);
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(hex_str.clone());
-                }
+                self.cardinality.insert(&hex_str);
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(hex_str);
@@ -763,9 +734,7 @@ impl ColumnAnalyzer {
                     self.sample_values.push(value.clone());
                 }
 
-                if self.unique_values.len() < 1000 {
-                    self.unique_values.insert(value);
-                }
+                self.cardinality.insert(&value);
             }
         }
         Ok(())
@@ -817,7 +786,7 @@ impl ColumnAnalyzer {
             data_type,
             total_count: self.total_count,
             null_count: self.null_count,
-            unique_count: Some(self.unique_values.len()),
+            unique_count: Some(self.cardinality.estimate()),
             sample_values: &self.sample_values,
             text_lengths: Some(TextLengths {
                 min_length: self.min_length,
@@ -896,6 +865,36 @@ mod tests {
             DataType::Integer,
             "age column should be detected as Integer"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unique_count_not_capped_for_high_cardinality_csv() -> Result<(), DataProfilerError> {
+        // Regression for the columnar hard cap: the Arrow CSV path used to stop
+        // counting distinct values at 1,000 and expose that cap as the exact
+        // count, wrecking uniqueness-based quality metrics for large columns.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id")?;
+        let rows = 50_000;
+        for id in 0..rows {
+            writeln!(temp_file, "{}", id)?;
+        }
+        temp_file.flush()?;
+
+        let profiler = ArrowProfiler::new();
+        let report = profiler.analyze_csv_file(temp_file.path())?;
+
+        let id_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "id")
+            .expect("id column should exist");
+
+        let unique = id_col.unique_count.expect("unique_count should be present");
+        assert_ne!(unique, 1_000, "must not expose the old hard cap as exact");
+        let error = (unique as f64 - rows as f64).abs() / rows as f64;
+        assert!(error < 0.05, "{rows} distinct ids estimated as {unique}");
 
         Ok(())
     }

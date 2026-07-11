@@ -177,6 +177,35 @@ def test_engine_parity(engine, reference, tmp_path):
     assert_profiles_match(engine, report, reference, EXPECTED_EXCEPTIONS)
 
 
+# ── High-cardinality regression (issue #386) ──
+#
+# The columnar (Arrow) engine used to stop counting distinct values at an
+# internal cap of 1,000 and expose that cap as the exact unique_count, so a
+# high-cardinality column reported 1,000 distinct and its quality score
+# collapsed ~20 points below the streaming engines. Every file engine must now
+# agree that a fully-distinct column has close to N distinct values.
+
+
+@pytest.mark.parametrize("engine", ["auto", "columnar", "incremental"])
+def test_high_cardinality_unique_count_not_capped(engine, tmp_path):
+    n_rows = 50_000
+    path = tmp_path / "high_card.csv"
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["id"])
+        for value in range(n_rows):
+            writer.writerow([value])
+
+    report = dataprof.profile(str(path), engine=engine)
+    unique = report["id"].unique_count
+
+    assert unique != 1000, f"{engine}: unique_count frozen at the old hard cap"
+    # HLL carries ~1% relative error; well within 5% of the true distinct count.
+    assert abs(unique - n_rows) / n_rows < 0.05, (
+        f"{engine}: {n_rows} distinct ids reported as {unique}"
+    )
+
+
 # ── SQLite arm (requires --features python-async,database,sqlite) ──
 
 
