@@ -1,0 +1,6 @@
+# Keep blank issues available: templates are a convenience, not a gate.
+blank_issues_enabled: true
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/AndreaBozzo/dataprof/discussions
+    about: For "how do I…" and open-ended questions, start a Discussion instead of an issue.
