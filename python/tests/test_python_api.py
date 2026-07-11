@@ -8,6 +8,7 @@ Run after building the extension:
 from __future__ import annotations
 
 import builtins
+import datetime
 import io
 import json
 import os
@@ -169,6 +170,14 @@ class TestProfileAdHocInputs:
         assert r["nested"].min_length == len('{"a":1,"b":[2,3]}')
         assert r["array"].min_length == len("[1,2]")
 
+    def test_container_cell_with_unserialisable_contents_falls_back_to_str(self):
+        # A dict/list holding a non-JSON-serialisable value must not abort
+        # profiling; it degrades to str() like any other opaque cell.
+        cell = {"when": datetime.datetime(2020, 1, 2)}
+        r = dataprof.profile([{"c": cell}])
+        assert r.rows == 1
+        assert r["c"].min_length == len(str(cell))
+
     def test_bytesio_csv_input(self):
         r = dataprof.profile(io.BytesIO(b"a,b\n1,2\n"), format="csv")
         assert r.rows == 1
@@ -248,6 +257,12 @@ class TestProfileAdHocInputs:
         assert list(r.column_profiles) == ["a"]
         assert r.rows == 1
         assert not r.source_exhausted
+
+    def test_list_of_dicts_max_rows_zero_yields_no_rows_not_error(self):
+        # max_rows=0 asks for an empty analysis; that must not be mistaken for
+        # the "rows but no columns" error, which is about the analysed subset.
+        r = dataprof.profile([{"a": 1}, {"a": 2}], max_rows=0)
+        assert r.rows == 0
 
     def test_list_of_dicts_rejects_colliding_normalized_keys(self):
         with pytest.raises(ValueError, match="collide after string conversion"):

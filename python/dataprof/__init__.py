@@ -223,7 +223,12 @@ def _cell_to_str(value: object) -> str | None:
     if isinstance(value, str):
         return value
     if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        try:
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        except (TypeError, ValueError):
+            # Contents aren't JSON-serialisable (datetime, set, circular ref, ...);
+            # fall back to str() so one odd cell doesn't abort profiling.
+            return str(value)
     return str(value)
 
 
@@ -262,13 +267,20 @@ def _columns_from_records(
     """Convert a list of row dicts into columns, keyed in first-seen order.
 
     Rows need not share keys; a row missing a key contributes a null there.
+
+    ``max_rows`` caps *key discovery* at the first ``max_rows`` rows, so a column
+    that only appears past the cap is never surfaced. Cells are materialised for
+    one row beyond the cap: the Rust profiler ignores that extra row (it analyses
+    only ``max_rows`` of them) but uses its presence to detect that the source was
+    truncated, without us stringifying every dropped row.
     """
-    analyzed_rows = rows if max_rows is None else rows[:max_rows]
+    key_rows = rows if max_rows is None else rows[:max_rows]
+    cell_rows = rows if max_rows is None else rows[: max_rows + 1]
     if sort_keys:
-        keys = list(dict.fromkeys(key for row in analyzed_rows for key in sorted(row, key=str)))
+        keys = list(dict.fromkeys(key for row in key_rows for key in sorted(row, key=str)))
     else:
-        keys = list(dict.fromkeys(key for row in analyzed_rows for key in row))
-    if rows and not keys:
+        keys = list(dict.fromkeys(key for row in key_rows for key in row))
+    if key_rows and not keys:
         raise ValueError(
             "list-of-dicts input contains rows but no columns, so their row count "
             "cannot be represented. Provide at least one key or pass an empty list."
@@ -285,7 +297,7 @@ def _columns_from_records(
         )
 
     return [
-        (name, [_cell_to_str(row.get(key)) for row in rows])
+        (name, [_cell_to_str(row.get(key)) for row in cell_rows])
         for key, name in zip(keys, normalized_names, strict=True)
     ]
 
