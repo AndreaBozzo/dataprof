@@ -189,6 +189,8 @@ impl CardinalityEstimator {
     }
 
     pub fn memory_usage_bytes(&self) -> usize {
+        // decode-audit: no-data — once the estimator spills, the exact set is
+        // dropped (None), so it genuinely holds zero bytes of string data.
         let exact_bytes = self
             .exact
             .as_ref()
