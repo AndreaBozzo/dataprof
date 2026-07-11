@@ -1,9 +1,9 @@
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasher, Hasher};
 
 use crate::profile_builder::infer_data_type_streaming;
+use dataprof_metrics::HyperLogLog;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 
 /// Incremental statistics computation for streaming data processing.
@@ -243,92 +243,6 @@ impl Default for TextLengthStats {
     }
 }
 
-struct HllBuildHasher;
-
-impl BuildHasher for HllBuildHasher {
-    type Hasher = std::collections::hash_map::DefaultHasher;
-
-    fn build_hasher(&self) -> Self::Hasher {
-        std::collections::hash_map::DefaultHasher::new()
-    }
-}
-
-#[derive(Clone)]
-struct HllCounter {
-    registers: Vec<u8>,
-}
-
-impl std::fmt::Debug for HllCounter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HllCounter")
-            .field("precision", &14u8)
-            .field("registers_len", &self.registers.len())
-            .finish()
-    }
-}
-
-impl HllCounter {
-    const PRECISION: usize = 14;
-    const NUM_REGISTERS: usize = 1 << Self::PRECISION;
-
-    fn new() -> Self {
-        Self {
-            registers: vec![0u8; Self::NUM_REGISTERS],
-        }
-    }
-
-    #[inline]
-    fn insert(&mut self, value: &str) {
-        let mut hasher = HllBuildHasher.build_hasher();
-        hasher.write(value.as_bytes());
-        let hash = hasher.finish();
-
-        let index = (hash as usize) & (Self::NUM_REGISTERS - 1);
-        let window = hash >> Self::PRECISION;
-        let rank = (window.leading_zeros() - Self::PRECISION as u32 + 1) as u8;
-
-        if rank > self.registers[index] {
-            self.registers[index] = rank;
-        }
-    }
-
-    fn count(&self) -> u64 {
-        let register_count = Self::NUM_REGISTERS as f64;
-        let alpha = 0.7213 / (1.0 + 1.079 / register_count);
-
-        let raw_estimate: f64 = alpha * register_count * register_count
-            / self
-                .registers
-                .iter()
-                .map(|&register| 2.0_f64.powi(-(register as i32)))
-                .sum::<f64>();
-
-        if raw_estimate <= 2.5 * register_count {
-            let zeros = self
-                .registers
-                .iter()
-                .filter(|&&register| register == 0)
-                .count() as f64;
-            if zeros > 0.0 {
-                (register_count * (register_count / zeros).ln()) as u64
-            } else {
-                raw_estimate as u64
-            }
-        } else if raw_estimate <= (1u64 << 32) as f64 / 30.0 {
-            raw_estimate as u64
-        } else {
-            let two32 = (1u64 << 32) as f64;
-            (-two32 * (1.0 - raw_estimate / two32).ln()) as u64
-        }
-    }
-
-    fn merge(&mut self, other: &HllCounter) {
-        for (left, right) in self.registers.iter_mut().zip(other.registers.iter()) {
-            *left = (*left).max(*right);
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct StreamingStatistics {
     pub count: usize,
@@ -336,7 +250,7 @@ pub struct StreamingStatistics {
     pub min: f64,
     pub max: f64,
     welford: WelfordAccumulator,
-    hll: HllCounter,
+    hll: HyperLogLog,
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
 }
@@ -349,7 +263,7 @@ impl StreamingStatistics {
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
             welford: WelfordAccumulator::new(),
-            hll: HllCounter::new(),
+            hll: HyperLogLog::new(),
             sampler: StreamReservoirSampler::new(10_000),
             text_length_tracker: TextLengthStats::new(),
         }
@@ -438,7 +352,7 @@ impl StreamingStatistics {
 
     pub fn memory_usage_bytes(&self) -> usize {
         let struct_size = std::mem::size_of::<Self>();
-        let hll_size = self.hll.registers.len();
+        let hll_size = self.hll.memory_usage_bytes();
         let reservoir_size = self.sampler.memory_usage_bytes();
 
         struct_size + hll_size + reservoir_size
@@ -705,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_hll_cardinality() {
-        let mut counter = HllCounter::new();
+        let mut counter = HyperLogLog::new();
         let total = 100_000;
         for index in 0..total {
             counter.insert(&format!("item_{index}"));
