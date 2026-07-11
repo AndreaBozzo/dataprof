@@ -199,6 +199,7 @@ def test_high_cardinality_unique_count_not_capped(engine, tmp_path):
     report = dataprof.profile(str(path), engine=engine)
     unique = report["id"].unique_count
 
+    assert unique is not None, f"{engine}: unique_count missing"
     assert unique != 1000, f"{engine}: unique_count frozen at the old hard cap"
     # HLL carries ~1% relative error; well within 5% of the true distinct count.
     assert abs(unique - n_rows) / n_rows < 0.05, (

@@ -300,7 +300,7 @@ impl ColumnAnalyzer {
             if !array.is_null(index) {
                 let value = array.value(index);
                 self.update_numeric_stats(value);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -315,7 +315,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -330,7 +330,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -345,7 +345,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -360,7 +360,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -375,7 +375,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -390,7 +390,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -405,7 +405,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -420,7 +420,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -435,7 +435,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
                 }
@@ -603,7 +603,7 @@ impl ColumnAnalyzer {
                 let bytes = array.value(index);
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
-                self.cardinality.insert(&format!("len:{}", len));
+                self.cardinality.insert_owned(format!("len:{}", len));
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
@@ -618,7 +618,7 @@ impl ColumnAnalyzer {
                 let bytes = array.value(index);
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
-                self.cardinality.insert(&format!("len:{}", len));
+                self.cardinality.insert_owned(format!("len:{}", len));
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(format!("<binary:{} bytes>", len));
                 }
@@ -734,7 +734,7 @@ impl ColumnAnalyzer {
                         if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
-                        self.cardinality.insert(&value_str);
+                        self.cardinality.insert_owned(value_str);
                     }
                 }
             }
@@ -746,7 +746,7 @@ impl ColumnAnalyzer {
                         if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                             self.sample_values.push(value_str.clone());
                         }
-                        self.cardinality.insert(&value_str);
+                        self.cardinality.insert_owned(value_str);
                     }
                 }
             }

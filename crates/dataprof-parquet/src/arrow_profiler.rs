@@ -433,7 +433,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(value);
 
                 // Add to unique values (with limit)
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
 
                 // Keep samples for pattern detection
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
@@ -450,7 +450,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
 
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -466,7 +466,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
 
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -482,7 +482,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
 
-                self.cardinality.insert(&value.to_string());
+                self.cardinality.insert_owned(value.to_string());
 
                 if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
                     self.sample_values.push(value.to_string());
@@ -734,7 +734,7 @@ impl ColumnAnalyzer {
                     self.sample_values.push(value.clone());
                 }
 
-                self.cardinality.insert(&value);
+                self.cardinality.insert_owned(value);
             }
         }
         Ok(())

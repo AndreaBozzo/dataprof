@@ -152,11 +152,33 @@ impl CardinalityEstimator {
         self.hll.insert(value);
         if let Some(exact) = self.exact.as_mut() {
             exact.insert(value.to_string());
-            // Once we exceed the exact budget, drop the set: the HLL has already
-            // seen every value, so the estimate stays accurate without the memory.
-            if exact.len() > self.threshold {
-                self.exact = None;
-            }
+            self.spill_if_over_budget();
+        }
+    }
+
+    /// Like [`Self::insert`] but takes ownership, moving the string straight into
+    /// the exact set instead of cloning it. Callers that already hold a freshly
+    /// built `String` -- the numeric and temporal formatting paths -- should
+    /// prefer this to avoid a second allocation per row under the threshold.
+    #[inline]
+    pub fn insert_owned(&mut self, value: String) {
+        self.hll.insert(&value);
+        if let Some(exact) = self.exact.as_mut() {
+            exact.insert(value);
+            self.spill_if_over_budget();
+        }
+    }
+
+    /// Drop the exact set once it exceeds the budget: the HLL has already seen
+    /// every value, so the estimate stays accurate without holding the memory.
+    #[inline]
+    fn spill_if_over_budget(&mut self) {
+        if self
+            .exact
+            .as_ref()
+            .is_some_and(|exact| exact.len() > self.threshold)
+        {
+            self.exact = None;
         }
     }
 
