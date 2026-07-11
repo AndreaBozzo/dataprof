@@ -1,6 +1,6 @@
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
 
 use crate::profile_builder::infer_data_type_streaming;
@@ -94,12 +94,17 @@ pub(crate) struct StreamReservoirSampler {
 }
 
 impl StreamReservoirSampler {
+    const DEFAULT_SEED: u64 = 0xDA7A_900D_F00D_5EED;
+
     pub fn new(capacity: usize) -> Self {
         Self {
             reservoir: Vec::with_capacity(capacity.min(1024)),
             capacity,
             count: 0,
-            rng: SmallRng::from_os_rng(),
+            // Profiling the same ordered source must produce the same report.
+            // Callers that need randomized admission have an explicit sampling
+            // strategy; this internal bounded-memory sample is deterministic.
+            rng: SmallRng::seed_from_u64(Self::DEFAULT_SEED),
         }
     }
 
@@ -406,11 +411,14 @@ impl StreamingStatistics {
     }
 
     pub fn unique_count(&self) -> usize {
+        if !self.unique_count_is_approximate() {
+            return self.sampler.samples().iter().collect::<HashSet<_>>().len();
+        }
         self.hll.count() as usize
     }
 
     pub fn unique_count_is_approximate(&self) -> bool {
-        self.hll.count() > 100
+        (self.sampler.samples().len() as u64) < self.sampler.count
     }
 
     pub fn sample_values(&self) -> &[String] {
@@ -474,6 +482,26 @@ impl StreamingColumnCollection {
                 self.ordered_names.push(header.clone());
             }
         }
+    }
+
+    /// Add a column discovered after `prior_rows` records have already passed.
+    ///
+    /// JSON objects may introduce keys at any point in a stream. Those earlier
+    /// objects are missing the new key, so the column must start with matching
+    /// total/null counters rather than looking shorter and more complete than
+    /// the dataset.
+    pub fn init_column_with_missing(&mut self, header: &str, prior_rows: usize) {
+        if self.columns.contains_key(header) {
+            return;
+        }
+
+        let stats = StreamingStatistics {
+            count: prior_rows,
+            null_count: prior_rows,
+            ..Default::default()
+        };
+        self.columns.insert(header.to_string(), stats);
+        self.ordered_names.push(header.to_string());
     }
 
     pub fn process_record<I>(&mut self, headers: &[String], values: I)
@@ -567,8 +595,8 @@ mod tests {
 
         assert_eq!(stats.count, 4);
         assert_eq!(stats.null_count, 1);
-        let unique_count = stats.unique_count();
-        assert!((2..=5).contains(&unique_count));
+        assert_eq!(stats.unique_count(), 3);
+        assert!(!stats.unique_count_is_approximate());
         assert!((stats.mean() - 15.333333333333334).abs() < 1e-10);
         assert_eq!(stats.min, 10.5);
         assert_eq!(stats.max, 20.0);
@@ -587,8 +615,8 @@ mod tests {
         stats1.merge(&stats2);
 
         assert_eq!(stats1.count, 4);
-        let unique_count = stats1.unique_count();
-        assert!((3..=6).contains(&unique_count));
+        assert_eq!(stats1.unique_count(), 4);
+        assert!(!stats1.unique_count_is_approximate());
         assert!((stats1.mean() - 25.0).abs() < 1e-10);
         assert_eq!(stats1.min, 10.0);
         assert_eq!(stats1.max, 40.0);
@@ -605,6 +633,42 @@ mod tests {
         let age_stats = collection.get_column_stats("age").unwrap();
         assert_eq!(age_stats.count, 2);
         assert!((age_stats.mean() - 27.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_unique_count_becomes_approximate_only_after_reservoir_truncation() {
+        let mut stats = StreamingStatistics::with_sample_capacity(2);
+        stats.update("a");
+        stats.update("b");
+        assert_eq!(stats.unique_count(), 2);
+        assert!(!stats.unique_count_is_approximate());
+
+        stats.update("c");
+        assert!(stats.unique_count_is_approximate());
+    }
+
+    #[test]
+    fn test_default_reservoir_sampling_is_deterministic() {
+        let mut left = StreamReservoirSampler::new(10);
+        let mut right = StreamReservoirSampler::new(10);
+        for value in 0..1_000 {
+            left.offer(value.to_string());
+            right.offer(value.to_string());
+        }
+
+        assert_eq!(left.samples(), right.samples());
+    }
+
+    #[test]
+    fn test_late_column_is_backfilled_as_missing() {
+        let mut collection = StreamingColumnCollection::new();
+        collection.init_column_with_missing("late", 3);
+        collection.process_record(&["late".to_string()], ["value".to_string()]);
+
+        let stats = collection.get_column_stats("late").unwrap();
+        assert_eq!(stats.count, 4);
+        assert_eq!(stats.null_count, 3);
+        assert_eq!(stats.unique_count(), 1);
     }
 
     #[test]

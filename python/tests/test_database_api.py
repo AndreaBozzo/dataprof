@@ -18,7 +18,7 @@ try:
         analyze_database_async,
         count_table_rows_async,
         get_table_schema_async,
-        test_connection_async,
+        test_connection_async as _test_connection_async,
     )
 except ImportError:
     pytest.skip(
@@ -74,12 +74,12 @@ class TestDatabaseConnection:
     """Test database connectivity via async Python API."""
 
     def test_connection_sqlite(self, sqlite_db):
-        result = _run(test_connection_async, sqlite_db)
+        result = _run(_test_connection_async, sqlite_db)
         assert result is True
 
     def test_connection_bad_string(self):
         with pytest.raises(RuntimeError):
-            _run(test_connection_async, "invalid://nope")
+            _run(_test_connection_async, "invalid://nope")
 
 
 @pytest.mark.database
