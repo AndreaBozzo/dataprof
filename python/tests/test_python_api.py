@@ -8,6 +8,7 @@ Run after building the extension:
 from __future__ import annotations
 
 import builtins
+import datetime
 import io
 import json
 import os
@@ -164,6 +165,19 @@ class TestProfileAdHocInputs:
         assert r.columns == 1
         assert r["a"].name == "a"
 
+    def test_nested_container_cells_use_deterministic_compact_json(self):
+        r = dataprof.profile([{"nested": {"b": [2, 3], "a": 1}, "array": [1, 2]}])
+        assert r["nested"].min_length == len('{"a":1,"b":[2,3]}')
+        assert r["array"].min_length == len("[1,2]")
+
+    def test_container_cell_with_unserialisable_contents_falls_back_to_str(self):
+        # A dict/list holding a non-JSON-serialisable value must not abort
+        # profiling; it degrades to str() like any other opaque cell.
+        cell = {"when": datetime.datetime(2020, 1, 2)}
+        r = dataprof.profile([{"c": cell}])
+        assert r.rows == 1
+        assert r["c"].min_length == len(str(cell))
+
     def test_bytesio_csv_input(self):
         r = dataprof.profile(io.BytesIO(b"a,b\n1,2\n"), format="csv")
         assert r.rows == 1
@@ -212,6 +226,10 @@ class TestProfileAdHocInputs:
         with pytest.raises(TypeError, match="must be a list or tuple"):
             dataprof.profile({"a": 1})
 
+    def test_dict_rejects_keys_that_collide_after_string_conversion(self):
+        with pytest.raises(ValueError, match="collide after string conversion"):
+            dataprof.profile({1: [1, 2], "1": [3, 4]})
+
     def test_raw_extension_rejects_ragged_columns(self):
         """`profile_columns` is importable directly, so it validates its own input.
 
@@ -234,6 +252,26 @@ class TestProfileAdHocInputs:
         assert r["a"].null_count == 1
         assert r["b"].null_count == 1
 
+    def test_list_of_dicts_max_rows_does_not_discover_later_columns(self):
+        r = dataprof.profile([{"a": 1}, {"a": 2, "later": 3}], max_rows=1)
+        assert list(r.column_profiles) == ["a"]
+        assert r.rows == 1
+        assert not r.source_exhausted
+
+    def test_list_of_dicts_max_rows_zero_yields_no_rows_not_error(self):
+        # max_rows=0 asks for an empty analysis; that must not be mistaken for
+        # the "rows but no columns" error, which is about the analysed subset.
+        r = dataprof.profile([{"a": 1}, {"a": 2}], max_rows=0)
+        assert r.rows == 0
+
+    def test_list_of_dicts_rejects_colliding_normalized_keys(self):
+        with pytest.raises(ValueError, match="collide after string conversion"):
+            dataprof.profile([{1: "a", "1": "b"}])
+
+    def test_non_empty_list_of_empty_records_is_not_reported_as_zero_rows(self):
+        with pytest.raises(ValueError, match="rows but no columns"):
+            dataprof.profile([{}])
+
     def test_csv_bytes_treat_empty_field_as_null(self):
         r = dataprof.profile(b"a,b\n1,\n2,x\n", format="csv")
         assert r["b"].null_count == 1
@@ -241,6 +279,10 @@ class TestProfileAdHocInputs:
     def test_csv_bytes_honour_delimiter(self):
         r = dataprof.profile(b"a;b\n1;2\n", format="csv", csv_delimiter=";")
         assert r.columns == 2
+
+    def test_csv_bytes_auto_detect_delimiter_like_file_input(self):
+        r = dataprof.profile(b"a;b\n1;2\n", format="csv")
+        assert list(r.column_profiles) == ["a", "b"]
 
     def test_csv_bytes_reject_ragged_rows(self):
         with pytest.raises(ValueError, match="row 2 has 3 fields"):
@@ -250,6 +292,20 @@ class TestProfileAdHocInputs:
         by_column = dataprof.profile(b'{"a": [1, 2]}', format="json")
         by_record = dataprof.profile(b'[{"a": 1}, {"a": 2}]', format="json")
         assert by_column.rows == by_record.rows == 2
+
+    def test_json_bytes_accept_scalar_root_object_as_one_record(self):
+        r = dataprof.profile(b'{"a": 1, "active": true}', format="json")
+        assert r.rows == 1
+        assert list(r.column_profiles) == ["a", "active"]
+
+    def test_json_bytes_max_rows_does_not_discover_later_columns(self):
+        r = dataprof.profile(b'[{"a": 1}, {"a": 2, "later": 3}]', format="json", max_rows=1)
+        assert list(r.column_profiles) == ["a"]
+        assert not r.source_exhausted
+
+    def test_json_bytes_column_order_matches_file_parser(self):
+        r = dataprof.profile(b'[{"z": 1, "a": 2}, {"later": 3}]', format="json")
+        assert list(r.column_profiles) == ["a", "z", "later"]
 
     def test_jsonl_bytes_input(self):
         r = dataprof.profile(b'{"a": 1}\n{"a": 2}\n', format="jsonl")
@@ -468,6 +524,11 @@ class TestReportErgonomics:
         assert "a\\|b" in md
         # No unescaped pipe leaks into a cell and breaks the table
         assert "| a|b |" not in md
+
+    def test_to_markdown_keeps_newlines_inside_cells(self):
+        md = dataprof.profile({"line\nbreak": [1, 2]}).to_markdown()
+        assert "line\\nbreak" in md
+        assert "| line\nbreak |" not in md
 
     def test_from_json_round_trip_quality_score(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
@@ -1542,6 +1603,12 @@ class TestSaveFormats:
             assert "data_type" in content
         finally:
             os.unlink(path)
+
+    def test_save_accepts_pathlike(self, report, tmp_path):
+        path = tmp_path / "report.json"
+        result = report.save(path)
+        assert result is report
+        assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
 
     def test_save_parquet(self, report):
         pytest.importorskip("pyarrow")

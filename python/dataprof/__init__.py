@@ -222,19 +222,34 @@ def _cell_to_str(value: object) -> str | None:
         return None
     if isinstance(value, str):
         return value
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        except (TypeError, ValueError):
+            # Contents aren't JSON-serialisable (datetime, set, circular ref, ...);
+            # fall back to str() so one odd cell doesn't abort profiling.
+            return str(value)
     return str(value)
 
 
 def _columns_from_dict(source: dict[Any, Any]) -> list[_Column]:
     """Convert a dict of equal-length sequences into columns."""
     columns: list[_Column] = []
+    normalized_names: set[str] = set()
     for key, values in source.items():
+        name = str(key)
+        if name in normalized_names:
+            raise ValueError(
+                f"dict input: column keys collide after string conversion at {name!r}. "
+                "Use distinct string column names."
+            )
+        normalized_names.add(name)
         if isinstance(values, (str, bytes)) or not isinstance(values, (list, tuple)):
             raise TypeError(
                 f"dict input: column {key!r} must be a list or tuple of cells, "
                 f"got {type(values).__name__}. For a single row, pass [{{...}}]."
             )
-        columns.append((str(key), [_cell_to_str(v) for v in values]))
+        columns.append((name, [_cell_to_str(v) for v in values]))
 
     lengths = {len(cells) for _, cells in columns}
     if len(lengths) > 1:
@@ -243,13 +258,48 @@ def _columns_from_dict(source: dict[Any, Any]) -> list[_Column]:
     return columns
 
 
-def _columns_from_records(rows: list[dict[Any, Any]]) -> list[_Column]:
+def _columns_from_records(
+    rows: list[dict[Any, Any]],
+    max_rows: int | None = None,
+    *,
+    sort_keys: bool = False,
+) -> list[_Column]:
     """Convert a list of row dicts into columns, keyed in first-seen order.
 
     Rows need not share keys; a row missing a key contributes a null there.
+
+    ``max_rows`` caps *key discovery* at the first ``max_rows`` rows, so a column
+    that only appears past the cap is never surfaced. Cells are materialised for
+    one row beyond the cap: the Rust profiler ignores that extra row (it analyses
+    only ``max_rows`` of them) but uses its presence to detect that the source was
+    truncated, without us stringifying every dropped row.
     """
-    keys = list(dict.fromkeys(key for row in rows for key in row))
-    return [(str(key), [_cell_to_str(row.get(key)) for row in rows]) for key in keys]
+    key_rows = rows if max_rows is None else rows[:max_rows]
+    cell_rows = rows if max_rows is None else rows[: max_rows + 1]
+    if sort_keys:
+        keys = list(dict.fromkeys(key for row in key_rows for key in sorted(row, key=str)))
+    else:
+        keys = list(dict.fromkeys(key for row in key_rows for key in row))
+    if key_rows and not keys:
+        raise ValueError(
+            "list-of-dicts input contains rows but no columns, so their row count "
+            "cannot be represented. Provide at least one key or pass an empty list."
+        )
+
+    normalized_names = [str(key) for key in keys]
+    if len(set(normalized_names)) != len(normalized_names):
+        collisions = sorted(
+            name for name in set(normalized_names) if normalized_names.count(name) > 1
+        )
+        raise ValueError(
+            "list-of-dicts input: column keys collide after string conversion: "
+            f"{collisions!r}. Use distinct string column names."
+        )
+
+    return [
+        (name, [_cell_to_str(row.get(key)) for row in cell_rows])
+        for key, name in zip(keys, normalized_names, strict=True)
+    ]
 
 
 def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[_Column]:
@@ -259,7 +309,12 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     rather than an empty string.
     """
     text = buffer.getvalue().decode("utf-8")
-    reader = _csv.reader(_io.StringIO(text), delimiter=delimiter or ",")
+    if delimiter is None:
+        try:
+            delimiter = _csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
+        except _csv.Error:
+            delimiter = ","
+    reader = _csv.reader(_io.StringIO(text), delimiter=delimiter)
     try:
         header = next(reader)
     except StopIteration:
@@ -872,7 +927,7 @@ def profile(
 
     if _is_list_of_dicts(source):
         _warn_if_config_ignored()
-        return _profile_python_columns(_columns_from_records(source), "dataframe")
+        return _profile_python_columns(_columns_from_records(source, max_rows), "dataframe")
 
     if isinstance(source, (bytes, bytearray, memoryview, _io.BytesIO)):
         if format is None:
@@ -892,9 +947,12 @@ def profile(
             else:
                 rows = json.loads(text)
             if isinstance(rows, dict):
-                columns = _columns_from_dict(rows)
+                if all(isinstance(values, (list, tuple)) for values in rows.values()):
+                    columns = _columns_from_dict(rows)
+                else:
+                    columns = _columns_from_records([rows], max_rows, sort_keys=True)
             elif _is_list_of_dicts(rows):
-                columns = _columns_from_records(rows)
+                columns = _columns_from_records(rows, max_rows, sort_keys=True)
             else:
                 raise ValueError(
                     f"{fmt} bytes must decode to an object of columns or an array of "
@@ -1605,7 +1663,7 @@ class ProfileReport:
                 row["timeliness"] = _r2(max(0.0, min(100.0, raw)))
         return row
 
-    def save(self, path: str) -> ProfileReport:
+    def save(self, path: str | os.PathLike[str]) -> ProfileReport:
         """Save the report to a file.
 
         Supported formats (by extension):
@@ -1619,6 +1677,7 @@ class ProfileReport:
         Returns:
             ``self`` for fluent chaining.
         """
+        path = _normalize_pathlike(path)
         if path.endswith(".json"):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.to_json())
@@ -1655,7 +1714,7 @@ class ProfileReport:
         """
 
         def esc(value: object) -> str:
-            return str(value).replace("|", "\\|")
+            return _one_line(value).replace("|", "\\|")
 
         qs = self.quality_score
         qs_str = f"{qs:.1f}%" if qs is not None else "N/A"

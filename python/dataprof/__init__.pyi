@@ -194,7 +194,7 @@ class ProfileReport:
     def quality_summary(self) -> dict[str, Any]:
         """Single-row quality summary dict for easy aggregation."""
         ...
-    def save(self, path: str) -> ProfileReport:
+    def save(self, path: str | PathLike[str]) -> ProfileReport:
         """Save report to file (.json, .csv, or .parquet), returning self for chaining."""
         ...
     def to_html(self) -> str:

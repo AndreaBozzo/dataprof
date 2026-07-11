@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 
@@ -271,6 +271,7 @@ fn json_value_to_string(value: &Value) -> String {
 /// Feed a JSON object's fields into a [`StreamingColumnCollection`].
 fn feed_json_object(
     obj: &JsonObject,
+    prior_rows: usize,
     known_columns: &mut Vec<String>,
     known_columns_set: &mut HashSet<String>,
     column_stats: &mut StreamingColumnCollection,
@@ -278,6 +279,7 @@ fn feed_json_object(
     for key in obj.keys() {
         if known_columns_set.insert(key.clone()) {
             known_columns.push(key.clone());
+            column_stats.init_column_with_missing(key, prior_rows);
         }
     }
 
@@ -354,14 +356,17 @@ fn analyze_json_from_reader_full<R: BufRead>(
     let mut column_stats = StreamingColumnCollection::new();
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
+    let mut rows_seen = 0;
 
     let summary = scan_json_from_reader(reader, config, |obj| {
         feed_json_object(
             obj,
+            rows_seen,
             &mut known_columns,
             &mut known_columns_set,
             &mut column_stats,
         );
+        rows_seen += 1;
     })?;
 
     let profiles = profile_builder::profiles_from_streaming_with_hints(
@@ -434,12 +439,16 @@ pub fn analyze_json_file_with_dimensions_and_hints(
                     .to_string(),
             });
         }
-        return Ok(ReportAssembler::new(
+        let mut assembler = ReportAssembler::new(
             file_source,
             ExecutionMetadata::new(0, 0, start.elapsed().as_millis()),
         )
-        .skip_quality()
-        .build());
+        .columns(column_profiles)
+        .with_quality_data(HashMap::new());
+        if let Some(dimensions) = quality_dimensions {
+            assembler = assembler.with_requested_dimensions(dimensions.to_vec());
+        }
+        return Ok(assembler.build());
     }
 
     let sample_columns = profile_builder::quality_check_samples(&column_stats);
@@ -743,11 +752,28 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_json_backfills_columns_discovered_after_first_row() {
+        let json = write_file(r#"[{"a":1},{"a":2,"b":3}]"#);
+        let config = JsonParserConfig::default();
+        let report = analyze_json_file(json.path(), &config).unwrap();
+        let col_b = report
+            .column_profiles
+            .iter()
+            .find(|profile| profile.name == "b")
+            .unwrap();
+
+        assert_eq!(col_b.total_count, 2);
+        assert_eq!(col_b.null_count, 1);
+        assert_eq!(col_b.unique_count, Some(1));
+    }
+
+    #[test]
     fn test_analyze_json_empty_array() {
         let json = write_file("[]");
         let config = JsonParserConfig::default();
         let report = analyze_json_file(json.path(), &config).unwrap();
         assert!(report.column_profiles.is_empty());
+        assert_eq!(report.quality_score(), Some(100.0));
     }
 
     #[test]
