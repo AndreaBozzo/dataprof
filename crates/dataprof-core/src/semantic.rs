@@ -1,5 +1,6 @@
 /// User-supplied semantic hints that affect profiling and quality metrics.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SemanticHints {
     pub positive_columns: Vec<String>,
     pub identifier_columns: Vec<String>,

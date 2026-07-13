@@ -145,14 +145,23 @@ impl<'a> TimelinessCalculator<'a> {
         ];
 
         for (start_col, end_col) in &temporal_pairs {
-            let start_data = data.iter().find(|(k, _)| {
-                temporal_columns.contains(k) && k.to_lowercase().contains(start_col)
+            // Resolve ambiguous role matches in the order supplied by the user.
+            // Iterating `data` here would make the selected pair depend on the
+            // randomized iteration order of its HashMap.
+            let start_data = temporal_columns.iter().find_map(|name| {
+                name.to_lowercase()
+                    .contains(start_col)
+                    .then(|| data.get(name))
+                    .flatten()
             });
-            let end_data = data
-                .iter()
-                .find(|(k, _)| temporal_columns.contains(k) && k.to_lowercase().contains(end_col));
+            let end_data = temporal_columns.iter().find_map(|name| {
+                name.to_lowercase()
+                    .contains(end_col)
+                    .then(|| data.get(name))
+                    .flatten()
+            });
 
-            if let (Some((_, start_values)), Some((_, end_values))) = (start_data, end_data) {
+            if let (Some(start_values), Some(end_values)) = (start_data, end_data) {
                 for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
                     if start_val.is_empty() || end_val.is_empty() {
                         continue;
@@ -232,5 +241,43 @@ mod tests {
             .expect("complete timeliness metrics");
         assert_eq!(complete.temporal_pairs_checked, 2);
         assert_eq!(complete.temporal_violations, 1);
+    }
+
+    #[test]
+    fn temporal_ordering_uses_explicit_column_order_for_ambiguous_roles() {
+        let data = HashMap::from([
+            ("primary_start".to_string(), vec!["2024-01-01".to_string()]),
+            (
+                "secondary_start".to_string(),
+                vec!["2024-01-03".to_string()],
+            ),
+            ("end".to_string(), vec!["2024-01-02".to_string()]),
+        ]);
+        let config = IsoQualityConfig::default();
+        let calculator = TimelinessCalculator::new(&config);
+
+        let primary_first = calculator
+            .calculate(
+                &data,
+                &[
+                    "primary_start".to_string(),
+                    "secondary_start".to_string(),
+                    "end".to_string(),
+                ],
+            )
+            .expect("primary-first timeliness metrics");
+        assert_eq!(primary_first.temporal_violations, 0);
+
+        let secondary_first = calculator
+            .calculate(
+                &data,
+                &[
+                    "secondary_start".to_string(),
+                    "primary_start".to_string(),
+                    "end".to_string(),
+                ],
+            )
+            .expect("secondary-first timeliness metrics");
+        assert_eq!(secondary_first.temporal_violations, 1);
     }
 }
