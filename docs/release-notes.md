@@ -34,8 +34,7 @@ Now:
   substring false positives such as `paid`, `valid`, or `monkey`.
 - The duplicate-row scan refuses per-column samples it cannot prove
   row-aligned (null-stripped or reservoir-evicted columns) instead of
-  comparing unrelated values. In streaming runs `duplicate_rows` is reported
-  as not assessed (`rows_checked == 0`); key uniqueness stays exact.
+  comparing unrelated values.
 - `report.quality_score()` returns `None` when nothing was assessable (empty
   dataset, or a report serialized by an older version) instead of a
   fabricated 100. `overall_score()` on raw metrics returns 0.0 in that case —
@@ -45,6 +44,28 @@ Now:
 move down or stay; datasets whose old score leaned on vacuous-perfect
 dimensions drop the most. The weights (0.30 / 0.25 / 0.20 / 0.15 / 0.10) are
 unchanged and still dataprof's own formula, not an ISO-mandated one.
+
+## Duplicate rows are now counted over the full stream
+
+The CSV, JSON, and streaming engines track row identity while they read:
+every record's fields fold into a length-prefixed signature fed to the same
+exact-then-HLL distinct estimator that backs `unique_count`. As a result:
+
+- `duplicate_rows` covers **every row of the source** — including rows with
+  null values, which the old sample-based scan could never see — with
+  `rows_checked` reporting the full row count.
+- Below ~10,000 distinct rows the count is exact. Beyond that the distinct
+  estimator spills to its HLL sketch and the derived duplicate count is an
+  estimate (~1% relative error on distincts), flagged by the new
+  `UniquenessMetrics.duplicate_rows_approximate` field and filed as
+  non-exact provenance.
+- Engines without a row tracker (Parquet record batches, DataFrames, Arrow)
+  keep the alignment-guarded sample scan; when the sample cannot be proven
+  row-aligned, `duplicate_rows` stays not-assessed rather than wrong.
+
+`MetricsCalculator::calculate_{comprehensive,bifurcated}_metrics_with_positive_columns`
+gained a `row_duplicates: Option<RowDuplicateSummary>` parameter; pass `None`
+to keep the previous behavior.
 
 ---
 

@@ -48,6 +48,25 @@ pub struct UniquenessMetrics {
     /// and does not contribute to the dimension score.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_column: Option<String>,
+    /// True when `duplicate_rows` comes from the full-stream distinct-count
+    /// estimator after it spilled to its HLL sketch (~1% relative error on
+    /// the distinct count), rather than an exact count.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub duplicate_rows_approximate: bool,
+}
+
+/// Full-stream row-duplicate counts produced by an engine's row tracker.
+///
+/// Engines that see whole records (CSV, JSON, streaming readers) count
+/// duplicates over *every* row with bounded memory: exact below the
+/// distinct-row threshold, HLL-estimated (and flagged) beyond it. When
+/// available this supersedes the sample-based duplicate scan, which cannot
+/// run at all on misaligned per-column samples.
+#[derive(Debug, Clone, Copy)]
+pub struct RowDuplicateSummary {
+    pub duplicate_rows: usize,
+    pub rows_checked: usize,
+    pub approximate: bool,
 }
 
 /// Accuracy metrics (ISO 25012).
@@ -130,6 +149,7 @@ impl QualityMetrics {
                 high_cardinality_warning: false,
                 rows_checked: 0,
                 key_column: None,
+                duplicate_rows_approximate: false,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
@@ -189,9 +209,10 @@ impl QualityMetrics {
     /// dimension was not computed or neither component had data.
     ///
     /// Mean of the available components: share of non-duplicate rows (when
-    /// rows could be scanned for duplicates) and `key_uniqueness` (when a
-    /// key column was identified). In streaming runs the duplicate scan is
-    /// typically not assessable while key uniqueness stays exact.
+    /// a row tracker or an aligned sample scan produced a count) and
+    /// `key_uniqueness` (when a key column was identified). Engines without
+    /// a row tracker whose samples cannot be proven row-aligned contribute
+    /// only the key component.
     pub fn uniqueness_score(&self) -> Option<f64> {
         let u = self.uniqueness.as_ref()?;
         let duplicate_score = (u.rows_checked > 0)
@@ -465,6 +486,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
+                duplicate_rows_approximate: false,
             }),
             accuracy: Some(AccuracyMetrics {
                 outlier_ratio: 0.0,
@@ -699,6 +721,7 @@ mod tests {
                 high_cardinality_warning: false,
                 rows_checked: 100,
                 key_column: None,
+                duplicate_rows_approximate: false,
             }),
             ..QualityMetrics::default()
         };
@@ -783,6 +806,7 @@ mod tests {
                         high_cardinality_warning: true,
                         rows_checked: 25,
                         key_column: Some("user_id".to_string()),
+                        duplicate_rows_approximate: false,
                     }),
                     ..QualityMetrics::default()
                 },

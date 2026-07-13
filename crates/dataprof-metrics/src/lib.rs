@@ -12,7 +12,7 @@ pub use analysis::{
 };
 pub use quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, QualityAssessment,
-    QualityMetrics, TimelinessMetrics, UniquenessMetrics,
+    QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
 };
 pub use stats::{
     CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, calculate_datetime_stats,
