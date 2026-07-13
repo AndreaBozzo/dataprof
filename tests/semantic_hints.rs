@@ -86,3 +86,32 @@ fn identifier_columns_are_semantic_strings_and_excluded_from_outliers() {
         0.0
     );
 }
+
+#[test]
+fn identifier_columns_drive_key_uniqueness_without_name_guessing() {
+    let csv = write_csv("invoice_number\nA\nB\nB\nC\n");
+
+    let without_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    let without_uniqueness = without_hint
+        .quality
+        .as_ref()
+        .and_then(|quality| quality.metrics.uniqueness.as_ref())
+        .expect("uniqueness metrics");
+    assert_eq!(without_uniqueness.key_column, None);
+
+    let with_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .identifier_columns(vec!["invoice_number".to_string()])
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    let uniqueness = with_hint
+        .quality
+        .as_ref()
+        .and_then(|quality| quality.metrics.uniqueness.as_ref())
+        .expect("uniqueness metrics");
+    assert_eq!(uniqueness.key_column.as_deref(), Some("invoice_number"));
+    assert!((uniqueness.key_uniqueness - 75.0).abs() < 0.01);
+}

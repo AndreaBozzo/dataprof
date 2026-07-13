@@ -35,11 +35,14 @@ impl<'a> UniquenessCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
         total_rows: usize,
+        identifier_columns: &[String],
     ) -> Result<UniquenessMetrics, DataProfilerError> {
         let (duplicate_rows, rows_checked) =
             Self::count_exact_duplicate_rows(data, column_profiles)?;
-        let (key_uniqueness, key_column) = Self::calculate_key_uniqueness(column_profiles)?;
-        let high_cardinality_warning = self.check_high_cardinality(column_profiles, total_rows);
+        let (key_uniqueness, key_column) =
+            Self::calculate_key_uniqueness(column_profiles, identifier_columns)?;
+        let high_cardinality_warning =
+            self.check_high_cardinality(column_profiles, total_rows, identifier_columns);
 
         Ok(UniquenessMetrics {
             duplicate_rows,
@@ -108,15 +111,18 @@ impl<'a> UniquenessCalculator<'a> {
     /// signal" rather than "perfect key".
     fn calculate_key_uniqueness(
         column_profiles: &[ColumnProfile],
+        identifier_columns: &[String],
     ) -> Result<(f64, Option<String>), DataProfilerError> {
-        // Look for ID-like columns
-        let key_column = column_profiles.iter().find(|profile| {
-            let name_lower = profile.name.to_lowercase();
-            name_lower.contains("id")
-                || name_lower.contains("key")
-                || name_lower == "pk"
-                || name_lower.ends_with("_id")
-        });
+        // Explicit semantic hints take precedence and retain user-supplied
+        // order. Fall back to the conservative name heuristic when absent.
+        let key_column = identifier_columns
+            .iter()
+            .find_map(|name| column_profiles.iter().find(|profile| profile.name == *name))
+            .or_else(|| {
+                column_profiles
+                    .iter()
+                    .find(|profile| is_likely_id_column(&profile.name))
+            });
 
         if let Some(key_col) = key_column {
             if let Some(unique_count) = key_col.unique_count {
@@ -140,7 +146,12 @@ impl<'a> UniquenessCalculator<'a> {
 
     /// Check for high cardinality warning
     /// Uses configurable high_cardinality_threshold from ISO thresholds (default: 95%)
-    fn check_high_cardinality(&self, column_profiles: &[ColumnProfile], total_rows: usize) -> bool {
+    fn check_high_cardinality(
+        &self,
+        column_profiles: &[ColumnProfile],
+        total_rows: usize,
+        identifier_columns: &[String],
+    ) -> bool {
         if total_rows == 0 {
             return false;
         }
@@ -151,7 +162,9 @@ impl<'a> UniquenessCalculator<'a> {
             if let Some(unique_count) = profile.unique_count {
                 let cardinality_ratio = unique_count as f64 / total_rows as f64;
                 // Flag if a column exceeds threshold (excluding obvious ID columns)
-                cardinality_ratio > threshold && !is_likely_id_column(&profile.name)
+                let is_identifier = identifier_columns.contains(&profile.name)
+                    || is_likely_id_column(&profile.name);
+                cardinality_ratio > threshold && !is_identifier
             } else {
                 false
             }

@@ -28,6 +28,10 @@ Now:
 - `UniquenessMetrics.key_column` names the column `key_uniqueness` describes;
   when no key column is identified, key uniqueness carries no signal instead
   of "assume perfect".
+- Explicit `identifier_columns` hints now select the column used by
+  `key_uniqueness`. Without a hint, key-name inference matches complete words
+  such as `id`, `key`, and `pk` (including snake/kebab/camel case) instead of
+  substring false positives such as `paid`, `valid`, or `monkey`.
 - The duplicate-row scan refuses per-column samples it cannot prove
   row-aligned (null-stripped or reservoir-evicted columns) instead of
   comparing unrelated values. In streaming runs `duplicate_rows` is reported

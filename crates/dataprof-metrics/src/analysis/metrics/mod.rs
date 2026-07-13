@@ -160,6 +160,24 @@ impl MetricsCalculator {
         requested_dimensions: Option<&[QualityDimension]>,
         positive_columns: &[String],
     ) -> Result<QualityMetrics, DataProfilerError> {
+        self.calculate_comprehensive_metrics_with_semantic_hints(
+            data,
+            column_profiles,
+            requested_dimensions,
+            positive_columns,
+            &[],
+        )
+    }
+
+    /// Calculate comprehensive metrics with explicit semantic column hints.
+    pub fn calculate_comprehensive_metrics_with_semantic_hints(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
+        positive_columns: &[String],
+        identifier_columns: &[String],
+    ) -> Result<QualityMetrics, DataProfilerError> {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset(
                 &requested_dimensions,
@@ -215,6 +233,7 @@ impl MetricsCalculator {
                 data,
                 column_profiles,
                 sample_size,
+                identifier_columns,
             )?;
             Some(UniquenessMetrics {
                 duplicate_rows: u.duplicate_rows,
@@ -372,6 +391,24 @@ impl MetricsCalculator {
         requested_dimensions: Option<&[QualityDimension]>,
         positive_columns: &[String],
     ) -> Result<BifurcatedResult, DataProfilerError> {
+        self.calculate_bifurcated_metrics_with_semantic_hints(
+            data,
+            column_profiles,
+            requested_dimensions,
+            positive_columns,
+            &[],
+        )
+    }
+
+    /// Calculate bifurcated metrics with explicit semantic column hints.
+    pub fn calculate_bifurcated_metrics_with_semantic_hints(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
+        positive_columns: &[String],
+        identifier_columns: &[String],
+    ) -> Result<BifurcatedResult, DataProfilerError> {
         if data.is_empty() && column_profiles.is_empty() {
             return Ok(BifurcatedResult {
                 metrics: Self::default_metrics_for_empty_dataset(&requested_dimensions),
@@ -431,6 +468,7 @@ impl MetricsCalculator {
                 data,
                 column_profiles,
                 total_rows,
+                identifier_columns,
             )?;
             // Only claim provenance for components that carry signal:
             // key_uniqueness means nothing without an identified key column,

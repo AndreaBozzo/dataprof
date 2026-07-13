@@ -113,11 +113,12 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_bifurcated_metrics_with_positive_columns(
+        match calculator.calculate_bifurcated_metrics_with_semantic_hints(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
             &self.semantic_hints.positive_columns,
+            &self.semantic_hints.identifier_columns,
         ) {
             Ok(result) => {
                 let confidence = self
@@ -141,11 +142,12 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_comprehensive_metrics_with_positive_columns(
+        match calculator.calculate_comprehensive_metrics_with_semantic_hints(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
             &self.semantic_hints.positive_columns,
+            &self.semantic_hints.identifier_columns,
         ) {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
