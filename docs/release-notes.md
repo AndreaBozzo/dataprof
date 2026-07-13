@@ -1,13 +1,30 @@
 # Unreleased
 
+## Validity and Precision join the quality model
+
+Two new selectively requestable dimensions are available in Rust and Python:
+
+- **Validity** measures conformance to a confidently detected semantic pattern.
+  It stays unassessed when pattern detection did not run or no pattern has
+  enough confidence, rather than assuming values are valid.
+- **Precision** measures consistency of effective decimal places within each
+  floating-point column. It reports deviation from the observed modal scale;
+  it does not infer a business-required number of decimal places.
+
+Both dimensions participate in `assessed_dimensions()`, per-dimension scores,
+streaming provenance, report serialization, and Python nested quality dicts.
+Adding them changes the default score weights to 0.25 completeness, 0.20
+consistency, 0.15 uniqueness, 0.15 accuracy, 0.10 timeliness, 0.10 validity,
+and 0.05 precision. Re-baseline aggregate-score gates; underlying facts remain
+individually inspectable.
+
 ## Quality score weights are configurable
 
 The overall score's relative dimension weights now live in
 `IsoQualityConfig::score_weights`. `MetricsCalculator::with_thresholds(...)`
 copies them into each `QualityMetrics` result, so custom scores remain
-reproducible after report serialization. The defaults remain 0.30 completeness,
-0.25 consistency, 0.20 uniqueness, 0.15 accuracy, and 0.10 timeliness; weights
-renormalize over the dimensions that were actually assessed.
+reproducible after report serialization. Weights renormalize over the
+dimensions that were actually assessed.
 
 The documentation now describes ISO 8000 and ISO/IEC 25012 as sources for the
 quality-dimension concepts. Dataprof's aggregate score and its weights are a
@@ -59,8 +76,10 @@ Now:
 
 **What to do:** re-baseline any thresholds built on `quality_score`. Scores
 move down or stay; datasets whose old score leaned on vacuous-perfect
-dimensions drop the most. The weights (0.30 / 0.25 / 0.20 / 0.15 / 0.10) are
-unchanged and still dataprof's own formula, not an ISO-mandated one.
+dimensions drop the most. At that stage the five-dimension weights remained
+0.30 / 0.25 / 0.20 / 0.15 / 0.10; the Validity and Precision change above
+subsequently expands and rebalances them. The formula remains dataprof's own,
+not an ISO-mandated one.
 
 ## Duplicate rows are now counted over the full stream
 

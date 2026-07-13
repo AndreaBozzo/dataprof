@@ -402,6 +402,27 @@ class TestProfileReport:
         assert timeliness is not None
         assert timeliness["date_values_checked"] == 2
 
+    def test_validity_and_precision_dimensions(self, tmp_path):
+        path = tmp_path / "semantic_values.csv"
+        rows = [f"user{i}@example.com,{i}.25" for i in range(1, 9)] + [
+            "invalid-email,9.2",
+            "also-invalid,10.3",
+        ]
+        path.write_text("email,amount\n" + "\n".join(rows) + "\n", encoding="utf-8")
+
+        report = dataprof.profile(str(path), quality_dimensions=["validity", "precision"])
+        quality = report.quality
+        assert quality is not None
+        assert quality.validity is not None
+        assert quality.precision is not None
+
+        assert quality.validity["values_checked"] == 10
+        assert quality.validity["invalid_values"] == 2
+        assert quality.validity["valid_values_ratio"] == 80.0
+        assert quality.precision["numeric_values_checked"] == 10
+        assert quality.precision["inconsistent_precision_values"] == 2
+        assert quality.precision["decimal_places_consistency"] == 80.0
+
     @pytest.mark.parametrize(
         ("attr", "dimension", "key", "default"),
         [
@@ -570,11 +591,13 @@ class TestReportErgonomics:
 
     def test_quality_score_weights_are_exposed_and_round_trip(self, report):
         expected = {
-            "completeness": 0.30,
-            "consistency": 0.25,
-            "uniqueness": 0.20,
+            "completeness": 0.25,
+            "consistency": 0.20,
+            "uniqueness": 0.15,
             "accuracy": 0.15,
             "timeliness": 0.10,
+            "validity": 0.10,
+            "precision": 0.05,
         }
         assert report.quality.score_weights == expected
 
@@ -688,6 +711,8 @@ class TestReportErgonomics:
             "uniqueness",
             "accuracy",
             "timeliness",
+            "validity",
+            "precision",
         }
 
 
@@ -1604,6 +1629,8 @@ class TestQualitySummary:
             "uniqueness",
             "accuracy",
             "timeliness",
+            "validity",
+            "precision",
             "execution_time_ms",
         }
         assert expected_keys == set(qs.keys())
@@ -1625,6 +1652,8 @@ class TestQualitySummary:
             "uniqueness",
             "accuracy",
             "timeliness",
+            "validity",
+            "precision",
         )
         for key in score_keys:
             v = qs[key]

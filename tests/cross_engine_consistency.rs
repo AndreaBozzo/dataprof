@@ -157,6 +157,49 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
 }
 
 #[test]
+fn test_precision_quality_matches_standard_and_columnar_csv() {
+    let mut csv = NamedTempFile::new().unwrap();
+    writeln!(csv, "amount").unwrap();
+    for value in ["1.25", "2.35", "3.45", "4.5"] {
+        writeln!(csv, "{value}").unwrap();
+    }
+    csv.flush().unwrap();
+
+    let standard = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
+    let columnar = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(csv.path())
+        .unwrap();
+    let standard_precision = standard
+        .quality
+        .unwrap()
+        .metrics
+        .precision
+        .expect("standard precision");
+    let columnar_precision = columnar
+        .quality
+        .unwrap()
+        .metrics
+        .precision
+        .expect("columnar precision");
+
+    assert_eq!(
+        standard_precision.numeric_values_checked,
+        columnar_precision.numeric_values_checked
+    );
+    assert_eq!(
+        standard_precision.inconsistent_precision_values,
+        columnar_precision.inconsistent_precision_values
+    );
+    assert!(
+        (standard_precision.decimal_places_consistency
+            - columnar_precision.decimal_places_consistency)
+            .abs()
+            < 0.01
+    );
+}
+
+#[test]
 fn test_mixed_data_column_type_consistency() {
     // A column with one non-numeric value should be String in both engines
     let mut f = NamedTempFile::new().unwrap();
@@ -415,6 +458,8 @@ fn test_profiler_selective_dimensions_only_completeness() {
     assert!(m.uniqueness.is_none(), "uniqueness should be skipped");
     assert!(m.accuracy.is_none(), "accuracy should be skipped");
     assert!(m.timeliness.is_none(), "timeliness should be skipped");
+    assert!(m.validity.is_none(), "validity should be skipped");
+    assert!(m.precision.is_none(), "precision should be skipped");
 
     // Score should re-normalize to completeness alone
     let score = m.overall_score();
@@ -444,6 +489,8 @@ fn test_profiler_selective_dimensions_subset() {
     assert!(m.uniqueness.is_some());
     assert!(m.accuracy.is_none());
     assert!(m.timeliness.is_none());
+    assert!(m.validity.is_none());
+    assert!(m.precision.is_none());
 }
 
 #[test]
@@ -460,4 +507,6 @@ fn test_profiler_all_dimensions_default() {
     assert!(m.uniqueness.is_some());
     assert!(m.accuracy.is_some());
     assert!(m.timeliness.is_some());
+    assert!(m.validity.is_some());
+    assert!(m.precision.is_some());
 }

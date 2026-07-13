@@ -7,6 +7,8 @@ pub enum QualityDimension {
     Uniqueness,
     Accuracy,
     Timeliness,
+    Validity,
+    Precision,
 }
 
 impl QualityDimension {
@@ -18,6 +20,8 @@ impl QualityDimension {
             Self::Uniqueness,
             Self::Accuracy,
             Self::Timeliness,
+            Self::Validity,
+            Self::Precision,
         ]
     }
 }
@@ -32,6 +36,8 @@ impl std::str::FromStr for QualityDimension {
             "uniqueness" => Ok(Self::Uniqueness),
             "accuracy" => Ok(Self::Accuracy),
             "timeliness" => Ok(Self::Timeliness),
+            "validity" => Ok(Self::Validity),
+            "precision" => Ok(Self::Precision),
             _ => Err(format!("Unknown quality dimension: {s}")),
         }
     }
@@ -45,6 +51,8 @@ impl std::fmt::Display for QualityDimension {
             Self::Uniqueness => write!(f, "uniqueness"),
             Self::Accuracy => write!(f, "accuracy"),
             Self::Timeliness => write!(f, "timeliness"),
+            Self::Validity => write!(f, "validity"),
+            Self::Precision => write!(f, "precision"),
         }
     }
 }

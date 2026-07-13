@@ -309,6 +309,8 @@ print(q.consistency)     # {"data_type_consistency": ..., "format_violations": .
 print(q.uniqueness)      # {"duplicate_rows": ..., "key_uniqueness": ..., "high_cardinality_warning": ...}
 print(q.accuracy)        # {"outlier_ratio": ..., "range_violations": ..., "negative_values_in_positive": ...}
 print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., "temporal_violations": ...}
+print(q.validity)        # {"valid_values_ratio": ..., "invalid_values": ..., "values_checked": ...}
+print(q.precision)       # {"decimal_places_consistency": ..., "inconsistent_precision_values": ...}
 ```
 
 Flat `DataQualityMetrics` accessors are deprecated in 0.9. Use nested

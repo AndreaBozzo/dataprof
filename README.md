@@ -154,7 +154,7 @@ for col in &report.column_profiles {
 - **Multi-format by default** -- move from CSV and JSON to Parquet, live databases, DataFrames, and Arrow batches without changing tools
 - **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
 - **Async-ready** -- Rust async APIs and opt-in Python extension builds cover stream pipelines, services, and remote Parquet sources
-- **Explainable quality assessment** -- completeness, consistency, uniqueness, accuracy, and timeliness with inspectable facts behind every score
+- **Explainable quality assessment** -- seven selectively requestable dimensions, including validity and decimal-scale precision, with inspectable facts behind every score
 
 ## Feature Flags
 
@@ -189,7 +189,7 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 
 ## Quality Metrics
 
-dataprof reports five quality dimensions informed by concepts in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):
+dataprof reports seven quality dimensions informed by concepts in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):
 
 | Dimension | What it measures |
 |---|---|
@@ -198,12 +198,14 @@ dataprof reports five quality dimensions informed by concepts in [ISO 8000-8](ht
 | **Uniqueness** | Duplicate rows, key uniqueness, high-cardinality warnings |
 | **Accuracy** | Outlier ratio, range violations, negative values in positive-only columns |
 | **Timeliness** | Future dates, stale data ratio, temporal ordering violations in explicit temporal columns |
+| **Validity** | Conformance to confidently detected semantic patterns, such as email or identifier formats |
+| **Precision** | Consistency of effective decimal places within floating-point columns |
 
 The overall quality score (0 -- 100) is dataprof's weighted average of the
 dimensions that had data to assess. The aggregation formula is not mandated or
 certified by ISO. Rust callers can customize the relative weights through
-`IsoQualityConfig::score_weights`; default weights are 0.30 / 0.25 / 0.20 /
-0.15 / 0.10 in the table order above.
+`IsoQualityConfig::score_weights`; default weights are 0.25 / 0.20 / 0.15 /
+0.15 / 0.10 / 0.10 / 0.05 in the table order above.
 
 ## Documentation
 

@@ -745,7 +745,8 @@ def profile_file(
             (default: 500).
         quality_dimensions: List of quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
-            "accuracy", "timeliness". None = all dimensions (default).
+            "accuracy", "timeliness", "validity", "precision". None = all
+            dimensions (default).
         metrics: List of metric packs to compute. Valid values: "schema"
             (always included), "statistics", "patterns", "quality".
             None = all packs (default).
@@ -833,7 +834,8 @@ def profile(
             (default: 500).
         quality_dimensions: List of quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
-            "accuracy", "timeliness". None = all dimensions (default).
+            "accuracy", "timeliness", "validity", "precision". None = all
+            dimensions (default).
         metrics: List of metric packs to compute. Valid values: "schema"
             (always included), "statistics", "patterns", "quality".
             None = all packs (default). Omitting a pack skips that
@@ -1241,11 +1243,13 @@ class _DictQuality:
     """Read-only stand-in for native DataQualityMetrics, built from to_dict()."""
 
     _DEFAULT_SCORE_WEIGHTS = {
-        "completeness": 0.30,
-        "consistency": 0.25,
-        "uniqueness": 0.20,
+        "completeness": 0.25,
+        "consistency": 0.20,
+        "uniqueness": 0.15,
         "accuracy": 0.15,
         "timeliness": 0.10,
+        "validity": 0.10,
+        "precision": 0.05,
     }
 
     def __init__(self, d: dict[str, Any]):
@@ -1363,6 +1367,14 @@ class _DictQuality:
         return self._d.get("timeliness")
 
     @property
+    def validity(self) -> dict[str, Any] | None:
+        return self._d.get("validity")
+
+    @property
+    def precision(self) -> dict[str, Any] | None:
+        return self._d.get("precision")
+
+    @property
     def score_weights(self) -> dict[str, float]:
         weights = self._d.get("score_weights")
         if isinstance(weights, dict):
@@ -1383,7 +1395,15 @@ class _DictQuality:
         if isinstance(scores, dict):
             return scores
         return dict.fromkeys(
-            ("completeness", "consistency", "uniqueness", "accuracy", "timeliness")
+            (
+                "completeness",
+                "consistency",
+                "uniqueness",
+                "accuracy",
+                "timeliness",
+                "validity",
+                "precision",
+            )
         )
 
 
@@ -1563,6 +1583,12 @@ class ProfileReport:
             tim = q.timeliness
             if tim is not None:
                 quality_dict["timeliness"] = tim
+            validity = q.validity
+            if validity is not None:
+                quality_dict["validity"] = validity
+            precision = q.precision
+            if precision is not None:
+                quality_dict["precision"] = precision
 
         return {
             "source": self._report.source,
@@ -1692,6 +1718,8 @@ class ProfileReport:
             "uniqueness": None,
             "accuracy": None,
             "timeliness": None,
+            "validity": None,
+            "precision": None,
             "execution_time_ms": self._report.scan_time_ms,
         }
         if q is not None:
@@ -1899,7 +1927,7 @@ class ProfileReport:
           relative-percent change.
         - ``dimensions``: the same a/b/abs/rel_pct shape per ISO 25012
           dimension (completeness, consistency, uniqueness, accuracy,
-          timeliness), sourced from :meth:`quality_summary`.
+          timeliness, validity, precision), sourced from :meth:`quality_summary`.
         - ``columns``: per-column null-percentage drift over the union of
           column names (missing on one side → ``None``).
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
@@ -1922,7 +1950,15 @@ class ProfileReport:
 
         dimensions = {
             dim: _delta(a_summary.get(dim), b_summary.get(dim))
-            for dim in ("completeness", "consistency", "uniqueness", "accuracy", "timeliness")
+            for dim in (
+                "completeness",
+                "consistency",
+                "uniqueness",
+                "accuracy",
+                "timeliness",
+                "validity",
+                "precision",
+            )
         }
 
         a_cols = self.column_profiles

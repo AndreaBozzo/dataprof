@@ -87,7 +87,7 @@ fn main() -> Result<(), dataprof::DataProfilerError> {
 
 ## Understanding Quality Metrics
 
-dataprof evaluates five quality dimensions informed by ISO 8000 and ISO/IEC
+dataprof evaluates seven quality dimensions informed by ISO 8000 and ISO/IEC
 25012. Each is scored from 0 to 100, and dataprof computes its overall score as
 a configurable weighted average of the dimensions that were actually assessed.
 
@@ -134,6 +134,28 @@ call `.temporal_columns(...)` on the Rust profiler to opt columns into scoring.
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated
 - `temporal_violations` -- ordering inconsistencies in time series
+
+### Validity
+
+Measures whether values conform to a confidently detected semantic pattern.
+
+- `valid_values_ratio` -- share matching the dominant pattern
+- `invalid_values` -- non-null values that do not match it
+- `values_checked` -- values in columns with enough pattern evidence to assess
+
+Columns without a confident pattern are unassessed; dataprof does not invent a
+domain rule from a weak match.
+
+### Precision
+
+Measures consistency of effective decimal scale within floating-point columns.
+
+- `decimal_places_consistency` -- share using each column's modal decimal scale
+- `inconsistent_precision_values` -- values whose effective scale differs
+- `numeric_values_checked` -- parseable finite float values examined
+
+This describes representation consistency. It does not infer how many decimal
+places a business domain requires.
 
 ## Working with Different Formats
 

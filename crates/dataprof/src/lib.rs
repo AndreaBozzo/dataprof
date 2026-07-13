@@ -40,9 +40,10 @@ pub use dataprof_json::{
 };
 pub use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
-    PatternMetadata, QualityAssessment, QualityMetrics, TimelinessMetrics, UniquenessMetrics,
-    analyze_column, analyze_column_fast, calculate_datetime_stats, calculate_numeric_stats,
-    calculate_text_stats, detect_patterns, infer_type, is_null_like_token, list_patterns,
+    PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, TimelinessMetrics,
+    UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
+    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats, detect_patterns,
+    infer_type, is_null_like_token, list_patterns,
 };
 #[cfg(feature = "parquet-async")]
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};
