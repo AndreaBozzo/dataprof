@@ -36,11 +36,13 @@ fn main() -> Result<()> {
     let path = dir.path().join("orders.csv");
     write!(std::fs::File::create(&path)?, "{MESSY_ORDERS}")?;
 
-    // `amount_eur` should never be negative; telling the profiler makes the
-    // violation an accuracy signal instead of just an unusual number.
+    // `amount_eur` should never be negative, and `shipped_at` is the date whose
+    // freshness we care about. Explicit hints turn both into quality signals
+    // instead of relying on names or inferred types.
     let report = Profiler::new()
         .positive_columns(vec!["amount_eur".to_string()])
         .identifier_columns(vec!["order_id".to_string()])
+        .temporal_columns(vec!["shipped_at".to_string()])
         .analyze_file(&path)?;
 
     println!(
