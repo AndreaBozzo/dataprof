@@ -390,7 +390,8 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
 
         {
           "name": ..., "data_type": ..., "total_count": ..., "null_count": ...,
-          "null_percentage": ..., "unique_count": ..., "uniqueness_ratio": ...,
+          "null_percentage": ..., "unique_count": ...,
+          "unique_count_is_approximate": ..., "uniqueness_ratio": ...,
           "stats": {"min": ..., "max": ..., ...},      # numeric / text / boolean
           "patterns": [{"name": ..., "regex": ..., ...}, ...]
         }

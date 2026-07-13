@@ -235,7 +235,9 @@ def test_small_distinct_count_marked_exact(engine, tmp_path):
 
 @pytest.mark.parametrize("engine", ["auto", "columnar", "incremental"])
 def test_high_cardinality_distinct_count_marked_approximate(engine, tmp_path):
-    n_rows = 50_000
+    # 20k comfortably clears the 10k estimator threshold (matches the Rust
+    # parity test) without the IO of a larger file across three engines.
+    n_rows = 20_000
     path = tmp_path / "high_card.csv"
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
