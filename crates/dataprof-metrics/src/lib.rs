@@ -11,8 +11,9 @@ pub use analysis::{
     infer_type, is_null_like_token, list_patterns,
 };
 pub use quality::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, QualityAssessment,
-    QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
+    QualityAssessment, QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics,
 };
 pub use stats::{
     CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, calculate_datetime_stats,

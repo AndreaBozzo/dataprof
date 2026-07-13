@@ -31,6 +31,18 @@ Use this skill when the user asks you to understand an unfamiliar dataset, inspe
    report = dp.profile("data.csv", metrics=["schema", "quality"])
    ```
 
+   Quality assessment has seven selectively requestable dimensions:
+   `completeness`, `consistency`, `uniqueness`, `accuracy`, `timeliness`,
+   `validity`, and `precision`. Use `quality_dimensions=[...]` to narrow them.
+   A `None` dimension score means it was not assessed; do not present it as
+   perfect or replace it with zero.
+
+   Semantic policies must be explicit when the data alone cannot establish
+   them: use `positive_columns`, `identifier_columns`, and `temporal_columns`.
+   Validity is assessed only for columns with a confidently detected pattern.
+   Precision measures consistency of effective decimal scale; it does not
+   infer a business-required number of decimal places.
+
 4. Summarize for the user or another agent with compact outputs:
 
    ```python

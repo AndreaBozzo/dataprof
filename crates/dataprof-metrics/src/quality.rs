@@ -103,6 +103,28 @@ pub struct TimelinessMetrics {
     pub temporal_pairs_checked: usize,
 }
 
+/// Validity metrics derived from confidently detected semantic patterns.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ValidityMetrics {
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub valid_values_ratio: f64,
+    pub invalid_values: usize,
+    /// Non-null values checked against a dominant semantic pattern.
+    #[serde(default)]
+    pub values_checked: usize,
+}
+
+/// Precision metrics for effective decimal-scale consistency.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrecisionMetrics {
+    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    pub decimal_places_consistency: f64,
+    pub inconsistent_precision_values: usize,
+    /// Parseable finite values examined in floating-point columns.
+    #[serde(default)]
+    pub numeric_values_checked: usize,
+}
+
 /// Comprehensive data quality metrics following industry standards.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QualityMetrics {
@@ -116,6 +138,10 @@ pub struct QualityMetrics {
     pub accuracy: Option<AccuracyMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeliness: Option<TimelinessMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validity: Option<ValidityMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub precision: Option<PrecisionMetrics>,
     /// True when the sample used to compute these metrics was below the
     /// minimum recommended size (10 rows). When set, the quality scores and
     /// per-dimension ratios should be treated as directional rather than
@@ -168,6 +194,16 @@ impl QualityMetrics {
                 temporal_violations: 0,
                 date_values_checked: 0,
                 temporal_pairs_checked: 0,
+            }),
+            validity: Some(ValidityMetrics {
+                valid_values_ratio: 100.0,
+                invalid_values: 0,
+                values_checked: 0,
+            }),
+            precision: Some(PrecisionMetrics {
+                decimal_places_consistency: 100.0,
+                inconsistent_precision_values: 0,
+                numeric_values_checked: 0,
             }),
             low_sample_warning: false,
             score_weights: QualityScoreWeights::default(),
@@ -275,8 +311,23 @@ impl QualityMetrics {
         )
     }
 
+    /// Score for semantic-pattern validity (0-100), or `None` when no column
+    /// had a confidently detected pattern to validate.
+    pub fn validity_score(&self) -> Option<f64> {
+        let validity = self.validity.as_ref()?;
+        (validity.values_checked > 0).then_some(validity.valid_values_ratio.clamp(0.0, 100.0))
+    }
+
+    /// Score for decimal-scale precision consistency (0-100), or `None` when
+    /// no floating-point values were available to assess.
+    pub fn precision_score(&self) -> Option<f64> {
+        let precision = self.precision.as_ref()?;
+        (precision.numeric_values_checked > 0)
+            .then_some(precision.decimal_places_consistency.clamp(0.0, 100.0))
+    }
+
     /// Weighted components of the overall score: `(dimension, weight, score)`.
-    fn weighted_scores(&self) -> [(QualityDimension, f64, Option<f64>); 5] {
+    fn weighted_scores(&self) -> [(QualityDimension, f64, Option<f64>); 7] {
         [
             (
                 QualityDimension::Completeness,
@@ -302,6 +353,16 @@ impl QualityMetrics {
                 QualityDimension::Timeliness,
                 self.score_weights.timeliness,
                 self.timeliness_score(),
+            ),
+            (
+                QualityDimension::Validity,
+                self.score_weights.validity,
+                self.validity_score(),
+            ),
+            (
+                QualityDimension::Precision,
+                self.score_weights.precision,
+                self.precision_score(),
             ),
         ]
     }
@@ -414,6 +475,28 @@ impl QualityMetrics {
             .map_or(0, |t| t.temporal_violations)
     }
 
+    pub fn valid_values_ratio(&self) -> f64 {
+        self.validity
+            .as_ref()
+            .map_or(100.0, |v| v.valid_values_ratio)
+    }
+
+    pub fn invalid_values(&self) -> usize {
+        self.validity.as_ref().map_or(0, |v| v.invalid_values)
+    }
+
+    pub fn decimal_places_consistency(&self) -> f64 {
+        self.precision
+            .as_ref()
+            .map_or(100.0, |p| p.decimal_places_consistency)
+    }
+
+    pub fn inconsistent_precision_values(&self) -> usize {
+        self.precision
+            .as_ref()
+            .map_or(0, |p| p.inconsistent_precision_values)
+    }
+
     pub fn supports_dimension(&self, dimension: QualityDimension) -> bool {
         match dimension {
             QualityDimension::Completeness => self.completeness.is_some(),
@@ -421,6 +504,8 @@ impl QualityMetrics {
             QualityDimension::Uniqueness => self.uniqueness.is_some(),
             QualityDimension::Accuracy => self.accuracy.is_some(),
             QualityDimension::Timeliness => self.timeliness.is_some(),
+            QualityDimension::Validity => self.validity.is_some(),
+            QualityDimension::Precision => self.precision.is_some(),
         }
     }
 }
@@ -520,6 +605,16 @@ mod tests {
                 date_values_checked: 100,
                 temporal_pairs_checked: 100,
             }),
+            validity: Some(ValidityMetrics {
+                valid_values_ratio: 100.0,
+                invalid_values: 0,
+                values_checked: 100,
+            }),
+            precision: Some(PrecisionMetrics {
+                decimal_places_consistency: 100.0,
+                inconsistent_precision_values: 0,
+                numeric_values_checked: 100,
+            }),
             low_sample_warning: false,
             score_weights: QualityScoreWeights::default(),
         }
@@ -538,6 +633,8 @@ mod tests {
             uniqueness: 0.0,
             accuracy: 0.0,
             timeliness: 0.0,
+            validity: 0.0,
+            precision: 0.0,
         };
 
         assert!((metrics.overall_score() - 0.0).abs() < 0.01);
@@ -564,7 +661,7 @@ mod tests {
     #[test]
     fn test_perfect_assessed_scores_100() {
         let metrics = perfect_assessed();
-        assert_eq!(metrics.assessed_dimensions().len(), 5);
+        assert_eq!(metrics.assessed_dimensions().len(), 7);
         assert!((metrics.overall_score() - 100.0).abs() < 0.01);
     }
 
@@ -575,7 +672,7 @@ mod tests {
             c.missing_values_ratio = 100.0;
             c.complete_records_ratio = 0.0;
         }
-        assert!((metrics.overall_score() - 70.0).abs() < 0.01);
+        assert!((metrics.overall_score() - 75.0).abs() < 0.01);
     }
 
     #[test]
@@ -596,6 +693,12 @@ mod tests {
         }
         if let Some(ref mut t) = metrics.timeliness {
             t.stale_data_ratio = 100.0;
+        }
+        if let Some(ref mut v) = metrics.validity {
+            v.valid_values_ratio = 0.0;
+        }
+        if let Some(ref mut p) = metrics.precision {
+            p.decimal_places_consistency = 0.0;
         }
 
         assert!((metrics.overall_score() - 0.0).abs() < 0.01);
@@ -621,6 +724,12 @@ mod tests {
         if let Some(ref mut t) = metrics.timeliness {
             t.date_values_checked = 0;
         }
+        if let Some(ref mut v) = metrics.validity {
+            v.values_checked = 0;
+        }
+        if let Some(ref mut p) = metrics.precision {
+            p.numeric_values_checked = 0;
+        }
 
         assert_eq!(
             metrics.assessed_dimensions(),
@@ -629,8 +738,8 @@ mod tests {
                 QualityDimension::Consistency
             ]
         );
-        // (0.30 * 50 + 0.25 * 100) / 0.55 = 72.72..
-        assert!((metrics.overall_score() - 72.7272).abs() < 0.01);
+        // (0.25 * 50 + 0.20 * 100) / 0.45 = 72.22..
+        assert!((metrics.overall_score() - 72.2222).abs() < 0.01);
     }
 
     #[test]
@@ -775,8 +884,8 @@ mod tests {
             ..QualityMetrics::default()
         };
 
-        // (0.30 * 50 + 0.20 * 80) / 0.50 = 62
-        assert!((metrics.overall_score() - 62.0).abs() < 0.01);
+        // (0.25 * 50 + 0.15 * 80) / 0.40 = 61.25
+        assert!((metrics.overall_score() - 61.25).abs() < 0.01);
     }
 
     #[test]

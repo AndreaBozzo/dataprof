@@ -10,22 +10,27 @@ use crate::errors::DataProfilerError;
 /// dimensions that were actually assessed. Values should be non-negative and
 /// at least one weight must be positive.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct QualityScoreWeights {
     pub completeness: f64,
     pub consistency: f64,
     pub uniqueness: f64,
     pub accuracy: f64,
     pub timeliness: f64,
+    pub validity: f64,
+    pub precision: f64,
 }
 
 impl Default for QualityScoreWeights {
     fn default() -> Self {
         Self {
-            completeness: 0.30,
-            consistency: 0.25,
-            uniqueness: 0.20,
+            completeness: 0.25,
+            consistency: 0.20,
+            uniqueness: 0.15,
             accuracy: 0.15,
             timeliness: 0.10,
+            validity: 0.10,
+            precision: 0.05,
         }
     }
 }
@@ -42,6 +47,8 @@ impl QualityScoreWeights {
             self.uniqueness,
             self.accuracy,
             self.timeliness,
+            self.validity,
+            self.precision,
         ];
         weights
             .iter()
@@ -155,7 +162,7 @@ const DEFAULT_SHOW_PROGRESS: bool = true;
 // Quality Configuration Defaults
 /// Enable quality checking by default.
 /// Quality analysis is a core feature of DataProf.
-/// When enabled, all ISO 8000/25012 quality metrics are calculated.
+/// When enabled, all configured quality metrics are calculated.
 const DEFAULT_QUALITY_ENABLED: bool = true;
 
 // Engine Configuration Defaults
@@ -870,12 +877,14 @@ impl DataprofConfigBuilder {
 
     /// Enable or disable quality checking.
     ///
-    /// When enabled, all ISO 8000/25012 quality metrics are calculated:
+    /// When enabled, all quality dimensions are calculated:
     /// - Completeness (null detection)
     /// - Consistency (type consistency, mixed types)
     /// - Uniqueness (duplicate detection, high cardinality)
     /// - Accuracy (outlier detection)
     /// - Timeliness (stale data detection)
+    /// - Validity (semantic pattern conformance)
+    /// - Precision (effective decimal-scale consistency)
     pub fn quality_enabled(mut self, enabled: bool) -> Self {
         self.quality.enabled = enabled;
         self
@@ -1095,6 +1104,23 @@ mod tests {
     }
 
     #[test]
+    fn five_dimension_weights_gain_new_dimension_defaults() {
+        let weights: QualityScoreWeights = serde_json::from_str(
+            r#"{
+                "completeness": 0.30,
+                "consistency": 0.25,
+                "uniqueness": 0.20,
+                "accuracy": 0.15,
+                "timeliness": 0.10
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(weights.validity, 0.10);
+        assert_eq!(weights.precision, 0.05);
+    }
+
+    #[test]
     fn config_validation_rejects_invalid_score_weights() {
         let weights = QualityScoreWeights {
             completeness: 0.0,
@@ -1102,6 +1128,8 @@ mod tests {
             uniqueness: 0.0,
             accuracy: 0.0,
             timeliness: 0.0,
+            validity: 0.0,
+            precision: 0.0,
         };
         let config = DataprofConfigBuilder::new()
             .quality_score_weights(weights)

@@ -259,7 +259,8 @@ impl PyColumnProfile {
 /// Python wrapper for quality dimensions informed by ISO 8000/25012 concepts.
 ///
 /// Exposes both flat backward-compatible properties and new nested dimension
-/// accessors (completeness, consistency, uniqueness, accuracy, timeliness).
+/// accessors (completeness, consistency, uniqueness, accuracy, timeliness,
+/// validity, precision).
 /// Un-computed dimensions are `None` at the Python level.
 #[pyclass(name = "DataQualityMetrics", from_py_object)]
 #[derive(Clone)]
@@ -276,7 +277,7 @@ impl From<&QualityMetrics> for PyDataQualityMetrics {
 fn warn_flat_quality_accessor(py: Python<'_>, name: &str) -> PyResult<()> {
     let message = CString::new(format!(
         "DataQualityMetrics.{name} is deprecated; use the nested dimension properties \
-         such as completeness, consistency, uniqueness, accuracy, or timeliness instead"
+         such as completeness, consistency, uniqueness, accuracy, timeliness, validity, or precision instead"
     ))
     .expect("warning message contains no nul bytes");
     let category = py.get_type::<PyDeprecationWarning>();
@@ -381,6 +382,8 @@ impl PyDataQualityMetrics {
             ("uniqueness".to_string(), weights.uniqueness),
             ("accuracy".to_string(), weights.accuracy),
             ("timeliness".to_string(), weights.timeliness),
+            ("validity".to_string(), weights.validity),
+            ("precision".to_string(), weights.precision),
         ])
     }
 
@@ -592,6 +595,71 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
+    /// Validity dimension dict, or None if not computed.
+    #[getter]
+    fn validity(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .validity
+            .as_ref()
+            .map(|v| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "valid_values_ratio".into(),
+                    v.valid_values_ratio.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "invalid_values".into(),
+                    v.invalid_values.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "values_checked".into(),
+                    v.values_checked.into_pyobject(py)?.unbind().into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
+    /// Precision dimension dict, or None if not computed.
+    #[getter]
+    fn precision(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+        self.inner
+            .precision
+            .as_ref()
+            .map(|p| -> PyResult<_> {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "decimal_places_consistency".into(),
+                    p.decimal_places_consistency
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "inconsistent_precision_values".into(),
+                    p.inconsistent_precision_values
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "numeric_values_checked".into(),
+                    p.numeric_values_checked
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
+                Ok(m)
+            })
+            .transpose()
+    }
+
     /// Overall quality score (0-100): weighted average of the assessed
     /// dimension scores, renormalized over the assessed dimensions.
     /// Returns 0.0 when no dimension was assessable — check
@@ -619,6 +687,8 @@ impl PyDataQualityMetrics {
             ("uniqueness".to_string(), self.inner.uniqueness_score()),
             ("accuracy".to_string(), self.inner.accuracy_score()),
             ("timeliness".to_string(), self.inner.timeliness_score()),
+            ("validity".to_string(), self.inner.validity_score()),
+            ("precision".to_string(), self.inner.precision_score()),
         ])
     }
 
@@ -648,6 +718,12 @@ impl PyDataQualityMetrics {
         }
         if self.inner.timeliness.is_some() {
             dimensions.push("timeliness");
+        }
+        if self.inner.validity.is_some() {
+            dimensions.push("validity");
+        }
+        if self.inner.precision.is_some() {
+            dimensions.push("precision");
         }
 
         format!(

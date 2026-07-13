@@ -1,7 +1,8 @@
 //! Data Quality Metrics Calculation Module
 //!
 //! This module implements comprehensive data quality metric calculations following industry standards.
-//! It provides structured assessment across five key dimensions: Completeness, Consistency, Uniqueness, Accuracy, and Timeliness.
+//! It provides structured assessment across seven key dimensions: Completeness,
+//! Consistency, Uniqueness, Accuracy, Timeliness, Validity, and Precision.
 //!
 //! ## ISO Compliance
 //!
@@ -13,7 +14,7 @@
 //!
 //! ## TODO: Future ISO 25012 Dimensions
 //!
-//! ISO/IEC 25012 defines 15 data quality characteristics. We currently implement 5.
+//! ISO/IEC 25012 defines 15 data quality characteristics. We currently implement 7.
 //! Below are candidates for future implementation:
 //!
 //! ### Inherent Data Quality (content-focused)
@@ -28,13 +29,6 @@
 //!   - Impl: Schema compatibility scoring, format conversion success rate
 //! - **Recoverability**: Data integrity during system failures
 //!   - Impl: Backup validation, checksum verification
-//!
-//! ### Additional Dimensions (easy wins)
-//! - **Validity**: Conformance to domain-specific rules
-//!   - Impl: Custom rule engine, regex pattern validation
-//!   - Example: Email format, phone format, business rules
-//! - **Precision**: Level of detail/decimal places
-//!   - Impl: Decimal place analysis, significant figures check
 //!
 //! ### Research-Proposed Dimensions (MDPI 2024-2025)
 //! - **Governance**: Data ownership and responsibility tracking
@@ -57,9 +51,11 @@
 mod accuracy;
 mod completeness;
 mod consistency;
+mod precision;
 mod timeliness;
 mod uniqueness;
 mod utils;
+mod validity;
 
 // Re-export public types for backward compatibility
 pub use utils::{StatisticalValidation, validate_sample_size};
@@ -67,14 +63,17 @@ pub use utils::{StatisticalValidation, validate_sample_size};
 use accuracy::AccuracyCalculator;
 use completeness::CompletenessCalculator;
 use consistency::ConsistencyCalculator;
+use precision::PrecisionCalculator;
 use timeliness::TimelinessCalculator;
 use uniqueness::UniquenessCalculator;
+use validity::ValidityCalculator;
 
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{
-    AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, QualityDimension,
-    QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
+    AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics,
+    QualityDimension, QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
+    ValidityMetrics,
 };
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
@@ -315,12 +314,36 @@ impl MetricsCalculator {
             None
         };
 
+        let validity = if Self::is_requested(requested, QualityDimension::Validity) {
+            let validity = ValidityCalculator::calculate(data, column_profiles);
+            Some(ValidityMetrics {
+                valid_values_ratio: validity.valid_values_ratio,
+                invalid_values: validity.invalid_values,
+                values_checked: validity.values_checked,
+            })
+        } else {
+            None
+        };
+
+        let precision = if Self::is_requested(requested, QualityDimension::Precision) {
+            let precision = PrecisionCalculator::calculate(data, column_profiles);
+            Some(PrecisionMetrics {
+                decimal_places_consistency: precision.decimal_places_consistency,
+                inconsistent_precision_values: precision.inconsistent_precision_values,
+                numeric_values_checked: precision.numeric_values_checked,
+            })
+        } else {
+            None
+        };
+
         Ok(QualityMetrics {
             completeness,
             consistency,
             uniqueness,
             accuracy,
             timeliness,
+            validity,
+            precision,
             low_sample_warning: !validation.sufficient_sample,
             score_weights: self.thresholds.score_weights,
         })
@@ -386,6 +409,24 @@ impl MetricsCalculator {
                     temporal_violations: 0,
                     date_values_checked: 0,
                     temporal_pairs_checked: 0,
+                })
+            } else {
+                None
+            },
+            validity: if is_req(QualityDimension::Validity) {
+                Some(ValidityMetrics {
+                    valid_values_ratio: 100.0,
+                    invalid_values: 0,
+                    values_checked: 0,
+                })
+            } else {
+                None
+            },
+            precision: if is_req(QualityDimension::Precision) {
+                Some(PrecisionMetrics {
+                    decimal_places_consistency: 100.0,
+                    inconsistent_precision_values: 0,
+                    numeric_values_checked: 0,
                 })
             } else {
                 None
@@ -618,6 +659,30 @@ impl MetricsCalculator {
             None
         };
 
+        let validity = if Self::is_requested(requested, QualityDimension::Validity) {
+            let validity = ValidityCalculator::calculate(data, column_profiles);
+            sampled_dimensions.push("validity".to_string());
+            Some(ValidityMetrics {
+                valid_values_ratio: validity.valid_values_ratio,
+                invalid_values: validity.invalid_values,
+                values_checked: validity.values_checked,
+            })
+        } else {
+            None
+        };
+
+        let precision = if Self::is_requested(requested, QualityDimension::Precision) {
+            let precision = PrecisionCalculator::calculate(data, column_profiles);
+            sampled_dimensions.push("precision".to_string());
+            Some(PrecisionMetrics {
+                decimal_places_consistency: precision.decimal_places_consistency,
+                inconsistent_precision_values: precision.inconsistent_precision_values,
+                numeric_values_checked: precision.numeric_values_checked,
+            })
+        } else {
+            None
+        };
+
         // total_rows reflects the full stream — that's what the user cares about
         // for whether the quality metrics are reliable. Fall back to sample_rows
         // when total_rows is unknown (e.g. profile arrays mode).
@@ -634,6 +699,8 @@ impl MetricsCalculator {
             uniqueness,
             accuracy,
             timeliness,
+            validity,
+            precision,
             low_sample_warning: !validation.sufficient_sample,
             score_weights: self.thresholds.score_weights,
         };
@@ -728,6 +795,8 @@ mod tests {
             uniqueness: 0.0,
             accuracy: 0.0,
             timeliness: 0.0,
+            validity: 0.0,
+            precision: 0.0,
         };
         let config = IsoQualityConfig {
             score_weights: weights,
@@ -749,5 +818,37 @@ mod tests {
             .expect("quality metrics");
 
         assert_eq!(metrics.score_weights, weights);
+    }
+
+    #[test]
+    fn empty_bifurcated_sample_keeps_new_dimensions_neutral_and_unassessed() {
+        let profiles = vec![ColumnProfile {
+            name: "amount".to_string(),
+            data_type: DataType::Float,
+            null_count: 0,
+            total_count: 100,
+            unique_count: Some(10),
+            stats: ColumnStats::None,
+            patterns: Some(vec![]),
+        }];
+        let requested = [QualityDimension::Validity, QualityDimension::Precision];
+
+        let result = MetricsCalculator::new()
+            .calculate_bifurcated_metrics(&HashMap::new(), &profiles, Some(&requested))
+            .expect("bifurcated quality metrics");
+        let validity = result.metrics.validity.as_ref().expect("validity metrics");
+        let precision = result
+            .metrics
+            .precision
+            .as_ref()
+            .expect("precision metrics");
+
+        assert_eq!(validity.valid_values_ratio, 100.0);
+        assert_eq!(validity.invalid_values, 0);
+        assert_eq!(validity.values_checked, 0);
+        assert_eq!(precision.decimal_places_consistency, 100.0);
+        assert_eq!(precision.inconsistent_precision_values, 0);
+        assert_eq!(precision.numeric_values_checked, 0);
+        assert!(result.metrics.assessed_dimensions().is_empty());
     }
 }
