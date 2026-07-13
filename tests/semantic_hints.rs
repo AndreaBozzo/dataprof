@@ -115,3 +115,38 @@ fn identifier_columns_drive_key_uniqueness_without_name_guessing() {
     assert_eq!(uniqueness.key_column.as_deref(), Some("invoice_number"));
     assert!((uniqueness.key_uniqueness - 75.0).abs() < 0.01);
 }
+
+#[test]
+fn temporal_columns_gate_timeliness_scoring() {
+    let csv = write_csv("observed_on,value\n2020-01-01,1\n2021-01-01,2\n2022-01-01,3\n");
+
+    let without_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    assert_eq!(
+        without_hint
+            .quality
+            .as_ref()
+            .expect("quality")
+            .metrics
+            .timeliness_score(),
+        None
+    );
+
+    let with_hint = Profiler::new()
+        .engine(EngineType::Incremental)
+        .temporal_columns(vec!["observed_on".to_string()])
+        .analyze_file(csv.path())
+        .expect("profile should succeed");
+    let metrics = &with_hint.quality.as_ref().expect("quality").metrics;
+    assert!(metrics.timeliness_score().is_some());
+    assert_eq!(
+        metrics
+            .timeliness
+            .as_ref()
+            .expect("timeliness metrics")
+            .date_values_checked,
+        3
+    );
+}

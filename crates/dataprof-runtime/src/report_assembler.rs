@@ -123,12 +123,11 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_bifurcated_metrics_with_semantic_hints(
+        match calculator.calculate_bifurcated_metrics_with_all_semantic_hints(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
-            &self.semantic_hints.positive_columns,
-            &self.semantic_hints.identifier_columns,
+            &self.semantic_hints,
             self.row_duplicates,
         ) {
             Ok(result) => {
@@ -153,12 +152,11 @@ impl ReportAssembler {
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
         let calculator = MetricsCalculator::new();
-        match calculator.calculate_comprehensive_metrics_with_semantic_hints(
+        match calculator.calculate_comprehensive_metrics_with_all_semantic_hints(
             data,
             &self.columns,
             self.requested_dimensions.as_deref(),
-            &self.semantic_hints.positive_columns,
-            &self.semantic_hints.identifier_columns,
+            &self.semantic_hints,
             self.row_duplicates,
         ) {
             Ok(metrics) => {

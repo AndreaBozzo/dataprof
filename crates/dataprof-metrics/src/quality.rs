@@ -246,7 +246,8 @@ impl QualityMetrics {
     }
 
     /// Score for the timeliness dimension (0-100), or `None` when the
-    /// dimension was not computed or no date values were found.
+    /// dimension was not computed or no parseable values were found in the
+    /// explicitly configured temporal columns.
     ///
     /// `100 - stale_data_ratio`, penalized by future dates as a share of
     /// the date values checked and by temporal ordering violations as a

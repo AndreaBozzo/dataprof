@@ -125,7 +125,9 @@ Measures whether values fall within expected ranges.
 
 ### Timeliness
 
-Measures whether date/time values are current and consistent.
+Measures whether explicitly selected date/time values are current and
+consistent. Pass `temporal_columns=["created_at", "updated_at"]` in Python or
+call `.temporal_columns(...)` on the Rust profiler to opt columns into scoring.
 
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated

@@ -58,6 +58,8 @@ pub struct ProfilerConfig {
     pub positive_columns: Vec<String>,
     /// Columns that should be treated as semantic identifiers, not measures.
     pub identifier_columns: Vec<String>,
+    /// Columns whose values should contribute to timeliness quality metrics.
+    pub temporal_columns: Vec<String>,
     /// Database connection configuration. Required for `analyze_query()`.
     #[cfg(feature = "database")]
     pub database_config: Option<DatabaseConfig>,
@@ -80,6 +82,7 @@ impl Default for ProfilerConfig {
             locale: None,
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
+            temporal_columns: Vec::new(),
             #[cfg(feature = "database")]
             database_config: None,
         }
@@ -246,6 +249,12 @@ impl Profiler {
         self
     }
 
+    /// Mark columns whose values should contribute to timeliness metrics.
+    pub fn temporal_columns(mut self, columns: Vec<String>) -> Self {
+        self.config.temporal_columns = columns;
+        self
+    }
+
     /// Set the progress update interval (default: 500ms)
     pub fn progress_interval(mut self, interval: Duration) -> Self {
         self.config.progress_interval = interval;
@@ -409,6 +418,7 @@ impl Profiler {
             self.config.positive_columns.clone(),
             self.config.identifier_columns.clone(),
         )
+        .with_temporal_columns(self.config.temporal_columns.clone())
     }
 
     /// Reject a stop condition richer than a plain row limit.
@@ -709,7 +719,7 @@ impl Profiler {
         let semantic_hints = self.semantic_hints();
         if !semantic_hints.is_empty() {
             return Err(DataProfilerError::UnsupportedDataSource {
-                message: "positive_columns and identifier_columns are not supported for database profiling yet".to_string(),
+                message: "positive_columns, identifier_columns, and temporal_columns are not supported for database profiling yet".to_string(),
             });
         }
         let config = self
@@ -737,7 +747,7 @@ impl Profiler {
         let semantic_hints = self.semantic_hints();
         if !semantic_hints.is_empty() {
             return Err(DataProfilerError::UnsupportedDataSource {
-                message: "positive_columns and identifier_columns are not supported for database profiling yet".to_string(),
+                message: "positive_columns, identifier_columns, and temporal_columns are not supported for database profiling yet".to_string(),
             });
         }
         let config = self

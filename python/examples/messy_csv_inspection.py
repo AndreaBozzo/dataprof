@@ -41,12 +41,14 @@ def main() -> None:
         path = Path(tmp) / "orders.csv"
         path.write_text(MESSY_ORDERS, encoding="utf-8")
 
-        # `amount_eur` should never be negative; telling the profiler makes the
-        # violation an accuracy signal instead of just an unusual number.
+        # `amount_eur` should never be negative, and `shipped_at` is the date
+        # whose freshness we care about. Explicit hints turn both into quality
+        # signals instead of relying on names or inferred types.
         report = dp.profile(
             str(path),
             positive_columns=["amount_eur"],
             identifier_columns=["order_id"],
+            temporal_columns=["shipped_at"],
         )
 
         print(f"orders.csv: {report.rows} rows x {report.columns} columns\n")
