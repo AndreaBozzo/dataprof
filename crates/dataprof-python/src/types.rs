@@ -559,6 +559,13 @@ impl PyDataQualityMetrics {
                     "date_values_checked".into(),
                     t.date_values_checked.into_pyobject(py)?.unbind().into_any(),
                 );
+                m.insert(
+                    "temporal_pairs_checked".into(),
+                    t.temporal_pairs_checked
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
                 Ok(m)
             })
             .transpose()

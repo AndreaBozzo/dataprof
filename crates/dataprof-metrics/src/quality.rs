@@ -76,6 +76,12 @@ pub struct TimelinessMetrics {
     /// overall score.
     #[serde(default)]
     pub date_values_checked: usize,
+    /// Start/end value pairs actually compared for temporal ordering.
+    /// `temporal_violations` is bounded by this, not by
+    /// `date_values_checked` — the pair scan may cover columns the date
+    /// scan does not.
+    #[serde(default)]
+    pub temporal_pairs_checked: usize,
 }
 
 /// Comprehensive data quality metrics following industry standards.
@@ -136,6 +142,7 @@ impl QualityMetrics {
                 stale_data_ratio: 0.0,
                 temporal_violations: 0,
                 date_values_checked: 0,
+                temporal_pairs_checked: 0,
             }),
             low_sample_warning: false,
         }
@@ -220,16 +227,24 @@ impl QualityMetrics {
     /// Score for the timeliness dimension (0-100), or `None` when the
     /// dimension was not computed or no date values were found.
     ///
-    /// `100 - stale_data_ratio`, penalized by future dates and temporal
-    /// ordering violations as a share of the date values checked.
+    /// `100 - stale_data_ratio`, penalized by future dates as a share of
+    /// the date values checked and by temporal ordering violations as a
+    /// share of the pairs actually compared.
     pub fn timeliness_score(&self) -> Option<f64> {
         let t = self.timeliness.as_ref()?;
         if t.date_values_checked == 0 {
             return None;
         }
-        let violation_ratio =
-            (t.future_dates_count + t.temporal_violations) as f64 / t.date_values_checked as f64;
-        Some((100.0 - t.stale_data_ratio - violation_ratio * 100.0).clamp(0.0, 100.0))
+        let future_ratio = t.future_dates_count as f64 / t.date_values_checked as f64;
+        let temporal_ratio = if t.temporal_pairs_checked > 0 {
+            t.temporal_violations as f64 / t.temporal_pairs_checked as f64
+        } else {
+            0.0
+        };
+        Some(
+            (100.0 - t.stale_data_ratio - (future_ratio + temporal_ratio) * 100.0)
+                .clamp(0.0, 100.0),
+        )
     }
 
     /// Weighted components of the overall score: `(dimension, weight, score)`.
@@ -462,6 +477,7 @@ mod tests {
                 stale_data_ratio: 0.0,
                 temporal_violations: 0,
                 date_values_checked: 100,
+                temporal_pairs_checked: 100,
             }),
             low_sample_warning: false,
         }

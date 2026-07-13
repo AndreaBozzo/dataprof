@@ -257,6 +257,7 @@ impl MetricsCalculator {
                 stale_data_ratio: t.stale_data_ratio,
                 temporal_violations: t.temporal_violations,
                 date_values_checked: t.date_values_checked,
+                temporal_pairs_checked: t.temporal_pairs_checked,
             })
         } else {
             None
@@ -329,6 +330,7 @@ impl MetricsCalculator {
                     stale_data_ratio: 0.0,
                     temporal_violations: 0,
                     date_values_checked: 0,
+                    temporal_pairs_checked: 0,
                 })
             } else {
                 None
@@ -430,9 +432,13 @@ impl MetricsCalculator {
                 column_profiles,
                 total_rows,
             )?;
-            exact_dimensions.push("key_uniqueness".to_string());
-            // The duplicate scan refuses misaligned per-column samples
-            // (rows_checked == 0); only label it when it actually ran.
+            // Only claim provenance for components that carry signal:
+            // key_uniqueness means nothing without an identified key column,
+            // and the duplicate scan refuses misaligned per-column samples
+            // (rows_checked == 0).
+            if u.key_column.is_some() {
+                exact_dimensions.push("key_uniqueness".to_string());
+            }
             if u.rows_checked > 0 {
                 sampled_dimensions.push("duplicate_rows".to_string());
             }
@@ -482,6 +488,7 @@ impl MetricsCalculator {
                     stale_data_ratio: 0.0,
                     temporal_violations: 0,
                     date_values_checked: 0,
+                    temporal_pairs_checked: 0,
                 }
             };
             sampled_dimensions.push("timeliness".to_string());
@@ -490,6 +497,7 @@ impl MetricsCalculator {
                 stale_data_ratio: t.stale_data_ratio,
                 temporal_violations: t.temporal_violations,
                 date_values_checked: t.date_values_checked,
+                temporal_pairs_checked: t.temporal_pairs_checked,
             })
         } else {
             None
