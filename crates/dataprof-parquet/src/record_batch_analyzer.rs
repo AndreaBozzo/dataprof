@@ -801,6 +801,7 @@ impl ColumnAnalyzer {
             total_count: self.total_count,
             null_count: self.null_count,
             unique_count: Some(self.cardinality.estimate()),
+            unique_count_is_approximate: Some(self.cardinality.is_approximate()),
             sample_values: &self.sample_values,
             text_lengths: Some(TextLengths {
                 min_length: self.min_length,

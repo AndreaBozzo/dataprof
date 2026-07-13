@@ -13,6 +13,17 @@ pub struct ColumnProfile {
     pub null_count: usize,
     pub total_count: usize,
     pub unique_count: Option<usize>,
+    /// Whether `unique_count` is an approximate (HyperLogLog) estimate rather
+    /// than an exact distinct count.
+    ///
+    /// `None` when `unique_count` is `None` (never computed); `Some(false)` for
+    /// an exact count; `Some(true)` once the cardinality estimator has spilled
+    /// to its HLL sketch (~1% relative error). Consumers running key or
+    /// high-cardinality/uniqueness gates must treat `Some(true)` as "do not rely
+    /// on this as an exact integer" -- an exact-looking count with no provenance
+    /// is unsafe for those checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_count_is_approximate: Option<bool>,
     pub stats: ColumnStats,
     /// Detected patterns, or `None` when pattern detection did not run.
     ///
@@ -214,6 +225,7 @@ mod tests {
             null_count: 2,
             total_count: 10,
             unique_count: Some(8),
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
@@ -244,6 +256,7 @@ mod tests {
         assert_eq!(deserialized.data_type, DataType::Integer);
         assert_eq!(deserialized.total_count, 10);
         assert_eq!(deserialized.null_count, 2);
+        assert_eq!(deserialized.unique_count_is_approximate, Some(false));
 
         if let ColumnStats::Numeric(n) = &deserialized.stats {
             assert!((n.min - 1.0).abs() < 0.01);
@@ -264,6 +277,7 @@ mod tests {
             null_count: 0,
             total_count: 3,
             unique_count: Some(3),
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,

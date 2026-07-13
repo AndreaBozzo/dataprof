@@ -179,6 +179,7 @@ mod tests {
             null_count: nulls,
             total_count: total,
             unique_count: Some(total - nulls),
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
             patterns: Some(vec![]),
         }

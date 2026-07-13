@@ -89,6 +89,9 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
         null_count,
         total_count,
         unique_count,
+        // analyze_column counts distinct values with an exact HashSet, so the
+        // count is exact whenever it was computed (never in fast mode).
+        unique_count_is_approximate: unique_count.map(|_| false),
         stats,
         patterns,
     }

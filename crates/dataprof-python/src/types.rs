@@ -54,6 +54,10 @@ pub struct PyColumnProfile {
     pub null_count: usize,
     #[pyo3(get)]
     pub unique_count: Option<usize>,
+    /// `None` when `unique_count` is `None`; `Some(False)` for an exact count;
+    /// `Some(True)` when it is a HyperLogLog estimate (~1% relative error).
+    #[pyo3(get)]
+    pub unique_count_is_approximate: Option<bool>,
     #[pyo3(get)]
     pub null_percentage: f64,
     #[pyo3(get)]
@@ -205,6 +209,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             total_count: profile.total_count,
             null_count: profile.null_count,
             unique_count: profile.unique_count,
+            unique_count_is_approximate: profile.unique_count_is_approximate,
             null_percentage,
             uniqueness_ratio,
             min,
