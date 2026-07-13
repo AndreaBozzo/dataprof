@@ -120,11 +120,51 @@ pub(crate) fn is_likely_date_column(column_name: &str) -> bool {
 
 /// Check if column is likely an ID column
 pub(crate) fn is_likely_id_column(column_name: &str) -> bool {
-    let name_lower = column_name.to_lowercase();
-    name_lower.contains("id")
-        || name_lower.contains("key")
-        || name_lower == "pk"
-        || name_lower.ends_with("_id")
+    identifier_words(column_name).into_iter().any(|word| {
+        word.eq_ignore_ascii_case("id")
+            || word.eq_ignore_ascii_case("key")
+            || word.eq_ignore_ascii_case("pk")
+    })
+}
+
+/// Split snake/kebab/spaced and camel/Pascal case names into semantic words.
+/// This keeps identifier inference from treating unrelated names such as
+/// `paid`, `valid`, or `monkey` as keys merely because they contain `id` or
+/// `key` as a substring.
+fn identifier_words(column_name: &str) -> Vec<&str> {
+    let mut boundaries = Vec::with_capacity(column_name.len() / 2 + 2);
+    boundaries.push(0);
+
+    let chars: Vec<(usize, char)> = column_name.char_indices().collect();
+    for (index, &(byte_index, current)) in chars.iter().enumerate() {
+        if !current.is_alphanumeric() {
+            boundaries.push(byte_index);
+            boundaries.push(byte_index + current.len_utf8());
+            continue;
+        }
+
+        let previous = index
+            .checked_sub(1)
+            .and_then(|i| chars.get(i))
+            .map(|(_, c)| *c);
+        let next = chars.get(index + 1).map(|(_, c)| *c);
+        let camel_boundary = current.is_uppercase() && previous.is_some_and(char::is_lowercase)
+            || current.is_uppercase()
+                && previous.is_some_and(char::is_uppercase)
+                && next.is_some_and(char::is_lowercase);
+        if camel_boundary {
+            boundaries.push(byte_index);
+        }
+    }
+    boundaries.push(column_name.len());
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    boundaries
+        .windows(2)
+        .filter_map(|range| column_name.get(range[0]..range[1]))
+        .filter(|word| word.chars().any(char::is_alphanumeric))
+        .collect()
 }
 
 /// Extract year from common date formats
@@ -188,4 +228,34 @@ pub(crate) fn calculate_percentile(sorted_values: &[f64], percentile: f64) -> f6
     let fraction = h - h_floor as f64;
 
     lower + fraction * (upper - lower)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_likely_id_column;
+
+    #[test]
+    fn identifier_heuristic_matches_words_not_substrings() {
+        for name in [
+            "id",
+            "user_id",
+            "order-key",
+            "primary key",
+            "CustomerId",
+            "APIKey",
+            "pk",
+        ] {
+            assert!(
+                is_likely_id_column(name),
+                "expected {name:?} to be identifier-like"
+            );
+        }
+
+        for name in ["paid", "valid", "identity", "monkey", "skid", "keyboard"] {
+            assert!(
+                !is_likely_id_column(name),
+                "expected {name:?} not to be identifier-like"
+            );
+        }
+    }
 }

@@ -41,6 +41,7 @@ impl<'a> UniquenessCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
         total_rows: usize,
+        identifier_columns: &[String],
         row_duplicates: Option<RowDuplicateSummary>,
     ) -> Result<UniquenessMetrics, DataProfilerError> {
         let (duplicate_rows, rows_checked, duplicate_rows_approximate) = match row_duplicates {
@@ -54,8 +55,10 @@ impl<'a> UniquenessCalculator<'a> {
                 (duplicates, rows, false)
             }
         };
-        let (key_uniqueness, key_column) = Self::calculate_key_uniqueness(column_profiles)?;
-        let high_cardinality_warning = self.check_high_cardinality(column_profiles, total_rows);
+        let (key_uniqueness, key_column) =
+            Self::calculate_key_uniqueness(column_profiles, identifier_columns)?;
+        let high_cardinality_warning =
+            self.check_high_cardinality(column_profiles, total_rows, identifier_columns);
 
         Ok(UniquenessMetrics {
             duplicate_rows,
@@ -125,15 +128,22 @@ impl<'a> UniquenessCalculator<'a> {
     /// signal" rather than "perfect key".
     fn calculate_key_uniqueness(
         column_profiles: &[ColumnProfile],
+        identifier_columns: &[String],
     ) -> Result<(f64, Option<String>), DataProfilerError> {
-        // Look for ID-like columns
-        let key_column = column_profiles.iter().find(|profile| {
-            let name_lower = profile.name.to_lowercase();
-            name_lower.contains("id")
-                || name_lower.contains("key")
-                || name_lower == "pk"
-                || name_lower.ends_with("_id")
-        });
+        // Explicit semantic hints take precedence and retain user-supplied
+        // order. Fall back to the conservative name heuristic when absent.
+        let key_column = identifier_columns
+            .iter()
+            .find_map(|name| {
+                column_profiles
+                    .iter()
+                    .find(|profile| profile.name == name.as_str())
+            })
+            .or_else(|| {
+                column_profiles
+                    .iter()
+                    .find(|profile| is_likely_id_column(&profile.name))
+            });
 
         if let Some(key_col) = key_column {
             if let Some(unique_count) = key_col.unique_count {
@@ -157,7 +167,12 @@ impl<'a> UniquenessCalculator<'a> {
 
     /// Check for high cardinality warning
     /// Uses configurable high_cardinality_threshold from ISO thresholds (default: 95%)
-    fn check_high_cardinality(&self, column_profiles: &[ColumnProfile], total_rows: usize) -> bool {
+    fn check_high_cardinality(
+        &self,
+        column_profiles: &[ColumnProfile],
+        total_rows: usize,
+        identifier_columns: &[String],
+    ) -> bool {
         if total_rows == 0 {
             return false;
         }
@@ -168,7 +183,9 @@ impl<'a> UniquenessCalculator<'a> {
             if let Some(unique_count) = profile.unique_count {
                 let cardinality_ratio = unique_count as f64 / total_rows as f64;
                 // Flag if a column exceeds threshold (excluding obvious ID columns)
-                cardinality_ratio > threshold && !is_likely_id_column(&profile.name)
+                let is_identifier = identifier_columns.contains(&profile.name)
+                    || is_likely_id_column(&profile.name);
+                cardinality_ratio > threshold && !is_identifier
             } else {
                 false
             }
@@ -334,7 +351,7 @@ mod tests {
 
         for case in cases {
             let metrics = calculator
-                .calculate(&case.data, &case.profiles, case.total_rows, None)
+                .calculate(&case.data, &case.profiles, case.total_rows, &[], None)
                 .unwrap_or_else(|e| panic!("{}: calculation failed: {e}", case.name));
 
             assert_eq!(
@@ -385,7 +402,7 @@ mod tests {
         let profiles = vec![profile("a", 1000, Some(2)), profile("b", 1000, Some(3))];
 
         let without = calculator
-            .calculate(&data, &profiles, 1000, None)
+            .calculate(&data, &profiles, 1000, &[], None)
             .expect("scan-only path");
         assert_eq!(without.rows_checked, 0, "misaligned sample must not scan");
 
@@ -395,7 +412,7 @@ mod tests {
             approximate: true,
         };
         let with = calculator
-            .calculate(&data, &profiles, 1000, Some(summary))
+            .calculate(&data, &profiles, 1000, &[], Some(summary))
             .expect("summary path");
         assert_eq!(with.duplicate_rows, 40);
         assert_eq!(with.rows_checked, 1000);
@@ -413,7 +430,7 @@ mod tests {
         let profiles = vec![profile("a", 3, Some(1)), profile("b", 3, Some(1))];
 
         let metrics = calculator
-            .calculate(&data, &profiles, 3, None)
+            .calculate(&data, &profiles, 3, &[], None)
             .expect("metrics");
         assert_eq!(metrics.duplicate_rows, 0);
         assert_eq!(metrics.rows_checked, 0);
