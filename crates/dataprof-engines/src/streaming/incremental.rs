@@ -326,6 +326,7 @@ impl IncrementalProfiler {
         if MetricPack::include_quality(packs) {
             assembler = assembler
                 .with_quality_data(sample_columns)
+                .with_row_duplicates(column_stats.row_duplicate_summary())
                 .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {
                 assembler = assembler.with_requested_dimensions(dims.clone());

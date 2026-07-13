@@ -335,6 +335,7 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns)
+    .with_row_duplicates(column_stats.row_duplicate_summary())
     .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());

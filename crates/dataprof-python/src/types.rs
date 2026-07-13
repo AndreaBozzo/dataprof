@@ -489,6 +489,14 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                m.insert(
+                    "duplicate_rows_approximate".into(),
+                    u.duplicate_rows_approximate
+                        .into_pyobject(py)?
+                        .to_owned()
+                        .unbind()
+                        .into_any(),
+                );
                 Ok(m)
             })
             .transpose()
