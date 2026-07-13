@@ -15,6 +15,7 @@ pub(crate) struct ConsistencyMetrics {
     pub data_type_consistency: f64,
     pub format_violations: usize,
     pub encoding_issues: usize,
+    pub values_checked: usize,
 }
 
 /// Calculator for consistency dimension metrics
@@ -26,7 +27,8 @@ impl ConsistencyCalculator {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
     ) -> Result<ConsistencyMetrics, DataProfilerError> {
-        let data_type_consistency = Self::calculate_type_consistency(data, column_profiles)?;
+        let (data_type_consistency, values_checked) =
+            Self::calculate_type_consistency(data, column_profiles)?;
         let format_violations = Self::count_format_violations(data)?;
         let encoding_issues = Self::detect_encoding_issues(data)?;
 
@@ -34,14 +36,16 @@ impl ConsistencyCalculator {
             data_type_consistency,
             format_violations,
             encoding_issues,
+            values_checked,
         })
     }
 
-    /// Calculate data type consistency percentage
+    /// Calculate data type consistency percentage and the number of non-null
+    /// values checked.
     fn calculate_type_consistency(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64, DataProfilerError> {
+    ) -> Result<(f64, usize), DataProfilerError> {
         let mut total_values = 0;
         let mut consistent_values = 0;
 
@@ -74,9 +78,12 @@ impl ConsistencyCalculator {
         }
 
         if total_values == 0 {
-            Ok(100.0)
+            Ok((100.0, 0))
         } else {
-            Ok((consistent_values as f64 / total_values as f64) * 100.0)
+            Ok((
+                (consistent_values as f64 / total_values as f64) * 100.0,
+                total_values,
+            ))
         }
     }
 
@@ -173,7 +180,10 @@ impl ConsistencyCalculator {
         violations
     }
 
-    /// Detect UTF-8 encoding issues
+    /// Detect UTF-8 encoding issues.
+    ///
+    /// Counts each affected value once, even when it shows several symptoms,
+    /// so the count stays comparable to `values_checked`.
     fn detect_encoding_issues(
         data: &HashMap<String, Vec<String>>,
     ) -> Result<usize, DataProfilerError> {
@@ -181,13 +191,9 @@ impl ConsistencyCalculator {
 
         for values in data.values() {
             for value in values {
-                // Check for replacement characters (�) which indicate encoding issues
-                if value.contains('\u{FFFD}') {
-                    issues += 1;
-                }
-
-                // Check for other problematic characters
-                if Self::has_encoding_artifacts(value) {
+                // Replacement characters (�) or mojibake artifacts both
+                // indicate the same defect: the value was mis-decoded.
+                if value.contains('\u{FFFD}') || Self::has_encoding_artifacts(value) {
                     issues += 1;
                 }
             }
@@ -219,6 +225,25 @@ mod tests {
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }
+    }
+
+    #[test]
+    fn test_encoding_issues_count_each_value_once() {
+        let data = HashMap::from([(
+            "name".to_string(),
+            vec![
+                // Both a replacement character and a mojibake artifact in
+                // one value: still a single mis-decoded value.
+                "Jos\u{FFFD} GarcÃ\u{AD}a".to_string(),
+                "clean".to_string(),
+            ],
+        )]);
+        let profiles = vec![string_profile("name")];
+
+        let metrics = ConsistencyCalculator::calculate(&data, &profiles)
+            .expect("consistency metrics should be computed");
+
+        assert_eq!(metrics.encoding_issues, 1);
     }
 
     #[test]

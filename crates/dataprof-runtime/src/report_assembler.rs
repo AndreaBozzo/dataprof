@@ -240,7 +240,9 @@ mod tests {
                 sample_size,
             } => {
                 assert!(exact_dimensions.contains(&"completeness".to_string()));
-                assert!(exact_dimensions.contains(&"key_uniqueness".to_string()));
+                // No key column exists in this fixture, so key_uniqueness
+                // carries no signal and must not be claimed as exact.
+                assert!(!exact_dimensions.contains(&"key_uniqueness".to_string()));
                 assert!(sampled_dimensions.contains(&"consistency".to_string()));
                 assert!(sampled_dimensions.contains(&"accuracy".to_string()));
                 assert!(sampled_dimensions.contains(&"timeliness".to_string()));

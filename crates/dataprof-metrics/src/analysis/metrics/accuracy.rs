@@ -16,6 +16,7 @@ pub(crate) struct AccuracyMetrics {
     pub outlier_ratio: f64,
     pub range_violations: usize,
     pub negative_values_in_positive: usize,
+    pub numeric_values_checked: usize,
 }
 
 /// Calculator for accuracy dimension metrics
@@ -45,7 +46,7 @@ impl<'a> AccuracyCalculator<'a> {
         positive_columns: &[String],
     ) -> Result<AccuracyMetrics, DataProfilerError> {
         let outlier_ratio = self.calculate_outlier_ratio(data, column_profiles)?;
-        let range_violations = Self::count_range_violations(data)?;
+        let (range_violations, numeric_values_checked) = Self::count_range_violations(data)?;
         let negative_values_in_positive =
             Self::count_negative_in_positive_fields(data, positive_columns)?;
 
@@ -53,6 +54,7 @@ impl<'a> AccuracyCalculator<'a> {
             outlier_ratio,
             range_violations,
             negative_values_in_positive,
+            numeric_values_checked,
         })
     }
 
@@ -129,23 +131,32 @@ impl<'a> AccuracyCalculator<'a> {
             .count()
     }
 
-    /// Count values outside expected ranges
+    /// Count values outside expected ranges; returns `(violations, finite
+    /// numeric values seen across all columns)`. The second value is the
+    /// denominator that makes the violation counts interpretable and marks
+    /// the accuracy dimension as assessable.
     fn count_range_violations(
         data: &HashMap<String, Vec<String>>,
-    ) -> Result<usize, DataProfilerError> {
+    ) -> Result<(usize, usize), DataProfilerError> {
         let mut violations = 0;
+        let mut numeric_values_checked = 0;
 
         for (column_name, values) in data {
-            violations += Self::check_domain_specific_ranges(column_name, values);
+            let (column_violations, column_numeric) =
+                Self::check_domain_specific_ranges(column_name, values);
+            violations += column_violations;
+            numeric_values_checked += column_numeric;
         }
 
-        Ok(violations)
+        Ok((violations, numeric_values_checked))
     }
 
-    /// Check domain-specific range violations
-    fn check_domain_specific_ranges(column_name: &str, values: &[String]) -> usize {
+    /// Check domain-specific range violations; returns `(violations, finite
+    /// numeric values seen)`.
+    fn check_domain_specific_ranges(column_name: &str, values: &[String]) -> (usize, usize) {
         let name_lower = column_name.to_lowercase();
         let mut violations = 0;
+        let mut numeric_values = 0;
 
         for value in values {
             if is_null_like_token(value.trim()) {
@@ -153,6 +164,11 @@ impl<'a> AccuracyCalculator<'a> {
             }
 
             if let Ok(num_value) = value.parse::<f64>() {
+                if !num_value.is_finite() {
+                    continue;
+                }
+                numeric_values += 1;
+
                 // Age should be reasonable (0-150)
                 if name_lower.contains("age") && !(0.0..=150.0).contains(&num_value) {
                     violations += 1;
@@ -177,7 +193,7 @@ impl<'a> AccuracyCalculator<'a> {
             }
         }
 
-        violations
+        (violations, numeric_values)
     }
 
     /// Count negative values in positive-only fields

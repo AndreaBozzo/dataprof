@@ -1342,6 +1342,20 @@ class _DictQuality:
     def overall_quality_score(self) -> float | None:
         return self._d.get("overall_score")
 
+    def assessed_dimensions(self) -> list[str]:
+        """Dimensions that had data to assess. Empty for reports serialized
+        before denominators existed — no score is fabricated for them."""
+        return self._d.get("assessed_dimensions") or []
+
+    def dimension_scores(self) -> dict[str, float | None]:
+        """Per-dimension scores (0-100), None when not assessable."""
+        scores = self._d.get("dimension_scores")
+        if isinstance(scores, dict):
+            return scores
+        return dict.fromkeys(
+            ("completeness", "consistency", "uniqueness", "accuracy", "timeliness")
+        )
+
 
 class _DictBackedReport:
     """Read-only stand-in for the native ProfileReport, built from to_dict()."""
@@ -1497,6 +1511,10 @@ class ProfileReport:
         if q is not None:
             quality_dict = {
                 "overall_score": _r2(q.overall_quality_score()),
+                "assessed_dimensions": q.assessed_dimensions(),
+                "dimension_scores": {
+                    name: _r2(score) for name, score in q.dimension_scores().items()
+                },
             }
             if q.low_sample_warning:
                 quality_dict["low_sample_warning"] = True
@@ -1628,6 +1646,11 @@ class ProfileReport:
 
         Returns a dict with source, rows, quality_score, per-dimension scores,
         and execution_time_ms. Useful for pd.concat() across multiple reports.
+
+        Dimension scores mirror the components of ``quality_score``: each uses
+        every sub-metric of its dimension, and a dimension that had nothing to
+        assess (no numeric values, no date columns, ...) is None rather than a
+        vacuous 100.
         """
         q = self._report.quality
         row: dict[str, Any] = {
@@ -1642,25 +1665,8 @@ class ProfileReport:
             "execution_time_ms": self._report.scan_time_ms,
         }
         if q is not None:
-            comp = q.completeness
-            if comp is not None:
-                row["completeness"] = _r2(comp.get("complete_records_ratio"))
-            cons = q.consistency
-            if cons is not None:
-                row["consistency"] = _r2(cons.get("data_type_consistency"))
-            uniq = q.uniqueness
-            if uniq is not None:
-                row["uniqueness"] = _r2(uniq.get("key_uniqueness"))
-            acc = q.accuracy
-            if acc is not None:
-                # Invert: low outlier_ratio → high accuracy score
-                raw = 100.0 - (acc.get("outlier_ratio") or 0.0)
-                row["accuracy"] = _r2(max(0.0, min(100.0, raw)))
-            tim = q.timeliness
-            if tim is not None:
-                # Invert: low stale_data_ratio → high timeliness score
-                raw = 100.0 - (tim.get("stale_data_ratio") or 0.0)
-                row["timeliness"] = _r2(max(0.0, min(100.0, raw)))
+            for name, score in q.dimension_scores().items():
+                row[name] = _r2(score)
         return row
 
     def save(self, path: str | os.PathLike[str]) -> ProfileReport:

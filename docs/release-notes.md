@@ -1,3 +1,49 @@
+# Unreleased
+
+## The quality score now only scores what was actually assessed
+
+**`quality_score` changes value for almost every dataset.** The facts
+(per-dimension counts and ratios) are unchanged; how they aggregate is not.
+
+Previously, a dimension with nothing to assess counted as perfect: no numeric
+columns meant accuracy 100, no date columns meant timeliness 100, no id-named
+column meant uniqueness 100. A text-only CSV could not score below 70 no matter
+how bad it was. And the violation counts (duplicate rows, format violations,
+encoding issues, range violations, future dates, temporal violations) never
+influenced the score at all.
+
+Now:
+
+- Each dimension records how much data it examined (`total_cells`,
+  `values_checked`, `rows_checked`, `numeric_values_checked`,
+  `date_values_checked`). A dimension that examined nothing is **excluded**
+  and the weights renormalize over the assessed dimensions
+  (`QualityMetrics::assessed_dimensions()`, Python
+  `quality.assessed_dimensions()` / `quality.dimension_scores()`).
+- Every sub-metric now feeds its dimension score: duplicate rows drive
+  uniqueness, format violations and encoding issues drive consistency, range
+  violations drive accuracy, future dates and temporal violations drive
+  timeliness. Completeness is the mean of cell-level and row-level
+  completeness.
+- `UniquenessMetrics.key_column` names the column `key_uniqueness` describes;
+  when no key column is identified, key uniqueness carries no signal instead
+  of "assume perfect".
+- The duplicate-row scan refuses per-column samples it cannot prove
+  row-aligned (null-stripped or reservoir-evicted columns) instead of
+  comparing unrelated values. In streaming runs `duplicate_rows` is reported
+  as not assessed (`rows_checked == 0`); key uniqueness stays exact.
+- `report.quality_score()` returns `None` when nothing was assessable (empty
+  dataset, or a report serialized by an older version) instead of a
+  fabricated 100. `overall_score()` on raw metrics returns 0.0 in that case —
+  check `assessed_dimensions()` to tell the difference.
+
+**What to do:** re-baseline any thresholds built on `quality_score`. Scores
+move down or stay; datasets whose old score leaned on vacuous-perfect
+dimensions drop the most. The weights (0.30 / 0.25 / 0.20 / 0.15 / 0.10) are
+unchanged and still dataprof's own formula, not an ISO-mandated one.
+
+---
+
 # DataProf 0.9.0 — Release Notes
 
 0.9.0 focuses on the Python surface: a report object that behaves like a report

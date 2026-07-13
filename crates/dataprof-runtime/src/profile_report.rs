@@ -60,10 +60,15 @@ impl ProfileReport {
         self
     }
 
-    /// Calculate overall quality score using ISO 8000/25012 metrics.
-    /// Returns `None` if quality metrics were not computed.
+    /// Calculate the overall quality score (weighted across the assessed
+    /// dimensions). Returns `None` if quality metrics were not computed, or
+    /// if no dimension had anything to assess (e.g. an empty dataset) —
+    /// absence of evidence is not a perfect score.
     pub fn quality_score(&self) -> Option<f64> {
-        self.quality.as_ref().map(|q| q.score())
+        self.quality
+            .as_ref()
+            .filter(|q| !q.metrics.assessed_dimensions().is_empty())
+            .map(|q| q.score())
     }
 
     /// Get the data source identifier (for backwards compatibility)
@@ -186,10 +191,19 @@ mod tests {
 
         assert_eq!(report.id, "legacy-report");
         assert_eq!(report.execution.rows_processed, 10);
+        // Legacy metrics predate the assessability denominators: the facts
+        // stay readable, but no score is fabricated from them.
+        assert!(report.quality_score().is_none());
         let quality = report
             .quality
             .expect("expected legacy quality to deserialize");
         assert!(matches!(quality.confidence, MetricConfidence::Exact));
-        assert!((quality.score() - 100.0).abs() < 0.01);
+        let completeness = quality
+            .metrics
+            .completeness
+            .as_ref()
+            .expect("legacy completeness facts should deserialize");
+        assert!((completeness.complete_records_ratio - 100.0).abs() < 0.01);
+        assert!(quality.metrics.assessed_dimensions().is_empty());
     }
 }

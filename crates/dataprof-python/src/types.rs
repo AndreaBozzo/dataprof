@@ -406,6 +406,10 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                m.insert(
+                    "total_cells".into(),
+                    c.total_cells.into_pyobject(py)?.unbind().into_any(),
+                );
                 Ok(m)
             })
             .transpose()
@@ -437,6 +441,10 @@ impl PyDataQualityMetrics {
                     "encoding_issues".into(),
                     c.encoding_issues.into_pyobject(py)?.unbind().into_any(),
                 );
+                m.insert(
+                    "values_checked".into(),
+                    c.values_checked.into_pyobject(py)?.unbind().into_any(),
+                );
                 Ok(m)
             })
             .transpose()
@@ -466,6 +474,18 @@ impl PyDataQualityMetrics {
                     u.high_cardinality_warning
                         .into_pyobject(py)?
                         .to_owned()
+                        .unbind()
+                        .into_any(),
+                );
+                m.insert(
+                    "rows_checked".into(),
+                    u.rows_checked.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "key_column".into(),
+                    u.key_column
+                        .as_deref()
+                        .into_pyobject(py)?
                         .unbind()
                         .into_any(),
                 );
@@ -500,6 +520,13 @@ impl PyDataQualityMetrics {
                         .unbind()
                         .into_any(),
                 );
+                m.insert(
+                    "numeric_values_checked".into(),
+                    a.numeric_values_checked
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
                 Ok(m)
             })
             .transpose()
@@ -528,14 +555,50 @@ impl PyDataQualityMetrics {
                     "temporal_violations".into(),
                     t.temporal_violations.into_pyobject(py)?.unbind().into_any(),
                 );
+                m.insert(
+                    "date_values_checked".into(),
+                    t.date_values_checked.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "temporal_pairs_checked".into(),
+                    t.temporal_pairs_checked
+                        .into_pyobject(py)?
+                        .unbind()
+                        .into_any(),
+                );
                 Ok(m)
             })
             .transpose()
     }
 
-    /// Overall quality score (0-100) using ISO 8000/25012 weighted formula.
+    /// Overall quality score (0-100): weighted average of the assessed
+    /// dimension scores, renormalized over the assessed dimensions.
+    /// Returns 0.0 when no dimension was assessable — check
+    /// `assessed_dimensions()` to distinguish that case.
     fn overall_quality_score(&self) -> f64 {
         self.inner.overall_score()
+    }
+
+    /// Names of the dimensions that had data to assess and contribute to
+    /// the overall score.
+    fn assessed_dimensions(&self) -> Vec<String> {
+        self.inner
+            .assessed_dimensions()
+            .iter()
+            .map(|d| d.to_string())
+            .collect()
+    }
+
+    /// Per-dimension scores (0-100). A dimension maps to None when it was
+    /// not computed or had nothing to assess.
+    fn dimension_scores(&self) -> std::collections::HashMap<String, Option<f64>> {
+        std::collections::HashMap::from([
+            ("completeness".to_string(), self.inner.completeness_score()),
+            ("consistency".to_string(), self.inner.consistency_score()),
+            ("uniqueness".to_string(), self.inner.uniqueness_score()),
+            ("accuracy".to_string(), self.inner.accuracy_score()),
+            ("timeliness".to_string(), self.inner.timeliness_score()),
+        ])
     }
 
     fn __str__(&self) -> String {

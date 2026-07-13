@@ -773,7 +773,8 @@ mod tests {
         let config = JsonParserConfig::default();
         let report = analyze_json_file(json.path(), &config).unwrap();
         assert!(report.column_profiles.is_empty());
-        assert_eq!(report.quality_score(), Some(100.0));
+        // An empty dataset has nothing to assess: no score is fabricated.
+        assert_eq!(report.quality_score(), None);
     }
 
     #[test]
