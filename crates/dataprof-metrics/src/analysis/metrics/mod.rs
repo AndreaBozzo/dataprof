@@ -215,10 +215,13 @@ impl MetricsCalculator {
 
         // Uniqueness dimension
         let uniqueness = if Self::is_requested(requested, QualityDimension::Uniqueness) {
+            let uniqueness_total_rows = row_duplicates
+                .filter(|summary| summary.rows_checked > 0)
+                .map_or(sample_size, |summary| summary.rows_checked);
             let u = UniquenessCalculator::new(&self.thresholds).calculate(
                 data,
                 column_profiles,
-                sample_size,
+                uniqueness_total_rows,
                 row_duplicates,
             )?;
             Some(UniquenessMetrics {
@@ -577,4 +580,50 @@ pub struct BifurcatedResult {
     pub sampled_dimensions: Vec<String>,
     /// Number of sample rows used for Phase B dimensions
     pub sample_size: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ColumnStats, DataType};
+
+    #[test]
+    fn comprehensive_metrics_use_tracker_rows_for_cardinality_ratio() {
+        let data = HashMap::from([(
+            "city".to_string(),
+            vec!["Rome".to_string(), "Milan".to_string()],
+        )]);
+        let profiles = vec![ColumnProfile {
+            name: "city".to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 1_000,
+            unique_count: Some(100),
+            stats: ColumnStats::None,
+            patterns: Some(vec![]),
+        }];
+        let requested = [QualityDimension::Uniqueness];
+
+        let metrics = MetricsCalculator::new()
+            .calculate_comprehensive_metrics_with_positive_columns(
+                &data,
+                &profiles,
+                Some(&requested),
+                &[],
+                Some(RowDuplicateSummary {
+                    duplicate_rows: 0,
+                    rows_checked: 1_000,
+                    approximate: false,
+                }),
+            )
+            .expect("quality metrics");
+
+        assert!(
+            !metrics
+                .uniqueness
+                .expect("uniqueness metrics")
+                .high_cardinality_warning,
+            "100 distinct values out of 1,000 rows is not high cardinality"
+        );
+    }
 }

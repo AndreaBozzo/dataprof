@@ -485,12 +485,15 @@ impl StreamingColumnCollection {
         // Length-prefixed so field boundaries are unambiguous:
         // ["ab", "c"] and ["a", "bc"] must produce different signatures.
         let mut row_signature = String::new();
-        let mut saw_field = false;
+        let mut values = values.into_iter();
 
-        for (header, value) in headers.iter().zip(values) {
+        // Headers define the row schema. Normalize a missing trailing field to
+        // the profiler's empty/null representation so ragged flexible records
+        // update every column and hash identically to an explicit empty field.
+        for header in headers {
+            let value = values.next().unwrap_or_default();
             let _ = write!(row_signature, "{}:", value.len());
             row_signature.push_str(&value);
-            saw_field = true;
 
             if !self.columns.contains_key(header) {
                 self.ordered_names.push(header.clone());
@@ -499,7 +502,7 @@ impl StreamingColumnCollection {
             stats.update(&value);
         }
 
-        if saw_field {
+        if !headers.is_empty() {
             self.row_tracker.observe(row_signature);
         }
     }
@@ -614,6 +617,27 @@ mod row_tracker_tests {
         assert_eq!(
             summary.duplicate_rows, 0,
             "different field splits must not collide"
+        );
+    }
+
+    #[test]
+    fn test_ragged_rows_normalize_missing_trailing_fields() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        record(&mut collection, &headers, &["x"]);
+        record(&mut collection, &headers, &["x", ""]);
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert_eq!(summary.rows_checked, 2);
+        assert_eq!(summary.duplicate_rows, 1);
+        assert_eq!(
+            collection
+                .get_column_stats("b")
+                .expect("column b")
+                .null_count,
+            2
         );
     }
 
