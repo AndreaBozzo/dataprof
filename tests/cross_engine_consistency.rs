@@ -440,6 +440,92 @@ fn test_streaming_bifurcation_with_large_dataset() {
     );
 }
 
+// -- Distinct-count provenance (#383) --
+
+/// On a small dataset every column's distinct count is exact, and both engines
+/// must say so: `unique_count_is_approximate == Some(false)`, never `None` or
+/// `Some(true)`. An exact-looking count with no provenance is unsafe for key
+/// checks, so the flag must be present and truthful.
+#[test]
+fn test_distinct_count_marked_exact_on_small_data_across_engines() {
+    let csv = create_test_csv(); // 100 rows, well under the estimator threshold
+    let path = csv.path();
+
+    let std_report = analyze_csv_file(path, &CsvParserConfig::default()).unwrap();
+    let arrow_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(path)
+        .unwrap();
+
+    for std_col in &std_report.column_profiles {
+        let arrow_col = arrow_report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == std_col.name)
+            .unwrap();
+
+        assert_eq!(
+            std_col.unique_count_is_approximate,
+            Some(false),
+            "standard engine should mark '{}' exact",
+            std_col.name
+        );
+        assert_eq!(
+            arrow_col.unique_count_is_approximate,
+            Some(false),
+            "columnar engine should mark '{}' exact",
+            std_col.name
+        );
+        assert_eq!(
+            std_col.unique_count, arrow_col.unique_count,
+            "exact unique_count should match across engines for '{}'",
+            std_col.name
+        );
+    }
+}
+
+/// A high-cardinality column past the estimator threshold is a *legitimate*
+/// approximation, not a semantic mismatch: both engines must flag it
+/// `Some(true)` and land near the true distinct count.
+#[test]
+fn test_high_cardinality_marked_approximate_across_engines() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,category").unwrap();
+    let rows = 20_000;
+    for i in 0..rows {
+        // `id` is unique per row (past the 10k exact threshold → HLL estimate);
+        // `category` stays tiny.
+        writeln!(f, "id-{i},{}", if i % 2 == 0 { "A" } else { "B" }).unwrap();
+    }
+    f.flush().unwrap();
+
+    let std_report = analyze_csv_file(f.path(), &CsvParserConfig::default()).unwrap();
+    let arrow_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(f.path())
+        .unwrap();
+
+    for report in [&std_report, &arrow_report] {
+        let id_col = report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == "id")
+            .expect("id column present");
+
+        assert_eq!(
+            id_col.unique_count_is_approximate,
+            Some(true),
+            "high-cardinality 'id' must be flagged approximate"
+        );
+        let estimate = id_col.unique_count.expect("id unique_count present");
+        let error = (estimate as f64 - rows as f64).abs() / rows as f64;
+        assert!(
+            error < 0.05,
+            "approximate estimate {estimate} should be near {rows} (error {error:.4})"
+        );
+    }
+}
+
 // -- Selective dimension computation --
 
 #[test]

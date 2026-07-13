@@ -222,6 +222,7 @@ mod tests {
             null_count: 0,
             total_count: 0,
             unique_count: None,
+            unique_count_is_approximate: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }

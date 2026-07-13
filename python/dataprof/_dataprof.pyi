@@ -147,6 +147,7 @@ class ColumnProfile:
     total_count: int
     null_count: int
     unique_count: int | None
+    unique_count_is_approximate: bool | None
     null_percentage: float
     uniqueness_ratio: float
     min: float | None

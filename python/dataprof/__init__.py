@@ -405,6 +405,7 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
         "null_count": col.null_count,
         "null_percentage": _r2(col.null_percentage),
         "unique_count": col.unique_count,
+        "unique_count_is_approximate": col.unique_count_is_approximate,
         "uniqueness_ratio": _r2(col.uniqueness_ratio),
     }
     if col.min is not None:
@@ -487,6 +488,7 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "null_count": col.null_count,
         "null_percentage": _r2(col.null_percentage),
         "unique_count": col.unique_count,
+        "unique_count_is_approximate": col.unique_count_is_approximate,
         "uniqueness_ratio": _r2(col.uniqueness_ratio),
         "min": _r4(col.min),
         "max": _r4(col.max),
@@ -1222,6 +1224,7 @@ class _DictColumn:
         self.null_count = d.get("null_count")
         self.null_percentage = d.get("null_percentage")
         self.unique_count = d.get("unique_count")
+        self.unique_count_is_approximate = d.get("unique_count_is_approximate")
         self.uniqueness_ratio = d.get("uniqueness_ratio")
         # Overlay only known stat attributes — never setattr arbitrary keys from
         # (possibly malformed) input, which could inject unexpected/dunder names.
@@ -1791,7 +1794,11 @@ class ProfileReport:
             "|---|---|---|---|---|---|---|",
         ]
         for col in self._report.column_profiles:
-            unique_str = f"{col.unique_count:,}" if col.unique_count is not None else ""
+            unique_str = (
+                ""
+                if col.unique_count is None
+                else f"{'~' if col.unique_count_is_approximate else ''}{col.unique_count:,}"
+            )
             row = [
                 esc(col.name),
                 esc(col.data_type),
@@ -2084,7 +2091,8 @@ class ProfileReport:
             parts = [f"  {col.name:<20s} {col.data_type:<10s}"]
             parts.append(f"{_r2(col.null_percentage):>5.1f}% null")
             if col.unique_count is not None:
-                parts.append(f"{col.unique_count:,} unique")
+                approx = "~" if col.unique_count_is_approximate else ""
+                parts.append(f"{approx}{col.unique_count:,} unique")
             if col.mean is not None:
                 parts.append(f"mean={_r4(col.mean)}")
                 if col.std_dev is not None:
@@ -2127,7 +2135,11 @@ class ProfileReport:
             bg = "#f9fafb" if i % 2 else "#ffffff"
             stats = _stats_cell(col)
             pattern = _html.escape(_pattern_cell(col))
-            unique_str = f"{col.unique_count:,}" if col.unique_count is not None else ""
+            unique_str = (
+                ""
+                if col.unique_count is None
+                else f"{'~' if col.unique_count_is_approximate else ''}{col.unique_count:,}"
+            )
 
             col_rows += (
                 f'<tr style="background:{bg}">'

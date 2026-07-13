@@ -205,6 +205,7 @@ mod tests {
             null_count: 0,
             total_count: total,
             unique_count: unique,
+            unique_count_is_approximate: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }

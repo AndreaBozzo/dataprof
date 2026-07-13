@@ -207,6 +207,50 @@ def test_high_cardinality_unique_count_not_capped(engine, tmp_path):
     )
 
 
+# ── Distinct-count provenance (issue #383) ──
+#
+# unique_count must not present an approximate HLL estimate as an exact integer.
+# Small columns are exact across every engine; a high-cardinality column past the
+# estimator threshold is flagged approximate. The flag also survives to_dict().
+
+
+@pytest.mark.parametrize("engine", ["auto", "columnar", "incremental"])
+def test_small_distinct_count_marked_exact(engine, tmp_path):
+    path = tmp_path / "small.csv"
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["category"])
+        for value in ["a", "b", "c", "a", "b"]:
+            writer.writerow([value])
+
+    report = dataprof.profile(str(path), engine=engine)
+    col = report["category"]
+    assert col.unique_count == 3
+    assert col.unique_count_is_approximate is False, (
+        f"{engine}: small exact count must be flagged exact, not "
+        f"{col.unique_count_is_approximate!r}"
+    )
+    assert report.to_dict()["columns"][0]["unique_count_is_approximate"] is False
+
+
+@pytest.mark.parametrize("engine", ["auto", "columnar", "incremental"])
+def test_high_cardinality_distinct_count_marked_approximate(engine, tmp_path):
+    n_rows = 50_000
+    path = tmp_path / "high_card.csv"
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["id"])
+        for value in range(n_rows):
+            writer.writerow([value])
+
+    report = dataprof.profile(str(path), engine=engine)
+    col = report["id"]
+    assert col.unique_count_is_approximate is True, (
+        f"{engine}: HLL-estimated count must be flagged approximate, not "
+        f"{col.unique_count_is_approximate!r}"
+    )
+
+
 # ── SQLite arm (requires --features python-async,database,sqlite) ──
 
 

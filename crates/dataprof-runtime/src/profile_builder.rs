@@ -25,6 +25,10 @@ pub struct ColumnProfileInput<'a> {
     pub total_count: usize,
     pub null_count: usize,
     pub unique_count: Option<usize>,
+    /// Whether `unique_count` is an approximate (HLL) estimate. `None` mirrors
+    /// `unique_count: None`; `Some(false)` for exact counts; `Some(true)` once
+    /// the engine's cardinality estimator has spilled to its HLL sketch.
+    pub unique_count_is_approximate: Option<bool>,
     pub sample_values: &'a [String],
     /// Pre-computed text lengths for engines that track them incrementally.
     /// When `Some`, text stats are built from these instead of re-scanning samples.
@@ -123,6 +127,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         null_count: input.null_count,
         total_count: input.total_count,
         unique_count: input.unique_count,
+        unique_count_is_approximate: input.unique_count_is_approximate,
         stats,
         patterns,
     }
@@ -211,6 +216,7 @@ pub fn profile_from_stats_with_hints(
         total_count: stats.count,
         null_count: stats.null_count,
         unique_count: Some(stats.unique_count()),
+        unique_count_is_approximate: Some(stats.unique_count_is_approximate()),
         sample_values: stats.sample_values(),
         text_lengths: Some(TextLengths {
             min_length: text_stats.min_length,
@@ -340,6 +346,7 @@ mod tests {
             total_count: 3,
             null_count: 0,
             unique_count: Some(2),
+            unique_count_is_approximate: Some(false),
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: Some((2, 1)),
@@ -371,6 +378,7 @@ mod tests {
             total_count: 3,
             null_count: 0,
             unique_count: Some(2),
+            unique_count_is_approximate: Some(false),
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -398,6 +406,7 @@ mod tests {
             total_count: 3,
             null_count: 0,
             unique_count: Some(3),
+            unique_count_is_approximate: Some(false),
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -419,6 +428,7 @@ mod tests {
             total_count: 2,
             null_count: 0,
             unique_count: Some(2),
+            unique_count_is_approximate: Some(false),
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -445,6 +455,7 @@ mod tests {
             total_count: 2,
             null_count: 0,
             unique_count: Some(2),
+            unique_count_is_approximate: Some(false),
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
@@ -465,6 +476,7 @@ mod tests {
             total_count: 2,
             null_count: 0,
             unique_count: Some(2),
+            unique_count_is_approximate: Some(false),
             sample_values: &samples,
             text_lengths: None,
             boolean_counts: None,
