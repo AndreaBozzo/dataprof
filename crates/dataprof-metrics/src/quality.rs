@@ -310,7 +310,7 @@ impl QualityMetrics {
     pub fn assessed_dimensions(&self) -> Vec<QualityDimension> {
         self.weighted_scores()
             .iter()
-            .filter(|(_, _, score)| score.is_some())
+            .filter(|(_, weight, score)| *weight > 0.0 && score.is_some())
             .map(|(dim, _, _)| *dim)
             .collect()
     }
@@ -547,6 +547,10 @@ mod tests {
             serde_json::from_str(&json).expect("deserialize custom weights");
         assert_eq!(restored.score_weights, metrics.score_weights);
         assert!((restored.overall_score() - metrics.overall_score()).abs() < 0.01);
+        assert_eq!(
+            restored.assessed_dimensions(),
+            vec![QualityDimension::Completeness]
+        );
     }
 
     #[test]

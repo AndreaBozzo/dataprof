@@ -1225,6 +1225,14 @@ class _DictColumn:
 class _DictQuality:
     """Read-only stand-in for native DataQualityMetrics, built from to_dict()."""
 
+    _DEFAULT_SCORE_WEIGHTS = {
+        "completeness": 0.30,
+        "consistency": 0.25,
+        "uniqueness": 0.20,
+        "accuracy": 0.15,
+        "timeliness": 0.10,
+    }
+
     def __init__(self, d: dict[str, Any]):
         self._d = d
         self.low_sample_warning = bool(d.get("low_sample_warning", False))
@@ -1344,13 +1352,7 @@ class _DictQuality:
         weights = self._d.get("score_weights")
         if isinstance(weights, dict):
             return weights
-        return {
-            "completeness": 0.30,
-            "consistency": 0.25,
-            "uniqueness": 0.20,
-            "accuracy": 0.15,
-            "timeliness": 0.10,
-        }
+        return self._DEFAULT_SCORE_WEIGHTS
 
     def overall_quality_score(self) -> float | None:
         return self._d.get("overall_score")
