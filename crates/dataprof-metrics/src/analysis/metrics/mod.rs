@@ -660,11 +660,7 @@ impl MetricsCalculator {
         };
 
         let validity = if Self::is_requested(requested, QualityDimension::Validity) {
-            let validity = if data.is_empty() {
-                validity::ValidityMetrics::default()
-            } else {
-                ValidityCalculator::calculate(data, column_profiles)
-            };
+            let validity = ValidityCalculator::calculate(data, column_profiles);
             sampled_dimensions.push("validity".to_string());
             Some(ValidityMetrics {
                 valid_values_ratio: validity.valid_values_ratio,
@@ -676,11 +672,7 @@ impl MetricsCalculator {
         };
 
         let precision = if Self::is_requested(requested, QualityDimension::Precision) {
-            let precision = if data.is_empty() {
-                precision::PrecisionMetrics::default()
-            } else {
-                PrecisionCalculator::calculate(data, column_profiles)
-            };
+            let precision = PrecisionCalculator::calculate(data, column_profiles);
             sampled_dimensions.push("precision".to_string());
             Some(PrecisionMetrics {
                 decimal_places_consistency: precision.decimal_places_consistency,
@@ -826,5 +818,37 @@ mod tests {
             .expect("quality metrics");
 
         assert_eq!(metrics.score_weights, weights);
+    }
+
+    #[test]
+    fn empty_bifurcated_sample_keeps_new_dimensions_neutral_and_unassessed() {
+        let profiles = vec![ColumnProfile {
+            name: "amount".to_string(),
+            data_type: DataType::Float,
+            null_count: 0,
+            total_count: 100,
+            unique_count: Some(10),
+            stats: ColumnStats::None,
+            patterns: Some(vec![]),
+        }];
+        let requested = [QualityDimension::Validity, QualityDimension::Precision];
+
+        let result = MetricsCalculator::new()
+            .calculate_bifurcated_metrics(&HashMap::new(), &profiles, Some(&requested))
+            .expect("bifurcated quality metrics");
+        let validity = result.metrics.validity.as_ref().expect("validity metrics");
+        let precision = result
+            .metrics
+            .precision
+            .as_ref()
+            .expect("precision metrics");
+
+        assert_eq!(validity.valid_values_ratio, 100.0);
+        assert_eq!(validity.invalid_values, 0);
+        assert_eq!(validity.values_checked, 0);
+        assert_eq!(precision.decimal_places_consistency, 100.0);
+        assert_eq!(precision.inconsistent_precision_values, 0);
+        assert_eq!(precision.numeric_values_checked, 0);
+        assert!(result.metrics.assessed_dimensions().is_empty());
     }
 }
