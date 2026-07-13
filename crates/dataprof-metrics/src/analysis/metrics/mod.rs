@@ -759,7 +759,7 @@ mod tests {
             null_count: 0,
             total_count: 1_000,
             unique_count: Some(100),
-            unique_count_is_approximate: None,
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];
@@ -810,7 +810,7 @@ mod tests {
             null_count: 0,
             total_count: 1,
             unique_count: Some(1),
-            unique_count_is_approximate: None,
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];
@@ -830,7 +830,7 @@ mod tests {
             null_count: 0,
             total_count: 100,
             unique_count: Some(10),
-            unique_count_is_approximate: None,
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];

@@ -205,7 +205,7 @@ mod tests {
             null_count: 0,
             total_count: total,
             unique_count: unique,
-            unique_count_is_approximate: None,
+            unique_count_is_approximate: unique.map(|_| false),
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }

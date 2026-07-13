@@ -99,7 +99,7 @@ mod tests {
             null_count: 0,
             total_count: 4,
             unique_count: Some(4),
-            unique_count_is_approximate: None,
+            unique_count_is_approximate: Some(false),
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }

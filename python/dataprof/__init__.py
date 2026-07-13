@@ -1794,11 +1794,13 @@ class ProfileReport:
             "|---|---|---|---|---|---|---|",
         ]
         for col in self._report.column_profiles:
-            unique_str = (
-                ""
-                if col.unique_count is None
-                else f"{'~' if col.unique_count_is_approximate else ''}{col.unique_count:,}"
-            )
+            if col.unique_count is None:
+                unique_str = ""
+            else:
+                # Unknown provenance (None) must not look exact -- only an
+                # explicit False drops the ~ prefix.
+                prefix = "" if col.unique_count_is_approximate is False else "~"
+                unique_str = f"{prefix}{col.unique_count:,}"
             row = [
                 esc(col.name),
                 esc(col.data_type),
@@ -2091,7 +2093,9 @@ class ProfileReport:
             parts = [f"  {col.name:<20s} {col.data_type:<10s}"]
             parts.append(f"{_r2(col.null_percentage):>5.1f}% null")
             if col.unique_count is not None:
-                approx = "~" if col.unique_count_is_approximate else ""
+                # Unknown provenance (None, e.g. an older deserialized report)
+                # must not render as exact -- only an explicit False drops the ~.
+                approx = "" if col.unique_count_is_approximate is False else "~"
                 parts.append(f"{approx}{col.unique_count:,} unique")
             if col.mean is not None:
                 parts.append(f"mean={_r4(col.mean)}")
@@ -2135,11 +2139,13 @@ class ProfileReport:
             bg = "#f9fafb" if i % 2 else "#ffffff"
             stats = _stats_cell(col)
             pattern = _html.escape(_pattern_cell(col))
-            unique_str = (
-                ""
-                if col.unique_count is None
-                else f"{'~' if col.unique_count_is_approximate else ''}{col.unique_count:,}"
-            )
+            if col.unique_count is None:
+                unique_str = ""
+            else:
+                # Unknown provenance (None) must not look exact -- only an
+                # explicit False drops the ~ prefix.
+                prefix = "" if col.unique_count_is_approximate is False else "~"
+                unique_str = f"{prefix}{col.unique_count:,}"
 
             col_rows += (
                 f'<tr style="background:{bg}">'
