@@ -15,6 +15,7 @@ pub(crate) struct ConsistencyMetrics {
     pub data_type_consistency: f64,
     pub format_violations: usize,
     pub encoding_issues: usize,
+    pub values_checked: usize,
 }
 
 /// Calculator for consistency dimension metrics
@@ -26,7 +27,8 @@ impl ConsistencyCalculator {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
     ) -> Result<ConsistencyMetrics, DataProfilerError> {
-        let data_type_consistency = Self::calculate_type_consistency(data, column_profiles)?;
+        let (data_type_consistency, values_checked) =
+            Self::calculate_type_consistency(data, column_profiles)?;
         let format_violations = Self::count_format_violations(data)?;
         let encoding_issues = Self::detect_encoding_issues(data)?;
 
@@ -34,14 +36,16 @@ impl ConsistencyCalculator {
             data_type_consistency,
             format_violations,
             encoding_issues,
+            values_checked,
         })
     }
 
-    /// Calculate data type consistency percentage
+    /// Calculate data type consistency percentage and the number of non-null
+    /// values checked.
     fn calculate_type_consistency(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64, DataProfilerError> {
+    ) -> Result<(f64, usize), DataProfilerError> {
         let mut total_values = 0;
         let mut consistent_values = 0;
 
@@ -74,9 +78,12 @@ impl ConsistencyCalculator {
         }
 
         if total_values == 0 {
-            Ok(100.0)
+            Ok((100.0, 0))
         } else {
-            Ok((consistent_values as f64 / total_values as f64) * 100.0)
+            Ok((
+                (consistent_values as f64 / total_values as f64) * 100.0,
+                total_values,
+            ))
         }
     }
 

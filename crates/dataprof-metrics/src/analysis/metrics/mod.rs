@@ -190,6 +190,7 @@ impl MetricsCalculator {
                 missing_values_ratio: c.missing_values_ratio,
                 complete_records_ratio: c.complete_records_ratio,
                 null_columns: c.null_columns,
+                total_cells: c.total_cells,
             })
         } else {
             None
@@ -202,6 +203,7 @@ impl MetricsCalculator {
                 data_type_consistency: c.data_type_consistency,
                 format_violations: c.format_violations,
                 encoding_issues: c.encoding_issues,
+                values_checked: c.values_checked,
             })
         } else {
             None
@@ -218,6 +220,8 @@ impl MetricsCalculator {
                 duplicate_rows: u.duplicate_rows,
                 key_uniqueness: u.key_uniqueness,
                 high_cardinality_warning: u.high_cardinality_warning,
+                rows_checked: u.rows_checked,
+                key_column: u.key_column,
             })
         } else {
             None
@@ -239,6 +243,7 @@ impl MetricsCalculator {
                 outlier_ratio: a.outlier_ratio,
                 range_violations: a.range_violations,
                 negative_values_in_positive: a.negative_values_in_positive,
+                numeric_values_checked: a.numeric_values_checked,
             })
         } else {
             None
@@ -251,6 +256,7 @@ impl MetricsCalculator {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
                 temporal_violations: t.temporal_violations,
+                date_values_checked: t.date_values_checked,
             })
         } else {
             None
@@ -281,6 +287,7 @@ impl MetricsCalculator {
                     missing_values_ratio: 0.0,
                     complete_records_ratio: 100.0,
                     null_columns: vec![],
+                    total_cells: 0,
                 })
             } else {
                 None
@@ -290,6 +297,7 @@ impl MetricsCalculator {
                     data_type_consistency: 100.0,
                     format_violations: 0,
                     encoding_issues: 0,
+                    values_checked: 0,
                 })
             } else {
                 None
@@ -299,6 +307,8 @@ impl MetricsCalculator {
                     duplicate_rows: 0,
                     key_uniqueness: 100.0,
                     high_cardinality_warning: false,
+                    rows_checked: 0,
+                    key_column: None,
                 })
             } else {
                 None
@@ -308,6 +318,7 @@ impl MetricsCalculator {
                     outlier_ratio: 0.0,
                     range_violations: 0,
                     negative_values_in_positive: 0,
+                    numeric_values_checked: 0,
                 })
             } else {
                 None
@@ -317,6 +328,7 @@ impl MetricsCalculator {
                     future_dates_count: 0,
                     stale_data_ratio: 0.0,
                     temporal_violations: 0,
+                    date_values_checked: 0,
                 })
             } else {
                 None
@@ -383,6 +395,7 @@ impl MetricsCalculator {
                 missing_values_ratio: c.missing_values_ratio,
                 complete_records_ratio: c.complete_records_ratio,
                 null_columns: c.null_columns,
+                total_cells: c.total_cells,
             })
         } else {
             None
@@ -397,6 +410,7 @@ impl MetricsCalculator {
                     data_type_consistency: 100.0,
                     format_violations: 0,
                     encoding_issues: 0,
+                    values_checked: 0,
                 }
             };
             sampled_dimensions.push("consistency".to_string());
@@ -404,6 +418,7 @@ impl MetricsCalculator {
                 data_type_consistency: c.data_type_consistency,
                 format_violations: c.format_violations,
                 encoding_issues: c.encoding_issues,
+                values_checked: c.values_checked,
             })
         } else {
             None
@@ -416,11 +431,17 @@ impl MetricsCalculator {
                 total_rows,
             )?;
             exact_dimensions.push("key_uniqueness".to_string());
-            sampled_dimensions.push("duplicate_rows".to_string());
+            // The duplicate scan refuses misaligned per-column samples
+            // (rows_checked == 0); only label it when it actually ran.
+            if u.rows_checked > 0 {
+                sampled_dimensions.push("duplicate_rows".to_string());
+            }
             Some(UniquenessMetrics {
                 duplicate_rows: u.duplicate_rows,
                 key_uniqueness: u.key_uniqueness,
                 high_cardinality_warning: u.high_cardinality_warning,
+                rows_checked: u.rows_checked,
+                key_column: u.key_column,
             })
         } else {
             None
@@ -438,6 +459,7 @@ impl MetricsCalculator {
                     outlier_ratio: 0.0,
                     range_violations: 0,
                     negative_values_in_positive: 0,
+                    numeric_values_checked: 0,
                 }
             };
             sampled_dimensions.push("accuracy".to_string());
@@ -445,6 +467,7 @@ impl MetricsCalculator {
                 outlier_ratio: a.outlier_ratio,
                 range_violations: a.range_violations,
                 negative_values_in_positive: a.negative_values_in_positive,
+                numeric_values_checked: a.numeric_values_checked,
             })
         } else {
             None
@@ -458,6 +481,7 @@ impl MetricsCalculator {
                     future_dates_count: 0,
                     stale_data_ratio: 0.0,
                     temporal_violations: 0,
+                    date_values_checked: 0,
                 }
             };
             sampled_dimensions.push("timeliness".to_string());
@@ -465,6 +489,7 @@ impl MetricsCalculator {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
                 temporal_violations: t.temporal_violations,
+                date_values_checked: t.date_values_checked,
             })
         } else {
             None

@@ -15,6 +15,8 @@ pub(crate) struct UniquenessMetrics {
     pub duplicate_rows: usize,
     pub key_uniqueness: f64,
     pub high_cardinality_warning: bool,
+    pub rows_checked: usize,
+    pub key_column: Option<String>,
 }
 
 /// Calculator for uniqueness dimension metrics
@@ -34,23 +36,35 @@ impl<'a> UniquenessCalculator<'a> {
         column_profiles: &[ColumnProfile],
         total_rows: usize,
     ) -> Result<UniquenessMetrics, DataProfilerError> {
-        let duplicate_rows = Self::count_exact_duplicate_rows(data)?;
-        let key_uniqueness = Self::calculate_key_uniqueness(column_profiles)?;
+        let (duplicate_rows, rows_checked) =
+            Self::count_exact_duplicate_rows(data, column_profiles)?;
+        let (key_uniqueness, key_column) = Self::calculate_key_uniqueness(column_profiles)?;
         let high_cardinality_warning = self.check_high_cardinality(column_profiles, total_rows);
 
         Ok(UniquenessMetrics {
             duplicate_rows,
             key_uniqueness,
             high_cardinality_warning,
+            rows_checked,
+            key_column,
         })
     }
 
-    /// Count exact duplicate rows
+    /// Count exact duplicate rows; returns `(duplicates, rows_scanned)`.
+    ///
+    /// The per-column sample arrays are only row-aligned when every column
+    /// kept every value: null-like values never enter the reservoir, and
+    /// past its capacity each column is evicted independently. Comparing
+    /// misaligned columns fabricates duplicates out of unrelated values, so
+    /// when alignment cannot be proven (unequal lengths, or lengths that
+    /// don't match the known row count) this returns `(0, 0)` — "not
+    /// assessed" — rather than a plausible-looking wrong count.
     fn count_exact_duplicate_rows(
         data: &HashMap<String, Vec<String>>,
-    ) -> Result<usize, DataProfilerError> {
+        column_profiles: &[ColumnProfile],
+    ) -> Result<(usize, usize), DataProfilerError> {
         if data.is_empty() {
-            return Ok(0);
+            return Ok((0, 0));
         }
 
         let total_rows = data.values().next().map(|v| v.len()).ok_or_else(|| {
@@ -58,6 +72,16 @@ impl<'a> UniquenessCalculator<'a> {
                 message: "No data columns found".to_string(),
             }
         })?;
+
+        let aligned_lengths = data.values().all(|column| column.len() == total_rows);
+        let matches_known_row_count = match column_profiles.first() {
+            Some(profile) => profile.total_count == total_rows,
+            None => true,
+        };
+        if !aligned_lengths || !matches_known_row_count {
+            return Ok((0, 0));
+        }
+
         let column_names: Vec<&String> = data.keys().collect();
 
         let mut row_signatures = HashSet::new();
@@ -74,13 +98,17 @@ impl<'a> UniquenessCalculator<'a> {
             }
         }
 
-        Ok(duplicates)
+        Ok((duplicates, total_rows))
     }
 
-    /// Calculate key uniqueness percentage
+    /// Calculate key uniqueness percentage and the column it describes.
+    ///
+    /// Returns `(100.0, None)` when no key column was identified or its
+    /// unique count is unavailable — the caller treats `None` as "no key
+    /// signal" rather than "perfect key".
     fn calculate_key_uniqueness(
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64, DataProfilerError> {
+    ) -> Result<(f64, Option<String>), DataProfilerError> {
         // Look for ID-like columns
         let key_column = column_profiles.iter().find(|profile| {
             let name_lower = profile.name.to_lowercase();
@@ -93,15 +121,20 @@ impl<'a> UniquenessCalculator<'a> {
         if let Some(key_col) = key_column {
             if let Some(unique_count) = key_col.unique_count {
                 if key_col.total_count == 0 {
-                    Ok(100.0)
+                    Ok((100.0, None))
                 } else {
-                    Ok((unique_count as f64 / key_col.total_count as f64) * 100.0)
+                    Ok((
+                        (unique_count as f64 / key_col.total_count as f64) * 100.0,
+                        Some(key_col.name.clone()),
+                    ))
                 }
             } else {
-                Ok(100.0) // Assume perfect if unique_count not available
+                // unique_count unavailable: no evidence either way
+                Ok((100.0, None))
             }
         } else {
-            Ok(100.0) // No key column found, assume perfect
+            // No key column found: no key signal
+            Ok((100.0, None))
         }
     }
 

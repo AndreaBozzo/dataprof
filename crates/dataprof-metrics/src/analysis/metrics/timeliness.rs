@@ -16,6 +16,7 @@ pub(crate) struct TimelinessMetrics {
     pub future_dates_count: usize,
     pub stale_data_ratio: f64,
     pub temporal_violations: usize,
+    pub date_values_checked: usize,
 }
 
 /// Calculator for timeliness dimension metrics
@@ -35,13 +36,15 @@ impl<'a> TimelinessCalculator<'a> {
         column_profiles: &[ColumnProfile],
     ) -> Result<TimelinessMetrics, DataProfilerError> {
         let future_dates_count = Self::count_future_dates(data, column_profiles)?;
-        let stale_data_ratio = self.calculate_stale_data_ratio(data, column_profiles)?;
+        let (stale_data_ratio, date_values_checked) =
+            self.calculate_stale_data_ratio(data, column_profiles)?;
         let temporal_violations = Self::count_temporal_violations(data)?;
 
         Ok(TimelinessMetrics {
             future_dates_count,
             stale_data_ratio,
             temporal_violations,
+            date_values_checked,
         })
     }
 
@@ -79,12 +82,13 @@ impl<'a> TimelinessCalculator<'a> {
         Ok(future_count)
     }
 
-    /// Calculate percentage of stale data (older than threshold)
+    /// Calculate percentage of stale data (older than threshold); returns
+    /// `(ratio, date values with an extractable year)`.
     fn calculate_stale_data_ratio(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64, DataProfilerError> {
+    ) -> Result<(f64, usize), DataProfilerError> {
         let mut total_dates = 0;
         let mut stale_dates = 0;
 
@@ -114,9 +118,12 @@ impl<'a> TimelinessCalculator<'a> {
         }
 
         if total_dates == 0 {
-            Ok(0.0)
+            Ok((0.0, 0))
         } else {
-            Ok((stale_dates as f64 / total_dates as f64) * 100.0)
+            Ok((
+                (stale_dates as f64 / total_dates as f64) * 100.0,
+                total_dates,
+            ))
         }
     }
 

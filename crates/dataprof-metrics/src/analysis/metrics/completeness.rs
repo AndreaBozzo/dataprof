@@ -14,6 +14,7 @@ pub(crate) struct CompletenessMetrics {
     pub missing_values_ratio: f64,
     pub complete_records_ratio: f64,
     pub null_columns: Vec<String>,
+    pub total_cells: usize,
 }
 
 /// Calculator for completeness dimension metrics
@@ -35,8 +36,12 @@ impl<'a> CompletenessCalculator<'a> {
     ) -> Result<CompletenessMetrics, DataProfilerError> {
         // Prefer ColumnProfile counters for missing_values_ratio when available,
         // because the reservoir sample does not include empty/null values.
+        let total_cells = if !column_profiles.is_empty() {
+            column_profiles.iter().map(|p| p.total_count).sum()
+        } else {
+            data.values().map(|v| v.len()).sum()
+        };
         let missing_values_ratio = if !column_profiles.is_empty() {
-            let total_cells: usize = column_profiles.iter().map(|p| p.total_count).sum();
             let null_cells: usize = column_profiles.iter().map(|p| p.null_count).sum();
             if total_cells == 0 {
                 0.0
@@ -64,6 +69,7 @@ impl<'a> CompletenessCalculator<'a> {
             missing_values_ratio,
             complete_records_ratio,
             null_columns,
+            total_cells,
         })
     }
 
@@ -138,6 +144,7 @@ impl<'a> CompletenessCalculator<'a> {
             missing_values_ratio,
             complete_records_ratio,
             null_columns,
+            total_cells,
         })
     }
 
