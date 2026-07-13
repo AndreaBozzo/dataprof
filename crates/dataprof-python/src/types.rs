@@ -256,7 +256,7 @@ impl PyColumnProfile {
     }
 }
 
-/// Python wrapper for QualityMetrics — ISO 8000/25012 quality dimensions.
+/// Python wrapper for quality dimensions informed by ISO 8000/25012 concepts.
 ///
 /// Exposes both flat backward-compatible properties and new nested dimension
 /// accessors (completeness, consistency, uniqueness, accuracy, timeliness).
@@ -369,6 +369,19 @@ impl PyDataQualityMetrics {
     #[getter]
     fn low_sample_warning(&self) -> bool {
         self.inner.low_sample_warning
+    }
+
+    /// Relative weights used by the aggregate quality score.
+    #[getter]
+    fn score_weights(&self) -> std::collections::HashMap<String, f64> {
+        let weights = self.inner.score_weights;
+        std::collections::HashMap::from([
+            ("completeness".to_string(), weights.completeness),
+            ("consistency".to_string(), weights.consistency),
+            ("uniqueness".to_string(), weights.uniqueness),
+            ("accuracy".to_string(), weights.accuracy),
+            ("timeliness".to_string(), weights.timeliness),
+        ])
     }
 
     // -- Nested dimension accessors (composable API) --

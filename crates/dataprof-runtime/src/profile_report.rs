@@ -4,7 +4,7 @@ use dataprof_metrics::{QualityAssessment, QualityMetrics};
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
-/// ISO 8000/25012 quality assessment. This is the primary output of all
+/// Quality assessment informed by ISO 8000/25012 concepts. This is the primary output of all
 /// profiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,
 /// `Profiler::profile_stream`, etc.).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

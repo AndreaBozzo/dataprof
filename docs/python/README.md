@@ -291,13 +291,16 @@ Event fields: `kind`, `rows_processed`, `bytes_consumed`, `elapsed_ms`, `process
 
 ## `DataQualityMetrics`
 
-ISO 8000/25012 quality metrics, accessible via `report.quality`:
+Quality metrics informed by ISO 8000 and ISO/IEC 25012, accessible via
+`report.quality`. The aggregate score is dataprof's formula, not an ISO-defined
+or certified score:
 
 ```python
 q = report.quality
 
 # Overall score
 print(q.overall_quality_score())
+print(q.score_weights)  # relative weights used by dataprof's aggregate formula
 
 # Nested dimension accessors (None when not computed)
 print(q.completeness)    # {"missing_values_ratio": ..., "complete_records_ratio": ..., "null_columns": [...]}

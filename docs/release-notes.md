@@ -1,5 +1,18 @@
 # Unreleased
 
+## Quality score weights are configurable
+
+The overall score's relative dimension weights now live in
+`IsoQualityConfig::score_weights`. `MetricsCalculator::with_thresholds(...)`
+copies them into each `QualityMetrics` result, so custom scores remain
+reproducible after report serialization. The defaults remain 0.30 completeness,
+0.25 consistency, 0.20 uniqueness, 0.15 accuracy, and 0.10 timeliness; weights
+renormalize over the dimensions that were actually assessed.
+
+The documentation now describes ISO 8000 and ISO/IEC 25012 as sources for the
+quality-dimension concepts. Dataprof's aggregate score and its weights are a
+configurable project formula, not an ISO-mandated or certified score.
+
 ## The quality score now only scores what was actually assessed
 
 **`quality_score` changes value for almost every dataset.** The facts

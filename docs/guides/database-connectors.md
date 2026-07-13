@@ -1,6 +1,6 @@
 # Database Connectors Guide
 
-Profile data directly from PostgreSQL, MySQL, and SQLite databases with ISO 8000/25012 quality assessment.
+Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality assessment informed by ISO 8000/25012 concepts.
 
 > [!NOTE]
 > Before 0.9.0, every column was read as text and non-text columns profiled as

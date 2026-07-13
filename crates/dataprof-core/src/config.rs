@@ -4,8 +4,54 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::DataProfilerError;
 
-/// ISO 8000/25012 compliant quality thresholds.
-/// These thresholds are configurable for industry-specific requirements.
+/// Relative weights used to aggregate assessed quality dimensions.
+///
+/// Weights do not need to sum to one: the score renormalizes them over the
+/// dimensions that were actually assessed. Values should be non-negative and
+/// at least one weight must be positive.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct QualityScoreWeights {
+    pub completeness: f64,
+    pub consistency: f64,
+    pub uniqueness: f64,
+    pub accuracy: f64,
+    pub timeliness: f64,
+}
+
+impl Default for QualityScoreWeights {
+    fn default() -> Self {
+        Self {
+            completeness: 0.30,
+            consistency: 0.25,
+            uniqueness: 0.20,
+            accuracy: 0.15,
+            timeliness: 0.10,
+        }
+    }
+}
+
+impl QualityScoreWeights {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn is_valid(&self) -> bool {
+        let weights = [
+            self.completeness,
+            self.consistency,
+            self.uniqueness,
+            self.accuracy,
+            self.timeliness,
+        ];
+        weights
+            .iter()
+            .all(|weight| weight.is_finite() && *weight >= 0.0)
+            && weights.iter().any(|weight| *weight > 0.0)
+    }
+}
+
+/// Quality thresholds and score settings informed by ISO 8000/25012 concepts.
+/// These values are dataprof configuration, not ISO-mandated parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IsoQualityConfig {
     /// Maximum acceptable null percentage for a column (default: 50%).
@@ -26,6 +72,9 @@ pub struct IsoQualityConfig {
     pub max_data_age_years: f64,
     /// Percentage threshold for reporting stale data (default: 20%).
     pub stale_data_threshold: f64,
+    /// Dataprof-defined weights for the overall quality score.
+    #[serde(default)]
+    pub score_weights: QualityScoreWeights,
 }
 
 impl Default for IsoQualityConfig {
@@ -40,6 +89,7 @@ impl Default for IsoQualityConfig {
             outlier_min_samples: 4,
             max_data_age_years: 5.0,
             stale_data_threshold: 20.0,
+            score_weights: QualityScoreWeights::default(),
         }
     }
 }
@@ -57,6 +107,7 @@ impl IsoQualityConfig {
             outlier_min_samples: 10,
             max_data_age_years: 2.0,
             stale_data_threshold: 10.0,
+            score_weights: QualityScoreWeights::default(),
         }
     }
 
@@ -72,6 +123,7 @@ impl IsoQualityConfig {
             outlier_min_samples: 4,
             max_data_age_years: 10.0,
             stale_data_threshold: 30.0,
+            score_weights: QualityScoreWeights::default(),
         }
     }
 }
@@ -612,6 +664,14 @@ impl DataprofConfig {
             });
         }
 
+        if !iso.score_weights.is_valid() {
+            return Err(DataProfilerError::ConfigValidationError {
+                message: "Quality score weights must be finite and non-negative, with at least one positive weight.\n\
+                     → Fix: Set quality.iso_thresholds.score_weights to valid relative weights."
+                    .to_string(),
+            });
+        }
+
         // Validate engine
         let valid_engines = ["auto", "streaming", "memory_efficient", "true_streaming"];
         if !valid_engines.contains(&self.engine.default_engine.as_str()) {
@@ -821,9 +881,15 @@ impl DataprofConfigBuilder {
         self
     }
 
-    /// Set custom ISO quality thresholds.
+    /// Set custom quality thresholds and score settings.
     pub fn iso_quality_thresholds(mut self, thresholds: IsoQualityConfig) -> Self {
         self.quality.iso_thresholds = thresholds;
+        self
+    }
+
+    /// Set relative weights for the overall quality score.
+    pub fn quality_score_weights(mut self, weights: QualityScoreWeights) -> Self {
+        self.quality.iso_thresholds.score_weights = weights;
         self
     }
 
@@ -1009,5 +1075,38 @@ impl DataprofConfigBuilder {
 impl Default for DataprofConfigBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_quality_config_defaults_score_weights() {
+        let mut value = serde_json::to_value(IsoQualityConfig::default()).unwrap();
+        value
+            .as_object_mut()
+            .expect("quality config object")
+            .remove("score_weights");
+
+        let restored: IsoQualityConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.score_weights, QualityScoreWeights::default());
+    }
+
+    #[test]
+    fn config_validation_rejects_invalid_score_weights() {
+        let weights = QualityScoreWeights {
+            completeness: 0.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+        };
+        let config = DataprofConfigBuilder::new()
+            .quality_score_weights(weights)
+            .build();
+
+        assert!(config.is_err());
     }
 }

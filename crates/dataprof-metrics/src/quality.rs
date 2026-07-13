@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use dataprof_core::{ColumnProfile, QualityDimension};
+use dataprof_core::{ColumnProfile, QualityDimension, QualityScoreWeights};
 use serde::{Deserialize, Serialize};
 
 use crate::core::errors::DataProfilerError;
@@ -122,6 +122,11 @@ pub struct QualityMetrics {
     /// reliable. Backwards-compatible: defaults to `false`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub low_sample_warning: bool,
+    /// Weights used to aggregate dimension scores. Default weights are omitted
+    /// from serialized reports; custom weights are retained for reproducible
+    /// score calculation after a round trip.
+    #[serde(default, skip_serializing_if = "QualityScoreWeights::is_default")]
+    pub score_weights: QualityScoreWeights,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -165,6 +170,7 @@ impl QualityMetrics {
                 temporal_pairs_checked: 0,
             }),
             low_sample_warning: false,
+            score_weights: QualityScoreWeights::default(),
         }
     }
 
@@ -273,17 +279,29 @@ impl QualityMetrics {
         [
             (
                 QualityDimension::Completeness,
-                0.30,
+                self.score_weights.completeness,
                 self.completeness_score(),
             ),
             (
                 QualityDimension::Consistency,
-                0.25,
+                self.score_weights.consistency,
                 self.consistency_score(),
             ),
-            (QualityDimension::Uniqueness, 0.20, self.uniqueness_score()),
-            (QualityDimension::Accuracy, 0.15, self.accuracy_score()),
-            (QualityDimension::Timeliness, 0.10, self.timeliness_score()),
+            (
+                QualityDimension::Uniqueness,
+                self.score_weights.uniqueness,
+                self.uniqueness_score(),
+            ),
+            (
+                QualityDimension::Accuracy,
+                self.score_weights.accuracy,
+                self.accuracy_score(),
+            ),
+            (
+                QualityDimension::Timeliness,
+                self.score_weights.timeliness,
+                self.timeliness_score(),
+            ),
         ]
     }
 
@@ -502,7 +520,33 @@ mod tests {
                 temporal_pairs_checked: 100,
             }),
             low_sample_warning: false,
+            score_weights: QualityScoreWeights::default(),
         }
+    }
+
+    #[test]
+    fn test_custom_weights_change_and_survive_serialized_score() {
+        let mut metrics = perfect_assessed();
+        if let Some(ref mut c) = metrics.completeness {
+            c.missing_values_ratio = 100.0;
+            c.complete_records_ratio = 0.0;
+        }
+        metrics.score_weights = QualityScoreWeights {
+            completeness: 1.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+        };
+
+        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+
+        let json = serde_json::to_string(&metrics).expect("serialize custom weights");
+        assert!(json.contains("score_weights"));
+        let restored: QualityMetrics =
+            serde_json::from_str(&json).expect("deserialize custom weights");
+        assert_eq!(restored.score_weights, metrics.score_weights);
+        assert!((restored.overall_score() - metrics.overall_score()).abs() < 0.01);
     }
 
     #[test]

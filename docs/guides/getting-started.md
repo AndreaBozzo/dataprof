@@ -12,7 +12,7 @@ Data profiling is the process of examining a dataset to collect statistics and a
 - Are there duplicates? Outliers? Impossible values?
 - Is the data fresh or stale?
 
-dataprof automates this analysis and scores data quality against the ISO 8000/25012 standard, producing a structured report you can use for data validation, ETL pipelines, and quality monitoring.
+dataprof automates this analysis and assesses quality across dimensions informed by ISO 8000 and ISO/IEC 25012, producing a structured report you can use for data validation, ETL pipelines, and quality monitoring. The aggregate score is dataprof's configurable formula, not an ISO certification.
 
 ## Installation
 
@@ -87,7 +87,9 @@ fn main() -> Result<(), dataprof::DataProfilerError> {
 
 ## Understanding Quality Metrics
 
-dataprof evaluates data quality across five ISO 8000/25012 dimensions. Each is scored from 0 to 100, and the overall score is a weighted average.
+dataprof evaluates five quality dimensions informed by ISO 8000 and ISO/IEC
+25012. Each is scored from 0 to 100, and dataprof computes its overall score as
+a configurable weighted average of the dimensions that were actually assessed.
 
 ### Completeness
 

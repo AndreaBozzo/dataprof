@@ -548,6 +548,20 @@ class TestReportErgonomics:
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
         assert reloaded.quality_score == report.quality_score
 
+    def test_quality_score_weights_are_exposed_and_round_trip(self, report):
+        expected = {
+            "completeness": 0.30,
+            "consistency": 0.25,
+            "uniqueness": 0.20,
+            "accuracy": 0.15,
+            "timeliness": 0.10,
+        }
+        assert report.quality.score_weights == expected
+
+        reloaded = dataprof.ProfileReport.from_json(report.to_json())
+        assert reloaded.quality is not None
+        assert reloaded.quality.score_weights == expected
+
     def test_from_dict_round_trip_idempotent(self, report):
         reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
         assert reloaded.to_dict() == report.to_dict()
