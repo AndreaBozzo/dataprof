@@ -35,6 +35,7 @@ pub struct PyProfilerConfig {
     pub(crate) locale: Option<String>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
+    pub(crate) temporal_columns: Vec<String>,
 }
 
 #[pymethods]
@@ -57,6 +58,7 @@ impl PyProfilerConfig {
         locale = None,
         positive_columns = None,
         identifier_columns = None,
+        temporal_columns = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -76,6 +78,7 @@ impl PyProfilerConfig {
         locale: Option<String>,
         positive_columns: Option<Vec<String>>,
         identifier_columns: Option<Vec<String>>,
+        temporal_columns: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -144,6 +147,7 @@ impl PyProfilerConfig {
             locale,
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
+            temporal_columns: temporal_columns.unwrap_or_default(),
         })
     }
 
@@ -209,6 +213,12 @@ impl PyProfilerConfig {
     #[getter]
     fn identifier_columns(&self) -> Vec<String> {
         self.identifier_columns.clone()
+    }
+
+    /// Columns whose values should contribute to timeliness metrics
+    #[getter]
+    fn temporal_columns(&self) -> Vec<String> {
+        self.temporal_columns.clone()
     }
 
     fn __repr__(&self) -> String {
@@ -281,6 +291,9 @@ impl PyProfilerConfig {
         if !self.identifier_columns.is_empty() {
             profiler = profiler.identifier_columns(self.identifier_columns.clone());
         }
+        if !self.temporal_columns.is_empty() {
+            profiler = profiler.temporal_columns(self.temporal_columns.clone());
+        }
 
         profiler
     }
@@ -290,6 +303,7 @@ impl PyProfilerConfig {
             self.positive_columns.clone(),
             self.identifier_columns.clone(),
         )
+        .with_temporal_columns(self.temporal_columns.clone())
     }
 }
 

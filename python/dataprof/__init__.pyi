@@ -46,6 +46,7 @@ def profile(
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source (file path, DataFrame, or Arrow object)."""
     ...
@@ -69,6 +70,7 @@ def profile_file(
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a file path with file-oriented options."""
     ...
@@ -122,6 +124,7 @@ class Profiler:
     def locale(self, locale: str) -> Profiler: ...
     def positive_columns(self, columns: list[str]) -> Profiler: ...
     def identifier_columns(self, columns: list[str]) -> Profiler: ...
+    def temporal_columns(self, columns: list[str]) -> Profiler: ...
     def profile(self, source: Any) -> ProfileReport: ...
 
 # --- Result Types ---

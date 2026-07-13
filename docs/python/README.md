@@ -79,6 +79,7 @@ dp.profile(
     locale=None,                     # str -- pattern locale hint, e.g. "IT"
     positive_columns=None,           # list[str] -- columns expected to be non-negative
     identifier_columns=None,         # list[str] -- semantic IDs, not measures
+    temporal_columns=None,           # list[str] -- columns assessed for timeliness
 ) -> ProfileReport
 ```
 
@@ -323,6 +324,9 @@ if q.completeness is not None:
 does not infer positive-only domains from column names. `identifier_columns`
 marks numeric-looking IDs as semantic strings so numeric stats and outlier
 metrics do not treat them as measures.
+Timeliness scoring is opt-in through `temporal_columns`; inferred date columns
+remain visible in column profiles but do not affect the quality score unless
+their names are explicitly selected.
 
 **Selective dimensions** -- compute only what you need:
 

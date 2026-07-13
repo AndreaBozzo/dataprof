@@ -76,6 +76,7 @@ use crate::types::{
     AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, QualityDimension,
     QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
 };
+use dataprof_core::SemanticHints;
 use std::collections::HashMap;
 
 /// Engine for calculating comprehensive data quality metrics
@@ -184,6 +185,26 @@ impl MetricsCalculator {
         identifier_columns: &[String],
         row_duplicates: Option<RowDuplicateSummary>,
     ) -> Result<QualityMetrics, DataProfilerError> {
+        let semantic_hints =
+            SemanticHints::new(positive_columns.to_vec(), identifier_columns.to_vec());
+        self.calculate_comprehensive_metrics_with_all_semantic_hints(
+            data,
+            column_profiles,
+            requested_dimensions,
+            &semantic_hints,
+            row_duplicates,
+        )
+    }
+
+    /// Calculate comprehensive metrics with all explicit semantic column hints.
+    pub fn calculate_comprehensive_metrics_with_all_semantic_hints(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
+        semantic_hints: &SemanticHints,
+        row_duplicates: Option<RowDuplicateSummary>,
+    ) -> Result<QualityMetrics, DataProfilerError> {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset(
                 &requested_dimensions,
@@ -242,7 +263,7 @@ impl MetricsCalculator {
                 data,
                 column_profiles,
                 uniqueness_total_rows,
-                identifier_columns,
+                &semantic_hints.identifier_columns,
                 row_duplicates,
             )?;
             Some(UniquenessMetrics {
@@ -260,13 +281,13 @@ impl MetricsCalculator {
         // Accuracy dimension
         let accuracy = if Self::is_requested(requested, QualityDimension::Accuracy) {
             let accuracy_calculator = AccuracyCalculator::new(&self.thresholds);
-            let a = if positive_columns.is_empty() {
+            let a = if semantic_hints.positive_columns.is_empty() {
                 accuracy_calculator.calculate(data, column_profiles)?
             } else {
                 accuracy_calculator.calculate_with_positive_columns(
                     data,
                     column_profiles,
-                    positive_columns,
+                    &semantic_hints.positive_columns,
                 )?
             };
             Some(AccuracyMetrics {
@@ -281,7 +302,8 @@ impl MetricsCalculator {
 
         // Timeliness dimension
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
-            let t = TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?;
+            let t = TimelinessCalculator::new(&self.thresholds)
+                .calculate(data, &semantic_hints.temporal_columns)?;
             Some(TimelinessMetrics {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
@@ -428,6 +450,26 @@ impl MetricsCalculator {
         identifier_columns: &[String],
         row_duplicates: Option<RowDuplicateSummary>,
     ) -> Result<BifurcatedResult, DataProfilerError> {
+        let semantic_hints =
+            SemanticHints::new(positive_columns.to_vec(), identifier_columns.to_vec());
+        self.calculate_bifurcated_metrics_with_all_semantic_hints(
+            data,
+            column_profiles,
+            requested_dimensions,
+            &semantic_hints,
+            row_duplicates,
+        )
+    }
+
+    /// Calculate bifurcated metrics with all explicit semantic column hints.
+    pub fn calculate_bifurcated_metrics_with_all_semantic_hints(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+        column_profiles: &[ColumnProfile],
+        requested_dimensions: Option<&[QualityDimension]>,
+        semantic_hints: &SemanticHints,
+        row_duplicates: Option<RowDuplicateSummary>,
+    ) -> Result<BifurcatedResult, DataProfilerError> {
         if data.is_empty() && column_profiles.is_empty() {
             return Ok(BifurcatedResult {
                 metrics: Self::default_metrics_for_empty_dataset(&requested_dimensions),
@@ -487,7 +529,7 @@ impl MetricsCalculator {
                 data,
                 column_profiles,
                 total_rows,
-                identifier_columns,
+                &semantic_hints.identifier_columns,
                 row_duplicates,
             )?;
             // Only claim provenance for components that carry signal:
@@ -524,7 +566,7 @@ impl MetricsCalculator {
                 AccuracyCalculator::new(&self.thresholds).calculate_with_positive_columns(
                     data,
                     column_profiles,
-                    positive_columns,
+                    &semantic_hints.positive_columns,
                 )?
             } else {
                 accuracy::AccuracyMetrics {
@@ -547,7 +589,8 @@ impl MetricsCalculator {
 
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
             let t = if !data.is_empty() {
-                TimelinessCalculator::new(&self.thresholds).calculate(data, column_profiles)?
+                TimelinessCalculator::new(&self.thresholds)
+                    .calculate(data, &semantic_hints.temporal_columns)?
             } else {
                 timeliness::TimelinessMetrics {
                     future_dates_count: 0,

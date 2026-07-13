@@ -719,6 +719,7 @@ def profile_file(
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a file path and return a report.
 
@@ -754,6 +755,8 @@ def profile_file(
             non-negative.
         identifier_columns: Numeric-looking columns to treat as semantic
             identifiers instead of measures.
+        temporal_columns: Columns whose values should contribute to timeliness
+            quality metrics.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -776,6 +779,7 @@ def profile_file(
         locale=locale,
         positive_columns=positive_columns,
         identifier_columns=identifier_columns,
+        temporal_columns=temporal_columns,
     )
     rust_report = _analyze_file(normalized_path, config)
     return ProfileReport(rust_report)
@@ -801,6 +805,7 @@ def profile(
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
+    temporal_columns: list[str] | None = None,
 ) -> ProfileReport:
     """Profile a data source and return a report.
 
@@ -840,6 +845,8 @@ def profile(
             non-negative.
         identifier_columns: Numeric-looking columns to treat as semantic
             identifiers instead of measures.
+        temporal_columns: Columns whose values should contribute to timeliness
+            quality metrics.
 
     Returns:
         ProfileReport with analysis results and quality metrics.
@@ -864,6 +871,7 @@ def profile(
             locale=locale,
             positive_columns=positive_columns,
             identifier_columns=identifier_columns,
+            temporal_columns=temporal_columns,
         )
 
     # DataFrame/Arrow paths — build config for metric packs + quality dims + locale
@@ -878,6 +886,7 @@ def profile(
                 locale,
                 positive_columns,
                 identifier_columns,
+                temporal_columns,
             )
         ):
             return ProfilerConfig(
@@ -887,6 +896,7 @@ def profile(
                 locale=locale,
                 positive_columns=positive_columns,
                 identifier_columns=identifier_columns,
+                temporal_columns=temporal_columns,
             )
         return None
 
@@ -1116,6 +1126,11 @@ class Profiler:
     def identifier_columns(self, columns: list[str]) -> Profiler:
         """Mark columns to profile as semantic identifiers."""
         self._kwargs["identifier_columns"] = columns
+        return self
+
+    def temporal_columns(self, columns: list[str]) -> Profiler:
+        """Mark columns whose values should contribute to timeliness metrics."""
+        self._kwargs["temporal_columns"] = columns
         return self
 
     def metrics(self, packs: list[str]) -> Profiler:

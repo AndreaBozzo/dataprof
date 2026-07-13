@@ -35,6 +35,7 @@ class ProfilerConfig:
         locale: str | None = None,
         positive_columns: list[str] | None = None,
         identifier_columns: list[str] | None = None,
+        temporal_columns: list[str] | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
@@ -52,6 +53,8 @@ class ProfilerConfig:
     def positive_columns(self) -> list[str]: ...
     @property
     def identifier_columns(self) -> list[str]: ...
+    @property
+    def temporal_columns(self) -> list[str]: ...
 
 # --- Sampling ---
 

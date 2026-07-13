@@ -197,7 +197,7 @@ dataprof evaluates data quality against the five dimensions defined in [ISO 8000
 | **Consistency** | Data type consistency, format violations, encoding issues |
 | **Uniqueness** | Duplicate rows, key uniqueness, high-cardinality warnings |
 | **Accuracy** | Outlier ratio, range violations, negative values in positive-only columns |
-| **Timeliness** | Future dates, stale data ratio, temporal ordering violations |
+| **Timeliness** | Future dates, stale data ratio, temporal ordering violations in explicit temporal columns |
 
 An overall quality score (0 -- 100) is computed as a weighted average of dimension scores.
 

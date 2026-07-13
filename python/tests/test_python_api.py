@@ -382,6 +382,26 @@ class TestProfileReport:
         assert uniqueness["rows_checked"] == 3
         assert uniqueness["duplicate_rows_approximate"] is False
 
+    def test_temporal_columns_gate_timeliness_score(self, tmp_path):
+        path = tmp_path / "events.csv"
+        path.write_text(
+            "observed_on,value\n2020-01-01,1\n2021-01-01,2\n",
+            encoding="utf-8",
+        )
+
+        without_hint = dataprof.profile(str(path))
+        without_quality = without_hint.quality
+        assert without_quality is not None
+        assert without_quality.dimension_scores()["timeliness"] is None
+
+        with_hint = dataprof.profile(str(path), temporal_columns=["observed_on"])
+        with_quality = with_hint.quality
+        assert with_quality is not None
+        assert with_quality.dimension_scores()["timeliness"] is not None
+        timeliness = with_quality.timeliness
+        assert timeliness is not None
+        assert timeliness["date_values_checked"] == 2
+
     @pytest.mark.parametrize(
         ("attr", "dimension", "key", "default"),
         [
@@ -1006,9 +1026,11 @@ class TestProfilerConfig:
         cfg = dataprof.ProfilerConfig(
             positive_columns=["pressure"],
             identifier_columns=["order_id", "customer_id"],
+            temporal_columns=["observed_on"],
         )
         assert cfg.positive_columns == ["pressure"]
         assert cfg.identifier_columns == ["order_id", "customer_id"]
+        assert cfg.temporal_columns == ["observed_on"]
 
     def test_max_rows(self):
         if not os.path.exists(CSV_LARGE_FILE):
@@ -1248,6 +1270,7 @@ class TestNamespace:
             "locale",
             "positive_columns",
             "identifier_columns",
+            "temporal_columns",
         }
         actual_params = set(sig.parameters.keys())
         assert actual_params == expected_params, (
@@ -1802,6 +1825,7 @@ class TestProfilerBuilder:
         assert p.quality_dimensions(["completeness"]) is p
         assert p.positive_columns(["pressure"]) is p
         assert p.identifier_columns(["order_id"]) is p
+        assert p.temporal_columns(["observed_on"]) is p
 
     def test_csv_delimiter(self):
         if not os.path.exists(SEMICOLON_FILE):
