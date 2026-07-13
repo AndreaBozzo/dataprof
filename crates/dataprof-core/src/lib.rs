@@ -21,7 +21,7 @@ pub use classification::{DataType, PatternCategory};
 pub use config::{DatabaseSamplingConfig, DatabaseSettings};
 pub use config::{
     DataprofConfig, DataprofConfigBuilder, EngineConfig, IsoQualityConfig, MemoryConfig,
-    OutputConfig, QualityConfig,
+    OutputConfig, QualityConfig, QualityScoreWeights,
 };
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
 pub use execution::{ExecutionMetadata, TruncationReason};

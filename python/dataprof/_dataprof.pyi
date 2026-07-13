@@ -176,7 +176,7 @@ class ColumnProfile:
     patterns: list[Pattern] | None
 
 class DataQualityMetrics:
-    """ISO 8000/25012 data quality metrics."""
+    """Quality metrics informed by ISO 8000/25012 concepts."""
 
     missing_values_ratio: float
     complete_records_ratio: float
@@ -194,6 +194,7 @@ class DataQualityMetrics:
     stale_data_ratio: float
     temporal_violations: int
     low_sample_warning: bool
+    score_weights: dict[str, float]
 
     @property
     def completeness(self) -> dict[str, Any] | None: ...

@@ -79,10 +79,9 @@ use crate::types::{
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
 
-/// Engine for calculating comprehensive data quality metrics
-/// Supports ISO 8000/25012 configurable thresholds
+/// Engine for calculating comprehensive data quality metrics.
 pub struct MetricsCalculator {
-    /// ISO-compliant quality thresholds
+    /// Configurable quality thresholds and score weights.
     pub thresholds: IsoQualityConfig,
 }
 
@@ -93,7 +92,7 @@ impl Default for MetricsCalculator {
 }
 
 impl MetricsCalculator {
-    /// Create a new calculator with default ISO thresholds
+    /// Create a new calculator with default quality settings.
     pub fn new() -> Self {
         Self {
             thresholds: IsoQualityConfig::default(),
@@ -208,6 +207,7 @@ impl MetricsCalculator {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset(
                 &requested_dimensions,
+                self.thresholds.score_weights,
             ));
         }
 
@@ -322,12 +322,14 @@ impl MetricsCalculator {
             accuracy,
             timeliness,
             low_sample_warning: !validation.sufficient_sample,
+            score_weights: self.thresholds.score_weights,
         })
     }
 
     /// Create default metrics for empty dataset (only requested dimensions are populated).
     fn default_metrics_for_empty_dataset(
         requested: &Option<&[QualityDimension]>,
+        score_weights: dataprof_core::QualityScoreWeights,
     ) -> QualityMetrics {
         let is_req = |d| match requested {
             None => true,
@@ -389,6 +391,7 @@ impl MetricsCalculator {
                 None
             },
             low_sample_warning: false,
+            score_weights,
         }
     }
 
@@ -472,7 +475,10 @@ impl MetricsCalculator {
     ) -> Result<BifurcatedResult, DataProfilerError> {
         if data.is_empty() && column_profiles.is_empty() {
             return Ok(BifurcatedResult {
-                metrics: Self::default_metrics_for_empty_dataset(&requested_dimensions),
+                metrics: Self::default_metrics_for_empty_dataset(
+                    &requested_dimensions,
+                    self.thresholds.score_weights,
+                ),
                 exact_dimensions: vec![],
                 sampled_dimensions: vec![],
                 sample_size: 0,
@@ -629,6 +635,7 @@ impl MetricsCalculator {
             accuracy,
             timeliness,
             low_sample_warning: !validation.sufficient_sample,
+            score_weights: self.thresholds.score_weights,
         };
 
         Ok(BifurcatedResult {
@@ -671,6 +678,7 @@ pub struct BifurcatedResult {
 mod tests {
     use super::*;
     use crate::types::{ColumnStats, DataType};
+    use dataprof_core::QualityScoreWeights;
 
     #[test]
     fn comprehensive_metrics_use_tracker_rows_for_cardinality_ratio() {
@@ -710,5 +718,36 @@ mod tests {
                 .high_cardinality_warning,
             "100 distinct values out of 1,000 rows is not high cardinality"
         );
+    }
+
+    #[test]
+    fn calculator_copies_custom_score_weights_into_metrics() {
+        let weights = QualityScoreWeights {
+            completeness: 1.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+        };
+        let config = IsoQualityConfig {
+            score_weights: weights,
+            ..IsoQualityConfig::default()
+        };
+        let data = HashMap::from([("value".to_string(), vec!["x".to_string()])]);
+        let profiles = vec![ColumnProfile {
+            name: "value".to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 1,
+            unique_count: Some(1),
+            stats: ColumnStats::None,
+            patterns: Some(vec![]),
+        }];
+
+        let metrics = MetricsCalculator::with_thresholds(config)
+            .calculate_comprehensive_metrics(&data, &profiles, None)
+            .expect("quality metrics");
+
+        assert_eq!(metrics.score_weights, weights);
     }
 }

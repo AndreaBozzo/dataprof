@@ -1,4 +1,4 @@
-//! High-performance data profiling with ISO 8000/25012 quality metrics.
+//! High-performance data profiling and quality assessment.
 //!
 //! The `dataprof` crate is the user-facing facade for profiling CSV, JSON,
 //! JSONL, Parquet, database, DataFrame, and Arrow sources. Implementation
@@ -26,10 +26,11 @@ pub use dataprof_core::{
     BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats, CountMethod,
     DataFrameLibrary, DataProfilerError, DataSource, DataType, DataprofConfig,
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
-    InputValidator, MetricPack, NumericStats, OutputFormat, ParquetMetadata, Pattern,
-    PatternCategory, ProgressEvent, ProgressSink, QualityDimension, Quartiles, QueryEngine,
-    RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints, StopCondition, StopEvaluator,
-    StructureColumnSummary, StructureReport, TextStats, TruncationReason, ValidationError,
+    InputValidator, IsoQualityConfig, MetricPack, NumericStats, OutputFormat, ParquetMetadata,
+    Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension, QualityScoreWeights,
+    Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints,
+    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextStats,
+    TruncationReason, ValidationError,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,

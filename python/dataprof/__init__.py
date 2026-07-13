@@ -743,7 +743,7 @@ def profile_file(
             than ``progress_interval_ms`` may emit only start and finish events.
         progress_interval_ms: Minimum interval between progress events in ms
             (default: 500).
-        quality_dimensions: List of ISO 25012 quality dimensions to evaluate.
+        quality_dimensions: List of quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
             "accuracy", "timeliness". None = all dimensions (default).
         metrics: List of metric packs to compute. Valid values: "schema"
@@ -831,7 +831,7 @@ def profile(
             than ``progress_interval_ms`` may emit only start and finish events.
         progress_interval_ms: Minimum interval between progress events in ms
             (default: 500).
-        quality_dimensions: List of ISO 25012 quality dimensions to evaluate.
+        quality_dimensions: List of quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
             "accuracy", "timeliness". None = all dimensions (default).
         metrics: List of metric packs to compute. Valid values: "schema"
@@ -1093,7 +1093,7 @@ class Profiler:
         return self
 
     def quality_dimensions(self, dims: list[str]) -> Profiler:
-        """Select ISO 25012 quality dimensions to evaluate."""
+        """Select quality dimensions to evaluate."""
         self._kwargs["quality_dimensions"] = dims
         return self
 
@@ -1240,6 +1240,14 @@ class _DictColumn:
 class _DictQuality:
     """Read-only stand-in for native DataQualityMetrics, built from to_dict()."""
 
+    _DEFAULT_SCORE_WEIGHTS = {
+        "completeness": 0.30,
+        "consistency": 0.25,
+        "uniqueness": 0.20,
+        "accuracy": 0.15,
+        "timeliness": 0.10,
+    }
+
     def __init__(self, d: dict[str, Any]):
         self._d = d
         self.low_sample_warning = bool(d.get("low_sample_warning", False))
@@ -1353,6 +1361,13 @@ class _DictQuality:
     @property
     def timeliness(self) -> dict[str, Any] | None:
         return self._d.get("timeliness")
+
+    @property
+    def score_weights(self) -> dict[str, float]:
+        weights = self._d.get("score_weights")
+        if isinstance(weights, dict):
+            return weights
+        return self._DEFAULT_SCORE_WEIGHTS
 
     def overall_quality_score(self) -> float | None:
         return self._d.get("overall_score")

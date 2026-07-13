@@ -2,7 +2,7 @@
   <img src="assets/images/logo.png" alt="dataprof logo" width="800" height="auto" />
   <h1>dataprof</h1>
   <p>
-    <strong>High-performance data profiling with ISO 8000/25012 quality metrics</strong>
+    <strong>High-performance data profiling and quality assessment</strong>
   </p>
 
   [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
@@ -16,7 +16,7 @@
 
 ---
 
-dataprof is a Rust and Python library for profiling tabular data. It computes column-level statistics, detects data types and patterns, and evaluates data quality against the ISO 8000/25012 standard, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
+dataprof is a Rust and Python library for profiling tabular data. It computes column-level statistics, detects data types and patterns, and assesses data quality across dimensions informed by ISO 8000 and ISO/IEC 25012, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
 
 It is built for the first ten minutes with unfamiliar data: find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious values before they turn into pipeline bugs.
 
@@ -76,7 +76,7 @@ print(structure.format, len(structure.columns), structure.row_count.count)
 #### 2. Interpret
 
 ```python
-print(f"quality={report.quality_score:.1f}")   # 0-100, weighted across five ISO dimensions
+print(f"quality={report.quality_score:.1f}")   # 0-100, weighted across assessed dimensions
 print(report.quality_summary())                # per-dimension scores
 
 age = report["age"]
@@ -154,7 +154,7 @@ for col in &report.column_profiles {
 - **Multi-format by default** -- move from CSV and JSON to Parquet, live databases, DataFrames, and Arrow batches without changing tools
 - **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
 - **Async-ready** -- Rust async APIs and opt-in Python extension builds cover stream pipelines, services, and remote Parquet sources
-- **ISO 8000/25012 quality assessment** -- five dimensions: Completeness, Consistency, Uniqueness, Accuracy, Timeliness
+- **Explainable quality assessment** -- completeness, consistency, uniqueness, accuracy, and timeliness with inspectable facts behind every score
 
 ## Feature Flags
 
@@ -189,7 +189,7 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 
 ## Quality Metrics
 
-dataprof evaluates data quality against the five dimensions defined in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):
+dataprof reports five quality dimensions informed by concepts in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):
 
 | Dimension | What it measures |
 |---|---|
@@ -199,7 +199,11 @@ dataprof evaluates data quality against the five dimensions defined in [ISO 8000
 | **Accuracy** | Outlier ratio, range violations, negative values in positive-only columns |
 | **Timeliness** | Future dates, stale data ratio, temporal ordering violations in explicit temporal columns |
 
-An overall quality score (0 -- 100) is computed as a weighted average of dimension scores.
+The overall quality score (0 -- 100) is dataprof's weighted average of the
+dimensions that had data to assess. The aggregation formula is not mandated or
+certified by ISO. Rust callers can customize the relative weights through
+`IsoQualityConfig::score_weights`; default weights are 0.30 / 0.25 / 0.20 /
+0.15 / 0.10 in the table order above.
 
 ## Documentation
 
