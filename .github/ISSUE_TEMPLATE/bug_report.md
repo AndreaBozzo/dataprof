@@ -18,13 +18,13 @@ The smallest thing that triggers it — a command, a code snippet, or a few rows
 of data. A minimal repro is the single most useful thing you can add.
 
 ```
-# CLI, Rust, or Python — whatever you ran
+# Rust or Python — whatever you ran
 ```
 
 ## Environment
 
 - dataprof version:
-- How you use it: [ ] Python (`dp.profile`)  [ ] Rust crate (`Profiler`)  [ ] CLI
+- How you use it: [ ] Python (`dp.profile`)  [ ] Rust crate (`Profiler`)
 - Install source: [e.g. PyPI wheel, `cargo add`, source build]
 - Engine (if set): [e.g. auto, columnar, incremental, streaming]
 - Input format: [e.g. CSV, JSON, JSONL, Parquet, database, in-memory]

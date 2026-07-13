@@ -23,3 +23,7 @@ Anything you've tried or considered instead.
 ## Anything else
 
 Related issues, prior art, or context.
+
+<!-- Product boundary: dataprof profiles data and reports on it. It does not
+transform, clean, or move your data, and it has no CLI. Requests that fit that
+boundary are much easier to accept. -->
