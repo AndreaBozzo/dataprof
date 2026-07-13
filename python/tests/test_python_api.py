@@ -368,6 +368,20 @@ class TestProfileReport:
         assert "score=" in r
         assert "dimensions=" in r
 
+    def test_csv_duplicate_rows_cover_full_stream_and_expose_provenance(self, tmp_path):
+        path = tmp_path / "duplicates.csv"
+        path.write_text("a,b\nx,1\nx,1\ny,2\n", encoding="utf-8")
+
+        report = dataprof.profile(str(path), quality_dimensions=["uniqueness"])
+        quality = report.quality
+        assert quality is not None
+        uniqueness = quality.uniqueness
+        assert uniqueness is not None
+
+        assert uniqueness["duplicate_rows"] == 1
+        assert uniqueness["rows_checked"] == 3
+        assert uniqueness["duplicate_rows_approximate"] is False
+
     @pytest.mark.parametrize(
         ("attr", "dimension", "key", "default"),
         [

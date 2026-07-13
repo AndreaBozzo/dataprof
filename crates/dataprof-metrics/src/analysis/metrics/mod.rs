@@ -74,7 +74,7 @@ use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{
     AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, QualityDimension,
-    QualityMetrics, TimelinessMetrics, UniquenessMetrics,
+    QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
 };
 use std::collections::HashMap;
 
@@ -149,16 +149,20 @@ impl MetricsCalculator {
             column_profiles,
             requested_dimensions,
             &[],
+            None,
         )
     }
 
-    /// Calculate comprehensive metrics with explicit positive-only column hints.
+    /// Calculate comprehensive metrics with explicit positive-only column
+    /// hints and, when the engine tracked whole rows, full-stream duplicate
+    /// counts that supersede the sample-based duplicate scan.
     pub fn calculate_comprehensive_metrics_with_positive_columns(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
         requested_dimensions: Option<&[QualityDimension]>,
         positive_columns: &[String],
+        row_duplicates: Option<RowDuplicateSummary>,
     ) -> Result<QualityMetrics, DataProfilerError> {
         if data.is_empty() {
             return Ok(Self::default_metrics_for_empty_dataset(
@@ -215,6 +219,7 @@ impl MetricsCalculator {
                 data,
                 column_profiles,
                 sample_size,
+                row_duplicates,
             )?;
             Some(UniquenessMetrics {
                 duplicate_rows: u.duplicate_rows,
@@ -222,6 +227,7 @@ impl MetricsCalculator {
                 high_cardinality_warning: u.high_cardinality_warning,
                 rows_checked: u.rows_checked,
                 key_column: u.key_column,
+                duplicate_rows_approximate: u.duplicate_rows_approximate,
             })
         } else {
             None
@@ -310,6 +316,7 @@ impl MetricsCalculator {
                     high_cardinality_warning: false,
                     rows_checked: 0,
                     key_column: None,
+                    duplicate_rows_approximate: false,
                 })
             } else {
                 None
@@ -345,8 +352,9 @@ impl MetricsCalculator {
     /// from `ColumnProfile` stats (`null_count`, `total_count`) which are exact
     /// even for infinite streams. Key uniqueness already uses `ColumnProfile`.
     ///
-    /// **Phase B (sampled)**: Consistency, Accuracy, Timeliness, and duplicate_rows
-    /// are computed from the bounded reservoir sample.
+    /// **Phase B (sampled)**: Consistency, Accuracy, and Timeliness are computed
+    /// from the bounded reservoir sample. Duplicate rows use a full-stream row
+    /// tracker when supplied; otherwise they fall back to an aligned sample.
     ///
     /// Returns a [`BifurcatedResult`] containing the metrics plus provenance
     /// for which dimensions are exact vs sampled.
@@ -361,16 +369,20 @@ impl MetricsCalculator {
             column_profiles,
             requested_dimensions,
             &[],
+            None,
         )
     }
 
-    /// Calculate bifurcated metrics with explicit positive-only column hints.
+    /// Calculate bifurcated metrics with explicit positive-only column
+    /// hints and, when the engine tracked whole rows, full-stream duplicate
+    /// counts that supersede the sample-based duplicate scan.
     pub fn calculate_bifurcated_metrics_with_positive_columns(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
         requested_dimensions: Option<&[QualityDimension]>,
         positive_columns: &[String],
+        row_duplicates: Option<RowDuplicateSummary>,
     ) -> Result<BifurcatedResult, DataProfilerError> {
         if data.is_empty() && column_profiles.is_empty() {
             return Ok(BifurcatedResult {
@@ -431,16 +443,24 @@ impl MetricsCalculator {
                 data,
                 column_profiles,
                 total_rows,
+                row_duplicates,
             )?;
             // Only claim provenance for components that carry signal:
             // key_uniqueness means nothing without an identified key column,
             // and the duplicate scan refuses misaligned per-column samples
-            // (rows_checked == 0).
+            // (rows_checked == 0). Full-stream tracker counts are exact
+            // until the distinct estimator spills to its HLL sketch, after
+            // which they are flagged approximate and filed as non-exact.
             if u.key_column.is_some() {
                 exact_dimensions.push("key_uniqueness".to_string());
             }
             if u.rows_checked > 0 {
-                sampled_dimensions.push("duplicate_rows".to_string());
+                let from_tracker = row_duplicates.is_some_and(|s| s.rows_checked > 0);
+                if from_tracker && !u.duplicate_rows_approximate {
+                    exact_dimensions.push("duplicate_rows".to_string());
+                } else {
+                    sampled_dimensions.push("duplicate_rows".to_string());
+                }
             }
             Some(UniquenessMetrics {
                 duplicate_rows: u.duplicate_rows,
@@ -448,6 +468,7 @@ impl MetricsCalculator {
                 high_cardinality_warning: u.high_cardinality_warning,
                 rows_checked: u.rows_checked,
                 key_column: u.key_column,
+                duplicate_rows_approximate: u.duplicate_rows_approximate,
             })
         } else {
             None

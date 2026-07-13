@@ -11,7 +11,8 @@ use dataprof_core::{
     ColumnProfile, DataSource, ExecutionMetadata, QualityDimension, SemanticHints,
 };
 use dataprof_metrics::{
-    MetricConfidence, MetricsCalculator, QualityAssessment, analysis::metrics::BifurcatedResult,
+    MetricConfidence, MetricsCalculator, QualityAssessment, RowDuplicateSummary,
+    analysis::metrics::BifurcatedResult,
 };
 
 use crate::ProfileReport;
@@ -26,6 +27,7 @@ pub struct ReportAssembler {
     skip_quality: bool,
     requested_dimensions: Option<Vec<QualityDimension>>,
     semantic_hints: SemanticHints,
+    row_duplicates: Option<RowDuplicateSummary>,
 }
 
 impl ReportAssembler {
@@ -40,6 +42,7 @@ impl ReportAssembler {
             skip_quality: false,
             requested_dimensions: None,
             semantic_hints: SemanticHints::default(),
+            row_duplicates: None,
         }
     }
 
@@ -76,6 +79,13 @@ impl ReportAssembler {
     /// Set semantic hints used by quality metrics.
     pub fn with_semantic_hints(mut self, hints: SemanticHints) -> Self {
         self.semantic_hints = hints;
+        self
+    }
+
+    /// Provide full-stream row-duplicate counts from an engine's row
+    /// tracker; they supersede the sample-based duplicate scan.
+    pub fn with_row_duplicates(mut self, summary: Option<RowDuplicateSummary>) -> Self {
+        self.row_duplicates = summary;
         self
     }
 
@@ -118,6 +128,7 @@ impl ReportAssembler {
             &self.columns,
             self.requested_dimensions.as_deref(),
             &self.semantic_hints.positive_columns,
+            self.row_duplicates,
         ) {
             Ok(result) => {
                 let confidence = self
@@ -146,6 +157,7 @@ impl ReportAssembler {
             &self.columns,
             self.requested_dimensions.as_deref(),
             &self.semantic_hints.positive_columns,
+            self.row_duplicates,
         ) {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
@@ -250,6 +262,66 @@ mod tests {
                 assert_eq!(*sample_size, 2);
             }
             other => panic!("Expected Mixed confidence, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_streaming_exact_row_duplicates_have_exact_provenance() {
+        let data = HashMap::from([("col".to_string(), vec!["a".to_string(), "b".to_string()])]);
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(1000, 1, 50))
+            .with_quality_data(data)
+            .with_row_duplicates(Some(RowDuplicateSummary {
+                duplicate_rows: 25,
+                rows_checked: 1000,
+                approximate: false,
+            }))
+            .build();
+
+        let quality = report.quality.expect("quality assessment");
+        let uniqueness = quality.metrics.uniqueness.expect("uniqueness metrics");
+        assert_eq!(uniqueness.duplicate_rows, 25);
+        assert_eq!(uniqueness.rows_checked, 1000);
+        assert!(!uniqueness.duplicate_rows_approximate);
+        match quality.confidence {
+            MetricConfidence::Mixed {
+                exact_dimensions,
+                sampled_dimensions,
+                ..
+            } => {
+                assert!(exact_dimensions.contains(&"duplicate_rows".to_string()));
+                assert!(!sampled_dimensions.contains(&"duplicate_rows".to_string()));
+            }
+            other => panic!("Expected Mixed confidence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_streaming_approximate_row_duplicates_have_sampled_provenance() {
+        let data = HashMap::from([("col".to_string(), vec!["a".to_string(), "b".to_string()])]);
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(20_000, 1, 50))
+            .with_quality_data(data)
+            .with_row_duplicates(Some(RowDuplicateSummary {
+                duplicate_rows: 500,
+                rows_checked: 20_000,
+                approximate: true,
+            }))
+            .build();
+
+        let quality = report.quality.expect("quality assessment");
+        let uniqueness = quality.metrics.uniqueness.expect("uniqueness metrics");
+        assert!(uniqueness.duplicate_rows_approximate);
+        match quality.confidence {
+            MetricConfidence::Mixed {
+                exact_dimensions,
+                sampled_dimensions,
+                ..
+            } => {
+                assert!(!exact_dimensions.contains(&"duplicate_rows".to_string()));
+                assert!(sampled_dimensions.contains(&"duplicate_rows".to_string()));
+            }
+            other => panic!("Expected Mixed confidence, got {other:?}"),
         }
     }
 

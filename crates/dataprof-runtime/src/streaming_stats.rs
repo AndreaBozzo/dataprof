@@ -1,10 +1,11 @@
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 use crate::profile_builder::infer_data_type_streaming;
-use dataprof_metrics::HyperLogLog;
 use dataprof_metrics::analysis::inference::is_null_like_token;
+use dataprof_metrics::{CardinalityEstimator, HyperLogLog, RowDuplicateSummary};
 
 /// Incremental statistics computation for streaming data processing.
 ///
@@ -365,10 +366,67 @@ impl Default for StreamingStatistics {
     }
 }
 
+/// Full-stream row-duplicate tracking with bounded memory.
+///
+/// Every record's fields are folded into a canonical length-prefixed
+/// signature and fed to a [`CardinalityEstimator`]: duplicates are counted
+/// exactly while the distinct-row signatures fit the estimator's exact set,
+/// and estimated (flagged approximate) once it spills to its HLL sketch.
+/// Unlike the per-column reservoirs, this sees whole rows — including
+/// null-like values — so the count is row-aligned by construction.
+#[derive(Debug, Clone, Default)]
+pub struct RowUniquenessTracker {
+    rows_seen: usize,
+    distinct: CardinalityEstimator,
+}
+
+impl RowUniquenessTracker {
+    pub fn observe(&mut self, signature: String) {
+        self.rows_seen += 1;
+        self.distinct.insert_owned(signature);
+    }
+
+    pub fn rows_seen(&self) -> usize {
+        self.rows_seen
+    }
+
+    /// Rows minus distinct rows; exact until the estimator spills.
+    pub fn duplicate_rows(&self) -> usize {
+        self.rows_seen.saturating_sub(self.distinct.estimate())
+    }
+
+    pub fn is_approximate(&self) -> bool {
+        self.distinct.is_approximate()
+    }
+
+    pub fn merge(&mut self, other: &RowUniquenessTracker) {
+        self.rows_seen += other.rows_seen;
+        self.distinct.merge(&other.distinct);
+    }
+
+    pub fn memory_usage_bytes(&self) -> usize {
+        self.distinct.memory_usage_bytes()
+    }
+
+    /// Summary for quality metrics, or `None` when no rows were observed
+    /// (e.g. an engine that never fed whole records through this tracker).
+    pub fn summary(&self) -> Option<RowDuplicateSummary> {
+        if self.rows_seen == 0 {
+            return None;
+        }
+        Some(RowDuplicateSummary {
+            duplicate_rows: self.duplicate_rows(),
+            rows_checked: self.rows_seen,
+            approximate: self.is_approximate(),
+        })
+    }
+}
+
 pub struct StreamingColumnCollection {
     columns: HashMap<String, StreamingStatistics>,
     ordered_names: Vec<String>,
     memory_limit_bytes: usize,
+    row_tracker: RowUniquenessTracker,
 }
 
 impl StreamingColumnCollection {
@@ -377,6 +435,7 @@ impl StreamingColumnCollection {
             columns: HashMap::new(),
             ordered_names: Vec::new(),
             memory_limit_bytes: 100 * 1024 * 1024,
+            row_tracker: RowUniquenessTracker::default(),
         }
     }
 
@@ -385,6 +444,7 @@ impl StreamingColumnCollection {
             columns: HashMap::new(),
             ordered_names: Vec::new(),
             memory_limit_bytes: limit_mb * 1024 * 1024,
+            row_tracker: RowUniquenessTracker::default(),
         }
     }
 
@@ -422,13 +482,31 @@ impl StreamingColumnCollection {
     where
         I: IntoIterator<Item = String>,
     {
+        // Length-prefixed so field boundaries are unambiguous:
+        // ["ab", "c"] and ["a", "bc"] must produce different signatures.
+        let mut row_signature = String::new();
+        let mut saw_field = false;
+
         for (header, value) in headers.iter().zip(values) {
+            let _ = write!(row_signature, "{}:", value.len());
+            row_signature.push_str(&value);
+            saw_field = true;
+
             if !self.columns.contains_key(header) {
                 self.ordered_names.push(header.clone());
             }
             let stats = self.columns.entry(header.to_string()).or_default();
             stats.update(&value);
         }
+
+        if saw_field {
+            self.row_tracker.observe(row_signature);
+        }
+    }
+
+    /// Full-stream row-duplicate counts, or `None` when no rows were seen.
+    pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
+        self.row_tracker.summary()
     }
 
     pub fn get_column_stats(&self, column_name: &str) -> Option<&StreamingStatistics> {
@@ -443,7 +521,8 @@ impl StreamingColumnCollection {
         self.columns
             .values()
             .map(|stats| stats.memory_usage_bytes())
-            .sum()
+            .sum::<usize>()
+            + self.row_tracker.memory_usage_bytes()
     }
 
     pub fn is_memory_pressure(&self) -> bool {
@@ -485,12 +564,104 @@ impl StreamingColumnCollection {
                 }
             }
         }
+        self.row_tracker.merge(&other.row_tracker);
     }
 }
 
 impl Default for StreamingColumnCollection {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod row_tracker_tests {
+    use super::*;
+
+    fn record(collection: &mut StreamingColumnCollection, headers: &[String], values: &[&str]) {
+        collection.process_record(headers, values.iter().map(|v| v.to_string()));
+    }
+
+    #[test]
+    fn test_exact_duplicates_including_null_rows() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        record(&mut collection, &headers, &["x", ""]);
+        record(&mut collection, &headers, &["x", ""]);
+        record(&mut collection, &headers, &["x", "1"]);
+        record(&mut collection, &headers, &["", ""]);
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert_eq!(summary.rows_checked, 4);
+        // Null-like values are part of the row identity: the per-column
+        // reservoirs drop them, but the row tracker must not.
+        assert_eq!(summary.duplicate_rows, 1);
+        assert!(!summary.approximate);
+    }
+
+    #[test]
+    fn test_field_boundaries_are_unambiguous() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        record(&mut collection, &headers, &["ab", "c"]);
+        record(&mut collection, &headers, &["a", "bc"]);
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert_eq!(
+            summary.duplicate_rows, 0,
+            "different field splits must not collide"
+        );
+    }
+
+    #[test]
+    fn test_no_rows_means_no_summary() {
+        let collection = StreamingColumnCollection::new();
+        assert!(collection.row_duplicate_summary().is_none());
+    }
+
+    #[test]
+    fn test_spills_to_approximate_beyond_distinct_threshold() {
+        let headers = vec!["n".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        let distinct = dataprof_metrics::EXACT_CARDINALITY_THRESHOLD + 500;
+        for i in 0..distinct {
+            record(&mut collection, &headers, &[&i.to_string()]);
+        }
+        // Every row twice: duplicates == distinct.
+        for i in 0..distinct {
+            record(&mut collection, &headers, &[&i.to_string()]);
+        }
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert!(summary.approximate, "past the threshold the count is HLL");
+        assert_eq!(summary.rows_checked, distinct * 2);
+        let error = (summary.duplicate_rows as f64 - distinct as f64).abs() / distinct as f64;
+        assert!(
+            error < 0.05,
+            "estimated {} duplicates for {distinct} true, off by {error:.4}",
+            summary.duplicate_rows
+        );
+    }
+
+    #[test]
+    fn test_merge_combines_row_trackers() {
+        let headers = vec!["a".to_string()];
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &headers, &["x"]);
+        record(&mut left, &headers, &["y"]);
+        record(&mut right, &headers, &["x"]);
+
+        left.merge(right);
+        let summary = left.row_duplicate_summary().expect("rows were observed");
+        assert_eq!(summary.rows_checked, 3);
+        assert_eq!(summary.duplicate_rows, 1);
     }
 }
 
