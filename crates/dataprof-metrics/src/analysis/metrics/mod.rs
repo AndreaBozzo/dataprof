@@ -52,6 +52,8 @@ mod accuracy;
 mod completeness;
 mod consistency;
 mod precision;
+#[cfg(test)]
+mod testing;
 mod timeliness;
 mod uniqueness;
 mod utils;
@@ -743,6 +745,7 @@ pub struct BifurcatedResult {
 
 #[cfg(test)]
 mod tests {
+    use super::testing::string_profile;
     use super::*;
     use crate::types::{ColumnStats, DataType};
     use dataprof_core::QualityScoreWeights;
@@ -820,6 +823,26 @@ mod tests {
             .expect("quality metrics");
 
         assert_eq!(metrics.score_weights, weights);
+    }
+
+    #[test]
+    fn unrequested_completeness_remains_absent() {
+        let data = HashMap::from([("value".to_string(), vec!["x".to_string()])]);
+        let profiles = vec![string_profile("value", 1, 0)];
+        let requested = [QualityDimension::Consistency];
+
+        let metrics = MetricsCalculator::new()
+            .calculate_comprehensive_metrics(&data, &profiles, Some(&requested))
+            .expect("quality metrics");
+
+        assert!(
+            metrics.completeness.is_none(),
+            "an unrequested dimension must remain absent rather than looking computed"
+        );
+        assert!(
+            metrics.consistency.is_some(),
+            "the requested dimension should still be computed"
+        );
     }
 
     #[test]

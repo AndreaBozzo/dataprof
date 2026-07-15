@@ -169,72 +169,60 @@ impl<'a> CompletenessCalculator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::testing::{
+        CompletenessInput, CompletenessScenario, assert_completeness, column_data,
+        expected_completeness, null_threshold, string_profile,
+    };
     use super::*;
-    use crate::types::{ColumnStats, DataType, TextStats};
 
-    fn make_profile(name: &str, total: usize, nulls: usize) -> ColumnProfile {
-        ColumnProfile {
-            name: name.to_string(),
-            data_type: DataType::String,
-            null_count: nulls,
-            total_count: total,
-            unique_count: Some(total - nulls),
-            unique_count_is_approximate: Some(false),
-            stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
-            patterns: Some(vec![]),
+    #[test]
+    fn completeness_scenarios_cover_boundaries() {
+        let scenarios = vec![
+            CompletenessScenario {
+                name: "empty input is computed but neutral",
+                input: CompletenessInput::Profiles(vec![]),
+                config: IsoQualityConfig::default(),
+                expected: expected_completeness(0.0, 100.0, &[], 0),
+            },
+            CompletenessScenario {
+                name: "perfect raw rows",
+                input: CompletenessInput::Rows {
+                    data: column_data(&[("a", &["x", "y"]), ("b", &["1", "2"])]),
+                    total_rows: 2,
+                },
+                config: IsoQualityConfig::default(),
+                expected: expected_completeness(0.0, 100.0, &[], 4),
+            },
+            CompletenessScenario {
+                name: "exact null threshold is not a null column",
+                input: CompletenessInput::Profiles(vec![string_profile("boundary", 100, 25)]),
+                config: null_threshold(25.0),
+                expected: expected_completeness(25.0, 75.0, &[], 100),
+            },
+            CompletenessScenario {
+                name: "degraded profiles expose exact counters",
+                input: CompletenessInput::Profiles(vec![
+                    string_profile("partial", 100, 10),
+                    string_profile("mostly_null", 100, 60),
+                ]),
+                config: IsoQualityConfig::default(),
+                expected: expected_completeness(35.0, 30.0, &["mostly_null"], 200),
+            },
+        ];
+
+        for scenario in scenarios {
+            let calculator = CompletenessCalculator::new(&scenario.config);
+            let actual = match &scenario.input {
+                CompletenessInput::Rows { data, total_rows } => {
+                    calculator.calculate(data, &[], *total_rows)
+                }
+                CompletenessInput::Profiles(profiles) => {
+                    calculator.calculate_from_profiles(profiles)
+                }
+            }
+            .unwrap_or_else(|error| panic!("scenario `{}` failed: {error}", scenario.name));
+
+            assert_completeness(scenario.name, &actual, &scenario.expected);
         }
-    }
-
-    #[test]
-    fn test_calculate_from_profiles_all_complete() {
-        let thresholds = IsoQualityConfig::default();
-        let calc = CompletenessCalculator::new(&thresholds);
-        let profiles = vec![make_profile("a", 100, 0), make_profile("b", 100, 0)];
-
-        let result = calc.calculate_from_profiles(&profiles).unwrap();
-        assert_eq!(result.missing_values_ratio, 0.0);
-        assert_eq!(result.complete_records_ratio, 100.0);
-        assert!(result.null_columns.is_empty());
-    }
-
-    #[test]
-    fn test_calculate_from_profiles_with_nulls() {
-        let thresholds = IsoQualityConfig::default();
-        let calc = CompletenessCalculator::new(&thresholds);
-        let profiles = vec![
-            make_profile("a", 100, 10), // 10% null
-            make_profile("b", 100, 20), // 20% null
-        ];
-
-        let result = calc.calculate_from_profiles(&profiles).unwrap();
-        // 30 null cells out of 200 total = 15%
-        assert!((result.missing_values_ratio - 15.0).abs() < 0.01);
-        // Pessimistic bound: max(0, 100 - 30) / 100 = 70%
-        assert!((result.complete_records_ratio - 70.0).abs() < 0.01);
-        assert!(result.null_columns.is_empty()); // Neither exceeds 50% threshold
-    }
-
-    #[test]
-    fn test_calculate_from_profiles_null_column_detected() {
-        let thresholds = IsoQualityConfig::default();
-        let calc = CompletenessCalculator::new(&thresholds);
-        let profiles = vec![
-            make_profile("good", 100, 0),
-            make_profile("bad", 100, 60), // 60% null → above 50% threshold
-        ];
-
-        let result = calc.calculate_from_profiles(&profiles).unwrap();
-        assert_eq!(result.null_columns, vec!["bad".to_string()]);
-    }
-
-    #[test]
-    fn test_calculate_from_profiles_empty() {
-        let thresholds = IsoQualityConfig::default();
-        let calc = CompletenessCalculator::new(&thresholds);
-        let profiles: Vec<ColumnProfile> = vec![];
-
-        let result = calc.calculate_from_profiles(&profiles).unwrap();
-        assert_eq!(result.missing_values_ratio, 0.0);
-        assert_eq!(result.complete_records_ratio, 100.0);
     }
 }
