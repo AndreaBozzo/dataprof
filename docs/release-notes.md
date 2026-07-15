@@ -1,5 +1,14 @@
 # Unreleased
 
+## Installed capabilities are discoverable
+
+`dataprof.capabilities()` returns an immutable snapshot of the current build:
+local formats, compiled pandas/polars/Arrow interoperability, installed optional
+Python packages, async and URL support, remote Parquet support, database
+availability, compiled connectors, and the package version. Discovery imports
+no heavyweight optional dependency and performs no file, database, or network
+operation.
+
 ## Validity and Precision join the quality model
 
 Two new selectively requestable dimensions are available in Rust and Python:

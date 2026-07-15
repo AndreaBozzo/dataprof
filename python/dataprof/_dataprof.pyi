@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 __version__: str
+_compiled_capabilities: dict[str, bool]
 
 # --- Configuration ---
 

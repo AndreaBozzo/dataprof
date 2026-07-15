@@ -26,6 +26,24 @@ uv run maturin develop --features "python,python-async,async-streaming,parquet-a
 uv run maturin develop --features "python,python-async,database,sqlite"
 ```
 
+Inspect the current installation without importing optional packages or trying
+a network/database operation:
+
+```python
+import dataprof as dp
+
+features = dp.capabilities()
+print(features)
+
+if features.database and "sqlite" in features.database_connectors:
+    # Database helpers are available in this build.
+    ...
+
+if features.pandas_interop and features.pandas_installed:
+    # Both compiled interoperability and the optional Python package are present.
+    ...
+```
+
 ## Quick Start
 
 ```python

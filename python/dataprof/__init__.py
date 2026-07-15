@@ -15,6 +15,8 @@ import os
 import pathlib
 import warnings
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass as _dataclass
+from importlib import util as _importlib_util
 from typing import Any, cast
 
 from ._dataprof import (
@@ -31,6 +33,7 @@ from ._dataprof import (
     StructureColumnSummary,
     StructureReport,
     __version__,
+    _compiled_capabilities,
     analyze_file as _analyze_file,
     analyze_structure as _analyze_structure,
     infer_schema as _infer_schema,
@@ -89,7 +92,71 @@ except ImportError:
     get_table_schema_async = _database_unavailable("get_table_schema_async")
     test_connection_async = _database_unavailable("test_connection_async")
 
+
+@_dataclass(frozen=True, slots=True)
+class Capabilities:
+    """Immutable snapshot of features available in this installation."""
+
+    version: str
+    local_csv: bool
+    local_json: bool
+    local_jsonl: bool
+    local_parquet: bool
+    pandas_interop: bool
+    pandas_installed: bool
+    polars_interop: bool
+    polars_installed: bool
+    arrow_interop: bool
+    pyarrow_installed: bool
+    async_streaming: bool
+    url_profiling: bool
+    remote_parquet: bool
+    database: bool
+    database_connectors: tuple[str, ...]
+
+
+def _dependency_installed(module_name: str) -> bool:
+    """Check availability without importing the optional dependency."""
+    try:
+        return _importlib_util.find_spec(module_name) is not None
+    except (AttributeError, ImportError, ValueError):
+        return False
+
+
+def capabilities() -> Capabilities:
+    """Return a side-effect-free snapshot of installed dataprof capabilities.
+
+    Optional Python packages are discovered without importing them. Compiled
+    async and database support reflects the feature flags of the native module.
+    """
+    connectors = tuple(
+        name for name in ("postgres", "mysql", "sqlite") if _compiled_capabilities[name]
+    )
+    async_streaming = _compiled_capabilities["async_streaming"]
+
+    return Capabilities(
+        version=__version__,
+        local_csv=True,
+        local_json=True,
+        local_jsonl=True,
+        local_parquet=True,
+        pandas_interop=True,
+        pandas_installed=_dependency_installed("pandas"),
+        polars_interop=True,
+        polars_installed=_dependency_installed("polars"),
+        arrow_interop=True,
+        pyarrow_installed=_dependency_installed("pyarrow"),
+        async_streaming=async_streaming,
+        url_profiling=async_streaming,
+        remote_parquet=_compiled_capabilities["parquet_async"],
+        database=_compiled_capabilities["database"],
+        database_connectors=connectors,
+    )
+
+
 __all__ = [
+    "Capabilities",
+    "capabilities",
     "analyze_database_async",
     "count_table_rows_async",
     "get_table_schema_async",

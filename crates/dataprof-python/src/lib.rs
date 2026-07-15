@@ -33,7 +33,7 @@ pub use stop_condition::PyStopCondition;
 pub use types::{PyColumnProfile, PyDataQualityMetrics, PyProfileReport};
 
 use pyo3::prelude::*;
-use pyo3::types::PyModule;
+use pyo3::types::{PyDict, PyModule};
 use pyo3::wrap_pyfunction;
 
 /// Python module definition
@@ -42,6 +42,23 @@ use pyo3::wrap_pyfunction;
 pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Version
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
+    // Private build metadata consumed by the public Python capabilities()
+    // snapshot. Keep this side-effect free: it reports compile-time flags only.
+    let compiled_capabilities = PyDict::new(m.py());
+    compiled_capabilities.set_item(
+        "async_streaming",
+        cfg!(all(feature = "python-async", feature = "async-streaming")),
+    )?;
+    compiled_capabilities.set_item("parquet_async", cfg!(feature = "parquet-async"))?;
+    compiled_capabilities.set_item(
+        "database",
+        cfg!(all(feature = "python-async", feature = "database")),
+    )?;
+    compiled_capabilities.set_item("postgres", cfg!(feature = "postgres"))?;
+    compiled_capabilities.set_item("mysql", cfg!(feature = "mysql"))?;
+    compiled_capabilities.set_item("sqlite", cfg!(feature = "sqlite"))?;
+    m.add("_compiled_capabilities", compiled_capabilities)?;
 
     // Configuration
     m.add_class::<PyProfilerConfig>()?;
