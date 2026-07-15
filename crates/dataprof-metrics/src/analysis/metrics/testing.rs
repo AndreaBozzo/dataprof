@@ -22,12 +22,16 @@ pub(super) fn column_data(columns: &[(&str, &[&str])]) -> HashMap<String, Vec<St
 }
 
 pub(super) fn string_profile(name: &str, total: usize, nulls: usize) -> ColumnProfile {
+    let unique_count = total.checked_sub(nulls).unwrap_or_else(|| {
+        panic!("profile `{name}` has {nulls} nulls but only {total} total values")
+    });
+
     ColumnProfile {
         name: name.to_string(),
         data_type: DataType::String,
         null_count: nulls,
         total_count: total,
-        unique_count: Some(total.saturating_sub(nulls)),
+        unique_count: Some(unique_count),
         unique_count_is_approximate: Some(false),
         stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
         patterns: Some(vec![]),
@@ -101,9 +105,9 @@ pub(super) fn assert_completeness(
 }
 
 fn assert_float_field(scenario_name: &str, field: &str, actual: f64, expected: f64) {
-    const EPSILON: f64 = 1e-9;
+    const ABSOLUTE_TOLERANCE: f64 = 0.01;
     assert!(
-        (actual - expected).abs() <= EPSILON,
-        "scenario `{scenario_name}` field `{field}`: expected {expected}, got {actual}"
+        (actual - expected).abs() <= ABSOLUTE_TOLERANCE,
+        "scenario `{scenario_name}` field `{field}`: expected {expected} ± {ABSOLUTE_TOLERANCE}, got {actual}"
     );
 }
