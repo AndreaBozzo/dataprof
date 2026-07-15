@@ -187,6 +187,13 @@ class TestPublicDatabaseSurface:
         assert report.columns == 5
         assert report["name"].null_count == 0
 
+    def test_capabilities_report_compiled_connector(self):
+        import dataprof as dp
+
+        snapshot = dp.capabilities()
+        assert snapshot.database
+        assert "sqlite" in snapshot.database_connectors
+
     def test_schema_and_count_shapes(self, sqlite_db):
         import dataprof as dp
 

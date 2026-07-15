@@ -8,10 +8,14 @@ Run after building the extension:
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import datetime
+import importlib.util
 import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -41,6 +45,68 @@ except ImportError:
 # ─────────────────────────────────────────────────
 #  1. Core profile() dispatch
 # ─────────────────────────────────────────────────
+
+
+class TestCapabilities:
+    def test_default_snapshot_shape(self):
+        snapshot = dataprof.capabilities()
+
+        assert isinstance(snapshot, dataprof.Capabilities)
+        assert snapshot.version == dataprof.__version__
+        assert snapshot.local_csv
+        assert snapshot.local_json
+        assert snapshot.local_jsonl
+        assert snapshot.local_parquet
+        assert snapshot.pandas_interop
+        assert snapshot.polars_interop
+        assert snapshot.arrow_interop
+        assert snapshot.pandas_installed is (importlib.util.find_spec("pandas") is not None)
+        assert snapshot.polars_installed is (importlib.util.find_spec("polars") is not None)
+        assert snapshot.pyarrow_installed is (importlib.util.find_spec("pyarrow") is not None)
+        assert "Capabilities(" in repr(snapshot)
+
+    def test_compiled_features_match_native_metadata(self):
+        from dataprof._dataprof import _compiled_capabilities
+
+        snapshot = dataprof.capabilities()
+        compiled = _compiled_capabilities
+
+        assert snapshot.async_streaming is compiled["async_streaming"]
+        assert snapshot.url_profiling is compiled["async_streaming"]
+        assert snapshot.remote_parquet is compiled["parquet_async"]
+        assert snapshot.database is compiled["database"]
+        assert snapshot.database_connectors == tuple(
+            name
+            for name in ("postgres", "mysql", "sqlite")
+            if compiled["database"] and compiled[name]
+        )
+
+    def test_connectors_are_hidden_without_database_api(self, monkeypatch):
+        from dataprof._dataprof import _compiled_capabilities
+
+        monkeypatch.setitem(_compiled_capabilities, "database", False)
+        monkeypatch.setitem(_compiled_capabilities, "sqlite", True)
+
+        snapshot = dataprof.capabilities()
+        assert not snapshot.database
+        assert snapshot.database_connectors == ()
+
+    def test_snapshot_is_immutable(self):
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            setattr(dataprof.capabilities(), "database", True)
+
+    def test_discovery_does_not_import_optional_dependencies(self):
+        code = """
+import sys
+import dataprof
+
+optional = {"pandas", "polars", "pyarrow"}
+before = optional.intersection(sys.modules)
+dataprof.capabilities()
+after = optional.intersection(sys.modules)
+assert after == before, after - before
+"""
+        subprocess.run([sys.executable, "-c", code], check=True)
 
 
 class TestProfileFile:
@@ -1205,6 +1271,8 @@ class TestProgress:
 class TestNamespace:
     def test_all_exports(self):
         expected = {
+            "Capabilities",
+            "capabilities",
             "profile",
             "profile_file",
             "Profiler",

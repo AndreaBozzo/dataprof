@@ -42,6 +42,14 @@ if not _HAS_URL:
     )
 
 
+def test_capabilities_report_async_url_support():
+    import dataprof
+
+    snapshot = dataprof.capabilities()
+    assert snapshot.async_streaming
+    assert snapshot.url_profiling
+
+
 def _run(async_fn, *args, **kwargs):
     async def _inner():
         return await async_fn(*args, **kwargs)
