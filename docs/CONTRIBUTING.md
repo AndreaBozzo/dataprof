@@ -30,6 +30,14 @@ Thank you for considering contributing to dataprof! We welcome contributions fro
 
 ### Build & Test
 
+Run the complete contributor setup smoke path from the repository root:
+
+```bash
+python .github/scripts/contributor_smoke.py
+```
+
+The runner stops at the first failure and executes this focused sequence:
+
 ```bash
 # Install Python dev dependencies
 uv sync
