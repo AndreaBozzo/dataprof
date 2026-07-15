@@ -129,10 +129,17 @@ def capabilities() -> Capabilities:
     Optional Python packages are discovered without importing them. Compiled
     async and database support reflects the feature flags of the native module.
     """
-    connectors = tuple(
-        name for name in ("postgres", "mysql", "sqlite") if _compiled_capabilities[name]
+    database = bool(_compiled_capabilities.get("database", False))
+    connectors = (
+        tuple(
+            name
+            for name in ("postgres", "mysql", "sqlite")
+            if _compiled_capabilities.get(name, False)
+        )
+        if database
+        else ()
     )
-    async_streaming = _compiled_capabilities["async_streaming"]
+    async_streaming = bool(_compiled_capabilities.get("async_streaming", False))
 
     return Capabilities(
         version=__version__,
@@ -148,8 +155,8 @@ def capabilities() -> Capabilities:
         pyarrow_installed=_dependency_installed("pyarrow"),
         async_streaming=async_streaming,
         url_profiling=async_streaming,
-        remote_parquet=_compiled_capabilities["parquet_async"],
-        database=_compiled_capabilities["database"],
+        remote_parquet=bool(_compiled_capabilities.get("parquet_async", False)),
+        database=database,
         database_connectors=connectors,
     )
 

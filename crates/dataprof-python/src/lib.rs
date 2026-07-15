@@ -55,9 +55,18 @@ pub fn dataprof(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "database",
         cfg!(all(feature = "python-async", feature = "database")),
     )?;
-    compiled_capabilities.set_item("postgres", cfg!(feature = "postgres"))?;
-    compiled_capabilities.set_item("mysql", cfg!(feature = "mysql"))?;
-    compiled_capabilities.set_item("sqlite", cfg!(feature = "sqlite"))?;
+    compiled_capabilities.set_item(
+        "postgres",
+        cfg!(all(feature = "python-async", feature = "postgres")),
+    )?;
+    compiled_capabilities.set_item(
+        "mysql",
+        cfg!(all(feature = "python-async", feature = "mysql")),
+    )?;
+    compiled_capabilities.set_item(
+        "sqlite",
+        cfg!(all(feature = "python-async", feature = "sqlite")),
+    )?;
     m.add("_compiled_capabilities", compiled_capabilities)?;
 
     // Configuration

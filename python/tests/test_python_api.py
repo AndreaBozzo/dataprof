@@ -76,8 +76,20 @@ class TestCapabilities:
         assert snapshot.remote_parquet is compiled["parquet_async"]
         assert snapshot.database is compiled["database"]
         assert snapshot.database_connectors == tuple(
-            name for name in ("postgres", "mysql", "sqlite") if compiled[name]
+            name
+            for name in ("postgres", "mysql", "sqlite")
+            if compiled["database"] and compiled[name]
         )
+
+    def test_connectors_are_hidden_without_database_api(self, monkeypatch):
+        from dataprof._dataprof import _compiled_capabilities
+
+        monkeypatch.setitem(_compiled_capabilities, "database", False)
+        monkeypatch.setitem(_compiled_capabilities, "sqlite", True)
+
+        snapshot = dataprof.capabilities()
+        assert not snapshot.database
+        assert snapshot.database_connectors == ()
 
     def test_snapshot_is_immutable(self):
         with pytest.raises(dataclasses.FrozenInstanceError):
