@@ -698,13 +698,25 @@ impl PyDataQualityMetrics {
     }
 
     fn __str__(&self) -> String {
-        format!(
-            "DataQualityMetrics(score={:.1}%, completeness={:.1}%, consistency={:.1}%, uniqueness={:.1}%)",
-            self.inner.overall_score(),
-            self.inner.complete_records_ratio(),
-            self.inner.data_type_consistency(),
-            self.inner.key_uniqueness(),
-        )
+        // Render only what was assessed. The flat accessors below substitute a
+        // perfect 100.0 for an absent dimension (kept for the deprecated
+        // getters), so reading them here would print "consistency=100.0%" for a
+        // dimension that never ran — a reassuring number with nothing behind it.
+        let assessed = self.inner.assessed_dimensions();
+        if assessed.is_empty() {
+            return "DataQualityMetrics(not assessed)".to_string();
+        }
+        let mut parts = vec![format!("score={:.1}%", self.inner.overall_score())];
+        for (label, value) in [
+            ("completeness", self.inner.completeness_score()),
+            ("consistency", self.inner.consistency_score()),
+            ("uniqueness", self.inner.uniqueness_score()),
+        ] {
+            if let Some(v) = value {
+                parts.push(format!("{label}={v:.1}%"));
+            }
+        }
+        format!("DataQualityMetrics({})", parts.join(", "))
     }
 
     fn __repr__(&self) -> String {

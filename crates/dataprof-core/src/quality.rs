@@ -105,6 +105,36 @@ impl MetricPack {
             Some(p) => p.contains(&Self::Quality),
         }
     }
+
+    /// Resolve the packs to compute, folding in an explicit quality-dimension
+    /// selection.
+    ///
+    /// Requesting an empty set of dimensions (`Some(&[])`) says "assess no
+    /// dimension", which is the same statement as not selecting the quality
+    /// pack: nothing is analyzed, so the report carries no quality. Without
+    /// this, an empty selection produces a quality object whose dimensions are
+    /// all absent — an artifact that reads like a measured result.
+    ///
+    /// This is deliberately about what was *requested*. A caller that asks for
+    /// dimensions and gets none back (an empty dataset, no date column) was
+    /// still analyzed, and keeps a quality object reporting exactly that.
+    pub fn resolve_with_dimensions(
+        packs: Option<&[Self]>,
+        dimensions: Option<&[QualityDimension]>,
+    ) -> Option<Vec<Self>> {
+        if !dimensions.is_some_and(<[QualityDimension]>::is_empty) {
+            return packs.map(<[Self]>::to_vec);
+        }
+        // `None` packs means "all packs"; make that explicit before removing
+        // Quality, so the result still selects everything else.
+        let selected = packs.map_or_else(Self::all, <[Self]>::to_vec);
+        Some(
+            selected
+                .into_iter()
+                .filter(|pack| *pack != Self::Quality)
+                .collect(),
+        )
+    }
 }
 
 impl std::str::FromStr for MetricPack {
@@ -143,6 +173,50 @@ mod tests {
         assert!(MetricPack::include_statistics(None));
         assert!(MetricPack::include_patterns(None));
         assert!(MetricPack::include_quality(None));
+    }
+
+    #[test]
+    fn test_resolve_with_dimensions_empty_selection_drops_quality() {
+        // Requesting no dimension is the same statement as not asking for
+        // quality at all, so the pack must fall out and the report carry no
+        // quality object.
+        let resolved = MetricPack::resolve_with_dimensions(None, Some(&[])).unwrap();
+        assert!(!resolved.contains(&MetricPack::Quality));
+        assert!(!MetricPack::include_quality(Some(&resolved)));
+        // The other packs survive: only quality was deselected.
+        assert!(resolved.contains(&MetricPack::Schema));
+        assert!(resolved.contains(&MetricPack::Statistics));
+        assert!(resolved.contains(&MetricPack::Patterns));
+    }
+
+    #[test]
+    fn test_resolve_with_dimensions_empty_selection_keeps_explicit_packs() {
+        let packs = vec![MetricPack::Schema, MetricPack::Quality];
+        let resolved = MetricPack::resolve_with_dimensions(Some(&packs), Some(&[])).unwrap();
+        assert_eq!(resolved, vec![MetricPack::Schema]);
+    }
+
+    #[test]
+    fn test_resolve_with_dimensions_non_empty_selection_is_untouched() {
+        // A real selection says which dimensions to assess, not whether to.
+        let dims = vec![QualityDimension::Completeness];
+        assert_eq!(MetricPack::resolve_with_dimensions(None, Some(&dims)), None);
+        assert!(MetricPack::include_quality(None));
+
+        let packs = vec![MetricPack::Quality];
+        let resolved = MetricPack::resolve_with_dimensions(Some(&packs), Some(&dims)).unwrap();
+        assert!(MetricPack::include_quality(Some(&resolved)));
+    }
+
+    #[test]
+    fn test_resolve_with_dimensions_absent_selection_is_untouched() {
+        // `None` means "all dimensions", which is not the same as "none".
+        assert_eq!(MetricPack::resolve_with_dimensions(None, None), None);
+        let packs = vec![MetricPack::Quality];
+        assert_eq!(
+            MetricPack::resolve_with_dimensions(Some(&packs), None),
+            Some(packs)
+        );
     }
 
     #[test]
