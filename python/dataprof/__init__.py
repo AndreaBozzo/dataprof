@@ -2124,9 +2124,9 @@ class ProfileReport:
             )
         # Check the schema version before any structural decoding: an
         # incompatible document must fail explicitly, never load partially.
-        version = data.get("schema_version")
-        if version is not None:
-            if isinstance(version, bool) or not isinstance(version, int):
+        if "schema_version" in data:
+            version = data["schema_version"]
+            if version is None or isinstance(version, bool) or not isinstance(version, int):
                 raise ValueError(
                     f"from_dict(): 'schema_version' must be an integer, got {version!r}."
                 )
@@ -2136,7 +2136,6 @@ class ProfileReport:
                     f"reads up to version {REPORT_SCHEMA_VERSION}. Upgrade dataprof "
                     "to load it."
                 )
-        if not {"source", "columns", "execution"} <= data.keys():
             raise ValueError(
                 "from_dict() expects a mapping produced by ProfileReport.to_dict() "
                 "(with 'source', 'columns', and 'execution' keys)."
