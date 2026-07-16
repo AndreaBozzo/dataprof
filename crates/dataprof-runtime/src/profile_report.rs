@@ -23,13 +23,12 @@ pub const REPORT_SCHEMA_VERSION: u32 = 1;
 /// Quality assessment informed by ISO 8000/25012 concepts. This is the primary output of all
 /// profiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,
 /// `Profiler::profile_stream`, etc.).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ProfileReport {
     /// Version of the serialized report schema (see [`REPORT_SCHEMA_VERSION`]).
     ///
     /// `0` means the document predates schema versioning (a 0.9-era report).
     /// Deserialization rejects versions newer than [`REPORT_SCHEMA_VERSION`].
-    #[serde(default, deserialize_with = "deserialize_schema_version")]
     pub schema_version: u32,
     /// Unique identifier for this report (UUID v4)
     pub id: String,
@@ -40,15 +39,9 @@ pub struct ProfileReport {
     /// Column-level profiling results
     pub column_profiles: Vec<ColumnProfile>,
     /// Execution metadata (timing, rows processed, truncation info, etc.)
-    #[serde(alias = "scan_info")]
     pub execution: ExecutionMetadata,
     /// Data quality assessment (optional — partial analysis may skip quality)
-    #[serde(
-        alias = "data_quality_metrics",
-        skip_serializing_if = "Option::is_none",
-        default,
-        deserialize_with = "deserialize_quality_compat"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<QualityAssessment>,
 }
 
@@ -100,23 +93,79 @@ impl ProfileReport {
     }
 }
 
-/// Rejects documents written by a newer schema than this build understands.
-/// Failing here aborts the whole deserialization, so an incompatible report
-/// can never partially decode into a plausible but semantically wrong one.
-fn deserialize_schema_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::Deserialize;
+/// Mirror of [`ProfileReport`] carrying the field-level deserialization
+/// rules (legacy aliases, quality compat). Kept private: the public entry
+/// point is the manual [`serde::Deserialize`] impl below, which gates on
+/// `schema_version` before any of these fields decode.
+#[derive(serde::Deserialize)]
+struct ProfileReportFields {
+    #[serde(default)]
+    schema_version: u32,
+    id: String,
+    timestamp: String,
+    data_source: DataSource,
+    column_profiles: Vec<ColumnProfile>,
+    #[serde(alias = "scan_info")]
+    execution: ExecutionMetadata,
+    #[serde(
+        alias = "data_quality_metrics",
+        default,
+        deserialize_with = "deserialize_quality_compat"
+    )]
+    quality: Option<QualityAssessment>,
+}
 
-    let version = u32::deserialize(deserializer)?;
-    if version > REPORT_SCHEMA_VERSION {
-        return Err(serde::de::Error::custom(format!(
-            "report schema version {version} is newer than the latest supported \
-             version {REPORT_SCHEMA_VERSION}; upgrade dataprof to read this report"
-        )));
+impl From<ProfileReportFields> for ProfileReport {
+    fn from(fields: ProfileReportFields) -> Self {
+        Self {
+            schema_version: fields.schema_version,
+            id: fields.id,
+            timestamp: fields.timestamp,
+            data_source: fields.data_source,
+            column_profiles: fields.column_profiles,
+            execution: fields.execution,
+            quality: fields.quality,
+        }
     }
-    Ok(version)
+}
+
+/// Manual deserialization so the `schema_version` gate runs before any other
+/// field decodes. A derived deserializer visits fields in document order, so
+/// an unsupported future document that also changed structure could fail with
+/// a confusing structural error instead of the actionable version error; by
+/// buffering the document first, the version check always wins.
+impl<'de> serde::Deserialize<'de> for ProfileReport {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::Deserialize;
+        use serde::de::Error;
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.get("schema_version") {
+            // Absent field: legacy pre-0.10 document, defaults to version 0.
+            None => {}
+            Some(serde_json::Value::Number(n)) if n.as_u64().is_some() => {
+                let version = n.as_u64().unwrap_or_default();
+                if version > u64::from(REPORT_SCHEMA_VERSION) {
+                    return Err(D::Error::custom(format!(
+                        "report schema version {version} is newer than the latest supported \
+                         version {REPORT_SCHEMA_VERSION}; upgrade dataprof to read this report"
+                    )));
+                }
+            }
+            // An explicit null or non-integer is malformed, not legacy.
+            Some(other) => {
+                return Err(D::Error::custom(format!(
+                    "report schema_version must be a non-negative integer, got {other}"
+                )));
+            }
+        }
+        ProfileReportFields::deserialize(value)
+            .map(ProfileReport::from)
+            .map_err(D::Error::custom)
+    }
 }
 
 /// Custom deserializer that handles both legacy `DataQualityMetrics` (flat)
@@ -322,5 +371,48 @@ mod tests {
             msg.contains("schema version") && msg.contains("upgrade dataprof"),
             "expected an actionable schema-version error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn test_version_error_wins_over_structural_errors() {
+        // A future document that also broke structure, with schema_version
+        // appearing after the broken field, must still fail with the version
+        // error — not a confusing type error from the field encountered first.
+        let json_text = format!(
+            r#"{{"column_profiles": "not-an-array", "schema_version": {}}}"#,
+            REPORT_SCHEMA_VERSION + 1
+        );
+        let err = serde_json::from_str::<ProfileReport>(&json_text).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("upgrade dataprof"),
+            "expected the schema-version error to win, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_null_schema_version_is_malformed_not_legacy() {
+        let mut json = current_document();
+        json["schema_version"] = json!(null);
+
+        let err = serde_json::from_value::<ProfileReport>(json).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("schema_version must be a non-negative integer"),
+            "expected explicit rejection of null schema_version, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_non_integer_schema_version_is_rejected() {
+        for bad in [json!("1"), json!(1.5), json!(-1), json!(true)] {
+            let mut json = current_document();
+            json["schema_version"] = bad.clone();
+            let err = serde_json::from_value::<ProfileReport>(json).unwrap_err();
+            assert!(
+                err.to_string().contains("non-negative integer"),
+                "expected rejection of {bad}, got: {err}"
+            );
+        }
     }
 }

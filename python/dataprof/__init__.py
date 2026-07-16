@@ -2124,6 +2124,8 @@ class ProfileReport:
             )
         # Check the schema version before any structural decoding: an
         # incompatible document must fail explicitly, never load partially.
+        # An explicit null is not the same as a missing field: only documents
+        # written before versioning existed may omit it.
         if "schema_version" in data:
             version = data["schema_version"]
             if version is None or isinstance(version, bool) or not isinstance(version, int):
@@ -2136,6 +2138,7 @@ class ProfileReport:
                     f"reads up to version {REPORT_SCHEMA_VERSION}. Upgrade dataprof "
                     "to load it."
                 )
+        if not {"source", "columns", "execution"} <= data.keys():
             raise ValueError(
                 "from_dict() expects a mapping produced by ProfileReport.to_dict() "
                 "(with 'source', 'columns', and 'execution' keys)."

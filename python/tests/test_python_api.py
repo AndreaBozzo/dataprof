@@ -871,7 +871,7 @@ class TestReportErgonomics:
         with pytest.raises(ValueError, match="Upgrade dataprof"):
             dataprof.ProfileReport.from_dict(d)
 
-    @pytest.mark.parametrize("bad", ["1", 1.0, True, {}])
+    @pytest.mark.parametrize("bad", ["1", 1.0, True, {}, None])
     def test_from_dict_rejects_non_integer_schema_version(self, report, bad):
         d = report.to_dict()
         d["schema_version"] = bad
