@@ -1,6 +1,22 @@
 use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata};
 use dataprof_metrics::{QualityAssessment, QualityMetrics};
 
+/// Version of the serialized `ProfileReport` schema written by this build.
+///
+/// This is intentionally independent of the package version: the document
+/// format only changes when the schema itself changes, not on every release.
+///
+/// Compatibility policy for readers:
+/// - Documents without a `schema_version` field are legacy pre-0.10 reports
+///   and deserialize with `schema_version == 0`.
+/// - Unknown *additive* fields written by a newer dataprof are ignored, so a
+///   reader accepts any document whose `schema_version` is at most this
+///   constant.
+/// - A document with a `schema_version` greater than this constant fails to
+///   deserialize with an explicit error instead of being partially decoded
+///   into a plausible-but-wrong report.
+pub const REPORT_SCHEMA_VERSION: u32 = 1;
+
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
@@ -9,6 +25,12 @@ use dataprof_metrics::{QualityAssessment, QualityMetrics};
 /// `Profiler::profile_stream`, etc.).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProfileReport {
+    /// Version of the serialized report schema (see [`REPORT_SCHEMA_VERSION`]).
+    ///
+    /// `0` means the document predates schema versioning (a 0.9-era report).
+    /// Deserialization rejects versions newer than [`REPORT_SCHEMA_VERSION`].
+    #[serde(default, deserialize_with = "deserialize_schema_version")]
+    pub schema_version: u32,
     /// Unique identifier for this report (UUID v4)
     pub id: String,
     /// Timestamp when the report was generated (ISO 8601 / RFC 3339)
@@ -39,6 +61,7 @@ impl ProfileReport {
         quality: Option<QualityAssessment>,
     ) -> Self {
         Self {
+            schema_version: REPORT_SCHEMA_VERSION,
             id: uuid::Uuid::new_v4().to_string(),
             timestamp: chrono::Utc::now().to_rfc3339(),
             data_source,
@@ -75,6 +98,25 @@ impl ProfileReport {
     pub fn source_identifier(&self) -> String {
         self.data_source.identifier()
     }
+}
+
+/// Rejects documents written by a newer schema than this build understands.
+/// Failing here aborts the whole deserialization, so an incompatible report
+/// can never partially decode into a plausible but semantically wrong one.
+fn deserialize_schema_version<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    let version = u32::deserialize(deserializer)?;
+    if version > REPORT_SCHEMA_VERSION {
+        return Err(serde::de::Error::custom(format!(
+            "report schema version {version} is newer than the latest supported \
+             version {REPORT_SCHEMA_VERSION}; upgrade dataprof to read this report"
+        )));
+    }
+    Ok(version)
 }
 
 /// Custom deserializer that handles both legacy `DataQualityMetrics` (flat)
@@ -134,6 +176,29 @@ mod tests {
         assert_eq!(deserialized.source_identifier(), "test.csv");
         assert_eq!(deserialized.execution.rows_processed, 100);
         assert!(deserialized.quality.is_some());
+        assert_eq!(deserialized.schema_version, REPORT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_serialized_report_carries_schema_version() {
+        let report = ProfileReport::new(
+            DataSource::File {
+                path: "test.csv".to_string(),
+                format: FileFormat::Csv,
+                size_bytes: 1024,
+                modified_at: None,
+                parquet_metadata: None,
+            },
+            vec![],
+            ExecutionMetadata::new(100, 5, 50),
+            None,
+        );
+
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            value.get("schema_version").and_then(|v| v.as_u64()),
+            Some(u64::from(REPORT_SCHEMA_VERSION))
+        );
     }
 
     #[test]
@@ -190,6 +255,9 @@ mod tests {
         let report: ProfileReport = serde_json::from_value(json).unwrap();
 
         assert_eq!(report.id, "legacy-report");
+        // A document without a schema_version field is a legacy pre-0.10
+        // report; it must load and be identifiable as such.
+        assert_eq!(report.schema_version, 0);
         assert_eq!(report.execution.rows_processed, 10);
         // Legacy metrics predate the assessability denominators: the facts
         // stay readable, but no score is fabricated from them.
@@ -205,5 +273,54 @@ mod tests {
             .expect("legacy completeness facts should deserialize");
         assert!((completeness.complete_records_ratio - 100.0).abs() < 0.01);
         assert!(quality.metrics.assessed_dimensions().is_empty());
+    }
+
+    fn current_document() -> serde_json::Value {
+        json!({
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "id": "current-report",
+            "timestamp": "2026-07-16T10:00:00Z",
+            "data_source": {
+                "type": "file",
+                "path": "test.csv",
+                "format": "csv",
+                "size_bytes": 42
+            },
+            "column_profiles": [],
+            "execution": {
+                "rows_processed": 10,
+                "columns_detected": 2,
+                "scan_time_ms": 5,
+                "error_count": 0,
+                "source_exhausted": true,
+                "sampling_applied": false
+            }
+        })
+    }
+
+    #[test]
+    fn test_additive_fields_from_newer_writer_are_ignored() {
+        // A newer dataprof may add fields within the same schema version;
+        // a compatible reader must not break on them.
+        let mut json = current_document();
+        json["a_future_additive_field"] = json!({"anything": true});
+        json["column_profiles"] = json!([]);
+
+        let report: ProfileReport = serde_json::from_value(json).unwrap();
+        assert_eq!(report.schema_version, REPORT_SCHEMA_VERSION);
+        assert_eq!(report.id, "current-report");
+    }
+
+    #[test]
+    fn test_unsupported_future_schema_version_fails_explicitly() {
+        let mut json = current_document();
+        json["schema_version"] = json!(REPORT_SCHEMA_VERSION + 1);
+
+        let err = serde_json::from_value::<ProfileReport>(json).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("schema version") && msg.contains("upgrade dataprof"),
+            "expected an actionable schema-version error, got: {msg}"
+        );
     }
 }

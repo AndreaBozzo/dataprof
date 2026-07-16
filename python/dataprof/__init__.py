@@ -161,9 +161,18 @@ def capabilities() -> Capabilities:
     )
 
 
+# Version of the serialized report document written by to_dict()/to_json()/
+# save(). Independent of the package version: it only changes when the report
+# schema itself changes. Readers accept any document whose schema_version is
+# at most this value; documents without the field are legacy pre-0.10 reports
+# and load through a compatibility path. See ProfileReport.from_dict().
+REPORT_SCHEMA_VERSION = 1
+
+
 __all__ = [
     "Capabilities",
     "capabilities",
+    "REPORT_SCHEMA_VERSION",
     "analyze_database_async",
     "count_table_rows_async",
     "get_table_schema_async",
@@ -1636,7 +1645,10 @@ class ProfileReport:
         """Convert the report to a nested Python dict.
 
         All floating-point values are rounded (2dp for percentages, 4dp for
-        statistics) to match the Rust report serialization.
+        statistics) to match the Rust report serialization. The document
+        carries ``schema_version`` (``dataprof.REPORT_SCHEMA_VERSION``) so
+        saved reports remain readable across releases; see
+        :meth:`from_dict` for the compatibility policy.
         """
         cols = [column_to_dict(col) for col in self._report.column_profiles]
 
@@ -1675,6 +1687,7 @@ class ProfileReport:
                 quality_dict["precision"] = precision
 
         return {
+            "schema_version": REPORT_SCHEMA_VERSION,
             "source": self._report.source,
             "source_type": self._report.source_type,
             "execution": {
@@ -2092,10 +2105,38 @@ class ProfileReport:
         ``quality_summary``, mapping access, …) work as usual. Useful for
         reloading a report saved yesterday without re-profiling the data.
 
+        Compatibility: the document's ``schema_version`` (see
+        ``dataprof.REPORT_SCHEMA_VERSION``) is checked first. Documents
+        without the field are legacy pre-0.10 reports and load through a
+        compatibility path; unknown additive fields from newer writers are
+        ignored; a document with a newer schema version is rejected outright
+        rather than partially decoded.
+
         Raises:
-            ValueError: if ``data`` is not a mapping produced by ``to_dict()``.
+            ValueError: if ``data`` is not a mapping produced by ``to_dict()``,
+                or was written with a newer report schema than this dataprof
+                can read.
         """
-        if not isinstance(data, dict) or not {"source", "columns", "execution"} <= data.keys():
+        if not isinstance(data, dict):
+            raise ValueError(
+                "from_dict() expects a mapping produced by ProfileReport.to_dict() "
+                "(with 'source', 'columns', and 'execution' keys)."
+            )
+        # Check the schema version before any structural decoding: an
+        # incompatible document must fail explicitly, never load partially.
+        version = data.get("schema_version")
+        if version is not None:
+            if isinstance(version, bool) or not isinstance(version, int):
+                raise ValueError(
+                    f"from_dict(): 'schema_version' must be an integer, got {version!r}."
+                )
+            if version > REPORT_SCHEMA_VERSION:
+                raise ValueError(
+                    f"This report uses schema version {version}, but this dataprof "
+                    f"reads up to version {REPORT_SCHEMA_VERSION}. Upgrade dataprof "
+                    "to load it."
+                )
+        if not {"source", "columns", "execution"} <= data.keys():
             raise ValueError(
                 "from_dict() expects a mapping produced by ProfileReport.to_dict() "
                 "(with 'source', 'columns', and 'execution' keys)."

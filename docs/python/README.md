@@ -457,6 +457,29 @@ reloaded = dp.ProfileReport.from_json(report.to_json())
 reloaded = dp.ProfileReport.from_dict(report.to_dict())
 ```
 
+#### Report schema versioning
+
+Saved reports are durable artifacts — CI baselines, drift references, agent
+inputs — so the document carries its own schema version, independent of the
+package version:
+
+```python
+report.to_dict()["schema_version"]   # == dp.REPORT_SCHEMA_VERSION
+```
+
+The compatibility policy when loading:
+
+| Document | Behavior |
+|---|---|
+| No `schema_version` field | Legacy pre-0.10 report; loads through a compatibility path |
+| `schema_version` ≤ `dp.REPORT_SCHEMA_VERSION` | Loads normally; unknown additive fields from newer writers are ignored |
+| `schema_version` > `dp.REPORT_SCHEMA_VERSION` | Raises `ValueError` immediately — an incompatible report is never partially decoded |
+
+The version only increments when the document format itself changes
+incompatibly, not on every dataprof release. The same field with the same
+semantics appears in reports serialized from Rust (`serde`), where readers
+enforce the identical policy.
+
 ### `compare()`
 
 Detect quality drift or schema changes between two profiles (e.g. the same
