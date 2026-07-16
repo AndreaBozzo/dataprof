@@ -1754,6 +1754,19 @@ class TestDescribe:
         desc = r.describe()
         assert desc is not None
 
+    def test_describe_50pct_falls_back_to_median(self):
+        # Small samples compute a median without full quartiles; describe()
+        # must not show 50% as missing while the median exists.
+        r = dataprof.profile({"age": [29, 31, 42]})
+        col = r["age"]
+        assert col.median is not None
+        desc = r.describe()
+        try:
+            fifty = desc["age"]["50%"]
+        except TypeError:
+            fifty = desc.loc["50%", "age"]
+        assert fifty == pytest.approx(col.median, abs=0.01)
+
 
 # ─────────────────────────────────────────────────
 #  16. quality_summary
