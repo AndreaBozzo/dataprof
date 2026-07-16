@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import os
 import pathlib
+import threading
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FutureTimeout
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
@@ -202,6 +202,11 @@ class AgentGuard:
     def resolve_path(self, source: str | os.PathLike[str]) -> pathlib.Path:
         """Resolve a model-supplied source to a real file inside the sandbox.
 
+        A relative source is interpreted against the sandbox roots, never
+        against the process working directory: the caller's CWD is not part of
+        this contract, and a model supplying ``"customers.csv"`` means "the one
+        in the sandbox". Roots are tried in order and the first match wins.
+
         Traversal, absolute paths outside the root, and escaping symlinks are
         all rejected here — after full resolution, so that `a/../../etc/passwd`
         and a symlink to `/etc/passwd` fail the same check rather than relying
@@ -217,23 +222,39 @@ class AgentGuard:
         self._reject_network(raw)
 
         candidate = pathlib.Path(raw).expanduser()
+        attempts = (
+            [candidate]
+            if candidate.is_absolute()
+            else [root / candidate for root in self._policy.roots]
+        )
 
         # Resolve symlinks and `..` fully before comparing against the roots.
         # Comparing an unresolved path would let `root/../../etc` pass.
-        try:
-            resolved = candidate.resolve(strict=True)
-        except (OSError, RuntimeError):
-            # RuntimeError covers a symlink loop. Report both as "not found":
-            # distinguishing them tells the caller about the host filesystem.
+        attempted: pathlib.Path | None = None
+        resolved: pathlib.Path | None = None
+        for attempt in attempts:
+            try:
+                candidate_resolved = attempt.resolve(strict=True)
+            except (OSError, RuntimeError):
+                # RuntimeError covers a symlink loop. Both mean "this attempt
+                # is not a usable file"; try the next root.
+                continue
+            attempted, resolved = attempt, candidate_resolved
+            if self._containing_root(candidate_resolved) is not None:
+                break
+
+        if resolved is None or attempted is None:
+            # Reported as "not found" whether the path is missing or unreadable:
+            # telling the two apart describes the host filesystem to the model.
             raise PathNotAllowedError(
                 f"no such file inside the sandbox: {self._describe(candidate)}"
-            ) from None
+            )
 
         root = self._containing_root(resolved)
         if root is None:
             raise PathNotAllowedError(f"path is outside the sandbox: {self._describe(candidate)}")
 
-        if not self._policy.follow_symlinks and self._traverses_symlink(candidate, resolved):
+        if not self._policy.follow_symlinks and self._traverses_symlink(attempted, resolved):
             raise PathNotAllowedError(
                 f"path is a symlink and symlinks are disabled: {self._describe(candidate)}"
             )
@@ -258,18 +279,23 @@ class AgentGuard:
             return root
         return None
 
-    def _traverses_symlink(self, candidate: pathlib.Path, resolved: pathlib.Path) -> bool:
+    def _traverses_symlink(self, attempted: pathlib.Path, resolved: pathlib.Path) -> bool:
         """True if reaching ``resolved`` went through a link.
+
+        ``attempted`` is always absolute — either an absolute source or a root
+        joined to a relative one — so a purely textual `..` fold is enough to
+        compare against the fully resolved path. Any remaining difference means
+        a link was crossed.
 
         Checked even when the target lands inside the sandbox: a link that
         currently resolves in-root can be repointed out of it later, and the
         strict reading of the checklist is that symlinks are off by default.
         """
-        if candidate.is_symlink():
+        if attempted.is_symlink():
             return True
         try:
-            absolute = candidate if candidate.is_absolute() else pathlib.Path.cwd() / candidate
-            return os.path.normpath(absolute) != str(resolved)
+            folded = os.path.normcase(os.path.normpath(attempted))
+            return folded != os.path.normcase(str(resolved))
         except OSError:
             return True
 
@@ -326,8 +352,7 @@ class AgentGuard:
         no cancellation token, and progress callbacks cannot carry one either
         (``crates/dataprof-python/src/progress.rs`` swallows callback errors by
         design, so raising from one would not stop the work). On timeout the
-        worker thread runs to completion in the background and its result is
-        discarded.
+        worker runs to completion in the background and its result is discarded.
 
         The real defense against runaway work is therefore the pre-flight size
         check in :meth:`resolve_path` plus :meth:`stop_condition`, both of which
@@ -336,22 +361,30 @@ class AgentGuard:
         Raises:
             AgentTimeoutError: ``fn`` did not finish within the deadline.
         """
-        # A dedicated executor per call keeps a timed-out straggler from
-        # occupying a shared pool slot for the life of the guard.
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dataprof-agent")
-        try:
-            future = executor.submit(fn, *args, **kwargs)
+        # A plain daemon thread rather than a ThreadPoolExecutor: since 3.9 the
+        # executor registers an atexit hook that *joins* its non-daemon workers,
+        # so one stuck call would hold the interpreter open at shutdown. A
+        # daemon thread lets an abandoned straggler die with the process.
+        outcome: list[_T] = []
+        failure: list[BaseException] = []
+
+        def target() -> None:
             try:
-                return future.result(timeout=self._policy.timeout_seconds)
-            except _FutureTimeout:
-                future.cancel()
-                raise AgentTimeoutError(
-                    f"call exceeded the {self._policy.timeout_seconds:g}s limit and was abandoned"
-                ) from None
-        finally:
-            # Do not block on a straggler; the thread is a daemon of the pool
-            # and the interpreter joins it at exit.
-            executor.shutdown(wait=False)
+                outcome.append(fn(*args, **kwargs))
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
+                failure.append(exc)
+
+        worker = threading.Thread(target=target, name="dataprof-agent", daemon=True)
+        worker.start()
+        worker.join(self._policy.timeout_seconds)
+
+        if worker.is_alive():
+            raise AgentTimeoutError(
+                f"call exceeded the {self._policy.timeout_seconds:g}s limit and was abandoned"
+            )
+        if failure:
+            raise failure[0]
+        return outcome[0]
 
     # -- guarded entry points ---------------------------------------------
 

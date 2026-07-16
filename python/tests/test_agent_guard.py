@@ -13,8 +13,8 @@ Run after building the extension:
 from __future__ import annotations
 
 import ast
-import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -69,11 +69,46 @@ def test_policy_rejects_a_root_that_is_not_a_directory(sandbox: Path) -> None:
         SandboxPolicy(roots=sandbox / "data.csv")
 
 
-def test_resolves_a_file_inside_the_root(guard: AgentGuard, sandbox: Path) -> None:
-    assert (
-        guard.resolve_path("data.csv" if os.getcwd() == str(sandbox) else sandbox / "data.csv")
-        == (sandbox / "data.csv").resolve()
-    )
+def test_resolves_an_absolute_file_inside_the_root(guard: AgentGuard, sandbox: Path) -> None:
+    assert guard.resolve_path(sandbox / "data.csv") == (sandbox / "data.csv").resolve()
+
+
+def test_relative_source_resolves_against_the_root_not_the_cwd(
+    guard: AgentGuard, sandbox: Path, tmp_path: Path
+) -> None:
+    """A model sending "data.csv" means the one in the sandbox. The process CWD
+    is not part of the contract, so it is deliberately set elsewhere here."""
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.chdir(elsewhere)
+        assert guard.resolve_path("data.csv") == (sandbox / "data.csv").resolve()
+
+
+def test_relative_source_does_not_pick_up_a_cwd_file(
+    guard: AgentGuard, sandbox: Path, tmp_path: Path
+) -> None:
+    """A same-named file in the CWD must not shadow the sandboxed one."""
+    elsewhere = tmp_path / "cwd"
+    elsewhere.mkdir()
+    (elsewhere / "data.csv").write_text("token\nsuper-secret-value\n")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.chdir(elsewhere)
+        assert guard.resolve_path("data.csv") == (sandbox / "data.csv").resolve()
+
+
+def test_relative_traversal_out_of_the_root_is_rejected(guard: AgentGuard, outside: Path) -> None:
+    with pytest.raises(PathNotAllowedError):
+        guard.resolve_path(Path("..") / "outside" / "secret.csv")
+
+
+def test_relative_source_searches_roots_in_order(tmp_path: Path) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    for d in (first, second):
+        d.mkdir()
+    (second / "only-in-second.csv").write_text(CSV_BODY)
+    guard = AgentGuard(SandboxPolicy(roots=[first, second]))
+    assert guard.resolve_path("only-in-second.csv") == (second / "only-in-second.csv").resolve()
 
 
 def test_profiles_a_sandboxed_file(guard: AgentGuard, sandbox: Path) -> None:
@@ -173,7 +208,10 @@ def test_guard_module_contains_no_execution_or_socket_primitives() -> None:
     tree = ast.parse(Path(source_file).read_text())
 
     banned_modules = {"subprocess", "socket", "urllib", "requests", "httpx", "pty", "shutil"}
-    banned_calls = {"eval", "exec", "compile", "__import__", "system", "popen", "spawn"}
+    banned_calls = {"eval", "exec", "compile", "__import__", "system"}
+    # Prefixes, because the os module spells execution as a family: spawnl,
+    # spawnv, execve, popen2... an exact-name check would wave those through.
+    banned_prefixes = ("spawn", "exec", "popen", "fork")
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -185,7 +223,10 @@ def test_guard_module_contains_no_execution_or_socket_primitives() -> None:
             )
         elif isinstance(node, ast.Call):
             name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name is None:
+                continue
             assert name not in banned_calls, f"guard calls {name}()"
+            assert not name.startswith(banned_prefixes), f"guard calls {name}()"
 
 
 def test_rejects_non_path_sources(guard: AgentGuard) -> None:
@@ -260,6 +301,18 @@ def test_timeout_raises_and_is_reported_as_a_security_error(sandbox: Path) -> No
 
 def test_timeout_does_not_fire_on_a_quick_call(guard: AgentGuard) -> None:
     assert guard.run(lambda: 7) == 7
+
+
+def test_abandoned_worker_is_a_daemon_and_cannot_hold_the_interpreter_open(sandbox: Path) -> None:
+    """A timed-out call is not cancellable, so the straggler must at least not
+    keep the process alive at shutdown."""
+    guard = AgentGuard(SandboxPolicy(roots=sandbox, timeout_seconds=0.05))
+    before = {t.ident for t in threading.enumerate()}
+    with pytest.raises(AgentTimeoutError):
+        guard.run(time.sleep, 2)
+    stragglers = [t for t in threading.enumerate() if t.ident not in before]
+    assert stragglers, "expected the abandoned worker to still be running"
+    assert all(t.daemon for t in stragglers)
 
 
 def test_run_propagates_the_callee_error_unchanged(guard: AgentGuard) -> None:
