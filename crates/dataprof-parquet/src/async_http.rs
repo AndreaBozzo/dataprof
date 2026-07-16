@@ -307,6 +307,7 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
     )
     .columns(column_profiles)
+    .with_row_duplicates(analyzer.row_duplicate_summary())
     .with_quality_data(sample_columns)
     .with_semantic_hints(semantic_hints.clone());
     if let Some(dims) = quality_dimensions {

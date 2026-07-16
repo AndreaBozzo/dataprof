@@ -308,3 +308,64 @@ def test_sqlite_parity(tmp_path):
     assert not mismatches, "sqlite disagrees with the reference profile on:\n" + "\n".join(
         mismatches
     )
+
+
+# ── Duplicate-row detection with nulls (issue #417) ──
+#
+# The columnar engine used to skip duplicate-row detection whenever any column
+# contained nulls: per-column sample reservoirs lose row alignment, the
+# sample-based scan correctly refused to run, and — with no full-stream
+# tracker — the uniqueness dimension silently dropped its duplicate component.
+# Same file, different overall quality score depending on the engine.
+
+
+def _dup_rows_csv(tmp_path):
+    path = tmp_path / "dups_with_nulls.csv"
+    path.write_text(
+        "id,name,value,city\n"
+        "1,Alice,10.5,Rome\n"
+        "2,,20.0,Milan\n"
+        "2,,20.0,Milan\n"  # duplicate row containing a null
+        "3,Bob,,Naples\n"
+        "4,Alice,10.5,\n"
+        "1,Alice,10.5,Rome\n",  # duplicate of the first row
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_duplicate_rows_with_nulls_agree_across_engines(tmp_path):
+    path = _dup_rows_csv(tmp_path)
+    reports = {
+        engine: dataprof.profile(str(path), engine=engine) for engine in ("incremental", "columnar")
+    }
+
+    facts = {}
+    for engine, report in reports.items():
+        uniqueness = report.to_dict()["quality"]["uniqueness"]
+        facts[engine] = (
+            uniqueness["rows_checked"],
+            uniqueness["duplicate_rows"],
+            uniqueness["key_uniqueness"],
+        )
+        assert uniqueness["rows_checked"] == 6, f"{engine} must scan every row"
+        assert uniqueness["duplicate_rows"] == 2, f"{engine} must find both duplicates"
+
+    assert facts["incremental"] == facts["columnar"]
+    assert reports["incremental"].quality_score == pytest.approx(
+        reports["columnar"].quality_score, abs=0.01
+    ), "overall quality must not depend on the engine"
+
+
+def test_duplicate_rows_tracked_for_dataframe_and_arrow_inputs(tmp_path):
+    # The DataFrame/Arrow paths share RecordBatchAnalyzer; duplicates must be
+    # assessed there too, not silently skipped when a column has nulls.
+    pa = pytest.importorskip("pyarrow")
+    data = {
+        "id": [1, 2, 2, 3],
+        "name": ["Alice", None, None, "Bob"],
+    }
+    report = dataprof.profile(pa.table(data))
+    uniqueness = report.to_dict()["quality"]["uniqueness"]
+    assert uniqueness["rows_checked"] == 4
+    assert uniqueness["duplicate_rows"] == 1

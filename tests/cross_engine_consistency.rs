@@ -596,3 +596,88 @@ fn test_profiler_all_dimensions_default() {
     assert!(m.validity.is_some());
     assert!(m.precision.is_some());
 }
+
+/// Regression for #417: the columnar engine used to skip duplicate-row
+/// detection whenever any column contained nulls (misaligned sample
+/// reservoirs), silently dropping the duplicate component of the uniqueness
+/// dimension and producing a different overall quality score than the
+/// incremental engine for the same bytes.
+#[test]
+fn test_duplicate_rows_with_nulls_match_across_engines() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,name,value,city").unwrap();
+    writeln!(f, "1,Alice,10.5,Rome").unwrap();
+    writeln!(f, "2,,20.0,Milan").unwrap();
+    writeln!(f, "2,,20.0,Milan").unwrap(); // duplicate row containing a null
+    writeln!(f, "3,Bob,,Naples").unwrap();
+    writeln!(f, "4,Alice,10.5,").unwrap();
+    writeln!(f, "1,Alice,10.5,Rome").unwrap(); // duplicate of row 1
+    f.flush().unwrap();
+
+    let incremental = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(f.path())
+        .expect("incremental analysis should succeed");
+    let columnar = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(f.path())
+        .expect("columnar analysis should succeed");
+
+    let inc_uniq = incremental
+        .quality
+        .as_ref()
+        .and_then(|q| q.metrics.uniqueness.as_ref())
+        .expect("incremental uniqueness should be assessed");
+    let col_uniq = columnar
+        .quality
+        .as_ref()
+        .and_then(|q| q.metrics.uniqueness.as_ref())
+        .expect("columnar uniqueness should be assessed");
+
+    // Both engines must scan every row and find both duplicates, despite the
+    // nulls that break per-column sample alignment.
+    assert_eq!(inc_uniq.rows_checked, 6, "incremental rows_checked");
+    assert_eq!(col_uniq.rows_checked, 6, "columnar rows_checked");
+    assert_eq!(inc_uniq.duplicate_rows, 2, "incremental duplicate_rows");
+    assert_eq!(col_uniq.duplicate_rows, 2, "columnar duplicate_rows");
+    assert_eq!(
+        inc_uniq.key_uniqueness, col_uniq.key_uniqueness,
+        "key_uniqueness must match across engines"
+    );
+
+    // The contract that actually matters to users: identical overall score.
+    let inc_score = incremental.quality_score().expect("incremental score");
+    let col_score = columnar.quality_score().expect("columnar score");
+    assert!(
+        (inc_score - col_score).abs() < 0.01,
+        "overall quality must not depend on the engine: incremental={inc_score} columnar={col_score}"
+    );
+}
+
+/// Duplicate-row detection must also run on clean files (no nulls) — the
+/// aligned-sample fallback already handled this, so it guards the new
+/// full-stream tracker against regressing the easy case.
+#[test]
+fn test_duplicate_rows_without_nulls_match_across_engines() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,name").unwrap();
+    writeln!(f, "1,Alice").unwrap();
+    writeln!(f, "2,Bob").unwrap();
+    writeln!(f, "2,Bob").unwrap();
+    writeln!(f, "3,Carol").unwrap();
+    f.flush().unwrap();
+
+    for engine in [EngineType::Incremental, EngineType::Columnar] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(f.path())
+            .expect("analysis should succeed");
+        let uniq = report
+            .quality
+            .as_ref()
+            .and_then(|q| q.metrics.uniqueness.as_ref())
+            .expect("uniqueness should be assessed");
+        assert_eq!(uniq.rows_checked, 4, "{engine:?} rows_checked");
+        assert_eq!(uniq.duplicate_rows, 1, "{engine:?} duplicate_rows");
+    }
+}

@@ -1,3 +1,4 @@
+use crate::record_batch_analyzer::observe_batch_rows;
 use arrow::array::*;
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
@@ -9,7 +10,8 @@ use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
 use dataprof_runtime::{
-    ColumnProfileInput, ProfileReport, ReportAssembler, TextLengths, build_column_profile,
+    ColumnProfileInput, ProfileReport, ReportAssembler, RowUniquenessTracker, TextLengths,
+    build_column_profile,
 };
 use std::fs::File;
 use std::path::Path;
@@ -136,6 +138,11 @@ impl ArrowProfiler {
         }
 
         let mut total_rows = 0;
+        // Full-stream duplicate-row tracking: without it, files whose sample
+        // reservoirs are misaligned (any column with nulls) would silently
+        // skip the duplicate component of the uniqueness dimension — breaking
+        // cross-engine score parity with the incremental engine.
+        let mut row_tracker = RowUniquenessTracker::default();
 
         // The Arrow CSV reader has no row cap, so enforce it here: stop once the
         // limit is reached and slice the batch that straddles it, keeping the row
@@ -159,6 +166,11 @@ impl ArrowProfiler {
             }
 
             total_rows += batch.num_rows();
+            observe_batch_rows(&mut row_tracker, &batch).map_err(|error| {
+                DataProfilerError::ArrowError {
+                    message: error.to_string(),
+                }
+            })?;
 
             // Process each column in the batch
             for (col_idx, column) in batch.columns().iter().enumerate() {
@@ -213,7 +225,8 @@ impl ArrowProfiler {
             },
             execution,
         )
-        .columns(column_profiles);
+        .columns(column_profiles)
+        .with_row_duplicates(row_tracker.summary());
 
         if MetricPack::include_quality(packs) {
             assembler = assembler

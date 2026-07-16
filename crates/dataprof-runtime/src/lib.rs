@@ -20,5 +20,6 @@ pub use profile_builder::{
 pub use profile_report::ProfileReport;
 pub use report_assembler::ReportAssembler;
 pub use streaming_stats::{
-    StreamingColumnCollection, StreamingStatistics, TextLengthStats, WelfordAccumulator,
+    RowUniquenessTracker, StreamingColumnCollection, StreamingStatistics, TextLengthStats,
+    WelfordAccumulator,
 };
