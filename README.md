@@ -211,6 +211,7 @@ certified by ISO. Rust callers can customize the relative weights through
 
 ### Start here
 
+- [Why dataprof?](docs/guides/why-dataprof.md) -- an honest comparison with Polars/pandas `describe()` and ydata-profiling, including when to prefer them
 - [Getting Started](docs/guides/getting-started.md) -- the shortest path from mystery dataset to useful signal
 - [Examples Cookbook](docs/guides/examples.md) -- focused Rust and Python recipes you can adapt quickly
 - [Agent Workflows](docs/guides/agent-workflows.md) -- copy-paste guidance for AGENTS.md, Cursor rules, and Claude Code skills
