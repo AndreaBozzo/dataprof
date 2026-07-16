@@ -16,14 +16,49 @@ use std::fmt::Write as _;
 
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
 
-/// Fold every row of a batch into the tracker as a canonical signature.
+/// Full-stream duplicate-row tracking over Arrow batches.
 ///
-/// Signatures use the same length-prefixed encoding as the incremental
+/// Row signatures use the same length-prefixed encoding as the incremental
 /// engine's `StreamingColumnCollection::process_record`, with a null slot
 /// contributing an empty value — so on inputs both engines can read (CSV),
 /// duplicate counts agree across engines. Columns fold in schema order,
 /// which is stable across the batches of one source.
-pub fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -> Result<()> {
+///
+/// When a column's values cannot be rendered (an Arrow type without a
+/// formatter), tracking disables itself and [`Self::summary`] returns `None`
+/// — the duplicate component reads "not assessed". Substituting placeholder
+/// values instead would fabricate or mask duplicates, which is worse than
+/// admitting the metric was skipped; and the profile as a whole must not
+/// fail over an auxiliary metric.
+#[derive(Default)]
+pub(crate) struct BatchRowTracker {
+    tracker: RowUniquenessTracker,
+    disabled: bool,
+}
+
+impl BatchRowTracker {
+    pub(crate) fn observe_batch(&mut self, batch: &RecordBatch) {
+        if self.disabled {
+            return;
+        }
+        if observe_batch_rows(&mut self.tracker, batch).is_err() {
+            self.disabled = true;
+        }
+    }
+
+    /// Full-stream row-duplicate counts; `None` when no rows were seen or a
+    /// batch could not be signed (partial counts would be misleading).
+    pub(crate) fn summary(&self) -> Option<RowDuplicateSummary> {
+        if self.disabled {
+            return None;
+        }
+        self.tracker.summary()
+    }
+}
+
+/// Fold every row of a batch into the tracker as a canonical signature.
+/// See [`BatchRowTracker`] for the encoding and failure contract.
+fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -> Result<()> {
     use arrow::datatypes::DataType as ArrowDataType;
     use arrow::util::display::{ArrayFormatter, FormatOptions};
 
@@ -65,7 +100,7 @@ pub fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatc
 pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
     total_rows: usize,
-    row_tracker: RowUniquenessTracker,
+    row_tracker: BatchRowTracker,
 }
 
 impl RecordBatchAnalyzer {
@@ -73,13 +108,13 @@ impl RecordBatchAnalyzer {
         Self {
             column_analyzers: HashMap::new(),
             total_rows: 0,
-            row_tracker: RowUniquenessTracker::default(),
+            row_tracker: BatchRowTracker::default(),
         }
     }
 
     pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
         self.total_rows += batch.num_rows();
-        observe_batch_rows(&mut self.row_tracker, batch)?;
+        self.row_tracker.observe_batch(batch);
 
         for (column_index, column) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
@@ -101,7 +136,8 @@ impl RecordBatchAnalyzer {
         self.total_rows
     }
 
-    /// Full-stream row-duplicate counts, or `None` when no rows were seen.
+    /// Full-stream row-duplicate counts, or `None` when no rows were seen or
+    /// the batches could not be signed (see [`BatchRowTracker`]).
     pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
         self.row_tracker.summary()
     }
