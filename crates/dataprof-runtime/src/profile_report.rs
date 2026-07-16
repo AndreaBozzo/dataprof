@@ -139,7 +139,6 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::Deserialize;
         use serde::de::Error;
 
         let value = serde_json::Value::deserialize(deserializer)?;
