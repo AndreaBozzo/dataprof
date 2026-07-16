@@ -547,6 +547,83 @@ class TestProfileReport:
         with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.key_uniqueness"):
             assert q.key_uniqueness == 100.0
 
+    @pytest.mark.parametrize("source", ["file", "dict"])
+    def test_empty_quality_dimensions_means_not_analyzed(self, source, tmp_path):
+        """An empty selection requests no dimension, which is the same as not
+        asking for quality — so nothing was analyzed and there is no quality to
+        report. Must agree for file and in-memory inputs, which reach the gate
+        by different routes."""
+        data = {"id": [1, 2, 3], "name": ["a", "b", None]}
+        if source == "file":
+            path = tmp_path / "d.csv"
+            path.write_text("id,name\n1,a\n2,b\n3,\n")
+            target = str(path)
+        else:
+            target = data
+
+        report = dataprof.profile(target, quality_dimensions=[])
+        assert report.quality is None
+        assert report.quality_score is None
+        assert report.to_dict().get("quality") is None
+
+    @pytest.mark.parametrize("source", ["file", "dict"])
+    def test_empty_quality_dimensions_matches_deselecting_the_pack(self, source, tmp_path):
+        """`quality_dimensions=[]` and `metrics=["schema"]` both say "no quality"
+        and must not disagree about how that looks."""
+        if source == "file":
+            path = tmp_path / "d.csv"
+            path.write_text("id,name\n1,a\n2,b\n3,\n")
+            target = str(path)
+        else:
+            target = {"id": [1, 2, 3], "name": ["a", "b", None]}
+
+        empty_dims = dataprof.profile(target, quality_dimensions=[])
+        no_pack = dataprof.profile(target, metrics=["schema"])
+        assert empty_dims.quality is no_pack.quality is None
+        assert empty_dims.quality_score is no_pack.quality_score is None
+
+    def test_empty_selection_still_profiles_the_data(self):
+        """Dropping quality must not drop the profile with it."""
+        report = dataprof.profile(CSV_FILE, quality_dimensions=[])
+        assert report.rows > 0
+        assert report.columns > 0
+        assert report.quality is None
+
+    def test_analyzed_but_vacuous_is_not_reported_as_unanalyzed(self):
+        """The distinction the whole contract rests on: asking for quality and
+        finding nothing assessable is *not* the same as never asking. The first
+        keeps a quality object saying so; only the second is None."""
+        report = dataprof.profile({"a": []})
+        assert report.quality is not None
+        assert report.quality_score is None
+        assert report.quality.assessed_dimensions() == []
+
+        not_asked = dataprof.profile({"a": []}, quality_dimensions=[])
+        assert not_asked.quality is None
+
+    def test_str_omits_dimensions_that_were_not_assessed(self):
+        """str() read the flat accessors, which substitute a perfect 100.0 for an
+        absent dimension — so an unassessed dimension printed as 100%, a
+        reassuring number with nothing behind it."""
+        q = dataprof.profile(CSV_FILE, quality_dimensions=["completeness"]).quality
+        assert q is not None
+        rendered = str(q)
+        assert "completeness=" in rendered
+        assert "consistency=" not in rendered
+        assert "uniqueness=" not in rendered
+
+    def test_str_reports_dimensions_that_were_assessed(self):
+        q = dataprof.profile(CSV_FILE).quality
+        assert q is not None
+        rendered = str(q)
+        for dimension in ("completeness=", "consistency=", "uniqueness="):
+            assert dimension in rendered
+
+    def test_str_says_so_when_nothing_was_assessed(self):
+        q = dataprof.profile({"a": []}).quality
+        assert q is not None
+        assert str(q) == "DataQualityMetrics(not assessed)"
+
     def test_reloaded_quality_flat_accessors_warn(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
         q = reloaded.quality

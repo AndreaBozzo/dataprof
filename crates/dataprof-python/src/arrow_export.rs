@@ -365,7 +365,8 @@ pub fn profile_dataframe(
     let start = std::time::Instant::now();
 
     // Extract metric packs and quality dimensions from config
-    let packs = config.and_then(|c| c.metric_packs.as_deref());
+    let resolved_packs = config.and_then(PyProfilerConfig::effective_metric_packs);
+    let packs = resolved_packs.as_deref();
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
     let include_quality = MetricPack::include_quality(packs);
@@ -470,7 +471,8 @@ pub fn profile_arrow(
     let start = std::time::Instant::now();
 
     // Extract metric packs and quality dimensions from config
-    let packs = config.and_then(|c| c.metric_packs.as_deref());
+    let resolved_packs = config.and_then(PyProfilerConfig::effective_metric_packs);
+    let packs = resolved_packs.as_deref();
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
     let include_quality = MetricPack::include_quality(packs);

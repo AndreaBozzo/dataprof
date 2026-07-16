@@ -214,6 +214,13 @@ impl Profiler {
     /// By default all dimensions are evaluated. Call this method with a subset
     /// to skip the rest — dimensions that are not requested will appear as
     /// `None` in the report.
+    ///
+    /// Passing an empty vector requests no dimension, which means quality is
+    /// not analyzed at all: the report carries no quality metrics, exactly as
+    /// if [`metric_packs`](Self::metric_packs) had omitted
+    /// [`MetricPack::Quality`]. That is distinct from requesting dimensions and
+    /// finding none assessable — that still reports quality, with nothing
+    /// assessed.
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
         self.config.quality_dimensions = Some(dims);
         self
@@ -421,6 +428,19 @@ impl Profiler {
         .with_temporal_columns(self.config.temporal_columns.clone())
     }
 
+    /// The metric packs to compute, with an empty quality-dimension selection
+    /// folded in.
+    ///
+    /// Resolved on read rather than in the setters so the outcome does not
+    /// depend on whether `quality_dimensions` or `metric_packs` was called
+    /// first.
+    fn effective_metric_packs(&self) -> Option<Vec<MetricPack>> {
+        MetricPack::resolve_with_dimensions(
+            self.config.metric_packs.as_deref(),
+            self.config.quality_dimensions.as_deref(),
+        )
+    }
+
     /// Reject a stop condition richer than a plain row limit.
     ///
     /// Row-oriented parsers (JSON, Parquet, the Arrow CSV reader) can enforce a
@@ -533,8 +553,8 @@ impl Profiler {
                 if let Some(d) = &self.config.quality_dimensions {
                     profiler = profiler.quality_dimensions(d.clone());
                 }
-                if let Some(p) = &self.config.metric_packs {
-                    profiler = profiler.metric_packs(p.clone());
+                if let Some(p) = self.effective_metric_packs() {
+                    profiler = profiler.metric_packs(p);
                 }
                 if let Some(l) = &self.config.locale {
                     profiler = profiler.locale(l.clone());
@@ -597,8 +617,8 @@ impl Profiler {
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
-        if let Some(p) = &self.config.metric_packs {
-            profiler = profiler.metric_packs(p.clone());
+        if let Some(p) = self.effective_metric_packs() {
+            profiler = profiler.metric_packs(p);
         }
         if let Some(l) = &self.config.locale {
             profiler = profiler.locale(l.clone());
@@ -657,8 +677,8 @@ impl Profiler {
             if let Some(d) = &self.config.quality_dimensions {
                 profiler = profiler.quality_dimensions(d.clone());
             }
-            if let Some(p) = &self.config.metric_packs {
-                profiler = profiler.metric_packs(p.clone());
+            if let Some(p) = self.effective_metric_packs() {
+                profiler = profiler.metric_packs(p);
             }
             if let Some(l) = &self.config.locale {
                 profiler = profiler.locale(l.clone());
@@ -819,8 +839,8 @@ impl Profiler {
         if let Some(ref d) = self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
-        if let Some(ref p) = self.config.metric_packs {
-            profiler = profiler.metric_packs(p.clone());
+        if let Some(p) = self.effective_metric_packs() {
+            profiler = profiler.metric_packs(p);
         }
         profiler = profiler.semantic_hints(self.semantic_hints());
 

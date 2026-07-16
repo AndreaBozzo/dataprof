@@ -43,7 +43,8 @@ pub fn profile_columns(
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
-    let packs = config.and_then(|c| c.metric_packs.as_deref());
+    let resolved_packs = config.and_then(PyProfilerConfig::effective_metric_packs);
+    let packs = resolved_packs.as_deref();
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
     let include_quality = MetricPack::include_quality(packs);

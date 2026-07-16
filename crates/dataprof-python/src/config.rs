@@ -305,6 +305,19 @@ impl PyProfilerConfig {
         )
         .with_temporal_columns(self.temporal_columns.clone())
     }
+
+    /// Metric packs with an empty quality-dimension selection folded in.
+    ///
+    /// The in-memory entry points (`profile_columns`, the Arrow exporters) gate
+    /// on packs directly instead of going through `Profiler`, so they resolve
+    /// the same rule here — otherwise `quality_dimensions=[]` would mean one
+    /// thing for a file and another for a DataFrame.
+    pub(crate) fn effective_metric_packs(&self) -> Option<Vec<MetricPack>> {
+        MetricPack::resolve_with_dimensions(
+            self.metric_packs.as_deref(),
+            self.quality_dimensions.as_deref(),
+        )
+    }
 }
 
 fn parse_engine(s: &str) -> PyResult<EngineType> {

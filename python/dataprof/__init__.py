@@ -823,7 +823,10 @@ def profile_file(
         quality_dimensions: List of quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
             "accuracy", "timeliness", "validity", "precision". None = all
-            dimensions (default).
+            dimensions (default). An empty list requests no dimension, which
+            means quality is not analyzed at all: ``quality`` and
+            ``quality_score`` are None, the same as omitting "quality" from
+            ``metrics``.
         metrics: List of metric packs to compute. Valid values: "schema"
             (always included), "statistics", "patterns", "quality".
             None = all packs (default).
@@ -912,7 +915,10 @@ def profile(
         quality_dimensions: List of quality dimensions to evaluate.
             Valid values: "completeness", "consistency", "uniqueness",
             "accuracy", "timeliness", "validity", "precision". None = all
-            dimensions (default).
+            dimensions (default). An empty list requests no dimension, which
+            means quality is not analyzed at all: ``quality`` and
+            ``quality_score`` are None, the same as omitting "quality" from
+            ``metrics``.
         metrics: List of metric packs to compute. Valid values: "schema"
             (always included), "statistics", "patterns", "quality".
             None = all packs (default). Omitting a pack skips that
