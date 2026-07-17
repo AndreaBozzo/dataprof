@@ -33,6 +33,7 @@ pub(super) fn string_profile(name: &str, total: usize, nulls: usize) -> ColumnPr
         total_count: total,
         unique_count: Some(unique_count),
         unique_count_is_approximate: Some(false),
+        invalid_count: None,
         stats: ColumnStats::Text(TextStats::from_lengths(1, 10, 5.0)),
         patterns: Some(vec![]),
     }

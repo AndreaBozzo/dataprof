@@ -2,7 +2,8 @@ use crate::types::{ColumnProfile, ColumnStats, DataType};
 
 use crate::analysis::inference::{infer_type, is_null_like_token, parse_strict_boolean_token};
 use crate::analysis::patterns::detect_patterns;
-use crate::stats::{calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats};
+use crate::stats::numeric::compute_numeric_stats_with_parsed_count;
+use crate::stats::{calculate_datetime_stats, calculate_text_stats};
 
 /// Analyze a column with full profiling (includes pattern detection and unique counts)
 pub fn analyze_column(name: &str, data: &[String]) -> ColumnProfile {
@@ -36,9 +37,22 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     // Infer type (uses same whitespace logic internally)
     let data_type = infer_type(data);
 
-    // Calculate stats
+    // Calculate stats. Numeric columns also yield how many values parsed as
+    // finite numbers, so the invalid count comes from the same single pass.
+    let mut invalid_count = None;
     let stats = match data_type {
-        DataType::Integer | DataType::Float => calculate_numeric_stats(data),
+        DataType::Integer | DataType::Float => {
+            let (numeric, parsed) = compute_numeric_stats_with_parsed_count(data);
+            // Non-null values that fail the finite-numeric parse are excluded
+            // from the statistics; expose the count so denominators stay
+            // auditable.
+            invalid_count = Some(
+                total_count
+                    .saturating_sub(null_count)
+                    .saturating_sub(parsed),
+            );
+            ColumnStats::Numeric(numeric)
+        }
         DataType::Date => calculate_datetime_stats(data),
         DataType::Boolean => {
             let tc = data
@@ -92,6 +106,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
         // analyze_column counts distinct values with an exact HashSet, so the
         // count is exact whenever it was computed (never in fast mode).
         unique_count_is_approximate: unique_count.map(|_| false),
+        invalid_count,
         stats,
         patterns,
     }

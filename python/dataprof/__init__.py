@@ -492,6 +492,11 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
         "unique_count_is_approximate": col.unique_count_is_approximate,
         "uniqueness_ratio": _r2(col.uniqueness_ratio),
     }
+    # The key is omitted entirely when the check did not run (non-numeric
+    # column, or statistics skipped), mirroring the Rust serialization; a
+    # clean numeric column serializes 0.
+    if col.invalid_count is not None:
+        col_data["invalid_count"] = col.invalid_count
     if col.min is not None:
         col_data["stats"] = {
             k: v
@@ -574,6 +579,7 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "unique_count": col.unique_count,
         "unique_count_is_approximate": col.unique_count_is_approximate,
         "uniqueness_ratio": _r2(col.uniqueness_ratio),
+        "invalid_count": col.invalid_count,
         "min": _r4(col.min),
         "max": _r4(col.max),
         "mean": _r4(col.mean),
@@ -1316,6 +1322,7 @@ class _DictColumn:
         self.unique_count = d.get("unique_count")
         self.unique_count_is_approximate = d.get("unique_count_is_approximate")
         self.uniqueness_ratio = d.get("uniqueness_ratio")
+        self.invalid_count = d.get("invalid_count")
         # Overlay only known stat attributes — never setattr arbitrary keys from
         # (possibly malformed) input, which could inject unexpected/dunder names.
         stats = d.get("stats")

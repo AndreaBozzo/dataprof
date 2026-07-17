@@ -24,6 +24,16 @@ pub struct ColumnProfile {
     /// is unsafe for those checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique_count_is_approximate: Option<bool>,
+    /// Non-null values that did not parse as a finite number for the column's
+    /// type — parse failures and non-finite tokens like `inf`/`NaN` — and were
+    /// therefore excluded from `stats`.
+    ///
+    /// For numeric columns this makes the statistics denominator auditable:
+    /// `mean`/`std_dev` cover `total_count - null_count - invalid_count`
+    /// values. `None` means the check did not run (non-numeric column, or
+    /// statistics skipped) — never "no invalid values", which is `Some(0)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid_count: Option<usize>,
     pub stats: ColumnStats,
     /// Detected patterns, or `None` when pattern detection did not run.
     ///
@@ -226,6 +236,7 @@ mod tests {
             total_count: 10,
             unique_count: Some(8),
             unique_count_is_approximate: Some(false),
+            invalid_count: Some(0),
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
@@ -278,6 +289,7 @@ mod tests {
             total_count: 3,
             unique_count: Some(3),
             unique_count_is_approximate: Some(false),
+            invalid_count: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,

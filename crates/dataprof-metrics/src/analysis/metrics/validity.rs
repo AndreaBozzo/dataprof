@@ -84,6 +84,7 @@ mod tests {
             total_count: 4,
             unique_count: Some(4),
             unique_count_is_approximate: Some(false),
+            invalid_count: None,
             stats: ColumnStats::None,
             patterns,
         }

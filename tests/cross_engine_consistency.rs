@@ -64,6 +64,9 @@ fn test_base_numeric_stats_exact_beyond_sample_capacity() {
             Some(true),
             "[{engine}] sampled order statistics must be disclosed as approximate"
         );
+        // Every value parsed: analyzed and clean is Some(0), never None —
+        // and never a nonzero artifact of comparing against the sample.
+        assert_eq!(id.invalid_count, Some(0), "[{engine}] invalid_count");
     }
 
     // And the two engines must agree with each other exactly on base stats.
@@ -86,6 +89,54 @@ fn test_base_numeric_stats_exact_beyond_sample_capacity() {
         assert!(
             (std1 - std2).abs() < 1e-6 * std1.abs().max(1.0),
             "'{name}' std_dev: {std1} vs {std2}"
+        );
+    }
+}
+
+/// A numeric column with an unparseable non-null value must disclose it via
+/// `invalid_count` — identically through every engine — so the statistics
+/// denominator is auditable instead of silently shrinking (#425).
+#[test]
+fn test_invalid_count_surfaces_unparseable_numeric_values() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "amount,label").unwrap();
+    for i in 0..5 {
+        writeln!(f, "{}.5,row{}", i, i).unwrap();
+    }
+    // Decimal-comma value: non-null, fails the numeric parse.
+    writeln!(f, "\"12,50\",rowx").unwrap();
+    writeln!(f, ",rownull").unwrap();
+    f.flush().unwrap();
+
+    let std_report = analyze_csv_file(f.path(), &CsvParserConfig::default()).unwrap();
+    let arrow_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(f.path())
+        .unwrap();
+
+    for (engine, report) in [("std", &std_report), ("arrow", &arrow_report)] {
+        let amount = report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == "amount")
+            .unwrap();
+        assert_eq!(amount.data_type, DataType::Float, "[{engine}]");
+        assert_eq!(amount.total_count, 7, "[{engine}]");
+        assert_eq!(amount.null_count, 1, "[{engine}]");
+        assert_eq!(
+            amount.invalid_count,
+            Some(1),
+            "[{engine}] the unparseable value must be counted, not silently dropped"
+        );
+
+        let label = report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == "label")
+            .unwrap();
+        assert_eq!(
+            label.invalid_count, None,
+            "[{engine}] non-numeric columns are not checked: None, not 0"
         );
     }
 }

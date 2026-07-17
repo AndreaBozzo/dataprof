@@ -223,6 +223,7 @@ mod tests {
             total_count: 0,
             unique_count: None,
             unique_count_is_approximate: None,
+            invalid_count: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }
