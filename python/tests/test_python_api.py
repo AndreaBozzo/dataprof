@@ -829,6 +829,61 @@ class TestReportErgonomics:
         col = reloaded[d["columns"][0]["name"]]
         assert not hasattr(col, "__evil__")
 
+    # -- Report schema versioning (compatibility contract) --
+
+    def test_to_dict_carries_schema_version(self, report):
+        d = report.to_dict()
+        assert d["schema_version"] == dataprof.REPORT_SCHEMA_VERSION
+        assert json.loads(report.to_json())["schema_version"] == dataprof.REPORT_SCHEMA_VERSION
+
+    def test_save_load_preserves_schema_version(self, report):
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+        try:
+            report.save(path)
+            with open(path, encoding="utf-8") as fh:
+                on_disk = json.load(fh)
+            assert on_disk["schema_version"] == dataprof.REPORT_SCHEMA_VERSION
+            loaded = dataprof.ProfileReport.load(path)
+            assert loaded.to_dict()["schema_version"] == dataprof.REPORT_SCHEMA_VERSION
+        finally:
+            os.unlink(path)
+
+    def test_from_dict_accepts_legacy_unversioned_document(self, report):
+        # A 0.9-era save() document has no schema_version field; it must
+        # still load through the legacy compatibility path.
+        legacy = report.to_dict()
+        del legacy["schema_version"]
+        reloaded = dataprof.ProfileReport.from_dict(legacy)
+        assert reloaded.columns == report.columns
+
+    def test_from_dict_ignores_additive_top_level_fields(self, report):
+        # A newer writer on the same schema version may add fields; a
+        # compatible reader must not break on them.
+        d = report.to_dict()
+        d["a_future_additive_field"] = {"anything": True}
+        reloaded = dataprof.ProfileReport.from_dict(d)
+        assert reloaded.columns == report.columns
+
+    def test_from_dict_rejects_newer_schema_version(self, report):
+        d = report.to_dict()
+        d["schema_version"] = dataprof.REPORT_SCHEMA_VERSION + 1
+        with pytest.raises(ValueError, match="Upgrade dataprof"):
+            dataprof.ProfileReport.from_dict(d)
+
+    @pytest.mark.parametrize("bad", ["1", 1.0, True, {}, None])
+    def test_from_dict_rejects_non_integer_schema_version(self, report, bad):
+        d = report.to_dict()
+        d["schema_version"] = bad
+        with pytest.raises(ValueError, match="schema_version"):
+            dataprof.ProfileReport.from_dict(d)
+
+    def test_newer_schema_version_fails_before_partial_decoding(self):
+        # The version gate must run before structural validation: an
+        # incompatible document is rejected outright, not half-parsed.
+        with pytest.raises(ValueError, match="Upgrade dataprof"):
+            dataprof.ProfileReport.from_dict({"schema_version": dataprof.REPORT_SCHEMA_VERSION + 1})
+
     def test_compare_identical_is_zero(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
         delta = report.compare(reloaded)
@@ -1350,6 +1405,7 @@ class TestNamespace:
         expected = {
             "Capabilities",
             "capabilities",
+            "REPORT_SCHEMA_VERSION",
             "profile",
             "profile_file",
             "Profiler",

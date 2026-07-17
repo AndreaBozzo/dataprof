@@ -17,7 +17,7 @@ pub use profile_builder::{
     profile_from_stats, profile_from_stats_with_hints, profiles_from_streaming,
     profiles_from_streaming_with_hints, quality_check_samples,
 };
-pub use profile_report::ProfileReport;
+pub use profile_report::{ProfileReport, REPORT_SCHEMA_VERSION};
 pub use report_assembler::ReportAssembler;
 pub use streaming_stats::{
     StreamingColumnCollection, StreamingStatistics, TextLengthStats, WelfordAccumulator,

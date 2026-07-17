@@ -27,6 +27,9 @@ from ._dataprof import (
 
 # --- Primary API ---
 
+REPORT_SCHEMA_VERSION: int
+"""Version of the serialized report document written by to_dict()/save()."""
+
 @dataclass(frozen=True, slots=True)
 class Capabilities:
     """Immutable snapshot of features available in this installation."""
@@ -287,6 +290,7 @@ def _estimate_tokens(text: str) -> int: ...
 __all__ = [
     "Capabilities",
     "capabilities",
+    "REPORT_SCHEMA_VERSION",
     "analyze_database_async",
     "count_table_rows_async",
     "get_table_schema_async",
