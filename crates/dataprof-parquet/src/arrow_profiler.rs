@@ -1,3 +1,4 @@
+use crate::record_batch_analyzer::BatchRowTracker;
 use arrow::array::*;
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
@@ -136,6 +137,11 @@ impl ArrowProfiler {
         }
 
         let mut total_rows = 0;
+        // Full-stream duplicate-row tracking: without it, files whose sample
+        // reservoirs are misaligned (any column with nulls) would silently
+        // skip the duplicate component of the uniqueness dimension — breaking
+        // cross-engine score parity with the incremental engine.
+        let mut row_tracker = BatchRowTracker::default();
 
         // The Arrow CSV reader has no row cap, so enforce it here: stop once the
         // limit is reached and slice the batch that straddles it, keeping the row
@@ -159,6 +165,7 @@ impl ArrowProfiler {
             }
 
             total_rows += batch.num_rows();
+            row_tracker.observe_batch(&batch);
 
             // Process each column in the batch
             for (col_idx, column) in batch.columns().iter().enumerate() {
@@ -213,7 +220,8 @@ impl ArrowProfiler {
             },
             execution,
         )
-        .columns(column_profiles);
+        .columns(column_profiles)
+        .with_row_duplicates(row_tracker.summary());
 
         if MetricPack::include_quality(packs) {
             assembler = assembler

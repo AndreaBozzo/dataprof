@@ -234,6 +234,7 @@ pub fn analyze_parquet_with_config_dims_and_hints(
         execution,
     )
     .columns(column_profiles)
+    .with_row_duplicates(analyzer.row_duplicate_summary())
     .with_quality_data(sample_columns)
     .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {

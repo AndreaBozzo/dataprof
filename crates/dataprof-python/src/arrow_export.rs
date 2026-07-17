@@ -429,7 +429,8 @@ pub fn profile_dataframe(
         },
         exec,
     )
-    .columns(column_profiles);
+    .columns(column_profiles)
+    .with_row_duplicates(analyzer.row_duplicate_summary());
 
     if include_quality {
         assembler = assembler
@@ -534,7 +535,8 @@ pub fn profile_arrow(
         },
         exec,
     )
-    .columns(column_profiles);
+    .columns(column_profiles)
+    .with_row_duplicates(analyzer.row_duplicate_summary());
 
     if include_quality {
         assembler = assembler

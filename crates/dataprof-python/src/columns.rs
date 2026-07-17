@@ -14,7 +14,9 @@ use dataprof::{
     DataFrameLibrary, DataSource, ExecutionMetadata, MetricPack, TruncationReason, infer_type,
     is_null_like_token,
 };
-use dataprof_runtime::{ColumnProfileInput, ReportAssembler, build_column_profile};
+use dataprof_runtime::{
+    ColumnProfileInput, ReportAssembler, RowUniquenessTracker, build_column_profile,
+};
 
 use super::config::PyProfilerConfig;
 use super::types::PyProfileReport;
@@ -73,9 +75,27 @@ pub fn profile_columns(
     let num_cols = columns.len();
 
     // Analysis is pure Rust over owned data, so the GIL buys us nothing here.
-    let (column_profiles, sample_columns) = py.detach(|| {
+    let (column_profiles, sample_columns, row_duplicates) = py.detach(|| {
         let mut profiles = Vec::with_capacity(num_cols);
         let mut samples = std::collections::HashMap::new();
+
+        // Full-stream duplicate-row tracking over the row-aligned input,
+        // using the same length-prefixed signature encoding as the file
+        // engines. Null cells contribute an empty value, so files and
+        // ad-hoc inputs holding the same data agree on duplicate counts.
+        let mut row_tracker = RowUniquenessTracker::default();
+        if num_cols > 0 {
+            use std::fmt::Write as _;
+            for row_index in 0..num_rows {
+                let mut row_signature = String::new();
+                for (_, cells) in &columns {
+                    let value = cells[row_index].as_deref().unwrap_or("");
+                    let _ = write!(row_signature, "{}:", value.len());
+                    row_signature.push_str(value);
+                }
+                row_tracker.observe(row_signature);
+            }
+        }
 
         for (col_name, cells) in &columns {
             let present: Vec<String> = cells[..num_rows]
@@ -114,7 +134,7 @@ pub fn profile_columns(
             }
         }
 
-        (profiles, samples)
+        (profiles, samples, row_tracker.summary())
     });
 
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, start.elapsed().as_millis());
@@ -142,7 +162,8 @@ pub fn profile_columns(
         },
         exec,
     )
-    .columns(column_profiles);
+    .columns(column_profiles)
+    .with_row_duplicates(row_duplicates);
 
     if include_quality {
         assembler = assembler

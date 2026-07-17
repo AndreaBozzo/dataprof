@@ -7,16 +7,100 @@ use arrow::util::display::ArrayFormatter;
 use dataprof_core::{ColumnProfile, DataType, SemanticHints};
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::infer_type;
-use dataprof_runtime::{ColumnProfileInput, TextLengths, build_column_profile};
+use dataprof_metrics::{RowDuplicateSummary, infer_type};
+use dataprof_runtime::{
+    ColumnProfileInput, RowUniquenessTracker, TextLengths, build_column_profile,
+};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
+
+/// Full-stream duplicate-row tracking over Arrow batches.
+///
+/// Row signatures use the same length-prefixed encoding as the incremental
+/// engine's `StreamingColumnCollection::process_record`, with a null slot
+/// contributing an empty value — so on inputs both engines can read (CSV),
+/// duplicate counts agree across engines. Columns fold in schema order,
+/// which is stable across the batches of one source.
+///
+/// When a column's values cannot be rendered (an Arrow type without a
+/// formatter), tracking disables itself and [`Self::summary`] returns `None`
+/// — the duplicate component reads "not assessed". Substituting placeholder
+/// values instead would fabricate or mask duplicates, which is worse than
+/// admitting the metric was skipped; and the profile as a whole must not
+/// fail over an auxiliary metric.
+#[derive(Default)]
+pub(crate) struct BatchRowTracker {
+    tracker: RowUniquenessTracker,
+    disabled: bool,
+}
+
+impl BatchRowTracker {
+    pub(crate) fn observe_batch(&mut self, batch: &RecordBatch) {
+        if self.disabled {
+            return;
+        }
+        if observe_batch_rows(&mut self.tracker, batch).is_err() {
+            self.disabled = true;
+        }
+    }
+
+    /// Full-stream row-duplicate counts; `None` when no rows were seen or a
+    /// batch could not be signed (partial counts would be misleading).
+    pub(crate) fn summary(&self) -> Option<RowDuplicateSummary> {
+        if self.disabled {
+            return None;
+        }
+        self.tracker.summary()
+    }
+}
+
+/// Fold every row of a batch into the tracker as a canonical signature.
+/// See [`BatchRowTracker`] for the encoding and failure contract.
+fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -> Result<()> {
+    use arrow::datatypes::DataType as ArrowDataType;
+    use arrow::util::display::{ArrayFormatter, FormatOptions};
+
+    // Null must render as an empty field ("0:"), matching the incremental
+    // engine — the default formatter would render a visible placeholder.
+    let options = FormatOptions::default().with_null("");
+    let formatters: Vec<Option<ArrayFormatter>> = batch
+        .columns()
+        .iter()
+        .map(|column| match column.data_type() {
+            // A NullArray has no validity buffer; every slot is null.
+            ArrowDataType::Null => Ok(None),
+            _ => ArrayFormatter::try_new(column.as_ref(), &options).map(Some),
+        })
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|error| anyhow::anyhow!("row signature formatting failed: {error}"))?;
+
+    let mut value_buffer = String::new();
+    for row_index in 0..batch.num_rows() {
+        let mut row_signature = String::new();
+        for (column, formatter) in batch.columns().iter().zip(&formatters) {
+            value_buffer.clear();
+            if let Some(formatter) = formatter
+                && !column.is_null(row_index)
+            {
+                write!(value_buffer, "{}", formatter.value(row_index))
+                    .map_err(|error| anyhow::anyhow!("row signature formatting failed: {error}"))?;
+            }
+            let _ = write!(row_signature, "{}:", value_buffer.len());
+            row_signature.push_str(&value_buffer);
+        }
+        tracker.observe(row_signature);
+    }
+
+    Ok(())
+}
 
 /// Analyzer for processing multiple RecordBatches and building column profiles.
 pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
     total_rows: usize,
+    row_tracker: BatchRowTracker,
 }
 
 impl RecordBatchAnalyzer {
@@ -24,11 +108,13 @@ impl RecordBatchAnalyzer {
         Self {
             column_analyzers: HashMap::new(),
             total_rows: 0,
+            row_tracker: BatchRowTracker::default(),
         }
     }
 
     pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
         self.total_rows += batch.num_rows();
+        self.row_tracker.observe_batch(batch);
 
         for (column_index, column) in batch.columns().iter().enumerate() {
             let schema = batch.schema();
@@ -48,6 +134,12 @@ impl RecordBatchAnalyzer {
 
     pub fn total_rows(&self) -> usize {
         self.total_rows
+    }
+
+    /// Full-stream row-duplicate counts, or `None` when no rows were seen or
+    /// the batches could not be signed (see [`BatchRowTracker`]).
+    pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
+        self.row_tracker.summary()
     }
 
     pub fn to_profiles(
