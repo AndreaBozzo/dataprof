@@ -1775,7 +1775,9 @@ class ProfileReport:
                 "std": _r4(col.std_dev),
                 "min": _r4(col.min),
                 "25%": q["q1"] if q else None,
-                "50%": q["q2"] if q else None,
+                # Small samples compute a median without full quartiles;
+                # fall back so 50% matches the median shown elsewhere.
+                "50%": q["q2"] if q else _r2(col.median),
                 "75%": q["q3"] if q else None,
                 "max": _r4(col.max),
                 "min_length": col.min_length,
