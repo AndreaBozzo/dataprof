@@ -127,6 +127,9 @@ pub fn profile_columns(
                 skip_statistics,
                 skip_patterns,
                 locale,
+                // `present` is the full column, so the sample-derived stats
+                // are already exact.
+                exact_numeric: None,
             }));
 
             if include_quality {

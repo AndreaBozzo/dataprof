@@ -46,6 +46,12 @@ impl WelfordAccumulator {
         if self.count == 0 { 0.0 } else { self.mean }
     }
 
+    /// Number of values folded into this accumulator.
+    #[inline]
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+
     pub fn variance(&self) -> f64 {
         if self.count < 2 {
             0.0
@@ -56,6 +62,21 @@ impl WelfordAccumulator {
 
     pub fn std_dev(&self) -> f64 {
         self.variance().sqrt()
+    }
+
+    /// Unbiased sample variance (n-1 denominator), matching the convention of
+    /// the batch numeric stats in `dataprof-metrics`.
+    pub fn sample_variance(&self) -> f64 {
+        if self.count < 2 {
+            0.0
+        } else {
+            (self.m2 / (self.count - 1) as f64).max(0.0)
+        }
+    }
+
+    /// Standard deviation derived from [`Self::sample_variance`].
+    pub fn sample_std_dev(&self) -> f64 {
+        self.sample_variance().sqrt()
     }
 
     pub fn merge(&mut self, other: &WelfordAccumulator) {
@@ -87,7 +108,7 @@ impl Default for WelfordAccumulator {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct StreamReservoirSampler {
+pub struct StreamReservoirSampler {
     reservoir: Vec<String>,
     capacity: usize,
     count: u64,
@@ -338,6 +359,29 @@ impl StreamingStatistics {
 
     pub fn sample_values(&self) -> &[String] {
         self.sampler.samples()
+    }
+
+    /// Exact aggregates over every numeric value this column has streamed,
+    /// or `None` when no value parsed as a finite number.
+    ///
+    /// These come from the O(1)-memory min/max fields and the Welford
+    /// accumulator, so they cover the full stream even when the reservoir
+    /// sample no longer does.
+    pub fn exact_numeric_aggregates(
+        &self,
+    ) -> Option<crate::profile_builder::ExactNumericAggregates> {
+        let count = self.welford.count();
+        if count == 0 {
+            return None;
+        }
+        Some(crate::profile_builder::ExactNumericAggregates {
+            min: self.min,
+            max: self.max,
+            mean: self.welford.mean(),
+            std_dev: self.welford.sample_std_dev(),
+            variance: self.welford.sample_variance(),
+            count: count as usize,
+        })
     }
 
     pub fn text_length_stats(&self) -> TextLengthStats {

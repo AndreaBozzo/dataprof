@@ -13,13 +13,13 @@ pub use async_source::ReqwestSource;
 pub use async_source::{AsyncDataSource, AsyncSourceInfo, BytesSource};
 pub use memory_config::MemoryConfig;
 pub use profile_builder::{
-    ColumnProfileInput, TextLengths, build_column_profile, infer_data_type_streaming,
-    profile_from_stats, profile_from_stats_with_hints, profiles_from_streaming,
-    profiles_from_streaming_with_hints, quality_check_samples,
+    ColumnProfileInput, ExactNumericAggregates, TextLengths, build_column_profile,
+    infer_data_type_streaming, profile_from_stats, profile_from_stats_with_hints,
+    profiles_from_streaming, profiles_from_streaming_with_hints, quality_check_samples,
 };
 pub use profile_report::{ProfileReport, REPORT_SCHEMA_VERSION};
 pub use report_assembler::ReportAssembler;
 pub use streaming_stats::{
-    RowUniquenessTracker, StreamingColumnCollection, StreamingStatistics, TextLengthStats,
-    WelfordAccumulator,
+    RowUniquenessTracker, StreamReservoirSampler, StreamingColumnCollection, StreamingStatistics,
+    TextLengthStats, WelfordAccumulator,
 };
