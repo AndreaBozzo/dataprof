@@ -203,6 +203,7 @@ Per-column profiling statistics.
 | `total_count` | `int` | Total number of values |
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |
+| `invalid_count` | `int \| None` | Non-null values that failed the column's type parse and are excluded from the statistics. `None` = check did not run (non-numeric column); `0` = every non-null value parsed |
 | `null_percentage` | `float` | Null ratio (0.0--100.0) |
 | `uniqueness_ratio` | `float` | Unique values / total values |
 | `min` | `float \| None` | Minimum (numeric columns) |

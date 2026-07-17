@@ -36,6 +36,23 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
     // Infer type (uses same whitespace logic internally)
     let data_type = infer_type(data);
 
+    // Non-null values that fail the numeric parse are excluded from the
+    // statistics; expose that count so denominators stay auditable.
+    let invalid_count = match data_type {
+        DataType::Integer | DataType::Float => {
+            let parsed = data
+                .iter()
+                .filter(|s| s.parse::<f64>().ok().is_some_and(|v| v.is_finite()))
+                .count();
+            Some(
+                total_count
+                    .saturating_sub(null_count)
+                    .saturating_sub(parsed),
+            )
+        }
+        _ => None,
+    };
+
     // Calculate stats
     let stats = match data_type {
         DataType::Integer | DataType::Float => calculate_numeric_stats(data),
@@ -92,6 +109,7 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
         // analyze_column counts distinct values with an exact HashSet, so the
         // count is exact whenever it was computed (never in fast mode).
         unique_count_is_approximate: unique_count.map(|_| false),
+        invalid_count,
         stats,
         patterns,
     }

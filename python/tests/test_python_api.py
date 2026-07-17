@@ -2243,3 +2243,47 @@ class TestLowSampleWarning:
         r = dataprof.profile(str(path))
         assert r.low_sample_warning is False
         assert "low_sample_warning" not in r.to_dict()["quality"]
+
+
+class TestInvalidCount:
+    """Per-column invalid_count: non-null values excluded from numeric stats
+    must be disclosed, never silently dropped (#425)."""
+
+    def test_unparseable_numeric_value_is_counted(self, tmp_path):
+        path = tmp_path / "amounts.csv"
+        path.write_text('amount,label\n1.5,a\n2.5,b\n3.5,c\n4.5,d\n5.5,e\n"12,50",f\n,g\n')
+        r = dataprof.profile(str(path))
+
+        amount = r["amount"]
+        assert amount.data_type == "float"
+        assert amount.null_count == 1
+        assert amount.invalid_count == 1
+
+        d = next(c for c in r.to_dict()["columns"] if c["name"] == "amount")
+        assert d["invalid_count"] == 1
+
+    def test_clean_numeric_column_reports_zero_not_none(self, tmp_path):
+        path = tmp_path / "clean.csv"
+        path.write_text("x\n" + "\n".join(str(i) for i in range(20)) + "\n")
+        r = dataprof.profile(str(path))
+        assert r["x"].invalid_count == 0
+
+    def test_non_numeric_column_not_checked(self, tmp_path):
+        path = tmp_path / "text.csv"
+        path.write_text("name\nalice\nbob\ncarol\n")
+        r = dataprof.profile(str(path))
+        assert r["name"].invalid_count is None
+        d = r.to_dict()["columns"][0]
+        assert "invalid_count" not in d
+
+    def test_in_memory_sources_match_file_semantics(self):
+        r = dataprof.profile({"v": ["1", "2", "3", "4", "5", "12,50", None]})
+        assert r["v"].invalid_count == 1
+
+    def test_roundtrip_preserves_invalid_count(self, tmp_path):
+        path = tmp_path / "amounts.csv"
+        path.write_text('amount\n1.5\n2.5\n3.5\n4.5\n5.5\n"12,50"\n')
+        r = dataprof.profile(str(path))
+        r2 = dataprof.ProfileReport.from_json(r.to_json())
+        assert r2["amount"].invalid_count == 1
+        assert r2.to_dict() == r.to_dict()

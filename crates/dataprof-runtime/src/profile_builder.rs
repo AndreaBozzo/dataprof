@@ -82,12 +82,31 @@ pub struct TextLengths {
 /// pre-computed text lengths; this function handles stats calculation
 /// and pattern detection.
 pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
+    let mut invalid_count = None;
     let stats = if input.skip_statistics {
         ColumnStats::None
     } else {
         match input.data_type {
             DataType::Integer | DataType::Float => {
                 let mut numeric = compute_numeric_stats(input.sample_values);
+                let sampled_numeric = input
+                    .sample_values
+                    .iter()
+                    .filter(|s| s.parse::<f64>().ok().is_some_and(|v| v.is_finite()))
+                    .count();
+                // Values the statistics actually cover. With exact stream
+                // aggregates that is the engine's full parsed count; without
+                // them the sample *is* the full data (in-memory sources).
+                let parsed_total = match &input.exact_numeric {
+                    Some(exact) => exact.count,
+                    None => sampled_numeric,
+                };
+                invalid_count = Some(
+                    input
+                        .total_count
+                        .saturating_sub(input.null_count)
+                        .saturating_sub(parsed_total),
+                );
                 if let Some(exact) = &input.exact_numeric {
                     numeric.min = exact.min;
                     numeric.max = exact.max;
@@ -100,11 +119,6 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                     // kurtosis, outliers) still come from the retained sample;
                     // disclose that whenever the sample no longer covers every
                     // numeric value the exact aggregates saw.
-                    let sampled_numeric = input
-                        .sample_values
-                        .iter()
-                        .filter(|s| s.parse::<f64>().ok().is_some_and(|v| v.is_finite()))
-                        .count();
                     if exact.count > sampled_numeric {
                         numeric.is_approximate = Some(true);
                     }
@@ -177,6 +191,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         total_count: input.total_count,
         unique_count: input.unique_count,
         unique_count_is_approximate: input.unique_count_is_approximate,
+        invalid_count,
         stats,
         patterns,
     }
