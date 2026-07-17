@@ -52,7 +52,7 @@ pub struct ColumnProfileInput<'a> {
     pub exact_numeric: Option<ExactNumericAggregates>,
 }
 
-/// Exact streaming aggregates for a numeric column: O(1)-memory statistics an
+/// Exact streaming aggregates for a numeric column: O(1)-memory statistics that an
 /// engine computed over the entire stream, as opposed to the bounded
 /// `sample_values` it retained.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -119,6 +119,7 @@ impl StreamReservoirSampler {
     const DEFAULT_SEED: u64 = 0xDA7A_900D_F00D_5EED;
 
     pub fn new(capacity: usize) -> Self {
+        let capacity = capacity.max(1);
         Self {
             reservoir: Vec::with_capacity(capacity.min(1024)),
             capacity,
@@ -810,6 +811,14 @@ mod tests {
         }
 
         assert_eq!(left.samples(), right.samples());
+    }
+
+    #[test]
+    fn test_reservoir_zero_capacity_still_retains_a_sample() {
+        let mut sampler = StreamReservoirSampler::new(0);
+        sampler.offer("value".to_string());
+
+        assert_eq!(sampler.samples(), ["value"]);
     }
 
     #[test]
