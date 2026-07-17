@@ -260,103 +260,11 @@ impl RobustCsvParser {
     }
 
     /// Detect delimiter by sampling the file.
+    ///
+    /// Delegates to the shared quote-aware sniffer so both parsers agree on
+    /// the delimiter for the same file.
     pub fn detect_delimiter(&self, file_path: &Path) -> Result<u8> {
-        let file = std::fs::File::open(file_path)?;
-        let reader = BufReader::new(file);
-
-        let mut lines = Vec::new();
-        for (index, line) in reader.lines().enumerate() {
-            if index >= 5 {
-                break;
-            }
-            lines.push(line?);
-        }
-
-        let delimiters = *b",;\t|";
-        let mut best_delimiter = b',';
-        let mut max_consistency = 0;
-        let mut max_field_count = 0;
-
-        for &delimiter in &delimiters {
-            let consistency = self.measure_delimiter_consistency(&lines, delimiter);
-            let avg_field_count = self.average_field_count(&lines, delimiter);
-
-            let should_update = if avg_field_count > 1 && max_field_count <= 1 {
-                true
-            } else if avg_field_count <= 1 && max_field_count > 1 {
-                false
-            } else {
-                consistency > max_consistency
-                    || (consistency == max_consistency && avg_field_count > max_field_count)
-            };
-
-            if should_update {
-                max_consistency = consistency;
-                max_field_count = avg_field_count;
-                best_delimiter = delimiter;
-            }
-        }
-
-        Ok(best_delimiter)
-    }
-
-    fn measure_delimiter_consistency(&self, lines: &[String], delimiter: u8) -> usize {
-        if lines.is_empty() {
-            return 0;
-        }
-
-        let delimiter_char = delimiter as char;
-        let field_counts: Vec<usize> = lines
-            .iter()
-            .map(|line| self.count_fields_simple(line, delimiter_char))
-            .collect();
-
-        let mut counts = std::collections::HashMap::new();
-        for &count in &field_counts {
-            *counts.entry(count).or_insert(0) += 1;
-        }
-
-        // decode-audit: no-data — an empty sample scores 0 consistency for this
-        // delimiter candidate; nothing is fabricated.
-        counts.values().max().copied().unwrap_or(0)
-    }
-
-    fn average_field_count(&self, lines: &[String], delimiter: u8) -> usize {
-        if lines.is_empty() {
-            return 0;
-        }
-
-        let delimiter_char = delimiter as char;
-        let total_fields: usize = lines
-            .iter()
-            .map(|line| self.count_fields_simple(line, delimiter_char))
-            .sum();
-
-        total_fields / lines.len()
-    }
-
-    fn count_fields_simple(&self, line: &str, delimiter: char) -> usize {
-        let mut field_count = 1;
-        let mut in_quotes = false;
-        let mut chars = line.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            match ch {
-                '"' => {
-                    if chars.peek() == Some(&'"') {
-                        chars.next();
-                    } else {
-                        in_quotes = !in_quotes;
-                    }
-                }
-                current if current == delimiter && !in_quotes => {
-                    field_count += 1;
-                }
-                _ => {}
-            }
-        }
-
-        field_count
+        Ok(crate::detect_delimiter_from_path(file_path)?)
     }
 
     /// Parse CSV with robust error handling.
@@ -574,7 +482,7 @@ impl RobustCsvParser {
             }
 
             let delimiter = self.delimiter.unwrap_or(b',') as char;
-            let field_count = self.count_fields_simple(&line, delimiter);
+            let field_count = crate::count_fields(&line, delimiter);
             *field_counts.entry(field_count).or_insert(0) += 1;
 
             diagnostics.total_lines += 1;

@@ -79,7 +79,7 @@ impl CsvParserConfig {
 }
 
 /// Count fields in a line for a given delimiter, respecting quoted sections.
-fn count_fields(line: &str, delimiter: char) -> usize {
+pub(crate) fn count_fields(line: &str, delimiter: char) -> usize {
     let mut count = 1;
     let mut in_quotes = false;
     let mut chars = line.chars().peekable();
@@ -97,55 +97,89 @@ fn count_fields(line: &str, delimiter: char) -> usize {
     count
 }
 
+/// Split raw CSV sample text into logical records, honoring quoted sections
+/// so an embedded newline inside quotes does not start a new record.
+fn split_sample_records(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut records = Vec::new();
+    let mut in_quotes = false;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                if in_quotes && bytes.get(i + 1) == Some(&b'"') {
+                    i += 1; // escaped quote inside a quoted section
+                } else {
+                    in_quotes = !in_quotes;
+                }
+            }
+            b'\n' if !in_quotes => {
+                let end = if i > start && bytes[i - 1] == b'\r' {
+                    i - 1
+                } else {
+                    i
+                };
+                records.push(&text[start..end]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if start < text.len() {
+        records.push(text[start..].trim_end_matches('\r'));
+    }
+    records
+}
+
 /// Detect the most likely CSV delimiter by sampling up to 4 KB of data.
 ///
-/// Tests comma, semicolon, tab, and pipe. Returns the delimiter that produces
-/// the most consistent field counts across the first 5 sample lines, preferring
-/// delimiters that yield more than one field.
+/// The sample is split into logical records with quote handling, so quoted
+/// fields containing embedded newlines or delimiter characters do not skew
+/// detection. Tests comma, semicolon, tab, and pipe over the first 5 records:
+/// a delimiter whose modal field count is greater than one always beats one
+/// that only ever yields single-field records, then higher record agreement
+/// and higher field counts win.
 ///
-/// Falls back to comma if no clear winner is found.
+/// Falls back to comma if no candidate splits the sample.
 pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
+    const SAMPLE_BYTES: u64 = 4096;
     let mut preamble = Vec::new();
-    let mut take = reader.take(4096);
+    let mut take = reader.take(SAMPLE_BYTES);
     take.read_to_end(&mut preamble)?;
+    let truncated = preamble.len() as u64 == SAMPLE_BYTES;
 
     let preamble_str = String::from_utf8_lossy(&preamble);
-    let lines: Vec<String> = preamble_str.lines().map(|line| line.to_string()).collect();
+    let mut records = split_sample_records(&preamble_str);
+    // A full sample buffer usually ends mid-record; never score a fragment.
+    if truncated && records.len() > 1 {
+        records.pop();
+    }
 
     let delimiters = *b",;\t|";
     let mut best_delimiter = b',';
-    let mut max_consistency = 0;
-    let mut max_fields = 0;
+    // (splits records into >1 field, records agreeing on the modal count,
+    //  modal field count) — compared lexicographically, first wins ties.
+    let mut best_score = (false, 0usize, 0usize);
 
     for &delimiter in &delimiters {
-        let delimiter_char = delimiter as char;
         let mut counts = std::collections::HashMap::new();
-        let mut total_fields = 0;
-
-        let sample_lines = std::cmp::min(lines.len(), 5);
-        for line in lines.iter().take(sample_lines) {
-            let count = count_fields(line, delimiter_char);
-            *counts.entry(count).or_insert(0) += 1;
-            total_fields += count;
+        for record in records.iter().take(5) {
+            let fields = count_fields(record, delimiter as char);
+            *counts.entry(fields).or_insert(0usize) += 1;
         }
 
-        // decode-audit: no-data — an empty sample scores 0 consistency for this
-        // delimiter candidate; nothing is fabricated.
-        let consistency = counts.values().max().copied().unwrap_or(0);
-        let avg_fields = total_fields.checked_div(sample_lines).unwrap_or(0);
+        // decode-audit: no-data — an empty sample scores 0 for this delimiter
+        // candidate; nothing is fabricated.
+        let (modal_fields, consistency) = counts
+            .into_iter()
+            .max_by_key(|&(fields, count)| (count, fields))
+            .unwrap_or((0, 0));
 
-        let should_update = if avg_fields > 1 && max_fields <= 1 {
-            true
-        } else if avg_fields <= 1 && max_fields > 1 {
-            false
-        } else {
-            consistency > max_consistency
-                || (consistency == max_consistency && avg_fields > max_fields)
-        };
-
-        if should_update {
-            max_consistency = consistency;
-            max_fields = avg_fields;
+        let score = (modal_fields > 1, consistency, modal_fields);
+        if score > best_score {
+            best_score = score;
             best_delimiter = delimiter;
         }
     }
@@ -628,5 +662,42 @@ mod tests {
     fn test_detect_delimiter_quoted_fields() {
         let data = b"name;desc;val\n\"hello;world\";foo;1\nbar;baz;2\n";
         assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_quoted_embedded_newline() {
+        // A quoted cell containing a newline must not break record splitting:
+        // before the quote-aware sniffer this file was detected as semicolon
+        // (zero occurrences, "perfectly consistent" single-field records) and
+        // profiled as a single column named "id,comment".
+        let data = b"id,comment\n1,\"line one\nline two\"\n2,\"normal\"\n3,\"has \"\"quotes\"\" inside\"\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_absent_candidate_never_beats_real_one() {
+        // One ragged record makes comma imperfect (consistency 3/4); an absent
+        // delimiter is uniformly single-field (4/4) and must still lose.
+        let data = b"a,b,c\n1,2,3\nragged line without delimiters\n4,5,6\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_single_column_falls_back_to_comma() {
+        let data = b"value\n1\n2\n3\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+    }
+
+    #[test]
+    fn test_detect_delimiter_two_column_semicolon_with_commas_in_text() {
+        // Free text containing commas must not outvote the true delimiter.
+        let data = b"id;note\n1;hello, world\n2;foo, bar, baz\n3;plain\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_split_sample_records_quote_aware() {
+        let records = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n");
+        assert_eq!(records, vec!["a,b", "1,\"x\ny\"", "2,z"]);
     }
 }
