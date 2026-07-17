@@ -517,6 +517,8 @@ impl ColumnAnalyzer {
                 // Utf8 columns often carry numeric content (the Arrow CSV
                 // reader may deliver strings): keep the exact accumulators
                 // fed so numeric stats never fall back to the sample.
+                // decode-audit: no-data — a cell that does not parse is a
+                // non-numeric value, excluded from numeric stats by design.
                 if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
                     self.update_numeric_stats(number);
                 }
@@ -541,6 +543,8 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
+                // decode-audit: no-data — a cell that does not parse is a
+                // non-numeric value, excluded from numeric stats by design.
                 if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
                     self.update_numeric_stats(number);
                 }
