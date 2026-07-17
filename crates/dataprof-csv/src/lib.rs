@@ -99,7 +99,12 @@ pub(crate) fn count_fields(line: &str, delimiter: char) -> usize {
 
 /// Split raw CSV sample text into logical records, honoring quoted sections
 /// so an embedded newline inside quotes does not start a new record.
-fn split_sample_records(text: &str) -> Vec<&str> {
+///
+/// The returned flag is true when the final record was not terminated by a
+/// newline outside quotes — i.e. the text ends mid-record (or exactly at a
+/// record's end with no trailing newline, which a caller sampling a fixed
+/// byte budget cannot distinguish from a cut).
+fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
     let bytes = text.as_bytes();
     let mut records = Vec::new();
     let mut in_quotes = false;
@@ -127,10 +132,11 @@ fn split_sample_records(text: &str) -> Vec<&str> {
         }
         i += 1;
     }
-    if start < text.len() {
+    let last_unterminated = start < text.len();
+    if last_unterminated {
         records.push(text[start..].trim_end_matches('\r'));
     }
-    records
+    (records, last_unterminated)
 }
 
 /// Detect the most likely CSV delimiter by sampling up to 4 KB of data.
@@ -151,9 +157,10 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
     let truncated = preamble.len() as u64 == SAMPLE_BYTES;
 
     let preamble_str = String::from_utf8_lossy(&preamble);
-    let mut records = split_sample_records(&preamble_str);
-    // A full sample buffer usually ends mid-record; never score a fragment.
-    if truncated && records.len() > 1 {
+    let (mut records, last_unterminated) = split_sample_records(&preamble_str);
+    // A full sample buffer that ends mid-record leaves a fragment; never score
+    // it. A sample ending on a clean newline keeps all its records.
+    if truncated && last_unterminated && records.len() > 1 {
         records.pop();
     }
 
@@ -697,7 +704,31 @@ mod tests {
 
     #[test]
     fn test_split_sample_records_quote_aware() {
-        let records = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n");
+        let (records, last_unterminated) = split_sample_records("a,b\r\n1,\"x\ny\"\n2,z\n");
         assert_eq!(records, vec!["a,b", "1,\"x\ny\"", "2,z"]);
+        assert!(!last_unterminated);
+
+        let (records, last_unterminated) = split_sample_records("a,b\n1,\"cut mid-fie");
+        assert_eq!(records, vec!["a,b", "1,\"cut mid-fie"]);
+        assert!(last_unterminated);
+    }
+
+    #[test]
+    fn test_detect_delimiter_full_sample_ending_on_record_boundary() {
+        // Exactly 4096 bytes ending with a clean newline: the final record is
+        // complete and must be scored, not dropped as a fragment.
+        let mut data = Vec::from(&b"a;b;c\n"[..]);
+        while data.len() < 4090 {
+            data.extend_from_slice(b"1;2;3\n");
+        }
+        while data.len() < 4095 {
+            data.push(b'#');
+        }
+        data.push(b'\n');
+        assert_eq!(data.len(), 4096);
+        assert_eq!(
+            detect_delimiter(Cursor::new(data.as_slice())).unwrap(),
+            b';'
+        );
     }
 }
