@@ -58,9 +58,10 @@ pub struct PyColumnProfile {
     /// `Some(True)` when it is a HyperLogLog estimate (~1% relative error).
     #[pyo3(get)]
     pub unique_count_is_approximate: Option<bool>,
-    /// Non-null values that failed the column's type parse and are excluded
-    /// from the statistics. `None` = check did not run (non-numeric column);
-    /// `Some(0)` = every non-null value parsed.
+    /// Non-null values that did not parse as a finite number — parse failures
+    /// and non-finite tokens like `inf`/`NaN` — and are excluded from the
+    /// statistics. `None` = check did not run (non-numeric column, or
+    /// statistics skipped); `Some(0)` = every non-null value parsed.
     #[pyo3(get)]
     pub invalid_count: Option<usize>,
     #[pyo3(get)]

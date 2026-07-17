@@ -10,6 +10,13 @@ pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
 
 /// Compute numeric stats and return the inner struct directly.
 pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
+    compute_numeric_stats_with_parsed_count(data).0
+}
+
+/// Compute numeric stats plus the number of values they cover — the count of
+/// cells that parsed as a finite number. Lets callers derive invalid-value
+/// counts without a second parse pass over the data.
+pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats, usize) {
     // decode-audit: no-data — cells that do not parse are non-numeric values
     // (nulls, tokens like "N/A"), excluded from numeric stats by design.
     let numbers: Vec<f64> = data
@@ -17,9 +24,10 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
         .filter_map(|s| s.parse::<f64>().ok())
         .filter(|x| x.is_finite())
         .collect();
+    let parsed_count = numbers.len();
 
     if numbers.is_empty() {
-        return NumericStats::empty();
+        return (NumericStats::empty(), 0);
     }
 
     // Single SIMD-accelerated pass for base statistics (min, max, sum, sum_squares)
@@ -76,21 +84,24 @@ pub fn compute_numeric_stats(data: &[String]) -> NumericStats {
     // samples to mirror the global metric's behaviour.
     let outlier_count = count_outliers_iqr(&numbers, quartiles.as_ref(), 4);
 
-    NumericStats {
-        min,
-        max,
-        mean,
-        std_dev,
-        variance,
-        median,
-        quartiles,
-        mode,
-        coefficient_of_variation,
-        skewness,
-        kurtosis,
-        is_approximate,
-        outlier_count,
-    }
+    (
+        NumericStats {
+            min,
+            max,
+            mean,
+            std_dev,
+            variance,
+            median,
+            quartiles,
+            mode,
+            coefficient_of_variation,
+            skewness,
+            kurtosis,
+            is_approximate,
+            outlier_count,
+        },
+        parsed_count,
+    )
 }
 
 /// Count IQR outliers given pre-computed quartiles. Returns `None` when the

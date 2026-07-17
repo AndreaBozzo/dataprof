@@ -492,8 +492,9 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
         "unique_count_is_approximate": col.unique_count_is_approximate,
         "uniqueness_ratio": _r2(col.uniqueness_ratio),
     }
-    # Absent (not None) when the parse check did not run, mirroring the Rust
-    # serialization: None = not analyzed, 0 = analyzed and clean.
+    # The key is omitted entirely when the check did not run (non-numeric
+    # column, or statistics skipped), mirroring the Rust serialization; a
+    # clean numeric column serializes 0.
     if col.invalid_count is not None:
         col_data["invalid_count"] = col.invalid_count
     if col.min is not None:

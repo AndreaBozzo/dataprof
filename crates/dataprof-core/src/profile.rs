@@ -24,8 +24,9 @@ pub struct ColumnProfile {
     /// is unsafe for those checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique_count_is_approximate: Option<bool>,
-    /// Non-null values that failed the column's type parse and were therefore
-    /// excluded from `stats`.
+    /// Non-null values that did not parse as a finite number for the column's
+    /// type — parse failures and non-finite tokens like `inf`/`NaN` — and were
+    /// therefore excluded from `stats`.
     ///
     /// For numeric columns this makes the statistics denominator auditable:
     /// `mean`/`std_dev` cover `total_count - null_count - invalid_count`

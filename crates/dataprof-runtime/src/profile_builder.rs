@@ -14,7 +14,7 @@ use dataprof_metrics::{
     analysis::inference::{is_null_like_token, parse_strict_boolean_token},
     analysis::patterns::looks_like_date,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
-    stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats},
+    stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats_with_parsed_count},
 };
 
 use crate::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
@@ -88,12 +88,8 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     } else {
         match input.data_type {
             DataType::Integer | DataType::Float => {
-                let mut numeric = compute_numeric_stats(input.sample_values);
-                let sampled_numeric = input
-                    .sample_values
-                    .iter()
-                    .filter(|s| s.parse::<f64>().ok().is_some_and(|v| v.is_finite()))
-                    .count();
+                let (mut numeric, sampled_numeric) =
+                    compute_numeric_stats_with_parsed_count(input.sample_values);
                 // Values the statistics actually cover. With exact stream
                 // aggregates that is the engine's full parsed count; without
                 // them the sample *is* the full data (in-memory sources).
