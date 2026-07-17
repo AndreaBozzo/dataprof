@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
-    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, SemanticHints,
-    StopCondition, StopEvaluator,
+    PeakMemorySampler, ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker,
+    SemanticHints, StopCondition, StopEvaluator,
 };
 use dataprof_csv::{CsvParserConfig, MemoryMappedCsvReader};
 use dataprof_runtime::{
@@ -127,6 +127,7 @@ impl IncrementalProfiler {
 
         progress_tracker.emit_started(Some(estimated_data_rows), Some(file_size_bytes));
 
+        let mut memory_sampler = PeakMemorySampler::new();
         let mut headers = None;
         let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
@@ -148,6 +149,8 @@ impl IncrementalProfiler {
             if records.is_empty() && actual_bytes == 0 {
                 break;
             }
+
+            memory_sampler.sample();
 
             // Store headers from first chunk and initialize column collection
             if headers.is_none() && chunk_headers.is_some() {
@@ -262,6 +265,7 @@ impl IncrementalProfiler {
             }
         }
 
+        memory_sampler.sample();
         progress_tracker.emit_finished(!source_exhausted);
 
         // Convert streaming statistics to column profiles
@@ -290,6 +294,10 @@ impl IncrementalProfiler {
 
         let mut execution = ExecutionMetadata::new(analyzed_rows, num_columns, scan_time_ms)
             .with_bytes_consumed(bytes_consumed);
+
+        if let Some(peak_mb) = memory_sampler.peak_mb() {
+            execution = execution.with_memory_peak_mb(peak_mb);
+        }
 
         // Apply stop condition truncation reason
         if let Some(reason) = stop_eval.truncation_reason() {
@@ -435,6 +443,28 @@ mod tests {
 
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_memory_peak_is_populated() -> Result<()> {
+        // Regression for #419: memory_peak_mb was declared but never set,
+        // so every report shipped null for a headline instrumentation field.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,value")?;
+        for i in 1..=100 {
+            writeln!(temp_file, "{},val_{}", i, i)?;
+        }
+        temp_file.flush()?;
+
+        let report = IncrementalProfiler::new().analyze_file(temp_file.path())?;
+
+        let peak = report
+            .execution
+            .memory_peak_mb
+            .expect("incremental engine must report peak memory");
+        assert!(peak > 0.0, "peak memory must be positive, got {peak}");
 
         Ok(())
     }

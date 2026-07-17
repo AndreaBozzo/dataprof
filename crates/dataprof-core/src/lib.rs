@@ -2,6 +2,7 @@ pub mod classification;
 pub mod config;
 pub mod errors;
 pub mod execution;
+pub mod memory_sampler;
 pub mod memory_tracker;
 pub mod output;
 pub mod partial;
@@ -25,6 +26,7 @@ pub use config::{
 };
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
 pub use execution::{ExecutionMetadata, TruncationReason};
+pub use memory_sampler::PeakMemorySampler;
 pub use memory_tracker::{MemoryLeak, MemoryTracker};
 pub use output::OutputFormat;
 pub use partial::{
