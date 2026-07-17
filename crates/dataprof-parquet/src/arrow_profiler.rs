@@ -4,7 +4,7 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat,
-    MetricPack, QualityDimension, SemanticHints, TruncationReason,
+    MetricPack, PeakMemorySampler, QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::CardinalityEstimator;
@@ -148,6 +148,7 @@ impl ArrowProfiler {
         // count exact rather than rounding up to a batch boundary.
         let max_rows = self.csv_config.as_ref().and_then(|config| config.max_rows);
         let mut truncated = false;
+        let mut memory_sampler = PeakMemorySampler::new();
 
         for batch_result in csv_reader {
             let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, &error))?;
@@ -176,6 +177,11 @@ impl ArrowProfiler {
                     analyzer.process_array(column)?;
                 }
             }
+
+            // Sample after processing, while the batch and the analyzer state
+            // it grew are both resident, so per-batch allocation spikes count
+            // toward the peak.
+            memory_sampler.sample();
         }
 
         // Convert analyzers to column profiles and extract samples
@@ -205,7 +211,11 @@ impl ArrowProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
+        memory_sampler.sample();
         let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms);
+        if let Some(peak_mb) = memory_sampler.peak_mb() {
+            execution = execution.with_memory_peak_mb(peak_mb);
+        }
         if truncated && let Some(max) = max_rows {
             execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
         }
@@ -874,6 +884,28 @@ mod tests {
             DataType::Integer,
             "age column should be detected as Integer"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_memory_peak_is_populated() -> Result<(), DataProfilerError> {
+        // Regression for #419: memory_peak_mb was declared but never set,
+        // so every report shipped null for a headline instrumentation field.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "id,value")?;
+        for i in 1..=100 {
+            writeln!(temp_file, "{},val_{}", i, i)?;
+        }
+        temp_file.flush()?;
+
+        let report = ArrowProfiler::new().analyze_csv_file(temp_file.path())?;
+
+        let peak = report
+            .execution
+            .memory_peak_mb
+            .expect("columnar engine must report peak memory");
+        assert!(peak > 0.0, "peak memory must be positive, got {peak}");
 
         Ok(())
     }

@@ -30,7 +30,9 @@ pub struct ExecutionMetadata {
     /// Throughput in rows per second, auto-calculated when possible.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throughput_rows_sec: Option<f64>,
-    /// Peak memory usage in megabytes, if tracked.
+    /// Peak process memory usage (resident set size) in megabytes observed
+    /// during profiling, sampled at chunk/batch boundaries. Absent when the
+    /// platform provided no reading or the input path does not track memory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_peak_mb: Option<f64>,
     /// Number of errors encountered during profiling.
