@@ -13,7 +13,8 @@ use dataprof_core::{
 use dataprof_metrics::{
     analysis::inference::{is_null_like_token, parse_strict_boolean_token},
     analysis::patterns::looks_like_date,
-    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats, detect_patterns,
+    calculate_datetime_stats, calculate_text_stats, detect_patterns,
+    stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats},
 };
 
 use crate::streaming_stats::{StreamingColumnCollection, StreamingStatistics};
@@ -41,6 +42,30 @@ pub struct ColumnProfileInput<'a> {
     pub skip_patterns: bool,
     /// Optional locale for pattern detection (e.g. "IT", "US").
     pub locale: Option<&'a str>,
+    /// Exact aggregates over every numeric value the engine streamed.
+    ///
+    /// When present, these override the sample-derived `min`, `max`, `mean`,
+    /// `std_dev`, and `variance` on numeric columns, so those fields stay
+    /// exact even when `sample_values` no longer covers the full stream.
+    /// `None` means `sample_values` *is* the full data (in-memory sources)
+    /// or the engine has no exact accumulators for the column.
+    pub exact_numeric: Option<ExactNumericAggregates>,
+}
+
+/// Exact streaming aggregates for a numeric column: O(1)-memory statistics that an
+/// engine computed over the entire stream, as opposed to the bounded
+/// `sample_values` it retained.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExactNumericAggregates {
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    /// Standard deviation with the unbiased (n-1) denominator.
+    pub std_dev: f64,
+    /// Variance with the unbiased (n-1) denominator.
+    pub variance: f64,
+    /// Number of parsed numeric values covered by these aggregates.
+    pub count: usize,
 }
 
 /// Pre-computed text length stats from streaming/columnar engines.
@@ -61,7 +86,31 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         ColumnStats::None
     } else {
         match input.data_type {
-            DataType::Integer | DataType::Float => calculate_numeric_stats(input.sample_values),
+            DataType::Integer | DataType::Float => {
+                let mut numeric = compute_numeric_stats(input.sample_values);
+                if let Some(exact) = &input.exact_numeric {
+                    numeric.min = exact.min;
+                    numeric.max = exact.max;
+                    numeric.mean = exact.mean;
+                    numeric.std_dev = exact.std_dev;
+                    numeric.variance = exact.variance;
+                    numeric.coefficient_of_variation =
+                        calculate_coefficient_of_variation(exact.std_dev, exact.mean);
+                    // Order statistics (median, quartiles, mode, skewness,
+                    // kurtosis, outliers) still come from the retained sample;
+                    // disclose that whenever the sample no longer covers every
+                    // numeric value the exact aggregates saw.
+                    let sampled_numeric = input
+                        .sample_values
+                        .iter()
+                        .filter(|s| s.parse::<f64>().ok().is_some_and(|v| v.is_finite()))
+                        .count();
+                    if exact.count > sampled_numeric {
+                        numeric.is_approximate = Some(true);
+                    }
+                }
+                ColumnStats::Numeric(numeric)
+            }
             DataType::Date => {
                 if !input.sample_values.is_empty() {
                     calculate_datetime_stats(input.sample_values)
@@ -227,6 +276,7 @@ pub fn profile_from_stats_with_hints(
         skip_statistics,
         skip_patterns,
         locale,
+        exact_numeric: stats.exact_numeric_aggregates(),
     })
 }
 
@@ -352,6 +402,7 @@ mod tests {
             boolean_counts: Some((2, 1)),
             skip_statistics: false,
             skip_patterns: false,
+            exact_numeric: None,
             locale: None,
         });
 
@@ -384,6 +435,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: false,
             skip_patterns: false,
+            exact_numeric: None,
             locale: None,
         });
 
@@ -412,6 +464,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: true,
             skip_patterns: false,
+            exact_numeric: None,
             locale: None,
         });
 
@@ -434,6 +487,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: false,
             skip_patterns: true,
+            exact_numeric: None,
             locale: None,
         });
 
@@ -461,6 +515,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: false,
             skip_patterns: false,
+            exact_numeric: None,
             locale: None,
         });
 
@@ -482,6 +537,7 @@ mod tests {
             boolean_counts: None,
             skip_statistics: false,
             skip_patterns: false,
+            exact_numeric: None,
             locale: None,
         });
 

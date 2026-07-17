@@ -9,7 +9,8 @@ use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
-    ColumnProfileInput, RowUniquenessTracker, TextLengths, build_column_profile,
+    ColumnProfileInput, ExactNumericAggregates, RowUniquenessTracker, StreamReservoirSampler,
+    TextLengths, build_column_profile,
 };
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -179,7 +180,7 @@ impl RecordBatchAnalyzer {
     pub fn create_sample_columns(&self) -> HashMap<String, Vec<String>> {
         let mut samples = HashMap::new();
         for (name, analyzer) in &self.column_analyzers {
-            samples.insert(name.clone(), analyzer.sample_values.clone());
+            samples.insert(name.clone(), analyzer.sample_values.samples().to_vec());
         }
         samples
     }
@@ -200,12 +201,13 @@ pub struct ColumnAnalyzer {
     max_value: Option<f64>,
     sum: f64,
     sum_squares: f64,
+    numeric_count: usize,
     min_length: usize,
     max_length: usize,
     total_length: usize,
     true_count: usize,
     false_count: usize,
-    sample_values: Vec<String>,
+    sample_values: StreamReservoirSampler,
 }
 
 impl ColumnAnalyzer {
@@ -219,12 +221,13 @@ impl ColumnAnalyzer {
             max_value: None,
             sum: 0.0,
             sum_squares: 0.0,
+            numeric_count: 0,
             min_length: usize::MAX,
             max_length: 0,
             total_length: 0,
             true_count: 0,
             false_count: 0,
-            sample_values: Vec::new(),
+            sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
         }
     }
 
@@ -393,9 +396,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 self.update_numeric_stats(value);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -408,9 +409,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -423,9 +422,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -438,9 +435,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -453,9 +448,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -468,9 +461,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -483,9 +474,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -498,9 +487,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -513,9 +500,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -528,9 +513,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -545,10 +528,16 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
-                self.cardinality.insert(value);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
+                // Utf8 columns often carry numeric content (the Arrow CSV
+                // reader may deliver strings): keep the exact accumulators
+                // fed so numeric stats never fall back to the sample.
+                // decode-audit: no-data — a cell that does not parse is a
+                // non-numeric value, excluded from numeric stats by design.
+                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                    self.update_numeric_stats(number);
                 }
+                self.cardinality.insert(value);
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -563,10 +552,13 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
-                self.cardinality.insert(value);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
+                // decode-audit: no-data — a cell that does not parse is a
+                // non-numeric value, excluded from numeric stats by design.
+                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                    self.update_numeric_stats(number);
                 }
+                self.cardinality.insert(value);
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -583,9 +575,7 @@ impl ColumnAnalyzer {
                 }
                 let value_str = if value { "True" } else { "False" };
                 self.cardinality.insert(value_str);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value_str.to_string());
-                }
+                self.sample_values.offer(value_str.to_string());
             }
         }
         Ok(())
@@ -598,9 +588,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(days as f64);
                 let date_str = format!("1970-01-01+{}days", days);
                 self.cardinality.insert(&date_str);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(date_str);
-                }
+                self.sample_values.offer(date_str);
             }
         }
         Ok(())
@@ -613,9 +601,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(millis as f64);
                 let datetime_str = format!("1970-01-01T00:00:00.000+{}ms", millis);
                 self.cardinality.insert(&datetime_str);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(datetime_str);
-                }
+                self.sample_values.offer(datetime_str);
             }
         }
         Ok(())
@@ -634,9 +620,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(ts_str);
-                    }
+                    self.sample_values.offer(ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -649,9 +633,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(ts_str);
-                    }
+                    self.sample_values.offer(ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -664,9 +646,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(ts_str);
-                    }
+                    self.sample_values.offer(ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -679,9 +659,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(ts_str);
-                    }
+                    self.sample_values.offer(ts_str);
                 }
             }
         }
@@ -696,9 +674,7 @@ impl ColumnAnalyzer {
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
                 self.cardinality.insert_owned(format!("len:{}", len));
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(format!("<binary:{} bytes>", len));
-                }
+                self.sample_values.offer(format!("<binary:{} bytes>", len));
             }
         }
         Ok(())
@@ -711,9 +687,7 @@ impl ColumnAnalyzer {
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
                 self.cardinality.insert_owned(format!("len:{}", len));
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(format!("<binary:{} bytes>", len));
-                }
+                self.sample_values.offer(format!("<binary:{} bytes>", len));
             }
         }
         Ok(())
@@ -726,9 +700,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(decimal_value as f64);
                 let decimal_str = format!("dec128:{}", decimal_value);
                 self.cardinality.insert(&decimal_str);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(decimal_str);
-                }
+                self.sample_values.offer(decimal_str);
             }
         }
         Ok(())
@@ -740,9 +712,7 @@ impl ColumnAnalyzer {
                 let decimal_str = format!("dec256:value_{}", index);
                 self.update_text_stats(&decimal_str);
                 self.cardinality.insert(&decimal_str);
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(decimal_str);
-                }
+                self.sample_values.offer(decimal_str);
             }
         }
         Ok(())
@@ -761,9 +731,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ns", dur_value);
                     self.cardinality.insert(&dur_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(dur_str);
-                    }
+                    self.sample_values.offer(dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -776,9 +744,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}us", dur_value);
                     self.cardinality.insert(&dur_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(dur_str);
-                    }
+                    self.sample_values.offer(dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -791,9 +757,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ms", dur_value);
                     self.cardinality.insert(&dur_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(dur_str);
-                    }
+                    self.sample_values.offer(dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -806,9 +770,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}s", dur_value);
                     self.cardinality.insert(&dur_str);
-                    if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                        self.sample_values.push(dur_str);
-                    }
+                    self.sample_values.offer(dur_str);
                 }
             }
         }
@@ -823,9 +785,7 @@ impl ColumnAnalyzer {
                     if !array.is_null(index) {
                         let value_str = formatter.value(index).to_string();
                         self.update_text_stats(&value_str);
-                        if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                            self.sample_values.push(value_str.clone());
-                        }
+                        self.sample_values.offer(value_str.clone());
                         self.cardinality.insert_owned(value_str);
                     }
                 }
@@ -835,9 +795,7 @@ impl ColumnAnalyzer {
                     if !array.is_null(index) {
                         let value_str = format!("<{}:value_{}>", array.data_type(), index);
                         self.update_text_stats(&value_str);
-                        if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                            self.sample_values.push(value_str.clone());
-                        }
+                        self.sample_values.offer(value_str.clone());
                         self.cardinality.insert_owned(value_str);
                     }
                 }
@@ -849,6 +807,7 @@ impl ColumnAnalyzer {
     fn update_numeric_stats(&mut self, value: f64) {
         self.sum += value;
         self.sum_squares += value * value;
+        self.numeric_count += 1;
 
         self.min_value = Some(match self.min_value {
             Some(min_value) => min_value.min(value),
@@ -859,6 +818,32 @@ impl ColumnAnalyzer {
             Some(max_value) => max_value.max(value),
             None => value,
         });
+    }
+
+    /// Exact aggregates over every numeric value processed, independent of the
+    /// bounded reservoir sample. `None` when the column saw no numeric values.
+    fn exact_numeric_aggregates(&self) -> Option<ExactNumericAggregates> {
+        let (min, max) = (self.min_value?, self.max_value?);
+        if self.numeric_count == 0 {
+            return None;
+        }
+        let mean = self.sum / self.numeric_count as f64;
+        // Clamp: sum-of-squares variance can go slightly negative from
+        // floating-point cancellation.
+        let variance = dataprof_metrics::stats::numeric::calculate_variance(
+            self.sum_squares,
+            self.sum,
+            self.numeric_count,
+        )
+        .max(0.0);
+        Some(ExactNumericAggregates {
+            min,
+            max,
+            mean,
+            std_dev: variance.sqrt(),
+            variance,
+            count: self.numeric_count,
+        })
     }
 
     fn update_text_stats(&mut self, value: &str) {
@@ -894,7 +879,7 @@ impl ColumnAnalyzer {
             null_count: self.null_count,
             unique_count: Some(self.cardinality.estimate()),
             unique_count_is_approximate: Some(self.cardinality.is_approximate()),
-            sample_values: &self.sample_values,
+            sample_values: self.sample_values.samples(),
             text_lengths: Some(TextLengths {
                 min_length: self.min_length,
                 max_length: self.max_length,
@@ -908,6 +893,7 @@ impl ColumnAnalyzer {
             skip_statistics,
             skip_patterns,
             locale,
+            exact_numeric: self.exact_numeric_aggregates(),
         })
     }
 
@@ -932,7 +918,7 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Duration(_) => DataType::Integer,
             arrow::datatypes::DataType::Boolean => DataType::Boolean,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                infer_type(&self.sample_values)
+                infer_type(self.sample_values.samples())
             }
             _ => DataType::String,
         }

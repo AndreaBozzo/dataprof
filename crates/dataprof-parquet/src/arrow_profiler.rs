@@ -10,7 +10,8 @@ use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
 use dataprof_runtime::{
-    ColumnProfileInput, ProfileReport, ReportAssembler, TextLengths, build_column_profile,
+    ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
+    StreamReservoirSampler, TextLengths, build_column_profile,
 };
 use std::fs::File;
 use std::path::Path;
@@ -281,6 +282,7 @@ struct ColumnAnalyzer {
     max_value: Option<f64>,
     sum: f64,
     sum_squares: f64,
+    numeric_count: usize,
     // Text statistics
     min_length: usize,
     max_length: usize,
@@ -288,8 +290,8 @@ struct ColumnAnalyzer {
     // Boolean statistics
     true_count: usize,
     false_count: usize,
-    // Sample values for pattern detection
-    sample_values: Vec<String>,
+    // Reservoir sample for pattern detection and order statistics
+    sample_values: StreamReservoirSampler,
 }
 
 impl ColumnAnalyzer {
@@ -303,12 +305,13 @@ impl ColumnAnalyzer {
             max_value: None,
             sum: 0.0,
             sum_squares: 0.0,
+            numeric_count: 0,
             min_length: usize::MAX,
             max_length: 0,
             total_length: 0,
             true_count: 0,
             false_count: 0,
-            sample_values: Vec::new(),
+            sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
         }
     }
 
@@ -454,9 +457,7 @@ impl ColumnAnalyzer {
                 self.cardinality.insert_owned(value.to_string());
 
                 // Keep samples for pattern detection
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -470,9 +471,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert_owned(value.to_string());
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -486,9 +485,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert_owned(value.to_string());
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -502,9 +499,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert_owned(value.to_string());
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -519,12 +514,18 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
+                // Utf8 columns often carry numeric content (the Arrow CSV
+                // reader may deliver strings): keep the exact accumulators
+                // fed so numeric stats never fall back to the sample.
+                // decode-audit: no-data — a cell that does not parse is a
+                // non-numeric value, excluded from numeric stats by design.
+                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                    self.update_numeric_stats(number);
+                }
 
                 self.cardinality.insert(value);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -542,12 +543,15 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
+                // decode-audit: no-data — a cell that does not parse is a
+                // non-numeric value, excluded from numeric stats by design.
+                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                    self.update_numeric_stats(number);
+                }
 
                 self.cardinality.insert(value);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.to_string());
-                }
+                self.sample_values.offer(value.to_string());
             }
         }
         Ok(())
@@ -566,9 +570,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(value_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value_str.to_string());
-                }
+                self.sample_values.offer(value_str.to_string());
             }
         }
         Ok(())
@@ -583,9 +585,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&date_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(date_str);
-                }
+                self.sample_values.offer(date_str);
             }
         }
         Ok(())
@@ -600,9 +600,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&date_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(date_str);
-                }
+                self.sample_values.offer(date_str);
             }
         }
         Ok(())
@@ -619,9 +617,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&ts_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(ts_str);
-                }
+                self.sample_values.offer(ts_str);
             }
         }
         Ok(())
@@ -638,9 +634,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&ts_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(ts_str);
-                }
+                self.sample_values.offer(ts_str);
             }
         }
         Ok(())
@@ -657,9 +651,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&ts_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(ts_str);
-                }
+                self.sample_values.offer(ts_str);
             }
         }
         Ok(())
@@ -676,9 +668,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&ts_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(ts_str);
-                }
+                self.sample_values.offer(ts_str);
             }
         }
         Ok(())
@@ -701,9 +691,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&hex_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(hex_str);
-                }
+                self.sample_values.offer(hex_str);
             }
         }
         Ok(())
@@ -729,9 +717,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&hex_str);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(hex_str);
-                }
+                self.sample_values.offer(hex_str);
             }
         }
         Ok(())
@@ -748,9 +734,7 @@ impl ColumnAnalyzer {
                     .unwrap_or_else(|_| format!("<type:{}>", array.data_type()));
                 self.update_text_stats(&value);
 
-                if self.sample_values.len() < NUMERIC_SAMPLE_CAP {
-                    self.sample_values.push(value.clone());
-                }
+                self.sample_values.offer(value.clone());
 
                 self.cardinality.insert_owned(value);
             }
@@ -761,6 +745,7 @@ impl ColumnAnalyzer {
     fn update_numeric_stats(&mut self, value: f64) {
         self.sum += value;
         self.sum_squares += value * value;
+        self.numeric_count += 1;
 
         self.min_value = Some(match self.min_value {
             Some(min) => min.min(value),
@@ -771,6 +756,32 @@ impl ColumnAnalyzer {
             Some(max) => max.max(value),
             None => value,
         });
+    }
+
+    /// Exact aggregates over every numeric value processed, independent of the
+    /// bounded reservoir sample. `None` when the column saw no numeric values.
+    fn exact_numeric_aggregates(&self) -> Option<ExactNumericAggregates> {
+        let (min, max) = (self.min_value?, self.max_value?);
+        if self.numeric_count == 0 {
+            return None;
+        }
+        let mean = self.sum / self.numeric_count as f64;
+        // Clamp: sum-of-squares variance can go slightly negative from
+        // floating-point cancellation.
+        let variance = dataprof_metrics::stats::numeric::calculate_variance(
+            self.sum_squares,
+            self.sum,
+            self.numeric_count,
+        )
+        .max(0.0);
+        Some(ExactNumericAggregates {
+            min,
+            max,
+            mean,
+            std_dev: variance.sqrt(),
+            variance,
+            count: self.numeric_count,
+        })
     }
 
     fn update_text_stats(&mut self, value: &str) {
@@ -806,7 +817,7 @@ impl ColumnAnalyzer {
             null_count: self.null_count,
             unique_count: Some(self.cardinality.estimate()),
             unique_count_is_approximate: Some(self.cardinality.is_approximate()),
-            sample_values: &self.sample_values,
+            sample_values: self.sample_values.samples(),
             text_lengths: Some(TextLengths {
                 min_length: self.min_length,
                 max_length: self.max_length,
@@ -820,6 +831,7 @@ impl ColumnAnalyzer {
             skip_statistics,
             skip_patterns,
             locale,
+            exact_numeric: self.exact_numeric_aggregates(),
         })
     }
 
@@ -836,7 +848,7 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Reuse the shared inference logic for consistent type detection
                 // across all engines (dates before numerics, 100% match threshold)
-                infer_type(&self.sample_values)
+                infer_type(self.sample_values.samples())
             }
             _ => DataType::String,
         }
@@ -844,7 +856,7 @@ impl ColumnAnalyzer {
 
     /// Get collected sample values for quality metrics calculation
     fn get_sample_values(&self) -> Vec<String> {
-        self.sample_values.clone()
+        self.sample_values.samples().to_vec()
     }
 }
 

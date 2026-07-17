@@ -12,6 +12,106 @@ use dataprof::{
 use dataprof::{EngineType, Profiler};
 use tempfile::NamedTempFile;
 
+/// 30k rows of *sorted* values — larger than the 10k per-column sample
+/// reservoirs, so any engine that derives base statistics from its retained
+/// sample (or samples a biased prefix) reports wildly wrong min/max/mean.
+fn create_sorted_30k_csv() -> NamedTempFile {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "id,value").unwrap();
+    for i in 0..30_000 {
+        writeln!(f, "{},{:.2}", i, i as f64 / 2.0).unwrap();
+    }
+    f.flush().unwrap();
+    f
+}
+
+/// Base numeric statistics must be exact — computed over every value, not the
+/// bounded sample — and identical across engines, even when the data is
+/// sorted and larger than the sample capacity (#424).
+#[test]
+fn test_base_numeric_stats_exact_beyond_sample_capacity() {
+    let csv = create_sorted_30k_csv();
+    let path = csv.path();
+
+    let std_report = analyze_csv_file(path, &CsvParserConfig::default())
+        .expect("standard CSV analysis should succeed");
+    let arrow_report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(path)
+        .expect("Arrow CSV analysis should succeed");
+
+    for (engine, report) in [("std", &std_report), ("arrow", &arrow_report)] {
+        let id = report
+            .column_profiles
+            .iter()
+            .find(|c| c.name == "id")
+            .expect("id column");
+        let ColumnStats::Numeric(n) = &id.stats else {
+            panic!("id should have numeric stats");
+        };
+        // Exact analytical values for 0..=29999.
+        assert_eq!(n.min, 0.0, "[{engine}] min must be exact");
+        assert_eq!(n.max, 29_999.0, "[{engine}] max must be exact");
+        assert!(
+            (n.mean - 14_999.5).abs() < 1e-6,
+            "[{engine}] mean must be exact, got {}",
+            n.mean
+        );
+        // Order statistics come from a 10k sample out of 30k values, and the
+        // report must say so.
+        assert_eq!(
+            n.is_approximate,
+            Some(true),
+            "[{engine}] sampled order statistics must be disclosed as approximate"
+        );
+    }
+
+    // And the two engines must agree with each other exactly on base stats.
+    for name in ["id", "value"] {
+        let get = |r: &dataprof::ProfileReport| {
+            let col = r.column_profiles.iter().find(|c| c.name == name).unwrap();
+            match &col.stats {
+                ColumnStats::Numeric(n) => (n.min, n.max, n.mean, n.std_dev),
+                other => panic!("'{name}' should be numeric, got {other:?}"),
+            }
+        };
+        let (min1, max1, mean1, std1) = get(&std_report);
+        let (min2, max2, mean2, std2) = get(&arrow_report);
+        assert_eq!(min1, min2, "'{name}' min must match across engines");
+        assert_eq!(max1, max2, "'{name}' max must match across engines");
+        assert!(
+            (mean1 - mean2).abs() < 1e-9,
+            "'{name}' mean: {mean1} vs {mean2}"
+        );
+        assert!(
+            (std1 - std2).abs() < 1e-6 * std1.abs().max(1.0),
+            "'{name}' std_dev: {std1} vs {std2}"
+        );
+    }
+}
+
+/// Small data (fewer values than the sample capacity) keeps exact order
+/// statistics and must not be flagged approximate.
+#[test]
+fn test_small_data_not_flagged_approximate() {
+    let csv = create_test_csv();
+    let report = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
+    let age = report
+        .column_profiles
+        .iter()
+        .find(|c| c.name == "age")
+        .unwrap();
+    let ColumnStats::Numeric(n) = &age.stats else {
+        panic!("age should be numeric");
+    };
+    assert_eq!(
+        n.is_approximate, None,
+        "full-coverage stats are not approximate"
+    );
+    assert_eq!(n.min, 20.0);
+    assert_eq!(n.max, 69.0);
+}
+
 fn create_test_csv() -> NamedTempFile {
     let mut f = NamedTempFile::new().unwrap();
     writeln!(f, "name,age,salary,score").unwrap();
