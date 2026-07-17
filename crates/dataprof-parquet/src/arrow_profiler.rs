@@ -167,7 +167,6 @@ impl ArrowProfiler {
 
             total_rows += batch.num_rows();
             row_tracker.observe_batch(&batch);
-            memory_sampler.sample();
 
             // Process each column in the batch
             for (col_idx, column) in batch.columns().iter().enumerate() {
@@ -178,6 +177,11 @@ impl ArrowProfiler {
                     analyzer.process_array(column)?;
                 }
             }
+
+            // Sample after processing, while the batch and the analyzer state
+            // it grew are both resident, so per-batch allocation spikes count
+            // toward the peak.
+            memory_sampler.sample();
         }
 
         // Convert analyzers to column profiles and extract samples

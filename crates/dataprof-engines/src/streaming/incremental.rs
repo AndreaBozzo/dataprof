@@ -150,8 +150,6 @@ impl IncrementalProfiler {
                 break;
             }
 
-            memory_sampler.sample();
-
             // Store headers from first chunk and initialize column collection
             if headers.is_none() && chunk_headers.is_some() {
                 headers = chunk_headers;
@@ -216,6 +214,11 @@ impl IncrementalProfiler {
                     }
                 }
             }
+
+            // Sample after processing, while the chunk buffer and the stats it
+            // grew are both resident, so per-chunk allocation spikes count
+            // toward the peak.
+            memory_sampler.sample();
 
             if hit_row_limit {
                 break;
