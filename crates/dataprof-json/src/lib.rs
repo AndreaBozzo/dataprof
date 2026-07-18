@@ -441,7 +441,7 @@ pub fn analyze_json_file_with_dimensions_and_hints(
         }
         let mut assembler = ReportAssembler::new(
             file_source,
-            ExecutionMetadata::new(0, 0, start.elapsed().as_millis()),
+            ExecutionMetadata::new(0, 0, start.elapsed().as_millis()).with_engine("json"),
         )
         .columns(column_profiles)
         .with_quality_data(HashMap::new());
@@ -455,7 +455,8 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    let mut execution = ExecutionMetadata::new(rows_read, num_columns, scan_time_ms);
+    let mut execution =
+        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms).with_engine("json");
     // `truncated` is set only when a record still remained at the cap, so a source
     // holding exactly `max_rows` records is reported as fully read, not cut short.
     if truncated && let Some(max) = config.max_rows {

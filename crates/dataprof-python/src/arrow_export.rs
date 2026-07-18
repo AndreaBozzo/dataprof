@@ -410,7 +410,7 @@ pub fn profile_dataframe(
     let memory_bytes = estimate_memory_bytes(py, &df, &source_library);
 
     // Build execution metadata, marking truncation if max_rows was applied
-    let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
+    let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms).with_engine("columnar");
     if truncated {
         // decode-audit: impossible — truncation only happens when max_rows was set.
         exec = exec.with_truncation(TruncationReason::MaxRows(
@@ -517,7 +517,7 @@ pub fn profile_arrow(
     let scan_time_ms = start.elapsed().as_millis();
 
     // Build execution metadata, marking truncation if max_rows was applied
-    let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms);
+    let mut exec = ExecutionMetadata::new(num_rows, num_cols, scan_time_ms).with_engine("columnar");
     if truncated {
         // decode-audit: impossible — truncation only happens when max_rows was set.
         exec = exec.with_truncation(TruncationReason::MaxRows(

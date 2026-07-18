@@ -638,6 +638,8 @@ class TestProfileReport:
         assert "source" in d
         assert "columns" in d
         assert "execution" in d
+        assert report.engine in {"incremental", "columnar"}
+        assert d["execution"]["engine"] in {"incremental", "columnar"}
         assert isinstance(d["columns"], list)
 
     def test_to_json(self, report):

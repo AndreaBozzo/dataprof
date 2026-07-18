@@ -1514,6 +1514,7 @@ class _DictBackedReport:
         execution = d.get("execution") or {}
         self.source = d.get("source")
         self.source_type = d.get("source_type")
+        self.engine = execution.get("engine")
         self.rows_processed = execution.get("rows_processed")
         self.columns_detected = execution.get("columns_detected")
         self.scan_time_ms = execution.get("scan_time_ms")
@@ -1556,6 +1557,10 @@ class ProfileReport:
     @property
     def source_type(self) -> str:
         return self._report.source_type
+
+    @property
+    def engine(self) -> str | None:
+        return self._report.engine
 
     @property
     def rows(self) -> int:
@@ -1698,6 +1703,7 @@ class ProfileReport:
             "source": self._report.source,
             "source_type": self._report.source_type,
             "execution": {
+                "engine": self._report.engine,
                 "rows_processed": self._report.rows_processed,
                 "columns_detected": self._report.columns_detected,
                 "scan_time_ms": self._report.scan_time_ms,

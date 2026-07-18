@@ -813,6 +813,12 @@ impl PyProfileReport {
 
     // -- ExecutionMetadata fields --
 
+    /// Engine or parser that actually produced the report
+    #[getter]
+    fn engine(&self) -> Option<&str> {
+        self.inner.execution.engine.as_deref()
+    }
+
     /// Number of rows processed
     #[getter]
     fn rows_processed(&self) -> usize {

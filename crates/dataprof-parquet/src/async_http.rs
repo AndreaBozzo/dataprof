@@ -304,7 +304,7 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
             modified_at: None,
             parquet_metadata,
         },
-        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms),
+        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("parquet"),
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())

@@ -207,6 +207,7 @@ impl AsyncStreamingProfiler {
         };
 
         let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms)
+            .with_engine("incremental")
             .with_bytes_consumed(total_bytes);
 
         if let Some(reason) = truncation_reason {
