@@ -225,7 +225,8 @@ pub async fn analyze_database(
     let query_engine = detect_query_engine(&config.connection_string);
 
     if columns.is_empty() {
-        let mut exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis());
+        let mut exec = ExecutionMetadata::new(0, 0, start.elapsed().as_millis())
+            .with_engine(query_engine.to_string());
         if let Some(ref info) = sample_info
             && info.sampling_ratio < 1.0
         {
@@ -260,7 +261,8 @@ pub async fn analyze_database(
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
     let num_columns = column_profiles.len();
 
-    let mut execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms);
+    let mut execution = ExecutionMetadata::new(actual_rows_processed, num_columns, scan_time_ms)
+        .with_engine(query_engine.to_string());
     if sampling_ratio < 1.0 {
         execution = execution
             .with_sampling(sampling_ratio)

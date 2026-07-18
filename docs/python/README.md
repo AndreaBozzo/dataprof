@@ -142,6 +142,7 @@ Returned by `profile()` and all analysis functions.
 |---|---|---|
 | `source` | `str` | Source identifier (file path, table name, etc.) |
 | `source_type` | `str` | `"file"`, `"query"`, `"dataframe"`, `"stream"` |
+| `engine` | `str \| None` | Engine or parser that produced the report |
 | `rows` | `int` | Number of rows processed |
 | `columns` | `int` | Number of columns detected |
 | `column_profiles` | `dict[str, ColumnProfile]` | Per-column statistics (by name) |

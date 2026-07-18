@@ -214,7 +214,8 @@ pub fn analyze_parquet_with_config_dims_and_hints(
 
     let num_columns = column_profiles.len();
 
-    let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms);
+    let mut execution =
+        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("parquet");
     // A cap only truncates when the file actually holds more rows than the cap.
     // A file with exactly `max_rows` rows was read in full, not cut short.
     if let Some(max) = config.max_rows

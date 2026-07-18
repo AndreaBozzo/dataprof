@@ -140,7 +140,8 @@ pub fn profile_columns(
         (profiles, samples, row_tracker.summary())
     });
 
-    let mut exec = ExecutionMetadata::new(num_rows, num_cols, start.elapsed().as_millis());
+    let mut exec = ExecutionMetadata::new(num_rows, num_cols, start.elapsed().as_millis())
+        .with_engine("columnar");
     if truncated {
         exec = exec.with_truncation(TruncationReason::MaxRows(
             effective_max_rows.unwrap_or(0) as u64

@@ -344,8 +344,50 @@ fn auto_engine_without_stop_condition_reads_everything() {
         .expect("auto engine should profile the csv");
 
     assert_eq!(report.execution.rows_processed, 100);
+    assert_eq!(report.execution.engine.as_deref(), Some("incremental"));
     assert!(report.execution.truncation_reason.is_none());
     assert!(report.execution.source_exhausted);
+}
+
+#[test]
+fn explicit_incremental_engine_is_recorded() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".csv")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(tmp, "n").unwrap();
+    writeln!(tmp, "1").unwrap();
+    tmp.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(tmp.path())
+        .expect("incremental engine should profile the csv");
+
+    assert_eq!(report.execution.engine.as_deref(), Some("incremental"));
+}
+
+#[cfg(feature = "arrow")]
+#[test]
+fn explicit_columnar_engine_is_recorded() {
+    use std::io::Write;
+
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".csv")
+        .tempfile()
+        .expect("tmpfile");
+    writeln!(tmp, "n").unwrap();
+    writeln!(tmp, "1").unwrap();
+    tmp.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(tmp.path())
+        .expect("columnar engine should profile the csv");
+
+    assert_eq!(report.execution.engine.as_deref(), Some("columnar"));
 }
 
 #[test]

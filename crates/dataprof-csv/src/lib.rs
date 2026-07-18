@@ -360,7 +360,8 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     if column_profiles.is_empty() && rows_read == 0 {
         return Ok(ReportAssembler::new(
             file_source,
-            ExecutionMetadata::new(0, header_names.len(), start.elapsed().as_millis()),
+            ExecutionMetadata::new(0, header_names.len(), start.elapsed().as_millis())
+                .with_engine("csv"),
         )
         .skip_quality()
         .build());
@@ -372,7 +373,7 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
 
     let mut assembler = ReportAssembler::new(
         file_source,
-        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms),
+        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms).with_engine("csv"),
     )
     .columns(column_profiles)
     .with_quality_data(sample_columns)

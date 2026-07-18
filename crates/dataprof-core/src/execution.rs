@@ -18,6 +18,9 @@ pub enum TruncationReason {
 /// Metadata about the profiling execution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionMetadata {
+    /// Engine or parser that actually produced the report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
     /// Number of rows actually processed or analyzed.
     pub rows_processed: usize,
     /// Number of bytes consumed from the source, if known.
@@ -59,6 +62,7 @@ impl ExecutionMetadata {
         };
 
         Self {
+            engine: None,
             rows_processed,
             bytes_consumed: None,
             columns_detected,
@@ -71,6 +75,12 @@ impl ExecutionMetadata {
             sampling_applied: false,
             sampling_ratio: None,
         }
+    }
+
+    /// Record the engine or parser that actually produced the report.
+    pub fn with_engine(mut self, engine: impl Into<String>) -> Self {
+        self.engine = Some(engine.into());
+        self
     }
 
     /// Set sampling information.
@@ -130,6 +140,12 @@ mod tests {
     fn test_execution_metadata_zero_time_no_throughput() {
         let meta = ExecutionMetadata::new(100, 3, 0);
         assert!(meta.throughput_rows_sec.is_none());
+    }
+
+    #[test]
+    fn test_execution_metadata_with_engine() {
+        let meta = ExecutionMetadata::new(100, 3, 25).with_engine("incremental");
+        assert_eq!(meta.engine.as_deref(), Some("incremental"));
     }
 
     #[test]

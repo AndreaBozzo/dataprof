@@ -213,7 +213,8 @@ impl ArrowProfiler {
         let num_columns = column_profiles.len();
 
         memory_sampler.sample();
-        let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms);
+        let mut execution =
+            ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("columnar");
         if let Some(peak_mb) = memory_sampler.peak_mb() {
             execution = execution.with_memory_peak_mb(peak_mb);
         }
