@@ -24,14 +24,17 @@ pub struct ColumnProfile {
     /// is unsafe for those checks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unique_count_is_approximate: Option<bool>,
-    /// Non-null values that did not parse for the column's inferred type and
-    /// were therefore excluded from `stats`: non-finite or malformed numbers
-    /// on numeric columns, and invalid calendar values on date columns.
+    /// Non-null values that failed the column type's raw validity predicate:
+    /// non-finite or malformed numbers on numeric columns, and values that do
+    /// not parse directly as calendar dates on date columns. The date predicate
+    /// intentionally does not trim surrounding whitespace; descriptive date
+    /// statistics may normalize whitespace independently.
     ///
-    /// For numeric and date columns this makes the statistics denominator auditable:
-    /// `mean`/`std_dev` cover `total_count - null_count - invalid_count`
-    /// values. `None` means the check did not run (non-numeric column, or
-    /// statistics skipped) — never "no invalid values", which is `Some(0)`.
+    /// For numeric columns, `mean`/`std_dev` cover
+    /// `total_count - null_count - invalid_count` values. For date columns,
+    /// this count audits the strict raw-value quality predicate. `None` means
+    /// the check did not run (another column type, or statistics skipped) —
+    /// never "no invalid values", which is `Some(0)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invalid_count: Option<usize>,
     pub stats: ColumnStats,

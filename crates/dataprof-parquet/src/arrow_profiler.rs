@@ -329,10 +329,26 @@ impl ColumnAnalyzer {
     }
 
     fn offer_sample(&mut self, value: String) {
-        if dataprof_metrics::value_matches_hint(&value, dataprof_core::SemanticHintKind::Temporal) {
+        if self.should_track_date_matches()
+            && dataprof_metrics::value_matches_hint(
+                &value,
+                dataprof_core::SemanticHintKind::Temporal,
+            )
+        {
             self.date_matched_values += 1;
         }
         self.sample_values.offer(value);
+    }
+
+    fn should_track_date_matches(&self) -> bool {
+        matches!(
+            &self.data_type,
+            arrow::datatypes::DataType::Utf8
+                | arrow::datatypes::DataType::LargeUtf8
+                | arrow::datatypes::DataType::Date32
+                | arrow::datatypes::DataType::Date64
+                | arrow::datatypes::DataType::Timestamp(_, _)
+        )
     }
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
@@ -820,6 +836,9 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Int16
             | arrow::datatypes::DataType::Int8 => DataType::Integer,
             arrow::datatypes::DataType::Boolean => DataType::Boolean,
+            arrow::datatypes::DataType::Date32
+            | arrow::datatypes::DataType::Date64
+            | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Reuse the shared inference logic for consistent type detection
                 // across all engines (dates before numerics, 100% match threshold)

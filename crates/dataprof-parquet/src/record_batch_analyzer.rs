@@ -286,8 +286,8 @@ impl ColumnAnalyzer {
 
     fn offer_sample(&mut self, value: String) {
         if !is_null_like_token(value.trim()) {
-            let matches_date =
-                dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal);
+            let matches_date = self.should_track_date_matches()
+                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal);
             if matches_date {
                 self.date_matched_values += 1;
             }
@@ -304,6 +304,17 @@ impl ColumnAnalyzer {
             }
         }
         self.sample_values.offer(value);
+    }
+
+    fn should_track_date_matches(&self) -> bool {
+        matches!(
+            &self.data_type,
+            arrow::datatypes::DataType::Utf8
+                | arrow::datatypes::DataType::LargeUtf8
+                | arrow::datatypes::DataType::Date32
+                | arrow::datatypes::DataType::Date64
+                | arrow::datatypes::DataType::Timestamp(_, _)
+        )
     }
 
     fn hint_binding(&self, column: &str, kind: SemanticHintKind) -> SemanticHintBinding {

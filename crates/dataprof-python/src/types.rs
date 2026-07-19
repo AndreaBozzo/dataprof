@@ -60,9 +60,9 @@ pub struct PyColumnProfile {
     #[pyo3(get)]
     pub unique_count_is_approximate: Option<bool>,
     /// Non-null values that did not parse as a finite number — parse failures
-    /// and non-finite tokens like `inf`/`NaN` — and are excluded from the
-    /// statistics. `None` = check did not run (non-numeric column, or
-    /// statistics skipped); `Some(0)` = every non-null value parsed.
+    /// and non-finite tokens like `inf`/`NaN` — or failed the strict raw date
+    /// predicate. `None` = check did not run (another column type, or
+    /// statistics skipped); `Some(0)` = every non-null value was valid.
     #[pyo3(get)]
     pub invalid_count: Option<usize>,
     #[pyo3(get)]
