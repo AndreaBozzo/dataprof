@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use dataprof::{ColumnStats, DataProfilerError, DataType, EngineType, MetricPack, Profiler};
+use dataprof::{SamplingStrategy, StopCondition};
 use tempfile::NamedTempFile;
 
 fn write_csv(content: &str) -> NamedTempFile {
@@ -368,4 +369,44 @@ fn identifier_hint_remains_usable_without_quality() {
 
     assert!(report.quality.is_none());
     assert_eq!(report.column_profiles[0].data_type, DataType::Identifier);
+}
+
+#[test]
+fn zero_match_on_row_sample_is_not_treated_as_proven_inert() {
+    let csv = write_csv("value\ntext\n1\nmore-text\n");
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .sampling(SamplingStrategy::Systematic { interval: 2 })
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path())
+        .expect("unseen rows may contain a match");
+
+    let binding = report
+        .semantic_hint_bindings
+        .iter()
+        .find(|binding| binding.column == "value")
+        .expect("positive binding");
+    assert_eq!(binding.matched_values, 0);
+    assert!(!binding.exact);
+    assert!(!binding.is_proven_inert());
+}
+
+#[test]
+fn zero_match_before_early_stop_is_not_treated_as_proven_inert() {
+    let csv = write_csv("value\ntext\nmore-text\n1\n");
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .stop_when(StopCondition::MaxRows(2))
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path())
+        .expect("unread rows may contain a match");
+
+    let binding = report
+        .semantic_hint_bindings
+        .iter()
+        .find(|binding| binding.column == "value")
+        .expect("positive binding");
+    assert_eq!(binding.matched_values, 0);
+    assert!(!binding.exact);
+    assert!(!binding.is_proven_inert());
 }

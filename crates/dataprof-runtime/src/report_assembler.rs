@@ -148,7 +148,15 @@ impl ReportAssembler {
         }
 
         if let Some(exact) = &self.exact_value_hint_bindings {
-            bindings.extend(exact.iter().cloned());
+            let full_coverage = self.execution.source_exhausted && !self.execution.sampling_applied;
+            bindings.extend(exact.iter().cloned().map(|mut binding| {
+                // Engine accumulators cover every value they processed. That
+                // is every source row for ordinary reservoir-backed streaming,
+                // but not when row-level sampling skipped records or an early
+                // stop left part of the source unread.
+                binding.exact &= full_coverage;
+                binding
+            }));
         } else if let Some(data) = &self.quality_data {
             let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
             let exact = !self.is_streaming_context(sample_size);
@@ -245,7 +253,7 @@ impl ReportAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dataprof_core::FileFormat;
+    use dataprof_core::{FileFormat, TruncationReason};
 
     fn test_source() -> DataSource {
         DataSource::File {
@@ -399,5 +407,43 @@ mod tests {
         assert!(report.quality.is_some());
         let quality = report.quality.unwrap();
         assert!(matches!(quality.confidence, MetricConfidence::Mixed { .. }));
+    }
+
+    fn positive_binding() -> SemanticHintBinding {
+        SemanticHintBinding {
+            column: "col".to_string(),
+            kind: SemanticHintKind::Positive,
+            checked_values: 2,
+            matched_values: 0,
+            exact: true,
+        }
+    }
+
+    #[test]
+    fn exact_hint_binding_stays_exact_for_exhaustive_stream() {
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(2, 1, 10))
+            .with_semantic_hints(SemanticHints::new(vec!["col".to_string()], vec![]))
+            .with_exact_value_hint_bindings(vec![positive_binding()])
+            .build();
+
+        assert!(report.semantic_hint_bindings[0].exact);
+    }
+
+    #[test]
+    fn exact_hint_binding_is_downgraded_for_sampled_or_truncated_execution() {
+        let executions = [
+            ExecutionMetadata::new(2, 1, 10).with_sampling(0.5),
+            ExecutionMetadata::new(2, 1, 10).with_truncation(TruncationReason::MaxRows(2)),
+        ];
+
+        for execution in executions {
+            let report = ReportAssembler::new(test_source(), execution)
+                .with_semantic_hints(SemanticHints::new(vec!["col".to_string()], vec![]))
+                .with_exact_value_hint_bindings(vec![positive_binding()])
+                .build();
+
+            assert!(!report.semantic_hint_bindings[0].exact);
+            assert!(!report.semantic_hint_bindings[0].is_proven_inert());
+        }
     }
 }
