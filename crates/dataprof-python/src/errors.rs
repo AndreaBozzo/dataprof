@@ -31,7 +31,7 @@ pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
         | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
         DataProfilerError::IoError { .. } => {
-            if message.contains("Permission denied") {
+            if message.to_ascii_lowercase().contains("permission denied") {
                 PyPermissionError::new_err(message)
             } else {
                 PyIOError::new_err(message)

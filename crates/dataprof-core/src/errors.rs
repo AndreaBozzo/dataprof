@@ -496,7 +496,7 @@ impl DataProfilerError {
                 Some("Check that the file exists and you have permission to read it.".to_string())
             }
             DataProfilerError::UnsupportedFormat { .. } => Some(format!(
-                "This build reads {}. Re-encode the input, or rebuild with the needed feature.",
+                "This build reads {}. Convert the input to one of these formats, or rebuild with the feature for the format you need.",
                 supported_formats_hint()
             )),
             DataProfilerError::MemoryLimitExceeded => {

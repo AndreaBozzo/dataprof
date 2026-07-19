@@ -53,28 +53,24 @@ fn unsupported_format_does_not_overclaim() {
 }
 
 #[test]
-fn malformed_csv_keeps_the_source_path_in_context() {
-    // A ragged file that trips strict parsing; the error path must still name
-    // the file rather than the removed `'unknown'` placeholder.
+fn undecodable_csv_error_never_prints_unknown() {
+    // Non-UTF-8 input (latin-1 `é` = 0xE9) is a deterministic hard failure that
+    // every engine refuses — the exact case where the old error path printed the
+    // `'unknown'` placeholder (see #426). The contract: it errors, and neither
+    // the message nor its suggestion names the file as `'unknown'`.
     let mut file = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
-    writeln!(file, "a,b,c").unwrap();
-    for _ in 0..2000 {
-        writeln!(file, "1,2,3,4,5,6,7,8,9").unwrap();
-    }
+    file.write_all(b"name,city\nJos\xE9,Z\xFCrich\n").unwrap();
     file.flush().unwrap();
 
-    // Force strict parsing so the ragged rows surface as an error rather than
-    // being recovered; if it still succeeds, the contract we assert is moot.
-    let result = Profiler::new()
-        .csv_flexible(false)
-        .analyze_file(file.path());
+    let err = Profiler::new()
+        .analyze_file(file.path())
+        .expect_err("non-UTF-8 CSV must fail rather than silently mis-decode");
 
-    if let Err(err) = result {
-        assert!(
-            !err.to_string().contains("'unknown'"),
-            "malformed-file error must not print 'unknown': {err}"
-        );
-    }
+    let rendered = err.to_string();
+    assert!(
+        !rendered.contains("unknown"),
+        "undecodable-file error must not print 'unknown': {rendered}"
+    );
 }
 
 #[test]

@@ -304,8 +304,12 @@ impl Profiler {
 
         // Fail fast with the real path so a missing file is never reported as
         // `'unknown'` by a downstream parser's context-free error conversion.
-        // `symlink_metadata` avoids following a dangling link to a false "found".
-        if std::fs::symlink_metadata(path).is_err() {
+        // Only `NotFound` short-circuits here — a permission or other I/O error
+        // must not masquerade as `FileNotFound`, so it falls through and the
+        // engine surfaces the accurate category. `symlink_metadata` avoids
+        // following a dangling link to a false "found".
+        if std::fs::symlink_metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        {
             return Err(DataProfilerError::file_not_found(
                 path.display().to_string(),
             ));
