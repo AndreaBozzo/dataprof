@@ -15,6 +15,7 @@ use dataprof_runtime::{
     TextLengths, build_column_profile,
 };
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt::Write as _;
 
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
@@ -135,22 +136,17 @@ impl RecordBatchAnalyzer {
             let positive_hint = self.semantic_hints.is_positive_column(&column_name);
             let temporal_hint = self.semantic_hints.is_temporal_column(&column_name);
 
-            if !self.column_analyzers.contains_key(&column_name) {
-                self.column_order.push(column_name.clone());
-                self.column_analyzers.insert(
-                    column_name.clone(),
-                    ColumnAnalyzer::with_value_hints(
+            let analyzer = match self.column_analyzers.entry(column_name.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    self.column_order.push(column_name);
+                    entry.insert(ColumnAnalyzer::with_value_hints(
                         field.data_type(),
                         positive_hint,
                         temporal_hint,
-                    ),
-                );
-            }
-
-            let analyzer = self
-                .column_analyzers
-                .get_mut(&column_name)
-                .expect("column order and analyzers must stay in sync");
+                    ))
+                }
+            };
 
             analyzer.process_array(column)?;
         }

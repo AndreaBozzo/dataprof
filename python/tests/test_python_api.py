@@ -185,11 +185,19 @@ class TestProfileFile:
 
 class TestProfileDataFrame:
     @staticmethod
-    def assert_column_order(report):
+    def assert_column_order(report, backend):
         expected = ["num", "cat", "when", "big"]
         assert [column["name"] for column in report.to_dict()["columns"]] == expected
-        assert report.to_dataframe()["name"].tolist() == expected
-        assert report.describe().columns.tolist() == expected
+        if backend == "pandas":
+            assert report.to_dataframe()["name"].tolist() == expected
+        else:
+            assert report.to_polars()["name"].to_list() == expected
+
+        described = report.describe()
+        described_columns = (
+            list(described) if isinstance(described, dict) else described.columns.tolist()
+        )
+        assert described_columns == expected
         assert list(report.compare(report)["columns"]) == expected
 
     def test_pandas(self):
@@ -205,7 +213,7 @@ class TestProfileDataFrame:
         r = dataprof.profile(df)
         assert r.rows == 2
         assert r.columns == 4
-        self.assert_column_order(r)
+        self.assert_column_order(r, "pandas")
 
 
 class TestInterop:
@@ -232,7 +240,7 @@ class TestInterop:
         assert batch.num_rows > 0
         assert batch.num_columns > 0
 
-    def test_polars(self):
+    def test_polars(self, monkeypatch):
         pl = pytest.importorskip("polars")
         df = pl.DataFrame(
             {
@@ -245,7 +253,16 @@ class TestInterop:
         r = dataprof.profile(df)
         assert r.rows == 2
         assert r.columns == 4
-        TestProfileDataFrame.assert_column_order(r)
+
+        original_import = builtins.__import__
+
+        def import_without_pandas(name, *args, **kwargs):
+            if name == "pandas":
+                raise ImportError("blocked pandas")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_without_pandas)
+        TestProfileDataFrame.assert_column_order(r, "polars")
 
 
 class TestProfileAdHocInputs:

@@ -2104,6 +2104,8 @@ class ProfileReport:
         b_order = list(b_cols)
         a_names = set(a_order)
         b_names = set(b_order)
+        # Preserve the left report's schema order, then append right-only
+        # columns in their source order.
         all_names = [*a_order, *(name for name in b_order if name not in a_names)]
 
         def _null_pct(cols: dict[str, ColumnProfile], name: str) -> float | None:
