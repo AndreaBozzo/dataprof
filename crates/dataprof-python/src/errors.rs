@@ -24,10 +24,17 @@ pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
 
 /// Enforce the semantic-hint contract against a freshly built report: every
 /// hinted column must exist, and no hint may be proven inert over the full data.
-pub(crate) fn validate_report_hints(report: &ProfileReport, hints: &SemanticHints) -> PyResult<()> {
+pub(crate) fn validate_report_hints(
+    report: &ProfileReport,
+    hints: &SemanticHints,
+    quality_requested: bool,
+) -> PyResult<()> {
     if hints.is_empty() {
         return Ok(());
     }
+    hints
+        .validate_quality_usage(quality_requested)
+        .map_err(|e| analysis_error_to_py(&e))?;
     let names: Vec<&str> = report
         .column_profiles
         .iter()

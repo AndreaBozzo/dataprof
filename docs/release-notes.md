@@ -129,13 +129,14 @@ cannot bind is now an error instead of a silent no-op:
 
 Reports gained `semantic_hint_bindings`, per-column evidence of how each hint
 bound (`column`, `kind`, `checked_values`, `matched_values`, `exact`).
-Value-driven hints are measured over the same data the quality metrics assessed;
-`exact` states whether that covered every row. A hint that matched nothing is
-only rejected when the evidence is `exact`, so on a sampled stream a zero match
-is recorded as evidence rather than mistaken for proof of absence — surfacing
-that universally would require full-stream binding accounting, which pairs
-naturally with the inferred-date accounting work (#430). The field is additive;
-older readers ignore it.
+Value-driven hints are counted by bounded-memory accumulators over the full
+processed stream, even when quality metrics use a reservoir sample. Their
+evidence is therefore exact, and an inert hint is rejected consistently on
+large streamed sources without risking a false positive when a match exists
+outside the retained sample. Supplying `positive_columns` or
+`temporal_columns` without the Quality metric pack is also an error because
+those hints would have no consumer; `identifier_columns` remains usable because
+it affects column typing. The field is additive; older readers ignore it.
 
 ---
 

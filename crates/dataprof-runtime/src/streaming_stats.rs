@@ -3,7 +3,8 @@ use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use crate::profile_builder::infer_data_type_streaming;
+use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_streaming};
+use dataprof_core::{SemanticHintBinding, SemanticHints};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{CardinalityEstimator, HyperLogLog, RowDuplicateSummary};
 
@@ -472,6 +473,7 @@ pub struct StreamingColumnCollection {
     ordered_names: Vec<String>,
     memory_limit_bytes: usize,
     row_tracker: RowUniquenessTracker,
+    hint_bindings: ValueHintBindingAccumulator,
 }
 
 impl StreamingColumnCollection {
@@ -481,6 +483,7 @@ impl StreamingColumnCollection {
             ordered_names: Vec::new(),
             memory_limit_bytes: 100 * 1024 * 1024,
             row_tracker: RowUniquenessTracker::default(),
+            hint_bindings: ValueHintBindingAccumulator::default(),
         }
     }
 
@@ -490,7 +493,14 @@ impl StreamingColumnCollection {
             ordered_names: Vec::new(),
             memory_limit_bytes: limit_mb * 1024 * 1024,
             row_tracker: RowUniquenessTracker::default(),
+            hint_bindings: ValueHintBindingAccumulator::default(),
         }
+    }
+
+    /// Configure value-driven semantic hints before records are processed.
+    pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
+        self.hint_bindings = ValueHintBindingAccumulator::new(hints);
+        self
     }
 
     pub fn init_columns(&mut self, headers: &[String]) {
@@ -545,6 +555,7 @@ impl StreamingColumnCollection {
             }
             let stats = self.columns.entry(header.to_string()).or_default();
             stats.update(&value);
+            self.hint_bindings.observe(header, &value);
         }
 
         if !headers.is_empty() {
@@ -555,6 +566,12 @@ impl StreamingColumnCollection {
     /// Full-stream row-duplicate counts, or `None` when no rows were seen.
     pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
         self.row_tracker.summary()
+    }
+
+    /// Exact value-driven semantic-hint evidence over every processed record.
+    pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
+        self.hint_bindings
+            .bindings(self.ordered_names.iter().map(String::as_str))
     }
 
     pub fn get_column_stats(&self, column_name: &str) -> Option<&StreamingStatistics> {
@@ -613,6 +630,7 @@ impl StreamingColumnCollection {
             }
         }
         self.row_tracker.merge(&other.row_tracker);
+        self.hint_bindings.merge(&other.hint_bindings);
     }
 }
 

@@ -28,6 +28,7 @@ pub struct ReportAssembler {
     skip_quality: bool,
     requested_dimensions: Option<Vec<QualityDimension>>,
     semantic_hints: SemanticHints,
+    exact_value_hint_bindings: Option<Vec<SemanticHintBinding>>,
     row_duplicates: Option<RowDuplicateSummary>,
 }
 
@@ -43,6 +44,7 @@ impl ReportAssembler {
             skip_quality: false,
             requested_dimensions: None,
             semantic_hints: SemanticHints::default(),
+            exact_value_hint_bindings: None,
             row_duplicates: None,
         }
     }
@@ -83,6 +85,15 @@ impl ReportAssembler {
         self
     }
 
+    /// Provide full-stream evidence for value-driven semantic hints.
+    ///
+    /// Streaming engines should pass their bounded-memory accumulator output;
+    /// it supersedes evidence recomputed from the retained quality sample.
+    pub fn with_exact_value_hint_bindings(mut self, bindings: Vec<SemanticHintBinding>) -> Self {
+        self.exact_value_hint_bindings = Some(bindings);
+        self
+    }
+
     /// Provide full-stream row-duplicate counts from an engine's row
     /// tracker; they supersede the sample-based duplicate scan.
     pub fn with_row_duplicates(mut self, summary: Option<RowDuplicateSummary>) -> Self {
@@ -109,9 +120,9 @@ impl ReportAssembler {
     ///
     /// Identifier binding is structural — the hint coerces the column's type, so
     /// it is read off the column profiles and is always exact. Positive and
-    /// temporal hints are value-driven; they are measured over the same data the
-    /// quality metrics assessed, tagged `exact` only when that data covers every
-    /// row (see [`Self::is_streaming_context`]).
+    /// temporal hints are value-driven. Streaming engines provide exact
+    /// full-stream counts; callers without those accumulators fall back to the
+    /// quality data and tag the result exact only when it covers every row.
     fn compute_hint_bindings(&self) -> Vec<SemanticHintBinding> {
         if self.semantic_hints.is_empty() {
             return Vec::new();
@@ -136,7 +147,9 @@ impl ReportAssembler {
             }
         }
 
-        if let Some(data) = &self.quality_data {
+        if let Some(exact) = &self.exact_value_hint_bindings {
+            bindings.extend(exact.iter().cloned());
+        } else if let Some(data) = &self.quality_data {
             let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
             let exact = !self.is_streaming_context(sample_size);
             bindings.extend(compute_value_hint_bindings(

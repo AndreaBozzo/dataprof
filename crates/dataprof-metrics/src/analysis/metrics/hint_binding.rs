@@ -33,7 +33,7 @@ pub fn compute_value_hint_bindings(
     for column in &hints.positive_columns {
         if let Some(values) = data.get(column) {
             // Mirror accuracy.rs: a value counts if it parses as f64.
-            let (checked, matched) = count_matches(values, |v| v.parse::<f64>().is_ok());
+            let (checked, matched) = count_matches(values, SemanticHintKind::Positive);
             bindings.push(binding(
                 column,
                 SemanticHintKind::Positive,
@@ -47,7 +47,7 @@ pub fn compute_value_hint_bindings(
     for column in &hints.temporal_columns {
         if let Some(values) = data.get(column) {
             // Mirror timeliness.rs: a value counts as a date if a year parses.
-            let (checked, matched) = count_matches(values, |v| extract_year(v).is_some());
+            let (checked, matched) = count_matches(values, SemanticHintKind::Temporal);
             bindings.push(binding(
                 column,
                 SemanticHintKind::Temporal,
@@ -85,7 +85,7 @@ fn binding(
 /// `extract_year(value)`), and neither `parse::<f64>()` nor `extract_year`
 /// tolerates surrounding whitespace, so trimming here would let this evidence
 /// accept values the calculators reject (e.g. `" 1"`, `" 2020-01-01"`).
-fn count_matches(values: &[String], pred: impl Fn(&str) -> bool) -> (usize, usize) {
+fn count_matches(values: &[String], kind: SemanticHintKind) -> (usize, usize) {
     let mut checked = 0;
     let mut matched = 0;
     for value in values {
@@ -93,11 +93,27 @@ fn count_matches(values: &[String], pred: impl Fn(&str) -> bool) -> (usize, usiz
             continue;
         }
         checked += 1;
-        if pred(value) {
+        if value_matches_hint(value, kind) {
             matched += 1;
         }
     }
     (checked, matched)
+}
+
+/// Apply the exact value predicate used by the quality calculator for `kind`.
+///
+/// Streaming engines use this helper while values pass through their
+/// full-stream accumulators. Keeping the predicates here prevents exact
+/// binding evidence from drifting away from the sampled quality calculation.
+pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
+    match kind {
+        // Mirror accuracy.rs: it parses the original, untrimmed cell.
+        SemanticHintKind::Positive => value.parse::<f64>().is_ok(),
+        // Mirror timeliness.rs: it extracts a year from the original cell.
+        SemanticHintKind::Temporal => extract_year(value).is_some(),
+        // Identifier binding is structural and is not value-driven.
+        SemanticHintKind::Identifier => true,
+    }
 }
 
 #[cfg(test)]

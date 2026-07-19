@@ -440,6 +440,8 @@ impl Profiler {
         if hints.is_empty() {
             return Ok(());
         }
+        let packs = self.effective_metric_packs();
+        hints.validate_quality_usage(MetricPack::include_quality(packs.as_deref()))?;
         let names: Vec<&str> = report
             .column_profiles
             .iter()

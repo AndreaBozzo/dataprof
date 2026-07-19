@@ -274,7 +274,7 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
             .collect()
     };
 
-    let mut column_stats = StreamingColumnCollection::new();
+    let mut column_stats = StreamingColumnCollection::new().with_semantic_hints(semantic_hints);
     let mut rows_read = 0;
 
     for result in csv_reader.records() {
@@ -378,6 +378,7 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     .columns(column_profiles)
     .with_quality_data(sample_columns)
     .with_row_duplicates(column_stats.row_duplicate_summary())
+    .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
     .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());

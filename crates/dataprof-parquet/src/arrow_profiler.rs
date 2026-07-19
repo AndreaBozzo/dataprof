@@ -11,7 +11,7 @@ use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
-    StreamReservoirSampler, TextLengths, build_column_profile,
+    StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
 };
 use std::fs::File;
 use std::path::Path;
@@ -143,6 +143,7 @@ impl ArrowProfiler {
         // skip the duplicate component of the uniqueness dimension — breaking
         // cross-engine score parity with the incremental engine.
         let mut row_tracker = BatchRowTracker::default();
+        let mut hint_bindings = ValueHintBindingAccumulator::new(&self.semantic_hints);
 
         // The Arrow CSV reader has no row cap, so enforce it here: stop once the
         // limit is reached and slice the batch that straddles it, keeping the row
@@ -176,6 +177,13 @@ impl ArrowProfiler {
 
                 if let Some(analyzer) = column_analyzers.get_mut(field.name()) {
                     analyzer.process_array(column)?;
+                }
+                if let Some(values) = column.as_any().downcast_ref::<StringArray>() {
+                    for row_index in 0..values.len() {
+                        if !values.is_null(row_index) {
+                            hint_bindings.observe(field.name(), values.value(row_index));
+                        }
+                    }
                 }
             }
 
@@ -238,6 +246,7 @@ impl ArrowProfiler {
         if MetricPack::include_quality(packs) {
             assembler = assembler
                 .with_quality_data(sample_columns)
+                .with_exact_value_hint_bindings(hint_bindings.bindings(headers.iter()))
                 .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {
                 assembler = assembler.with_requested_dimensions(dims.clone());
@@ -950,6 +959,32 @@ mod tests {
         let error = (unique as f64 - rows as f64).abs() / rows as f64;
         assert!(error < 0.05, "{rows} distinct ids estimated as {unique}");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_value_hint_binding_covers_full_stream() -> Result<(), DataProfilerError> {
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "value")?;
+        writeln!(temp_file, "1")?;
+        for _ in 0..10_050 {
+            writeln!(temp_file, "not-a-number")?;
+        }
+        temp_file.flush()?;
+
+        let hints = SemanticHints::new(vec!["value".to_string()], vec![]);
+        let report = ArrowProfiler::new()
+            .semantic_hints(hints)
+            .analyze_csv_file(temp_file.path())?;
+        let binding = report
+            .semantic_hint_bindings
+            .iter()
+            .find(|binding| binding.column == "value")
+            .expect("positive hint binding");
+
+        assert_eq!(binding.checked_values, 10_051);
+        assert_eq!(binding.matched_values, 1);
+        assert!(binding.exact);
         Ok(())
     }
 
