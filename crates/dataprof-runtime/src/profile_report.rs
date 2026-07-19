@@ -1,4 +1,4 @@
-use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata};
+use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, SemanticHintBinding};
 use dataprof_metrics::{QualityAssessment, QualityMetrics};
 
 /// Version of the serialized `ProfileReport` schema written by this build.
@@ -43,6 +43,14 @@ pub struct ProfileReport {
     /// Data quality assessment (optional — partial analysis may skip quality)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<QualityAssessment>,
+    /// Per-column evidence of how each semantic hint bound to the data.
+    ///
+    /// Empty when no hints were supplied. Recorded for provenance: a hint proven
+    /// inert over the full data is rejected before a report is returned, so a
+    /// successful report only carries bindings that matched something or whose
+    /// evidence was sampled. Additive field — older readers ignore it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub semantic_hint_bindings: Vec<SemanticHintBinding>,
 }
 
 impl ProfileReport {
@@ -61,7 +69,14 @@ impl ProfileReport {
             column_profiles,
             execution,
             quality,
+            semantic_hint_bindings: Vec::new(),
         }
+    }
+
+    /// Attach per-column semantic-hint binding evidence.
+    pub fn with_semantic_hint_bindings(mut self, bindings: Vec<SemanticHintBinding>) -> Self {
+        self.semantic_hint_bindings = bindings;
+        self
     }
 
     /// Override the auto-generated ID (useful for deterministic caching/testing)
@@ -113,6 +128,8 @@ struct ProfileReportFields {
         deserialize_with = "deserialize_quality_compat"
     )]
     quality: Option<QualityAssessment>,
+    #[serde(default)]
+    semantic_hint_bindings: Vec<SemanticHintBinding>,
 }
 
 impl From<ProfileReportFields> for ProfileReport {
@@ -125,6 +142,7 @@ impl From<ProfileReportFields> for ProfileReport {
             column_profiles: fields.column_profiles,
             execution: fields.execution,
             quality: fields.quality,
+            semantic_hint_bindings: fields.semantic_hint_bindings,
         }
     }
 }

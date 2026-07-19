@@ -435,7 +435,7 @@ pub fn profile_dataframe(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
-            .with_semantic_hints(semantic_hints);
+            .with_semantic_hints(semantic_hints.clone());
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
         }
@@ -444,6 +444,7 @@ pub fn profile_dataframe(
     }
 
     let report = assembler.build();
+    super::errors::validate_report_hints(&report, &semantic_hints)?;
 
     Ok(super::types::PyProfileReport::new(report))
 }
@@ -541,7 +542,7 @@ pub fn profile_arrow(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
-            .with_semantic_hints(semantic_hints);
+            .with_semantic_hints(semantic_hints.clone());
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
         }
@@ -550,6 +551,7 @@ pub fn profile_arrow(
     }
 
     let report = assembler.build();
+    super::errors::validate_report_hints(&report, &semantic_hints)?;
 
     Ok(super::types::PyProfileReport::new(report))
 }

@@ -3,10 +3,11 @@ use std::ffi::CString;
 use pyo3::PyErr;
 use pyo3::exceptions::PyDeprecationWarning;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport, QualityMetrics,
-    TruncationReason,
+    SemanticHintKind, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -921,6 +922,35 @@ impl PyProfileReport {
     #[getter]
     fn quality_score(&self) -> Option<f64> {
         self.inner.quality_score()
+    }
+
+    /// Per-column semantic-hint binding evidence.
+    ///
+    /// Empty unless positive/identifier/temporal hints were supplied. Each entry
+    /// is a dict with `column`, `kind`, `checked_values`, `matched_values`, and
+    /// `exact` (whether the counts cover every row or a sample).
+    #[getter]
+    fn semantic_hint_bindings<'py>(&self, py: Python<'py>) -> PyResult<Vec<Bound<'py, PyDict>>> {
+        self.inner
+            .semantic_hint_bindings
+            .iter()
+            .map(|b| {
+                let dict = PyDict::new(py);
+                dict.set_item("column", &b.column)?;
+                dict.set_item(
+                    "kind",
+                    match b.kind {
+                        SemanticHintKind::Positive => "positive",
+                        SemanticHintKind::Identifier => "identifier",
+                        SemanticHintKind::Temporal => "temporal",
+                    },
+                )?;
+                dict.set_item("checked_values", b.checked_values)?;
+                dict.set_item("matched_values", b.matched_values)?;
+                dict.set_item("exact", b.exact)?;
+                Ok(dict)
+            })
+            .collect()
     }
 
     /// Export as JSON string

@@ -307,11 +307,13 @@ impl Profiler {
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
 
-        match self.config.engine {
+        let report = match self.config.engine {
             EngineType::Auto => self.run_auto(path, format),
             EngineType::Incremental => self.run_incremental(path, format),
             EngineType::Columnar => self.run_columnar(path, format),
-        }
+        }?;
+        self.validate_semantic_hints(&report)?;
+        Ok(report)
     }
 
     /// Analyze a DataSource and return a quality report.
@@ -426,6 +428,26 @@ impl Profiler {
             self.config.identifier_columns.clone(),
         )
         .with_temporal_columns(self.config.temporal_columns.clone())
+    }
+
+    /// Reject semantic hints that could not bind to the profiled data.
+    ///
+    /// Runs once a report exists so both checks use real schema and evidence:
+    /// hint names must exist among the columns, and a hint proven inert over the
+    /// full data (matched no value) is an error rather than a silent no-op.
+    fn validate_semantic_hints(&self, report: &ProfileReport) -> Result<(), DataProfilerError> {
+        let hints = self.semantic_hints();
+        if hints.is_empty() {
+            return Ok(());
+        }
+        let names: Vec<&str> = report
+            .column_profiles
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        hints.validate_names(&names)?;
+        hints.validate_bindings(&report.semantic_hint_bindings)?;
+        Ok(())
     }
 
     /// The metric packs to compute, with an empty quality-dimension selection
@@ -844,7 +866,9 @@ impl Profiler {
         }
         profiler = profiler.semantic_hints(self.semantic_hints());
 
-        profiler.analyze_stream(source).await
+        let report = profiler.analyze_stream(source).await?;
+        self.validate_semantic_hints(&report)?;
+        Ok(report)
     }
 
     /// Profile a local file asynchronously.
@@ -884,7 +908,7 @@ impl Profiler {
                     let path = path.to_path_buf();
                     let dims = self.config.quality_dimensions.clone();
                     let semantic_hints = self.semantic_hints();
-                    tokio::task::spawn_blocking(move || {
+                    let report = tokio::task::spawn_blocking(move || {
                         dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
                             &path,
                             dims.as_deref(),
@@ -894,7 +918,9 @@ impl Profiler {
                     .await
                     .map_err(|e| DataProfilerError::StreamingError {
                         message: format!("Blocking task failed: {e}"),
-                    })?
+                    })??;
+                    self.validate_semantic_hints(&report)?;
+                    Ok(report)
                 }
                 #[cfg(not(feature = "parquet"))]
                 {
@@ -1005,13 +1031,15 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet-async")]
                 {
-                    return dataprof_parquet::analyze_parquet_async_http_dims_with_hints(
+                    let report = dataprof_parquet::analyze_parquet_async_http_dims_with_hints(
                         url,
                         &dataprof_parquet::ParquetConfig::default(),
                         self.config.quality_dimensions.clone(),
                         &self.semantic_hints(),
                     )
-                    .await;
+                    .await?;
+                    self.validate_semantic_hints(&report)?;
+                    Ok(report)
                 }
 
                 #[cfg(not(feature = "parquet-async"))]

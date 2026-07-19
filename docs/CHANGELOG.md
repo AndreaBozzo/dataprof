@@ -5,6 +5,26 @@ All notable changes to DataProfiler will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Semantic hints are now validated instead of silently dropped. A hint
+  (`positive_columns`, `identifier_columns`, `temporal_columns`) that names a
+  column absent from the schema raises an error listing the unmatched names and
+  the available columns; in Python this is a `ValueError`. A hint that names a
+  real column but binds to no value over the full data — a `positive` hint on a
+  column with no numeric values, a `temporal` hint on a column with no dates — is
+  also rejected. Identifier hints coerce the column's type, so they bind to any
+  existing column. (#420)
+- Reports now carry `semantic_hint_bindings`: per-column evidence of how each
+  hint bound (`column`, `kind`, `checked_values`, `matched_values`, `exact`).
+  Value-driven hints are measured over the same data the quality metrics
+  assessed; `exact` states whether that covered every row. A hint that matched
+  nothing is only rejected when the evidence is `exact`, so a sampled zero is
+  recorded but never mistaken for proof of absence. Additive report field —
+  older readers ignore it. (#420)
+
 ## [0.9.0] - 2026-07-09
 
 See [release-notes.md](release-notes.md) for the narrative 0.9.0 notes and the

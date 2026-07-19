@@ -4,6 +4,7 @@ pub mod analysis;
 pub mod arrow_export;
 pub mod columns;
 pub mod config;
+pub mod errors;
 pub mod partial;
 pub mod progress;
 pub mod sampling;

@@ -51,6 +51,7 @@
 mod accuracy;
 mod completeness;
 mod consistency;
+mod hint_binding;
 mod precision;
 #[cfg(test)]
 mod testing;
@@ -60,6 +61,7 @@ mod utils;
 mod validity;
 
 // Re-export public types for backward compatibility
+pub use hint_binding::compute_value_hint_bindings;
 pub use utils::{StatisticalValidation, validate_sample_size};
 
 use accuracy::AccuracyCalculator;

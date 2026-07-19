@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use dataprof::{AsyncSourceInfo, BytesSource, FileFormat, Profiler};
 
 use super::config::PyProfilerConfig;
+use super::errors::analysis_error_to_py;
 use super::partial::{PyRowCountEstimate, PySchemaResult};
 use super::types::PyProfileReport;
 
@@ -71,7 +72,7 @@ pub fn profile_bytes_async<'py>(
         let report = profiler
             .profile_stream(source)
             .await
-            .map_err(|e| PyRuntimeError::new_err(format!("Async profiling failed: {e}")))?;
+            .map_err(|e| analysis_error_to_py(&e))?;
 
         Ok(PyProfileReport::new(report))
     })
@@ -93,7 +94,7 @@ pub fn profile_file_async<'py>(
         let report = profiler
             .profile_file(&path)
             .await
-            .map_err(|e| PyRuntimeError::new_err(format!("Async file profiling failed: {e}")))?;
+            .map_err(|e| analysis_error_to_py(&e))?;
 
         Ok(PyProfileReport::new(report))
     })
@@ -177,7 +178,7 @@ pub fn profile_url_async<'py>(
         let report = profiler
             .profile_url(&url)
             .await
-            .map_err(|e| PyRuntimeError::new_err(format!("Async URL profiling failed: {e}")))?;
+            .map_err(|e| analysis_error_to_py(&e))?;
 
         Ok(PyProfileReport::new(report))
     })

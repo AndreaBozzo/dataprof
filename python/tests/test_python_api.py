@@ -2289,3 +2289,74 @@ class TestInvalidCount:
         r2 = dataprof.ProfileReport.from_json(r.to_json())
         assert r2["amount"].invalid_count == 1
         assert r2.to_dict() == r.to_dict()
+
+
+# ─────────────────────────────────────────────────
+#  Semantic hint validation (#420)
+# ─────────────────────────────────────────────────
+
+
+class TestSemanticHintValidation:
+    """Hints must bind or fail loudly, never vanish silently."""
+
+    def test_unknown_positive_hint_name_raises_valueerror(self):
+        with pytest.raises(ValueError) as exc:
+            dataprof.profile({"pressure": ["1", "2", "3"]}, positive_columns=["presure"])
+        msg = str(exc.value)
+        assert "presure" in msg
+        assert "positive_columns" in msg
+
+    def test_unknown_temporal_hint_name_raises_valueerror(self):
+        with pytest.raises(ValueError):
+            dataprof.profile(
+                {"observed_on": ["2020-01-01", "2021-01-01"]},
+                temporal_columns=["not_a_column"],
+            )
+
+    def test_unknown_identifier_hint_name_raises_valueerror(self):
+        with pytest.raises(ValueError):
+            dataprof.profile({"code": ["A", "B", "C"]}, identifier_columns=["id"])
+
+    def test_positive_hint_on_text_column_raises_valueerror(self):
+        with pytest.raises(ValueError) as exc:
+            dataprof.profile({"name": ["alice", "bob", "carol"]}, positive_columns=["name"])
+        assert "name" in str(exc.value)
+
+    def test_temporal_hint_on_non_date_column_raises_valueerror(self):
+        with pytest.raises(ValueError):
+            dataprof.profile({"name": ["alice", "bob", "carol"]}, temporal_columns=["name"])
+
+    def test_valid_positive_hint_records_binding(self):
+        report = dataprof.profile(
+            {"pressure": ["101325", "-500", "100900"]},
+            positive_columns=["pressure"],
+        )
+        bindings = report.semantic_hint_bindings
+        assert len(bindings) == 1
+        binding = bindings[0]
+        assert binding["column"] == "pressure"
+        assert binding["kind"] == "positive"
+        assert binding["matched_values"] == 3
+        assert binding["exact"] is True
+        # to_dict() carries the same evidence.
+        assert report.to_dict()["semantic_hint_bindings"] == bindings
+
+    def test_mixed_temporal_column_binds_without_error(self):
+        report = dataprof.profile(
+            {"event": ["2020-01-01", "not-a-date", "2022-06-15"]},
+            temporal_columns=["event"],
+        )
+        binding = next(b for b in report.semantic_hint_bindings if b["column"] == "event")
+        assert binding["checked_values"] == 3
+        assert binding["matched_values"] == 2
+
+    def test_identifier_hint_binds_on_text_column(self):
+        report = dataprof.profile({"code": ["X", "Y", "Z"]}, identifier_columns=["code"])
+        binding = next(b for b in report.semantic_hint_bindings if b["column"] == "code")
+        assert binding["kind"] == "identifier"
+        assert binding["matched_values"] == binding["checked_values"]
+
+    def test_hint_free_report_has_no_bindings(self):
+        report = dataprof.profile({"pressure": ["1", "2", "3"]})
+        assert report.semantic_hint_bindings == []
+        assert "semantic_hint_bindings" not in report.to_dict()

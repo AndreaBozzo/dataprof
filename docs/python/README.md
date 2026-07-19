@@ -353,6 +353,21 @@ Timeliness scoring is opt-in through `temporal_columns`; inferred date columns
 remain visible in column profiles but do not affect the quality score unless
 their names are explicitly selected.
 
+Hints are validated, never silently dropped. A hint that names a missing column
+raises `ValueError` listing the unmatched names and the available columns; a
+`positive_columns` hint on a column with no numeric values, or a
+`temporal_columns` hint on a column with no dates, is likewise rejected.
+`report.semantic_hint_bindings` records how each hint bound — `column`, `kind`,
+`checked_values`, `matched_values`, and `exact` (whether the counts covered
+every row or a sample):
+
+```python
+report = dp.profile("readings.csv", positive_columns=["pressure"])
+report.semantic_hint_bindings
+# [{"column": "pressure", "kind": "positive",
+#   "checked_values": 1000, "matched_values": 1000, "exact": True}]
+```
+
 **Selective dimensions** -- compute only what you need:
 
 ```python
