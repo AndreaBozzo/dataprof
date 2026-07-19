@@ -102,6 +102,7 @@ fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -
 /// Analyzer for processing multiple RecordBatches and building column profiles.
 pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
+    column_order: Vec<String>,
     total_rows: usize,
     row_tracker: BatchRowTracker,
     semantic_hints: SemanticHints,
@@ -111,6 +112,7 @@ impl RecordBatchAnalyzer {
     pub fn new() -> Self {
         Self {
             column_analyzers: HashMap::new(),
+            column_order: Vec::new(),
             total_rows: 0,
             row_tracker: BatchRowTracker::default(),
             semantic_hints: SemanticHints::default(),
@@ -133,9 +135,22 @@ impl RecordBatchAnalyzer {
             let positive_hint = self.semantic_hints.is_positive_column(&column_name);
             let temporal_hint = self.semantic_hints.is_temporal_column(&column_name);
 
-            let analyzer = self.column_analyzers.entry(column_name).or_insert_with(|| {
-                ColumnAnalyzer::with_value_hints(field.data_type(), positive_hint, temporal_hint)
-            });
+            if !self.column_analyzers.contains_key(&column_name) {
+                self.column_order.push(column_name.clone());
+                self.column_analyzers.insert(
+                    column_name.clone(),
+                    ColumnAnalyzer::with_value_hints(
+                        field.data_type(),
+                        positive_hint,
+                        temporal_hint,
+                    ),
+                );
+            }
+
+            let analyzer = self
+                .column_analyzers
+                .get_mut(&column_name)
+                .expect("column order and analyzers must stay in sync");
 
             analyzer.process_array(column)?;
         }
@@ -174,17 +189,21 @@ impl RecordBatchAnalyzer {
         locale: Option<&str>,
         semantic_hints: &SemanticHints,
     ) -> Vec<ColumnProfile> {
-        let mut profiles = Vec::new();
-        for (name, analyzer) in &self.column_analyzers {
-            profiles.push(analyzer.to_column_profile(
-                name.clone(),
-                skip_statistics,
-                skip_patterns,
-                locale,
-                semantic_hints,
-            ));
-        }
-        profiles
+        self.column_order
+            .iter()
+            .map(|name| {
+                self.column_analyzers
+                    .get(name)
+                    .expect("column order and analyzers must stay in sync")
+                    .to_column_profile(
+                        name.clone(),
+                        skip_statistics,
+                        skip_patterns,
+                        locale,
+                        semantic_hints,
+                    )
+            })
+            .collect()
     }
 
     pub fn create_sample_columns(&self) -> HashMap<String, Vec<String>> {
@@ -1086,6 +1105,36 @@ mod tests {
         assert_eq!(col.total_count, 5);
         assert_eq!(col.null_count, 5);
         assert_eq!(col.unique_count, Some(0));
+    }
+
+    #[test]
+    fn test_profiles_preserve_record_batch_column_order() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("num", ArrowDataType::Float64, false),
+            Field::new("cat", ArrowDataType::Utf8, false),
+            Field::new("when", ArrowDataType::Date32, false),
+            Field::new("big", ArrowDataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Float64Array::from(vec![1.5])),
+                Arc::new(StringArray::from(vec!["a"])),
+                Arc::new(Date32Array::from(vec![19_723])),
+                Arc::new(Int64Array::from(vec![1_i64 << 40])),
+            ],
+        )
+        .unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+
+        let names: Vec<_> = analyzer
+            .to_profiles(false, false, None)
+            .into_iter()
+            .map(|profile| profile.name)
+            .collect();
+        assert_eq!(names, ["num", "cat", "when", "big"]);
     }
 
     #[test]
