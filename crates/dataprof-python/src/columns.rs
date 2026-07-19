@@ -172,7 +172,7 @@ pub fn profile_columns(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
-            .with_semantic_hints(semantic_hints);
+            .with_semantic_hints(semantic_hints.clone());
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
         }
@@ -180,5 +180,8 @@ pub fn profile_columns(
         assembler = assembler.skip_quality();
     }
 
-    Ok(PyProfileReport::new(assembler.build()))
+    let report = assembler.build();
+    super::errors::validate_report_hints(&report, &semantic_hints)?;
+
+    Ok(PyProfileReport::new(report))
 }

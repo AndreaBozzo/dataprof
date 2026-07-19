@@ -28,9 +28,9 @@ pub use dataprof_core::{
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
     InputValidator, IsoQualityConfig, MetricPack, NumericStats, OutputFormat, ParquetMetadata,
     Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension, QualityScoreWeights,
-    Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints,
-    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextStats,
-    TruncationReason, ValidationError,
+    Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding,
+    SemanticHintKind, SemanticHints, StopCondition, StopEvaluator, StructureColumnSummary,
+    StructureReport, TextStats, TruncationReason, ValidationError,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,

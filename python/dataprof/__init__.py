@@ -1593,6 +1593,19 @@ class ProfileReport:
         return self._report.quality
 
     @property
+    def semantic_hint_bindings(self) -> list[dict[str, Any]]:
+        """Per-column evidence of how each semantic hint bound to the data.
+
+        Empty unless ``positive_columns``/``identifier_columns``/
+        ``temporal_columns`` were supplied. Each entry has ``column``, ``kind``,
+        ``checked_values``, ``matched_values``, and ``exact``. A hint proven
+        inert over the full data raises before a report is returned, so a report
+        only ever carries bindings that matched something or whose evidence was
+        sampled.
+        """
+        return list(getattr(self._report, "semantic_hint_bindings", []))
+
+    @property
     def low_sample_warning(self) -> bool:
         """True when the sample used was below the recommended minimum (10 rows).
 
@@ -1698,7 +1711,7 @@ class ProfileReport:
             if precision is not None:
                 quality_dict["precision"] = precision
 
-        return {
+        document = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "source": self._report.source,
             "source_type": self._report.source_type,
@@ -1719,6 +1732,12 @@ class ProfileReport:
             "columns": cols,
             "quality": quality_dict,
         }
+        # Additive: only present when hints were supplied, so hint-free reports
+        # keep their existing shape.
+        bindings = self.semantic_hint_bindings
+        if bindings:
+            document["semantic_hint_bindings"] = bindings
+        return document
 
     def to_json(self, indent: int = 2) -> str:
         """Export the report as a JSON string."""

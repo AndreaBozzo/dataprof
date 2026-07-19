@@ -8,11 +8,12 @@
 use std::collections::HashMap;
 
 use dataprof_core::{
-    ColumnProfile, DataSource, ExecutionMetadata, QualityDimension, SemanticHints,
+    ColumnProfile, DataSource, DataType, ExecutionMetadata, QualityDimension, SemanticHintBinding,
+    SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
     MetricConfidence, MetricsCalculator, QualityAssessment, RowDuplicateSummary,
-    analysis::metrics::BifurcatedResult,
+    analysis::metrics::BifurcatedResult, compute_value_hint_bindings,
 };
 
 use crate::ProfileReport;
@@ -98,8 +99,54 @@ impl ReportAssembler {
         } else {
             None
         };
+        let bindings = self.compute_hint_bindings();
 
         ProfileReport::new(self.source, self.columns, self.execution, quality)
+            .with_semantic_hint_bindings(bindings)
+    }
+
+    /// Measure how each semantic hint bound to the data.
+    ///
+    /// Identifier binding is structural — the hint coerces the column's type, so
+    /// it is read off the column profiles and is always exact. Positive and
+    /// temporal hints are value-driven; they are measured over the same data the
+    /// quality metrics assessed, tagged `exact` only when that data covers every
+    /// row (see [`Self::is_streaming_context`]).
+    fn compute_hint_bindings(&self) -> Vec<SemanticHintBinding> {
+        if self.semantic_hints.is_empty() {
+            return Vec::new();
+        }
+
+        let mut bindings = Vec::new();
+        for column in &self.semantic_hints.identifier_columns {
+            if let Some(profile) = self.columns.iter().find(|c| &c.name == column) {
+                let checked = profile.total_count.saturating_sub(profile.null_count);
+                let matched = if profile.data_type == DataType::Identifier {
+                    checked
+                } else {
+                    0
+                };
+                bindings.push(SemanticHintBinding {
+                    column: column.clone(),
+                    kind: SemanticHintKind::Identifier,
+                    checked_values: checked,
+                    matched_values: matched,
+                    exact: true,
+                });
+            }
+        }
+
+        if let Some(data) = &self.quality_data {
+            let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
+            let exact = !self.is_streaming_context(sample_size);
+            bindings.extend(compute_value_hint_bindings(
+                data,
+                &self.semantic_hints,
+                exact,
+            ));
+        }
+
+        bindings
     }
 
     fn compute_quality(&self, data: &HashMap<String, Vec<String>>) -> Option<QualityAssessment> {

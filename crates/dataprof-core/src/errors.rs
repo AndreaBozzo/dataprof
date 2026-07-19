@@ -61,6 +61,9 @@ pub enum DataProfilerError {
     #[error("Invalid configuration: {message}\n{suggestion}")]
     InvalidConfiguration { message: String, suggestion: String },
 
+    #[error("Invalid semantic hint: {message}\n{suggestion}")]
+    InvalidSemanticHint { message: String, suggestion: String },
+
     #[error(
         "Data quality issue detected: {issue}\nImpact: {impact}\nRecommendation: {recommendation}"
     )]
@@ -419,6 +422,7 @@ impl DataProfilerError {
             DataProfilerError::UnsupportedFormat { .. } => "unsupported_format",
             DataProfilerError::MemoryLimitExceeded => "memory_limit",
             DataProfilerError::InvalidConfiguration { .. } => "configuration",
+            DataProfilerError::InvalidSemanticHint { .. } => "semantic_hint",
             DataProfilerError::DataQualityIssue { .. } => "data_quality",
             DataProfilerError::StreamingError { .. } => "streaming",
             DataProfilerError::SimdUnavailable { .. } => "simd",

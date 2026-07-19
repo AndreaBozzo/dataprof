@@ -1,4 +1,3 @@
-use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
@@ -6,6 +5,7 @@ use std::path::Path;
 use dataprof::{Profiler, list_patterns as dataprof_list_patterns};
 
 use super::config::PyProfilerConfig;
+use super::errors::analysis_error_to_py;
 use super::types::PyProfileReport;
 
 /// Analyze a file and return a full profile report.
@@ -30,7 +30,7 @@ pub fn analyze_file(
     let path = path.to_string();
     let report = py
         .detach(|| profiler.analyze_file(Path::new(&path)))
-        .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
+        .map_err(|e| analysis_error_to_py(&e))?;
 
     Ok(PyProfileReport::new(report))
 }

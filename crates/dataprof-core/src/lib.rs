@@ -44,7 +44,7 @@ pub use sampling::{
     ChunkSize, MultiReservoirSampler, ReservoirSampler, ReservoirStats, SamplingState,
     SamplingStrategy, WeightedReservoirSampler,
 };
-pub use semantic::SemanticHints;
+pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 pub use source::{
     DataFrameLibrary, DataSource, FileFormat, ParquetMetadata, QueryEngine, StreamSourceSystem,
 };

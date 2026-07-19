@@ -112,6 +112,31 @@ exact-then-HLL distinct estimator that backs `unique_count`. As a result:
 gained a `row_duplicates: Option<RowDuplicateSummary>` parameter; pass `None`
 to keep the previous behavior.
 
+## Semantic hints are validated, not silently dropped
+
+A semantic hint (`positive_columns`, `identifier_columns`, `temporal_columns`)
+is the user's chosen alternative to overconfident inference, so a hint that
+cannot bind is now an error instead of a silent no-op:
+
+- A hint that names a column not in the schema raises, listing the unmatched
+  names and the available columns. In Python this is a `ValueError`.
+- A hint that names a real column but binds to no value over the full data —
+  a `positive` hint on a column with no numeric values, a `temporal` hint on a
+  column with no dates — also raises. Identifier hints coerce the column's type,
+  so they bind to any existing column and are only rejected for an unknown name.
+- Mixed columns still bind: a `temporal` hint on a column where only some values
+  parse as dates is assessed, not rejected.
+
+Reports gained `semantic_hint_bindings`, per-column evidence of how each hint
+bound (`column`, `kind`, `checked_values`, `matched_values`, `exact`).
+Value-driven hints are measured over the same data the quality metrics assessed;
+`exact` states whether that covered every row. A hint that matched nothing is
+only rejected when the evidence is `exact`, so on a sampled stream a zero match
+is recorded as evidence rather than mistaken for proof of absence — surfacing
+that universally would require full-stream binding accounting, which pairs
+naturally with the inferred-date accounting work (#430). The field is additive;
+older readers ignore it.
+
 ---
 
 # DataProf 0.9.0 — Release Notes
