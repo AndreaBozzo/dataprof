@@ -1,6 +1,7 @@
 use std::io::Write;
 
-use dataprof::{ColumnStats, DataProfilerError, DataType, EngineType, Profiler};
+use dataprof::{ColumnStats, DataProfilerError, DataType, EngineType, MetricPack, Profiler};
+use dataprof::{SamplingStrategy, StopCondition};
 use tempfile::NamedTempFile;
 
 fn write_csv(content: &str) -> NamedTempFile {
@@ -302,4 +303,110 @@ fn multiple_unknown_hint_names_are_reported_together() {
         .temporal_columns(vec!["nope_b".to_string()])
         .analyze_file(csv.path());
     assert_hint_error(result, &["'nope_a'", "'nope_b'"]);
+}
+
+#[test]
+fn inert_positive_hint_is_rejected_beyond_stream_reservoir() {
+    let mut csv = String::from("value\n");
+    for _ in 0..10_050 {
+        csv.push_str("not-a-number\n");
+    }
+    let csv = write_csv(&csv);
+
+    let result = Profiler::new()
+        .engine(EngineType::Incremental)
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path());
+
+    assert_hint_error(result, &["'value'", "positive_columns", "0 of 10050"]);
+}
+
+#[test]
+fn full_stream_match_prevents_false_inert_error() {
+    let mut csv = String::from("value\n1\n");
+    for _ in 0..10_050 {
+        csv.push_str("not-a-number\n");
+    }
+    let csv = write_csv(&csv);
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path())
+        .expect("one full-stream match must make the hint active");
+
+    let binding = report
+        .semantic_hint_bindings
+        .iter()
+        .find(|binding| binding.column == "value")
+        .expect("positive binding");
+    assert_eq!(binding.checked_values, 10_051);
+    assert_eq!(binding.matched_values, 1);
+    assert!(binding.exact);
+}
+
+#[test]
+fn value_driven_hint_without_quality_is_rejected() {
+    let csv = write_csv("value\n1\n2\n");
+    let result = Profiler::new()
+        .engine(EngineType::Incremental)
+        .metric_packs(vec![MetricPack::Schema])
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path());
+
+    assert_hint_error(result, &["positive_columns", "Quality metric pack"]);
+}
+
+#[test]
+fn identifier_hint_remains_usable_without_quality() {
+    let csv = write_csv("code\n1\n2\n");
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .metric_packs(vec![MetricPack::Schema])
+        .identifier_columns(vec!["code".to_string()])
+        .analyze_file(csv.path())
+        .expect("identifier hints affect typing without quality");
+
+    assert!(report.quality.is_none());
+    assert_eq!(report.column_profiles[0].data_type, DataType::Identifier);
+}
+
+#[test]
+fn zero_match_on_row_sample_is_not_treated_as_proven_inert() {
+    let csv = write_csv("value\ntext\n1\nmore-text\n");
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .sampling(SamplingStrategy::Systematic { interval: 2 })
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path())
+        .expect("unseen rows may contain a match");
+
+    let binding = report
+        .semantic_hint_bindings
+        .iter()
+        .find(|binding| binding.column == "value")
+        .expect("positive binding");
+    assert_eq!(binding.matched_values, 0);
+    assert!(!binding.exact);
+    assert!(!binding.is_proven_inert());
+}
+
+#[test]
+fn zero_match_before_early_stop_is_not_treated_as_proven_inert() {
+    let csv = write_csv("value\ntext\nmore-text\n1\n");
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .stop_when(StopCondition::MaxRows(2))
+        .positive_columns(vec!["value".to_string()])
+        .analyze_file(csv.path())
+        .expect("unread rows may contain a match");
+
+    let binding = report
+        .semantic_hint_bindings
+        .iter()
+        .find(|binding| binding.column == "value")
+        .expect("positive binding");
+    assert_eq!(binding.matched_values, 0);
+    assert!(!binding.exact);
+    assert!(!binding.is_proven_inert());
 }

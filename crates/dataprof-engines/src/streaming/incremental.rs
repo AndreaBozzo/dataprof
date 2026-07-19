@@ -112,7 +112,8 @@ impl IncrementalProfiler {
         let chunk_size_bytes = self.calculate_optimal_chunk_size(file_size_bytes);
 
         // Initialize streaming statistics collection
-        let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb);
+        let mut column_stats = StreamingColumnCollection::memory_limit(self.memory.limit_mb)
+            .with_semantic_hints(&self.semantic_hints);
 
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
@@ -339,6 +340,7 @@ impl IncrementalProfiler {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_row_duplicates(column_stats.row_duplicate_summary())
+                .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
                 .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {
                 assembler = assembler.with_requested_dimensions(dims.clone());

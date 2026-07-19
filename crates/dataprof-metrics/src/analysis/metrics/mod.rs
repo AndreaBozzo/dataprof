@@ -61,7 +61,7 @@ mod utils;
 mod validity;
 
 // Re-export public types for backward compatibility
-pub use hint_binding::compute_value_hint_bindings;
+pub use hint_binding::{compute_value_hint_bindings, value_matches_hint};
 pub use utils::{StatisticalValidation, validate_sample_size};
 
 use accuracy::AccuracyCalculator;

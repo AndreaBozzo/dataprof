@@ -269,7 +269,7 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
             message: format!("Failed to build Parquet stream: {}", e),
         })?;
 
-    let mut analyzer = RecordBatchAnalyzer::new();
+    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
 
     while let Some(batch_result) = stream.next().await {
         let batch = batch_result.map_err(|e| DataProfilerError::ParquetError {
@@ -309,6 +309,7 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
     .with_quality_data(sample_columns)
+    .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
     .with_semantic_hints(semantic_hints.clone());
     if let Some(dims) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dims);

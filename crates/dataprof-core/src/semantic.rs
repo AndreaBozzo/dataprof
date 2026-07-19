@@ -160,6 +160,26 @@ impl SemanticHints {
         })
     }
 
+    /// Reject value-driven hints when the Quality metric pack did not run.
+    ///
+    /// Positive and temporal hints only affect quality calculators. Accepting
+    /// them without a quality assessment would make the configuration look
+    /// effective while producing neither metrics nor binding evidence.
+    pub fn validate_quality_usage(&self, quality_computed: bool) -> Result<(), DataProfilerError> {
+        if quality_computed
+            || (self.positive_columns.is_empty() && self.temporal_columns.is_empty())
+        {
+            return Ok(());
+        }
+
+        Err(DataProfilerError::InvalidSemanticHint {
+            message: "positive_columns and temporal_columns require the Quality metric pack"
+                .to_string(),
+            suggestion: "Include MetricPack::Quality (\"quality\" in Python), or remove the value-driven hint. Identifier hints remain usable without quality because they affect column typing."
+                .to_string(),
+        })
+    }
+
     /// Fail loudly when a hint names a real column but bound to nothing.
     ///
     /// Only bindings that were assessed over the full data

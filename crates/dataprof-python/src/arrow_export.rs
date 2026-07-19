@@ -386,16 +386,16 @@ pub fn profile_dataframe(
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
+    // decode-audit: no-data — absent config simply means no semantic hints.
+    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
 
     // Process using existing RecordBatchAnalyzer
-    let mut analyzer = RecordBatchAnalyzer::new();
+    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     analyzer
         .process_batch(&batch)
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
-    // decode-audit: no-data — absent config simply means no semantic hints.
-    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = if include_quality {
@@ -435,6 +435,7 @@ pub fn profile_dataframe(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
+            .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
             .with_semantic_hints(semantic_hints.clone());
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
@@ -444,7 +445,7 @@ pub fn profile_dataframe(
     }
 
     let report = assembler.build();
-    super::errors::validate_report_hints(&report, &semantic_hints)?;
+    super::errors::validate_report_hints(&report, &semantic_hints, include_quality)?;
 
     Ok(super::types::PyProfileReport::new(report))
 }
@@ -493,6 +494,8 @@ pub fn profile_arrow(
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
+    // decode-audit: no-data — absent config simply means no semantic hints.
+    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
 
     // Estimate memory from pyarrow's nbytes
     // decode-audit: no-data — memory estimate is best-effort metadata; failure
@@ -503,14 +506,12 @@ pub fn profile_arrow(
         .ok();
 
     // Process using existing RecordBatchAnalyzer
-    let mut analyzer = RecordBatchAnalyzer::new();
+    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     analyzer
         .process_batch(&batch)
         .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
-    // decode-audit: no-data — absent config simply means no semantic hints.
-    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = analyzer.create_sample_columns();
@@ -542,6 +543,7 @@ pub fn profile_arrow(
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
+            .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
             .with_semantic_hints(semantic_hints.clone());
         if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
             assembler = assembler.with_requested_dimensions(dims);
@@ -551,7 +553,7 @@ pub fn profile_arrow(
     }
 
     let report = assembler.build();
-    super::errors::validate_report_hints(&report, &semantic_hints)?;
+    super::errors::validate_report_hints(&report, &semantic_hints, include_quality)?;
 
     Ok(super::types::PyProfileReport::new(report))
 }

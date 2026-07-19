@@ -181,7 +181,7 @@ pub fn profile_columns(
     }
 
     let report = assembler.build();
-    super::errors::validate_report_hints(&report, &semantic_hints)?;
+    super::errors::validate_report_hints(&report, &semantic_hints, include_quality)?;
 
     Ok(PyProfileReport::new(report))
 }

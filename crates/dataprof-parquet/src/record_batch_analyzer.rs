@@ -4,7 +4,9 @@ use anyhow::Result;
 use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
-use dataprof_core::{ColumnProfile, DataType, SemanticHints};
+use dataprof_core::{
+    ColumnProfile, DataType, SemanticHintBinding, SemanticHintKind, SemanticHints,
+};
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{RowDuplicateSummary, infer_type};
@@ -102,6 +104,7 @@ pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
     total_rows: usize,
     row_tracker: BatchRowTracker,
+    semantic_hints: SemanticHints,
 }
 
 impl RecordBatchAnalyzer {
@@ -110,7 +113,13 @@ impl RecordBatchAnalyzer {
             column_analyzers: HashMap::new(),
             total_rows: 0,
             row_tracker: BatchRowTracker::default(),
+            semantic_hints: SemanticHints::default(),
         }
+    }
+
+    pub fn with_semantic_hints(mut self, hints: &SemanticHints) -> Self {
+        self.semantic_hints = hints.clone();
+        self
     }
 
     pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
@@ -121,11 +130,12 @@ impl RecordBatchAnalyzer {
             let schema = batch.schema();
             let field = schema.field(column_index);
             let column_name = field.name().to_string();
+            let positive_hint = self.semantic_hints.is_positive_column(&column_name);
+            let temporal_hint = self.semantic_hints.is_temporal_column(&column_name);
 
-            let analyzer = self
-                .column_analyzers
-                .entry(column_name)
-                .or_insert_with(|| ColumnAnalyzer::new(field.data_type()));
+            let analyzer = self.column_analyzers.entry(column_name).or_insert_with(|| {
+                ColumnAnalyzer::with_value_hints(field.data_type(), positive_hint, temporal_hint)
+            });
 
             analyzer.process_array(column)?;
         }
@@ -184,6 +194,29 @@ impl RecordBatchAnalyzer {
         }
         samples
     }
+
+    /// Exact value-driven semantic-hint evidence over every processed batch.
+    pub fn semantic_hint_bindings(&self) -> Vec<SemanticHintBinding> {
+        let positive = self
+            .semantic_hints
+            .positive_columns
+            .iter()
+            .filter_map(|column| {
+                self.column_analyzers
+                    .get(column)
+                    .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::Positive))
+            });
+        let temporal = self
+            .semantic_hints
+            .temporal_columns
+            .iter()
+            .filter_map(|column| {
+                self.column_analyzers
+                    .get(column)
+                    .map(|analyzer| analyzer.hint_binding(column, SemanticHintKind::Temporal))
+            });
+        positive.chain(temporal).collect()
+    }
 }
 
 impl Default for RecordBatchAnalyzer {
@@ -208,10 +241,23 @@ pub struct ColumnAnalyzer {
     true_count: usize,
     false_count: usize,
     sample_values: StreamReservoirSampler,
+    positive_hint: bool,
+    temporal_hint: bool,
+    hint_checked_values: usize,
+    positive_matched_values: usize,
+    temporal_matched_values: usize,
 }
 
 impl ColumnAnalyzer {
     pub fn new(data_type: &arrow::datatypes::DataType) -> Self {
+        Self::with_value_hints(data_type, false, false)
+    }
+
+    fn with_value_hints(
+        data_type: &arrow::datatypes::DataType,
+        positive_hint: bool,
+        temporal_hint: bool,
+    ) -> Self {
         Self {
             data_type: data_type.clone(),
             total_count: 0,
@@ -228,6 +274,43 @@ impl ColumnAnalyzer {
             true_count: 0,
             false_count: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
+            positive_hint,
+            temporal_hint,
+            hint_checked_values: 0,
+            positive_matched_values: 0,
+            temporal_matched_values: 0,
+        }
+    }
+
+    fn offer_sample(&mut self, value: String) {
+        if !is_null_like_token(value.trim()) && (self.positive_hint || self.temporal_hint) {
+            self.hint_checked_values += 1;
+            if self.positive_hint
+                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Positive)
+            {
+                self.positive_matched_values += 1;
+            }
+            if self.temporal_hint
+                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal)
+            {
+                self.temporal_matched_values += 1;
+            }
+        }
+        self.sample_values.offer(value);
+    }
+
+    fn hint_binding(&self, column: &str, kind: SemanticHintKind) -> SemanticHintBinding {
+        let matched_values = match kind {
+            SemanticHintKind::Positive => self.positive_matched_values,
+            SemanticHintKind::Temporal => self.temporal_matched_values,
+            SemanticHintKind::Identifier => self.hint_checked_values,
+        };
+        SemanticHintBinding {
+            column: column.to_string(),
+            kind,
+            checked_values: self.hint_checked_values,
+            matched_values,
+            exact: true,
         }
     }
 
@@ -396,7 +479,7 @@ impl ColumnAnalyzer {
                 let value = array.value(index);
                 self.update_numeric_stats(value);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -409,7 +492,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -422,7 +505,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -435,7 +518,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -448,7 +531,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -461,7 +544,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -474,7 +557,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -487,7 +570,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -500,7 +583,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -513,7 +596,7 @@ impl ColumnAnalyzer {
                 let value_f64 = value as f64;
                 self.update_numeric_stats(value_f64);
                 self.cardinality.insert_owned(value.to_string());
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -537,7 +620,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(number);
                 }
                 self.cardinality.insert(value);
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -558,7 +641,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(number);
                 }
                 self.cardinality.insert(value);
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -575,7 +658,7 @@ impl ColumnAnalyzer {
                 }
                 let value_str = if value { "True" } else { "False" };
                 self.cardinality.insert(value_str);
-                self.sample_values.offer(value_str.to_string());
+                self.offer_sample(value_str.to_string());
             }
         }
         Ok(())
@@ -588,7 +671,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(days as f64);
                 let date_str = format!("1970-01-01+{}days", days);
                 self.cardinality.insert(&date_str);
-                self.sample_values.offer(date_str);
+                self.offer_sample(date_str);
             }
         }
         Ok(())
@@ -601,7 +684,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(millis as f64);
                 let datetime_str = format!("1970-01-01T00:00:00.000+{}ms", millis);
                 self.cardinality.insert(&datetime_str);
-                self.sample_values.offer(datetime_str);
+                self.offer_sample(datetime_str);
             }
         }
         Ok(())
@@ -620,7 +703,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    self.sample_values.offer(ts_str);
+                    self.offer_sample(ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -633,7 +716,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    self.sample_values.offer(ts_str);
+                    self.offer_sample(ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -646,7 +729,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    self.sample_values.offer(ts_str);
+                    self.offer_sample(ts_str);
                 }
             }
         } else if let Some(ts_array) = array
@@ -659,7 +742,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(ts_value as f64);
                     let ts_str = format!("ts:{}", ts_value);
                     self.cardinality.insert(&ts_str);
-                    self.sample_values.offer(ts_str);
+                    self.offer_sample(ts_str);
                 }
             }
         }
@@ -674,7 +757,7 @@ impl ColumnAnalyzer {
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
                 self.cardinality.insert_owned(format!("len:{}", len));
-                self.sample_values.offer(format!("<binary:{} bytes>", len));
+                self.offer_sample(format!("<binary:{} bytes>", len));
             }
         }
         Ok(())
@@ -687,7 +770,7 @@ impl ColumnAnalyzer {
                 let len = bytes.len();
                 self.update_text_stats(&format!("<binary:{}>", len));
                 self.cardinality.insert_owned(format!("len:{}", len));
-                self.sample_values.offer(format!("<binary:{} bytes>", len));
+                self.offer_sample(format!("<binary:{} bytes>", len));
             }
         }
         Ok(())
@@ -700,7 +783,7 @@ impl ColumnAnalyzer {
                 self.update_numeric_stats(decimal_value as f64);
                 let decimal_str = format!("dec128:{}", decimal_value);
                 self.cardinality.insert(&decimal_str);
-                self.sample_values.offer(decimal_str);
+                self.offer_sample(decimal_str);
             }
         }
         Ok(())
@@ -712,7 +795,7 @@ impl ColumnAnalyzer {
                 let decimal_str = format!("dec256:value_{}", index);
                 self.update_text_stats(&decimal_str);
                 self.cardinality.insert(&decimal_str);
-                self.sample_values.offer(decimal_str);
+                self.offer_sample(decimal_str);
             }
         }
         Ok(())
@@ -731,7 +814,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ns", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.sample_values.offer(dur_str);
+                    self.offer_sample(dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -744,7 +827,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}us", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.sample_values.offer(dur_str);
+                    self.offer_sample(dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -757,7 +840,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}ms", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.sample_values.offer(dur_str);
+                    self.offer_sample(dur_str);
                 }
             }
         } else if let Some(dur_array) = array
@@ -770,7 +853,7 @@ impl ColumnAnalyzer {
                     self.update_numeric_stats(dur_value as f64);
                     let dur_str = format!("dur:{}s", dur_value);
                     self.cardinality.insert(&dur_str);
-                    self.sample_values.offer(dur_str);
+                    self.offer_sample(dur_str);
                 }
             }
         }
@@ -785,7 +868,7 @@ impl ColumnAnalyzer {
                     if !array.is_null(index) {
                         let value_str = formatter.value(index).to_string();
                         self.update_text_stats(&value_str);
-                        self.sample_values.offer(value_str.clone());
+                        self.offer_sample(value_str.clone());
                         self.cardinality.insert_owned(value_str);
                     }
                 }
@@ -795,7 +878,7 @@ impl ColumnAnalyzer {
                     if !array.is_null(index) {
                         let value_str = format!("<{}:value_{}>", array.data_type(), index);
                         self.update_text_stats(&value_str);
-                        self.sample_values.offer(value_str.clone());
+                        self.offer_sample(value_str.clone());
                         self.cardinality.insert_owned(value_str);
                     }
                 }

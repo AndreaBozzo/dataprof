@@ -190,7 +190,7 @@ pub fn analyze_parquet_with_config_dims_and_hints(
             message: format!("Failed to build Parquet reader: {}", error),
         })?;
 
-    let mut analyzer = RecordBatchAnalyzer::new();
+    let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
     for batch_result in reader {
         let batch = batch_result.map_err(|error| DataProfilerError::ParquetError {
             message: format!("Failed to read Parquet batch: {}", error),
@@ -237,6 +237,7 @@ pub fn analyze_parquet_with_config_dims_and_hints(
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
     .with_quality_data(sample_columns)
+    .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
     .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
