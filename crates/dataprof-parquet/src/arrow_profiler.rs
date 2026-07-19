@@ -2,6 +2,7 @@ use crate::record_batch_analyzer::BatchRowTracker;
 use arrow::array::*;
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
+use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat,
     MetricPack, PeakMemorySampler, QualityDimension, SemanticHints, TruncationReason,
@@ -302,6 +303,7 @@ struct ColumnAnalyzer {
     false_count: usize,
     // Reservoir sample for pattern detection and order statistics
     sample_values: StreamReservoirSampler,
+    date_matched_values: usize,
 }
 
 impl ColumnAnalyzer {
@@ -322,7 +324,31 @@ impl ColumnAnalyzer {
             true_count: 0,
             false_count: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
+            date_matched_values: 0,
         }
+    }
+
+    fn offer_sample(&mut self, value: String) {
+        if self.should_track_date_matches()
+            && dataprof_metrics::value_matches_hint(
+                &value,
+                dataprof_core::SemanticHintKind::Temporal,
+            )
+        {
+            self.date_matched_values += 1;
+        }
+        self.sample_values.offer(value);
+    }
+
+    fn should_track_date_matches(&self) -> bool {
+        matches!(
+            &self.data_type,
+            arrow::datatypes::DataType::Utf8
+                | arrow::datatypes::DataType::LargeUtf8
+                | arrow::datatypes::DataType::Date32
+                | arrow::datatypes::DataType::Date64
+                | arrow::datatypes::DataType::Timestamp(_, _)
+        )
     }
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
@@ -467,7 +493,7 @@ impl ColumnAnalyzer {
                 self.cardinality.insert_owned(value.to_string());
 
                 // Keep samples for pattern detection
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -481,7 +507,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert_owned(value.to_string());
 
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -495,7 +521,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert_owned(value.to_string());
 
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -509,7 +535,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert_owned(value.to_string());
 
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -535,7 +561,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(value);
 
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -561,7 +587,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(value);
 
-                self.sample_values.offer(value.to_string());
+                self.offer_sample(value.to_string());
             }
         }
         Ok(())
@@ -580,105 +606,59 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(value_str);
 
-                self.sample_values.offer(value_str.to_string());
+                self.offer_sample(value_str.to_string());
             }
         }
         Ok(())
     }
 
     fn process_date32_array(&mut self, array: &Date32Array) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                // Date32 represents days since epoch
-                let date_str = format!("date32:{}", value);
-                self.update_text_stats(&date_str);
-
-                self.cardinality.insert(&date_str);
-
-                self.sample_values.offer(date_str);
-            }
-        }
-        Ok(())
+        self.process_formatted_temporal_array(array)
     }
 
     fn process_date64_array(&mut self, array: &Date64Array) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                // Date64 represents milliseconds since epoch
-                let date_str = format!("date64:{}", value);
-                self.update_text_stats(&date_str);
-
-                self.cardinality.insert(&date_str);
-
-                self.sample_values.offer(date_str);
-            }
-        }
-        Ok(())
+        self.process_formatted_temporal_array(array)
     }
 
     fn process_timestamp_array(
         &mut self,
         array: &TimestampNanosecondArray,
     ) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let ts_str = format!("timestamp_ns:{}", value);
-                self.update_text_stats(&ts_str);
-
-                self.cardinality.insert(&ts_str);
-
-                self.sample_values.offer(ts_str);
-            }
-        }
-        Ok(())
+        self.process_formatted_temporal_array(array)
     }
 
     fn process_timestamp_micro_array(
         &mut self,
         array: &TimestampMicrosecondArray,
     ) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let ts_str = format!("timestamp_us:{}", value);
-                self.update_text_stats(&ts_str);
-
-                self.cardinality.insert(&ts_str);
-
-                self.sample_values.offer(ts_str);
-            }
-        }
-        Ok(())
+        self.process_formatted_temporal_array(array)
     }
 
     fn process_timestamp_milli_array(
         &mut self,
         array: &TimestampMillisecondArray,
     ) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let ts_str = format!("timestamp_ms:{}", value);
-                self.update_text_stats(&ts_str);
-
-                self.cardinality.insert(&ts_str);
-
-                self.sample_values.offer(ts_str);
-            }
-        }
-        Ok(())
+        self.process_formatted_temporal_array(array)
     }
 
     fn process_timestamp_second_array(
         &mut self,
         array: &TimestampSecondArray,
     ) -> Result<(), DataProfilerError> {
+        self.process_formatted_temporal_array(array)
+    }
+
+    fn process_formatted_temporal_array(
+        &mut self,
+        array: &dyn Array,
+    ) -> Result<(), DataProfilerError> {
+        let formatter = ArrayFormatter::try_new(array, &Default::default())?;
         for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let ts_str = format!("timestamp_s:{}", value);
-                self.update_text_stats(&ts_str);
-
-                self.cardinality.insert(&ts_str);
-
-                self.sample_values.offer(ts_str);
+            if !array.is_null(i) {
+                let value = formatter.value(i).to_string();
+                self.update_text_stats(&value);
+                self.cardinality.insert(&value);
+                self.offer_sample(value);
             }
         }
         Ok(())
@@ -701,7 +681,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&hex_str);
 
-                self.sample_values.offer(hex_str);
+                self.offer_sample(hex_str);
             }
         }
         Ok(())
@@ -727,7 +707,7 @@ impl ColumnAnalyzer {
 
                 self.cardinality.insert(&hex_str);
 
-                self.sample_values.offer(hex_str);
+                self.offer_sample(hex_str);
             }
         }
         Ok(())
@@ -744,7 +724,7 @@ impl ColumnAnalyzer {
                     .unwrap_or_else(|_| format!("<type:{}>", array.data_type()));
                 self.update_text_stats(&value);
 
-                self.sample_values.offer(value.clone());
+                self.offer_sample(value.clone());
 
                 self.cardinality.insert_owned(value);
             }
@@ -842,6 +822,7 @@ impl ColumnAnalyzer {
             skip_patterns,
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
+            exact_date_matches: Some(self.date_matched_values),
         })
     }
 
@@ -855,6 +836,9 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Int16
             | arrow::datatypes::DataType::Int8 => DataType::Integer,
             arrow::datatypes::DataType::Boolean => DataType::Boolean,
+            arrow::datatypes::DataType::Date32
+            | arrow::datatypes::DataType::Date64
+            | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
             arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
                 // Reuse the shared inference logic for consistent type detection
                 // across all engines (dates before numerics, 100% match threshold)

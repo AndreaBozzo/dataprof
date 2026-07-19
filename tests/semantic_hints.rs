@@ -140,21 +140,21 @@ fn identifier_columns_drive_key_uniqueness_without_name_guessing() {
 }
 
 #[test]
-fn temporal_columns_gate_timeliness_scoring() {
+fn inferred_date_columns_are_assessed_without_a_hint() {
     let csv = write_csv("observed_on,value\n2020-01-01,1\n2021-01-01,2\n2022-01-01,3\n");
 
     let without_hint = Profiler::new()
         .engine(EngineType::Incremental)
         .analyze_file(csv.path())
         .expect("profile should succeed");
-    assert_eq!(
+    assert!(
         without_hint
             .quality
             .as_ref()
             .expect("quality")
             .metrics
-            .timeliness_score(),
-        None
+            .timeliness_score()
+            .is_some()
     );
 
     let with_hint = Profiler::new()
@@ -172,6 +172,53 @@ fn temporal_columns_gate_timeliness_scoring() {
             .date_values_checked,
         3
     );
+}
+
+#[test]
+fn invalid_calendar_date_is_visible_and_lowers_timeliness() {
+    let csv = write_csv(
+        "observed_on\n2024-01-01\n2024-02-02\n2024-03-03\n2024-04-04\n2024-05-05\n2024-06-06\n2024-07-07\n2024-08-08\n2024-13-45\n",
+    );
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(csv.path())
+        .expect("mostly valid date column should profile");
+    let column = report
+        .column_profiles
+        .iter()
+        .find(|column| column.name == "observed_on")
+        .expect("date column");
+    assert_eq!(column.data_type, DataType::Date);
+    assert_eq!(column.invalid_count, Some(1));
+
+    let metrics = &report.quality.as_ref().expect("quality").metrics;
+    let timeliness = metrics.timeliness.as_ref().expect("timeliness metrics");
+    assert_eq!(timeliness.date_values_checked, 9);
+    assert_eq!(timeliness.invalid_date_values, 1);
+    assert!(metrics.timeliness_score().expect("timeliness score") < 100.0);
+}
+
+#[test]
+fn date_invalid_count_covers_values_beyond_stream_reservoir() {
+    let mut csv = String::from("observed_on\n2024-13-45\n");
+    for _ in 0..10_050 {
+        csv.push_str("2024-01-01\n");
+    }
+    let csv = write_csv(&csv);
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(csv.path())
+        .expect("date stream should profile");
+    let column = report
+        .column_profiles
+        .iter()
+        .find(|column| column.name == "observed_on")
+        .expect("date column");
+
+    assert_eq!(column.data_type, DataType::Date);
+    assert_eq!(column.invalid_count, Some(1));
 }
 
 // ---------------------------------------------------------------------------

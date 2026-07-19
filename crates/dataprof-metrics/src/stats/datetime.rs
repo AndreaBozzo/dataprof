@@ -73,6 +73,13 @@ pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
 fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     let trimmed = s.trim();
 
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Some(ParsedDateTime {
+            date: dt.date_naive(),
+            datetime: Some(dt.naive_local()),
+        });
+    }
+
     // Try datetime formats first (these have time components)
     if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
         return Some(ParsedDateTime {
@@ -124,6 +131,47 @@ fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     }
 
     None
+}
+
+/// Parse a raw quality-metric value and return its calendar year.
+///
+/// Unlike the descriptive datetime statistics path, quality predicates do not
+/// normalize surrounding whitespace: a value must be directly parseable as it
+/// appeared in the source. The calendar parser validates month/day ranges, so
+/// shape-only strings such as `2024-13-45` are rejected.
+pub(crate) fn parse_raw_datetime_year(s: &str) -> Option<i32> {
+    if !looks_like_raw_datetime_candidate(s) {
+        return None;
+    }
+    parse_flexible_full(s).map(|parsed| parsed.date.year())
+}
+
+/// Cheap shape check before attempting the multi-format chrono parser.
+///
+/// Every supported raw format starts with either `YYYY<sep>MM<sep>DD` or
+/// `DD<sep>MM<sep>YYYY`. Malformed date-shaped values remain candidates so the
+/// calendar parser can reject and count values such as `2024-13-45`.
+fn looks_like_raw_datetime_candidate(s: &str) -> bool {
+    if s != s.trim() || s.len() < 10 {
+        return false;
+    }
+
+    let bytes = s.as_bytes();
+    let ascii_digits = |range: std::ops::Range<usize>| {
+        bytes
+            .get(range)
+            .is_some_and(|slice| slice.iter().all(u8::is_ascii_digit))
+    };
+    let supported_separator = |byte: u8| matches!(byte, b'-' | b'/' | b'.');
+
+    let year_first = ascii_digits(0..4)
+        && bytes.get(4).is_some_and(|byte| supported_separator(*byte))
+        && bytes.get(7) == bytes.get(4);
+    let year_last = ascii_digits(6..10)
+        && bytes.get(2).is_some_and(|byte| supported_separator(*byte))
+        && bytes.get(5) == bytes.get(2);
+
+    year_first || year_last
 }
 
 fn build_year_distribution(dates: &[NaiveDate]) -> HashMap<i32, usize> {
@@ -209,6 +257,18 @@ mod tests {
         let dt = parsed.datetime.unwrap();
         assert_eq!(dt.hour(), 10);
         assert_eq!(dt.minute(), 30);
+    }
+
+    #[test]
+    fn raw_datetime_year_validates_the_complete_calendar_value() {
+        assert_eq!(parse_raw_datetime_year("2024-02-29"), Some(2024));
+        assert_eq!(parse_raw_datetime_year("2024-02-29T10:30:00Z"), Some(2024));
+        assert_eq!(parse_raw_datetime_year("1800-01-01"), Some(1800));
+        assert_eq!(parse_raw_datetime_year("2200-01-01"), Some(2200));
+        assert_eq!(parse_raw_datetime_year("2024-13-45"), None);
+        assert_eq!(parse_raw_datetime_year("2023-02-29"), None);
+        assert_eq!(parse_raw_datetime_year(" 2024-02-29"), None);
+        assert_eq!(parse_raw_datetime_year("ordinary text value"), None);
     }
 
     #[test]

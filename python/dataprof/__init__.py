@@ -492,9 +492,9 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
         "unique_count_is_approximate": col.unique_count_is_approximate,
         "uniqueness_ratio": _r2(col.uniqueness_ratio),
     }
-    # The key is omitted entirely when the check did not run (non-numeric
-    # column, or statistics skipped), mirroring the Rust serialization; a
-    # clean numeric column serializes 0.
+    # The key is omitted entirely when the numeric/date check did not run
+    # (another column type, or statistics skipped), mirroring the Rust
+    # serialization; a clean checked column serializes 0.
     if col.invalid_count is not None:
         col_data["invalid_count"] = col.invalid_count
     if col.min is not None:
@@ -1445,6 +1445,11 @@ class _DictQuality:
     def temporal_violations(self) -> int:
         self._warn_flat_accessor("temporal_violations")
         return self._dimension_value("timeliness", "temporal_violations", 0)
+
+    @property
+    def invalid_date_values(self) -> int:
+        self._warn_flat_accessor("invalid_date_values")
+        return self._dimension_value("timeliness", "invalid_date_values", 0)
 
     @property
     def completeness(self) -> dict[str, Any] | None:

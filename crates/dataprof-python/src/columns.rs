@@ -130,6 +130,7 @@ pub fn profile_columns(
                 // `present` is the full column, so the sample-derived stats
                 // are already exact.
                 exact_numeric: None,
+                exact_date_matches: None,
             }));
 
             if include_quality {

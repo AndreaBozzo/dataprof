@@ -4,6 +4,7 @@
 //! Key metrics: future dates, stale data ratio, temporal violations.
 
 use super::utils::extract_year;
+use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use chrono::Datelike;
@@ -15,6 +16,7 @@ pub(crate) struct TimelinessMetrics {
     pub future_dates_count: usize,
     pub stale_data_ratio: f64,
     pub temporal_violations: usize,
+    pub invalid_date_values: usize,
     pub date_values_checked: usize,
     pub temporal_pairs_checked: usize,
 }
@@ -35,9 +37,8 @@ impl<'a> TimelinessCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
     ) -> Result<TimelinessMetrics, DataProfilerError> {
-        let future_dates_count = Self::count_future_dates(data, temporal_columns)?;
-        let (stale_data_ratio, date_values_checked) =
-            self.calculate_stale_data_ratio(data, temporal_columns)?;
+        let (future_dates_count, stale_data_ratio, date_values_checked, invalid_date_values) =
+            self.calculate_date_summary(data, temporal_columns);
         let (temporal_violations, temporal_pairs_checked) =
             Self::count_temporal_violations(data, temporal_columns)?;
 
@@ -45,82 +46,61 @@ impl<'a> TimelinessCalculator<'a> {
             future_dates_count,
             stale_data_ratio,
             temporal_violations,
+            invalid_date_values,
             date_values_checked,
             temporal_pairs_checked,
         })
     }
 
-    /// Count dates that are in the future (beyond current date)
-    fn count_future_dates(
-        data: &HashMap<String, Vec<String>>,
-        temporal_columns: &[String],
-    ) -> Result<usize, DataProfilerError> {
-        let mut future_count = 0;
-
-        // Get current year from system time
-        let current_year = chrono::Utc::now().year();
-
-        for (column_name, column_data) in data {
-            if !temporal_columns.contains(column_name) {
-                continue;
-            }
-            for value in column_data {
-                if value.is_empty() {
-                    continue;
-                }
-
-                // Extract year from common date formats
-                if let Some(year) = extract_year(value)
-                    && year > current_year
-                {
-                    future_count += 1;
-                }
-            }
-        }
-
-        Ok(future_count)
-    }
-
-    /// Calculate percentage of stale data (older than threshold); returns
-    /// `(ratio, date values with an extractable year)`.
-    fn calculate_stale_data_ratio(
+    /// Assess every non-null value in the selected temporal columns.
+    ///
+    /// `date_values_checked` is the complete denominator. Values that do not
+    /// parse as real calendar dates remain visible as `invalid_date_values`
+    /// instead of disappearing from both the metric and its score.
+    fn calculate_date_summary(
         &self,
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
-    ) -> Result<(f64, usize), DataProfilerError> {
-        let mut total_dates = 0;
+    ) -> (usize, f64, usize, usize) {
+        let mut future_count = 0;
         let mut stale_dates = 0;
+        let mut valid_dates = 0;
+        let mut checked = 0;
+        let mut invalid_dates = 0;
 
-        // Get current year from system time
         let current_year = chrono::Utc::now().year();
         let threshold_year = current_year - self.thresholds.max_data_age_years as i32;
 
-        for (column_name, column_data) in data {
-            if !temporal_columns.contains(column_name) {
+        for column_name in temporal_columns {
+            let Some(column_data) = data.get(column_name) else {
                 continue;
-            }
+            };
             for value in column_data {
-                if value.is_empty() {
+                if is_null_like_token(value.trim()) {
                     continue;
                 }
+                checked += 1;
 
                 if let Some(year) = extract_year(value) {
-                    total_dates += 1;
+                    valid_dates += 1;
+                    if year > current_year {
+                        future_count += 1;
+                    }
                     if year < threshold_year {
                         stale_dates += 1;
                     }
+                } else {
+                    invalid_dates += 1;
                 }
             }
         }
 
-        if total_dates == 0 {
-            Ok((0.0, 0))
+        let stale_ratio = if valid_dates == 0 {
+            0.0
         } else {
-            Ok((
-                (stale_dates as f64 / total_dates as f64) * 100.0,
-                total_dates,
-            ))
-        }
+            (stale_dates as f64 / valid_dates as f64) * 100.0
+        };
+        (future_count, stale_ratio, checked, invalid_dates)
     }
 
     /// Count temporal ordering violations (e.g., end_date < start_date);
@@ -163,10 +143,15 @@ impl<'a> TimelinessCalculator<'a> {
 
             if let (Some(start_values), Some(end_values)) = (start_data, end_data) {
                 for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
-                    if start_val.is_empty() || end_val.is_empty() {
+                    if is_null_like_token(start_val.trim()) || is_null_like_token(end_val.trim()) {
                         continue;
                     }
 
+                    // Invalid calendar values are already reported by
+                    // `invalid_date_values` and cannot form a meaningful pair.
+                    if extract_year(start_val).is_none() || extract_year(end_val).is_none() {
+                        continue;
+                    }
                     pairs_checked += 1;
                     // Compare as sortable strings (works for ISO dates YYYY-MM-DD)
                     if start_val > end_val {
@@ -213,7 +198,25 @@ mod tests {
             .calculate(&data, &["event_value".to_string()])
             .expect("timeliness metrics");
 
-        assert_eq!(metrics.date_values_checked, 1);
+        assert_eq!(metrics.date_values_checked, 2);
+        assert_eq!(metrics.invalid_date_values, 1);
+    }
+
+    #[test]
+    fn invalid_calendar_values_are_not_compared_as_temporal_pairs() {
+        let data = HashMap::from([
+            ("start".to_string(), vec!["2024-13-45".to_string()]),
+            ("end".to_string(), vec!["2024-01-01".to_string()]),
+        ]);
+        let config = IsoQualityConfig::default();
+
+        let metrics = TimelinessCalculator::new(&config)
+            .calculate(&data, &["start".to_string(), "end".to_string()])
+            .expect("timeliness metrics");
+
+        assert_eq!(metrics.invalid_date_values, 1);
+        assert_eq!(metrics.temporal_pairs_checked, 0);
+        assert_eq!(metrics.temporal_violations, 0);
     }
 
     #[test]

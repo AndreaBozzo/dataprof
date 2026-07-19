@@ -448,7 +448,7 @@ class TestProfileReport:
         assert uniqueness["rows_checked"] == 3
         assert uniqueness["duplicate_rows_approximate"] is False
 
-    def test_temporal_columns_gate_timeliness_score(self, tmp_path):
+    def test_inferred_date_columns_drive_timeliness_score(self, tmp_path):
         path = tmp_path / "events.csv"
         path.write_text(
             "observed_on,value\n2020-01-01,1\n2021-01-01,2\n",
@@ -458,7 +458,7 @@ class TestProfileReport:
         without_hint = dataprof.profile(str(path))
         without_quality = without_hint.quality
         assert without_quality is not None
-        assert without_quality.dimension_scores()["timeliness"] is None
+        assert without_quality.dimension_scores()["timeliness"] is not None
 
         with_hint = dataprof.profile(str(path), temporal_columns=["observed_on"])
         with_quality = with_hint.quality
@@ -467,6 +467,28 @@ class TestProfileReport:
         timeliness = with_quality.timeliness
         assert timeliness is not None
         assert timeliness["date_values_checked"] == 2
+
+    def test_invalid_calendar_date_is_visible_in_timeliness(self, tmp_path):
+        path = tmp_path / "invalid_date.csv"
+        path.write_text(
+            "observed_on\n"
+            "2024-01-01\n2024-02-02\n2024-03-03\n2024-04-04\n"
+            "2024-05-05\n2024-06-06\n2024-07-07\n2024-08-08\n2024-13-45\n",
+            encoding="utf-8",
+        )
+
+        report = dataprof.profile(str(path))
+        assert report["observed_on"].data_type == "date"
+        assert report["observed_on"].invalid_count == 1
+        quality = report.quality
+        assert quality is not None
+        timeliness = quality.timeliness
+        assert timeliness is not None
+        assert timeliness["date_values_checked"] == 9
+        assert timeliness["invalid_date_values"] == 1
+        timeliness_score = quality.dimension_scores()["timeliness"]
+        assert timeliness_score is not None
+        assert timeliness_score < 100.0
 
     def test_validity_and_precision_dimensions(self, tmp_path):
         path = tmp_path / "semantic_values.csv"

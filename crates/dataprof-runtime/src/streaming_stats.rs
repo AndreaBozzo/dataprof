@@ -4,9 +4,11 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_streaming};
-use dataprof_core::{SemanticHintBinding, SemanticHints};
+use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::{CardinalityEstimator, HyperLogLog, RowDuplicateSummary};
+use dataprof_metrics::{
+    CardinalityEstimator, HyperLogLog, RowDuplicateSummary, value_matches_hint,
+};
 
 /// Incremental statistics computation for streaming data processing.
 ///
@@ -277,6 +279,7 @@ pub struct StreamingStatistics {
     hll: HyperLogLog,
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
+    date_match_count: usize,
 }
 
 impl StreamingStatistics {
@@ -290,6 +293,7 @@ impl StreamingStatistics {
             hll: HyperLogLog::new(),
             sampler: StreamReservoirSampler::new(10_000),
             text_length_tracker: TextLengthStats::new(),
+            date_match_count: 0,
         }
     }
 
@@ -311,6 +315,9 @@ impl StreamingStatistics {
         self.hll.insert(value);
         self.sampler.offer(value.to_string());
         self.text_length_tracker.update(value.len());
+        if value_matches_hint(value, SemanticHintKind::Temporal) {
+            self.date_match_count += 1;
+        }
 
         if let Some(number) = value.parse::<f64>().ok().filter(|num| num.is_finite()) {
             self.welford.update(number);
@@ -334,6 +341,7 @@ impl StreamingStatistics {
         self.hll.merge(&other.hll);
         self.sampler.merge(&other.sampler);
         self.text_length_tracker.merge(&other.text_length_tracker);
+        self.date_match_count += other.date_match_count;
     }
 
     pub fn mean(&self) -> f64 {
@@ -361,6 +369,11 @@ impl StreamingStatistics {
 
     pub fn sample_values(&self) -> &[String] {
         self.sampler.samples()
+    }
+
+    /// Values over the full stream accepted by the temporal calculator.
+    pub fn date_match_count(&self) -> usize {
+        self.date_match_count
     }
 
     /// Exact aggregates over every numeric value this column has streamed,

@@ -64,10 +64,11 @@ Now:
   violations drive accuracy, future dates and temporal violations drive
   timeliness. Completeness is the mean of cell-level and row-level
   completeness.
-- Timeliness scoring is now opt-in through explicit `temporal_columns` hints.
-  Date inference still describes column types, but inferred dates do not affect
-  the quality score unless selected; this prevents arbitrary date-like fields
-  from silently imposing a freshness policy.
+- Timeliness scoring assesses confidently inferred date columns by default.
+  Explicit `temporal_columns` hints add columns that inference cannot identify,
+  such as mixed-format strings. Non-null values that fail strict calendar
+  parsing are reported as `invalid_date_values` and reduce the timeliness score
+  instead of silently disappearing from its denominator.
 - `UniquenessMetrics.key_column` names the column `key_uniqueness` describes;
   when no key column is identified, key uniqueness carries no signal instead
   of "assume perfect".

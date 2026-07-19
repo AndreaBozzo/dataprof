@@ -50,6 +50,9 @@ pub struct ColumnProfileInput<'a> {
     /// `None` means `sample_values` *is* the full data (in-memory sources)
     /// or the engine has no exact accumulators for the column.
     pub exact_numeric: Option<ExactNumericAggregates>,
+    /// Number of values over the full stream accepted by the temporal parser.
+    /// `None` means `sample_values` is the complete in-memory column.
+    pub exact_date_matches: Option<usize>,
 }
 
 /// Exact streaming aggregates for a numeric column: O(1)-memory statistics that an
@@ -122,6 +125,24 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                 ColumnStats::Numeric(numeric)
             }
             DataType::Date => {
+                let parsed_dates = input.exact_date_matches.unwrap_or_else(|| {
+                    input
+                        .sample_values
+                        .iter()
+                        .filter(|value| {
+                            dataprof_metrics::value_matches_hint(
+                                value,
+                                dataprof_core::SemanticHintKind::Temporal,
+                            )
+                        })
+                        .count()
+                });
+                invalid_count = Some(
+                    input
+                        .total_count
+                        .saturating_sub(input.null_count)
+                        .saturating_sub(parsed_dates),
+                );
                 if !input.sample_values.is_empty() {
                     calculate_datetime_stats(input.sample_values)
                 } else if let Some(tl) = &input.text_lengths {
@@ -288,6 +309,7 @@ pub fn profile_from_stats_with_hints(
         skip_patterns,
         locale,
         exact_numeric: stats.exact_numeric_aggregates(),
+        exact_date_matches: Some(stats.date_match_count()),
     })
 }
 
@@ -414,6 +436,7 @@ mod tests {
             skip_statistics: false,
             skip_patterns: false,
             exact_numeric: None,
+            exact_date_matches: None,
             locale: None,
         });
 
@@ -447,6 +470,7 @@ mod tests {
             skip_statistics: false,
             skip_patterns: false,
             exact_numeric: None,
+            exact_date_matches: None,
             locale: None,
         });
 
@@ -476,6 +500,7 @@ mod tests {
             skip_statistics: true,
             skip_patterns: false,
             exact_numeric: None,
+            exact_date_matches: None,
             locale: None,
         });
 
@@ -499,6 +524,7 @@ mod tests {
             skip_statistics: false,
             skip_patterns: true,
             exact_numeric: None,
+            exact_date_matches: None,
             locale: None,
         });
 
@@ -527,6 +553,7 @@ mod tests {
             skip_statistics: false,
             skip_patterns: false,
             exact_numeric: None,
+            exact_date_matches: None,
             locale: None,
         });
 
@@ -549,6 +576,7 @@ mod tests {
             skip_statistics: false,
             skip_patterns: false,
             exact_numeric: None,
+            exact_date_matches: None,
             locale: None,
         });
 

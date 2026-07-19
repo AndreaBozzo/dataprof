@@ -60,9 +60,9 @@ pub struct PyColumnProfile {
     #[pyo3(get)]
     pub unique_count_is_approximate: Option<bool>,
     /// Non-null values that did not parse as a finite number — parse failures
-    /// and non-finite tokens like `inf`/`NaN` — and are excluded from the
-    /// statistics. `None` = check did not run (non-numeric column, or
-    /// statistics skipped); `Some(0)` = every non-null value parsed.
+    /// and non-finite tokens like `inf`/`NaN` — or failed the strict raw date
+    /// predicate. `None` = check did not run (another column type, or
+    /// statistics skipped); `Some(0)` = every non-null value was valid.
     #[pyo3(get)]
     pub invalid_count: Option<usize>,
     #[pyo3(get)]
@@ -376,6 +376,11 @@ impl PyDataQualityMetrics {
         warn_flat_quality_accessor(py, "temporal_violations")?;
         Ok(self.inner.temporal_violations())
     }
+    #[getter]
+    fn invalid_date_values(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "invalid_date_values")?;
+        Ok(self.inner.invalid_date_values())
+    }
 
     /// True when the underlying sample was below the recommended minimum
     /// (10 rows). Treat quality scores as directional rather than reliable
@@ -591,6 +596,10 @@ impl PyDataQualityMetrics {
                 m.insert(
                     "temporal_violations".into(),
                     t.temporal_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "invalid_date_values".into(),
+                    t.invalid_date_values.into_pyobject(py)?.unbind().into_any(),
                 );
                 m.insert(
                     "date_values_checked".into(),

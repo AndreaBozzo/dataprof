@@ -196,6 +196,7 @@ class DataQualityMetrics:
     future_dates_count: int
     stale_data_ratio: float
     temporal_violations: int
+    invalid_date_values: int
     low_sample_warning: bool
     score_weights: dict[str, float]
 
