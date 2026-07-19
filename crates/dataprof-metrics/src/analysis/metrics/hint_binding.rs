@@ -77,18 +77,23 @@ fn binding(
     }
 }
 
-/// Count `(non-null values, values satisfying `pred`)`, filtering null-like
-/// tokens the same way the quality calculators do.
+/// Count `(non-null values, values satisfying `pred`)`.
+///
+/// Mirrors the quality calculators exactly: the null-like check runs on the
+/// trimmed token, but `pred` sees the *original* value. `accuracy.rs` and
+/// `timeliness.rs` parse the raw string (`v.parse::<f64>()`,
+/// `extract_year(value)`), and neither `parse::<f64>()` nor `extract_year`
+/// tolerates surrounding whitespace, so trimming here would let this evidence
+/// accept values the calculators reject (e.g. `" 1"`, `" 2020-01-01"`).
 fn count_matches(values: &[String], pred: impl Fn(&str) -> bool) -> (usize, usize) {
     let mut checked = 0;
     let mut matched = 0;
     for value in values {
-        let trimmed = value.trim();
-        if is_null_like_token(trimmed) {
+        if is_null_like_token(value.trim()) {
             continue;
         }
         checked += 1;
-        if pred(trimmed) {
+        if pred(value) {
             matched += 1;
         }
     }
@@ -159,6 +164,34 @@ mod tests {
         let hints = SemanticHints::default().with_temporal_columns(vec!["name".to_string()]);
         let bindings = compute_value_hint_bindings(&d, &hints, true);
         assert!(bindings[0].is_proven_inert());
+    }
+
+    #[test]
+    fn whitespace_padded_values_match_the_calculators_not_a_trimmed_view() {
+        // The calculators parse the raw string, and neither `parse::<f64>()` nor
+        // `extract_year` accepts surrounding whitespace. Binding evidence must
+        // agree, so a padded value is counted as considered but not matched.
+        let d = data(&[
+            ("pressure", &[" 101325", "100900"]),
+            ("event", &[" 2020-01-01", "2022-06-15"]),
+        ]);
+        let hints = SemanticHints::new(vec!["pressure".to_string()], vec![])
+            .with_temporal_columns(vec!["event".to_string()]);
+        let bindings = compute_value_hint_bindings(&d, &hints, true);
+
+        let positive = bindings
+            .iter()
+            .find(|b| b.column == "pressure")
+            .expect("positive binding");
+        assert_eq!(positive.checked_values, 2);
+        assert_eq!(positive.matched_values, 1);
+
+        let temporal = bindings
+            .iter()
+            .find(|b| b.column == "event")
+            .expect("temporal binding");
+        assert_eq!(temporal.checked_values, 2);
+        assert_eq!(temporal.matched_values, 1);
     }
 
     #[test]
