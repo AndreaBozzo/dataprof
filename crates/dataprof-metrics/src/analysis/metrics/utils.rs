@@ -6,6 +6,8 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
+use crate::stats::datetime::parse_raw_datetime_year;
+
 // Pre-compile date validation regex patterns for better performance
 pub(crate) static DATE_VALIDATION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
@@ -170,23 +172,7 @@ fn identifier_words(column_name: &str) -> Vec<&str> {
 /// Extract year from common date formats
 /// Supports: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
 pub(crate) fn extract_year(date_str: &str) -> Option<i32> {
-    // Try YYYY-MM-DD or YYYY/MM/DD format (year first)
-    if date_str.len() >= 4
-        && let Ok(year) = date_str[0..4].parse::<i32>()
-        && (1900..=2100).contains(&year)
-    {
-        return Some(year);
-    }
-
-    // Try DD/MM/YYYY or DD-MM-YYYY format (year last)
-    if date_str.len() >= 10
-        && let Ok(year) = date_str[6..10].parse::<i32>()
-        && (1900..=2100).contains(&year)
-    {
-        return Some(year);
-    }
-
-    None
+    parse_raw_datetime_year(date_str).filter(|year| (1900..=2100).contains(year))
 }
 
 /// Calculate percentile using linear interpolation (Type 7 - R/Excel default)

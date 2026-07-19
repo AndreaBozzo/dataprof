@@ -75,9 +75,9 @@ use validity::ValidityCalculator;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{
-    AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics,
-    QualityDimension, QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
-    ValidityMetrics,
+    AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, DataType,
+    PrecisionMetrics, QualityDimension, QualityMetrics, RowDuplicateSummary, TimelinessMetrics,
+    UniquenessMetrics, ValidityMetrics,
 };
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
@@ -134,6 +134,22 @@ impl MetricsCalculator {
             None => true,
             Some(dims) => dims.contains(&dim),
         }
+    }
+
+    /// Explicit temporal hints plus columns the profiler itself inferred as dates.
+    /// Hint order wins for ambiguous start/end role matching; inferred columns
+    /// are appended in stable profile order and duplicates are removed.
+    fn effective_temporal_columns(
+        column_profiles: &[ColumnProfile],
+        semantic_hints: &SemanticHints,
+    ) -> Vec<String> {
+        let mut columns = semantic_hints.temporal_columns.clone();
+        for profile in column_profiles {
+            if profile.data_type == DataType::Date && !columns.contains(&profile.name) {
+                columns.push(profile.name.clone());
+            }
+        }
+        columns
     }
 
     /// Calculate comprehensive data quality metrics from column data.
@@ -305,12 +321,15 @@ impl MetricsCalculator {
 
         // Timeliness dimension
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
-            let t = TimelinessCalculator::new(&self.thresholds)
-                .calculate(data, &semantic_hints.temporal_columns)?;
+            let temporal_columns =
+                Self::effective_temporal_columns(column_profiles, semantic_hints);
+            let t =
+                TimelinessCalculator::new(&self.thresholds).calculate(data, &temporal_columns)?;
             Some(TimelinessMetrics {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
                 temporal_violations: t.temporal_violations,
+                invalid_date_values: t.invalid_date_values,
                 date_values_checked: t.date_values_checked,
                 temporal_pairs_checked: t.temporal_pairs_checked,
             })
@@ -411,6 +430,7 @@ impl MetricsCalculator {
                     future_dates_count: 0,
                     stale_data_ratio: 0.0,
                     temporal_violations: 0,
+                    invalid_date_values: 0,
                     date_values_checked: 0,
                     temporal_pairs_checked: 0,
                 })
@@ -639,14 +659,16 @@ impl MetricsCalculator {
         };
 
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
+            let temporal_columns =
+                Self::effective_temporal_columns(column_profiles, semantic_hints);
             let t = if !data.is_empty() {
-                TimelinessCalculator::new(&self.thresholds)
-                    .calculate(data, &semantic_hints.temporal_columns)?
+                TimelinessCalculator::new(&self.thresholds).calculate(data, &temporal_columns)?
             } else {
                 timeliness::TimelinessMetrics {
                     future_dates_count: 0,
                     stale_data_ratio: 0.0,
                     temporal_violations: 0,
+                    invalid_date_values: 0,
                     date_values_checked: 0,
                     temporal_pairs_checked: 0,
                 }
@@ -656,6 +678,7 @@ impl MetricsCalculator {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
                 temporal_violations: t.temporal_violations,
+                invalid_date_values: t.invalid_date_values,
                 date_values_checked: t.date_values_checked,
                 temporal_pairs_checked: t.temporal_pairs_checked,
             })

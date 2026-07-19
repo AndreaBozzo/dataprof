@@ -90,7 +90,12 @@ pub struct TimelinessMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub stale_data_ratio: f64,
     pub temporal_violations: usize,
-    /// Date values with an extractable year in date-typed columns. 0 means
+    /// Non-null values in inferred or explicitly configured temporal columns
+    /// that failed calendar-date parsing.
+    #[serde(default)]
+    pub invalid_date_values: usize,
+    /// Non-null values examined in inferred or explicitly configured temporal
+    /// columns. 0 means
     /// the dimension had nothing to assess and it is excluded from the
     /// overall score.
     #[serde(default)]
@@ -192,6 +197,7 @@ impl QualityMetrics {
                 future_dates_count: 0,
                 stale_data_ratio: 0.0,
                 temporal_violations: 0,
+                invalid_date_values: 0,
                 date_values_checked: 0,
                 temporal_pairs_checked: 0,
             }),
@@ -288,7 +294,7 @@ impl QualityMetrics {
     }
 
     /// Score for the timeliness dimension (0-100), or `None` when the
-    /// dimension was not computed or no parseable values were found in the
+    /// dimension was not computed or no values were found in inferred or
     /// explicitly configured temporal columns.
     ///
     /// `100 - stale_data_ratio`, penalized by future dates as a share of
@@ -299,14 +305,15 @@ impl QualityMetrics {
         if t.date_values_checked == 0 {
             return None;
         }
-        let future_ratio = t.future_dates_count as f64 / t.date_values_checked as f64;
+        let value_violation_ratio =
+            (t.future_dates_count + t.invalid_date_values) as f64 / t.date_values_checked as f64;
         let temporal_ratio = if t.temporal_pairs_checked > 0 {
             t.temporal_violations as f64 / t.temporal_pairs_checked as f64
         } else {
             0.0
         };
         Some(
-            (100.0 - t.stale_data_ratio - (future_ratio + temporal_ratio) * 100.0)
+            (100.0 - t.stale_data_ratio - (value_violation_ratio + temporal_ratio) * 100.0)
                 .clamp(0.0, 100.0),
         )
     }
@@ -475,6 +482,12 @@ impl QualityMetrics {
             .map_or(0, |t| t.temporal_violations)
     }
 
+    pub fn invalid_date_values(&self) -> usize {
+        self.timeliness
+            .as_ref()
+            .map_or(0, |t| t.invalid_date_values)
+    }
+
     pub fn valid_values_ratio(&self) -> f64 {
         self.validity
             .as_ref()
@@ -602,6 +615,7 @@ mod tests {
                 future_dates_count: 0,
                 stale_data_ratio: 0.0,
                 temporal_violations: 0,
+                invalid_date_values: 0,
                 date_values_checked: 100,
                 temporal_pairs_checked: 100,
             }),

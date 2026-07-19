@@ -73,6 +73,13 @@ pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
 fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     let trimmed = s.trim();
 
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Some(ParsedDateTime {
+            date: dt.date_naive(),
+            datetime: Some(dt.naive_local()),
+        });
+    }
+
     // Try datetime formats first (these have time components)
     if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
         return Some(ParsedDateTime {
@@ -124,6 +131,19 @@ fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     }
 
     None
+}
+
+/// Parse a raw quality-metric value and return its calendar year.
+///
+/// Unlike the descriptive datetime statistics path, quality predicates do not
+/// normalize surrounding whitespace: a value must be directly parseable as it
+/// appeared in the source. The calendar parser validates month/day ranges, so
+/// shape-only strings such as `2024-13-45` are rejected.
+pub(crate) fn parse_raw_datetime_year(s: &str) -> Option<i32> {
+    if s != s.trim() {
+        return None;
+    }
+    parse_flexible_full(s).map(|parsed| parsed.date.year())
 }
 
 fn build_year_distribution(dates: &[NaiveDate]) -> HashMap<i32, usize> {
@@ -209,6 +229,15 @@ mod tests {
         let dt = parsed.datetime.unwrap();
         assert_eq!(dt.hour(), 10);
         assert_eq!(dt.minute(), 30);
+    }
+
+    #[test]
+    fn raw_datetime_year_validates_the_complete_calendar_value() {
+        assert_eq!(parse_raw_datetime_year("2024-02-29"), Some(2024));
+        assert_eq!(parse_raw_datetime_year("2024-02-29T10:30:00Z"), Some(2024));
+        assert_eq!(parse_raw_datetime_year("2024-13-45"), None);
+        assert_eq!(parse_raw_datetime_year("2023-02-29"), None);
+        assert_eq!(parse_raw_datetime_year(" 2024-02-29"), None);
     }
 
     #[test]

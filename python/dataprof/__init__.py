@@ -1447,6 +1447,11 @@ class _DictQuality:
         return self._dimension_value("timeliness", "temporal_violations", 0)
 
     @property
+    def invalid_date_values(self) -> int:
+        self._warn_flat_accessor("invalid_date_values")
+        return self._dimension_value("timeliness", "invalid_date_values", 0)
+
+    @property
     def completeness(self) -> dict[str, Any] | None:
         return self._d.get("completeness")
 

@@ -53,7 +53,23 @@ fn analyze_column_with_options(name: &str, data: &[String], fast_mode: bool) -> 
             );
             ColumnStats::Numeric(numeric)
         }
-        DataType::Date => calculate_datetime_stats(data),
+        DataType::Date => {
+            let parsed = data
+                .iter()
+                .filter(|value| {
+                    super::metrics::value_matches_hint(
+                        value,
+                        dataprof_core::SemanticHintKind::Temporal,
+                    )
+                })
+                .count();
+            invalid_count = Some(
+                total_count
+                    .saturating_sub(null_count)
+                    .saturating_sub(parsed),
+            );
+            calculate_datetime_stats(data)
+        }
         DataType::Boolean => {
             let tc = data
                 .iter()

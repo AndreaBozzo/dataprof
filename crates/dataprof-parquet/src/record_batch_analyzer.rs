@@ -246,6 +246,7 @@ pub struct ColumnAnalyzer {
     hint_checked_values: usize,
     positive_matched_values: usize,
     temporal_matched_values: usize,
+    date_matched_values: usize,
 }
 
 impl ColumnAnalyzer {
@@ -279,21 +280,27 @@ impl ColumnAnalyzer {
             hint_checked_values: 0,
             positive_matched_values: 0,
             temporal_matched_values: 0,
+            date_matched_values: 0,
         }
     }
 
     fn offer_sample(&mut self, value: String) {
-        if !is_null_like_token(value.trim()) && (self.positive_hint || self.temporal_hint) {
-            self.hint_checked_values += 1;
-            if self.positive_hint
-                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Positive)
-            {
-                self.positive_matched_values += 1;
+        if !is_null_like_token(value.trim()) {
+            let matches_date =
+                dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal);
+            if matches_date {
+                self.date_matched_values += 1;
             }
-            if self.temporal_hint
-                && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Temporal)
-            {
-                self.temporal_matched_values += 1;
+            if self.positive_hint || self.temporal_hint {
+                self.hint_checked_values += 1;
+                if self.positive_hint
+                    && dataprof_metrics::value_matches_hint(&value, SemanticHintKind::Positive)
+                {
+                    self.positive_matched_values += 1;
+                }
+                if self.temporal_hint && matches_date {
+                    self.temporal_matched_values += 1;
+                }
             }
         }
         self.sample_values.offer(value);
@@ -665,11 +672,12 @@ impl ColumnAnalyzer {
     }
 
     fn process_date32_array(&mut self, array: &Date32Array) -> Result<()> {
+        let formatter = ArrayFormatter::try_new(array, &Default::default())?;
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let days = array.value(index);
                 self.update_numeric_stats(days as f64);
-                let date_str = format!("1970-01-01+{}days", days);
+                let date_str = formatter.value(index).to_string();
                 self.cardinality.insert(&date_str);
                 self.offer_sample(date_str);
             }
@@ -678,11 +686,12 @@ impl ColumnAnalyzer {
     }
 
     fn process_date64_array(&mut self, array: &Date64Array) -> Result<()> {
+        let formatter = ArrayFormatter::try_new(array, &Default::default())?;
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let millis = array.value(index);
                 self.update_numeric_stats(millis as f64);
-                let datetime_str = format!("1970-01-01T00:00:00.000+{}ms", millis);
+                let datetime_str = formatter.value(index).to_string();
                 self.cardinality.insert(&datetime_str);
                 self.offer_sample(datetime_str);
             }
@@ -693,6 +702,8 @@ impl ColumnAnalyzer {
     fn process_timestamp_array(&mut self, array: &dyn Array) -> Result<()> {
         use arrow::array::PrimitiveArray;
 
+        let formatter = ArrayFormatter::try_new(array, &Default::default())?;
+
         if let Some(ts_array) = array
             .as_any()
             .downcast_ref::<PrimitiveArray<arrow::datatypes::TimestampNanosecondType>>()
@@ -701,7 +712,7 @@ impl ColumnAnalyzer {
                 if !ts_array.is_null(index) {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
-                    let ts_str = format!("ts:{}", ts_value);
+                    let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
                     self.offer_sample(ts_str);
                 }
@@ -714,7 +725,7 @@ impl ColumnAnalyzer {
                 if !ts_array.is_null(index) {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
-                    let ts_str = format!("ts:{}", ts_value);
+                    let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
                     self.offer_sample(ts_str);
                 }
@@ -727,7 +738,7 @@ impl ColumnAnalyzer {
                 if !ts_array.is_null(index) {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
-                    let ts_str = format!("ts:{}", ts_value);
+                    let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
                     self.offer_sample(ts_str);
                 }
@@ -740,7 +751,7 @@ impl ColumnAnalyzer {
                 if !ts_array.is_null(index) {
                     let ts_value = ts_array.value(index);
                     self.update_numeric_stats(ts_value as f64);
-                    let ts_str = format!("ts:{}", ts_value);
+                    let ts_str = formatter.value(index).to_string();
                     self.cardinality.insert(&ts_str);
                     self.offer_sample(ts_str);
                 }
@@ -977,6 +988,7 @@ impl ColumnAnalyzer {
             skip_patterns,
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
+            exact_date_matches: Some(self.date_matched_values),
         })
     }
 

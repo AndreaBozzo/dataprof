@@ -376,6 +376,11 @@ impl PyDataQualityMetrics {
         warn_flat_quality_accessor(py, "temporal_violations")?;
         Ok(self.inner.temporal_violations())
     }
+    #[getter]
+    fn invalid_date_values(&self, py: Python<'_>) -> PyResult<usize> {
+        warn_flat_quality_accessor(py, "invalid_date_values")?;
+        Ok(self.inner.invalid_date_values())
+    }
 
     /// True when the underlying sample was below the recommended minimum
     /// (10 rows). Treat quality scores as directional rather than reliable
@@ -591,6 +596,10 @@ impl PyDataQualityMetrics {
                 m.insert(
                     "temporal_violations".into(),
                     t.temporal_violations.into_pyobject(py)?.unbind().into_any(),
+                );
+                m.insert(
+                    "invalid_date_values".into(),
+                    t.invalid_date_values.into_pyobject(py)?.unbind().into_any(),
                 );
                 m.insert(
                     "date_values_checked".into(),
