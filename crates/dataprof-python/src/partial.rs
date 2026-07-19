@@ -1,10 +1,11 @@
-use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::Path;
 
 use dataprof::{
     CountMethod, DataType, RowCountEstimate, SchemaResult, StructureColumnSummary, StructureReport,
 };
+
+use super::errors::analysis_error_to_py;
 
 fn data_type_name(data_type: &DataType) -> &'static str {
     match data_type {
@@ -301,8 +302,7 @@ impl PyRowCountEstimate {
 /// (or just metadata for Parquet).
 #[pyfunction]
 pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
-    let result = dataprof::infer_schema(Path::new(path))
-        .map_err(|e| PyRuntimeError::new_err(format!("Schema inference failed: {}", e)))?;
+    let result = dataprof::infer_schema(Path::new(path)).map_err(|e| analysis_error_to_py(&e))?;
     Ok(PySchemaResult { inner: result })
 }
 
@@ -312,8 +312,8 @@ pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
 /// for large CSV/JSON files via sampling.
 #[pyfunction]
 pub fn quick_row_count(path: &str) -> PyResult<PyRowCountEstimate> {
-    let result = dataprof::quick_row_count(Path::new(path))
-        .map_err(|e| PyRuntimeError::new_err(format!("Row count failed: {}", e)))?;
+    let result =
+        dataprof::quick_row_count(Path::new(path)).map_err(|e| analysis_error_to_py(&e))?;
     Ok(PyRowCountEstimate { inner: result })
 }
 
@@ -321,6 +321,6 @@ pub fn quick_row_count(path: &str) -> PyResult<PyRowCountEstimate> {
 #[pyfunction(signature = (path, max_rows=None))]
 pub fn analyze_structure(path: &str, max_rows: Option<usize>) -> PyResult<PyStructureReport> {
     let result = dataprof::analyze_structure(Path::new(path), max_rows)
-        .map_err(|e| PyRuntimeError::new_err(format!("Structure analysis failed: {}", e)))?;
+        .map_err(|e| analysis_error_to_py(&e))?;
     Ok(PyStructureReport { inner: result })
 }

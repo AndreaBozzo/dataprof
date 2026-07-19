@@ -202,6 +202,7 @@ arrow = [
 ]
 parquet = [
     "arrow",
+    "dataprof-core/parquet",
     "dataprof-parquet/parquet",
     "dataprof-engines/parquet",
     "dataprof-partial/parquet",

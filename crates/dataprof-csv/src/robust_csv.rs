@@ -130,7 +130,7 @@ impl RobustCsvParser {
                 } else {
                     DataProfilerError::csv_parsing(
                         &initial_error_string,
-                        &file_path.to_string_lossy(),
+                        Some(file_path.to_string_lossy().as_ref()),
                     )
                 };
 
@@ -155,7 +155,7 @@ impl RobustCsvParser {
                     .map_err(|error| {
                         DataProfilerError::csv_parsing(
                             &error.to_string(),
-                            &file_path.to_string_lossy(),
+                            Some(file_path.to_string_lossy().as_ref()),
                         )
                     })
             }
@@ -167,7 +167,7 @@ impl RobustCsvParser {
                     .map_err(|error| {
                         DataProfilerError::csv_parsing(
                             &error.to_string(),
-                            &file_path.to_string_lossy(),
+                            Some(file_path.to_string_lossy().as_ref()),
                         )
                     })
             }
@@ -177,13 +177,13 @@ impl RobustCsvParser {
                     .map_err(|error| {
                         DataProfilerError::csv_parsing(
                             &error.to_string(),
-                            &file_path.to_string_lossy(),
+                            Some(file_path.to_string_lossy().as_ref()),
                         )
                     })
             }
             _ => Err(DataProfilerError::csv_parsing(
                 "Unsupported recovery strategy for CSV parsing",
-                &file_path.to_string_lossy(),
+                Some(file_path.to_string_lossy().as_ref()),
             )),
         }
     }
@@ -378,14 +378,17 @@ impl RobustCsvParser {
                 Err(error) => {
                     error_count += 1;
 
-                    let enhanced_error =
-                        DataProfilerError::csv_parsing(&error.to_string(), "current file");
+                    let file_path_str = file_path.to_string_lossy();
+                    let enhanced_error = DataProfilerError::csv_parsing(
+                        &error.to_string(),
+                        Some(file_path_str.as_ref()),
+                    );
                     log::warn!("Row {}: {}", row_index + 2, enhanced_error);
 
                     if error_count > max_errors {
                         return Err(DataProfilerError::csv_parsing(
                             &format!("Too many parsing errors ({})", error_count),
-                            "current file",
+                            Some(file_path_str.as_ref()),
                         )
                         .into());
                     }

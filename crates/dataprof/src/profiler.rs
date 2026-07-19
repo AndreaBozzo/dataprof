@@ -301,6 +301,16 @@ impl Profiler {
         file_path: P,
     ) -> Result<ProfileReport, DataProfilerError> {
         let path = file_path.as_ref();
+
+        // Fail fast with the real path so a missing file is never reported as
+        // `'unknown'` by a downstream parser's context-free error conversion.
+        // `symlink_metadata` avoids following a dangling link to a false "found".
+        if std::fs::symlink_metadata(path).is_err() {
+            return Err(DataProfilerError::file_not_found(
+                path.display().to_string(),
+            ));
+        }
+
         let format = self
             .config
             .format_override

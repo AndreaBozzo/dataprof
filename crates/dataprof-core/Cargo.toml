@@ -32,3 +32,6 @@ default = []
 arrow = ["dep:arrow"]
 async-streaming = ["dep:tokio"]
 database = []
+# Message-only flag: lets error diagnostics advertise Parquet support accurately
+# when the workspace is built with the facade's `parquet` feature. Enables no code.
+parquet = []

@@ -1,5 +1,33 @@
 # Unreleased
 
+## Errors preserve source context and map to idiomatic Python exceptions
+
+Failure diagnostics are now consistent about what failed, where, and what to do
+next. This is **compatibility-sensitive**: error messages and, on the Python
+side, exception *types* have changed.
+
+- **Real paths, never `'unknown'`.** The context-free `From<io::Error>`,
+  `From<anyhow::Error>`, and `From<csv::Error>` conversions no longer fabricate
+  a `FileNotFound { path: "unknown" }`; they keep the original message and let
+  call sites that hold the path attach it. `Profiler::analyze_file` now fails
+  fast with a `FileNotFound` naming the real path when the file is missing.
+- **Honest supported-format claims.** `UnsupportedFormat` lists only the formats
+  the running build can actually read — Parquet appears only when the `parquet`
+  feature is enabled — instead of the fixed `CSV, JSON, JSONL` string that
+  omitted Parquet.
+- **Structured suggestions.** `DataProfilerError::suggestion()` exposes the
+  actionable next step as data, so callers no longer have to parse it out of the
+  formatted message.
+- **Credential redaction.** Database connection and query errors scrub
+  `scheme://user:password@host` userinfo before the message is stored, and the
+  "invalid connection string" errors report the detected scheme instead of
+  echoing the raw string.
+- **Idiomatic Python exceptions.** File-based entry points now raise
+  `FileNotFoundError` (missing file), `ValueError` (unsupported format, invalid
+  config, unbindable semantic hints), and `PermissionError` / `OSError` (I/O),
+  instead of wrapping every failure in a generic `RuntimeError`. `except
+  RuntimeError:` blocks that relied on the old behavior need updating.
+
 ## Installed capabilities are discoverable
 
 `dataprof.capabilities()` returns an immutable snapshot of the current build:
