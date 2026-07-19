@@ -1039,7 +1039,7 @@ impl Profiler {
                     )
                     .await?;
                     self.validate_semantic_hints(&report)?;
-                    return Ok(report);
+                    Ok(report)
                 }
 
                 #[cfg(not(feature = "parquet-async"))]
