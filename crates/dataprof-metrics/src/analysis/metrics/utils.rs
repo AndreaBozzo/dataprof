@@ -172,7 +172,7 @@ fn identifier_words(column_name: &str) -> Vec<&str> {
 /// Extract year from common date formats
 /// Supports: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
 pub(crate) fn extract_year(date_str: &str) -> Option<i32> {
-    parse_raw_datetime_year(date_str).filter(|year| (1900..=2100).contains(year))
+    parse_raw_datetime_year(date_str)
 }
 
 /// Calculate percentile using linear interpolation (Type 7 - R/Excel default)
