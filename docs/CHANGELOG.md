@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded but never mistaken for proof of absence. Additive report field —
   older readers ignore it. (#420)
 
+### Fixed
+
+- Python DataFrame and Arrow-backed profiles now preserve source schema column
+  order in report exports. `ProfileReport.compare()` column output is no longer
+  alphabetically sorted: it follows the left report's schema order, then appends
+  right-only columns in their source order. (#427)
+
 ## [0.9.0] - 2026-07-09
 
 See [release-notes.md](release-notes.md) for the narrative 0.9.0 notes and the

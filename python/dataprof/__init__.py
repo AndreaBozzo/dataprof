@@ -2105,15 +2105,20 @@ class ProfileReport:
 
         a_cols = self.column_profiles
         b_cols = other.column_profiles
-        a_names = set(a_cols)
-        b_names = set(b_cols)
+        a_order = list(a_cols)
+        b_order = list(b_cols)
+        a_names = set(a_order)
+        b_names = set(b_order)
+        # Preserve the left report's schema order, then append right-only
+        # columns in their source order.
+        all_names = [*a_order, *(name for name in b_order if name not in a_names)]
 
         def _null_pct(cols: dict[str, ColumnProfile], name: str) -> float | None:
             col = cols.get(name)
             return _r2(col.null_percentage) if col is not None else None
 
         columns: dict[str, dict[str, float | None]] = {}
-        for name in sorted(a_names | b_names):
+        for name in all_names:
             null_a = _null_pct(a_cols, name)
             null_b = _null_pct(b_cols, name)
             null_delta = None if null_a is None or null_b is None else _r2(null_b - null_a)
@@ -2128,9 +2133,9 @@ class ProfileReport:
             "dimensions": dimensions,
             "columns": columns,
             "schema": {
-                "added": sorted(b_names - a_names),
-                "removed": sorted(a_names - b_names),
-                "common": sorted(a_names & b_names),
+                "added": [name for name in b_order if name not in a_names],
+                "removed": [name for name in a_order if name not in b_names],
+                "common": [name for name in a_order if name in b_names],
             },
         }
 

@@ -159,6 +159,19 @@ class TestProfileFile:
         assert via_profile_file.columns == via_profile.columns
         assert via_profile_file.to_dict()["columns"] == via_profile.to_dict()["columns"]
 
+    def test_csv_preserves_column_order(self, tmp_path):
+        path = tmp_path / "ordered.csv"
+        path.write_text("num,cat,when,big\n1.5,a,2024-01-01,1099511627776\n")
+
+        report = dataprof.profile(path)
+
+        assert [column["name"] for column in report.to_dict()["columns"]] == [
+            "num",
+            "cat",
+            "when",
+            "big",
+        ]
+
     def test_missing_file_raises_file_not_found(self):
         missing = str(FIXTURES / "does_not_exist.csv")
         with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
@@ -171,12 +184,36 @@ class TestProfileFile:
 
 
 class TestProfileDataFrame:
+    @staticmethod
+    def assert_column_order(report, backend):
+        expected = ["num", "cat", "when", "big"]
+        assert [column["name"] for column in report.to_dict()["columns"]] == expected
+        if backend == "pandas":
+            assert report.to_dataframe()["name"].tolist() == expected
+        else:
+            assert report.to_polars()["name"].to_list() == expected
+
+        described = report.describe()
+        described_columns = (
+            list(described) if isinstance(described, dict) else described.columns.tolist()
+        )
+        assert described_columns == expected
+        assert list(report.compare(report)["columns"]) == expected
+
     def test_pandas(self):
         pd = pytest.importorskip("pandas")
-        df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        df = pd.DataFrame(
+            {
+                "num": [1.5, 2.5],
+                "cat": ["a", "b"],
+                "when": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                "big": [2**40, 2**40 + 1],
+            }
+        )
         r = dataprof.profile(df)
-        assert r.rows == 3
-        assert r.columns == 2
+        assert r.rows == 2
+        assert r.columns == 4
+        self.assert_column_order(r, "pandas")
 
 
 class TestInterop:
@@ -203,12 +240,29 @@ class TestInterop:
         assert batch.num_rows > 0
         assert batch.num_columns > 0
 
-    def test_polars(self):
+    def test_polars(self, monkeypatch):
         pl = pytest.importorskip("polars")
-        df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+        df = pl.DataFrame(
+            {
+                "num": [1.5, 2.5],
+                "cat": ["a", "b"],
+                "when": ["2024-01-01", "2024-01-02"],
+                "big": [2**40, 2**40 + 1],
+            }
+        )
         r = dataprof.profile(df)
-        assert r.rows == 3
-        assert r.columns == 2
+        assert r.rows == 2
+        assert r.columns == 4
+
+        original_import = builtins.__import__
+
+        def import_without_pandas(name, *args, **kwargs):
+            if name == "pandas":
+                raise ImportError("blocked pandas")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_without_pandas)
+        TestProfileDataFrame.assert_column_order(r, "polars")
 
 
 class TestProfileAdHocInputs:
