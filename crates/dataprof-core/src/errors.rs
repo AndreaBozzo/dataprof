@@ -1,5 +1,50 @@
 use thiserror::Error;
 
+/// The file formats this build can actually read, reflecting compiled features.
+///
+/// The list must never over-claim: Parquet is only advertised when the `parquet`
+/// feature is enabled, so an "unsupported format" error cannot point the user at
+/// a format the installed build cannot open.
+fn supported_formats_hint() -> &'static str {
+    #[cfg(feature = "parquet")]
+    {
+        "CSV, JSON, JSONL, Parquet"
+    }
+    #[cfg(not(feature = "parquet"))]
+    {
+        "CSV, JSON, JSONL"
+    }
+}
+
+/// Redact credentials from a string before it enters an error message.
+///
+/// Connection strings and driver errors can carry `scheme://user:password@host`.
+/// We collapse the userinfo to `***` so passwords (and usernames) never reach a
+/// log line or a surfaced diagnostic, while keeping the scheme/host for context.
+pub fn redact_credentials(input: &str) -> String {
+    // Match the `://[userinfo@]` segment of any URL-like token and drop userinfo.
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(scheme_idx) = rest.find("://") {
+        let after_scheme = scheme_idx + 3;
+        out.push_str(&rest[..after_scheme]);
+        let tail = &rest[after_scheme..];
+        // Userinfo, if present, ends at the first '@' before the next authority
+        // delimiter ('/', '?', '#', or whitespace).
+        let authority_end = tail
+            .find(['/', '?', '#', ' ', '\t', '\n'])
+            .unwrap_or(tail.len());
+        if let Some(at_rel) = tail[..authority_end].find('@') {
+            out.push_str("***");
+            rest = &tail[at_rel..]; // keep '@host...'
+        } else {
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Auto-retry configuration for error recovery
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
@@ -50,7 +95,10 @@ pub enum DataProfilerError {
     )]
     FileNotFound { path: String },
 
-    #[error("Unsupported file format: {format}\nSupported formats: CSV, JSON, JSONL")]
+    #[error(
+        "Unsupported file format: {format}\nSupported formats: {}",
+        supported_formats_hint()
+    )]
     UnsupportedFormat { format: String },
 
     #[error(
@@ -165,8 +213,12 @@ pub enum DataProfilerError {
 }
 
 impl DataProfilerError {
-    /// Create a database connection error
+    /// Create a database connection error.
+    ///
+    /// The message is scrubbed of URL credentials before storage so a driver
+    /// error that echoes the connection string cannot leak the password.
     pub fn database_connection(message: &str) -> Self {
+        let message = redact_credentials(message);
         let m = message.to_lowercase();
         let suggestion = if m.contains("refused") {
             "Check that the database server is running and accepting connections."
@@ -178,15 +230,18 @@ impl DataProfilerError {
             "Verify the connection string format and database server availability."
         };
         DataProfilerError::DatabaseConnectionError {
-            message: message.to_string(),
+            message,
             suggestion: suggestion.to_string(),
         }
     }
 
-    /// Create a database query error
+    /// Create a database query error.
+    ///
+    /// Redacts URL credentials that a driver error might surface; the raw SQL
+    /// text and bound parameter values are never embedded by callers.
     pub fn database_query(message: &str) -> Self {
         DataProfilerError::DatabaseQueryError {
-            message: message.to_string(),
+            message: redact_credentials(message),
         }
     }
 
@@ -220,12 +275,20 @@ impl DataProfilerError {
             message: message.to_string(),
         }
     }
-    /// Create a CSV parsing error with helpful suggestions
-    pub fn csv_parsing(original_error: &str, file_path: &str) -> Self {
+    /// Create a CSV parsing error with helpful suggestions.
+    ///
+    /// `file_path` is `None` at boundaries that do not know the source (e.g. the
+    /// `From<csv::Error>` conversion); pass `Some(path)` whenever it is known so
+    /// the suggestion can name the offending file instead of a placeholder.
+    pub fn csv_parsing(original_error: &str, file_path: Option<&str>) -> Self {
         let suggestion = if original_error.contains("field") && original_error.contains("record") {
+            let file_clause = match file_path {
+                Some(path) => format!("The CSV file '{}' has", path),
+                None => "This CSV file has".to_string(),
+            };
             format!(
-                "The CSV file '{}' has inconsistent column counts. This often happens with:\n  • Text fields containing commas without proper quoting\n  • Mixed line endings (Windows/Unix)\n  • Embedded newlines in data\n\n  DataProfiler will attempt to parse it with flexible mode automatically.",
-                file_path
+                "{} inconsistent column counts. This often happens with:\n  • Text fields containing commas without proper quoting\n  • Mixed line endings (Windows/Unix)\n  • Embedded newlines in data\n\n  dataprof will attempt to parse it with flexible mode automatically.",
+                file_clause
             )
         } else if original_error.contains("UTF-8") {
             "The file contains non-UTF-8 characters. Try converting it to UTF-8 encoding."
@@ -414,6 +477,45 @@ impl DataProfilerError {
         )
     }
 
+    /// The actionable next step for this error, as structured context.
+    ///
+    /// Suggestions live in the variants and the `Display` string, but callers
+    /// that want to react programmatically (or render the hint separately from
+    /// the message) should read it here rather than parse the formatted output.
+    pub fn suggestion(&self) -> Option<String> {
+        match self {
+            DataProfilerError::CsvParsingError { suggestion, .. }
+            | DataProfilerError::InvalidConfiguration { suggestion, .. }
+            | DataProfilerError::InvalidSemanticHint { suggestion, .. }
+            | DataProfilerError::SamplingError { suggestion, .. }
+            | DataProfilerError::DatabaseConnectionError { suggestion, .. } => {
+                Some(suggestion.clone())
+            }
+            DataProfilerError::ColumnAnalysisError { suggestion, .. } => Some(suggestion.clone()),
+            DataProfilerError::FileNotFound { .. } => {
+                Some("Check that the file exists and you have permission to read it.".to_string())
+            }
+            DataProfilerError::UnsupportedFormat { .. } => Some(format!(
+                "This build reads {}. Convert the input to one of these formats, or rebuild with the feature for the format you need.",
+                supported_formats_hint()
+            )),
+            DataProfilerError::MemoryLimitExceeded => {
+                Some("Use streaming mode or increase available memory.".to_string())
+            }
+            DataProfilerError::StreamingError { .. } => Some(
+                "Set a smaller chunk size on the profiler builder, e.g. `.chunk_size(ChunkSize::Fixed(1000))`."
+                    .to_string(),
+            ),
+            DataProfilerError::DataQualityIssue { recommendation, .. } => {
+                Some(recommendation.clone())
+            }
+            DataProfilerError::DatabaseFeatureDisabled { .. } => {
+                Some("Recompile with the appropriate database feature flag.".to_string())
+            }
+            _ => None,
+        }
+    }
+
     /// Get error category for logging/metrics
     pub fn category(&self) -> &'static str {
         match self {
@@ -449,45 +551,42 @@ impl DataProfilerError {
     }
 }
 
-/// Convert from anyhow::Error to DataProfilerError with context
+/// Convert from anyhow::Error to DataProfilerError with context.
+///
+/// These conversions run where the source path/operation is *not* known, so they
+/// never fabricate one: a path is only ever attached by the call sites that hold
+/// it (see [`DataProfilerError::csv_parsing`], `map_io_error`, and the facade's
+/// existence check). Preserving the original message keeps the source diagnostic.
 impl From<anyhow::Error> for DataProfilerError {
     fn from(err: anyhow::Error) -> Self {
         let error_str = err.to_string();
 
-        // Try to categorize the error based on its message
-        if error_str.contains("No such file") || error_str.contains("not found") {
-            DataProfilerError::FileNotFound {
-                path: "unknown".to_string(),
-            }
-        } else if error_str.contains("CSV") {
+        // Categorize by message only; do not invent a path we do not have.
+        if error_str.contains("CSV") {
             DataProfilerError::CsvParsingError {
                 message: error_str,
                 suggestion: "Try using robust CSV parsing mode".to_string(),
             }
         } else if error_str.contains("JSON") {
             DataProfilerError::JsonParsingError { message: error_str }
-        } else if error_str.contains("permission") {
-            DataProfilerError::IoError { message: error_str }
         } else {
-            // Generic error
+            // Generic I/O error — the original message carries the detail
+            // (including "file not found" wording) without a fabricated path.
             DataProfilerError::IoError { message: error_str }
         }
     }
 }
 
-/// Convert from std::io::Error to DataProfilerError
+/// Convert from std::io::Error to DataProfilerError.
+///
+/// Path-less by design: callers that know the file use `map_io_error` to produce
+/// a [`DataProfilerError::FileNotFound`] with the real path. Here we keep the OS
+/// message (which already names the condition) rather than guessing a path.
 impl From<std::io::Error> for DataProfilerError {
     fn from(err: std::io::Error) -> Self {
         match err.kind() {
-            std::io::ErrorKind::NotFound => DataProfilerError::FileNotFound {
-                path: "unknown".to_string(),
-            },
             std::io::ErrorKind::PermissionDenied => DataProfilerError::IoError {
                 message: "Permission denied - check file access rights".to_string(),
-            },
-            std::io::ErrorKind::InvalidData => DataProfilerError::CsvParsingError {
-                message: "Invalid data format detected".to_string(),
-                suggestion: "Check file encoding and format".to_string(),
             },
             _ => DataProfilerError::IoError {
                 message: err.to_string(),
@@ -496,10 +595,13 @@ impl From<std::io::Error> for DataProfilerError {
     }
 }
 
-/// Convert from csv::Error to DataProfilerError with enhanced context
+/// Convert from csv::Error to DataProfilerError with enhanced context.
+///
+/// The source path is unknown at this boundary, so the suggestion is written
+/// without a filename rather than the misleading `'unknown'` placeholder.
 impl From<csv::Error> for DataProfilerError {
     fn from(err: csv::Error) -> Self {
-        DataProfilerError::csv_parsing(&err.to_string(), "unknown")
+        DataProfilerError::csv_parsing(&err.to_string(), None)
     }
 }
 
@@ -675,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_error_categorization() {
-        let csv_error = DataProfilerError::csv_parsing("field count mismatch", "test.csv");
+        let csv_error = DataProfilerError::csv_parsing("field count mismatch", Some("test.csv"));
         assert_eq!(csv_error.category(), "csv_parsing");
         assert!(!csv_error.is_recoverable());
     }
@@ -696,5 +798,85 @@ mod tests {
         let error_string = config_error.to_string();
         assert!(error_string.contains("Invalid chunk size"));
         assert!(error_string.contains("Use a value between"));
+    }
+
+    #[test]
+    fn io_conversion_never_fabricates_a_path() {
+        // A NotFound io::Error carries no path here; the conversion must not
+        // invent one (the `'unknown'` placeholder the contract work removed).
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
+        let err = DataProfilerError::from(io_err);
+        assert_eq!(err.category(), "io");
+        assert!(!err.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn csv_conversion_without_path_omits_the_filename() {
+        // The `From<csv::Error>` boundary does not know the source file, so the
+        // suggestion must not print `'unknown'` as if it were the filename.
+        let err = DataProfilerError::csv_parsing("record has 5 fields but 3 expected", None);
+        let msg = err.to_string();
+        assert!(!msg.contains("unknown"));
+        assert!(msg.contains("This CSV file has inconsistent column counts"));
+    }
+
+    #[test]
+    fn csv_conversion_with_path_names_the_file() {
+        let err =
+            DataProfilerError::csv_parsing("record has 5 fields but 3 expected", Some("data.csv"));
+        assert!(err.to_string().contains("The CSV file 'data.csv' has"));
+    }
+
+    #[test]
+    fn file_not_found_keeps_the_real_path() {
+        let err = DataProfilerError::file_not_found("/data/sales.csv");
+        assert_eq!(err.category(), "file_not_found");
+        assert!(err.to_string().contains("/data/sales.csv"));
+    }
+
+    #[test]
+    fn unsupported_format_advertises_only_buildable_formats() {
+        let err = DataProfilerError::unsupported_format("xlsx");
+        let msg = err.to_string();
+        assert!(msg.contains("CSV, JSON, JSONL"));
+        // Parquet is only claimed when the build can actually read it.
+        #[cfg(feature = "parquet")]
+        assert!(msg.contains("Parquet"));
+        #[cfg(not(feature = "parquet"))]
+        assert!(!msg.contains("Parquet"));
+    }
+
+    #[test]
+    fn suggestion_is_available_as_structured_context() {
+        let err = DataProfilerError::unsupported_format("xlsx");
+        assert!(err.suggestion().is_some());
+        let hint = DataProfilerError::simd_unavailable("no avx2");
+        assert!(hint.suggestion().is_none());
+    }
+
+    #[test]
+    fn redact_credentials_scrubs_userinfo() {
+        assert_eq!(
+            redact_credentials("postgresql://admin:s3cret@db.internal:5432/sales"),
+            "postgresql://***@db.internal:5432/sales"
+        );
+        // No userinfo → untouched.
+        assert_eq!(
+            redact_credentials("mysql://db.internal:3306/app"),
+            "mysql://db.internal:3306/app"
+        );
+        // Embedded in a driver error message.
+        let msg = "Failed to connect: error with url mysql://root:hunter2@localhost/db";
+        let redacted = redact_credentials(msg);
+        assert!(!redacted.contains("hunter2"));
+        assert!(redacted.contains("mysql://***@localhost/db"));
+    }
+
+    #[test]
+    fn database_connection_error_redacts_password() {
+        let err = DataProfilerError::database_connection(
+            "pool timed out connecting to postgres://user:topsecret@host/db",
+        );
+        assert!(!err.to_string().contains("topsecret"));
     }
 }

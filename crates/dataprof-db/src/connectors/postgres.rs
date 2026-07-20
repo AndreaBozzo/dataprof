@@ -37,8 +37,8 @@ impl PostgresConnector {
         if connection_info.database_type() != "postgresql" {
             return Err(DataProfilerError::DatabaseConfigError {
                 message: format!(
-                    "Invalid connection string for PostgreSQL: {}",
-                    config.connection_string
+                    "Invalid connection string for PostgreSQL: expected a postgresql:// URL, got a {} URL",
+                    connection_info.database_type()
                 ),
             });
         }
@@ -223,5 +223,31 @@ impl DatabaseConnector for PostgresConnector {
 
         #[cfg(not(feature = "postgres"))]
         Err(feature_not_enabled_error("PostgreSQL", "postgres"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheme_mismatch_error_does_not_leak_the_connection_string() {
+        // A mysql:// URL handed to the Postgres connector is a config error, but
+        // it must report the detected scheme — never echo the raw string, which
+        // carries the password.
+        let config = DatabaseConfig {
+            connection_string: "mysql://admin:s3cret@db.internal/app".to_string(),
+            ..Default::default()
+        };
+        let msg = match PostgresConnector::new(config) {
+            Ok(_) => panic!("scheme mismatch must fail"),
+            Err(err) => err.to_string(),
+        };
+        assert!(!msg.contains("s3cret"), "password must not leak: {msg}");
+        assert!(!msg.contains("admin"), "username must not leak: {msg}");
+        assert!(
+            msg.contains("mysql"),
+            "should name the detected scheme: {msg}"
+        );
     }
 }

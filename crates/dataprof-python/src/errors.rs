@@ -5,20 +5,39 @@
 //! validates hints and returns a typed error; the DataFrame paths build a report
 //! directly, so they call [`validate_report_hints`] to get the same contract.
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{
+    PyFileNotFoundError, PyIOError, PyPermissionError, PyRuntimeError, PyValueError,
+};
 use pyo3::prelude::*;
 
 use dataprof::{DataProfilerError, ProfileReport, SemanticHints};
 
 /// Map a profiling error to the most appropriate Python exception.
 ///
-/// Mistakes in user input — invalid configuration, semantic hints that cannot
-/// bind — surface as `ValueError`; everything else is a `RuntimeError`.
+/// The category drives the exception type so callers can `except` on the
+/// idiomatic Python class instead of string-matching a `RuntimeError`:
+///   * bad user input (config, semantic hints, unsupported format) → `ValueError`
+///   * a missing file → `FileNotFoundError`
+///   * permission / other I/O trouble → `PermissionError` / `IOError`
+///   * everything else → `RuntimeError`
+///
+/// The `DataProfilerError` `Display` already carries the actionable suggestion,
+/// so the message is passed through verbatim rather than re-wrapped.
 pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
+    let message = err.to_string();
     match err {
         DataProfilerError::InvalidSemanticHint { .. }
-        | DataProfilerError::InvalidConfiguration { .. } => PyValueError::new_err(err.to_string()),
-        _ => PyRuntimeError::new_err(format!("Analysis failed: {err}")),
+        | DataProfilerError::InvalidConfiguration { .. }
+        | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
+        DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
+        DataProfilerError::IoError { .. } => {
+            if message.to_ascii_lowercase().contains("permission denied") {
+                PyPermissionError::new_err(message)
+            } else {
+                PyIOError::new_err(message)
+            }
+        }
+        _ => PyRuntimeError::new_err(format!("Analysis failed: {message}")),
     }
 }
 

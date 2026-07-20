@@ -182,6 +182,16 @@ class TestProfileFile:
         with pytest.raises(TypeError, match="Unsupported source type"):
             dataprof.profile(42)
 
+    def test_unsupported_format_raises_value_error(self, tmp_path):
+        # A genuinely unknown extension is user error, not an internal failure:
+        # the lightweight entry points surface it as ValueError, and the
+        # supported-format list must match what this build can read.
+        bogus = tmp_path / "sheet.xlsx"
+        bogus.write_text("not really a spreadsheet")
+        with pytest.raises(ValueError, match="Unsupported file format") as excinfo:
+            dataprof.infer_schema(str(bogus))
+        assert "CSV" in str(excinfo.value)
+
 
 class TestProfileDataFrame:
     @staticmethod

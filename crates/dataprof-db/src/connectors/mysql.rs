@@ -37,8 +37,8 @@ impl MySqlConnector {
         if connection_info.database_type() != "mysql" {
             return Err(DataProfilerError::DatabaseConfigError {
                 message: format!(
-                    "Invalid connection string for MySQL: {}",
-                    config.connection_string
+                    "Invalid connection string for MySQL: expected a mysql:// URL, got a {} URL",
+                    connection_info.database_type()
                 ),
             });
         }
