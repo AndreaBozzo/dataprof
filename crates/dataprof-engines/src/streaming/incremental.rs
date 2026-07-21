@@ -132,6 +132,7 @@ impl IncrementalProfiler {
         let mut headers = None;
         let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
+        let mut ragged_rows = 0;
         let mut offset = 0u64;
         let mut source_exhausted = true;
 
@@ -169,6 +170,15 @@ impl IncrementalProfiler {
 
                 for (row_idx, record) in records.iter().enumerate() {
                     let global_row_idx = iterated_rows + row_idx;
+
+                    // A record whose field count differs from the header is a
+                    // structural violation. It is still recovered below (padded
+                    // or truncated to header width), but must not vanish from
+                    // the report — counted here, before sampling, so the signal
+                    // reflects every row read rather than only sampled ones.
+                    if record.len() != header_names.len() {
+                        ragged_rows += 1;
+                    }
 
                     // Apply sampling strategy
                     if !self
@@ -298,7 +308,8 @@ impl IncrementalProfiler {
 
         let mut execution = ExecutionMetadata::new(analyzed_rows, num_columns, scan_time_ms)
             .with_engine("incremental")
-            .with_bytes_consumed(bytes_consumed);
+            .with_bytes_consumed(bytes_consumed)
+            .with_ragged_row_count(ragged_rows);
 
         if let Some(peak_mb) = memory_sampler.peak_mb() {
             execution = execution.with_memory_peak_mb(peak_mb);

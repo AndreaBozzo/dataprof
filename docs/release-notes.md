@@ -1,5 +1,26 @@
 # Unreleased
 
+## Ragged CSV rows leave a signal instead of vanishing
+
+A CSV row whose field count differs from the header — extra trailing fields, or
+missing ones — is still recovered (extra fields dropped, missing fields padded
+to null) so profiling continues, but that recovery is no longer silent.
+`execution.ragged_row_count` reports how many rows were ragged; it is `0` for a
+cleanly parsed file. Previously such files reported `error_count: 0` and a
+perfect consistency score, answering "did parsing silently go wrong?" with a
+confident and wrong "no".
+
+The count is exposed on the Python `ProfileReport` as `report.ragged_row_count`
+and in `to_dict()["execution"]["ragged_row_count"]`. It is an additive report
+field: reports written before this release deserialize with `ragged_row_count`
+of `0`.
+
+Scope: this is surfaced by the incremental engine, which drives the default CSV
+path. The columnar (Arrow) engine and the async reader reject ragged rows
+outright rather than recovering them, so they never produced the silent-clean
+result; unifying that recovery behavior across engines is tracked separately.
+Ragged rows do not yet influence the consistency dimension's score.
+
 ## Errors preserve source context and map to idiomatic Python exceptions
 
 Failure diagnostics are now consistent about what failed, where, and what to do

@@ -1529,6 +1529,9 @@ class _DictBackedReport:
         self.throughput_rows_sec = execution.get("throughput_rows_sec")
         self.memory_peak_mb = execution.get("memory_peak_mb")
         self.error_count = execution.get("error_count")
+        # Additive field: reports written before it existed omit the key and
+        # must read back as 0 (not None), matching the Rust serde default.
+        self.ragged_row_count = execution.get("ragged_row_count") or 0
         self.sampling_applied = bool(execution.get("sampling_applied", False))
         self.sampling_ratio = execution.get("sampling_ratio")
         quality = d.get("quality")
@@ -1641,6 +1644,17 @@ class ProfileReport:
         return self._report.source_exhausted
 
     @property
+    def ragged_row_count(self) -> int:
+        """Number of data rows whose field count differed from the header.
+
+        Nonzero means the source did not parse cleanly: flexible parsing
+        recovered each row (dropping extra fields or padding missing ones to
+        null), but the row is a structural violation. This is the direct answer
+        to "did parsing silently go wrong?" for ragged CSV.
+        """
+        return self._report.ragged_row_count
+
+    @property
     def sampling_applied(self) -> bool:
         return self._report.sampling_applied
 
@@ -1731,6 +1745,7 @@ class ProfileReport:
                 "throughput_rows_sec": _r4(self._report.throughput_rows_sec),
                 "memory_peak_mb": _r2(self._report.memory_peak_mb),
                 "error_count": self._report.error_count,
+                "ragged_row_count": self._report.ragged_row_count,
                 "sampling_applied": self._report.sampling_applied,
                 "sampling_ratio": _r4(self._report.sampling_ratio),
             },
