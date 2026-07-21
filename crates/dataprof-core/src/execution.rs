@@ -40,6 +40,15 @@ pub struct ExecutionMetadata {
     pub memory_peak_mb: Option<f64>,
     /// Number of errors encountered during profiling.
     pub error_count: usize,
+    /// Number of data rows whose field count differed from the header's.
+    ///
+    /// These rows were recovered — extra trailing fields dropped, missing
+    /// trailing fields padded to null — so profiling continued, but each one
+    /// is a structural violation in the source. A nonzero value means the file
+    /// did not parse cleanly even though a report was produced. Additive field:
+    /// legacy documents without it deserialize as `0`.
+    #[serde(default)]
+    pub ragged_row_count: usize,
     /// Whether the entire source was consumed.
     pub source_exhausted: bool,
     /// If the source was not exhausted, why processing stopped.
@@ -70,6 +79,7 @@ impl ExecutionMetadata {
             throughput_rows_sec,
             memory_peak_mb: None,
             error_count: 0,
+            ragged_row_count: 0,
             source_exhausted: true,
             truncation_reason: None,
             sampling_applied: false,
@@ -115,6 +125,12 @@ impl ExecutionMetadata {
         self
     }
 
+    /// Set the count of ragged rows (field count != header field count).
+    pub fn with_ragged_row_count(mut self, count: usize) -> Self {
+        self.ragged_row_count = count;
+        self
+    }
+
     /// Set peak memory usage.
     pub fn with_memory_peak_mb(mut self, mb: f64) -> Self {
         self.memory_peak_mb = Some(mb);
@@ -153,6 +169,30 @@ mod tests {
         let meta = ExecutionMetadata::new(500, 3, 100).with_sampling(0.5);
         assert!(meta.sampling_applied);
         assert_eq!(meta.sampling_ratio, Some(0.5));
+    }
+
+    #[test]
+    fn test_execution_metadata_ragged_row_count() {
+        let meta = ExecutionMetadata::new(100, 3, 25);
+        assert_eq!(meta.ragged_row_count, 0);
+        let meta = meta.with_ragged_row_count(2);
+        assert_eq!(meta.ragged_row_count, 2);
+    }
+
+    #[test]
+    fn test_execution_metadata_ragged_defaults_when_absent() {
+        // A document written before the field existed must deserialize as 0,
+        // not fail or fabricate a value.
+        let json = r#"{
+            "rows_processed": 10,
+            "columns_detected": 2,
+            "scan_time_ms": 5,
+            "error_count": 0,
+            "source_exhausted": true,
+            "sampling_applied": false
+        }"#;
+        let meta: ExecutionMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.ragged_row_count, 0);
     }
 
     #[test]

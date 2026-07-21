@@ -46,6 +46,26 @@ class TestDogfoodingSession:
         assert "DataQualityMetrics" in quality_repr
         assert "dimensions=" in quality_repr
 
+    def test_ragged_csv_is_not_reported_clean(self, tmp_path):
+        # Regression for #418: ragged rows were silently normalized, leaving
+        # error_count 0 and consistency 100 on structurally broken files.
+        csv = tmp_path / "ragged.csv"
+        csv.write_text("name,age,city\nAlice,25,NYC\nBob,30\nCarol,35,LA,EXTRA\nDave,40,SF\n")
+
+        report = dp.profile(csv, metrics=["schema", "statistics", "quality"])
+
+        assert report.rows == 4
+        assert report.ragged_row_count == 2
+        assert report.to_dict()["execution"]["ragged_row_count"] == 2
+
+    def test_clean_csv_reports_zero_ragged_rows(self, tmp_path):
+        csv = tmp_path / "clean.csv"
+        csv.write_text("name,age,city\nAlice,25,NYC\nBob,30,LA\n")
+
+        report = dp.profile(csv, metrics=["schema", "statistics", "quality"])
+
+        assert report.ragged_row_count == 0
+
     def test_checkout_jsonl_session(self):
         report = dp.profile(FIXTURES / "checkout_events.jsonl", format="jsonl")
 

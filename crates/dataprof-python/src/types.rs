@@ -894,6 +894,16 @@ impl PyProfileReport {
         self.inner.execution.error_count
     }
 
+    /// Number of data rows whose field count differed from the header.
+    ///
+    /// Nonzero means the source did not parse cleanly: extra fields were
+    /// dropped or missing trailing fields padded to null. The rows are still
+    /// profiled, but this is the structural-violation signal for ragged CSV.
+    #[getter]
+    fn ragged_row_count(&self) -> usize {
+        self.inner.execution.ragged_row_count
+    }
+
     /// Whether sampling was applied
     #[getter]
     fn sampling_applied(&self) -> bool {
