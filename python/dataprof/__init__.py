@@ -1529,7 +1529,9 @@ class _DictBackedReport:
         self.throughput_rows_sec = execution.get("throughput_rows_sec")
         self.memory_peak_mb = execution.get("memory_peak_mb")
         self.error_count = execution.get("error_count")
-        self.ragged_row_count = execution.get("ragged_row_count")
+        # Additive field: reports written before it existed omit the key and
+        # must read back as 0 (not None), matching the Rust serde default.
+        self.ragged_row_count = execution.get("ragged_row_count") or 0
         self.sampling_applied = bool(execution.get("sampling_applied", False))
         self.sampling_ratio = execution.get("sampling_ratio")
         quality = d.get("quality")
