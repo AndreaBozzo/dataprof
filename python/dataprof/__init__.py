@@ -1955,7 +1955,8 @@ class ProfileReport:
                 f.write(self.to_markdown())
         else:
             raise ValueError(
-                f"Unsupported format for '{path}'. Use .json, .csv, .parquet, .html, .md."
+                f"Unsupported format for '{path}'. "
+                "Use .json, .csv, .parquet, .html, .md, or .markdown."
             )
         return self
 

@@ -241,6 +241,22 @@ class TestInterop:
         assert batch.num_rows > 0
         assert batch.num_columns > 0
 
+    def test_arrow_uniqueness_ratio_is_unit_scale(self):
+        # uniqueness_ratio must be a 0..1 ratio, matching
+        # ColumnProfile.uniqueness_ratio and the docs — not a 0..100 percentage.
+        pa = pytest.importorskip("pyarrow")
+        import dataprof.interop as interop
+
+        batch = pa.record_batch(interop.analyze_csv_to_arrow(CSV_FILE))
+        uniq = batch.column("unique_count").to_pylist()
+        totals = batch.column("total_count").to_pylist()
+        ratios = batch.column("uniqueness_ratio").to_pylist()
+        for uc, tot, ratio in zip(uniq, totals, ratios):
+            if ratio is None:
+                continue
+            assert 0.0 <= ratio <= 1.0
+            assert ratio == pytest.approx(uc / tot, abs=1e-9)
+
     def test_analyze_parquet_to_arrow_path_object(self):
         import dataprof.interop as interop
 

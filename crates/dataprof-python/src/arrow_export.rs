@@ -624,7 +624,9 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let unique_ratios: Float64Array = profiles
         .iter()
         .map(|p| match p.unique_count {
-            Some(u) if p.total_count > 0 => Some((u as f64 / p.total_count as f64) * 100.0),
+            // A ratio in [0, 1], matching `ColumnProfile.uniqueness_ratio` and
+            // the documented definition — not a 0–100 percentage.
+            Some(u) if p.total_count > 0 => Some(u as f64 / p.total_count as f64),
             _ => None,
         })
         .collect();
