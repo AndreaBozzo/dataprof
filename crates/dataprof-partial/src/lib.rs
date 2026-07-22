@@ -446,25 +446,7 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
     let reader = BufReader::new(file);
 
     if file_size < FULL_SCAN_THRESHOLD {
-        // Full scan — exact count using the CSV parser so embedded newlines in
-        // quoted fields do not inflate the row count.
-        let mut csv_reader = csv::ReaderBuilder::new()
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(reader);
-        let mut count: u64 = 0;
-        for result in csv_reader.records() {
-            let _record = result?;
-            count += 1;
-        }
-
-        Ok(RowCountEstimate {
-            count,
-            exact: true,
-            method: CountMethod::FullScan,
-            count_time_ms: start.elapsed().as_millis(),
-            relative_error: None,
-        })
+        full_scan_csv(reader, start)
     } else {
         // Sampling — estimate the local row density (rows per byte) at several
         // evenly-spaced offsets across the file, then integrate over the file
@@ -473,17 +455,16 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
         // are shorter than later ones, so extrapolating from the file's head
         // overestimates. Sampling across offsets removes that bias for the same
         // I/O budget.
-        drop(reader);
         let sample = sample_row_density_multi_offset(path, file_size)?;
 
         if sample.lines_sampled == 0 {
-            return Ok(RowCountEstimate {
-                count: 0,
-                exact: true,
-                method: CountMethod::FullScan,
-                count_time_ms: start.elapsed().as_millis(),
-                relative_error: None,
-            });
+            // The sampler could not observe a single complete line — e.g. rows
+            // longer than a sampling window, so every seek lands inside one row
+            // and the resync consumes the rest to EOF. Fall back to an exact
+            // scan rather than reporting a fabricated zero labelled `exact`.
+            // `reader` is still positioned at the start of the file (the
+            // sampler uses its own independent handle).
+            return full_scan_csv(reader, start);
         }
 
         // Subtract 1 for the header line.
@@ -498,6 +479,57 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
             relative_error: sample.relative_error,
         })
     }
+}
+
+/// Exact CSV row count via a full scan with the CSV parser, so embedded
+/// newlines in quoted fields do not inflate the count. Shared by the
+/// small-file path and the large-file fallback when sampling observes no
+/// complete lines.
+fn full_scan_csv<R: Read>(
+    reader: R,
+    start: Instant,
+) -> Result<RowCountEstimate, DataProfilerError> {
+    let mut csv_reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(reader);
+    let mut count: u64 = 0;
+    for result in csv_reader.records() {
+        let _record = result?;
+        count += 1;
+    }
+
+    Ok(RowCountEstimate {
+        count,
+        exact: true,
+        method: CountMethod::FullScan,
+        count_time_ms: start.elapsed().as_millis(),
+        relative_error: None,
+    })
+}
+
+/// Exact JSONL row count via a full scan counting non-empty lines. Shared by
+/// the small-file path and the large-file fallback when the prefix sample
+/// yields no non-empty lines.
+fn full_scan_jsonl<R: BufRead>(
+    reader: R,
+    start: Instant,
+) -> Result<RowCountEstimate, DataProfilerError> {
+    let mut count: u64 = 0;
+    for line in reader.lines() {
+        let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+        if !line.trim().is_empty() {
+            count += 1;
+        }
+    }
+
+    Ok(RowCountEstimate {
+        count,
+        exact: true,
+        method: CountMethod::FullScan,
+        count_time_ms: start.elapsed().as_millis(),
+        relative_error: None,
+    })
 }
 
 /// Statistics from sampling row density at several offsets across a file.
@@ -638,29 +670,17 @@ fn count_json(
             let reader = BufReader::new(file);
 
             if file_size < FULL_SCAN_THRESHOLD {
-                // Full scan — count non-empty lines
-                let mut count: u64 = 0;
-                for line in reader.lines() {
-                    let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
-                    if !line.trim().is_empty() {
-                        count += 1;
-                    }
-                }
+                return full_scan_jsonl(reader, start);
+            }
 
-                Ok(RowCountEstimate {
-                    count,
-                    exact: true,
-                    method: CountMethod::FullScan,
-                    count_time_ms: start.elapsed().as_millis(),
-                    relative_error: None,
-                })
-            } else {
-                // Sampling — estimate from first N lines.
-                // NOTE: this JSONL path is still prefix-biased like the old CSV
-                // sampler (see #428); it is left unchanged here to keep this
-                // change scoped to the reported CSV case. Because the estimate
-                // is not offset-corrected, no `relative_error` hint is emitted.
-                let reader = BufReader::new(fs::File::open(path).map_err(|_| {
+            // Sampling — estimate from first N lines.
+            // NOTE: this JSONL path is still prefix-biased like the old CSV
+            // sampler (see #428); the density-based estimator is left unchanged
+            // here to keep this change scoped to the reported CSV case. Because
+            // the estimate is not offset-corrected, no `relative_error` hint is
+            // emitted.
+            {
+                let sample_reader = BufReader::new(fs::File::open(path).map_err(|_| {
                     DataProfilerError::FileNotFound {
                         path: path.display().to_string(),
                     }
@@ -668,7 +688,7 @@ fn count_json(
                 let mut bytes_read: u64 = 0;
                 let mut lines_read: u64 = 0;
 
-                for line in reader.lines().take(ROW_SAMPLE_LINES) {
+                for line in sample_reader.lines().take(ROW_SAMPLE_LINES) {
                     let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
                     if !line.trim().is_empty() {
                         bytes_read += line.len() as u64 + 1;
@@ -677,13 +697,11 @@ fn count_json(
                 }
 
                 if lines_read == 0 {
-                    return Ok(RowCountEstimate {
-                        count: 0,
-                        exact: true,
-                        method: CountMethod::FullScan,
-                        count_time_ms: start.elapsed().as_millis(),
-                        relative_error: None,
-                    });
+                    // The prefix sample held no non-empty lines; that does not
+                    // mean the file is empty (the data may start past the
+                    // sampled prefix). Fall back to an exact scan instead of
+                    // reporting a fabricated zero labelled `exact`.
+                    return full_scan_jsonl(reader, start);
                 }
 
                 let avg_bytes_per_line = bytes_read as f64 / lines_read as f64;
@@ -1446,6 +1464,58 @@ mod tests {
         let f = write_temp_csv("a,b\n1,2\n3,4\n");
         let result = quick_row_count(f.path()).unwrap();
         assert!(result.exact);
+        assert_eq!(result.relative_error, None);
+    }
+
+    #[test]
+    fn test_quick_row_count_csv_sampling_zero_lines_falls_back_to_exact() {
+        // Header + a single data field larger than the whole sampling-window
+        // grid: every window seeks inside that one line and the resync consumes
+        // the remainder to EOF, so the sampler observes no complete line. The
+        // result must be an exact full scan (count=1), not a fabricated zero.
+        let mut f = NamedTempFile::with_suffix(".csv").unwrap();
+        writeln!(f, "data").unwrap();
+        let big = "x".repeat(FULL_SCAN_THRESHOLD as usize + 1024 * 1024);
+        writeln!(f, "{big}").unwrap();
+        f.flush().unwrap();
+
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.method, CountMethod::FullScan);
+        assert!(result.exact);
+        assert_eq!(result.count, 1);
+        assert_eq!(result.relative_error, None);
+    }
+
+    #[test]
+    fn test_quick_row_count_jsonl_sampling_zero_lines_falls_back_to_exact() {
+        // More than ROW_SAMPLE_LINES blank lines ahead of the real records, in a
+        // file large enough to take the sampling branch. The prefix sample sees
+        // only blanks (lines_read == 0), so the count must come from an exact
+        // full scan rather than being reported as an exact zero.
+        use std::io::BufWriter;
+        let mut f = NamedTempFile::with_suffix(".jsonl").unwrap();
+        let mut data_rows: u64 = 0;
+        {
+            let mut w = BufWriter::new(f.as_file_mut());
+            let blanks = ROW_SAMPLE_LINES + 100;
+            for _ in 0..blanks {
+                w.write_all(b"\n").unwrap();
+            }
+            let mut written = blanks as u64; // one byte per blank line
+            let target = FULL_SCAN_THRESHOLD + 1024 * 1024;
+            while written < target {
+                let line = format!("{{\"id\":{data_rows}}}\n");
+                w.write_all(line.as_bytes()).unwrap();
+                written += line.len() as u64;
+                data_rows += 1;
+            }
+        }
+        f.flush().unwrap();
+
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.method, CountMethod::FullScan);
+        assert!(result.exact);
+        assert_eq!(result.count, data_rows);
         assert_eq!(result.relative_error, None);
     }
 
