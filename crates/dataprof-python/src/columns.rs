@@ -68,6 +68,13 @@ pub fn profile_columns(
         )));
     }
 
+    // Backstop: the Python transport wrappers reject collisions with a precise
+    // source label, but this entry is reachable directly, so keep the invariant
+    // (one profile per name, never merged or shadowed) enforced here too.
+    let column_names: Vec<String> = columns.iter().map(|(n, _)| n.clone()).collect();
+    dataprof::validate_unique_column_names(&column_names, "columns")
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
     let num_rows = effective_max_rows
         .map(|cap| cap.min(source_rows))
         .unwrap_or(source_rows);

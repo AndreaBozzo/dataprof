@@ -51,4 +51,4 @@ pub use source::{
 pub use stop_condition::{
     SchemaStabilityTracker, StopCondition, StopEvaluator, schema_stable_threshold,
 };
-pub use validation::{InputValidator, ValidationError, exit_codes};
+pub use validation::{InputValidator, ValidationError, exit_codes, validate_unique_column_names};

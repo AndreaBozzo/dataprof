@@ -434,6 +434,41 @@ class TestProfileAdHocInputs:
         with pytest.raises(ValueError, match="row 2 has 3 fields"):
             dataprof.profile(b"a,b\n1,2,3\n", format="csv")
 
+    def test_csv_bytes_reject_duplicate_headers(self):
+        # Would otherwise report 3 columns but shadow one 'x' at mapping access.
+        with pytest.raises(ValueError, match="duplicate column name"):
+            dataprof.profile(b"x,x,y\n1,2,a\n3,4,b\n", format="csv")
+
+    def test_csv_file_reject_duplicate_headers(self, tmp_path):
+        path = tmp_path / "dup.csv"
+        path.write_text("x,x,y\n1,2,a\n3,4,b\n")
+        with pytest.raises(ValueError) as excinfo:
+            dataprof.profile(str(path))
+        msg = str(excinfo.value)
+        assert "'x'" in msg  # names the offender
+        assert "1" not in msg  # never echoes cell values
+
+    def test_arrow_reject_duplicate_columns(self):
+        pa = pytest.importorskip("pyarrow")
+        # Two fields named "x"; a name-keyed analyzer would merge them.
+        table = pa.table(
+            [pa.array([1, 3]), pa.array([2, 4]), pa.array([5, 6])],
+            schema=pa.schema(
+                [("x", pa.int64()), ("x", pa.int64()), ("y", pa.int64())]
+            ),
+        )
+        with pytest.raises(ValueError, match="[Dd]uplicate column name"):
+            dataprof.profile(table)
+
+    def test_raw_extension_rejects_duplicate_column_names(self):
+        # profile_columns is importable directly, so it enforces uniqueness too.
+        from dataprof import _dataprof
+
+        with pytest.raises(ValueError, match="[Dd]uplicate column name"):
+            _dataprof.profile_columns(
+                [("x", ["1", "3"]), ("x", ["2", "4"])], "t", None, None
+            )
+
     def test_json_bytes_accept_columns_or_records(self):
         by_column = dataprof.profile(b'{"a": [1, 2]}', format="json")
         by_record = dataprof.profile(b'[{"a": 1}, {"a": 2}]', format="json")

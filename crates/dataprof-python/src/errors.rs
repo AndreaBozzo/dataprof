@@ -28,6 +28,7 @@ pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
     match err {
         DataProfilerError::InvalidSemanticHint { .. }
         | DataProfilerError::InvalidConfiguration { .. }
+        | DataProfilerError::DuplicateColumnName { .. }
         | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
         DataProfilerError::IoError { .. } => {
@@ -38,6 +39,20 @@ pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
             }
         }
         _ => PyRuntimeError::new_err(format!("Analysis failed: {message}")),
+    }
+}
+
+/// Map an analyzer error (an `anyhow::Error` that usually wraps a
+/// [`DataProfilerError`]) onto a Python exception.
+///
+/// The columnar analyzers return `anyhow::Result`, which would otherwise
+/// flatten every failure into a `RuntimeError`. Recovering the typed error
+/// keeps input problems — notably duplicate column names — as `ValueError`, so
+/// the Arrow/Parquet input paths agree with the CSV and dict/list paths.
+pub(crate) fn analyzer_error_to_py(err: anyhow::Error) -> PyErr {
+    match err.downcast::<DataProfilerError>() {
+        Ok(typed) => analysis_error_to_py(&typed),
+        Err(other) => PyRuntimeError::new_err(format!("Analysis failed: {other}")),
     }
 }
 

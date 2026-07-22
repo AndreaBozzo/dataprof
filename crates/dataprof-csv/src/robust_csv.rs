@@ -134,6 +134,13 @@ impl RobustCsvParser {
                     )
                 };
 
+                // Duplicate headers are deterministic across strategies; recovery
+                // cannot resolve them, so surface the clear error instead of
+                // burying it under "auto-recovery failed".
+                if matches!(dp_error, DataProfilerError::DuplicateColumnName { .. }) {
+                    return Err(dp_error.into());
+                }
+
                 recovery_manager
                     .attempt_recovery(&dp_error, |strategy| {
                         self.try_recovery_strategy(file_path, strategy)
@@ -276,17 +283,21 @@ impl RobustCsvParser {
                 .context("Failed to detect delimiter")?
         };
 
-        match self.try_strict_parsing(file_path, delimiter) {
-            Ok(result) => return Ok(result),
+        let result = match self.try_strict_parsing(file_path, delimiter) {
+            Ok(result) => result,
             Err(error) => {
                 if self.verbosity >= 2 {
                     log::info!("Using flexible CSV parsing (strict mode failed: {})", error);
                 }
+                self.try_flexible_parsing(file_path, delimiter)
+                    .context("Both strict and flexible CSV parsing failed")?
             }
-        }
+        };
 
-        self.try_flexible_parsing(file_path, delimiter)
-            .context("Both strict and flexible CSV parsing failed")
+        // Duplicate headers are a property of the file, identical across parse
+        // strategies, so reject once here rather than in each leaf parser.
+        dataprof_core::validate_unique_column_names(&result.0, "CSV header")?;
+        Ok(result)
     }
 
     fn try_strict_parsing(
@@ -426,14 +437,14 @@ impl RobustCsvParser {
             })
             .from_reader(Cursor::new(data));
 
-        let headers = if has_headers {
-            Some(
-                reader
-                    .headers()?
-                    .iter()
-                    .map(|value| value.to_string())
-                    .collect(),
-            )
+        let headers: Option<Vec<String>> = if has_headers {
+            let names: Vec<String> = reader
+                .headers()?
+                .iter()
+                .map(|value| value.to_string())
+                .collect();
+            dataprof_core::validate_unique_column_names(&names, "CSV header")?;
+            Some(names)
         } else {
             None
         };

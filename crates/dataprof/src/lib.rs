@@ -30,7 +30,7 @@ pub use dataprof_core::{
     Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension, QualityScoreWeights,
     Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding,
     SemanticHintKind, SemanticHints, StopCondition, StopEvaluator, StructureColumnSummary,
-    StructureReport, TextStats, TruncationReason, ValidationError,
+    StructureReport, TextStats, TruncationReason, ValidationError, validate_unique_column_names,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
