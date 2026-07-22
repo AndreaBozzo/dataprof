@@ -454,10 +454,10 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
         // case of an autoincrement id or growing timestamp, where early rows
         // are shorter than later ones, so extrapolating from the file's head
         // overestimates. Sampling across offsets removes that bias for the same
-        // I/O budget.
-        let sample = sample_row_density_multi_offset(path, file_size)?;
+        // I/O budget. Every physical line counts as a row for CSV.
+        let sample = sample_row_density_multi_offset(path, file_size, |_| true)?;
 
-        if sample.lines_sampled == 0 {
+        if sample.rows_sampled == 0 {
             // The sampler could not observe a single complete line — e.g. rows
             // longer than a sampling window, so every seek lands inside one row
             // and the resync consumes the rest to EOF. Fall back to an exact
@@ -468,8 +468,8 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
         }
 
         // Subtract 1 for the header line.
-        let estimated_total_lines = sample.estimated_lines.round() as u64;
-        let count = estimated_total_lines.saturating_sub(1);
+        let estimated_total_rows = sample.estimated_rows.round() as u64;
+        let count = estimated_total_rows.saturating_sub(1);
 
         Ok(RowCountEstimate {
             count,
@@ -533,25 +533,31 @@ fn full_scan_jsonl<R: BufRead>(
 }
 
 /// Statistics from sampling row density at several offsets across a file.
-struct MultiOffsetLineSample {
-    /// Estimated total number of physical lines in the whole file.
-    estimated_lines: f64,
-    /// Total number of lines actually measured across all windows.
-    lines_sampled: u64,
-    /// Approximate 1-sigma relative standard error of `estimated_lines`, or
+struct MultiOffsetRowSample {
+    /// Estimated total number of qualifying rows in the whole file (rows for
+    /// which the caller's predicate returned true).
+    estimated_rows: f64,
+    /// Total number of qualifying rows actually measured across all windows.
+    rows_sampled: u64,
+    /// Approximate 1-sigma relative standard error of `estimated_rows`, or
     /// `None` when fewer than two windows produced data.
     relative_error: Option<f64>,
 }
 
-/// Estimate a file's total physical line count by sampling local row density
-/// (lines per byte) at [`ROW_SAMPLE_WINDOWS`] evenly-spaced offsets, measuring
-/// up to [`ROW_SAMPLE_LINES_PER_WINDOW`] lines per window. The total number of
-/// lines read matches the previous prefix-only sampler's budget
+/// Estimate a file's total row count by sampling local row density (qualifying
+/// rows per byte) at [`ROW_SAMPLE_WINDOWS`] evenly-spaced offsets, reading up to
+/// [`ROW_SAMPLE_LINES_PER_WINDOW`] physical lines per window. The total number
+/// of lines read matches the previous prefix-only sampler's budget
 /// ([`ROW_SAMPLE_LINES`]).
+///
+/// `counts_as_row` decides which physical lines count toward the row total
+/// (e.g. every line for CSV; only non-empty lines for JSONL). Every line's
+/// bytes are counted regardless, so skipped lines (like JSONL blanks) still
+/// lower the local density and are accounted for.
 ///
 /// Each window represents an equal share of the file's *bytes*, so averaging
 /// the per-window density is a Riemann sum of density over the byte axis — i.e.
-/// `total_lines ≈ file_size · mean(density)`. This stays unbiased whatever the
+/// `total_rows ≈ file_size · mean(density)`. This stays unbiased whatever the
 /// row-length distribution. (Averaging line *lengths* instead would be
 /// length-biased: uniform byte offsets over-weight long rows, undercounting.)
 ///
@@ -563,15 +569,16 @@ struct MultiOffsetLineSample {
 fn sample_row_density_multi_offset(
     path: &Path,
     file_size: u64,
-) -> Result<MultiOffsetLineSample, DataProfilerError> {
+    counts_as_row: impl Fn(&str) -> bool,
+) -> Result<MultiOffsetRowSample, DataProfilerError> {
     let mut file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
 
     let window_span = file_size / ROW_SAMPLE_WINDOWS as u64;
-    // Per-window row density in lines per byte.
+    // Per-window row density in qualifying rows per byte.
     let mut densities: Vec<f64> = Vec::with_capacity(ROW_SAMPLE_WINDOWS);
-    let mut total_lines: u64 = 0;
+    let mut total_rows: u64 = 0;
 
     for w in 0..ROW_SAMPLE_WINDOWS {
         let offset = window_span * w as u64 + window_span / 2;
@@ -590,7 +597,7 @@ fn sample_row_density_multi_offset(
         }
 
         let mut win_bytes: u64 = 0;
-        let mut win_lines: u64 = 0;
+        let mut win_rows: u64 = 0;
         for _ in 0..ROW_SAMPLE_LINES_PER_WINDOW {
             let mut line = String::new();
             // `read_line` keeps the line terminator, so byte accounting matches
@@ -602,12 +609,14 @@ fn sample_row_density_multi_offset(
                 break; // EOF
             }
             win_bytes += n as u64;
-            win_lines += 1;
+            if counts_as_row(&line) {
+                win_rows += 1;
+            }
         }
 
         if win_bytes > 0 {
-            densities.push(win_lines as f64 / win_bytes as f64);
-            total_lines += win_lines;
+            densities.push(win_rows as f64 / win_bytes as f64);
+            total_rows += win_rows;
         }
     }
 
@@ -616,7 +625,7 @@ fn sample_row_density_multi_offset(
     } else {
         densities.iter().sum::<f64>() / densities.len() as f64
     };
-    let estimated_lines = file_size as f64 * mean_density;
+    let estimated_rows = file_size as f64 * mean_density;
 
     // Estimate the uncertainty from the spread of per-window densities. The
     // standard error of the mean density propagates directly to the relative
@@ -634,9 +643,9 @@ fn sample_row_density_multi_offset(
         None
     };
 
-    Ok(MultiOffsetLineSample {
-        estimated_lines,
-        lines_sampled: total_lines,
+    Ok(MultiOffsetRowSample {
+        estimated_rows,
+        rows_sampled: total_rows,
         relative_error,
     })
 }
@@ -673,48 +682,29 @@ fn count_json(
                 return full_scan_jsonl(reader, start);
             }
 
-            // Sampling — estimate from first N lines.
-            // NOTE: this JSONL path is still prefix-biased like the old CSV
-            // sampler (see #428); the density-based estimator is left unchanged
-            // here to keep this change scoped to the reported CSV case. Because
-            // the estimate is not offset-corrected, no `relative_error` hint is
-            // emitted.
-            {
-                let sample_reader = BufReader::new(fs::File::open(path).map_err(|_| {
-                    DataProfilerError::FileNotFound {
-                        path: path.display().to_string(),
-                    }
-                })?);
-                let mut bytes_read: u64 = 0;
-                let mut lines_read: u64 = 0;
+            // Sampling — multi-offset row-density estimate, same technique as
+            // the CSV path (see #428), counting only non-empty lines as records
+            // so a run of blank lines does not skew the estimate.
+            let sample =
+                sample_row_density_multi_offset(path, file_size, |line| !line.trim().is_empty())?;
 
-                for line in sample_reader.lines().take(ROW_SAMPLE_LINES) {
-                    let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
-                    if !line.trim().is_empty() {
-                        bytes_read += line.len() as u64 + 1;
-                        lines_read += 1;
-                    }
-                }
-
-                if lines_read == 0 {
-                    // The prefix sample held no non-empty lines; that does not
-                    // mean the file is empty (the data may start past the
-                    // sampled prefix). Fall back to an exact scan instead of
-                    // reporting a fabricated zero labelled `exact`.
-                    return full_scan_jsonl(reader, start);
-                }
-
-                let avg_bytes_per_line = bytes_read as f64 / lines_read as f64;
-                let count = (file_size as f64 / avg_bytes_per_line) as u64;
-
-                Ok(RowCountEstimate {
-                    count,
-                    exact: false,
-                    method: CountMethod::Sampling,
-                    count_time_ms: start.elapsed().as_millis(),
-                    relative_error: None,
-                })
+            if sample.rows_sampled == 0 {
+                // No non-empty line was observed in any window; the records may
+                // start past every probe, or the whole file may be blank. Fall
+                // back to an exact scan instead of a fabricated `exact` zero.
+                return full_scan_jsonl(reader, start);
             }
+
+            // No header line in JSONL, so the estimate is the record count.
+            let count = sample.estimated_rows.round() as u64;
+
+            Ok(RowCountEstimate {
+                count,
+                exact: false,
+                method: CountMethod::Sampling,
+                count_time_ms: start.elapsed().as_millis(),
+                relative_error: sample.relative_error,
+            })
         }
         _ => {
             if is_single_root_json_object(path)? {
@@ -1486,28 +1476,97 @@ mod tests {
         assert_eq!(result.relative_error, None);
     }
 
-    #[test]
-    fn test_quick_row_count_jsonl_sampling_zero_lines_falls_back_to_exact() {
-        // More than ROW_SAMPLE_LINES blank lines ahead of the real records, in a
-        // file large enough to take the sampling branch. The prefix sample sees
-        // only blanks (lines_read == 0), so the count must come from an exact
-        // full scan rather than being reported as an exact zero.
+    /// Write a JSONL file larger than `FULL_SCAN_THRESHOLD` so `count_json`
+    /// takes the sampling branch. `grow` makes each record's payload length
+    /// increase with its index, reproducing the short-early / long-late bias.
+    /// Returns the exact record count.
+    fn write_large_jsonl(grow: bool) -> (NamedTempFile, u64) {
         use std::io::BufWriter;
         let mut f = NamedTempFile::with_suffix(".jsonl").unwrap();
-        let mut data_rows: u64 = 0;
+        let mut rows: u64 = 0;
         {
             let mut w = BufWriter::new(f.as_file_mut());
-            let blanks = ROW_SAMPLE_LINES + 100;
-            for _ in 0..blanks {
-                w.write_all(b"\n").unwrap();
-            }
-            let mut written = blanks as u64; // one byte per blank line
+            let mut written: u64 = 0;
             let target = FULL_SCAN_THRESHOLD + 1024 * 1024;
             while written < target {
-                let line = format!("{{\"id\":{data_rows}}}\n");
+                let filler = if grow {
+                    8 + (rows / 2_000) as usize
+                } else {
+                    24
+                };
+                let line = format!("{{\"id\":{rows},\"v\":\"{}\"}}\n", "x".repeat(filler));
                 w.write_all(line.as_bytes()).unwrap();
                 written += line.len() as u64;
-                data_rows += 1;
+                rows += 1;
+            }
+        }
+        f.flush().unwrap();
+        (f, rows)
+    }
+
+    #[test]
+    fn test_quick_row_count_jsonl_sampling_growing_rows_not_biased() {
+        // Multi-offset density sampling should keep the estimate within a few
+        // percent of the true record count despite the growing-row-length bias
+        // that skewed the old prefix-only JSONL sampler.
+        let (f, actual) = write_large_jsonl(true);
+        let result = quick_row_count(f.path()).unwrap();
+
+        assert_eq!(result.method, CountMethod::Sampling);
+        let err = (result.count as f64 - actual as f64).abs() / actual as f64;
+        assert!(
+            err < 0.03,
+            "JSONL multi-offset estimate off by {:.2}% (count={}, actual={})",
+            err * 100.0,
+            result.count,
+            actual
+        );
+        assert!(result.relative_error.is_some());
+    }
+
+    #[test]
+    fn test_quick_row_count_jsonl_blank_prefix_not_undercounted() {
+        // A run of blank lines longer than a single sampling window ahead of the
+        // records must not drag the estimate down: the density sampler counts
+        // only non-empty lines while still charging the blank bytes, and probes
+        // the whole file rather than just the prefix.
+        use std::io::BufWriter;
+        let (data_f, data_rows) = write_large_jsonl(false);
+        let mut f = NamedTempFile::with_suffix(".jsonl").unwrap();
+        {
+            let mut w = BufWriter::new(f.as_file_mut());
+            for _ in 0..(ROW_SAMPLE_LINES + 100) {
+                w.write_all(b"\n").unwrap();
+            }
+            let data = std::fs::read(data_f.path()).unwrap();
+            w.write_all(&data).unwrap();
+        }
+        f.flush().unwrap();
+
+        let result = quick_row_count(f.path()).unwrap();
+        assert_eq!(result.method, CountMethod::Sampling);
+        let err = (result.count as f64 - data_rows as f64).abs() / data_rows as f64;
+        assert!(
+            err < 0.05,
+            "blank-prefix estimate off by {:.2}% (count={}, actual={})",
+            err * 100.0,
+            result.count,
+            data_rows
+        );
+    }
+
+    #[test]
+    fn test_quick_row_count_jsonl_all_blank_falls_back_to_exact() {
+        // A large file whose every sampling window sees only blank lines yields
+        // no sampled record, so the count must come from an exact full scan (0
+        // records here) rather than a divide-by-zero or fabricated estimate.
+        use std::io::BufWriter;
+        let mut f = NamedTempFile::with_suffix(".jsonl").unwrap();
+        {
+            let mut w = BufWriter::new(f.as_file_mut());
+            let block = vec![b'\n'; 1024 * 1024];
+            for _ in 0..((FULL_SCAN_THRESHOLD / (1024 * 1024)) + 2) {
+                w.write_all(&block).unwrap();
             }
         }
         f.flush().unwrap();
@@ -1515,7 +1574,7 @@ mod tests {
         let result = quick_row_count(f.path()).unwrap();
         assert_eq!(result.method, CountMethod::FullScan);
         assert!(result.exact);
-        assert_eq!(result.count, data_rows);
+        assert_eq!(result.count, 0);
         assert_eq!(result.relative_error, None);
     }
 
