@@ -150,8 +150,8 @@ class ColumnProfile:
     unique_count: int | None
     unique_count_is_approximate: bool | None
     invalid_count: int | None
-    null_percentage: float
-    uniqueness_ratio: float
+    null_percentage: float | None
+    uniqueness_ratio: float | None
     min: float | None
     max: float | None
     mean: float | None

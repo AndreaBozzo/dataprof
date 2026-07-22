@@ -569,9 +569,10 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
         Field::new("data_type", ArrowDataType::Utf8, false),
         Field::new("total_count", ArrowDataType::UInt64, false),
         Field::new("null_count", ArrowDataType::UInt64, false),
-        Field::new("null_percentage", ArrowDataType::Float64, false),
+        // Nullable: undefined for a zero-row column, reported as null not 0.0.
+        Field::new("null_percentage", ArrowDataType::Float64, true),
         Field::new("unique_count", ArrowDataType::UInt64, true),
-        Field::new("uniqueness_ratio", ArrowDataType::Float64, false),
+        Field::new("uniqueness_ratio", ArrowDataType::Float64, true),
         // Numeric stats (nullable — None for non-numeric columns)
         Field::new("min", ArrowDataType::Float64, true),
         Field::new("max", ArrowDataType::Float64, true),
@@ -612,12 +613,8 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let null_pcts: Float64Array = profiles
         .iter()
         .map(|p| {
-            let pct = if p.total_count > 0 {
-                (p.null_count as f64 / p.total_count as f64) * 100.0
-            } else {
-                0.0
-            };
-            Some(pct)
+            // Absent (null) for a zero-row column: the ratio is undefined.
+            (p.total_count > 0).then(|| (p.null_count as f64 / p.total_count as f64) * 100.0)
         })
         .collect();
     let uniques: UInt64Array = profiles
@@ -626,12 +623,9 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
         .collect();
     let unique_ratios: Float64Array = profiles
         .iter()
-        .map(|p| {
-            let ratio = match p.unique_count {
-                Some(u) if p.total_count > 0 => (u as f64 / p.total_count as f64) * 100.0,
-                _ => 0.0,
-            };
-            Some(ratio)
+        .map(|p| match p.unique_count {
+            Some(u) if p.total_count > 0 => Some((u as f64 / p.total_count as f64) * 100.0),
+            _ => None,
         })
         .collect();
 

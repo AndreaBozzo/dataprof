@@ -2401,6 +2401,66 @@ class TestLowSampleWarning:
         assert r.to_dict()["quality"]["low_sample_warning"] is False
 
 
+class TestZeroRowSemantics:
+    """Header-only inputs have no values to measure, so ratios and aggregates
+    are absent (None), never a fabricated 0.0 (#435 item 3). Raw counts stay 0
+    -- that is "analyzed, found zero", which the counts genuinely are."""
+
+    @pytest.fixture()
+    def report(self, tmp_path):
+        path = tmp_path / "header_only.csv"
+        path.write_text("a,b,c\n")
+        return dataprof.profile(str(path))
+
+    def test_shape(self, report):
+        assert report.rows == 0
+        assert report.columns == 3
+
+    def test_derived_stats_absent_counts_zero(self, report):
+        for col in report.profiles:
+            # Counts are legitimately zero ("analyzed, found none").
+            assert col.total_count == 0
+            assert col.null_count == 0
+            # Ratios / aggregates were never measured -> absent, not 0.0.
+            assert col.null_percentage is None
+            assert col.uniqueness_ratio is None
+            assert col.avg_length is None
+            assert col.min_length is None
+            assert col.max_length is None
+
+    def test_to_dict_reports_absent(self, report):
+        col = report.to_dict()["columns"][0]
+        assert col["total_count"] == 0
+        assert col["null_percentage"] is None
+        assert col["uniqueness_ratio"] is None
+        # Length stats were never measured, so they are omitted entirely.
+        assert "avg_length" not in col.get("stats", {})
+
+    def test_renders_do_not_crash(self, report):
+        assert "ProfileReport" in repr(report)
+        assert "<table" in report.to_html()
+        md = report.to_markdown()
+        assert "Column" in md
+        # An em dash marks the absent percentage — never a misleading "0.0%".
+        assert "—" in md
+
+    def test_round_trips(self, report):
+        reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
+        assert reloaded.to_dict() == report.to_dict()
+
+    def test_arrow_export_null_not_zero(self, tmp_path):
+        pa = pytest.importorskip("pyarrow")
+        import dataprof.interop as interop
+
+        path = tmp_path / "header_only.csv"
+        path.write_text("a,b\n")
+        batch = pa.record_batch(interop.analyze_csv_to_arrow(str(path)))
+        assert batch.num_rows == 2  # one row per column profile
+        # The Arrow surface must agree with the report API: absent, not 0.0.
+        assert batch.column("null_percentage").to_pylist() == [None, None]
+        assert batch.column("uniqueness_ratio").to_pylist() == [None, None]
+
+
 class TestInvalidCount:
     """Per-column invalid_count: non-null values excluded from numeric stats
     must be disclosed, never silently dropped (#425)."""

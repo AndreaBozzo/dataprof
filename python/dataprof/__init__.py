@@ -245,6 +245,17 @@ def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     return {k: _half_up(v, 2) for k, v in q.items()}
 
 
+def _pct_str(value: float | None) -> str:
+    """Format a percentage for display, or an em dash when absent.
+
+    A percentage that was never measured (``None`` — e.g. a zero-row column)
+    renders as ``—`` rather than ``0.0%``, which would falsely read as a
+    measured value.
+    """
+    r = _r2(value)
+    return f"{r:.1f}%" if r is not None else "—"
+
+
 def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
     """Normalize Python path-like input to the string form expected by Rust."""
     if isinstance(path, str):
@@ -1989,7 +2000,7 @@ class ProfileReport:
                 esc(col.name),
                 esc(col.data_type),
                 f"{col.total_count:,}",
-                f"{_r2(col.null_percentage):.1f}%",
+                _pct_str(col.null_percentage),
                 unique_str,
                 esc(_stats_cell(col)),
                 esc(_pattern_cell(col)),
@@ -2310,7 +2321,7 @@ class ProfileReport:
             lines.append("Columns:")
         for col in show:
             parts = [f"  {col.name:<20s} {col.data_type:<10s}"]
-            parts.append(f"{_r2(col.null_percentage):>5.1f}% null")
+            parts.append(f"{_pct_str(col.null_percentage):>6} null")
             if col.unique_count is not None:
                 # Unknown provenance (None, e.g. an older deserialized report)
                 # must not render as exact -- only an explicit False drops the ~.
@@ -2371,7 +2382,7 @@ class ProfileReport:
                 f"<td><code>{_html.escape(col.name)}</code></td>"
                 f"<td>{_html.escape(col.data_type)}</td>"
                 f"<td style='text-align:right'>{col.total_count:,}</td>"
-                f"<td style='text-align:right'>{_r2(col.null_percentage):.1f}%</td>"
+                f"<td style='text-align:right'>{_pct_str(col.null_percentage)}</td>"
                 f"<td style='text-align:right'>{unique_str}</td>"
                 f"<td>{_html.escape(stats)}</td>"
                 f"<td>{pattern}</td>"
