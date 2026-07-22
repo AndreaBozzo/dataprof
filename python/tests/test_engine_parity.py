@@ -384,15 +384,17 @@ def test_duplicate_column_names_rejected_across_all_inputs(tmp_path):
         ("list-of-dicts", lambda: dataprof.profile([{1: "a", "1": "b"}])),
     ]
     pa = pytest.importorskip("pyarrow", reason="pyarrow optional")
-    inputs.append((
-        "arrow",
-        lambda: dataprof.profile(
-            pa.table(
-                [pa.array([1, 3]), pa.array([2, 4])],
-                schema=pa.schema([("x", pa.int64()), ("x", pa.int64())]),
-            )
-        ),
-    ))
+    inputs.append(
+        (
+            "arrow",
+            lambda: dataprof.profile(
+                pa.table(
+                    [pa.array([1, 3]), pa.array([2, 4])],
+                    schema=pa.schema([("x", pa.int64()), ("x", pa.int64())]),
+                )
+            ),
+        )
+    )
 
     for label, call in inputs:
         with pytest.raises(ValueError):

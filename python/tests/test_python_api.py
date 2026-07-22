@@ -453,9 +453,7 @@ class TestProfileAdHocInputs:
         # Two fields named "x"; a name-keyed analyzer would merge them.
         table = pa.table(
             [pa.array([1, 3]), pa.array([2, 4]), pa.array([5, 6])],
-            schema=pa.schema(
-                [("x", pa.int64()), ("x", pa.int64()), ("y", pa.int64())]
-            ),
+            schema=pa.schema([("x", pa.int64()), ("x", pa.int64()), ("y", pa.int64())]),
         )
         with pytest.raises(ValueError, match="[Dd]uplicate column name"):
             dataprof.profile(table)
@@ -465,9 +463,7 @@ class TestProfileAdHocInputs:
         from dataprof import _dataprof
 
         with pytest.raises(ValueError, match="[Dd]uplicate column name"):
-            _dataprof.profile_columns(
-                [("x", ["1", "3"]), ("x", ["2", "4"])], "t", None, None
-            )
+            _dataprof.profile_columns([("x", ["1", "3"]), ("x", ["2", "4"])], "t", None, None)
 
     def test_json_bytes_accept_columns_or_records(self):
         by_column = dataprof.profile(b'{"a": [1, 2]}', format="json")
