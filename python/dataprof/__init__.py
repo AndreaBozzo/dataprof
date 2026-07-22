@@ -245,6 +245,17 @@ def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     return {k: _half_up(v, 2) for k, v in q.items()}
 
 
+def _pct_str(value: float | None) -> str:
+    """Format a percentage for display, or an em dash when absent.
+
+    A percentage that was never measured (``None`` — e.g. a zero-row column)
+    renders as ``—`` rather than ``0.0%``, which would falsely read as a
+    measured value.
+    """
+    r = _r2(value)
+    return f"{r:.1f}%" if r is not None else "—"
+
+
 def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
     """Normalize Python path-like input to the string form expected by Rust."""
     if isinstance(path, str):
@@ -1580,16 +1591,40 @@ class ProfileReport:
 
     @functools.cached_property
     def column_profiles(self) -> dict[str, ColumnProfile]:
+        """Column profiles as a ``name → ColumnProfile`` mapping.
+
+        Because this is a mapping, iterating it yields column *names* (like any
+        dict), not profile objects — ``for c in report.column_profiles`` gives
+        strings. To iterate the profiles themselves use :attr:`profiles`, and to
+        look one up by name index into this mapping (``report["amount"]`` also
+        works). When a dataset has duplicate column names one profile shadows
+        the other here; :attr:`profiles` preserves the full ordered list.
+        """
         cols = self._report.column_profiles
         d = {col.name: col for col in cols}
         if len(d) != len(cols):
             warnings.warn(
                 f"Dataset has duplicate column names — {len(cols) - len(d)} "
-                "column(s) shadowed in dict access. Use _report.column_profiles "
+                "column(s) shadowed in dict access. Use .profiles "
                 "for the full list.",
                 stacklevel=2,
             )
         return d
+
+    @property
+    def profiles(self) -> list[ColumnProfile]:
+        """The column profiles as an ordered list of :class:`ColumnProfile`.
+
+        Use this when you want to iterate the profile objects rather than their
+        names::
+
+            for col in report.profiles:
+                print(col.name, col.null_percentage)
+
+        Unlike :attr:`column_profiles` (a name-keyed mapping), this preserves
+        every column, including duplicate names.
+        """
+        return list(self._report.column_profiles)
 
     @property
     def quality_score(self) -> float | None:
@@ -1706,8 +1741,10 @@ class ProfileReport:
                     name: _r2(score) for name, score in q.dimension_scores().items()
                 },
             }
-            if q.low_sample_warning:
-                quality_dict["low_sample_warning"] = True
+            # Always emit: a non-optional bool (False = "sample was adequate")
+            # so consumers never have to infer absence, and from_dict round-trips
+            # both states. See docs/python/README.md report-schema notes.
+            quality_dict["low_sample_warning"] = bool(q.low_sample_warning)
             comp = q.completeness
             if comp is not None:
                 quality_dict["completeness"] = comp
@@ -1882,9 +1919,11 @@ class ProfileReport:
         """Save the report to a file.
 
         Supported formats (by extension):
-            .json    — full report as JSON
-            .csv     — column profiles as CSV (no extra dependencies)
-            .parquet — column profiles as Parquet (requires pyarrow)
+            .json        — full report as JSON
+            .csv         — column profiles as CSV (no extra dependencies)
+            .parquet     — column profiles as Parquet (requires pyarrow)
+            .html        — standalone HTML render (same as :meth:`to_html`)
+            .md/.markdown — markdown table (same as :meth:`to_markdown`)
 
         Args:
             path: File path with one of the supported extensions.
@@ -1908,8 +1947,17 @@ class ProfileReport:
             import pyarrow.parquet as pq
 
             pq.write_table(table, path)
+        elif path.endswith(".html"):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.to_html())
+        elif path.endswith((".md", ".markdown")):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.to_markdown())
         else:
-            raise ValueError("Unsupported format. Use .json, .csv, or .parquet")
+            raise ValueError(
+                f"Unsupported format for '{path}'. "
+                "Use .json, .csv, .parquet, .html, .md, or .markdown."
+            )
         return self
 
     def to_html(self) -> str:
@@ -1953,7 +2001,7 @@ class ProfileReport:
                 esc(col.name),
                 esc(col.data_type),
                 f"{col.total_count:,}",
-                f"{_r2(col.null_percentage):.1f}%",
+                _pct_str(col.null_percentage),
                 unique_str,
                 esc(_stats_cell(col)),
                 esc(_pattern_cell(col)),
@@ -2274,7 +2322,7 @@ class ProfileReport:
             lines.append("Columns:")
         for col in show:
             parts = [f"  {col.name:<20s} {col.data_type:<10s}"]
-            parts.append(f"{_r2(col.null_percentage):>5.1f}% null")
+            parts.append(f"{_pct_str(col.null_percentage):>6} null")
             if col.unique_count is not None:
                 # Unknown provenance (None, e.g. an older deserialized report)
                 # must not render as exact -- only an explicit False drops the ~.
@@ -2335,7 +2383,7 @@ class ProfileReport:
                 f"<td><code>{_html.escape(col.name)}</code></td>"
                 f"<td>{_html.escape(col.data_type)}</td>"
                 f"<td style='text-align:right'>{col.total_count:,}</td>"
-                f"<td style='text-align:right'>{_r2(col.null_percentage):.1f}%</td>"
+                f"<td style='text-align:right'>{_pct_str(col.null_percentage)}</td>"
                 f"<td style='text-align:right'>{unique_str}</td>"
                 f"<td>{_html.escape(stats)}</td>"
                 f"<td>{pattern}</td>"

@@ -57,13 +57,16 @@ def main() -> None:
         print("-" * 46)
         for name, col in report.column_profiles.items():
             distinct = col.unique_count if col.unique_count is not None else "-"
-            print(f"{name:<16} {col.data_type:<12} {col.null_percentage:>5.0f}% {distinct:>9}")
+            # null_percentage is None for a column with no rows to measure.
+            null_pct = col.null_percentage
+            null_str = f"{null_pct:>5.0f}%" if null_pct is not None else "    -"
+            print(f"{name:<16} {col.data_type:<12} {null_str} {distinct:>9}")
 
         print("\nwhat to worry about")
         print("-" * 46)
 
         for name, col in report.column_profiles.items():
-            if col.null_percentage >= 20:
+            if col.null_percentage is not None and col.null_percentage >= 20:
                 print(
                     f"  {name}: {col.null_percentage:.0f}% missing -- optional, or a broken export?"
                 )

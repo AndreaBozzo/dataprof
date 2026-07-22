@@ -241,6 +241,22 @@ class TestInterop:
         assert batch.num_rows > 0
         assert batch.num_columns > 0
 
+    def test_arrow_uniqueness_ratio_is_unit_scale(self):
+        # uniqueness_ratio must be a 0..1 ratio, matching
+        # ColumnProfile.uniqueness_ratio and the docs — not a 0..100 percentage.
+        pa = pytest.importorskip("pyarrow")
+        import dataprof.interop as interop
+
+        batch = pa.record_batch(interop.analyze_csv_to_arrow(CSV_FILE))
+        uniq = batch.column("unique_count").to_pylist()
+        totals = batch.column("total_count").to_pylist()
+        ratios = batch.column("uniqueness_ratio").to_pylist()
+        for uc, tot, ratio in zip(uniq, totals, ratios):
+            if ratio is None:
+                continue
+            assert 0.0 <= ratio <= 1.0
+            assert ratio == pytest.approx(uc / tot, abs=1e-9)
+
     def test_analyze_parquet_to_arrow_path_object(self):
         import dataprof.interop as interop
 
@@ -767,7 +783,31 @@ class TestProfileReport:
 
     def test_save_unsupported_raises(self, report):
         with pytest.raises(ValueError, match="Unsupported format"):
-            report.save("/tmp/test.html")
+            report.save("/tmp/test.xlsx")
+
+    def test_save_html(self, report):
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            path = f.name
+        try:
+            assert report.save(path) is report  # fluent API
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            assert content == report.to_html()
+            assert "<table" in content
+        finally:
+            os.unlink(path)
+
+    def test_save_markdown(self, report):
+        for suffix in (".md", ".markdown"):
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                path = f.name
+            try:
+                assert report.save(path) is report
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+                assert content == report.to_markdown()
+            finally:
+                os.unlink(path)
 
     def test_repr(self, report):
         r = repr(report)
@@ -789,6 +829,15 @@ class TestReportErgonomics:
     @pytest.fixture()
     def report(self):
         return dataprof.profile(CSV_FILE)
+
+    def test_profiles_yields_profile_objects(self, report):
+        # column_profiles is a mapping (iterating it yields names); profiles is
+        # the ordered list of ColumnProfile objects.
+        names = list(report.column_profiles)
+        profiles = report.profiles
+        assert [c.name for c in profiles] == names
+        for col in profiles:  # the natural loop must not raise
+            assert isinstance(col.name, str)
 
     def test_to_html_matches_repr_html(self, report):
         assert report.to_html() == report._repr_html_()
@@ -840,6 +889,25 @@ class TestReportErgonomics:
     def test_from_dict_round_trip_idempotent(self, report):
         reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
         assert reloaded.to_dict() == report.to_dict()
+
+    def test_low_sample_warning_round_trips_both_states(self, tmp_path):
+        # Fewer than 10 rows raises the warning; it must survive to_dict/from_dict.
+        small = tmp_path / "small.csv"
+        small.write_text("a,b\n" + "\n".join(f"{i},{i * 2}" for i in range(3)) + "\n")
+        r_small = dataprof.profile(small)
+        assert r_small.quality is not None
+        d_small = r_small.to_dict()
+        assert d_small["quality"]["low_sample_warning"] is True
+        assert r_small.low_sample_warning is True
+        assert dataprof.ProfileReport.from_dict(d_small).low_sample_warning is True
+
+        # With an adequate sample the flag is False — and still emitted, since a
+        # non-optional bool should never require the reader to infer absence.
+        big = tmp_path / "big.csv"
+        big.write_text("a,b\n" + "\n".join(f"{i},{i * 2}" for i in range(50)) + "\n")
+        d_big = dataprof.profile(big).to_dict()
+        assert d_big["quality"]["low_sample_warning"] is False
+        assert dataprof.ProfileReport.from_dict(d_big).low_sample_warning is False
 
     def test_reloaded_report_supports_exports(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
@@ -2345,7 +2413,68 @@ class TestLowSampleWarning:
         path.write_text("x\n" + "\n".join(str(i) for i in range(50)) + "\n")
         r = dataprof.profile(str(path))
         assert r.low_sample_warning is False
-        assert "low_sample_warning" not in r.to_dict()["quality"]
+        # Emitted as an explicit False (non-optional bool), not omitted.
+        assert r.to_dict()["quality"]["low_sample_warning"] is False
+
+
+class TestZeroRowSemantics:
+    """Header-only inputs have no values to measure, so ratios and aggregates
+    are absent (None), never a fabricated 0.0 (#435 item 3). Raw counts stay 0
+    -- that is "analyzed, found zero", which the counts genuinely are."""
+
+    @pytest.fixture()
+    def report(self, tmp_path):
+        path = tmp_path / "header_only.csv"
+        path.write_text("a,b,c\n")
+        return dataprof.profile(str(path))
+
+    def test_shape(self, report):
+        assert report.rows == 0
+        assert report.columns == 3
+
+    def test_derived_stats_absent_counts_zero(self, report):
+        for col in report.profiles:
+            # Counts are legitimately zero ("analyzed, found none").
+            assert col.total_count == 0
+            assert col.null_count == 0
+            # Ratios / aggregates were never measured -> absent, not 0.0.
+            assert col.null_percentage is None
+            assert col.uniqueness_ratio is None
+            assert col.avg_length is None
+            assert col.min_length is None
+            assert col.max_length is None
+
+    def test_to_dict_reports_absent(self, report):
+        col = report.to_dict()["columns"][0]
+        assert col["total_count"] == 0
+        assert col["null_percentage"] is None
+        assert col["uniqueness_ratio"] is None
+        # Length stats were never measured, so they are omitted entirely.
+        assert "avg_length" not in col.get("stats", {})
+
+    def test_renders_do_not_crash(self, report):
+        assert "ProfileReport" in repr(report)
+        assert "<table" in report.to_html()
+        md = report.to_markdown()
+        assert "Column" in md
+        # An em dash marks the absent percentage — never a misleading "0.0%".
+        assert "—" in md
+
+    def test_round_trips(self, report):
+        reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
+        assert reloaded.to_dict() == report.to_dict()
+
+    def test_arrow_export_null_not_zero(self, tmp_path):
+        pa = pytest.importorskip("pyarrow")
+        import dataprof.interop as interop
+
+        path = tmp_path / "header_only.csv"
+        path.write_text("a,b\n")
+        batch = pa.record_batch(interop.analyze_csv_to_arrow(str(path)))
+        assert batch.num_rows == 2  # one row per column profile
+        # The Arrow surface must agree with the report API: absent, not 0.0.
+        assert batch.column("null_percentage").to_pylist() == [None, None]
+        assert batch.column("uniqueness_ratio").to_pylist() == [None, None]
 
 
 class TestInvalidCount:

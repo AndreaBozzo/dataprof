@@ -65,10 +65,15 @@ pub struct PyColumnProfile {
     /// statistics skipped); `Some(0)` = every non-null value was valid.
     #[pyo3(get)]
     pub invalid_count: Option<usize>,
+    /// Percentage of null values, or `None` for a zero-row column where the
+    /// ratio (`null_count / total_count`) is undefined — absent means "not
+    /// measured", never "0% nulls".
     #[pyo3(get)]
-    pub null_percentage: f64,
+    pub null_percentage: Option<f64>,
+    /// Distinct-value ratio, or `None` when it was not computed (no
+    /// `unique_count`) or the column has zero rows.
     #[pyo3(get)]
-    pub uniqueness_ratio: f64,
+    pub uniqueness_ratio: Option<f64>,
     // Numeric statistics (None for non-numeric columns)
     #[pyo3(get)]
     pub min: Option<f64>,
@@ -117,20 +122,21 @@ pub struct PyColumnProfile {
 
 impl From<&ColumnProfile> for PyColumnProfile {
     fn from(profile: &ColumnProfile) -> Self {
-        let null_percentage = if profile.total_count > 0 {
-            (profile.null_count as f64 / profile.total_count as f64) * 100.0
+        // Zero-row columns have no values to measure, so ratios/aggregates are
+        // undefined and reported as absent (None) rather than a misleading 0.0.
+        // Raw counts (total_count, null_count, unique_count) stay as-is: they
+        // are genuinely "analyzed, found N", where N may be 0.
+        let has_rows = profile.total_count > 0;
+
+        let null_percentage = if has_rows {
+            Some((profile.null_count as f64 / profile.total_count as f64) * 100.0)
         } else {
-            0.0
+            None
         };
 
-        let uniqueness_ratio = if let Some(unique) = profile.unique_count {
-            if profile.total_count > 0 {
-                unique as f64 / profile.total_count as f64
-            } else {
-                0.0
-            }
-        } else {
-            0.0
+        let uniqueness_ratio = match profile.unique_count {
+            Some(unique) if has_rows => Some(unique as f64 / profile.total_count as f64),
+            _ => None,
         };
 
         let (
@@ -184,8 +190,12 @@ impl From<&ColumnProfile> for PyColumnProfile {
             _ => None,
         };
 
+        // Length statistics of a zero-row text column were computed over no
+        // values, so they are absent rather than 0.
         let (min_length, max_length, avg_length) = match &profile.stats {
-            ColumnStats::Text(t) => (Some(t.min_length), Some(t.max_length), Some(t.avg_length)),
+            ColumnStats::Text(t) if has_rows => {
+                (Some(t.min_length), Some(t.max_length), Some(t.avg_length))
+            }
             _ => (None, None, None),
         };
 
@@ -247,10 +257,14 @@ impl From<&ColumnProfile> for PyColumnProfile {
 #[pymethods]
 impl PyColumnProfile {
     fn __repr__(&self) -> String {
+        let nulls = match self.null_percentage {
+            Some(p) => format!("nulls={:.1}%", p),
+            None => "nulls=n/a".to_string(),
+        };
         let mut parts = vec![
             format!("name='{}'", self.name),
             format!("type='{}'", self.data_type),
-            format!("nulls={:.1}%", self.null_percentage),
+            nulls,
         ];
 
         if let Some(unique) = self.unique_count {
