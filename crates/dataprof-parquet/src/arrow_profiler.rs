@@ -103,6 +103,10 @@ impl ArrowProfiler {
 
         // Get headers to create Arrow schema
         let headers = reader.headers()?.clone();
+        // Reject duplicate headers before building the name-keyed analyzer map,
+        // which would otherwise merge two columns into one profile.
+        let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
+        dataprof_core::validate_unique_column_names(&header_names, "CSV header")?;
         let mut fields = Vec::new();
         for header in headers.iter() {
             // Start with string type, Arrow will convert during processing

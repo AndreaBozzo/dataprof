@@ -266,7 +266,11 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
 
     let header_names: Vec<String> = if config.has_header {
         let headers = csv_reader.headers()?;
-        headers.iter().map(|header| header.to_string()).collect()
+        let names: Vec<String> = headers.iter().map(|header| header.to_string()).collect();
+        // Reject duplicate headers before profiling: process_record keys on name,
+        // so a repeat would merge two source columns into one inflated profile.
+        dataprof_core::validate_unique_column_names(&names, "CSV header")?;
+        names
     } else {
         let headers = csv_reader.headers()?;
         (0..headers.len())

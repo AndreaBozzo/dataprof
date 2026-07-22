@@ -181,6 +181,15 @@ pub enum DataProfilerError {
     #[error("Metrics calculation failed: {message}")]
     MetricsCalculationError { message: String },
 
+    #[error(
+        "Duplicate column name{plural}: {names}\nSource: {source_label}. Column names must be unique after normalization; rename or drop the duplicate column(s) before profiling."
+    )]
+    DuplicateColumnName {
+        names: String,
+        plural: String,
+        source_label: String,
+    },
+
     #[error("Configuration validation failed: {message}")]
     ConfigValidationError { message: String },
 
@@ -275,6 +284,25 @@ impl DataProfilerError {
             message: message.to_string(),
         }
     }
+    /// Create a duplicate-column-name error from the already-collected list of
+    /// repeated names and a short transport label.
+    ///
+    /// Only the offending names and the source are embedded — never row values —
+    /// so the diagnostic cannot leak cell data.
+    pub fn duplicate_column_name(duplicates: &[String], source: &str) -> Self {
+        let plural = if duplicates.len() == 1 { "" } else { "s" };
+        let names = duplicates
+            .iter()
+            .map(|n| format!("'{}'", n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        DataProfilerError::DuplicateColumnName {
+            names,
+            plural: plural.to_string(),
+            source_label: source.to_string(),
+        }
+    }
+
     /// Create a CSV parsing error with helpful suggestions.
     ///
     /// `file_path` is `None` at boundaries that do not know the source (e.g. the
@@ -539,6 +567,7 @@ impl DataProfilerError {
             DataProfilerError::UnsupportedDataSource { .. } => "unsupported_data_source",
             DataProfilerError::AllEnginesFailed { .. } => "all_engines_failed",
             DataProfilerError::MetricsCalculationError { .. } => "metrics_calculation",
+            DataProfilerError::DuplicateColumnName { .. } => "duplicate_column_name",
             DataProfilerError::ConfigValidationError { .. } => "config_validation",
             DataProfilerError::DatabaseConnectionError { .. } => "database_connection",
             DataProfilerError::DatabaseQueryError { .. } => "database_query",

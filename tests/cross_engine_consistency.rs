@@ -832,3 +832,64 @@ fn test_duplicate_rows_without_nulls_match_across_engines() {
         assert_eq!(uniq.duplicate_rows, 1, "{engine:?} duplicate_rows");
     }
 }
+
+/// Duplicate column names are a deterministic file property that no engine can
+/// resolve; every CSV engine must reject them before profiling rather than
+/// silently merging two columns into one profile (#381).
+#[test]
+fn test_duplicate_headers_rejected_across_csv_engines() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "x,x,y").unwrap();
+    writeln!(f, "1,2,a").unwrap();
+    writeln!(f, "3,4,b").unwrap();
+    f.flush().unwrap();
+
+    // Standard (simple) CSV engine.
+    let err = analyze_csv_file(f.path(), &CsvParserConfig::default())
+        .expect_err("standard engine must reject duplicate headers");
+    assert_eq!(err.category(), "duplicate_column_name");
+    let msg = err.to_string();
+    assert!(msg.contains("'x'"), "names the offender: {msg}");
+    assert!(!msg.contains('1'), "must not echo cell values: {msg}");
+
+    // Auto (incremental) and Columnar (Arrow) engines: a clear, categorized error,
+    // never buried under "All engines failed".
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let err = Profiler::new()
+            .engine(engine)
+            .analyze_file(f.path())
+            .expect_err("engine must reject duplicate headers");
+        assert_eq!(
+            err.category(),
+            "duplicate_column_name",
+            "{engine:?} should surface the duplicate-column error directly"
+        );
+    }
+}
+
+/// The reason duplicates must be rejected: a rectangular source must yield one
+/// profile per column, each with `total_count == rows` — never a merged column
+/// whose count exceeds the row count.
+#[test]
+fn test_unique_headers_preserve_column_count_and_totals() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "a,b,c").unwrap();
+    writeln!(f, "1,2,3").unwrap();
+    writeln!(f, "4,5,6").unwrap();
+    f.flush().unwrap();
+
+    for engine in [EngineType::Incremental, EngineType::Columnar] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(f.path())
+            .expect("unique headers should profile");
+        assert_eq!(report.column_profiles.len(), 3, "{engine:?} column count");
+        for col in &report.column_profiles {
+            assert_eq!(col.total_count, 2, "{engine:?} {} total_count", col.name);
+        }
+    }
+}

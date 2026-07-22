@@ -317,7 +317,7 @@ pub fn analyze_csv_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
         .engine(EngineType::Columnar)
         .format(FileFormat::Csv)
         .analyze_file(Path::new(path))
-        .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
+        .map_err(|e| crate::errors::analysis_error_to_py(&e))?;
 
     // Convert column profiles to RecordBatch
     let batch = profiles_to_record_batch(&report.column_profiles)
@@ -333,7 +333,7 @@ pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
     use std::path::Path;
 
     let report = analyze_parquet_with_quality(Path::new(path))
-        .map_err(|e| PyRuntimeError::new_err(format!("Parquet analysis failed: {}", e)))?;
+        .map_err(|e| crate::errors::analysis_error_to_py(&e))?;
 
     let batch = profiles_to_record_batch(&report.column_profiles)
         .map_err(|e| PyRuntimeError::new_err(format!("Batch conversion failed: {}", e)))?;
@@ -393,7 +393,7 @@ pub fn profile_dataframe(
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     analyzer
         .process_batch(&batch)
-        .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
+        .map_err(crate::errors::analyzer_error_to_py)?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
     let column_profiles =
@@ -509,7 +509,7 @@ pub fn profile_arrow(
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     analyzer
         .process_batch(&batch)
-        .map_err(|e| PyRuntimeError::new_err(format!("Analysis failed: {}", e)))?;
+        .map_err(crate::errors::analyzer_error_to_py)?;
 
     let locale = config.and_then(|c| c.locale.as_deref());
     let column_profiles =

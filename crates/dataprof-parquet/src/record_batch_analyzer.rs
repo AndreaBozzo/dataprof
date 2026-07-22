@@ -126,6 +126,20 @@ impl RecordBatchAnalyzer {
     }
 
     pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+        // Reject duplicate field names before building analyzers: they key on
+        // name, so a repeat would silently merge two columns into one profile and
+        // drop the other from column_order. The schema is fixed for the whole
+        // stream, so checking until the first non-empty batch is sufficient.
+        if self.column_order.is_empty() {
+            let names: Vec<String> = batch
+                .schema()
+                .fields()
+                .iter()
+                .map(|f| f.name().to_string())
+                .collect();
+            dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
+        }
+
         self.total_rows += batch.num_rows();
         self.row_tracker.observe_batch(batch);
 
@@ -1101,6 +1115,33 @@ mod tests {
             }
             _ => panic!("Expected Numeric stats for rank column"),
         }
+    }
+
+    #[test]
+    fn test_duplicate_field_names_rejected_before_merge() {
+        // Two fields named "x" would otherwise collapse into one analyzer,
+        // dropping a column and inflating the survivor's counts. Reject up front.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("x", ArrowDataType::Int64, true),
+            Field::new("x", ArrowDataType::Int64, true),
+            Field::new("y", ArrowDataType::Int64, true),
+        ]));
+        let a = Int64Array::from(vec![1, 3]);
+        let b = Int64Array::from(vec![2, 4]);
+        let c = Int64Array::from(vec![5, 6]);
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(a), Arc::new(b), Arc::new(c)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        let err = analyzer
+            .process_batch(&batch)
+            .expect_err("duplicate field names must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("'x'"), "names the offender: {msg}");
+        assert!(
+            msg.contains("Arrow/Parquet schema"),
+            "names the source: {msg}"
+        );
     }
 
     #[test]

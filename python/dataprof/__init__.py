@@ -414,6 +414,23 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     except StopIteration:
         return []
 
+    # Reject duplicate headers before profiling: name-keyed mapping access would
+    # otherwise shadow one column and silently drop its profile. Single pass,
+    # first-seen order, matching the Rust-side validate_unique_column_names.
+    seen: set[str] = set()
+    collisions: list[str] = []
+    for name in header:
+        if name in seen:
+            if name not in collisions:
+                collisions.append(name)
+        else:
+            seen.add(name)
+    if collisions:
+        raise ValueError(
+            "csv bytes input: duplicate column name(s): "
+            f"{collisions!r}. Column names must be unique."
+        )
+
     cells: list[list[str | None]] = [[] for _ in header]
     for row_num, row in enumerate(reader, start=2):
         if len(row) != len(header):

@@ -157,6 +157,10 @@ impl IncrementalProfiler {
                 headers = chunk_headers;
                 if let Some(ref h) = headers {
                     let names: Vec<String> = h.iter().map(|s| s.to_string()).collect();
+                    // Reject duplicate headers before any per-column state is built:
+                    // init_columns keys on name, so a repeat would otherwise merge
+                    // two source columns into one profile with an inflated count.
+                    dataprof_core::validate_unique_column_names(&names, "CSV header")?;
                     column_stats.init_columns(&names);
                     progress_tracker.emit_schema(names);
                 }

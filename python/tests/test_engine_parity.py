@@ -369,3 +369,45 @@ def test_duplicate_rows_tracked_for_dataframe_and_arrow_inputs(tmp_path):
     uniqueness = report.to_dict()["quality"]["uniqueness"]
     assert uniqueness["rows_checked"] == 4
     assert uniqueness["duplicate_rows"] == 1
+
+
+def test_duplicate_column_names_rejected_across_all_inputs(tmp_path):
+    # The same duplicate-header source must be rejected identically regardless of
+    # transport, so no path can silently merge or shadow a column (#381).
+    path = tmp_path / "dup.csv"
+    path.write_text("x,x,y\n1,2,a\n3,4,b\n")
+
+    inputs = [
+        ("csv file", lambda: dataprof.profile(str(path))),
+        ("csv bytes", lambda: dataprof.profile(b"x,x,y\n1,2,a\n3,4,b\n", format="csv")),
+        # dict/list-of-dicts collide only after str() normalization (1 vs "1").
+        ("list-of-dicts", lambda: dataprof.profile([{1: "a", "1": "b"}])),
+    ]
+    pa = pytest.importorskip("pyarrow", reason="pyarrow optional")
+    inputs.append(
+        (
+            "arrow",
+            lambda: dataprof.profile(
+                pa.table(
+                    [pa.array([1, 3]), pa.array([2, 4])],
+                    schema=pa.schema([("x", pa.int64()), ("x", pa.int64())]),
+                )
+            ),
+        )
+    )
+
+    for label, call in inputs:
+        with pytest.raises(ValueError):
+            call()
+
+
+def test_rectangular_source_has_one_profile_per_column(tmp_path):
+    # The invariant duplicate-rejection protects: columns == len(profiles) and
+    # every column's total_count equals the row count.
+    path = tmp_path / "rect.csv"
+    path.write_text("a,b,c\n1,2,3\n4,5,6\n")
+    for engine in ("auto", "incremental", "columnar"):
+        report = dataprof.profile(str(path), engine=engine)
+        assert report.columns == len(list(report.column_profiles)) == 3, engine
+        for col in report.column_profiles:
+            assert report[col].total_count == report.rows, f"{engine} {col}"

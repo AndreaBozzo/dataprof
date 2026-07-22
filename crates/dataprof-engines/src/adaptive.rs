@@ -101,6 +101,12 @@ impl AdaptiveProfiler {
         match result {
             Ok(report) => Ok(report),
             Err(primary_err) => {
+                // Duplicate column names are a deterministic property of the file;
+                // no engine can resolve them, so surface the clear, categorized
+                // error instead of burying it under "All engines failed".
+                if matches!(primary_err, DataProfilerError::DuplicateColumnName { .. }) {
+                    return Err(primary_err);
+                }
                 #[cfg(feature = "arrow")]
                 let fallback = match engine {
                     InternalEngineType::Arrow => InternalEngineType::Incremental,
