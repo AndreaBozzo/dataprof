@@ -285,14 +285,31 @@ impl PyRowCountEstimate {
         self.inner.count_time_ms
     }
 
+    /// Approximate 1-sigma relative standard error of an estimated count
+    /// (fraction of `count`, e.g. 0.02 ≈ ±2%). `None` for exact counts.
+    #[getter]
+    fn relative_error(&self) -> Option<f64> {
+        self.inner.relative_error
+    }
+
     fn __repr__(&self) -> String {
-        format!(
-            "RowCountEstimate(count={}, exact={}, method='{}', time={}ms)",
-            self.inner.count,
-            self.inner.exact,
-            self.method(),
-            self.inner.count_time_ms,
-        )
+        match self.inner.relative_error {
+            Some(err) => format!(
+                "RowCountEstimate(count={}, exact={}, method='{}', relative_error={:.4}, time={}ms)",
+                self.inner.count,
+                self.inner.exact,
+                self.method(),
+                err,
+                self.inner.count_time_ms,
+            ),
+            None => format!(
+                "RowCountEstimate(count={}, exact={}, method='{}', time={}ms)",
+                self.inner.count,
+                self.inner.exact,
+                self.method(),
+                self.inner.count_time_ms,
+            ),
+        }
     }
 }
 

@@ -78,6 +78,12 @@ pub struct RowCountEstimate {
     pub method: CountMethod,
     /// Time taken in milliseconds.
     pub count_time_ms: u128,
+    /// Approximate 1-sigma relative standard error of the estimate, expressed
+    /// as a fraction of `count` (e.g. `0.02` ≈ ±2%). Populated only for
+    /// sampled estimates where a variance across sampling windows is available;
+    /// `None` for exact counts and when it cannot be estimated.
+    #[serde(default)]
+    pub relative_error: Option<f64>,
 }
 
 /// Method used to obtain the row count.
