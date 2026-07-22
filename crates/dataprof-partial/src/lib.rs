@@ -457,7 +457,7 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
         // I/O budget. Every physical line counts as a row for CSV.
         let sample = sample_row_density_multi_offset(path, file_size, |_| true)?;
 
-        if sample.lines_sampled == 0 {
+        if sample.rows_sampled == 0 {
             // The sampler could not observe a single complete line — e.g. rows
             // longer than a sampling window, so every seek lands inside one row
             // and the resync consumes the rest to EOF. Fall back to an exact
@@ -468,8 +468,8 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
         }
 
         // Subtract 1 for the header line.
-        let estimated_total_lines = sample.estimated_lines.round() as u64;
-        let count = estimated_total_lines.saturating_sub(1);
+        let estimated_total_rows = sample.estimated_rows.round() as u64;
+        let count = estimated_total_rows.saturating_sub(1);
 
         Ok(RowCountEstimate {
             count,
@@ -533,13 +533,13 @@ fn full_scan_jsonl<R: BufRead>(
 }
 
 /// Statistics from sampling row density at several offsets across a file.
-struct MultiOffsetLineSample {
+struct MultiOffsetRowSample {
     /// Estimated total number of qualifying rows in the whole file (rows for
     /// which the caller's predicate returned true).
-    estimated_lines: f64,
+    estimated_rows: f64,
     /// Total number of qualifying rows actually measured across all windows.
-    lines_sampled: u64,
-    /// Approximate 1-sigma relative standard error of `estimated_lines`, or
+    rows_sampled: u64,
+    /// Approximate 1-sigma relative standard error of `estimated_rows`, or
     /// `None` when fewer than two windows produced data.
     relative_error: Option<f64>,
 }
@@ -570,7 +570,7 @@ fn sample_row_density_multi_offset(
     path: &Path,
     file_size: u64,
     counts_as_row: impl Fn(&str) -> bool,
-) -> Result<MultiOffsetLineSample, DataProfilerError> {
+) -> Result<MultiOffsetRowSample, DataProfilerError> {
     let mut file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
@@ -578,7 +578,7 @@ fn sample_row_density_multi_offset(
     let window_span = file_size / ROW_SAMPLE_WINDOWS as u64;
     // Per-window row density in qualifying rows per byte.
     let mut densities: Vec<f64> = Vec::with_capacity(ROW_SAMPLE_WINDOWS);
-    let mut total_lines: u64 = 0;
+    let mut total_rows: u64 = 0;
 
     for w in 0..ROW_SAMPLE_WINDOWS {
         let offset = window_span * w as u64 + window_span / 2;
@@ -616,7 +616,7 @@ fn sample_row_density_multi_offset(
 
         if win_bytes > 0 {
             densities.push(win_rows as f64 / win_bytes as f64);
-            total_lines += win_rows;
+            total_rows += win_rows;
         }
     }
 
@@ -625,7 +625,7 @@ fn sample_row_density_multi_offset(
     } else {
         densities.iter().sum::<f64>() / densities.len() as f64
     };
-    let estimated_lines = file_size as f64 * mean_density;
+    let estimated_rows = file_size as f64 * mean_density;
 
     // Estimate the uncertainty from the spread of per-window densities. The
     // standard error of the mean density propagates directly to the relative
@@ -643,9 +643,9 @@ fn sample_row_density_multi_offset(
         None
     };
 
-    Ok(MultiOffsetLineSample {
-        estimated_lines,
-        lines_sampled: total_lines,
+    Ok(MultiOffsetRowSample {
+        estimated_rows,
+        rows_sampled: total_rows,
         relative_error,
     })
 }
@@ -688,7 +688,7 @@ fn count_json(
             let sample =
                 sample_row_density_multi_offset(path, file_size, |line| !line.trim().is_empty())?;
 
-            if sample.lines_sampled == 0 {
+            if sample.rows_sampled == 0 {
                 // No non-empty line was observed in any window; the records may
                 // start past every probe, or the whole file may be blank. Fall
                 // back to an exact scan instead of a fabricated `exact` zero.
@@ -696,7 +696,7 @@ fn count_json(
             }
 
             // No header line in JSONL, so the estimate is the record count.
-            let count = sample.estimated_lines.round() as u64;
+            let count = sample.estimated_rows.round() as u64;
 
             Ok(RowCountEstimate {
                 count,
