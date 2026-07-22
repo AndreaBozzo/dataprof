@@ -498,6 +498,12 @@ incompatibly, not on every dataprof release. The same field with the same
 semantics appears in reports serialized from Rust (`serde`), where readers
 enforce the identical policy.
 
+When quality metrics are present, the `quality` block always carries a
+`low_sample_warning` boolean (`true` when the profiled sample was below the
+recommended minimum of 10 rows, `false` otherwise). It round-trips through
+`to_dict()`/`from_dict()`; treat `quality_score` and the per-dimension ratios
+as directional rather than reliable whenever it is `true`.
+
 ### `compare()`
 
 Detect quality drift or schema changes between two profiles (e.g. the same
@@ -524,6 +530,8 @@ delta = before.compare(after)
 report.save("report.json")      # full report as JSON
 report.save("profiles.csv")     # column profiles as CSV (no extra deps)
 report.save("profiles.parquet") # column profiles as Parquet (requires pyarrow)
+report.save("report.html")      # standalone HTML render (same as to_html())
+report.save("report.md")        # markdown table (same as to_markdown())
 ```
 
 ## Partial Analysis

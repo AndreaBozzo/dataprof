@@ -1580,16 +1580,40 @@ class ProfileReport:
 
     @functools.cached_property
     def column_profiles(self) -> dict[str, ColumnProfile]:
+        """Column profiles as a ``name → ColumnProfile`` mapping.
+
+        Because this is a mapping, iterating it yields column *names* (like any
+        dict), not profile objects — ``for c in report.column_profiles`` gives
+        strings. To iterate the profiles themselves use :attr:`profiles`, and to
+        look one up by name index into this mapping (``report["amount"]`` also
+        works). When a dataset has duplicate column names one profile shadows
+        the other here; :attr:`profiles` preserves the full ordered list.
+        """
         cols = self._report.column_profiles
         d = {col.name: col for col in cols}
         if len(d) != len(cols):
             warnings.warn(
                 f"Dataset has duplicate column names — {len(cols) - len(d)} "
-                "column(s) shadowed in dict access. Use _report.column_profiles "
+                "column(s) shadowed in dict access. Use .profiles "
                 "for the full list.",
                 stacklevel=2,
             )
         return d
+
+    @property
+    def profiles(self) -> list[ColumnProfile]:
+        """The column profiles as an ordered list of :class:`ColumnProfile`.
+
+        Use this when you want to iterate the profile objects rather than their
+        names::
+
+            for col in report.profiles:
+                print(col.name, col.null_percentage)
+
+        Unlike :attr:`column_profiles` (a name-keyed mapping), this preserves
+        every column, including duplicate names.
+        """
+        return list(self._report.column_profiles)
 
     @property
     def quality_score(self) -> float | None:
@@ -1706,8 +1730,10 @@ class ProfileReport:
                     name: _r2(score) for name, score in q.dimension_scores().items()
                 },
             }
-            if q.low_sample_warning:
-                quality_dict["low_sample_warning"] = True
+            # Always emit: a non-optional bool (False = "sample was adequate")
+            # so consumers never have to infer absence, and from_dict round-trips
+            # both states. See docs/python/README.md report-schema notes.
+            quality_dict["low_sample_warning"] = bool(q.low_sample_warning)
             comp = q.completeness
             if comp is not None:
                 quality_dict["completeness"] = comp
@@ -1882,9 +1908,11 @@ class ProfileReport:
         """Save the report to a file.
 
         Supported formats (by extension):
-            .json    — full report as JSON
-            .csv     — column profiles as CSV (no extra dependencies)
-            .parquet — column profiles as Parquet (requires pyarrow)
+            .json        — full report as JSON
+            .csv         — column profiles as CSV (no extra dependencies)
+            .parquet     — column profiles as Parquet (requires pyarrow)
+            .html        — standalone HTML render (same as :meth:`to_html`)
+            .md/.markdown — markdown table (same as :meth:`to_markdown`)
 
         Args:
             path: File path with one of the supported extensions.
@@ -1908,8 +1936,16 @@ class ProfileReport:
             import pyarrow.parquet as pq
 
             pq.write_table(table, path)
+        elif path.endswith(".html"):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.to_html())
+        elif path.endswith((".md", ".markdown")):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.to_markdown())
         else:
-            raise ValueError("Unsupported format. Use .json, .csv, or .parquet")
+            raise ValueError(
+                f"Unsupported format for '{path}'. Use .json, .csv, .parquet, .html, .md."
+            )
         return self
 
     def to_html(self) -> str:

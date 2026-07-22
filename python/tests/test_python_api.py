@@ -767,7 +767,31 @@ class TestProfileReport:
 
     def test_save_unsupported_raises(self, report):
         with pytest.raises(ValueError, match="Unsupported format"):
-            report.save("/tmp/test.html")
+            report.save("/tmp/test.xlsx")
+
+    def test_save_html(self, report):
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            path = f.name
+        try:
+            assert report.save(path) is report  # fluent API
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            assert content == report.to_html()
+            assert "<table" in content
+        finally:
+            os.unlink(path)
+
+    def test_save_markdown(self, report):
+        for suffix in (".md", ".markdown"):
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                path = f.name
+            try:
+                assert report.save(path) is report
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+                assert content == report.to_markdown()
+            finally:
+                os.unlink(path)
 
     def test_repr(self, report):
         r = repr(report)
@@ -789,6 +813,15 @@ class TestReportErgonomics:
     @pytest.fixture()
     def report(self):
         return dataprof.profile(CSV_FILE)
+
+    def test_profiles_yields_profile_objects(self, report):
+        # column_profiles is a mapping (iterating it yields names); profiles is
+        # the ordered list of ColumnProfile objects.
+        names = list(report.column_profiles)
+        profiles = report.profiles
+        assert [c.name for c in profiles] == names
+        for col in profiles:  # the natural loop must not raise
+            assert isinstance(col.name, str)
 
     def test_to_html_matches_repr_html(self, report):
         assert report.to_html() == report._repr_html_()
@@ -840,6 +873,25 @@ class TestReportErgonomics:
     def test_from_dict_round_trip_idempotent(self, report):
         reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
         assert reloaded.to_dict() == report.to_dict()
+
+    def test_low_sample_warning_round_trips_both_states(self, tmp_path):
+        # Fewer than 10 rows raises the warning; it must survive to_dict/from_dict.
+        small = tmp_path / "small.csv"
+        small.write_text("a,b\n" + "\n".join(f"{i},{i * 2}" for i in range(3)) + "\n")
+        r_small = dataprof.profile(small)
+        assert r_small.quality is not None
+        d_small = r_small.to_dict()
+        assert d_small["quality"]["low_sample_warning"] is True
+        assert r_small.low_sample_warning is True
+        assert dataprof.ProfileReport.from_dict(d_small).low_sample_warning is True
+
+        # With an adequate sample the flag is False — and still emitted, since a
+        # non-optional bool should never require the reader to infer absence.
+        big = tmp_path / "big.csv"
+        big.write_text("a,b\n" + "\n".join(f"{i},{i * 2}" for i in range(50)) + "\n")
+        d_big = dataprof.profile(big).to_dict()
+        assert d_big["quality"]["low_sample_warning"] is False
+        assert dataprof.ProfileReport.from_dict(d_big).low_sample_warning is False
 
     def test_reloaded_report_supports_exports(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
@@ -2345,7 +2397,8 @@ class TestLowSampleWarning:
         path.write_text("x\n" + "\n".join(str(i) for i in range(50)) + "\n")
         r = dataprof.profile(str(path))
         assert r.low_sample_warning is False
-        assert "low_sample_warning" not in r.to_dict()["quality"]
+        # Emitted as an explicit False (non-optional bool), not omitted.
+        assert r.to_dict()["quality"]["low_sample_warning"] is False
 
 
 class TestInvalidCount:
