@@ -5,7 +5,7 @@
 //! - [`quick_row_count`] — fast row counting / estimation
 
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::Instant;
 
@@ -31,6 +31,15 @@ const FULL_SCAN_THRESHOLD: u64 = 10 * 1024 * 1024;
 
 /// Number of lines to sample for row estimation.
 const ROW_SAMPLE_LINES: usize = 10_000;
+
+/// Number of evenly-spaced windows sampled across a large file when estimating
+/// a CSV row count. Sampling at multiple offsets removes the prefix bias of the
+/// old first-N-lines approach.
+const ROW_SAMPLE_WINDOWS: usize = 16;
+
+/// Lines measured per sampling window. Keeps the total sampled-line budget in
+/// line with [`ROW_SAMPLE_LINES`].
+const ROW_SAMPLE_LINES_PER_WINDOW: usize = ROW_SAMPLE_LINES / ROW_SAMPLE_WINDOWS;
 
 /// Default row cap for `analyze_structure()`.
 const STRUCTURE_SAMPLE_ROWS: usize = 1000;
@@ -337,6 +346,7 @@ fn count_from_reader<R: Read>(
                 exact: true,
                 method: CountMethod::StreamFullScan,
                 count_time_ms: 0, // caller patches timing
+                relative_error: None,
             })
         }
         FileFormat::Jsonl => {
@@ -352,6 +362,7 @@ fn count_from_reader<R: Read>(
                 exact: true,
                 method: CountMethod::StreamFullScan,
                 count_time_ms: 0,
+                relative_error: None,
             })
         }
         FileFormat::Json => {
@@ -384,6 +395,7 @@ fn count_from_reader<R: Read>(
                 exact: true,
                 method: CountMethod::StreamFullScan,
                 count_time_ms: 0,
+                relative_error: None,
             })
         }
         FileFormat::Parquet => Err(DataProfilerError::StreamingError {
@@ -417,6 +429,7 @@ fn count_parquet(path: &Path, start: Instant) -> Result<RowCountEstimate, DataPr
         count,
         exact: true,
         method: CountMethod::ParquetMetadata,
+        relative_error: None,
         count_time_ms: start.elapsed().as_millis(),
     })
 }
@@ -450,43 +463,150 @@ fn count_csv(path: &Path, start: Instant) -> Result<RowCountEstimate, DataProfil
             exact: true,
             method: CountMethod::FullScan,
             count_time_ms: start.elapsed().as_millis(),
+            relative_error: None,
         })
     } else {
-        // Sampling — read first N lines, estimate from avg line length
-        let mut bytes_read: u64 = 0;
-        let mut lines_read: u64 = 0;
+        // Sampling — estimate the local row density (rows per byte) at several
+        // evenly-spaced offsets across the file, then integrate over the file
+        // size. A prefix-only sample is systematically biased on the common
+        // case of an autoincrement id or growing timestamp, where early rows
+        // are shorter than later ones, so extrapolating from the file's head
+        // overestimates. Sampling across offsets removes that bias for the same
+        // I/O budget.
+        drop(reader);
+        let sample = sample_row_density_multi_offset(path, file_size)?;
 
-        for line in reader.lines().take(ROW_SAMPLE_LINES) {
-            let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
-            bytes_read += line.len() as u64 + 1; // +1 for newline
-            lines_read += 1;
-        }
-
-        if lines_read == 0 {
+        if sample.lines_sampled == 0 {
             return Ok(RowCountEstimate {
                 count: 0,
                 exact: true,
                 method: CountMethod::FullScan,
                 count_time_ms: start.elapsed().as_millis(),
+                relative_error: None,
             });
         }
 
-        let avg_bytes_per_line = bytes_read as f64 / lines_read as f64;
-        let estimated_total_lines = (file_size as f64 / avg_bytes_per_line) as u64;
-        // Subtract 1 for header
-        let count = if estimated_total_lines > 0 {
-            estimated_total_lines - 1
-        } else {
-            0
-        };
+        // Subtract 1 for the header line.
+        let estimated_total_lines = sample.estimated_lines.round() as u64;
+        let count = estimated_total_lines.saturating_sub(1);
 
         Ok(RowCountEstimate {
             count,
             exact: false,
             method: CountMethod::Sampling,
             count_time_ms: start.elapsed().as_millis(),
+            relative_error: sample.relative_error,
         })
     }
+}
+
+/// Statistics from sampling row density at several offsets across a file.
+struct MultiOffsetLineSample {
+    /// Estimated total number of physical lines in the whole file.
+    estimated_lines: f64,
+    /// Total number of lines actually measured across all windows.
+    lines_sampled: u64,
+    /// Approximate 1-sigma relative standard error of `estimated_lines`, or
+    /// `None` when fewer than two windows produced data.
+    relative_error: Option<f64>,
+}
+
+/// Estimate a file's total physical line count by sampling local row density
+/// (lines per byte) at [`ROW_SAMPLE_WINDOWS`] evenly-spaced offsets, measuring
+/// up to [`ROW_SAMPLE_LINES_PER_WINDOW`] lines per window. The total number of
+/// lines read matches the previous prefix-only sampler's budget
+/// ([`ROW_SAMPLE_LINES`]).
+///
+/// Each window represents an equal share of the file's *bytes*, so averaging
+/// the per-window density is a Riemann sum of density over the byte axis — i.e.
+/// `total_lines ≈ file_size · mean(density)`. This stays unbiased whatever the
+/// row-length distribution. (Averaging line *lengths* instead would be
+/// length-biased: uniform byte offsets over-weight long rows, undercounting.)
+///
+/// Windows are probed at the *center* of each byte slice (midpoint rule), not
+/// its leading edge: with a monotone row-length gradient a left-edge sample is
+/// a left Riemann sum with O(1/W) bias, whereas centered samples give the
+/// O(1/W²) midpoint rule. Every window seeks mid-file, so each discards the
+/// partial line it lands in before measuring whole lines.
+fn sample_row_density_multi_offset(
+    path: &Path,
+    file_size: u64,
+) -> Result<MultiOffsetLineSample, DataProfilerError> {
+    let mut file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
+        path: path.display().to_string(),
+    })?;
+
+    let window_span = file_size / ROW_SAMPLE_WINDOWS as u64;
+    // Per-window row density in lines per byte.
+    let mut densities: Vec<f64> = Vec::with_capacity(ROW_SAMPLE_WINDOWS);
+    let mut total_lines: u64 = 0;
+
+    for w in 0..ROW_SAMPLE_WINDOWS {
+        let offset = window_span * w as u64 + window_span / 2;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| DataProfilerError::io_error(&e))?;
+        let mut reader = BufReader::new(&mut file);
+
+        // Each window seeks into the middle of the file and most likely lands
+        // inside a line; discard that partial remainder so we only measure
+        // whole lines starting at the next boundary.
+        {
+            let mut partial = String::new();
+            reader
+                .read_line(&mut partial)
+                .map_err(|e| DataProfilerError::io_error(&e))?;
+        }
+
+        let mut win_bytes: u64 = 0;
+        let mut win_lines: u64 = 0;
+        for _ in 0..ROW_SAMPLE_LINES_PER_WINDOW {
+            let mut line = String::new();
+            // `read_line` keeps the line terminator, so byte accounting matches
+            // the on-disk length (including `\r\n`) without a manual +1.
+            let n = reader
+                .read_line(&mut line)
+                .map_err(|e| DataProfilerError::io_error(&e))?;
+            if n == 0 {
+                break; // EOF
+            }
+            win_bytes += n as u64;
+            win_lines += 1;
+        }
+
+        if win_bytes > 0 {
+            densities.push(win_lines as f64 / win_bytes as f64);
+            total_lines += win_lines;
+        }
+    }
+
+    let mean_density = if densities.is_empty() {
+        0.0
+    } else {
+        densities.iter().sum::<f64>() / densities.len() as f64
+    };
+    let estimated_lines = file_size as f64 * mean_density;
+
+    // Estimate the uncertainty from the spread of per-window densities. The
+    // standard error of the mean density propagates directly to the relative
+    // error of `file_size · mean_density`.
+    let relative_error = if densities.len() >= 2 && mean_density > 0.0 {
+        let k = densities.len() as f64;
+        let variance = densities
+            .iter()
+            .map(|d| (d - mean_density).powi(2))
+            .sum::<f64>()
+            / (k - 1.0);
+        let std_err = (variance / k).sqrt();
+        Some((std_err / mean_density).min(1.0))
+    } else {
+        None
+    };
+
+    Ok(MultiOffsetLineSample {
+        estimated_lines,
+        lines_sampled: total_lines,
+        relative_error,
+    })
 }
 
 fn count_json(
@@ -511,6 +631,7 @@ fn count_json(
                     exact: true,
                     method: CountMethod::FullScan,
                     count_time_ms: start.elapsed().as_millis(),
+                    relative_error: None,
                 });
             }
 
@@ -531,9 +652,14 @@ fn count_json(
                     exact: true,
                     method: CountMethod::FullScan,
                     count_time_ms: start.elapsed().as_millis(),
+                    relative_error: None,
                 })
             } else {
-                // Sampling — estimate from first N lines
+                // Sampling — estimate from first N lines.
+                // NOTE: this JSONL path is still prefix-biased like the old CSV
+                // sampler (see #428); it is left unchanged here to keep this
+                // change scoped to the reported CSV case. Because the estimate
+                // is not offset-corrected, no `relative_error` hint is emitted.
                 let reader = BufReader::new(fs::File::open(path).map_err(|_| {
                     DataProfilerError::FileNotFound {
                         path: path.display().to_string(),
@@ -556,6 +682,7 @@ fn count_json(
                         exact: true,
                         method: CountMethod::FullScan,
                         count_time_ms: start.elapsed().as_millis(),
+                        relative_error: None,
                     });
                 }
 
@@ -567,6 +694,7 @@ fn count_json(
                     exact: false,
                     method: CountMethod::Sampling,
                     count_time_ms: start.elapsed().as_millis(),
+                    relative_error: None,
                 })
             }
         }
@@ -577,6 +705,7 @@ fn count_json(
                     exact: true,
                     method: CountMethod::FullScan,
                     count_time_ms: start.elapsed().as_millis(),
+                    relative_error: None,
                 });
             }
 
@@ -595,6 +724,7 @@ fn count_json(
                 exact: true,
                 method: CountMethod::FullScan,
                 count_time_ms: start.elapsed().as_millis(),
+                relative_error: None,
             })
         }
     }
@@ -848,6 +978,7 @@ fn exact_row_count_from_sample(rows_sampled: usize, count_time_ms: u128) -> RowC
         exact: true,
         method: CountMethod::FullScan,
         count_time_ms,
+        relative_error: None,
     }
 }
 
@@ -1232,6 +1363,90 @@ mod tests {
         assert_eq!(result.count, 3);
         assert!(result.exact);
         assert_eq!(result.method, CountMethod::FullScan);
+    }
+
+    /// Write a CSV larger than `FULL_SCAN_THRESHOLD` so `count_csv` takes the
+    /// sampling branch. `grow` makes each row's filler length increase with the
+    /// row index, reproducing the short-early / long-late bias of autoincrement
+    /// ids and growing timestamps (issue #428). Returns the exact data-row count.
+    fn write_large_csv(grow: bool) -> (NamedTempFile, u64) {
+        use std::io::BufWriter;
+        let mut f = NamedTempFile::with_suffix(".csv").unwrap();
+        let mut rows: u64 = 0;
+        {
+            let mut w = BufWriter::new(f.as_file_mut());
+            w.write_all(b"id,payload\n").unwrap();
+            let mut written: u64 = "id,payload\n".len() as u64;
+            let target = FULL_SCAN_THRESHOLD + 1024 * 1024; // ~1 MB over threshold
+            while written < target {
+                let filler = if grow {
+                    // 8..~108 chars as the file progresses.
+                    8 + (rows / 2_000) as usize
+                } else {
+                    32
+                };
+                let line = format!("{},{}\n", rows, "x".repeat(filler));
+                w.write_all(line.as_bytes()).unwrap();
+                written += line.len() as u64;
+                rows += 1;
+            }
+        }
+        f.flush().unwrap();
+        (f, rows)
+    }
+
+    #[test]
+    fn test_quick_row_count_csv_sampling_uniform_is_accurate() {
+        let (f, actual) = write_large_csv(false);
+        let result = quick_row_count(f.path()).unwrap();
+
+        assert_eq!(result.method, CountMethod::Sampling);
+        assert!(!result.exact);
+
+        let err = (result.count as f64 - actual as f64).abs() / actual as f64;
+        assert!(
+            err < 0.02,
+            "uniform sampling estimate off by {:.2}% (count={}, actual={})",
+            err * 100.0,
+            result.count,
+            actual
+        );
+        // A hint should be present and tight for a uniform file.
+        let rel = result
+            .relative_error
+            .expect("relative_error should be Some");
+        assert!(
+            (0.0..0.05).contains(&rel),
+            "unexpected relative_error {rel}"
+        );
+    }
+
+    #[test]
+    fn test_quick_row_count_csv_sampling_growing_rows_not_biased() {
+        // With prefix-only sampling the short early rows made
+        // `file_size / avg_row_len` overestimate by ~9%. Multi-offset sampling
+        // should keep the estimate within a few percent of the true count.
+        let (f, actual) = write_large_csv(true);
+        let result = quick_row_count(f.path()).unwrap();
+
+        assert_eq!(result.method, CountMethod::Sampling);
+        let err = (result.count as f64 - actual as f64).abs() / actual as f64;
+        assert!(
+            err < 0.03,
+            "multi-offset estimate off by {:.2}% (count={}, actual={}) — prefix bias not removed",
+            err * 100.0,
+            result.count,
+            actual
+        );
+        assert!(result.relative_error.is_some());
+    }
+
+    #[test]
+    fn test_exact_counts_have_no_relative_error() {
+        let f = write_temp_csv("a,b\n1,2\n3,4\n");
+        let result = quick_row_count(f.path()).unwrap();
+        assert!(result.exact);
+        assert_eq!(result.relative_error, None);
     }
 
     #[test]

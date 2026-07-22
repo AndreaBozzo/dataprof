@@ -1265,6 +1265,13 @@ class TestPartialAnalysis:
         assert isinstance(result.exact, bool)
         assert isinstance(result.method, str)
 
+    def test_quick_row_count_exact_has_no_relative_error(self):
+        # Small files are counted exactly; the confidence hint only applies to
+        # sampled estimates, so it must be absent (not 0.0) here.
+        result = dataprof.quick_row_count(CSV_FILE)
+        assert result.exact is True
+        assert result.relative_error is None
+
     def test_quick_row_count_path_object(self):
         result = dataprof.quick_row_count(Path(CSV_FILE))
         assert result.count > 0
