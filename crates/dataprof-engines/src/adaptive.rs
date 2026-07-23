@@ -117,8 +117,10 @@ impl AdaptiveProfiler {
                 log::warn!("Fallback: {:?} → {:?} — {}", engine, fallback, primary_err);
                 self.try_engine(&fallback, file_path)
                     .map_err(|fallback_err| DataProfilerError::AllEnginesFailed {
+                        // The `AllEnginesFailed` variant already prefixes
+                        // "All engines failed: "; don't repeat it here.
                         message: format!(
-                            "All engines failed. Primary ({:?}): {}. Fallback ({:?}): {}.",
+                            "Primary ({:?}): {}. Fallback ({:?}): {}.",
                             engine, primary_err, fallback, fallback_err
                         ),
                     })
