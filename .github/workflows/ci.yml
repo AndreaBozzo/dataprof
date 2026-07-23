@@ -419,11 +419,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-prefix: rust-db
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
+          components: ''
 
       - name: Initialize test databases
         run: |
@@ -433,11 +429,35 @@ jobs:
           mysql -h 127.0.0.1 -u dataprof -pdev_password_123 dataprof_test \
             < .devcontainer/init-scripts/mysql/01-init-schema.sql || true
 
-      - name: Run Rust database tests (SQLite only)
-        run: cargo test --test database_integration --features "sqlite"
-
+      # all-db already includes the SQLite feature and its tests. Running a
+      # SQLite-only command first forces Cargo to build two feature graphs and
+      # can prevent a cold job from reaching the post-job cache save.
       - name: Run Rust database tests (all DBs)
         run: cargo test --test database_integration --features "all-db"
+
+  # The Python extension uses a different Cargo profile and feature graph.
+  # Build it in parallel so neither cold build blocks the other's cache save.
+  python-db-tests:
+    name: Python Database Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          token: ${{ github.token }}
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: rust-python-db
+          components: ''
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -448,7 +468,11 @@ jobs:
             uv.lock
 
       - name: Build Python bindings with database support
-        run: uv run maturin develop --features "python,python-async,database,sqlite"
+        run: uv run maturin develop --features "python,python-async,sqlite"
 
       - name: Run Python database tests
-        run: uv run pytest python/tests/test_database_api.py python/tests/test_engine_parity.py -v -ra
+        run: >-
+          uv run pytest
+          python/tests/test_database_api.py
+          python/tests/test_engine_parity.py::test_sqlite_parity
+          -v -ra
