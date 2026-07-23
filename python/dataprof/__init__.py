@@ -17,7 +17,14 @@ import warnings
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass as _dataclass
 from importlib import util as _importlib_util
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from ._dataprof import Pattern as _NativePattern
+else:
+    # Pattern objects are returned by the extension and described by its stub,
+    # but the class itself is not exported as a runtime module attribute.
+    _NativePattern = Any
 
 from ._dataprof import (
     ColumnProfile,
@@ -697,7 +704,7 @@ def _stats_cell(col: ColumnProfile) -> str:
 _MIN_SUMMARY_PATTERN_CONFIDENCE = 0.5
 
 
-def _dominant_pattern(col: ColumnProfile) -> Any | None:
+def _dominant_pattern(col: ColumnProfile) -> _NativePattern | _DictPattern | None:
     """Return the strongest pattern that clears the summary evidence threshold."""
     if not col.patterns:
         return None

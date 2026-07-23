@@ -1170,8 +1170,9 @@ class TestToLlmContext:
         assert patterns["ZIP Code (US)"].confidence < 0.5
         assert "CAP (IT)" not in report.to_llm_context()
         assert "ZIP Code (US)" not in report.to_llm_context()
-        assert "CAP (IT)" not in repr(report)
-        assert "ZIP Code (US)" not in report.to_markdown()
+        for summary in (repr(report), report.to_markdown(), report.to_html()):
+            assert "CAP (IT)" not in summary
+            assert "ZIP Code (US)" not in summary
         if dataprof.capabilities().pandas_installed:
             dataframe = report.to_dataframe().set_index("name")
             assert dataframe.loc["order_id", "top_pattern"] is None
