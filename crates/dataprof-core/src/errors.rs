@@ -135,6 +135,15 @@ pub enum DataProfilerError {
     #[error("I/O error: {message}\nCheck file permissions and disk space")]
     IoError { message: String },
 
+    #[error(
+        "Non-UTF-8 input in {path}: {detail}\nRe-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8 '{path}'`) and profile the result"
+    )]
+    EncodingError {
+        path: String,
+        detail: String,
+        guess: String,
+    },
+
     #[error("JSON parsing failed: {message}\nVerify JSON format and encoding")]
     JsonParsingError { message: String },
 
@@ -527,6 +536,9 @@ impl DataProfilerError {
                 "This build reads {}. Convert the input to one of these formats, or rebuild with the feature for the format you need.",
                 supported_formats_hint()
             )),
+            DataProfilerError::EncodingError { guess, .. } => Some(format!(
+                "Re-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8`) and profile the result."
+            )),
             DataProfilerError::MemoryLimitExceeded => {
                 Some("Use streaming mode or increase available memory.".to_string())
             }
@@ -550,6 +562,7 @@ impl DataProfilerError {
             DataProfilerError::CsvParsingError { .. } => "csv_parsing",
             DataProfilerError::FileNotFound { .. } => "file_not_found",
             DataProfilerError::UnsupportedFormat { .. } => "unsupported_format",
+            DataProfilerError::EncodingError { .. } => "encoding",
             DataProfilerError::MemoryLimitExceeded => "memory_limit",
             DataProfilerError::InvalidConfiguration { .. } => "configuration",
             DataProfilerError::InvalidSemanticHint { .. } => "semantic_hint",
@@ -827,6 +840,31 @@ mod tests {
         let error_string = config_error.to_string();
         assert!(error_string.contains("Invalid chunk size"));
         assert!(error_string.contains("Use a value between"));
+    }
+
+    #[test]
+    fn encoding_error_names_file_and_gives_reencode_advice() {
+        let err = DataProfilerError::EncodingError {
+            path: "sales.csv".to_string(),
+            detail: "first invalid UTF-8 byte at offset 12".to_string(),
+            guess: "windows-1252".to_string(),
+        };
+        assert_eq!(err.category(), "encoding");
+        let msg = err.to_string();
+        assert!(msg.contains("sales.csv"), "names the file: {msg}");
+        assert!(msg.contains("offset 12"), "reports the offset: {msg}");
+        assert!(
+            msg.to_lowercase().contains("utf-8"),
+            "mentions UTF-8: {msg}"
+        );
+        assert!(msg.contains("iconv"), "gives a re-encode command: {msg}");
+        // The old, misleading advice must not appear.
+        assert!(
+            !msg.to_lowercase().contains("check file permissions"),
+            "{msg}"
+        );
+        assert!(!msg.contains("All engines failed"), "{msg}");
+        assert!(err.suggestion().unwrap().contains("windows-1252"));
     }
 
     #[test]

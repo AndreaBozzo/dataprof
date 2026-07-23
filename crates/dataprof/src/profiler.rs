@@ -598,26 +598,29 @@ impl Profiler {
                 // select an engine that can deliver it rather than silently
                 // scanning the whole source (which also leaves the report claiming
                 // `source_exhausted` with no truncation reason).
-                if !matches!(self.config.stop_condition, StopCondition::Never) {
-                    return self.run_incremental(file_path, format);
-                }
-
-                let mut profiler = AdaptiveProfiler::new();
-                if let Some(d) = &self.config.quality_dimensions {
-                    profiler = profiler.quality_dimensions(d.clone());
-                }
-                if let Some(p) = self.effective_metric_packs() {
-                    profiler = profiler.metric_packs(p);
-                }
-                if let Some(l) = &self.config.locale {
-                    profiler = profiler.locale(l.clone());
-                }
-                profiler = profiler.semantic_hints(semantic_hints);
-                let csv_config = self.csv_config_for_file(file_path);
-                profiler = profiler.csv_config(csv_config);
-                // Format already resolved here; skip the engine's extension-based
-                // Parquet redetection so explicit `.format()` overrides win.
-                profiler.analyze_csv_file(file_path)
+                let result = if !matches!(self.config.stop_condition, StopCondition::Never) {
+                    self.run_incremental(file_path, format)
+                } else {
+                    let mut profiler = AdaptiveProfiler::new();
+                    if let Some(d) = &self.config.quality_dimensions {
+                        profiler = profiler.quality_dimensions(d.clone());
+                    }
+                    if let Some(p) = self.effective_metric_packs() {
+                        profiler = profiler.metric_packs(p);
+                    }
+                    if let Some(l) = &self.config.locale {
+                        profiler = profiler.locale(l.clone());
+                    }
+                    profiler = profiler.semantic_hints(semantic_hints);
+                    let csv_config = self.csv_config_for_file(file_path);
+                    profiler = profiler.csv_config(csv_config);
+                    // Format already resolved here; skip the engine's extension-based
+                    // Parquet redetection so explicit `.format()` overrides win.
+                    profiler.analyze_csv_file(file_path)
+                };
+                // Both engines fail hard on non-UTF-8 bytes with stacked, misleading
+                // messages. Replace that with one clear encoding diagnostic.
+                result.map_err(|err| map_csv_encoding_error(file_path, err))
             }
         }
     }
@@ -1111,6 +1114,33 @@ impl Profiler {
                 ),
             }),
         }
+    }
+}
+
+/// True when the error stems from the input not being valid UTF-8.
+///
+/// Both the incremental (`IoError: ... valid UTF-8`) and Arrow
+/// (`... invalid UTF-8 data`) engines report this differently, so match the
+/// substring their messages share.
+fn is_utf8_error(err: &DataProfilerError) -> bool {
+    err.to_string().to_ascii_lowercase().contains("utf-8")
+}
+
+/// Turn a raw engine failure on non-UTF-8 input into one clear encoding
+/// diagnostic. Non-encoding errors pass through untouched.
+fn map_csv_encoding_error(file_path: &Path, err: DataProfilerError) -> DataProfilerError {
+    if !is_utf8_error(&err) {
+        return err;
+    }
+    match dataprof_csv::diagnose_non_utf8(file_path) {
+        Some(diagnostic) => DataProfilerError::EncodingError {
+            path: file_path.display().to_string(),
+            detail: diagnostic.detail(),
+            guess: diagnostic.guess.to_string(),
+        },
+        // The bytes turned out to be valid UTF-8 (fault beyond the sniff window,
+        // or a mislabeled failure) — keep the original error rather than guess.
+        None => err,
     }
 }
 

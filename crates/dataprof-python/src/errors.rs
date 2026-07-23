@@ -30,6 +30,7 @@ pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
         | DataProfilerError::InvalidConfiguration { .. }
         | DataProfilerError::DuplicateColumnName { .. }
         | DataProfilerError::JsonParsingError { .. }
+        | DataProfilerError::EncodingError { .. }
         | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),
         DataProfilerError::IoError { .. } => {
