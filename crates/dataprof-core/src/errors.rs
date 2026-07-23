@@ -136,7 +136,7 @@ pub enum DataProfilerError {
     IoError { message: String },
 
     #[error(
-        "Non-UTF-8 input in {path}: {detail}\nRe-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8 {path}`) and profile the result"
+        "Non-UTF-8 input in {path}: {detail}\nRe-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8 '{path}'`) and profile the result"
     )]
     EncodingError {
         path: String,

@@ -674,7 +674,9 @@ mod tests {
 
     #[test]
     fn diagnose_non_utf8_flags_latin1() {
-        // "café" in latin-1: the 0xE9 (é) is an invalid lone continuation byte.
+        // "café" in latin-1: 0xE9 (é) is a UTF-8 leading byte for a 3-byte
+        // sequence, but here it is not followed by continuation bytes, so the
+        // stream is invalid UTF-8 at that position.
         let f = write_bytes(b"name\ncaf\xE9\n");
         let d = diagnose_non_utf8(f.path()).expect("latin-1 should be flagged");
         assert_eq!(d.guess, "latin-1");
