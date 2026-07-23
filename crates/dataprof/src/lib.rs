@@ -36,7 +36,7 @@ pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
 };
 pub use dataprof_json::{
-    JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader,
+    JsonErrorPolicy, JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader,
 };
 pub use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,

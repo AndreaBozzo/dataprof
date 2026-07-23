@@ -46,7 +46,8 @@ pub use sampling::{
 };
 pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 pub use source::{
-    DataFrameLibrary, DataSource, FileFormat, ParquetMetadata, QueryEngine, StreamSourceSystem,
+    DataFrameLibrary, DataSource, FileFormat, JsonErrorPolicy, ParquetMetadata, QueryEngine,
+    StreamSourceSystem,
 };
 pub use stop_condition::{
     SchemaStabilityTracker, StopCondition, StopEvaluator, schema_stable_threshold,

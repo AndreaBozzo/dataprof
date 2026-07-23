@@ -1,11 +1,10 @@
-use std::io::Read;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 use dataprof_core::{
-    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
-    ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker, SemanticHints,
-    StopCondition, StopEvaluator, StreamSourceSystem, TruncationReason,
+    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, JsonErrorPolicy,
+    MetricPack, ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker,
+    SemanticHints, StopCondition, StopEvaluator, StreamSourceSystem, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -46,6 +45,7 @@ pub struct AsyncStreamingProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     semantic_hints: SemanticHints,
+    json_error_policy: JsonErrorPolicy,
 }
 
 impl AsyncStreamingProfiler {
@@ -61,6 +61,7 @@ impl AsyncStreamingProfiler {
             quality_dimensions: None,
             metric_packs: None,
             semantic_hints: SemanticHints::default(),
+            json_error_policy: JsonErrorPolicy::default(),
         }
     }
 
@@ -110,6 +111,12 @@ impl AsyncStreamingProfiler {
         self
     }
 
+    /// Set how malformed JSON/JSONL records are handled (default: skip and count).
+    pub fn json_error_policy(mut self, policy: JsonErrorPolicy) -> Self {
+        self.json_error_policy = policy;
+        self
+    }
+
     /// Profile data from an async source, returning a [`ProfileReport`].
     ///
     /// Supports CSV, JSON, and JSONL formats. Parquet async support is tracked separately.
@@ -142,10 +149,13 @@ impl AsyncStreamingProfiler {
         let sync_reader = tokio_util::io::SyncIoBridge::new(reader);
 
         // Spawn the reader on a blocking thread — format determines the parser.
+        // The task reports how many malformed records were skipped (0 for CSV,
+        // and always 0 in strict JSON mode since the first one aborts).
+        let json_error_policy = self.json_error_policy;
         let reader_handle = tokio::task::spawn_blocking(move || match format {
-            FileFormat::Csv => Self::reader_task(sync_reader, tx, rows_per_chunk),
+            FileFormat::Csv => Self::reader_task(sync_reader, tx, rows_per_chunk).map(|()| 0usize),
             FileFormat::Json | FileFormat::Jsonl => {
-                Self::json_reader_task(sync_reader, tx, rows_per_chunk, format)
+                Self::json_reader_task(sync_reader, tx, rows_per_chunk, format, json_error_policy)
             }
             _ => unreachable!(),
         });
@@ -153,29 +163,35 @@ impl AsyncStreamingProfiler {
         // Process chunks on the current task
         let process_result = self.process_chunks(rx, source_info.size_hint).await;
 
-        // If processing failed, abort the reader task to avoid leaking it
+        // If processing failed, prefer the reader's error when it also failed:
+        // a strict-mode malformed record aborts the reader before any data
+        // reaches the processor, which would otherwise surface only as a generic
+        // "empty input" error and mask the real cause.
         let (_headers, column_stats, total_rows, sampled_rows, total_bytes, truncation_reason) =
             match process_result {
                 Ok(result) => result,
-                Err(e) => {
-                    reader_handle.abort();
-                    return Err(e);
+                Err(process_err) => {
+                    return match reader_handle.await {
+                        Ok(Err(reader_err)) => Err(reader_err),
+                        _ => Err(process_err),
+                    };
                 }
             };
 
         // Wait for the reader task to finish and propagate any errors
-        match reader_handle.await {
-            Ok(Ok(())) => {}
+        let malformed_records = match reader_handle.await {
+            Ok(Ok(count)) => count,
             Ok(Err(e)) => return Err(e),
             Err(join_err) if join_err.is_cancelled() => {
                 // We cancelled it ourselves — fine
+                0
             }
             Err(join_err) => {
                 return Err(DataProfilerError::StreamingError {
                     message: format!("Reader task panicked: {}", join_err),
                 });
             }
-        }
+        };
 
         // Build the report
         let packs = self.metric_packs.as_deref();
@@ -208,7 +224,10 @@ impl AsyncStreamingProfiler {
 
         let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms)
             .with_engine("incremental")
-            .with_bytes_consumed(total_bytes);
+            .with_bytes_consumed(total_bytes)
+            // Tolerant JSONL scans surface skipped malformed records so callers
+            // can distinguish a partial profile from a clean one.
+            .with_error_count(malformed_records);
 
         if let Some(reason) = truncation_reason {
             execution = execution.with_truncation(reason);
@@ -316,7 +335,8 @@ impl AsyncStreamingProfiler {
         tx: mpsc::Sender<ParsedChunk>,
         rows_per_chunk: usize,
         format: FileFormat,
-    ) -> Result<(), DataProfilerError> {
+        error_policy: JsonErrorPolicy,
+    ) -> Result<usize, DataProfilerError> {
         use serde_json::Value;
         use std::io::BufRead;
 
@@ -327,6 +347,8 @@ impl AsyncStreamingProfiler {
             std::collections::HashSet::new();
         let mut bytes_in_chunk: u64 = 0;
         let mut headers_sent = false;
+        let mut malformed_records: usize = 0;
+        let mut emitted_records: usize = 0;
 
         // Helper closure: convert a JSON object into a row aligned to known_columns.
         // New columns are only registered before headers are sent; once headers have
@@ -399,13 +421,32 @@ impl AsyncStreamingProfiler {
 
         match format {
             FileFormat::Jsonl => {
-                // True streaming: line-by-line
-                let mut reader = buf_reader.take(u64::MAX); // Use take to get a Read trait object
-                let de = serde_json::Deserializer::from_reader(&mut reader);
-                for value in de.into_iter::<Value>() {
-                    let v = value.map_err(|e| DataProfilerError::JsonParsingError {
-                        message: e.to_string(),
-                    })?;
+                // True streaming: deserialize one record at a time so a malformed
+                // record can be recovered from (skip to next line) or reported,
+                // matching the sync `scan_json_from_reader` contract.
+                loop {
+                    let parsed = {
+                        let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
+                        <Value as serde::Deserialize>::deserialize(&mut de)
+                    };
+                    let v = match parsed {
+                        Ok(v) => v,
+                        Err(e) if e.classify() == serde_json::error::Category::Eof => break,
+                        Err(e) => {
+                            if error_policy == JsonErrorPolicy::Strict {
+                                return Err(DataProfilerError::JsonParsingError {
+                                    message: format!("malformed JSON record: {e}"),
+                                });
+                            }
+                            malformed_records += 1;
+                            // Recover by discarding the rest of the offending line.
+                            let mut discard = Vec::new();
+                            buf_reader
+                                .read_until(b'\n', &mut discard)
+                                .map_err(DataProfilerError::from)?;
+                            continue;
+                        }
+                    };
 
                     if let Value::Object(obj) = v {
                         let row = process_object(
@@ -416,6 +457,7 @@ impl AsyncStreamingProfiler {
                         );
                         bytes_in_chunk += row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                         current_chunk.push(row);
+                        emitted_records += 1;
 
                         if current_chunk.len() >= rows_per_chunk
                             && !send_chunk(
@@ -426,7 +468,7 @@ impl AsyncStreamingProfiler {
                                 &tx,
                             )?
                         {
-                            return Ok(());
+                            return Ok(malformed_records);
                         }
                     }
                 }
@@ -503,6 +545,7 @@ impl AsyncStreamingProfiler {
                                     bytes_in_chunk +=
                                         row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                                     current_chunk.push(row);
+                                    emitted_records += 1;
 
                                     if current_chunk.len() >= rows_per_chunk
                                         && !send_chunk(
@@ -513,14 +556,23 @@ impl AsyncStreamingProfiler {
                                             &tx,
                                         )?
                                     {
-                                        return Ok(());
+                                        return Ok(malformed_records);
                                     }
                                 }
                                 Ok(_) => {
                                     // Skip non-object items, approximate 10 bytes progress
                                     bytes_in_chunk += 10;
                                 }
-                                Err(_) => {
+                                Err(e) => {
+                                    // A corrupt element leaves the array parser unable
+                                    // to resync, so we stop here either way; strict mode
+                                    // surfaces the failure instead of a partial profile.
+                                    if error_policy == JsonErrorPolicy::Strict {
+                                        return Err(DataProfilerError::JsonParsingError {
+                                            message: format!("malformed JSON record: {e}"),
+                                        });
+                                    }
+                                    malformed_records += 1;
                                     break;
                                 }
                             }
@@ -528,6 +580,14 @@ impl AsyncStreamingProfiler {
                     }
                 }
             }
+        }
+
+        // Input made up entirely of malformed records must fail, matching the
+        // file/bytes paths, rather than surfacing a generic "empty stream" error.
+        if emitted_records == 0 && malformed_records > 0 {
+            return Err(DataProfilerError::JsonParsingError {
+                message: "No valid JSON records found (all records were malformed)".to_string(),
+            });
         }
 
         // Flush remaining
@@ -541,7 +601,7 @@ impl AsyncStreamingProfiler {
             );
         }
 
-        Ok(())
+        Ok(malformed_records)
     }
 
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
@@ -876,5 +936,57 @@ mod tests {
             report.execution.truncation_reason,
             Some(TruncationReason::MaxRows(100))
         ));
+    }
+
+    fn jsonl_source(data: &'static [u8]) -> BytesSource {
+        BytesSource::new(
+            bytes::Bytes::from_static(data),
+            AsyncSourceInfo::new("test", FileFormat::Jsonl).size_hint(Some(data.len() as u64)),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_async_jsonl_tolerant_skips_and_counts() {
+        // Malformed record in the middle: default policy skips and counts it.
+        let source = jsonl_source(b"{\"id\":1}\nnot-json\n{\"id\":2}\n");
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.error_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_async_jsonl_strict_aborts() {
+        for data in [
+            b"not-json\n{\"id\":1}\n{\"id\":2}\n".as_ref(),
+            b"{\"id\":1}\nnot-json\n{\"id\":2}\n".as_ref(),
+            b"{\"id\":1}\n{\"id\":2}\nnot-json\n".as_ref(),
+        ] {
+            let source = BytesSource::new(
+                bytes::Bytes::from_static(data),
+                AsyncSourceInfo::new("test", FileFormat::Jsonl),
+            );
+            let result = AsyncStreamingProfiler::new()
+                .json_error_policy(JsonErrorPolicy::Strict)
+                .analyze_stream(source)
+                .await;
+            let err = result.expect_err("strict mode must reject malformed records");
+            let message = err.to_string();
+            assert!(message.to_lowercase().contains("malformed json record"));
+            assert!(!message.contains("not-json"), "leaked record: {message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_jsonl_clean_has_zero_error_count() {
+        let source = jsonl_source(b"{\"id\":1}\n{\"id\":2}\n{\"id\":3}\n");
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+        assert_eq!(report.execution.rows_processed, 3);
+        assert_eq!(report.execution.error_count, 0);
     }
 }

@@ -35,13 +35,14 @@ pub type PyColumn = (String, Vec<Option<String>>);
 ///
 /// Raises `ValueError` when the columns do not all have the same length.
 #[pyfunction]
-#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None))]
+#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0))]
 pub fn profile_columns(
     py: Python<'_>,
     columns: Vec<PyColumn>,
     name: String,
     max_rows: Option<usize>,
     config: Option<&PyProfilerConfig>,
+    error_count: usize,
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -149,7 +150,10 @@ pub fn profile_columns(
     });
 
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, start.elapsed().as_millis())
-        .with_engine("columnar");
+        .with_engine("columnar")
+        // Malformed records skipped upstream (e.g. tolerant JSONL byte parsing)
+        // are reported here so a partial profile is distinguishable from a clean one.
+        .with_error_count(error_count);
     if truncated {
         exec = exec.with_truncation(TruncationReason::MaxRows(
             effective_max_rows.unwrap_or(0) as u64

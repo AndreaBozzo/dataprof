@@ -66,6 +66,7 @@ def profile(
     name: str | None = None,
     csv_delimiter: str | None = None,
     csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
     on_progress: Callable[[ProgressEvent], None] | None = None,
@@ -90,6 +91,7 @@ def profile_file(
     max_rows: int | None = None,
     csv_delimiter: str | None = None,
     csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
     on_progress: Callable[[ProgressEvent], None] | None = None,
@@ -203,6 +205,8 @@ class ProfileReport:
     def truncation_reason(self) -> str | None: ...
     @property
     def source_exhausted(self) -> bool: ...
+    @property
+    def error_count(self) -> int: ...
     @property
     def ragged_row_count(self) -> int: ...
     @property

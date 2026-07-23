@@ -27,6 +27,7 @@ class ProfilerConfig:
         max_rows: int | None = None,
         csv_delimiter: str | None = None,
         csv_flexible: bool | None = None,
+        jsonl_on_error: str | None = None,
         sampling: SamplingStrategy | None = None,
         stop_condition: StopCondition | None = None,
         on_progress: Callable[[ProgressEvent], None] | None = None,
@@ -56,6 +57,8 @@ class ProfilerConfig:
     def identifier_columns(self) -> list[str]: ...
     @property
     def temporal_columns(self) -> list[str]: ...
+    @property
+    def jsonl_on_error(self) -> str: ...
 
 # --- Sampling ---
 
@@ -378,6 +381,7 @@ def profile_columns(
     name: str,
     max_rows: int | None,
     config: ProfilerConfig | None,
+    error_count: int = 0,
 ) -> ProfileReport: ...
 def infer_schema(path: str) -> SchemaResult: ...
 def quick_row_count(path: str) -> RowCountEstimate: ...

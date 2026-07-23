@@ -6,6 +6,7 @@ use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
     SemanticHints, TruncationReason,
 };
+pub use dataprof_core::JsonErrorPolicy;
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
@@ -28,12 +29,20 @@ pub struct JsonParserConfig {
     pub format: Option<JsonFormat>,
     /// Maximum rows to process (None = all rows).
     pub max_rows: Option<usize>,
+    /// How to react to a malformed record (default: skip).
+    pub error_policy: JsonErrorPolicy,
 }
 
 impl JsonParserConfig {
     /// Set the maximum number of rows to process.
     pub fn with_max_rows(mut self, max_rows: usize) -> Self {
         self.max_rows = Some(max_rows);
+        self
+    }
+
+    /// Set how malformed records are handled.
+    pub fn with_error_policy(mut self, policy: JsonErrorPolicy) -> Self {
+        self.error_policy = policy;
         self
     }
 
@@ -110,7 +119,10 @@ where
             let value: Value = match Value::deserialize(&mut deserializer) {
                 Ok(v) => v,
                 Err(err) if err.classify() == serde_json::error::Category::Eof => break,
-                Err(_) => {
+                Err(err) => {
+                    if config.error_policy == JsonErrorPolicy::Strict {
+                        return Err(malformed_record_error(&err));
+                    }
                     malformed_lines += 1;
                     skip_to_next_line(&mut reader)?;
                     continue;
@@ -201,7 +213,10 @@ where
                                 rows_read += 1;
                             }
                             Ok(_) => {}
-                            Err(_) => {
+                            Err(err) => {
+                                if config.error_policy == JsonErrorPolicy::Strict {
+                                    return Err(malformed_record_error(&err));
+                                }
                                 malformed_lines += 1;
                                 break;
                             }
@@ -219,6 +234,15 @@ where
         format,
         truncated,
     })
+}
+
+/// Build a strict-mode parse error from a serde failure. The serde message
+/// carries line/column context but never the record contents, so it is safe to
+/// surface directly.
+fn malformed_record_error(err: &serde_json::Error) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!("malformed JSON record: {err}"),
+    }
 }
 
 fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, DataProfilerError> {
@@ -455,8 +479,11 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     let scan_time_ms = start.elapsed().as_millis();
     let num_columns = column_profiles.len();
 
-    let mut execution =
-        ExecutionMetadata::new(rows_read, num_columns, scan_time_ms).with_engine("json");
+    let mut execution = ExecutionMetadata::new(rows_read, num_columns, scan_time_ms)
+        .with_engine("json")
+        // Tolerant scans surface skipped malformed records here so callers can
+        // tell a partial profile from a clean one.
+        .with_error_count(malformed_lines);
     // `truncated` is set only when a record still remained at the cap, so a source
     // holding exactly `max_rows` records is reported as fully read, not cut short.
     if truncated && let Some(max) = config.max_rows {
@@ -679,6 +706,88 @@ mod tests {
         assert_eq!(format, FileFormat::Jsonl);
         assert_eq!(rows, 2);
         assert_eq!(profiles[0].total_count, 2);
+    }
+
+    #[test]
+    fn test_strict_policy_errors_on_malformed_jsonl() {
+        // Malformed in first / middle / last position all abort under Strict.
+        for data in [
+            b"not-json\n{\"x\":1}\n{\"x\":2}\n".as_ref(),
+            b"{\"x\":1}\nnot-json\n{\"x\":2}\n".as_ref(),
+            b"{\"x\":1}\n{\"x\":2}\nnot-json\n".as_ref(),
+        ] {
+            let config = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+            let err = scan_json_from_reader(Cursor::new(data), &config, |_| {})
+                .expect_err("strict mode must reject malformed records");
+            let message = err.to_string().to_lowercase();
+            assert!(message.contains("malformed json record"), "got: {message}");
+            // The offending record text must never be echoed back.
+            assert!(!err.to_string().contains("not-json"), "leaked record: {err}");
+        }
+    }
+
+    #[test]
+    fn test_tolerant_policy_counts_skipped_records() {
+        let data = b"{\"x\":1}\nnot-json\n{\"x\":2}\n";
+        let config = JsonParserConfig::jsonl(); // default Skip
+        let summary =
+            scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
+        assert_eq!(summary.rows_read, 2);
+        assert_eq!(summary.malformed_lines, 1);
+    }
+
+    #[test]
+    fn test_blank_lines_are_not_counted_as_malformed() {
+        let data = b"{\"x\":1}\n\n   \n{\"x\":2}\n";
+        for policy in [JsonErrorPolicy::Skip, JsonErrorPolicy::Strict] {
+            let config = JsonParserConfig::jsonl().with_error_policy(policy);
+            let summary =
+                scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
+            assert_eq!(summary.rows_read, 2, "policy {policy:?}");
+            assert_eq!(summary.malformed_lines, 0, "policy {policy:?}");
+        }
+    }
+
+    #[test]
+    fn test_truncated_final_record_is_treated_as_eof() {
+        // serde classifies an incomplete trailing object as EOF, not a parse
+        // error, so it is silently dropped rather than counted or raised.
+        let data = b"{\"x\":1}\n{\"x\":2";
+        for policy in [JsonErrorPolicy::Skip, JsonErrorPolicy::Strict] {
+            let config = JsonParserConfig::jsonl().with_error_policy(policy);
+            let summary =
+                scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
+            assert_eq!(summary.rows_read, 1, "policy {policy:?}");
+            assert_eq!(summary.malformed_lines, 0, "policy {policy:?}");
+        }
+    }
+
+    #[test]
+    fn test_all_malformed_file_fails() {
+        let file = write_file("not-json\nalso-bad\n");
+        let config = JsonParserConfig::jsonl();
+        let err = analyze_json_file(file.path(), &config)
+            .expect_err("a file with no valid records must fail");
+        let message = err.to_string().to_lowercase();
+        assert!(message.contains("no valid json records"), "got: {message}");
+    }
+
+    #[test]
+    fn test_tolerant_file_reports_error_count() {
+        let file = write_file("{\"x\":1}\nnot-json\n{\"x\":2}\n");
+        let config = JsonParserConfig::jsonl();
+        let report = analyze_json_file(file.path(), &config).unwrap();
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.error_count, 1);
+    }
+
+    #[test]
+    fn test_strict_file_errors_on_malformed() {
+        let file = write_file("{\"x\":1}\nnot-json\n{\"x\":2}\n");
+        let config = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+        let err = analyze_json_file(file.path(), &config)
+            .expect_err("strict mode must reject the malformed record");
+        assert!(err.to_string().to_lowercase().contains("malformed json record"));
     }
 
     #[test]
