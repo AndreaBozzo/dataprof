@@ -66,7 +66,8 @@ impl StopCondition {
     /// The row count at which this condition can first trigger on rows alone,
     /// if any.
     ///
-    /// Mirrors [`evaluate`]: `Any` fires as soon as one child fires, so it takes
+    /// Mirrors the internal `evaluate` method: `Any` fires as soon as one child
+    /// fires, so it takes
     /// the *minimum* of the children that a row count can trigger. `All` fires
     /// only once every child has fired, so it takes the *maximum*, and yields
     /// `None` if any child cannot be triggered by rows at all (a byte cap,

@@ -260,7 +260,8 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
         .map(|i| parquet_meta.row_group(i).compressed_size() as u64)
         .sum();
 
-    let schema_summary = format!("{}", builder.schema());
+    let arrow_schema = builder.schema().clone();
+    let schema_summary = format!("{arrow_schema}");
 
     let mut stream = builder
         .with_batch_size(config.batch_size)
@@ -270,6 +271,7 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
         })?;
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
+    analyzer.initialize_schema(arrow_schema.as_ref())?;
 
     while let Some(batch_result) = stream.next().await {
         let batch = batch_result.map_err(|e| DataProfilerError::ParquetError {

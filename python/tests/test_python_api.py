@@ -2108,6 +2108,20 @@ class TestSaveFormats:
         assert result is report
         assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
 
+    def test_save_empty_report_csv_creates_artifact(self, tmp_path):
+        report = dataprof.profile({})
+        path = tmp_path / "empty.csv"
+
+        assert report.save(path) is report
+        assert path.exists()
+        assert path.read_bytes() == b""
+
+    def test_save_and_load_extensions_are_case_insensitive(self, report, tmp_path):
+        path = tmp_path / "REPORT.JSON"
+
+        assert report.save(path) is report
+        assert dataprof.ProfileReport.load(path).to_dict() == report.to_dict()
+
     def test_save_parquet(self, report):
         pytest.importorskip("pyarrow")
         pq = pytest.importorskip("pyarrow.parquet")
@@ -2508,6 +2522,28 @@ class TestZeroRowSemantics:
         assert batch.column("null_percentage").to_pylist() == [None, None]
         assert batch.column("uniqueness_ratio").to_pylist() == [None, None]
 
+    def test_zero_row_parquet_preserves_schema(self, tmp_path):
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+        path = tmp_path / "empty.parquet"
+        pq.write_table(
+            pa.table(
+                {
+                    "id": pa.array([], type=pa.int64()),
+                    "label": pa.array([], type=pa.string()),
+                }
+            ),
+            path,
+        )
+
+        report = dataprof.profile(path)
+        assert report.rows == 0
+        assert report.columns == 2
+        assert list(report) == ["id", "label"]
+        assert report["id"].total_count == 0
+        assert report["id"].null_percentage is None
+        assert report.quality_score is None
+
 
 class TestInvalidCount:
     """Per-column invalid_count: non-null values excluded from numeric stats
@@ -2543,6 +2579,22 @@ class TestInvalidCount:
     def test_in_memory_sources_match_file_semantics(self):
         r = dataprof.profile({"v": ["1", "2", "3", "4", "5", "12,50", None]})
         assert r["v"].invalid_count == 1
+
+    def test_arrow_non_finite_values_do_not_poison_statistics(self):
+        pa = pytest.importorskip("pyarrow")
+        r = dataprof.profile(
+            pa.table({"v": [1.5, float("nan"), float("inf"), float("-inf"), 3.25]})
+        )
+        v = r["v"]
+
+        assert v.data_type == "float"
+        assert v.null_count == 1
+        assert v.unique_count == 4
+        assert v.invalid_count == 2
+        assert v.min == 1.5
+        assert v.max == 3.25
+        assert v.mean == pytest.approx(2.375)
+        assert v.std_dev is not None and v.std_dev > 0.0
 
     def test_roundtrip_preserves_invalid_count(self, tmp_path):
         path = tmp_path / "amounts.csv"

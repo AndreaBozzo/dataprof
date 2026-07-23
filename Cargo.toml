@@ -92,7 +92,8 @@ homepage = "https://andreabozzo.github.io/dataprof/"
 exclude = [
     "assets/animations/*",
     "assets/images/*.png",
-    "examples/*",
+    "examples/test_data/*",
+    "examples/test_datasets/*",
     ".venv/*",
     ".mypy_cache/*",
     "python/*",

@@ -97,9 +97,12 @@ Measures how much data is present vs. missing.
 
 - `missing_values_ratio` -- fraction of null/empty values across all columns
 - `complete_records_ratio` -- fraction of rows with zero nulls
-- `null_columns` -- columns that are entirely null
+- `null_columns` -- columns past the configured null threshold (50% by default)
 
-A completeness score of 0.95 means 95% of expected values are present.
+The completeness score is on the same 0–100 scale as the other dimensions. It
+combines cell completeness (`100 - missing_values_ratio`) and row completeness
+(`complete_records_ratio`), so inspect both underlying values when setting a
+quality gate.
 
 ### Consistency
 
@@ -127,9 +130,11 @@ Measures whether values fall within expected ranges.
 
 ### Timeliness
 
-Measures whether explicitly selected date/time values are current and
-consistent. Pass `temporal_columns=["created_at", "updated_at"]` in Python or
-call `.temporal_columns(...)` on the Rust profiler to opt columns into scoring.
+Measures whether confidently inferred date/time values are current and
+consistent. Inferred date columns participate automatically. Pass
+`temporal_columns=["created_at", "updated_at"]` in Python or call
+`.temporal_columns(...)` on the Rust profiler to add columns whose dates cannot
+be inferred confidently, such as mixed-format strings.
 
 - `future_dates_count` -- dates that are in the future
 - `stale_data_ratio` -- fraction of temporal data that appears outdated

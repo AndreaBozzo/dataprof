@@ -4,7 +4,7 @@
 
 use std::io::Write;
 
-use dataprof::{DataProfilerError, Profiler};
+use dataprof::{DataProfilerError, EngineType, Profiler};
 
 #[test]
 fn missing_file_reports_the_real_path_not_unknown() {
@@ -61,25 +61,32 @@ fn non_utf8_csv_reports_one_clean_encoding_diagnostic() {
     file.write_all(b"name,city\nJos\xE9,Z\xFCrich\n").unwrap();
     file.flush().unwrap();
 
-    let err = Profiler::new()
-        .analyze_file(file.path())
-        .expect_err("non-UTF-8 CSV must fail rather than silently mis-decode");
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let err = Profiler::new()
+            .engine(engine)
+            .analyze_file(file.path())
+            .expect_err("non-UTF-8 CSV must fail rather than silently mis-decode");
 
-    assert_eq!(err.category(), "encoding");
-    let rendered = err.to_string();
-    // Names the real file, the encoding guess, the offset, and a re-encode fix...
-    assert!(!rendered.contains("unknown"), "{rendered}");
-    assert!(rendered.to_lowercase().contains("utf-8"), "{rendered}");
-    assert!(
-        rendered.contains("iconv"),
-        "gives a re-encode command: {rendered}"
-    );
-    // ...and drops the old misleading, stacked messaging.
-    assert!(!rendered.contains("All engines failed"), "{rendered}");
-    assert!(
-        !rendered.to_lowercase().contains("check file permissions"),
-        "encoding failure must not blame permissions: {rendered}"
-    );
+        assert_eq!(err.category(), "encoding");
+        let rendered = err.to_string();
+        // Names the real file, the encoding guess, the offset, and a re-encode fix...
+        assert!(!rendered.contains("unknown"), "{rendered}");
+        assert!(rendered.to_lowercase().contains("utf-8"), "{rendered}");
+        assert!(
+            rendered.contains("iconv"),
+            "gives a re-encode command: {rendered}"
+        );
+        // ...and drops the old misleading, stacked messaging.
+        assert!(!rendered.contains("All engines failed"), "{rendered}");
+        assert!(
+            !rendered.to_lowercase().contains("check file permissions"),
+            "encoding failure must not blame permissions: {rendered}"
+        );
+    }
 }
 
 #[test]

@@ -178,7 +178,8 @@ pub fn analyze_parquet_with_config_dims_and_hints(
         .map(|index| parquet_meta.row_group(index).compressed_size() as u64)
         .sum();
 
-    let schema_summary = format!("{}", builder.schema());
+    let arrow_schema = builder.schema().clone();
+    let schema_summary = format!("{arrow_schema}");
 
     let mut reader_builder = builder.with_batch_size(config.batch_size);
     if let Some(max) = config.max_rows {
@@ -191,6 +192,7 @@ pub fn analyze_parquet_with_config_dims_and_hints(
         })?;
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
+    analyzer.initialize_schema(arrow_schema.as_ref())?;
     for batch_result in reader {
         let batch = batch_result.map_err(|error| DataProfilerError::ParquetError {
             message: format!("Failed to read Parquet batch: {}", error),
@@ -385,6 +387,38 @@ mod tests {
     fn test_analyze_parquet_empty_file() {
         let result = analyze_parquet_with_quality(Path::new("nonexistent.parquet"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_row_parquet_preserves_schema() -> Result<()> {
+        let temp_file = NamedTempFile::new()?;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("label", DataType::Utf8, true),
+        ]));
+        let file = File::create(temp_file.path())?;
+        let writer = ArrowWriter::try_new(file, schema, None)?;
+        writer.close()?;
+
+        let report = analyze_parquet_with_quality(temp_file.path())?;
+        assert_eq!(report.execution.rows_processed, 0);
+        assert_eq!(report.execution.columns_detected, 2);
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["id", "label"]
+        );
+        assert!(
+            report
+                .column_profiles
+                .iter()
+                .all(|column| column.total_count == 0 && column.null_count == 0)
+        );
+        assert_eq!(report.quality_score(), None);
+        Ok(())
     }
 
     #[test]
