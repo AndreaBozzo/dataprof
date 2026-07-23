@@ -132,7 +132,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
             specificity: 75,
             locale: None,
             min_threshold: 5.0,
-            validator: None,
+            validator: Some(validators::validate_coordinates),
         },
         PatternDef {
             name: "IBAN",
@@ -477,13 +477,21 @@ pub fn list_patterns(locale: Option<&str>) -> Vec<PatternMetadata> {
 /// # Arguments
 /// * `data` - Slice of string values to analyze
 /// * `locale` - Optional ISO 3166-1 alpha-2 locale (e.g. "IT", "US", "GB").
-///   When set, locale-matching patterns receive a confidence boost and
-///   non-matching locale patterns are suppressed (unless match rate is very high).
+///   Matching is case-insensitive. When set, locale-matching patterns receive
+///   a confidence boost and non-matching locale patterns are suppressed.
+///   Without a locale, locale-specific candidates remain available as evidence
+///   but receive a confidence penalty, with a further penalty for ambiguous
+///   matches shared by patterns from different locales.
 ///
 /// # Returns
 /// Vector of detected patterns sorted by confidence descending, after overlap
 /// suppression and locale filtering.
 pub fn detect_patterns(data: &[String], locale: Option<&str>) -> Vec<Pattern> {
+    let normalized_locale = locale
+        .map(str::trim)
+        .filter(|locale| !locale.is_empty())
+        .map(str::to_ascii_uppercase);
+
     // Filter empty and whitespace-only strings for robust analysis
     let non_empty: Vec<&str> = data
         .iter()
@@ -538,13 +546,18 @@ pub fn detect_patterns(data: &[String], locale: Option<&str>) -> Vec<Pattern> {
                 None => 1.0,
             };
 
-            candidates.push(PatternMatch {
-                def,
-                match_count,
-                match_percentage,
-                matched_rows: std::mem::take(&mut match_bitmaps[pat_idx]),
-                validator_pass_rate,
-            });
+            // A semantic validator rejecting every regex match means this is
+            // not evidence for the pattern. Exclude it before overlap
+            // suppression so it cannot hide another, genuinely valid pattern.
+            if validator_pass_rate > 0.0 {
+                candidates.push(PatternMatch {
+                    def,
+                    match_count,
+                    match_percentage,
+                    matched_rows: std::mem::take(&mut match_bitmaps[pat_idx]),
+                    validator_pass_rate,
+                });
+            }
         }
     }
 
@@ -601,34 +614,55 @@ pub fn detect_patterns(data: &[String], locale: Option<&str>) -> Vec<Pattern> {
         }
     }
 
-    // Phase 3: Build results with locale-adjusted confidence
+    // Phase 3: Build results with locale-adjusted confidence.
+    //
+    // Locale-specific patterns without an explicit locale are useful evidence,
+    // but not strong enough by themselves to become an asserted semantic type.
+    // Identical row matches from multiple locales (for example CAP and ZIP on
+    // five-digit order IDs) are especially ambiguous and are penalized once per
+    // competing locale.
     let mut results: Vec<Pattern> = candidates
         .iter()
         .enumerate()
         .filter(|(i, _)| !suppressed[*i])
-        .filter_map(|(_, pm)| {
+        .filter_map(|(candidate_idx, pm)| {
             let mut confidence = compute_confidence(
                 pm.def.specificity,
                 pm.match_percentage,
                 pm.validator_pass_rate,
             );
 
-            // Locale adjustments (Phase 4)
-            if let Some(configured_locale) = locale {
+            if let Some(configured_locale) = normalized_locale.as_deref() {
                 match pm.def.locale {
-                    Some(pattern_locale) if pattern_locale == configured_locale => {
-                        // Boost locale-matching patterns (cap at 1.0)
+                    Some(pattern_locale)
+                        if pattern_locale.eq_ignore_ascii_case(configured_locale) =>
+                    {
                         confidence = (confidence * 1.2).min(1.0);
-                    }
-                    Some(_)
-                        // Suppress non-matching locale patterns with low confidence,
-                        // unless the match rate is very high (data speaks for itself)
-                        if confidence < 0.5 && pm.match_percentage <= 80.0 => {
-                            return None;
+                        if pm.match_percentage >= 80.0 && pm.validator_pass_rate >= 0.8 {
+                            confidence = confidence.max(0.5);
                         }
-                    Some(_) => {}
-                    None => {} // Universal patterns — no adjustment
+                    }
+                    Some(_) => return None,
+                    None => {}
                 }
+            } else if pm.def.locale.is_some() {
+                let distinct_matching_locales = candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(other_idx, other)| {
+                        !suppressed[*other_idx]
+                            && (candidate_idx == *other_idx
+                                || (other.def.locale != pm.def.locale
+                                    && other.def.locale.is_some()
+                                    && other.def.category == pm.def.category
+                                    && other.matched_rows == pm.matched_rows))
+                    })
+                    .filter_map(|(_, other)| other.def.locale)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+                    .max(1);
+
+                confidence *= 0.75 / distinct_matching_locales as f64;
             }
 
             Some(Pattern {
@@ -879,7 +913,7 @@ mod tests {
     fn test_detect_coordinates_pattern() {
         let data = vec![
             "41.9028, 12.4964".to_string(),   // Rome
-            "40.7128, -74.0060".to_string(),  // New York
+            "40.7128,-74.0060".to_string(),   // New York
             "-33.8688, 151.2093".to_string(), // Sydney
         ];
         let patterns = detect_patterns(&data, None);
@@ -887,6 +921,23 @@ mod tests {
         assert_eq!(patterns.len(), 1);
         assert_eq!(patterns[0].name, "Geographic Coordinates");
         assert_eq!(patterns[0].category, PatternCategory::Geographic);
+    }
+
+    #[test]
+    fn test_decimal_comma_numbers_are_not_coordinates() {
+        let data = vec![
+            "1.234,56".to_string(),
+            "2.345,67".to_string(),
+            "3.456,78".to_string(),
+        ];
+        let patterns = detect_patterns(&data, None);
+
+        assert!(
+            patterns
+                .iter()
+                .all(|pattern| pattern.name != "Geographic Coordinates"),
+            "locale-formatted decimal values must not be detected as coordinates"
+        );
     }
 
     #[test]
@@ -919,11 +970,11 @@ mod tests {
 
     #[test]
     fn test_detect_piva_pattern() {
-        // 100% 11-digit numbers — well above 25% threshold
+        // Valid identifiers at 100% — well above the 25% threshold.
         let data = vec![
-            "12345678901".to_string(),
-            "98765432109".to_string(),
-            "11111111111".to_string(),
+            "12345678903".to_string(),
+            "00000000000".to_string(),
+            "12345678903".to_string(),
         ];
         let patterns = detect_patterns(&data, None);
 
@@ -1032,15 +1083,15 @@ mod tests {
     #[test]
     fn test_equal_specificity_no_suppression() {
         // CAP (IT) and ZIP Code (US) both have specificity 35.
-        // Pure 5-digit data should return both (no suppression at equal specificity).
+        // Pure 5-digit data retains both as inspectable candidates, but the
+        // cross-locale ambiguity keeps either from becoming a confident claim.
         let data: Vec<String> = (10000..10020).map(|n| n.to_string()).collect();
         let patterns = detect_patterns(&data, None);
-        let cap = patterns.iter().any(|p| p.name == "CAP (IT)");
-        let zip = patterns.iter().any(|p| p.name == "ZIP Code (US)");
-        assert!(
-            cap && zip,
-            "Both CAP and ZIP should survive at equal specificity"
-        );
+        let cap = patterns.iter().find(|p| p.name == "CAP (IT)");
+        let zip = patterns.iter().find(|p| p.name == "ZIP Code (US)");
+        assert!(cap.is_some() && zip.is_some());
+        assert!(cap.unwrap().confidence < 0.5);
+        assert!(zip.unwrap().confidence < 0.5);
     }
 
     // ---- Confidence scoring tests ----
@@ -1183,17 +1234,11 @@ mod tests {
         let cap_valid = p_valid.iter().find(|p| p.name == "CAP (IT)");
         let cap_invalid = p_invalid.iter().find(|p| p.name == "CAP (IT)");
 
-        // Valid CAPs should have higher confidence than invalid ones
-        if let (Some(v), Some(iv)) = (cap_valid, cap_invalid) {
-            assert!(
-                v.confidence > iv.confidence,
-                "Valid CAPs ({:.3}) should have higher confidence than invalid ({:.3})",
-                v.confidence,
-                iv.confidence,
-            );
-        }
-        // At minimum, valid CAPs should be detected
         assert!(cap_valid.is_some(), "Valid CAPs should be detected");
+        assert!(
+            cap_invalid.is_none(),
+            "CAP must be absent when its validator rejects every match"
+        );
     }
 
     #[test]
@@ -1220,15 +1265,10 @@ mod tests {
         let piva_invalid = p_invalid.iter().find(|p| p.name == "P.IVA (IT)");
 
         assert!(piva_valid.is_some(), "Valid P.IVA should be detected");
-        // Both should be detected (regex matches), but valid should have higher confidence
-        if let (Some(v), Some(iv)) = (piva_valid, piva_invalid) {
-            assert!(
-                v.confidence > iv.confidence,
-                "Valid P.IVA ({:.3}) should have higher confidence than invalid ({:.3})",
-                v.confidence,
-                iv.confidence,
-            );
-        }
+        assert!(
+            piva_invalid.is_none(),
+            "P.IVA must be absent when every check digit is invalid"
+        );
     }
 
     // ---- Phase 3 pattern tests ----
@@ -1510,35 +1550,54 @@ mod tests {
     }
 
     #[test]
-    fn test_locale_high_match_rate_keeps_non_matching() {
-        // Even with non-matching locale, very high match rate (>80%) keeps the pattern
+    fn test_explicit_locale_suppresses_non_matching_even_at_high_match_rate() {
         let data: Vec<String> = (20100..=20200).map(|n| format!("{:05}", n)).collect();
         let with_us = detect_patterns(&data, Some("US"));
 
-        // CAP (IT) has 100% match rate, so it survives despite US locale
         let cap_us = with_us.iter().find(|p| p.name == "CAP (IT)");
         assert!(
-            cap_us.is_some(),
-            "CAP (IT) should survive with US locale when match rate >80% (data speaks for itself)"
+            cap_us.is_none(),
+            "an explicit US locale must suppress CAP even at a 100% regex match"
         );
+        let zip_us = with_us
+            .iter()
+            .find(|p| p.name == "ZIP Code (US)")
+            .expect("the matching US pattern should remain");
+        assert!(zip_us.confidence >= 0.5);
     }
 
     #[test]
-    fn test_locale_none_keeps_all() {
-        // Without locale, both CAP and ZIP should be present (equal specificity)
+    fn test_locale_is_case_insensitive() {
+        let data: Vec<String> = (20100..=20200).map(|n| format!("{:05}", n)).collect();
+        let uppercase = detect_patterns(&data, Some("IT"));
+        let lowercase = detect_patterns(&data, Some("it"));
+
+        let uppercase_cap = uppercase
+            .iter()
+            .find(|p| p.name == "CAP (IT)")
+            .expect("uppercase locale should detect CAP");
+        let lowercase_cap = lowercase
+            .iter()
+            .find(|p| p.name == "CAP (IT)")
+            .expect("lowercase locale should detect CAP");
+        assert_eq!(uppercase_cap.confidence, lowercase_cap.confidence);
+        assert!(lowercase.iter().all(|p| p.name != "ZIP Code (US)"));
+    }
+
+    #[test]
+    fn test_locale_none_keeps_ambiguous_evidence_below_summary_threshold() {
         let data: Vec<String> = (10001..=10050).map(|n| format!("{}", n)).collect();
         let patterns = detect_patterns(&data, None);
 
-        // At least one 5-digit pattern should survive
-        let has_five_digit = patterns.iter().any(|p| {
-            p.name == "CAP (IT)"
-                || p.name == "ZIP Code (US)"
-                || p.name == "German PLZ"
-                || p.name == "French Code Postal"
-        });
+        let locale_candidates: Vec<&Pattern> = patterns
+            .iter()
+            .filter(|p| p.name == "CAP (IT)" || p.name == "ZIP Code (US)")
+            .collect();
+        assert_eq!(locale_candidates.len(), 2);
         assert!(
-            has_five_digit,
-            "Some 5-digit pattern should be detected without locale"
+            locale_candidates
+                .iter()
+                .all(|pattern| pattern.confidence < 0.5)
         );
     }
 

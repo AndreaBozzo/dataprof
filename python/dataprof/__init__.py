@@ -624,8 +624,8 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
     top_pattern_pct = None
     top_pattern_category = None
     top_pattern_confidence = None
-    if col.patterns:
-        best = max(col.patterns, key=lambda p: p.confidence)
+    best = _dominant_pattern(col)
+    if best is not None:
         top_pattern = best.name
         top_pattern_pct = _r2(best.match_percentage)
         top_pattern_category = best.category
@@ -691,10 +691,26 @@ def _stats_cell(col: ColumnProfile) -> str:
     return ", ".join(parts)
 
 
+#: A pattern below this confidence remains available in detailed evidence but
+#: is not strong enough to become a report-level semantic claim. This mirrors
+#: the threshold used by the validity quality dimension.
+_MIN_SUMMARY_PATTERN_CONFIDENCE = 0.5
+
+
+def _dominant_pattern(col: ColumnProfile) -> Any | None:
+    """Return the strongest pattern that clears the summary evidence threshold."""
+    if not col.patterns:
+        return None
+    candidates = [
+        pattern for pattern in col.patterns if pattern.confidence >= _MIN_SUMMARY_PATTERN_CONFIDENCE
+    ]
+    return max(candidates, key=lambda pattern: pattern.confidence, default=None)
+
+
 def _pattern_cell(col: ColumnProfile) -> str:
-    """Highest-confidence detected pattern for a column, as "Name (pct%)"."""
-    if col.patterns:
-        best = max(col.patterns, key=lambda p: p.confidence)
+    """Highest-confidence reportable pattern, formatted as "Name (pct%)"."""
+    best = _dominant_pattern(col)
+    if best is not None:
         return f"{best.name} ({_r2(best.match_percentage):.0f}%)"
     return ""
 
@@ -2181,9 +2197,11 @@ class ProfileReport:
                 line += f" [{_one_line(col.min)} .. {_one_line(col.max)}]"
             schema_items.append(line)
 
-        pattern_items = [
-            f"- {_one_line(col.name)}: {_pattern_cell(col)}" for col in cols if col.patterns
-        ]
+        pattern_items = []
+        for col in cols:
+            pattern = _pattern_cell(col)
+            if pattern:
+                pattern_items.append(f"- {_one_line(col.name)}: {pattern}")
 
         # Flags are the reason an agent asked; schema is context; patterns are a
         # bonus. Unused budget rolls forward, so a clean dataset spends its flag
@@ -2433,8 +2451,8 @@ class ProfileReport:
                 parts.append(f"true={col.true_count}({pct:.0f}%)")
             elif col.avg_length is not None:
                 parts.append(f"avg_len={_r4(col.avg_length)}")
-            if col.patterns:
-                best = max(col.patterns, key=lambda p: p.confidence)
+            best = _dominant_pattern(col)
+            if best is not None:
                 parts.append(f"{best.name}({_r2(best.match_percentage):.0f}%)")
             lines.append("   ".join(parts))
 
