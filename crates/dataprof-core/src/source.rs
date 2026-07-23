@@ -22,6 +22,22 @@ impl std::fmt::Display for FileFormat {
     }
 }
 
+/// How JSON/JSONL parsing reacts to a malformed record.
+///
+/// Shared across the file, in-memory, and async byte input paths so callers get
+/// the same recovery behavior regardless of transport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JsonErrorPolicy {
+    /// Skip the malformed record, count it, and keep scanning. The profile is
+    /// reported as partial via `execution.error_count`.
+    #[default]
+    Skip,
+    /// Abort on the first malformed record with a `JsonParsingError` carrying
+    /// line/column context (never the record contents).
+    Strict,
+}
+
 /// Supported query engines for SQL-based profiling
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

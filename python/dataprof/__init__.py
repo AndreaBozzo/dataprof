@@ -444,6 +444,39 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     return [(str(name), cells[i]) for i, name in enumerate(header)]
 
 
+def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
+    """Scan JSONL text into row objects, honoring the malformed-record policy.
+
+    Mirrors the file/async JSONL scanners: blank lines are ignored, only object
+    records become rows (other JSON values are skipped without counting), and a
+    malformed record is either skipped-and-counted ("skip") or raised on
+    ("strict"). Error messages carry the 1-based line number, never the record
+    contents. Input that yields no valid record but had malformed lines fails.
+    """
+    rows: list[dict] = []
+    skipped = 0
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            if on_error == "strict":
+                # ``lineno`` is the record's position in the input; ``exc.colno``
+                # locates the fault within that line. The record text is never
+                # included.
+                raise ValueError(
+                    f"jsonl bytes: malformed JSON record on line {lineno}, column {exc.colno}."
+                ) from None
+            skipped += 1
+            continue
+        if isinstance(value, dict):
+            rows.append(value)
+    if not rows and skipped:
+        raise ValueError("jsonl bytes: no valid JSON records found (all records were malformed).")
+    return rows, skipped
+
+
 def _normalize_existing_file(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
     normalized = _normalize_pathlike(path, arg_name=arg_name)
     try:
@@ -830,6 +863,7 @@ def profile_file(
     max_rows: int | None = None,
     csv_delimiter: str | None = None,
     csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
     on_progress: Callable[[ProgressEvent], None] | None = None,
@@ -855,6 +889,10 @@ def profile_file(
         max_rows: Maximum rows to process before stopping.
         csv_delimiter: Single-character CSV delimiter (default: comma).
         csv_flexible: Allow variable-length CSV records.
+        jsonl_on_error: How to handle a malformed JSON/JSONL record: "skip"
+            (default) skips it, counts it in ``report.execution.error_count``,
+            and returns a partial profile; "strict" raises ValueError on the
+            first malformed record. A file with no valid records always fails.
         sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.
@@ -885,6 +923,8 @@ def profile_file(
     Returns:
         ProfileReport with analysis results and quality metrics.
     """
+    if jsonl_on_error not in ("skip", "strict"):
+        raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
     normalized_path = _normalize_existing_file(path, arg_name="path")
     config = ProfilerConfig(
         engine=engine,
@@ -894,6 +934,7 @@ def profile_file(
         max_rows=max_rows,
         csv_delimiter=csv_delimiter,
         csv_flexible=csv_flexible,
+        jsonl_on_error=jsonl_on_error,
         sampling=sampling,
         stop_condition=stop_condition,
         on_progress=on_progress,
@@ -920,6 +961,7 @@ def profile(
     name: str | None = None,
     csv_delimiter: str | None = None,
     csv_flexible: bool | None = None,
+    jsonl_on_error: str = "skip",
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
     on_progress: Callable[[ProgressEvent], None] | None = None,
@@ -947,6 +989,11 @@ def profile(
         name: Name for DataFrame sources in the report.
         csv_delimiter: Single-character CSV delimiter (default: comma).
         csv_flexible: Allow variable-length CSV records.
+        jsonl_on_error: How to handle a malformed JSON/JSONL record, applied
+            identically to file, bytes, and async byte inputs: "skip" (default)
+            skips it, counts it in ``report.execution.error_count``, and returns
+            a partial profile; "strict" raises ValueError on the first malformed
+            record. Input with no valid records always raises.
         sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.
@@ -979,6 +1026,9 @@ def profile(
     Returns:
         ProfileReport with analysis results and quality metrics.
     """
+    if jsonl_on_error not in ("skip", "strict"):
+        raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
+
     # File path — build config and delegate to Rust
     if isinstance(source, (str, pathlib.PurePath)):
         return profile_file(
@@ -990,6 +1040,7 @@ def profile(
             max_rows=max_rows,
             csv_delimiter=csv_delimiter,
             csv_flexible=csv_flexible,
+            jsonl_on_error=jsonl_on_error,
             sampling=sampling,
             stop_condition=stop_condition,
             on_progress=on_progress,
@@ -1055,8 +1106,12 @@ def profile(
         rust_report = _profile_dataframe(df, name or default_name, max_rows, _df_config())
         return ProfileReport(rust_report)
 
-    def _profile_python_columns(columns: list[_Column], default_name: str) -> ProfileReport:
-        rust_report = _profile_columns(columns, name or default_name, max_rows, _df_config())
+    def _profile_python_columns(
+        columns: list[_Column], default_name: str, error_count: int = 0
+    ) -> ProfileReport:
+        rust_report = _profile_columns(
+            columns, name or default_name, max_rows, _df_config(), error_count
+        )
         return ProfileReport(rust_report)
 
     if isinstance(source, dict):
@@ -1076,14 +1131,22 @@ def profile(
         fmt = format.lower()
         buffer = _bytes_buffer(source)
 
+        skipped = 0
         if fmt == "csv":
             columns = _columns_from_csv_bytes(buffer, csv_delimiter)
-        elif fmt in ("json", "jsonl"):
+        elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8")
-            if fmt == "jsonl":
-                rows = [json.loads(line) for line in text.splitlines() if line.strip()]
-            else:
+            rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
+            columns = _columns_from_records(rows, max_rows, sort_keys=True)
+        elif fmt == "json":
+            text = buffer.getvalue().decode("utf-8")
+            try:
                 rows = json.loads(text)
+            except json.JSONDecodeError as exc:
+                # Surface a dataprof error category, not a bare decoder exception.
+                raise ValueError(
+                    f"json bytes: malformed JSON (line {exc.lineno}, column {exc.colno})."
+                ) from None
             if isinstance(rows, dict):
                 if all(isinstance(values, (list, tuple)) for values in rows.values()):
                     columns = _columns_from_dict(rows)
@@ -1103,7 +1166,7 @@ def profile(
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
 
-        return _profile_python_columns(columns, f"{fmt}_bytes")
+        return _profile_python_columns(columns, f"{fmt}_bytes", skipped)
 
     # DataFrame detection via module name
     source_module = type(source).__module__ or ""
@@ -1694,6 +1757,17 @@ class ProfileReport:
     @property
     def source_exhausted(self) -> bool:
         return self._report.source_exhausted
+
+    @property
+    def error_count(self) -> int:
+        """Number of records skipped because they could not be parsed.
+
+        Nonzero means the profile is partial: for tolerant JSON/JSONL parsing
+        (``jsonl_on_error="skip"``, the default) each malformed record is
+        skipped and counted here rather than aborting the run. Zero means every
+        record parsed cleanly.
+        """
+        return self._report.error_count
 
     @property
     def ragged_row_count(self) -> int:

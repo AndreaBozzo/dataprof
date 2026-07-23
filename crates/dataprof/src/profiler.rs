@@ -40,6 +40,8 @@ pub struct ProfilerConfig {
     pub csv_delimiter: Option<u8>,
     /// Allow ragged CSV rows (None = use parser default).
     pub csv_flexible: Option<bool>,
+    /// How JSON/JSONL malformed records are handled (default: skip and count).
+    pub json_error_policy: dataprof_json::JsonErrorPolicy,
     /// Which quality dimensions to compute. `None` = all (default).
     pub quality_dimensions: Option<Vec<QualityDimension>>,
     /// Which metric packs to compute. `None` = all (default).
@@ -77,6 +79,7 @@ impl Default for ProfilerConfig {
             progress_interval: Duration::from_millis(500),
             csv_delimiter: None,
             csv_flexible: None,
+            json_error_policy: dataprof_json::JsonErrorPolicy::default(),
             quality_dimensions: None,
             metric_packs: None,
             locale: None,
@@ -189,6 +192,17 @@ impl Profiler {
     /// Set whether to allow ragged CSV rows. None = use parser default.
     pub fn csv_flexible(mut self, flexible: bool) -> Self {
         self.config.csv_flexible = Some(flexible);
+        self
+    }
+
+    /// Set how malformed JSON/JSONL records are handled.
+    ///
+    /// Default is [`JsonErrorPolicy::Skip`](dataprof_json::JsonErrorPolicy::Skip):
+    /// malformed records are skipped and counted in `execution.error_count`.
+    /// [`JsonErrorPolicy::Strict`](dataprof_json::JsonErrorPolicy::Strict) aborts
+    /// on the first malformed record.
+    pub fn json_error_policy(mut self, policy: dataprof_json::JsonErrorPolicy) -> Self {
+        self.config.json_error_policy = policy;
         self
     }
 
@@ -507,9 +521,10 @@ impl Profiler {
         self.config.stop_condition.max_rows().map(|n| n as usize)
     }
 
-    /// A JSON parser config carrying the configured row cap, if any.
+    /// A JSON parser config carrying the configured row cap and error policy.
     fn json_config_for_stop(&self) -> dataprof_json::JsonParserConfig {
-        let config = dataprof_json::JsonParserConfig::default();
+        let config = dataprof_json::JsonParserConfig::default()
+            .with_error_policy(self.config.json_error_policy);
         match self.stop_max_rows() {
             Some(max) => config.with_max_rows(max),
             None => config,
@@ -869,6 +884,7 @@ impl Profiler {
             .chunk_size(self.config.chunk_size.clone())
             .sampling(self.config.sampling.clone())
             .stop_condition(self.config.stop_condition.clone())
+            .json_error_policy(self.config.json_error_policy)
             .progress(self.progress_sink.clone(), self.config.progress_interval);
 
         if let Some(mb) = self.config.memory_limit_mb {
@@ -1060,9 +1076,9 @@ impl Profiler {
 
                 #[cfg(not(feature = "parquet-async"))]
                 {
-                    return Err(DataProfilerError::UnsupportedDataSource {
+                    Err(DataProfilerError::UnsupportedDataSource {
                         message: "Remote Parquet profiling requires the 'parquet-async' feature. Rebuild with 'parquet-async' to read Parquet over HTTP.".to_string(),
-                    });
+                    })
                 }
             }
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {

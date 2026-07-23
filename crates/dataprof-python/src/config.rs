@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof::{
-    ChunkSize, EngineType, FileFormat, MetricPack, Profiler, QualityDimension, SemanticHints,
-    StopCondition,
+    ChunkSize, EngineType, FileFormat, JsonErrorPolicy, MetricPack, Profiler, QualityDimension,
+    SemanticHints, StopCondition,
 };
 
 use super::progress::py_callback_to_sink;
@@ -26,6 +26,7 @@ pub struct PyProfilerConfig {
     pub(crate) max_rows: Option<u64>,
     pub(crate) csv_delimiter: Option<u8>,
     pub(crate) csv_flexible: Option<bool>,
+    pub(crate) json_error_policy: JsonErrorPolicy,
     pub(crate) sampling: Option<PySamplingStrategy>,
     pub(crate) stop_condition: Option<PyStopCondition>,
     pub(crate) on_progress: Option<Arc<Py<PyAny>>>,
@@ -49,6 +50,7 @@ impl PyProfilerConfig {
         max_rows = None,
         csv_delimiter = None,
         csv_flexible = None,
+        jsonl_on_error = None,
         sampling = None,
         stop_condition = None,
         on_progress = None,
@@ -69,6 +71,7 @@ impl PyProfilerConfig {
         max_rows: Option<u64>,
         csv_delimiter: Option<&str>,
         csv_flexible: Option<bool>,
+        jsonl_on_error: Option<&str>,
         sampling: Option<PySamplingStrategy>,
         stop_condition: Option<PyStopCondition>,
         on_progress: Option<Py<PyAny>>,
@@ -82,6 +85,10 @@ impl PyProfilerConfig {
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
+        let json_error_policy = jsonl_on_error
+            .map(parse_json_error_policy)
+            .transpose()?
+            .unwrap_or_default();
         let csv_delimiter = csv_delimiter
             .map(|d| {
                 if d.len() != 1 {
@@ -138,6 +145,7 @@ impl PyProfilerConfig {
             max_rows,
             csv_delimiter,
             csv_flexible,
+            json_error_policy,
             sampling,
             stop_condition,
             on_progress: on_progress.map(Arc::new),
@@ -195,6 +203,15 @@ impl PyProfilerConfig {
     #[getter]
     fn csv_flexible(&self) -> Option<bool> {
         self.csv_flexible
+    }
+
+    /// How malformed JSON/JSONL records are handled ("skip" or "strict")
+    #[getter]
+    fn jsonl_on_error(&self) -> &str {
+        match self.json_error_policy {
+            JsonErrorPolicy::Skip => "skip",
+            JsonErrorPolicy::Strict => "strict",
+        }
     }
 
     /// Locale for pattern detection
@@ -270,6 +287,7 @@ impl PyProfilerConfig {
         if let Some(f) = self.csv_flexible {
             profiler = profiler.csv_flexible(f);
         }
+        profiler = profiler.json_error_policy(self.json_error_policy);
         if let Some(ref cb) = self.on_progress {
             profiler = profiler.progress_sink(py_callback_to_sink(Arc::clone(cb)));
         }
@@ -340,6 +358,17 @@ fn parse_format(s: &str) -> PyResult<FileFormat> {
         "parquet" => Ok(FileFormat::Parquet),
         _ => Err(PyValueError::new_err(format!(
             "Unknown format '{}'. Valid: csv, json, jsonl, parquet",
+            s
+        ))),
+    }
+}
+
+fn parse_json_error_policy(s: &str) -> PyResult<JsonErrorPolicy> {
+    match s.to_lowercase().as_str() {
+        "skip" => Ok(JsonErrorPolicy::Skip),
+        "strict" => Ok(JsonErrorPolicy::Strict),
+        _ => Err(PyValueError::new_err(format!(
+            "Unknown jsonl_on_error '{}'. Valid: skip, strict",
             s
         ))),
     }

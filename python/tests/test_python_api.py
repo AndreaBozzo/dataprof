@@ -1704,6 +1704,7 @@ class TestNamespace:
             "name",
             "csv_delimiter",
             "csv_flexible",
+            "jsonl_on_error",
             "sampling",
             "stop_condition",
             "on_progress",
