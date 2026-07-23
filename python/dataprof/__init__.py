@@ -460,9 +460,14 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
             continue
         try:
             value = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             if on_error == "strict":
-                raise ValueError(f"jsonl bytes: malformed JSON record on line {lineno}.") from None
+                # ``lineno`` is the record's position in the input; ``exc.colno``
+                # locates the fault within that line. The record text is never
+                # included.
+                raise ValueError(
+                    f"jsonl bytes: malformed JSON record on line {lineno}, column {exc.colno}."
+                ) from None
             skipped += 1
             continue
         if isinstance(value, dict):
@@ -918,6 +923,8 @@ def profile_file(
     Returns:
         ProfileReport with analysis results and quality metrics.
     """
+    if jsonl_on_error not in ("skip", "strict"):
+        raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
     normalized_path = _normalize_existing_file(path, arg_name="path")
     config = ProfilerConfig(
         engine=engine,

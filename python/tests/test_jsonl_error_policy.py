@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
+from pathlib import Path
 
 import dataprof
 import pytest
@@ -33,12 +33,14 @@ requires_async = pytest.mark.skipif(
 )
 
 
-def _write(data: bytes) -> str:
-    tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".jsonl", delete=False)
-    tmp.write(data)
-    tmp.flush()
-    tmp.close()
-    return tmp.name
+def _write(tmp_path: Path, data: bytes) -> str:
+    """Write ``data`` to a JSONL file under pytest's per-test ``tmp_path``.
+
+    Using the fixture directory means pytest cleans the files up automatically.
+    """
+    target = tmp_path / "data.jsonl"
+    target.write_bytes(data)
+    return str(target)
 
 
 def _async_bytes(data: bytes, **kwargs):
@@ -53,8 +55,8 @@ def _async_bytes(data: bytes, **kwargs):
 # --- Tolerant (default) parity ---------------------------------------------
 
 
-def test_file_tolerant_reports_partial_and_error_count():
-    path = _write(MIXED)
+def test_file_tolerant_reports_partial_and_error_count(tmp_path):
+    path = _write(tmp_path, MIXED)
     report = dataprof.profile(path, format="jsonl")
     assert report.rows == 2
     assert report.error_count == 1
@@ -84,8 +86,8 @@ def test_async_bytes_tolerant_reports_partial_and_error_count():
         b'{"id":1}\n{"id":2}\nnot-json\n',  # last
     ],
 )
-def test_file_strict_raises_valueerror(data):
-    path = _write(data)
+def test_file_strict_raises_valueerror(tmp_path, data):
+    path = _write(tmp_path, data)
     with pytest.raises(ValueError) as excinfo:
         dataprof.profile(path, format="jsonl", jsonl_on_error="strict")
     # A dataprof error category, not a raw decoder exception.
@@ -113,8 +115,8 @@ def test_async_bytes_strict_raises_valueerror():
 # --- Edge cases -------------------------------------------------------------
 
 
-def test_all_malformed_file_and_bytes_fail():
-    path = _write(ALL_BAD)
+def test_all_malformed_file_and_bytes_fail(tmp_path):
+    path = _write(tmp_path, ALL_BAD)
     with pytest.raises(ValueError):
         dataprof.profile(path, format="jsonl")
     with pytest.raises(ValueError):
