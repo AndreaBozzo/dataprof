@@ -350,9 +350,9 @@ if q.completeness is not None:
 does not infer positive-only domains from column names. `identifier_columns`
 marks numeric-looking IDs as semantic strings so numeric stats and outlier
 metrics do not treat them as measures.
-Timeliness scoring is opt-in through `temporal_columns`; inferred date columns
-remain visible in column profiles but do not affect the quality score unless
-their names are explicitly selected.
+Timeliness scoring assesses confidently inferred date columns by default.
+`temporal_columns` adds columns that inference cannot identify confidently, such
+as mixed-format date strings.
 
 Hints are validated, never silently dropped. A hint that names a missing column
 raises `ValueError` listing the unmatched names and the available columns; a

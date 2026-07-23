@@ -160,8 +160,11 @@ impl Profiler {
     /// Set a stop condition for early termination.
     ///
     /// Fully evaluated for CSV sources by `EngineType::Auto` (which routes to the
-    /// incremental engine) and `EngineType::Incremental`, and by
-    /// [`Profiler::profile_stream`].
+    /// incremental engine) and `EngineType::Incremental`.
+    #[cfg_attr(
+        feature = "async-streaming",
+        doc = "It is also fully evaluated by [`Profiler::profile_stream`]."
+    )]
     ///
     /// The columnar engine and the JSON/Parquet parsers cannot evaluate a
     /// condition per chunk, so they honour a plain row limit
@@ -334,12 +337,21 @@ impl Profiler {
             .format_override
             .clone()
             .unwrap_or_else(|| Self::detect_format(path));
+        let is_csv = matches!(format, FileFormat::Csv);
 
-        let report = match self.config.engine {
+        let result = match self.config.engine {
             EngineType::Auto => self.run_auto(path, format),
             EngineType::Incremental => self.run_incremental(path, format),
             EngineType::Columnar => self.run_columnar(path, format),
-        }?;
+        };
+        // Every CSV engine ultimately requires UTF-8, but their raw errors use
+        // different variants and wording. Normalize at the shared file boundary
+        // so an explicit engine choice cannot regress the product error contract.
+        let report = if is_csv {
+            result.map_err(|err| map_csv_encoding_error(path, err))?
+        } else {
+            result?
+        };
         self.validate_semantic_hints(&report)?;
         Ok(report)
     }
@@ -598,7 +610,7 @@ impl Profiler {
                 // select an engine that can deliver it rather than silently
                 // scanning the whole source (which also leaves the report claiming
                 // `source_exhausted` with no truncation reason).
-                let result = if !matches!(self.config.stop_condition, StopCondition::Never) {
+                if !matches!(self.config.stop_condition, StopCondition::Never) {
                     self.run_incremental(file_path, format)
                 } else {
                     let mut profiler = AdaptiveProfiler::new();
@@ -617,10 +629,7 @@ impl Profiler {
                     // Format already resolved here; skip the engine's extension-based
                     // Parquet redetection so explicit `.format()` overrides win.
                     profiler.analyze_csv_file(file_path)
-                };
-                // Both engines fail hard on non-UTF-8 bytes with stacked, misleading
-                // messages. Replace that with one clear encoding diagnostic.
-                result.map_err(|err| map_csv_encoding_error(file_path, err))
+                }
             }
         }
     }

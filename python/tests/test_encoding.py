@@ -15,13 +15,14 @@ import dataprof
 import pytest
 
 
-def test_latin1_csv_raises_clean_value_error(tmp_path):
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+def test_latin1_csv_raises_clean_value_error(tmp_path, engine):
     path = tmp_path / "latin1.csv"
     # "José" / "Málaga" encoded as latin-1 — invalid UTF-8.
     path.write_bytes("name,city\nJosé,Málaga\n".encode("latin-1"))
 
     try:
-        dataprof.profile(str(path))
+        dataprof.profile(str(path), engine=engine)
     except ValueError as exc:
         message = str(exc)
         assert "utf-8" in message.lower()

@@ -3,7 +3,8 @@
 //!
 //! The file-based entry points go through `dataprof::Profiler`, which already
 //! validates hints and returns a typed error; the DataFrame paths build a report
-//! directly, so they call [`validate_report_hints`] to get the same contract.
+//! directly, so they call the internal `validate_report_hints` helper to get
+//! the same contract.
 
 use pyo3::exceptions::{
     PyFileNotFoundError, PyIOError, PyPermissionError, PyRuntimeError, PyValueError,

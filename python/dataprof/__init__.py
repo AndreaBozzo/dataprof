@@ -2023,25 +2023,29 @@ class ProfileReport:
             ``self`` for fluent chaining.
         """
         path = _normalize_pathlike(path)
-        if path.endswith(".json"):
+        lower_path = path.lower()
+        if lower_path.endswith(".json"):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.to_json())
-        elif path.endswith(".csv"):
+        elif lower_path.endswith(".csv"):
             records = self._records()
-            if records:
-                with open(path, "w", encoding="utf-8", newline="") as f:
+            # Opening unconditionally matters for a zero-column report: save()
+            # must either create the requested artifact or fail, never return
+            # success while leaving no file behind.
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                if records:
                     writer = _csv.DictWriter(f, fieldnames=records[0].keys())
                     writer.writeheader()
                     writer.writerows(records)
-        elif path.endswith(".parquet"):
+        elif lower_path.endswith(".parquet"):
             table = self.to_arrow()
             import pyarrow.parquet as pq
 
             pq.write_table(table, path)
-        elif path.endswith(".html"):
+        elif lower_path.endswith(".html"):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.to_html())
-        elif path.endswith((".md", ".markdown")):
+        elif lower_path.endswith((".md", ".markdown")):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.to_markdown())
         else:
@@ -2388,10 +2392,11 @@ class ProfileReport:
             FileNotFoundError: if the file does not exist.
         """
         path = _normalize_pathlike(path)
-        if path.endswith(".json"):
+        lower_path = path.lower()
+        if lower_path.endswith(".json"):
             with open(path, encoding="utf-8") as f:
                 return cls.from_json(f.read())
-        if path.endswith((".csv", ".parquet")):
+        if lower_path.endswith((".csv", ".parquet")):
             raise ValueError(
                 f"Cannot reload a full report from '{path}': .csv/.parquet store "
                 "only column profiles. Save and load with .json to round-trip a report."

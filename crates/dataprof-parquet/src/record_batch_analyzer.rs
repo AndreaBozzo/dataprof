@@ -125,21 +125,39 @@ impl RecordBatchAnalyzer {
         self
     }
 
-    pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
-        // Reject duplicate field names before building analyzers: they key on
-        // name, so a repeat would silently merge two columns into one profile and
-        // drop the other from column_order. The schema is fixed for the whole
-        // stream, so checking until the first non-empty batch is sufficient.
-        if self.column_order.is_empty() {
-            let names: Vec<String> = batch
-                .schema()
-                .fields()
-                .iter()
-                .map(|f| f.name().to_string())
-                .collect();
-            dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
-        }
+    /// Initialize column analyzers from a known Arrow schema.
+    ///
+    /// Parquet readers may yield no record batch for a zero-row file. Seeding
+    /// from metadata preserves that file's columns with zero counts instead of
+    /// collapsing a schema-bearing dataset into a zero-column report.
+    pub fn initialize_schema(&mut self, schema: &arrow::datatypes::Schema) -> Result<()> {
+        let names: Vec<String> = schema
+            .fields()
+            .iter()
+            .map(|field| field.name().to_string())
+            .collect();
+        dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
 
+        for field in schema.fields() {
+            let column_name = field.name().to_string();
+            let positive_hint = self.semantic_hints.is_positive_column(&column_name);
+            let temporal_hint = self.semantic_hints.is_temporal_column(&column_name);
+            if let Entry::Vacant(entry) = self.column_analyzers.entry(column_name.clone()) {
+                self.column_order.push(column_name);
+                entry.insert(ColumnAnalyzer::with_value_hints(
+                    field.data_type(),
+                    positive_hint,
+                    temporal_hint,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn process_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+        if self.column_order.is_empty() {
+            self.initialize_schema(batch.schema().as_ref())?;
+        }
         self.total_rows += batch.num_rows();
         self.row_tracker.observe_batch(batch);
 
@@ -147,20 +165,10 @@ impl RecordBatchAnalyzer {
             let schema = batch.schema();
             let field = schema.field(column_index);
             let column_name = field.name().to_string();
-            let positive_hint = self.semantic_hints.is_positive_column(&column_name);
-            let temporal_hint = self.semantic_hints.is_temporal_column(&column_name);
-
-            let analyzer = match self.column_analyzers.entry(column_name.clone()) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => {
-                    self.column_order.push(column_name);
-                    entry.insert(ColumnAnalyzer::with_value_hints(
-                        field.data_type(),
-                        positive_hint,
-                        temporal_hint,
-                    ))
-                }
-            };
+            let analyzer = self
+                .column_analyzers
+                .get_mut(&column_name)
+                .expect("schema initialization creates every column analyzer");
 
             analyzer.process_array(column)?;
         }
@@ -173,7 +181,7 @@ impl RecordBatchAnalyzer {
     }
 
     /// Full-stream row-duplicate counts, or `None` when no rows were seen or
-    /// the batches could not be signed (see [`BatchRowTracker`]).
+    /// the batches could not be signed (see the internal `BatchRowTracker`).
     pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
         self.row_tracker.summary()
     }
@@ -524,7 +532,18 @@ impl ColumnAnalyzer {
         for index in 0..array.len() {
             if !array.is_null(index) {
                 let value = array.value(index);
-                self.update_numeric_stats(value);
+                // Match the textual/ad-hoc paths: NaN is a null-like value,
+                // while infinities are present but invalid numeric values.
+                // Neither may enter the exact accumulators — one non-finite
+                // value would otherwise poison sum/sum_squares and serialize
+                // as plausible zero variance with a missing mean.
+                if value.is_nan() {
+                    self.null_count += 1;
+                    continue;
+                }
+                if value.is_finite() {
+                    self.update_numeric_stats(value);
+                }
                 self.cardinality.insert_owned(value.to_string());
                 self.offer_sample(value.to_string());
             }
@@ -537,7 +556,13 @@ impl ColumnAnalyzer {
             if !array.is_null(index) {
                 let value = array.value(index);
                 let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
+                if value_f64.is_nan() {
+                    self.null_count += 1;
+                    continue;
+                }
+                if value_f64.is_finite() {
+                    self.update_numeric_stats(value_f64);
+                }
                 self.cardinality.insert_owned(value.to_string());
                 self.offer_sample(value.to_string());
             }
@@ -939,6 +964,7 @@ impl ColumnAnalyzer {
     }
 
     fn update_numeric_stats(&mut self, value: f64) {
+        debug_assert!(value.is_finite());
         self.sum += value;
         self.sum_squares += value * value;
         self.numeric_count += 1;
@@ -1114,6 +1140,40 @@ mod tests {
                 assert!((stats.mean - 8.0).abs() < 1e-9, "mean was {}", stats.mean);
             }
             _ => panic!("Expected Numeric stats for rank column"),
+        }
+    }
+
+    #[test]
+    fn test_non_finite_floats_do_not_corrupt_numeric_stats() {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "value",
+            ArrowDataType::Float64,
+            true,
+        )]));
+        let values =
+            Float64Array::from(vec![1.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 3.25]);
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(values)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        let profiles = analyzer.to_profiles(false, false, None);
+        let column = profiles.iter().find(|p| p.name == "value").unwrap();
+
+        // NaN follows the textual/ad-hoc null-like contract. Infinities are
+        // present values, but are invalid for finite numeric statistics.
+        assert_eq!(column.total_count, 5);
+        assert_eq!(column.null_count, 1);
+        assert_eq!(column.unique_count, Some(4));
+        assert_eq!(column.invalid_count, Some(2));
+        match &column.stats {
+            ColumnStats::Numeric(stats) => {
+                assert!((stats.min - 1.5).abs() < 1e-9);
+                assert!((stats.max - 3.25).abs() < 1e-9);
+                assert!((stats.mean - 2.375).abs() < 1e-9);
+                assert!(stats.std_dev.is_finite());
+                assert!(stats.std_dev > 0.0);
+            }
+            _ => panic!("Expected Numeric stats for value column"),
         }
     }
 

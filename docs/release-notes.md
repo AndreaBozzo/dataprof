@@ -16,10 +16,11 @@ field: reports written before this release deserialize with `ragged_row_count`
 of `0`.
 
 Scope: this is surfaced by the incremental engine, which drives the default CSV
-path. The columnar (Arrow) engine and the async reader reject ragged rows
-outright rather than recovering them, so they never produced the silent-clean
-result; unifying that recovery behavior across engines is tracked separately.
-Ragged rows do not yet influence the consistency dimension's score.
+path. The columnar (Arrow) engine rejects ragged rows outright. The async reader
+currently recovers them without incrementing `ragged_row_count`; that remaining
+silent-clean path is a 0.10 blocker tracked in
+[#462](https://github.com/AndreaBozzo/dataprof/issues/462). Ragged rows do not
+yet influence the consistency dimension's score.
 
 ## Errors preserve source context and map to idiomatic Python exceptions
 
