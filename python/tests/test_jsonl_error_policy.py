@@ -5,8 +5,10 @@ default (skip) yields a partial profile with ``execution.error_count`` set;
 ``jsonl_on_error="strict"`` raises a ValueError carrying line context, never a
 raw ``json.JSONDecodeError`` and never the record contents.
 
+The async cases are skipped when the extension is built without async support.
+
 Run after building the extension:
-    maturin develop --features python
+    maturin develop --features python,python-async,async-streaming
     pytest python/tests/test_jsonl_error_policy.py -v
 """
 
@@ -22,6 +24,13 @@ import pytest
 # Malformed record in the middle position.
 MIXED = b'{"id":1,"x":10}\nnot-json\n{"id":2,"x":20}\n'
 ALL_BAD = b"not-json\nalso-bad\n"
+
+_HAS_ASYNC = dataprof.capabilities().async_streaming
+requires_async = pytest.mark.skipif(
+    not _HAS_ASYNC,
+    reason="Async streaming not compiled. Build with --features "
+    "'python,python-async,async-streaming'.",
+)
 
 
 def _write(data: bytes) -> str:
@@ -57,6 +66,7 @@ def test_bytes_tolerant_reports_partial_and_error_count():
     assert report.error_count == 1
 
 
+@requires_async
 def test_async_bytes_tolerant_reports_partial_and_error_count():
     report = _async_bytes(MIXED)
     assert report.rows == 2
@@ -92,6 +102,7 @@ def test_bytes_strict_raises_valueerror_with_line_and_no_record():
     assert "not-json" not in message
 
 
+@requires_async
 def test_async_bytes_strict_raises_valueerror():
     with pytest.raises(ValueError) as excinfo:
         _async_bytes(MIXED, jsonl_on_error="strict")
@@ -102,12 +113,16 @@ def test_async_bytes_strict_raises_valueerror():
 # --- Edge cases -------------------------------------------------------------
 
 
-def test_all_malformed_always_fails_across_transports():
+def test_all_malformed_file_and_bytes_fail():
     path = _write(ALL_BAD)
     with pytest.raises(ValueError):
         dataprof.profile(path, format="jsonl")
     with pytest.raises(ValueError):
         dataprof.profile(ALL_BAD, format="jsonl")
+
+
+@requires_async
+def test_all_malformed_async_fails():
     with pytest.raises(ValueError):
         _async_bytes(ALL_BAD)
 
@@ -126,9 +141,14 @@ def test_invalid_policy_value_rejected():
 
 def test_clean_input_has_zero_error_count():
     data = b'{"id":1}\n{"id":2}\n{"id":3}\n'
-    for report in (
-        dataprof.profile(data, format="jsonl"),
-        _async_bytes(data),
-    ):
-        assert report.rows == 3
-        assert report.error_count == 0
+    report = dataprof.profile(data, format="jsonl")
+    assert report.rows == 3
+    assert report.error_count == 0
+
+
+@requires_async
+def test_clean_input_async_has_zero_error_count():
+    data = b'{"id":1}\n{"id":2}\n{"id":3}\n'
+    report = _async_bytes(data)
+    assert report.rows == 3
+    assert report.error_count == 0

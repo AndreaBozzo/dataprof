@@ -85,7 +85,10 @@ impl PyProfilerConfig {
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
-        let json_error_policy = jsonl_on_error.map(parse_json_error_policy).transpose()?.unwrap_or_default();
+        let json_error_policy = jsonl_on_error
+            .map(parse_json_error_policy)
+            .transpose()?
+            .unwrap_or_default();
         let csv_delimiter = csv_delimiter
             .map(|d| {
                 if d.len() != 1 {

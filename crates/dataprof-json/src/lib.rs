@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 
+pub use dataprof_core::JsonErrorPolicy;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
     SemanticHints, TruncationReason,
 };
-pub use dataprof_core::JsonErrorPolicy;
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
 };
@@ -722,7 +722,10 @@ mod tests {
             let message = err.to_string().to_lowercase();
             assert!(message.contains("malformed json record"), "got: {message}");
             // The offending record text must never be echoed back.
-            assert!(!err.to_string().contains("not-json"), "leaked record: {err}");
+            assert!(
+                !err.to_string().contains("not-json"),
+                "leaked record: {err}"
+            );
         }
     }
 
@@ -730,8 +733,7 @@ mod tests {
     fn test_tolerant_policy_counts_skipped_records() {
         let data = b"{\"x\":1}\nnot-json\n{\"x\":2}\n";
         let config = JsonParserConfig::jsonl(); // default Skip
-        let summary =
-            scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
+        let summary = scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
         assert_eq!(summary.rows_read, 2);
         assert_eq!(summary.malformed_lines, 1);
     }
@@ -787,7 +789,11 @@ mod tests {
         let config = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
         let err = analyze_json_file(file.path(), &config)
             .expect_err("strict mode must reject the malformed record");
-        assert!(err.to_string().to_lowercase().contains("malformed json record"));
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("malformed json record")
+        );
     }
 
     #[test]
