@@ -22,6 +22,24 @@ silent-clean path is a 0.10 blocker tracked in
 [#462](https://github.com/AndreaBozzo/dataprof/issues/462). Ragged rows do not
 yet influence the consistency dimension's score.
 
+## Locale patterns require locale evidence before becoming report claims
+
+Ambiguous locale-specific shapes remain available in each column's detailed
+`patterns` evidence, but no longer appear as a top pattern in text, Markdown,
+HTML, tabular, or LLM-oriented summaries unless their confidence is at least
+0.5. For example, a five-digit order ID column without a configured locale can
+still show both Italian CAP and US ZIP as low-confidence candidates, but neither
+is presented as the column's semantic type.
+
+An explicit `locale=` is now case-insensitive and strict: its matching patterns
+receive enough evidence to be reportable at a strong match rate, while patterns
+for other locales are suppressed even when the broad regex matches every row.
+Coordinate validation also distinguishes compact latitude/longitude pairs from
+decimal-comma numbers such as `1.234,56`. More generally, a pattern is no longer
+returned when its semantic validator rejects every regex match, and such a
+candidate cannot suppress another pattern during overlap resolution. This
+resolves [#429](https://github.com/AndreaBozzo/dataprof/issues/429).
+
 ## Errors preserve source context and map to idiomatic Python exceptions
 
 Failure diagnostics are now consistent about what failed, where, and what to do

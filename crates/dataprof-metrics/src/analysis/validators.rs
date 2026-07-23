@@ -10,6 +10,44 @@
 //! Validators are pure functions; some implementations may use small temporary
 //! allocations while validating.
 
+/// Validate a latitude/longitude pair without confusing decimal-comma numbers.
+///
+/// A compact value with a three-digit group after a dot and an unsigned,
+/// two-digit suffix after the comma (for example `1.234,56`) is much stronger
+/// evidence for a locale-formatted decimal number than a coordinate. Other
+/// coordinate forms, including compact integer components, remain valid.
+pub fn validate_coordinates(s: &str) -> bool {
+    let Some((latitude, longitude)) = s.split_once(',') else {
+        return false;
+    };
+
+    let has_separator_whitespace = longitude.starts_with(char::is_whitespace);
+    let latitude = latitude.trim();
+    let longitude = longitude.trim();
+
+    if !has_separator_whitespace
+        && !longitude.starts_with(['+', '-'])
+        && longitude.len() == 2
+        && longitude.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let unsigned_latitude = latitude.trim_start_matches(['+', '-']);
+        if let Some((whole, fractional)) = unsigned_latitude.split_once('.')
+            && (1..=3).contains(&whole.len())
+            && whole.bytes().all(|byte| byte.is_ascii_digit())
+            && fractional.len() == 3
+            && fractional.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return false;
+        }
+    }
+
+    let (Ok(latitude), Ok(longitude)) = (latitude.parse::<f64>(), longitude.parse::<f64>()) else {
+        return false;
+    };
+
+    (-90.0..=90.0).contains(&latitude) && (-180.0..=180.0).contains(&longitude)
+}
+
 /// Validate an Italian CAP (Codice di Avviamento Postale).
 ///
 /// Valid range: 00010–98168. The regex `^\d{5}$` matches any 5-digit string;
@@ -230,6 +268,19 @@ pub fn validate_ssn_us(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_coordinates_require_unambiguous_separator_evidence() {
+        assert!(validate_coordinates("41.9028,12.4964"));
+        assert!(validate_coordinates("41.9028, 12.4964"));
+        assert!(validate_coordinates("41, 12"));
+        assert!(validate_coordinates("40.7128,-74"));
+        assert!(validate_coordinates("0,0"));
+        assert!(!validate_coordinates("1.234,56"));
+        assert!(!validate_coordinates("-12.345,67"));
+        assert!(!validate_coordinates("91.0, 12.0"));
+        assert!(!validate_coordinates("41.0, 181.0"));
+    }
 
     // ---- CAP (IT) validator ----
 

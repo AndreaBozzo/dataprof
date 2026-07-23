@@ -1155,6 +1155,61 @@ class TestToLlmContext:
     def test_reports_detected_pattern_names(self, messy):
         assert "email: Email" in messy.to_llm_context()
 
+    def test_ambiguous_order_ids_stay_detailed_but_not_in_summaries(self, tmp_path):
+        path = tmp_path / "orders.csv"
+        rows = ["order_id"] + [str(value) for value in range(20100, 20200)]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        report = dataprof.profile(str(path))
+        column = report["order_id"]
+        assert column.patterns is not None
+        patterns = {pattern.name: pattern for pattern in column.patterns}
+
+        assert {"CAP (IT)", "ZIP Code (US)"}.issubset(patterns)
+        assert patterns["CAP (IT)"].confidence < 0.5
+        assert patterns["ZIP Code (US)"].confidence < 0.5
+        assert "CAP (IT)" not in report.to_llm_context()
+        assert "ZIP Code (US)" not in report.to_llm_context()
+        for summary in (repr(report), report.to_markdown(), report.to_html()):
+            assert "CAP (IT)" not in summary
+            assert "ZIP Code (US)" not in summary
+        if dataprof.capabilities().pandas_installed:
+            dataframe = report.to_dataframe().set_index("name")
+            assert dataframe.loc["order_id", "top_pattern"] is None
+
+        detailed_names = {pattern["name"] for pattern in report.to_dict()["columns"][0]["patterns"]}
+        assert {"CAP (IT)", "ZIP Code (US)"}.issubset(detailed_names)
+
+    def test_explicit_locale_is_case_insensitive_and_strict(self, tmp_path):
+        path = tmp_path / "italian_postcodes.csv"
+        rows = ["postcode"] + [str(value) for value in range(20100, 20200)]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+        report = dataprof.profile(str(path), locale="it")
+        column = report["postcode"]
+        assert column.patterns is not None
+        patterns = {pattern.name: pattern for pattern in column.patterns}
+
+        assert patterns["CAP (IT)"].confidence >= 0.5
+        assert "ZIP Code (US)" not in patterns
+        assert "postcode: CAP (IT)" in report.to_llm_context()
+        if dataprof.capabilities().pandas_installed:
+            dataframe = report.to_dataframe().set_index("name")
+            assert dataframe.loc["postcode", "top_pattern"] == "CAP (IT)"
+
+    def test_decimal_comma_values_are_not_reported_as_coordinates(self, tmp_path):
+        path = tmp_path / "prices.csv"
+        path.write_text(
+            'price\n"1.234,56"\n"2.345,67"\n"3.456,78"\n',
+            encoding="utf-8",
+        )
+
+        report = dataprof.profile(str(path))
+        assert report["price"].patterns is not None
+        names = {pattern.name for pattern in report["price"].patterns}
+        assert "Geographic Coordinates" not in names
+        assert "Geographic Coordinates" not in report.to_llm_context()
+
     @staticmethod
     def _header_tokens(report):
         """Cost of the always-emitted header, which is the effective budget floor."""
