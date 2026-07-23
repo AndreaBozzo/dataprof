@@ -52,8 +52,13 @@ const ENCODING_SNIFF_LIMIT: usize = 1 << 20; // 1 MiB
 pub fn diagnose_non_utf8(path: &Path) -> Option<EncodingDiagnostic> {
     use std::io::Read;
 
+    // decode-audit: unknown — this runs only to enrich an error the caller
+    // already has. If the file cannot be reopened/read for sniffing, returning
+    // None keeps that original engine error, so the failure is surfaced, not lost.
     let file = std::fs::File::open(path).ok()?;
     let mut sample = Vec::new();
+    // decode-audit: unknown — as above; a read failure abandons the guess and
+    // preserves the caller's original error rather than swallowing it.
     file.take(ENCODING_SNIFF_LIMIT as u64)
         .read_to_end(&mut sample)
         .ok()?;
