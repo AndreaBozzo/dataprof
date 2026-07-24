@@ -198,7 +198,7 @@ jobs:
           cache-prefix: rust-python
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
@@ -251,7 +251,7 @@ jobs:
           cache-prefix: rust-wheel-smoke-${{ matrix.os }}
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
@@ -302,7 +302,7 @@ jobs:
           cache-prefix: rust-examples
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
@@ -354,7 +354,7 @@ jobs:
           cache-prefix: rust-python-url-${{ matrix.variant }}
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
@@ -455,7 +455,7 @@ jobs:
           components: ''
 
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
