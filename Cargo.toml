@@ -15,7 +15,7 @@ resolver = "3"
 
 # Shared package metadata inherited by every workspace member via `field.workspace = true`.
 [workspace.package]
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
@@ -26,16 +26,16 @@ repository = "https://github.com/AndreaBozzo/dataprof"
 # `dep.workspace = true` and may add `optional`, `features`, or `default-features` locally.
 [workspace.dependencies]
 # Internal crates
-dataprof = { version = "0.9.0", path = "." }
-dataprof-core = { version = "0.9.0", path = "crates/dataprof-core" }
-dataprof-metrics = { version = "0.9.0", path = "crates/dataprof-metrics" }
-dataprof-csv = { version = "0.9.0", path = "crates/dataprof-csv" }
-dataprof-json = { version = "0.9.0", path = "crates/dataprof-json" }
-dataprof-parquet = { version = "0.9.0", path = "crates/dataprof-parquet" }
-dataprof-engines = { version = "0.9.0", path = "crates/dataprof-engines" }
-dataprof-partial = { version = "0.9.0", path = "crates/dataprof-partial" }
-dataprof-db = { version = "0.9.0", path = "crates/dataprof-db" }
-dataprof-runtime = { version = "0.9.0", path = "crates/dataprof-runtime" }
+dataprof = { version = "0.10.0", path = "." }
+dataprof-core = { version = "0.10.0", path = "crates/dataprof-core" }
+dataprof-metrics = { version = "0.10.0", path = "crates/dataprof-metrics" }
+dataprof-csv = { version = "0.10.0", path = "crates/dataprof-csv" }
+dataprof-json = { version = "0.10.0", path = "crates/dataprof-json" }
+dataprof-parquet = { version = "0.10.0", path = "crates/dataprof-parquet" }
+dataprof-engines = { version = "0.10.0", path = "crates/dataprof-engines" }
+dataprof-partial = { version = "0.10.0", path = "crates/dataprof-partial" }
+dataprof-db = { version = "0.10.0", path = "crates/dataprof-db" }
+dataprof-runtime = { version = "0.10.0", path = "crates/dataprof-runtime" }
 
 # External dependencies
 anyhow = "1.0"

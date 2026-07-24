@@ -336,8 +336,8 @@ import dataprof as dp
 
 report = dp.profile("s3_landing/orders_2024-03-17.csv")
 
-# 0.8.0: bail out early on tiny samples — the score is computed but not
-# statistically meaningful below 10 rows.
+# Bail out early on tiny samples: the score is computed but not statistically
+# meaningful below 10 rows.
 if report.low_sample_warning:
     print(f"WARN: sample too small ({report.rows} rows), skipping quality gate")
     sys.exit(0)
@@ -362,7 +362,7 @@ if score < 90.0:
 print(f"ACCEPTED (score={score:.2f}), {report.rows} rows")
 ```
 
-### Per-column outlier triage (0.8.0)
+### Per-column outlier triage
 
 The global `accuracy.outlier_ratio` tells you *something* is suspicious, but
 per-column `outlier_count` tells you *where* to look.
@@ -387,7 +387,7 @@ for name, n_outliers, lo, hi in suspicious[:5]:
     print(f"{name:30} {n_outliers:>4} outliers  range=[{lo}, {hi}]")
 ```
 
-### Domain hints for IDs and positive values (0.8.0)
+### Domain hints for IDs and positive values
 
 ```python
 report = dp.profile(
@@ -401,7 +401,7 @@ if report.quality and report.quality.accuracy:
     print(report.quality.accuracy["negative_values_in_positive"])
 ```
 
-### Serialize a single column (0.8.0)
+### Serialize a single column
 
 For piping individual column profiles into Airflow XCom, Prometheus, a
 warehouse, etc., without dragging the whole report along:

@@ -158,9 +158,9 @@ validation:
 | `postgres`, `mysql`, `sqlite` | Individual SQL backends through `dataprof-db` features |
 | `all-db` | Convenience bundle for all three SQL backends |
 
-The facade crate now optimizes for `dataprof = "0.9"` as a Rust dependency. A
+The facade crate now optimizes for `dataprof = "0.10"` as a Rust dependency. A
 CLI could return later as a separate product if it becomes useful, but it is
-not part of the shipped 0.9 surface.
+not part of the shipped 0.10 surface.
 
 ## Migration Plan
 

@@ -2111,11 +2111,11 @@ class ProfileReport:
         return self
 
     def to_html(self) -> str:
-        """Return the standalone HTML representation of the report.
+        """Return the embeddable HTML representation of the report.
 
         Identical to Jupyter's rich display (``_repr_html_``), exposed as a
-        public method for saving standalone HTML files, embedding in CI
-        summaries, or sharing outside a notebook.
+        public method for saving an HTML fragment, embedding in CI summaries,
+        or sharing outside a notebook.
         """
         return self._repr_html_()
 

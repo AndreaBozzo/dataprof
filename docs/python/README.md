@@ -1,6 +1,10 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.9.0).
+Complete reference for the `dataprof` Python package (v0.10.0).
+
+For upgrade-sensitive changes to sampling, execution controls, quality scores,
+parser behavior, semantic hints, and exception types, read the
+[0.10.0 release notes and migration guide](../release-notes.md).
 
 The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
@@ -176,7 +180,7 @@ report.to_polars()               # polars DataFrame -- all stats (requires polar
 report.to_arrow()                # PyArrow Table -- all stats (requires pyarrow)
 report.describe()                # transposed summary like pandas describe()
 report.quality_summary()         # single-row dict for quality tracking
-report.to_html()                 # standalone HTML (same as the notebook display)
+report.to_html()                 # embeddable HTML (same as the notebook display)
 report.to_markdown()             # GitHub-flavored markdown table
 report.compare(other)            # dict of quality/schema/null deltas vs another report
 report.save("report.json")      # save to JSON
@@ -541,7 +545,7 @@ delta = before.compare(after)
 report.save("report.json")      # full report as JSON
 report.save("profiles.csv")     # column profiles as CSV (no extra deps)
 report.save("profiles.parquet") # column profiles as Parquet (requires pyarrow)
-report.save("report.html")      # standalone HTML render (same as to_html())
+report.save("report.html")      # HTML fragment (same as to_html())
 report.save("report.md")        # markdown table (same as to_markdown())
 ```
 

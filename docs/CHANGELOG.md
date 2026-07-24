@@ -1,36 +1,166 @@
 # Changelog
 
-All notable changes to DataProfiler will be documented in this file.
+All notable changes to dataprof are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+For the user-oriented overview, upgrade checklist, and migration details, read
+the [0.10.0 release notes](release-notes.md).
+
+## [0.10.0] - 2026-07-24
 
 ### Added
 
-- Semantic hints are now validated instead of silently dropped. A hint
-  (`positive_columns`, `identifier_columns`, `temporal_columns`) that names a
-  column absent from the schema raises an error listing the unmatched names and
-  the available columns; in Python this is a `ValueError`. A hint that names a
-  real column but binds to no value over the full data — a `positive` hint on a
-  column with no numeric values, a `temporal` hint on a column with no dates — is
-  also rejected. Identifier hints coerce the column's type, so they bind to any
-  existing column. (#420)
-- Reports now carry `semantic_hint_bindings`: per-column evidence of how each
-  hint bound (`column`, `kind`, `checked_values`, `matched_values`, `exact`).
-  Value-driven hints are measured over the same data the quality metrics
-  assessed; `exact` states whether that covered every row. A hint that matched
-  nothing is only rejected when the evidence is `exact`, so a sampled zero is
-  recorded but never mistaken for proof of absence. Additive report field —
-  older readers ignore it. (#420)
+- **Json**: Unify malformed-record policy across file/bytes/async JSONL (#382) (#457) by @AndreaBozzo
+
+- **Input**: Enforce duplicate column-name policy across engines (#381) (#456) by @AndreaBozzo
+
+- **Python**: Finish #435 report API ergonomics — profiles, save html/md, low_sample_warning, zero-row semantics (#455) by @AndreaBozzo
+
+- **Errors**: Standardize actionable diagnostics and preserve source context (#446) by @AndreaBozzo
+
+- **Hints**: Validate semantic hints and record binding evidence (#420) (#441) by @AndreaBozzo
+
+- Record report execution engine (#438) by @floze-the-genius
+
+- **Metrics**: Per-column invalid_count for values excluded from numeric stats (#437) by @AndreaBozzo
+
+- **Report**: Version the serialized ProfileReport schema (#415) by @AndreaBozzo
+
+- **Python**: Add agent security guard for MCP surfaces (#410) by @AndreaBozzo
+
+- **Capabilities**: Add capabilities function to report installed features and metadata (#409) by @AndreaBozzo
+
+- **Contributor**: Add smoke test script and update CONTRIBUTING.md (#408) by @AndreaBozzo
+
+- **Metrics**: Expose provenance for approximate distinct counts (#406) by @AndreaBozzo
+
+- **Metrics**: Add Validity and Precision dimensions (#399) by @AndreaBozzo
+
+- **Metrics**: Make quality score weights configurable (#398) by @AndreaBozzo
+
+- **Metrics**: Require explicit temporal columns (#397) by @AndreaBozzo
+
+- **Metrics**: Honor identifier column hints (#396) by @AndreaBozzo
+
+- **Metrics**: Track duplicate rows across streams (#395) by @AndreaBozzo
+
+- **Metrics**: Score only assessed dimensions, using every sub-metric (#394) by @AndreaBozzo
+
+- **Site**: Rehaul GitHub Pages into a project homepage by @AndreaBozzo
+
+### Changed
+
+- **Ci**: Parallelize database integration builds (#468) by @AndreaBozzo
+
+- **Metrics**: Add table-driven completeness scenarios (#407) by @AndreaBozzo
+
+- Add issue templates in the directory GitHub actually reads (#390) by @AndreaBozzo
+
+- **Json**: Format decode audit by @AndreaBozzo
+
+- Add cross-engine parity suite (#369) by @AndreaBozzo
+
+- Make the ty type check blocking now that the codebase passes it by @AndreaBozzo
+
+- **Deny**: Document why RUSTSEC-2024-0436 is ignored by @AndreaBozzo
+
+- Make the benchmark page generator pass ruff format and lint by @AndreaBozzo
+
+### Dependencies
+
+- **Deps-dev**: Bump pytest from 9.0.3 to 9.1.1 (#478) by @dependabot[bot]
+
+- **Deps-dev**: Bump maturin from 1.12.6 to 1.14.1 (#477) by @dependabot[bot]
+
+- **Deps**: Bump github/codeql-action from 4.36.1 to 4.37.3 (#476) by @dependabot[bot]
+
+- **Deps**: Bump actions/checkout from 6.0.3 to 7.0.1 (#475) by @dependabot[bot]
+
+- **Deps-dev**: Bump pyarrow from 23.0.1 to 25.0.0 (#479) by @dependabot[bot]
+
+- **Deps**: Bump actions/setup-python from 6 to 7 (#474) by @dependabot[bot]
+
+- **Deps**: Bump serde_json from 1.0.149 to 1.0.151 (#450) by @dependabot[bot]
+
+- **Deps**: Bump uuid from 1.23.4 to 1.24.0 (#451) by @dependabot[bot]
+
+- **Deps**: Bump futures from 0.3.32 to 0.3.33 (#448) by @dependabot[bot]
+
+- **Deps**: Bump toml from 0.9.12+spec-1.1.0 to 1.1.3+spec-1.1.0 (#285) by @dependabot[bot]
+
+- **Deps**: Bump wide from 1.2.0 to 1.5.0 (#391) by @dependabot[bot]
+
+- **Deps**: Bump sysinfo from 0.39.5 to 0.39.6 (#392) by @dependabot[bot]
+
+- **Deps**: Bump regex from 1.12.3 to 1.13.0 (#393) by @dependabot[bot]
+
+### Documentation
+
+- Document workspace crate boundaries (#487) by @AndreaBozzo
+
+- Add "Why dataprof?" comparison guide (#414) by @AndreaBozzo
+
+- **Templates**: Drop CLI references and reinforce profile-only boundary by @AndreaBozzo
+
+- Add AGENTS.md with a CLAUDE.md redirect by @AndreaBozzo
+
+- Align SECURITY.md supported versions with the 0.9.x line by @AndreaBozzo
 
 ### Fixed
 
-- Python DataFrame and Arrow-backed profiles now preserve source schema column
-  order in report exports. `ProfileReport.compare()` column output is no longer
-  alphabetically sorted: it follows the left report's schema order, then appends
-  right-only columns in their source order. (#427)
+- **Python**: Preserve async byte source sizes (#485) by @AndreaBozzo
+
+- **Json**: Validate streaming array grammar (#484) by @AndreaBozzo
+
+- **Json**: Reject truncated final JSONL records (#481) by @AndreaBozzo
+
+- **Security**: Audit every published feature graph (#464) (#473) by @AndreaBozzo
+
+- **Sampling**: Make every strategy sample, on every path (#459) (#472) by @AndreaBozzo
+
+- **Execution**: Honor resource controls and correct provenance (#460) (#471) by @AndreaBozzo
+
+- **Async**: Count ragged CSV rows and honor CSV options (#462) (#469) by @AndreaBozzo
+
+- **Patterns**: Require locale evidence for summary claims (#467) by @AndreaBozzo
+
+- Harden profiling contracts before 0.10 (#466) by @AndreaBozzo
+
+- **Csv**: One clean diagnostic for non-UTF-8 input (#426) (#458) by @AndreaBozzo
+
+- **Partial**: Apply multi-offset row-count sampling to JSONL (#454) by @AndreaBozzo
+
+- **Partial**: Remove prefix bias from CSV quick_row_count sampling (#453) by @AndreaBozzo
+
+- **Csv**: Surface ragged CSV rows instead of silently normalizing them (#452) by @AndreaBozzo
+
+- **Python**: Preserve DataFrame column order (#444) by @floze-the-genius
+
+- Assess inferred dates in timeliness (#445) by @AndreaBozzo
+
+- **Hints**: Make streamed binding evidence exact (#443) by @AndreaBozzo
+
+- **Metrics**: Base numeric stats from exact accumulators; disclose sampled order statistics (#432) by @AndreaBozzo
+
+- **Csv**: Quote-aware delimiter sniffer; absent delimiters can no longer win (#431) by @AndreaBozzo
+
+- **Metrics**: Populate execution.memory_peak_mb in incremental and columnar engines (#422) by @AndreaBozzo
+
+- **Metrics**: Track duplicate rows in columnar and record-batch engines (#421) by @AndreaBozzo
+
+- **Python**: Describe() 50% falls back to median when quartiles are absent (#416) by @AndreaBozzo
+
+- **Metrics**: Treat quality_dimensions=[] as quality not analyzed (#411) by @AndreaBozzo
+
+- Replace columnar 1,000-value unique-count cap with bounded estimator (#389) by @AndreaBozzo
+
+- **Decode**: Enforce audited invariants by @AndreaBozzo
+
+- **Decode**: Audit swallowed errors on decode paths by @AndreaBozzo
+
+- **Python**: Make ty check pass across examples, tests, and stubs by @AndreaBozzo
 
 ## [0.9.0] - 2026-07-09
 

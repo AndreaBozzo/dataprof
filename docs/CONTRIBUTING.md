@@ -231,8 +231,8 @@ Describe:
 
 ### Questions?
 
-- Check [DEVELOPMENT.md](docs/DEVELOPMENT.md) for architecture details
-- Read [docs/](docs/) for detailed documentation
+- Check the [crate redesign notes](architecture/crate-redesign.md) for architecture details
+- Browse the [documentation directory](./) for detailed guides and references
 - Open a discussion issue if you're unsure
 
 ## Code Guidelines
@@ -270,7 +270,7 @@ fn test_handles_empty_file() {
 - Document public APIs with doc comments
 - Include examples in doc comments
 - Update README.md for user-facing changes
-- Update [docs/](docs/) for architectural changes
+- Update the [documentation directory](./) for architectural changes
 
 ## Development Tips
 
