@@ -135,6 +135,7 @@ impl IncrementalProfiler {
         let mut ragged_rows = 0;
         let mut offset = 0u64;
         let mut source_exhausted = true;
+        let mut schema_stopped = false;
 
         // Extract the max_rows limit (if any) for per-row stop checking
         let row_limit = Self::extract_max_rows(&self.stop_condition);
@@ -262,8 +263,14 @@ impl IncrementalProfiler {
                 0.0
             };
 
+            // A condition that fires on the chunk which also finished the file
+            // has not truncated anything: the whole source was read. Reporting
+            // it as partial would make an exhaustive profile indistinguishable
+            // from a bounded one, which is what this metadata exists to answer.
+            let reached_eof = offset >= file_size_bytes;
+
             if stop_eval.update(records.len() as u64, actual_bytes as u64, memory_fraction) {
-                source_exhausted = false;
+                source_exhausted = reached_eof;
                 break;
             }
 
@@ -271,8 +278,11 @@ impl IncrementalProfiler {
             if let Some(ref mut tracker) = schema_tracker {
                 let fingerprint = column_stats.column_type_fingerprint();
                 if tracker.update(fingerprint, records.len() as u64) {
-                    stop_eval = StopEvaluator::new(StopCondition::Never); // prevent double-reason
-                    source_exhausted = false;
+                    // The tracker reports the reason; `stop_eval` keeps its
+                    // accumulated row and byte counters, which the report still
+                    // needs for `bytes_consumed`.
+                    schema_stopped = true;
+                    source_exhausted = reached_eof;
                     break;
                 }
             }
@@ -319,13 +329,15 @@ impl IncrementalProfiler {
             execution = execution.with_memory_peak_mb(peak_mb);
         }
 
-        // Apply stop condition truncation reason
-        if let Some(reason) = stop_eval.truncation_reason() {
-            execution = execution.with_truncation(reason);
-        } else if let Some(ref tracker) = schema_tracker
-            && !source_exhausted
-        {
-            execution = execution.with_truncation(tracker.truncation_reason());
+        // Apply the truncation reason — but only when something was actually
+        // left unread. A condition satisfied by the last chunk of a fully read
+        // file is not a truncation.
+        if !source_exhausted {
+            if let Some(reason) = stop_eval.truncation_reason() {
+                execution = execution.with_truncation(reason);
+            } else if schema_stopped && let Some(ref tracker) = schema_tracker {
+                execution = execution.with_truncation(tracker.truncation_reason());
+            }
         }
 
         // Determine if actual row-level sampling occurred (rows skipped by strategy)
@@ -373,7 +385,19 @@ impl IncrementalProfiler {
         condition.max_rows()
     }
 
+    /// Resolve the per-chunk read size in bytes.
+    ///
+    /// An explicitly configured size is honored as given: it is a resource
+    /// control, so silently substituting a computed size would make the option
+    /// a no-op. Only `Adaptive` derives a size from the memory limit and the
+    /// file.
     fn calculate_optimal_chunk_size(&self, file_size: u64) -> usize {
+        match self.chunk_size {
+            ChunkSize::Fixed(bytes) => return bytes.max(1),
+            ChunkSize::Custom(f) => return f(file_size).max(1),
+            ChunkSize::Adaptive => {}
+        }
+
         let max_memory_bytes = self.memory.limit_mb * 1024 * 1024;
 
         // Reserve memory for statistics (estimate)

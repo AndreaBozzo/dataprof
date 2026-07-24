@@ -1,5 +1,54 @@
 # Unreleased
 
+## Execution controls take effect, and execution metadata tells the truth
+
+`chunk_size` and `memory_limit_mb` were accepted and then dropped on the paths
+that document them, so a resource control could be silently ineffective. Both
+now reach the engine that does the work:
+
+- The incremental engine honors an explicitly configured `chunk_size` instead of
+  always deriving one from the memory limit and file size.
+- `memory_limit_mb` is forwarded on the incremental and default (`auto`) paths,
+  not only on the explicit columnar and async ones.
+
+**`chunk_size` is measured in bytes, on every engine and in every binding.** The
+type documented rows while the async reader treated the value as bytes and the
+incremental engine ignored it; bytes is now the single unit, because it is what
+actually bounds the working set. Chunk size never changes the result of a
+complete scan — only read granularity, progress cadence, and the points at which
+chunk-level stop conditions are evaluated. Async callers who passed
+`ChunkSize::Fixed` see effectively no change, since that path already divided
+the value by an assumed row width.
+
+Stop conditions and the metadata they produce were also inconsistent:
+
+- **Row caps are hard caps.** `dataprof.asyncio` evaluated `max_rows` per chunk,
+  so a request for 123 rows could return 200 while the report named the limit of
+  123. Async CSV, JSON and JSONL now stop exactly at the cap.
+- **A condition met on the final chunk is not a truncation.** A confidence
+  threshold or `quality_sample()` preset satisfied by the last chunk of a fully
+  read file reported `source_exhausted: false` with a truncation reason, making
+  a complete profile indistinguishable from a bounded one. The same holds for a
+  row cap equal to the row count.
+- **Schema stability keeps its counters.** Stopping on `schema_stable` reset the
+  stop evaluator to suppress a duplicate reason, discarding the accumulated byte
+  count with it and reporting `bytes_consumed: 0` on a scan that had read
+  thousands of bytes.
+- **Async byte counts are no longer short.** They were summed from parsed
+  fields, which exclude delimiters, quotes and line endings, so even a complete
+  scan reported fewer bytes than the source held. CSV now counts from the
+  parser's own byte position, and a scan that reaches the end of a source of
+  known length reports that source's full size.
+
+Byte caps remain chunk-boundary caps: `bytes_consumed` may exceed `MaxBytes` by
+at most one chunk, a bound the caller controls through `chunk_size`. Row caps
+have no such allowance.
+
+`rows_processed`, `bytes_consumed`, `source_exhausted` and `truncation_reason`
+are now covered by invariant tests on both the sync and async paths — a
+truncated scan is exactly a non-exhausted one, and an exhausted scan accounts
+for every byte of its source.
+
 ## Ragged CSV rows leave a signal instead of vanishing
 
 A CSV row whose field count differs from the header — extra trailing fields, or

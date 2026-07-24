@@ -81,7 +81,7 @@ dp.profile(
     source,                          # str, Path, DataFrame, Arrow, dict, rows, or bytes
     *,
     engine="auto",                   # "auto", "incremental", "columnar"
-    chunk_size=None,                 # int -- custom chunk size
+    chunk_size=None,                 # int -- bytes per streaming chunk
     memory_limit_mb=None,            # int -- memory cap
     format=None,                     # str -- file format override
     max_rows=None,                   # int -- stop after N rows
@@ -248,7 +248,7 @@ Reusable configuration object:
 ```python
 config = dp.ProfilerConfig(
     engine="incremental",
-    chunk_size=5000,
+    chunk_size=65536,                # bytes per chunk
     memory_limit_mb=512,
     max_rows=100000,
     csv_delimiter=";",

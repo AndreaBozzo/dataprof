@@ -613,7 +613,11 @@ impl Profiler {
                 if !matches!(self.config.stop_condition, StopCondition::Never) {
                     self.run_incremental(file_path, format)
                 } else {
-                    let mut profiler = AdaptiveProfiler::new();
+                    let mut profiler =
+                        AdaptiveProfiler::new().chunk_size(self.config.chunk_size.clone());
+                    if let Some(mb) = self.config.memory_limit_mb {
+                        profiler = profiler.memory_limit_mb(mb);
+                    }
                     if let Some(d) = &self.config.quality_dimensions {
                         profiler = profiler.quality_dimensions(d.clone());
                     }
@@ -679,6 +683,9 @@ impl Profiler {
             .sampling(self.config.sampling.clone())
             .stop_condition(self.config.stop_condition.clone())
             .progress(self.progress_sink.clone(), self.config.progress_interval);
+        if let Some(mb) = self.config.memory_limit_mb {
+            profiler = profiler.memory_limit_mb(mb);
+        }
         if let Some(d) = &self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
