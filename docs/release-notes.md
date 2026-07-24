@@ -15,12 +15,48 @@ and in `to_dict()["execution"]["ragged_row_count"]`. It is an additive report
 field: reports written before this release deserialize with `ragged_row_count`
 of `0`.
 
-Scope: this is surfaced by the incremental engine, which drives the default CSV
-path. The columnar (Arrow) engine rejects ragged rows outright. The async reader
-currently recovers them without incrementing `ragged_row_count`; that remaining
-silent-clean path is a 0.10 blocker tracked in
-[#462](https://github.com/AndreaBozzo/dataprof/issues/462). Ragged rows do not
-yet influence the consistency dimension's score.
+The async reader follows the same policy
+([#462](https://github.com/AndreaBozzo/dataprof/issues/462)): byte streams and
+URLs recover ragged rows and report the same count, so the transport can no
+longer launder a broken source into a clean-looking report. `csv_flexible=False`
+now also reaches that path — previously it was accepted and ignored there — and
+rejects the first ragged record instead of repairing it.
+
+Scope: the count is surfaced by the incremental engine, which drives the default
+CSV path, and by the async reader. Byte inputs to the synchronous `profile()`
+still reject rather than recover, since they are read without the flexible
+engine; write the data to a file to profile it leniently.
+
+The explicitly selected columnar (Arrow) engine is not yet covered. It rejects a
+row with *extra* fields, but pads a row with *missing* fields to null and still
+reports `ragged_row_count: 0` — so `engine="columnar"` remains a silent-clean
+path for short rows. Prefer the default `engine="auto"` when a source may be
+structurally broken; the gap is tracked in
+[#470](https://github.com/AndreaBozzo/dataprof/issues/470).
+
+Ragged rows do not yet influence the consistency dimension's score.
+
+## Async CSV detects its delimiter instead of assuming a comma
+
+`csv_delimiter` was accepted and ignored on every async path, which always
+parsed on commas. A semicolon- or tab-separated stream therefore collapsed into
+a single column and profiled as perfectly clean. The async reader now honors an
+explicit `csv_delimiter`, and when none is given it detects one from the head of
+the stream using the same sample size and scoring as the file path — so the same
+bytes yield the same columns whether they are read from disk, from memory, or
+off a URL.
+
+## Malformed CSV raises `ValueError`, like malformed JSON
+
+A CSV parse failure reached Python as a `RuntimeError` while the equivalent JSON
+failure raised `ValueError`, so callers could not catch bad input as one
+category. Malformed data of either format is now a `ValueError`.
+
+Relatedly, a rejection under `csv_flexible=False` keeps its own diagnostic. The
+auto engine used to retry the file under its fallback parser and report
+`All engines failed: ...` with both parsers' messages; asking for strict parsing
+means opting out of recovery, so the original error — naming the row and the
+expected field count — is returned directly.
 
 ## Locale patterns require locale evidence before becoming report claims
 
