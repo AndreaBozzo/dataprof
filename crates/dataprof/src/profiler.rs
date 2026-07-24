@@ -528,6 +528,29 @@ impl Profiler {
         })
     }
 
+    /// Whether a sampling strategy was configured.
+    fn has_sampling(&self) -> bool {
+        !matches!(self.config.sampling, SamplingStrategy::None)
+    }
+
+    /// Reject sampling on a path that cannot apply it per row.
+    ///
+    /// The columnar and JSON/Parquet readers materialise batches rather than
+    /// deciding row by row. Ignoring the option would produce a full profile
+    /// labelled as a sample of everything — the caller's memory and time
+    /// assumptions silently discarded.
+    fn ensure_no_sampling(&self, what: &str) -> Result<(), DataProfilerError> {
+        if !self.has_sampling() {
+            return Ok(());
+        }
+        Err(DataProfilerError::InvalidConfiguration {
+            message: format!("{what} cannot apply a sampling strategy"),
+            suggestion: "Profile a CSV source with the auto or incremental engine, which sample \
+                         row by row, or remove the sampling strategy."
+                .to_string(),
+        })
+    }
+
     /// The row cap implied by the configured stop condition, if any.
     fn stop_max_rows(&self) -> Option<usize> {
         self.config.stop_condition.max_rows().map(|n| n as usize)
@@ -579,6 +602,7 @@ impl Profiler {
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
                 self.ensure_row_limit_only("the JSON parser")?;
+                self.ensure_no_sampling("the JSON parser")?;
                 dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
                     &self.json_config_for_stop(),
@@ -590,6 +614,7 @@ impl Profiler {
                 #[cfg(feature = "parquet")]
                 {
                     self.ensure_row_limit_only("the Parquet parser")?;
+                    self.ensure_no_sampling("the Parquet parser")?;
                     dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
                         file_path,
                         &self.parquet_config_for_stop(),
@@ -610,7 +635,12 @@ impl Profiler {
                 // select an engine that can deliver it rather than silently
                 // scanning the whole source (which also leaves the report claiming
                 // `source_exhausted` with no truncation reason).
-                if !matches!(self.config.stop_condition, StopCondition::Never) {
+                // The same applies to sampling: only the incremental engine
+                // applies a strategy row by row, so a sampled auto run routes
+                // there rather than quietly returning a full profile.
+                if !matches!(self.config.stop_condition, StopCondition::Never)
+                    || self.has_sampling()
+                {
                     self.run_incremental(file_path, format)
                 } else {
                     let mut profiler =
@@ -650,6 +680,7 @@ impl Profiler {
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
                 self.ensure_row_limit_only("the JSON parser")?;
+                self.ensure_no_sampling("the JSON parser")?;
                 return dataprof_json::analyze_json_file_with_dimensions_and_hints(
                     file_path,
                     &self.json_config_for_stop(),
@@ -661,6 +692,7 @@ impl Profiler {
                 #[cfg(feature = "parquet")]
                 {
                     self.ensure_row_limit_only("the Parquet parser")?;
+                    self.ensure_no_sampling("the Parquet parser")?;
                     return dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
                         file_path,
                         &self.parquet_config_for_stop(),
@@ -711,8 +743,9 @@ impl Profiler {
         let dims = self.config.quality_dimensions.as_deref();
         let semantic_hints = self.semantic_hints();
         // Every columnar path enforces a row cap, but none can evaluate a richer
-        // stop condition per chunk.
+        // stop condition per chunk, and none samples row by row.
         self.ensure_row_limit_only("the columnar engine")?;
+        self.ensure_no_sampling("the columnar engine")?;
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]

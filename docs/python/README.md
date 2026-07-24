@@ -266,15 +266,26 @@ Controls how data is sampled during profiling:
 from dataprof import SamplingStrategy
 
 SamplingStrategy.none()                              # process everything
-SamplingStrategy.random(size=10000)                  # random sample
-SamplingStrategy.reservoir(size=10000)               # reservoir sampling
+SamplingStrategy.random(size=10000)                  # uniform sample of 10000 rows
+SamplingStrategy.reservoir(size=10000)               # same guarantee, Algorithm R
 SamplingStrategy.systematic(interval=10)             # every Nth row
-SamplingStrategy.stratified(["region"], 1000)         # stratified by column
-SamplingStrategy.progressive(5000, 0.95, 100000)     # adaptive progressive
-SamplingStrategy.importance(weight_threshold=0.5)    # importance-weighted
-SamplingStrategy.multi_stage([s1, s2])               # chained strategies
+SamplingStrategy.stratified(["region"], 1000)        # up to 1000 rows per region
+SamplingStrategy.progressive(5000, 0.95, 100000)     # grow until means are precise
+SamplingStrategy.importance("risk_score", 0.8)       # rows whose weight >= 0.8
+SamplingStrategy.multi_stage([s1, s2])               # filters, then one fixed-size stage
 SamplingStrategy.adaptive(total_rows=1000000, file_size_mb=500.0)
 ```
+
+Sampling applies to CSV sources on the `auto` and `incremental` engines and to
+every `dataprof.asyncio` entry point. The columnar engine and the JSON/Parquet
+readers cannot sample row by row and raise `ValueError` rather than silently
+returning a full profile.
+
+`random` and `reservoir` give the same guarantee — a uniform sample of exactly
+`size` rows — and both hold `size` rows in memory, because which rows belong in
+the sample is not settled until the source ends. The other strategies decide
+each row as it arrives and add no memory. Sampling bounds the cost of
+*analysis*, not of reading: use a `StopCondition` to stop early.
 
 ### `StopCondition`
 

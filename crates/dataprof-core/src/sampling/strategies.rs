@@ -1,87 +1,156 @@
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::fmt::Write;
 
-use super::reservoir::ReservoirSampler;
-
+/// How rows are selected for profiling.
+///
+/// Strategies divide into two families, which differ in cost. *Streaming*
+/// strategies decide each row as it arrives and add no memory. *Fixed-size*
+/// strategies — [`Random`](Self::Random) and [`Reservoir`](Self::Reservoir) —
+/// cannot know the final sample until the source ends, so they hold `size` rows
+/// in memory and the profile is computed from that buffer.
+///
+/// Every strategy is applied by `RowSampler`, which carries the state they need
+/// across rows.
 #[derive(Debug, Clone)]
 pub enum SamplingStrategy {
     /// No sampling - analyze all data
     None,
 
-    /// Simple random sampling with fixed size
+    /// A uniform random sample of exactly `size` rows (or every row, when the
+    /// source is shorter).
+    ///
+    /// Over a source of unknown length this is reservoir sampling, so it holds
+    /// `size` rows in memory and is equivalent to
+    /// [`Reservoir`](Self::Reservoir); both names are kept because both are
+    /// familiar.
     Random { size: usize },
 
-    /// Reservoir sampling for streaming data
+    /// A uniform random sample of exactly `size` rows, selected with Algorithm
+    /// R over a single pass.
+    ///
+    /// Holds `size` rows in memory: membership is not final until the source
+    /// ends, and statistics folded in earlier could not be retracted.
     Reservoir { size: usize },
 
-    /// Stratified sampling balanced by categories
+    /// Up to `samples_per_stratum` rows for each distinct combination of
+    /// `key_columns` observed in the data.
+    ///
+    /// Strata are discovered as rows arrive, so the sample size grows with the
+    /// number of distinct keys rather than being fixed up front.
     Stratified {
         key_columns: Vec<String>,
         samples_per_stratum: usize,
     },
 
-    /// Progressive sampling - stop when confidence is reached
+    /// Grow the sample until the mean of every numeric column is precise
+    /// enough, bounded by `initial_size` and `max_size`.
+    ///
+    /// `confidence_level` sets a target *relative standard error* of
+    /// `1.0 - confidence_level`: at `0.95`, sampling stops once the standard
+    /// error of each numeric column's mean is within 5% of that mean. Precision
+    /// is measured from the sampled data, so a low-variance column stops early
+    /// and a volatile one runs to `max_size`.
+    ///
+    /// A source with no numeric columns has no measurable precision, so it
+    /// always samples `max_size` rows.
     Progressive {
         initial_size: usize,
         confidence_level: f64,
         max_size: usize,
     },
 
-    /// Systematic sampling (every Nth row)
+    /// Every `interval`-th row, starting at the first.
     Systematic { interval: usize },
 
-    /// Importance sampling for anomaly detection
-    Importance { weight_threshold: f64 },
+    /// Rows whose `weight_column` holds a number at or above
+    /// `weight_threshold`.
+    ///
+    /// The caller states what matters: there is no built-in notion of an
+    /// important row. Rows where the column is absent or unparseable are
+    /// excluded. Note that this is a filter, not a probability-weighted sample —
+    /// the resulting profile describes the rows that met the threshold, not the
+    /// source as a whole.
+    Importance {
+        weight_column: String,
+        weight_threshold: f64,
+    },
 
-    /// Multi-stage sampling (combination of strategies)
+    /// Several strategies applied in order.
+    ///
+    /// Streaming stages act as filters that a row must pass in sequence. At
+    /// most one fixed-size stage may appear, and it must be last, since it
+    /// draws its sample from whatever the filters let through.
     MultiStage { stages: Vec<SamplingStrategy> },
 }
 
-/// State for advanced sampling strategies
+/// The cross-row state that stateful strategies need.
+///
+/// One instance lives for a whole scan. Recreating it per row — which is what
+/// a stateless helper amounts to — makes every stateful strategy behave as if
+/// each row were the first, which is how stratified sampling came to return
+/// nothing and reservoir sampling came to return everything.
+#[derive(Debug, Default)]
 pub struct SamplingState {
-    /// Progressive sampling state
+    /// Rows already taken by a `Progressive` stage.
     progressive_samples: usize,
-    progressive_confidence: f64,
 
-    /// Stratified sampling state
-    stratum_counts: HashMap<String, usize>,
+    /// Rows already taken from each observed stratum.
     stratum_samples: HashMap<String, usize>,
-
-    /// Enhanced reservoir sampler
-    reservoir_sampler: Option<ReservoirSampler>,
 }
 
 impl SamplingState {
     pub fn new() -> Self {
-        Self {
-            progressive_samples: 0,
-            progressive_confidence: 0.0,
-            stratum_counts: HashMap::new(),
-            stratum_samples: HashMap::new(),
-            reservoir_sampler: None,
+        Self::default()
+    }
+
+    /// Rows a `Progressive` stage has taken so far.
+    pub fn progressive_taken(&self) -> usize {
+        self.progressive_samples
+    }
+
+    /// Record that a `Progressive` stage took a row.
+    pub fn record_progressive(&mut self) {
+        self.progressive_samples += 1;
+    }
+
+    /// Take `row` for its stratum if that stratum still has room.
+    ///
+    /// The stratum key is the joined values of `key_columns`. A row missing any
+    /// key column belongs to no stratum and is not sampled — silently folding
+    /// it into a partial key would merge unrelated rows into one stratum.
+    pub fn take_from_stratum(
+        &mut self,
+        row: super::sampler::RowView<'_>,
+        key_columns: &[String],
+        samples_per_stratum: usize,
+    ) -> bool {
+        if key_columns.is_empty() {
+            return false;
+        }
+
+        // Length-prefixed so field boundaries are unambiguous: joining on a
+        // separator would merge ("a|b", "c") and ("a", "b|c") into one stratum
+        // and apply the cap to both together.
+        let mut stratum = String::new();
+        for column in key_columns {
+            let Some(value) = row.get(column) else {
+                return false;
+            };
+            let _ = write!(stratum, "{}:{}", value.len(), value);
+        }
+
+        let taken = self.stratum_samples.entry(stratum).or_insert(0);
+        if *taken < samples_per_stratum {
+            *taken += 1;
+            true
+        } else {
+            false
         }
     }
 
-    /// Initialize reservoir sampler with given capacity
-    pub fn init_reservoir(&mut self, capacity: usize) {
-        self.reservoir_sampler = Some(ReservoirSampler::new(capacity));
-    }
-
-    /// Get or initialize reservoir sampler
-    pub fn get_or_init_reservoir(&mut self, capacity: usize) -> &mut ReservoirSampler {
-        if self.reservoir_sampler.is_none() {
-            self.init_reservoir(capacity);
-        }
-        self.reservoir_sampler
-            .as_mut()
-            .expect("Reservoir sampler should be initialized after init_reservoir call")
-    }
-}
-
-impl Default for SamplingState {
-    fn default() -> Self {
-        Self::new()
+    /// Number of distinct strata observed so far.
+    pub fn strata_seen(&self) -> usize {
+        self.stratum_samples.len()
     }
 }
 
@@ -118,194 +187,12 @@ impl SamplingStrategy {
         }
     }
 
-    /// Create importance sampling strategy
-    pub fn importance(weight_threshold: f64) -> Self {
-        Self::Importance { weight_threshold }
-    }
-
-    /// Check if row should be included in sample
-    pub fn should_include(&self, row_index: usize, total_processed: usize) -> bool {
-        self.should_include_with_state(row_index, total_processed, &mut SamplingState::new(), None)
-    }
-
-    /// Check if row should be included with state tracking
-    pub fn should_include_with_state(
-        &self,
-        row_index: usize,
-        total_processed: usize,
-        state: &mut SamplingState,
-        row_data: Option<&HashMap<String, String>>,
-    ) -> bool {
-        match self {
-            SamplingStrategy::None => true,
-
-            SamplingStrategy::Random { size } => {
-                self.random_sample(row_index, total_processed, *size)
-            }
-
-            #[allow(clippy::manual_is_multiple_of)]
-            SamplingStrategy::Systematic { interval } => row_index % interval == 0,
-
-            SamplingStrategy::Reservoir { size } => {
-                self.reservoir_sample(row_index, total_processed, *size, state)
-            }
-
-            SamplingStrategy::Stratified {
-                key_columns,
-                samples_per_stratum,
-            } => self.stratified_sample(row_data, key_columns, *samples_per_stratum, state),
-
-            SamplingStrategy::Progressive {
-                initial_size,
-                confidence_level,
-                max_size,
-            } => self.progressive_sample(*initial_size, *confidence_level, *max_size, state),
-
-            SamplingStrategy::Importance { weight_threshold } => {
-                self.importance_sample(row_data, *weight_threshold)
-            }
-
-            SamplingStrategy::MultiStage { stages } => {
-                // Apply all stages in sequence
-                stages.iter().all(|stage| {
-                    stage.should_include_with_state(row_index, total_processed, state, row_data)
-                })
-            }
+    /// Create an importance filter over a caller-nominated weight column.
+    pub fn importance(weight_column: impl Into<String>, weight_threshold: f64) -> Self {
+        Self::Importance {
+            weight_column: weight_column.into(),
+            weight_threshold,
         }
-    }
-
-    fn random_sample(&self, row_index: usize, total_processed: usize, size: usize) -> bool {
-        if total_processed <= size {
-            return true;
-        }
-
-        let mut hasher = DefaultHasher::new();
-        row_index.hash(&mut hasher);
-        let hash = hasher.finish();
-
-        let probability = size as f64 / total_processed as f64;
-        let threshold = (probability * u64::MAX as f64) as u64;
-
-        hash < threshold
-    }
-
-    fn reservoir_sample(
-        &self,
-        row_index: usize,
-        _total_processed: usize,
-        size: usize,
-        state: &mut SamplingState,
-    ) -> bool {
-        // Use the enhanced reservoir sampler
-        let reservoir = state.get_or_init_reservoir(size);
-        reservoir.process_record(row_index)
-    }
-
-    fn stratified_sample(
-        &self,
-        row_data: Option<&HashMap<String, String>>,
-        key_columns: &[String],
-        samples_per_stratum: usize,
-        state: &mut SamplingState,
-    ) -> bool {
-        if let Some(data) = row_data {
-            // Create stratum identifier from specified columns
-            let stratum_id = key_columns
-                .iter()
-                .filter_map(|col| data.get(col))
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("|");
-
-            // Count total rows in this stratum
-            *state
-                .stratum_counts
-                .entry(stratum_id.to_string())
-                .or_insert(0) += 1;
-
-            // Check if we need more samples from this stratum
-            let current_samples = *state.stratum_samples.get(&stratum_id).unwrap_or(&0);
-
-            if current_samples < samples_per_stratum {
-                *state.stratum_samples.entry(stratum_id).or_insert(0) += 1;
-                true
-            } else {
-                false
-            }
-        } else {
-            // No row data available, fall back to random sampling
-            false
-        }
-    }
-
-    fn progressive_sample(
-        &self,
-        initial_size: usize,
-        confidence_level: f64,
-        max_size: usize,
-        state: &mut SamplingState,
-    ) -> bool {
-        if state.progressive_samples < initial_size {
-            state.progressive_samples += 1;
-            return true;
-        }
-
-        // Calculate confidence based on current sample size
-        // This is a simplified confidence calculation
-        let current_confidence = 1.0 - (1.0 / (state.progressive_samples as f64).sqrt());
-        state.progressive_confidence = current_confidence;
-
-        if current_confidence < confidence_level && state.progressive_samples < max_size {
-            state.progressive_samples += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn importance_sample(
-        &self,
-        row_data: Option<&HashMap<String, String>>,
-        weight_threshold: f64,
-    ) -> bool {
-        if let Some(data) = row_data {
-            // Calculate importance weight based on data characteristics
-            let weight = self.calculate_importance_weight(data);
-            weight >= weight_threshold
-        } else {
-            false
-        }
-    }
-
-    fn calculate_importance_weight(&self, data: &HashMap<String, String>) -> f64 {
-        // Simple importance calculation based on:
-        // 1. Number of non-empty values
-        // 2. Diversity of values
-        // 3. Presence of anomalous patterns
-
-        let non_empty_count = data.values().filter(|v| !v.is_empty()).count();
-        let total_values = data.len();
-
-        if total_values == 0 {
-            return 0.0;
-        }
-
-        let completeness = non_empty_count as f64 / total_values as f64;
-
-        // Check for unusual patterns that might indicate anomalies
-        let has_unusual_patterns = data.values().any(|v| {
-            // Very long strings might be anomalous
-            v.len() > 1000 ||
-            // All digits might be IDs
-            v.chars().all(|c| c.is_ascii_digit()) ||
-            // Mixed case and special characters
-            v.chars().any(|c| !c.is_ascii_alphanumeric() && !c.is_whitespace())
-        });
-
-        let anomaly_score = if has_unusual_patterns { 0.3 } else { 0.0 };
-
-        // Combine scores
-        completeness * 0.7 + anomaly_score
     }
 
     pub fn target_sample_size(&self) -> Option<usize> {
@@ -360,8 +247,11 @@ impl SamplingStrategy {
             SamplingStrategy::Systematic { interval } => {
                 format!("Systematic (every {}th record)", interval)
             }
-            SamplingStrategy::Importance { weight_threshold } => {
-                format!("Importance sampling (weight > {:.2})", weight_threshold)
+            SamplingStrategy::Importance {
+                weight_column,
+                weight_threshold,
+            } => {
+                format!("Importance filter ({weight_column} >= {weight_threshold:.2})")
             }
             SamplingStrategy::MultiStage { stages } => {
                 format!("Multi-stage ({} stages)", stages.len())
@@ -373,55 +263,61 @@ impl SamplingStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sampling::sampler::RowView;
+
+    // Behavioural coverage of each strategy lives with the runtime that
+    // applies them, in `sampler.rs`; a strategy on its own is only data.
 
     #[test]
-    fn test_random_sampling() {
-        let strategy = SamplingStrategy::Random { size: 100 };
-        let mut included_count = 0;
+    fn test_stratum_state_persists_across_rows() {
+        let headers = vec!["region".to_string()];
+        let mut state = SamplingState::new();
+        let keys = vec!["region".to_string()];
 
-        for i in 0..1000 {
-            if strategy.should_include(i, 1000) {
-                included_count += 1;
-            }
-        }
+        let north = vec!["north".to_string()];
+        let south = vec!["south".to_string()];
 
-        // Should be approximately 100 (within reasonable variance)
-        assert!(included_count > 50 && included_count < 150);
+        assert!(state.take_from_stratum(RowView::new(&headers, &north), &keys, 2));
+        assert!(state.take_from_stratum(RowView::new(&headers, &north), &keys, 2));
+        assert!(
+            !state.take_from_stratum(RowView::new(&headers, &north), &keys, 2),
+            "the third northern row exceeds the per-stratum cap"
+        );
+        assert!(
+            state.take_from_stratum(RowView::new(&headers, &south), &keys, 2),
+            "a different stratum has its own budget"
+        );
+        assert_eq!(state.strata_seen(), 2);
     }
 
     #[test]
-    fn test_systematic_sampling() {
-        let strategy = SamplingStrategy::Systematic { interval: 10 };
+    fn test_stratum_requires_every_key_column() {
+        let headers = vec!["region".to_string()];
+        let values = vec!["north".to_string()];
         let mut state = SamplingState::new();
+        let keys = vec!["region".to_string(), "segment".to_string()];
 
-        for i in 0..100 {
-            let included = strategy.should_include_with_state(i, i + 1, &mut state, None);
-            if i % 10 == 0 {
-                assert!(included);
-            } else {
-                assert!(!included);
-            }
-        }
+        assert!(
+            !state.take_from_stratum(RowView::new(&headers, &values), &keys, 5),
+            "a row missing a key column belongs to no stratum"
+        );
+        assert_eq!(state.strata_seen(), 0);
     }
 
     #[test]
-    fn test_progressive_sampling() {
-        let strategy = SamplingStrategy::Progressive {
-            initial_size: 10,
-            confidence_level: 0.95,
-            max_size: 50,
-        };
-        let mut state = SamplingState::new();
-        let mut included_count = 0;
-
-        for i in 0..100 {
-            if strategy.should_include_with_state(i, i + 1, &mut state, None) {
-                included_count += 1;
+    fn test_importance_constructor_names_its_column() {
+        let strategy = SamplingStrategy::importance("risk", 0.8);
+        match strategy {
+            SamplingStrategy::Importance {
+                ref weight_column,
+                weight_threshold,
+            } => {
+                assert_eq!(weight_column, "risk");
+                assert_eq!(weight_threshold, 0.8);
             }
+            other => panic!("expected an importance filter, got {other:?}"),
         }
-
-        // Should sample at least initial_size but not more than max_size
-        assert!((10..=50).contains(&included_count));
+        assert!(strategy.description().contains("risk"));
     }
 
     #[test]

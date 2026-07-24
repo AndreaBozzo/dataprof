@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
-    PeakMemorySampler, ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker,
-    SemanticHints, StopCondition, StopEvaluator,
+    PeakMemorySampler, ProgressSink, QualityDimension, RowSampler, RowView, SamplingStrategy,
+    SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
 };
 use dataprof_csv::{CsvParserConfig, MemoryMappedCsvReader};
 use dataprof_runtime::{
@@ -128,9 +128,12 @@ impl IncrementalProfiler {
 
         progress_tracker.emit_started(Some(estimated_data_rows), Some(file_size_bytes));
 
+        // Built before the first read: an unusable strategy must fail before
+        // the source is touched, not after a partial profile exists.
+        let mut sampler = RowSampler::new(&self.sampling_strategy)?;
+
         let mut memory_sampler = PeakMemorySampler::new();
         let mut headers = None;
-        let mut iterated_rows = 0;
         let mut analyzed_rows = 0;
         let mut ragged_rows = 0;
         let mut offset = 0u64;
@@ -174,8 +177,6 @@ impl IncrementalProfiler {
                     header_record.iter().map(|s| s.to_string()).collect();
 
                 for (row_idx, record) in records.iter().enumerate() {
-                    let global_row_idx = iterated_rows + row_idx;
-
                     // A record whose field count differs from the header is a
                     // structural violation. It is still recovered below (padded
                     // or truncated to header width), but must not vanish from
@@ -185,28 +186,42 @@ impl IncrementalProfiler {
                         ragged_rows += 1;
                     }
 
-                    // Apply sampling strategy
-                    if !self
-                        .sampling_strategy
-                        .should_include(global_row_idx, global_row_idx + 1)
-                    {
-                        continue;
-                    }
-
                     // Convert record to values, padding ragged rows to header length
                     // so missing trailing fields are counted as empty (null-like)
                     let mut values: Vec<String> = record.iter().map(|s| s.to_string()).collect();
                     values.resize(header_names.len(), String::new());
 
-                    // Process record incrementally (no memory accumulation)
-                    column_stats.process_record(&header_names, values);
-                    analyzed_rows += 1;
+                    // Sampling decides on the aligned row, so a strategy keyed on
+                    // a column reads the same value the profile will.
+                    if !sampler.accept(RowView::new(&header_names, &values)) {
+                        continue;
+                    }
 
-                    // Per-row stop check for MaxRows to avoid chunk-boundary overshoot
+                    if sampler.is_buffered() {
+                        // A fixed-size sample is not final until the source ends,
+                        // so the row is held rather than folded in; statistics are
+                        // built from the surviving sample after the loop.
+                        sampler.offer(values);
+                    } else {
+                        // Process record incrementally (no memory accumulation)
+                        column_stats.process_record(&header_names, values);
+                        analyzed_rows += 1;
+                    }
+
+                    // Per-row stop check for MaxRows to avoid chunk-boundary
+                    // overshoot. A fixed-size strategy has folded nothing in yet
+                    // — its sample is drawn at end of scan — so the cap bounds
+                    // the rows read and the sample is taken from those.
+                    // Counting only folded rows would let `reservoir(100)` under
+                    // `max_rows(20)` return 100 rows.
+                    let rows_against_cap = if sampler.is_buffered() {
+                        sampler.iterated_rows()
+                    } else {
+                        analyzed_rows
+                    };
                     if let Some(limit) = row_limit
-                        && analyzed_rows as u64 >= limit
+                        && rows_against_cap as u64 >= limit
                     {
-                        iterated_rows += row_idx + 1;
                         hit_row_limit = true;
 
                         // Reaching the cap is only truncation if a row actually
@@ -240,7 +255,6 @@ impl IncrementalProfiler {
                 break;
             }
 
-            iterated_rows += records.len();
             offset += actual_bytes as u64;
 
             // Update progress
@@ -293,6 +307,21 @@ impl IncrementalProfiler {
             }
         }
 
+        // A fixed-size sample is only final once reading stops, so its rows are
+        // folded in here. Doing it earlier would let a row that is later evicted
+        // leave its values in statistics that cannot be retracted.
+        if sampler.is_buffered() {
+            let sample = sampler.take_sample();
+            if let Some(ref header_record) = headers {
+                let header_names: Vec<String> =
+                    header_record.iter().map(|s| s.to_string()).collect();
+                for values in sample {
+                    column_stats.process_record(&header_names, values);
+                    analyzed_rows += 1;
+                }
+            }
+        }
+
         memory_sampler.sample();
         progress_tracker.emit_finished(!source_exhausted);
 
@@ -340,11 +369,12 @@ impl IncrementalProfiler {
             }
         }
 
-        // Determine if actual row-level sampling occurred (rows skipped by strategy)
-        let sampling_was_applied = analyzed_rows < iterated_rows;
-        if sampling_was_applied {
-            let ratio = analyzed_rows as f64 / iterated_rows as f64;
-            execution = execution.with_sampling(ratio);
+        // Sampling is reported against the rows the sampler actually saw, so
+        // the ratio answers "how much of what was read did the profile cover?"
+        // A strategy that happened to keep every row is not sampling.
+        let rows_seen = sampler.iterated_rows();
+        if analyzed_rows < rows_seen && rows_seen > 0 {
+            execution = execution.with_sampling(analyzed_rows as f64 / rows_seen as f64);
         }
 
         if !source_exhausted {

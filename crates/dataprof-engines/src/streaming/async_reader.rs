@@ -3,8 +3,9 @@ use tokio::sync::mpsc;
 
 use dataprof_core::{
     ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, JsonErrorPolicy,
-    MetricPack, ProgressSink, QualityDimension, SamplingStrategy, SchemaStabilityTracker,
-    SemanticHints, StopCondition, StopEvaluator, StreamSourceSystem, TruncationReason,
+    MetricPack, ProgressSink, QualityDimension, RowSampler, RowView, SamplingStrategy,
+    SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator, StreamSourceSystem,
+    TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -306,8 +307,11 @@ impl AsyncStreamingProfiler {
         if let Some(reason) = truncation_reason {
             execution = execution.with_truncation(reason);
         } else if total_rows > 0 && sampled_rows < total_rows {
-            let ratio = sampled_rows as f64 / total_rows as f64;
-            execution = execution.with_sampling(ratio).with_source_exhausted(false);
+            // Sampling says which of the rows that were read reached the
+            // profile. It says nothing about whether the source ran out —
+            // marking a fully consumed source as unexhausted made a complete
+            // scan look like an interrupted one.
+            execution = execution.with_sampling(sampled_rows as f64 / total_rows as f64);
         }
 
         let mut assembler = ReportAssembler::new(data_source, execution)
@@ -767,6 +771,9 @@ impl AsyncStreamingProfiler {
         if let Some(est) = estimated_total {
             stop_eval = stop_eval.with_estimated_total(est);
         }
+        // Built before any row is read: an unusable strategy must fail before
+        // the source is consumed, not after a partial profile exists.
+        let mut sampler = RowSampler::new(&self.sampling_strategy)?;
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
         let mut truncation_reason: Option<TruncationReason> = None;
 
@@ -823,21 +830,31 @@ impl AsyncStreamingProfiler {
             let mut hit_row_limit = false;
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
-                let global_row_idx = total_rows + row_idx;
-
-                // Apply sampling strategy
-                if !self
-                    .sampling_strategy
-                    .should_include(global_row_idx, global_row_idx + 1)
-                {
+                if !sampler.accept(RowView::new(&headers, &values)) {
                     continue;
                 }
 
-                column_stats.process_record(&headers, values);
-                sampled_rows += 1;
+                if sampler.is_buffered() {
+                    // Held rather than folded in: a fixed-size sample is not
+                    // final until the stream ends, and statistics cannot be
+                    // retracted for a row that is later evicted.
+                    sampler.offer(values);
+                } else {
+                    column_stats.process_record(&headers, values);
+                    sampled_rows += 1;
+                }
 
+                // A fixed-size strategy folds nothing in until the stream
+                // ends, so the cap bounds the rows read and the sample is drawn
+                // from those. Counting only folded rows would let the sample
+                // exceed the caller's hard ceiling.
+                let rows_against_cap = if sampler.is_buffered() {
+                    sampler.iterated_rows()
+                } else {
+                    sampler.sampled_rows()
+                };
                 if let Some(limit) = row_limit
-                    && sampled_rows as u64 >= limit
+                    && rows_against_cap as u64 >= limit
                 {
                     rows_consumed = row_idx + 1;
                     hit_row_limit = true;
@@ -894,6 +911,13 @@ impl AsyncStreamingProfiler {
 
             // Update progress
             progress_tracker.emit_chunk(chunk_rows, chunk_bytes, estimated_total_rows);
+        }
+
+        // A fixed-size sample is only final once reading stops, so it is folded
+        // in here rather than row by row.
+        for values in sampler.take_sample() {
+            column_stats.process_record(&headers, values);
+            sampled_rows += 1;
         }
 
         progress_tracker.emit_finished(truncation_reason.is_some());
