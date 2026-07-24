@@ -167,42 +167,57 @@ where
                     });
                 }
             } else {
-                loop {
-                    let mut consume = 0;
-                    let mut found_value = false;
-                    let mut end_of_array = false;
+                let mut expect_value = true;
+                let mut allow_end = true;
+                let mut array_closed = false;
+                let mut drain_remainder = false;
 
-                    {
-                        let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-                        if buf.is_empty() {
-                            break;
+                loop {
+                    let Some(next) = consume_leading_whitespace(&mut reader)? else {
+                        if config.error_policy == JsonErrorPolicy::Strict {
+                            return Err(malformed_array_error(
+                                "unexpected end of input before closing ']'",
+                            ));
                         }
-                        for &byte in buf {
-                            if byte.is_ascii_whitespace() || byte == b',' {
-                                consume += 1;
-                            } else if byte == b']' {
-                                end_of_array = true;
-                                consume += 1;
-                                break;
-                            } else {
-                                found_value = true;
+                        malformed_lines += 1;
+                        drain_remainder = true;
+                        break;
+                    };
+
+                    if expect_value {
+                        if next == b']' {
+                            if !allow_end {
+                                if config.error_policy == JsonErrorPolicy::Strict {
+                                    return Err(malformed_array_error(
+                                        "trailing comma before closing ']'",
+                                    ));
+                                }
+                                malformed_lines += 1;
+                                drain_remainder = true;
                                 break;
                             }
+                            reader.consume(1);
+                            array_closed = true;
+                            break;
                         }
-                    }
 
-                    reader.consume(consume);
-                    if end_of_array {
-                        break;
-                    }
-
-                    if found_value {
                         if let Some(max) = config.max_rows
                             && rows_read >= max
                         {
-                            // `found_value` means a real element follows, not the
-                            // closing bracket, so the array was genuinely cut short.
+                            // A value remains unread. Do not validate the unread
+                            // suffix of an intentionally bounded scan.
                             truncated = true;
+                            break;
+                        }
+
+                        if next == b',' {
+                            if config.error_policy == JsonErrorPolicy::Strict {
+                                return Err(malformed_array_error(
+                                    "unexpected comma where an array value was required",
+                                ));
+                            }
+                            malformed_lines += 1;
+                            drain_remainder = true;
                             break;
                         }
 
@@ -218,10 +233,47 @@ where
                                     return Err(malformed_record_error(&err));
                                 }
                                 malformed_lines += 1;
+                                drain_remainder = true;
+                                break;
+                            }
+                        }
+                        expect_value = false;
+                    } else {
+                        match next {
+                            b',' => {
+                                reader.consume(1);
+                                expect_value = true;
+                                allow_end = false;
+                            }
+                            b']' => {
+                                reader.consume(1);
+                                array_closed = true;
+                                break;
+                            }
+                            _ => {
+                                if config.error_policy == JsonErrorPolicy::Strict {
+                                    return Err(malformed_array_error(
+                                        "expected ',' or ']' after an array value",
+                                    ));
+                                }
+                                malformed_lines += 1;
+                                drain_remainder = true;
                                 break;
                             }
                         }
                     }
+                }
+
+                if drain_remainder {
+                    drain_to_end(&mut reader)?;
+                } else if array_closed && consume_leading_whitespace(&mut reader)?.is_some() {
+                    if config.error_policy == JsonErrorPolicy::Strict {
+                        return Err(malformed_array_error(
+                            "non-whitespace content follows the closing ']'",
+                        ));
+                    }
+                    malformed_lines += 1;
+                    drain_to_end(&mut reader)?;
                 }
             }
         }
@@ -242,6 +294,22 @@ where
 fn malformed_record_error(err: &serde_json::Error) -> DataProfilerError {
     DataProfilerError::JsonParsingError {
         message: format!("malformed JSON record: {err}"),
+    }
+}
+
+fn malformed_array_error(message: &str) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!("malformed JSON array: {message}"),
+    }
+}
+
+fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
+    loop {
+        let available = reader.fill_buf().map_err(DataProfilerError::from)?.len();
+        if available == 0 {
+            return Ok(());
+        }
+        reader.consume(available);
     }
 }
 
@@ -561,6 +629,53 @@ mod tests {
         assert_eq!(summary.rows_read, 2);
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0], vec!["name".to_string()]);
+    }
+
+    #[test]
+    fn test_json_array_container_grammar_obeys_error_policy() {
+        let cases = [
+            (br#"[{"x":1}"#.as_ref(), 1, "missing closing bracket"),
+            (br#"[{"x":1},"#.as_ref(), 1, "comma followed by EOF"),
+            (br#"[{"x":1} {"x":2}]"#.as_ref(), 1, "missing comma"),
+            (br#"[{"x":1},,{"x":2}]"#.as_ref(), 1, "doubled comma"),
+            (br#"[,{"x":1}]"#.as_ref(), 0, "leading comma"),
+            (br#"[{"x":1},]"#.as_ref(), 1, "trailing comma"),
+            (br#"[{"x":1}] trailing"#.as_ref(), 1, "trailing content"),
+            (
+                br#"[{"x":1}][{"x":2}]"#.as_ref(),
+                1,
+                "second top-level value",
+            ),
+        ];
+
+        for (data, expected_rows, case) in cases {
+            let skip = JsonParserConfig::json_array();
+            let summary =
+                scan_json_from_reader(Cursor::new(data), &skip, |_| {}).expect("tolerant scan");
+            assert_eq!(summary.rows_read, expected_rows, "{case}");
+            assert_eq!(summary.malformed_lines, 1, "{case}");
+
+            let strict = JsonParserConfig::json_array().with_error_policy(JsonErrorPolicy::Strict);
+            let err = scan_json_from_reader(Cursor::new(data), &strict, |_| {})
+                .expect_err("strict mode must reject invalid array grammar");
+            assert!(
+                err.to_string()
+                    .to_lowercase()
+                    .contains("malformed json array"),
+                "{case}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_array_max_rows_does_not_validate_unread_values() {
+        let data = br#"[{"x":1},not-valid-json"#;
+        let config = JsonParserConfig::json_array().with_max_rows(1);
+        let summary = scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
+
+        assert_eq!(summary.rows_read, 1);
+        assert_eq!(summary.malformed_lines, 0);
+        assert!(summary.truncated);
     }
 
     #[test]

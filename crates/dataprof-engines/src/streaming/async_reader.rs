@@ -36,6 +36,51 @@ struct ReaderOutcome {
     ragged_rows: usize,
 }
 
+fn peek_non_whitespace<R: std::io::BufRead>(
+    reader: &mut R,
+) -> Result<(Option<u8>, usize), DataProfilerError> {
+    let mut consumed = 0;
+    loop {
+        let whitespace_len = {
+            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+            if buf.is_empty() {
+                return Ok((None, consumed));
+            }
+            buf.iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count()
+        };
+        if whitespace_len == 0 {
+            let next = reader
+                .fill_buf()
+                .map_err(DataProfilerError::from)?
+                .first()
+                .copied();
+            return Ok((next, consumed));
+        }
+        reader.consume(whitespace_len);
+        consumed += whitespace_len;
+    }
+}
+
+fn malformed_json_array_error(message: &str) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!("malformed JSON array: {message}"),
+    }
+}
+
+fn drain_to_end<R: std::io::BufRead>(reader: &mut R) -> Result<usize, DataProfilerError> {
+    let mut consumed = 0;
+    loop {
+        let available = reader.fill_buf().map_err(DataProfilerError::from)?.len();
+        if available == 0 {
+            return Ok(consumed);
+        }
+        reader.consume(available);
+        consumed += available;
+    }
+}
+
 /// Async streaming profiler that accepts [`AsyncDataSource`] instead of file paths.
 ///
 /// Uses a bounded channel between a blocking CSV reader task and an async
@@ -610,108 +655,151 @@ impl AsyncStreamingProfiler {
             }
             _ => {
                 // JSON array: stream elements efficiently
-                let mut found_array = false;
+                let (opening, whitespace) = peek_non_whitespace(&mut buf_reader)?;
+                bytes_in_chunk += whitespace as u64;
+                if opening != Some(b'[') {
+                    return Err(DataProfilerError::JsonParsingError {
+                        message: "Expected JSON array (starts with '[') but input does not match"
+                            .to_string(),
+                    });
+                }
+                buf_reader.consume(1);
+                bytes_in_chunk += 1;
+
+                let mut expect_value = true;
+                let mut allow_end = true;
+                let mut array_closed = false;
+                let mut drain_remainder = false;
+
                 loop {
-                    let mut consume = 0;
-                    {
-                        let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
-                        if buf.is_empty() {
+                    let (next, whitespace) = peek_non_whitespace(&mut buf_reader)?;
+                    bytes_in_chunk += whitespace as u64;
+                    let Some(next) = next else {
+                        if error_policy == JsonErrorPolicy::Strict {
+                            return Err(malformed_json_array_error(
+                                "unexpected end of input before closing ']'",
+                            ));
+                        }
+                        malformed_records += 1;
+                        drain_remainder = true;
+                        break;
+                    };
+
+                    if expect_value {
+                        if next == b']' {
+                            if !allow_end {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(malformed_json_array_error(
+                                        "trailing comma before closing ']'",
+                                    ));
+                                }
+                                malformed_records += 1;
+                                drain_remainder = true;
+                                break;
+                            }
+                            buf_reader.consume(1);
+                            bytes_in_chunk += 1;
+                            array_closed = true;
                             break;
                         }
-                        for &b in buf {
-                            consume += 1;
-                            if b == b'[' {
-                                found_array = true;
-                                break;
-                            } else if !b.is_ascii_whitespace() {
+
+                        if next == b',' {
+                            if error_policy == JsonErrorPolicy::Strict {
+                                return Err(malformed_json_array_error(
+                                    "unexpected comma where an array value was required",
+                                ));
+                            }
+                            malformed_records += 1;
+                            drain_remainder = true;
+                            break;
+                        }
+
+                        let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
+                        match serde::Deserialize::deserialize(&mut de) {
+                            Ok(Value::Object(obj)) => {
+                                let row = process_object(
+                                    &obj,
+                                    &mut known_columns,
+                                    &mut known_columns_set,
+                                    headers_sent,
+                                );
+                                bytes_in_chunk +=
+                                    row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
+                                current_chunk.push(row);
+                                emitted_records += 1;
+
+                                if bytes_in_chunk as usize >= bytes_per_chunk
+                                    && !send_chunk(
+                                        &mut current_chunk,
+                                        &mut bytes_in_chunk,
+                                        &known_columns,
+                                        &mut headers_sent,
+                                        &tx,
+                                    )?
+                                {
+                                    return Ok(malformed_records);
+                                }
+                            }
+                            Ok(_) => {
+                                // Skip non-object items, approximate 10 bytes progress
+                                bytes_in_chunk += 10;
+                            }
+                            Err(e) => {
+                                // A corrupt element leaves the array parser unable
+                                // to resync, so we stop here either way; strict mode
+                                // surfaces the failure instead of a partial profile.
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(DataProfilerError::JsonParsingError {
+                                        message: format!("malformed JSON record: {e}"),
+                                    });
+                                }
+                                malformed_records += 1;
+                                drain_remainder = true;
                                 break;
                             }
                         }
-                    }
-                    buf_reader.consume(consume);
-                    bytes_in_chunk += consume as u64;
-                    if found_array || consume == 0 {
-                        break;
+                        expect_value = false;
+                    } else {
+                        match next {
+                            b',' => {
+                                buf_reader.consume(1);
+                                bytes_in_chunk += 1;
+                                expect_value = true;
+                                allow_end = false;
+                            }
+                            b']' => {
+                                buf_reader.consume(1);
+                                bytes_in_chunk += 1;
+                                array_closed = true;
+                                break;
+                            }
+                            _ => {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(malformed_json_array_error(
+                                        "expected ',' or ']' after an array value",
+                                    ));
+                                }
+                                malformed_records += 1;
+                                drain_remainder = true;
+                                break;
+                            }
+                        }
                     }
                 }
 
-                if found_array {
-                    loop {
-                        let mut consume = 0;
-                        let mut found_value = false;
-                        let mut end_of_array = false;
-
-                        {
-                            let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
-                            if buf.is_empty() {
-                                break;
-                            }
-                            for &b in buf {
-                                if b.is_ascii_whitespace() || b == b',' {
-                                    consume += 1;
-                                } else if b == b']' {
-                                    end_of_array = true;
-                                    consume += 1;
-                                    break;
-                                } else {
-                                    found_value = true;
-                                    break;
-                                }
-                            }
+                if drain_remainder {
+                    bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
+                } else if array_closed {
+                    let (trailing, whitespace) = peek_non_whitespace(&mut buf_reader)?;
+                    bytes_in_chunk += whitespace as u64;
+                    if trailing.is_some() {
+                        if error_policy == JsonErrorPolicy::Strict {
+                            return Err(malformed_json_array_error(
+                                "non-whitespace content follows the closing ']'",
+                            ));
                         }
-
-                        buf_reader.consume(consume);
-                        bytes_in_chunk += consume as u64;
-
-                        if end_of_array {
-                            break;
-                        }
-
-                        if found_value {
-                            let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
-                            match serde::Deserialize::deserialize(&mut de) {
-                                Ok(Value::Object(obj)) => {
-                                    let row = process_object(
-                                        &obj,
-                                        &mut known_columns,
-                                        &mut known_columns_set,
-                                        headers_sent,
-                                    );
-                                    bytes_in_chunk +=
-                                        row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
-                                    current_chunk.push(row);
-                                    emitted_records += 1;
-
-                                    if bytes_in_chunk as usize >= bytes_per_chunk
-                                        && !send_chunk(
-                                            &mut current_chunk,
-                                            &mut bytes_in_chunk,
-                                            &known_columns,
-                                            &mut headers_sent,
-                                            &tx,
-                                        )?
-                                    {
-                                        return Ok(malformed_records);
-                                    }
-                                }
-                                Ok(_) => {
-                                    // Skip non-object items, approximate 10 bytes progress
-                                    bytes_in_chunk += 10;
-                                }
-                                Err(e) => {
-                                    // A corrupt element leaves the array parser unable
-                                    // to resync, so we stop here either way; strict mode
-                                    // surfaces the failure instead of a partial profile.
-                                    if error_policy == JsonErrorPolicy::Strict {
-                                        return Err(DataProfilerError::JsonParsingError {
-                                            message: format!("malformed JSON record: {e}"),
-                                        });
-                                    }
-                                    malformed_records += 1;
-                                    break;
-                                }
-                            }
-                        }
+                        malformed_records += 1;
+                        bytes_in_chunk += drain_to_end(&mut buf_reader)? as u64;
                     }
                 }
             }
@@ -1252,6 +1340,13 @@ mod tests {
         )
     }
 
+    fn json_source(data: &'static [u8]) -> BytesSource {
+        BytesSource::new(
+            bytes::Bytes::from_static(data),
+            AsyncSourceInfo::new("test", FileFormat::Json).size_hint(Some(data.len() as u64)),
+        )
+    }
+
     #[tokio::test]
     async fn test_async_jsonl_tolerant_skips_and_counts() {
         // Malformed record in the middle: default policy skips and counts it.
@@ -1283,6 +1378,51 @@ mod tests {
             let message = err.to_string();
             assert!(message.to_lowercase().contains("malformed json record"));
             assert!(!message.contains("not-json"), "leaked record: {message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_json_array_container_grammar_obeys_error_policy() {
+        let recoverable_cases = [
+            (b"[{\"x\":1}".as_ref(), "missing closing bracket"),
+            (b"[{\"x\":1},".as_ref(), "comma followed by EOF"),
+            (b"[{\"x\":1} {\"x\":2}]".as_ref(), "missing comma"),
+            (b"[{\"x\":1},,{\"x\":2}]".as_ref(), "doubled comma"),
+            (b"[{\"x\":1},]".as_ref(), "trailing comma"),
+            (b"[{\"x\":1}] trailing".as_ref(), "trailing content"),
+            (b"[{\"x\":1}][{\"x\":2}]".as_ref(), "second top-level value"),
+        ];
+
+        for (data, case) in recoverable_cases {
+            let report = AsyncStreamingProfiler::new()
+                .analyze_stream(json_source(data))
+                .await
+                .expect("tolerant scan should retain the valid prefix");
+            assert_eq!(report.execution.rows_processed, 1, "{case}");
+            assert_eq!(report.execution.error_count, 1, "{case}");
+        }
+
+        let err = AsyncStreamingProfiler::new()
+            .analyze_stream(json_source(b"[,{\"x\":1}]"))
+            .await
+            .expect_err("an array failing before its first value must fail");
+        assert!(err.to_string().to_lowercase().contains("malformed"));
+
+        for (data, case) in recoverable_cases
+            .into_iter()
+            .chain([(b"[,{\"x\":1}]".as_ref(), "leading comma")])
+        {
+            let err = AsyncStreamingProfiler::new()
+                .json_error_policy(JsonErrorPolicy::Strict)
+                .analyze_stream(json_source(data))
+                .await
+                .expect_err("strict mode must reject invalid array grammar");
+            assert!(
+                err.to_string()
+                    .to_lowercase()
+                    .contains("malformed json array"),
+                "{case}: {err}"
+            );
         }
     }
 

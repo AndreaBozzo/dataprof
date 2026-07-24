@@ -190,6 +190,17 @@ the stream using the same sample size and scoring as the file path — so the sa
 bytes yield the same columns whether they are read from disk, from memory, or
 off a URL.
 
+## Streaming JSON arrays enforce their container grammar
+
+The file and async JSON readers streamed each array value correctly but treated
+commas as optional whitespace and stopped at either `]` or EOF. Missing,
+leading, doubled, and trailing commas; a missing closing bracket; trailing
+garbage; and a second top-level value could all produce a clean profile.
+Container parsing now follows the JSON array state machine and validates the
+closing bracket and trailing input. Tolerant mode retains a valid prefix but
+increments `error_count`; strict mode raises `ValueError`. A scan intentionally
+bounded by `max_rows` still does not validate values it did not read.
+
 ## Malformed CSV raises `ValueError`, like malformed JSON
 
 A CSV parse failure reached Python as a `RuntimeError` while the equivalent JSON
