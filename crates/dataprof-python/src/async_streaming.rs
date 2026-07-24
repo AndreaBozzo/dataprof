@@ -35,6 +35,14 @@ fn build_profiler(config: Option<&PyProfilerConfig>) -> Profiler {
     }
 }
 
+fn python_bytes_source(data: Vec<u8>, format: FileFormat) -> BytesSource {
+    let size = data.len() as u64;
+    BytesSource::new(
+        bytes::Bytes::from(data),
+        AsyncSourceInfo::new("python-bytes", format).size_hint(Some(size)),
+    )
+}
+
 /// Profile in-memory bytes asynchronously.
 ///
 /// Accepts raw bytes and a format string. Returns a ProfileReport.
@@ -64,10 +72,7 @@ pub fn profile_bytes_async<'py>(
     let profiler = build_profiler(config);
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let source = BytesSource::new(
-            bytes::Bytes::from(data),
-            AsyncSourceInfo::new("python-bytes", fmt),
-        );
+        let source = python_bytes_source(data, fmt);
 
         let report = profiler
             .profile_stream(source)
@@ -113,10 +118,7 @@ pub fn infer_schema_stream_async<'py>(
     let fmt = parse_format(format)?;
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let source = BytesSource::new(
-            bytes::Bytes::from(data),
-            AsyncSourceInfo::new("python-bytes", fmt),
-        );
+        let source = python_bytes_source(data, fmt);
 
         let result = Profiler::new()
             .infer_schema_stream(source)
@@ -140,10 +142,7 @@ pub fn quick_row_count_stream_async<'py>(
     let fmt = parse_format(format)?;
 
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let source = BytesSource::new(
-            bytes::Bytes::from(data),
-            AsyncSourceInfo::new("python-bytes", fmt),
-        );
+        let source = python_bytes_source(data, fmt);
 
         let result = Profiler::new()
             .quick_row_count_stream(source)

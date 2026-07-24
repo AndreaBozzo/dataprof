@@ -252,3 +252,34 @@ def test_async_chunk_size_never_changes_a_complete_profile(chunk_size):
     assert report.rows == 2_000
     assert report.columns == 3
     _assert_consistent(report, len(data), f"async chunk_size={chunk_size}")
+
+
+@requires_async
+@pytest.mark.parametrize(
+    ("fmt", "data"),
+    [
+        ("json", b'[{"id":1},{"id":2}]'),
+        ("jsonl", b'{"id":1}\n{"id":2}\n'),
+    ],
+)
+def test_async_json_bytes_account_for_the_complete_buffer(fmt, data):
+    report = _async_bytes(data, fmt)
+
+    assert report.rows == 2
+    _assert_consistent(report, len(data), f"async {fmt} bytes")
+
+
+@requires_async
+@pytest.mark.parametrize(
+    ("fmt", "data"),
+    [
+        ("json", b'[{"id":1},{"id":2},{"id":3}]'),
+        ("jsonl", b'{"id":1}\n{"id":2}\n{"id":3}\n'),
+    ],
+)
+def test_async_json_row_cap_keeps_partial_byte_accounting(fmt, data):
+    report = _async_bytes(data, fmt, max_rows=1)
+
+    assert report.rows == 1
+    assert not report.source_exhausted
+    _assert_consistent(report, len(data), f"async bounded {fmt} bytes")
