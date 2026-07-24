@@ -560,13 +560,34 @@ impl AsyncStreamingProfiler {
                 // record can be recovered from (skip to next line) or reported,
                 // matching the sync `scan_json_from_reader` contract.
                 loop {
+                    // Distinguish clean exhaustion from an incomplete trailing
+                    // value. serde reports both as `Category::Eof`, but only an
+                    // empty/whitespace-only remainder is a clean end of stream.
+                    let has_value = loop {
+                        let whitespace_len = {
+                            let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
+                            if buf.is_empty() {
+                                break false;
+                            }
+                            buf.iter()
+                                .take_while(|byte| byte.is_ascii_whitespace())
+                                .count()
+                        };
+                        if whitespace_len == 0 {
+                            break true;
+                        }
+                        buf_reader.consume(whitespace_len);
+                    };
+                    if !has_value {
+                        break;
+                    }
+
                     let parsed = {
                         let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
                         <Value as serde::Deserialize>::deserialize(&mut de)
                     };
                     let v = match parsed {
                         Ok(v) => v,
-                        Err(e) if e.classify() == serde_json::error::Category::Eof => break,
                         Err(e) => {
                             if error_policy == JsonErrorPolicy::Strict {
                                 return Err(DataProfilerError::JsonParsingError {
@@ -574,6 +595,9 @@ impl AsyncStreamingProfiler {
                                 });
                             }
                             malformed_records += 1;
+                            if e.classify() == serde_json::error::Category::Eof {
+                                break;
+                            }
                             // Recover by discarding the rest of the offending line.
                             let mut discard = Vec::new();
                             buf_reader
@@ -1295,5 +1319,28 @@ mod tests {
             .unwrap();
         assert_eq!(report.execution.rows_processed, 3);
         assert_eq!(report.execution.error_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_async_jsonl_truncated_final_record_obeys_error_policy() {
+        let data = b"{\"id\":1}\n{\"id\":2";
+
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(jsonl_source(data))
+            .await
+            .unwrap();
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.execution.error_count, 1);
+
+        let err = AsyncStreamingProfiler::new()
+            .json_error_policy(JsonErrorPolicy::Strict)
+            .analyze_stream(jsonl_source(data))
+            .await
+            .expect_err("strict mode must reject an incomplete trailing record");
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("malformed json record")
+        );
     }
 }

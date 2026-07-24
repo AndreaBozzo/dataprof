@@ -115,15 +115,25 @@ where
                 break;
             }
 
+            // `serde_json` classifies both a clean end of input and an
+            // incomplete trailing value as `Category::Eof`. Check whether a
+            // non-whitespace value actually starts here so only the former is
+            // treated as normal exhaustion.
+            if consume_leading_whitespace(&mut reader)?.is_none() {
+                break;
+            }
+
             let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
             let value: Value = match Value::deserialize(&mut deserializer) {
                 Ok(v) => v,
-                Err(err) if err.classify() == serde_json::error::Category::Eof => break,
                 Err(err) => {
                     if config.error_policy == JsonErrorPolicy::Strict {
                         return Err(malformed_record_error(&err));
                     }
                     malformed_lines += 1;
+                    if err.classify() == serde_json::error::Category::Eof {
+                        break;
+                    }
                     skip_to_next_line(&mut reader)?;
                     continue;
                 }
@@ -751,17 +761,22 @@ mod tests {
     }
 
     #[test]
-    fn test_truncated_final_record_is_treated_as_eof() {
-        // serde classifies an incomplete trailing object as EOF, not a parse
-        // error, so it is silently dropped rather than counted or raised.
+    fn test_truncated_final_record_obeys_error_policy() {
         let data = b"{\"x\":1}\n{\"x\":2";
-        for policy in [JsonErrorPolicy::Skip, JsonErrorPolicy::Strict] {
-            let config = JsonParserConfig::jsonl().with_error_policy(policy);
-            let summary =
-                scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
-            assert_eq!(summary.rows_read, 1, "policy {policy:?}");
-            assert_eq!(summary.malformed_lines, 0, "policy {policy:?}");
-        }
+
+        let skip = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Skip);
+        let summary = scan_json_from_reader(Cursor::new(data.as_ref()), &skip, |_| {}).unwrap();
+        assert_eq!(summary.rows_read, 1);
+        assert_eq!(summary.malformed_lines, 1);
+
+        let strict = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+        let err = scan_json_from_reader(Cursor::new(data.as_ref()), &strict, |_| {})
+            .expect_err("strict mode must reject an incomplete trailing record");
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("malformed json record")
+        );
     }
 
     #[test]

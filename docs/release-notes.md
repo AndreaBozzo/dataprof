@@ -180,6 +180,16 @@ structurally broken; the gap is tracked in
 
 Ragged rows do not yet influence the consistency dimension's score.
 
+## Truncated JSONL records are never a clean EOF
+
+An incomplete final JSONL object was silently discarded on file and async
+inputs because `serde_json` classifies both a clean end of input and a partial
+value as EOF. That made tolerant mode report `error_count: 0`, and even
+`jsonl_on_error="strict"` returned a successful profile. The scanners now
+distinguish an empty or whitespace-only remainder from a value that started but
+did not finish. Tolerant mode skips and counts the partial record; strict mode
+raises `ValueError`, matching synchronous bytes input.
+
 ## Async CSV detects its delimiter instead of assuming a comma
 
 `csv_delimiter` was accepted and ignored on every async path, which always
