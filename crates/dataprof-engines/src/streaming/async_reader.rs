@@ -564,19 +564,23 @@ impl AsyncStreamingProfiler {
                     // value. serde reports both as `Category::Eof`, but only an
                     // empty/whitespace-only remainder is a clean end of stream.
                     let has_value = loop {
-                        let whitespace_len = {
+                        let whitespace_only_len = {
                             let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
                             if buf.is_empty() {
                                 break false;
                             }
-                            buf.iter()
-                                .take_while(|byte| byte.is_ascii_whitespace())
-                                .count()
+                            if buf.iter().all(u8::is_ascii_whitespace) {
+                                Some(buf.len())
+                            } else {
+                                None
+                            }
                         };
-                        if whitespace_len == 0 {
+                        let Some(whitespace_only_len) = whitespace_only_len else {
+                            // Leave a mixed whitespace/value buffer untouched so
+                            // serde retains its line and column context.
                             break true;
-                        }
-                        buf_reader.consume(whitespace_len);
+                        };
+                        buf_reader.consume(whitespace_only_len);
                     };
                     if !has_value {
                         break;
@@ -1337,10 +1341,8 @@ mod tests {
             .analyze_stream(jsonl_source(data))
             .await
             .expect_err("strict mode must reject an incomplete trailing record");
-        assert!(
-            err.to_string()
-                .to_lowercase()
-                .contains("malformed json record")
-        );
+        let message = err.to_string().to_lowercase();
+        assert!(message.contains("malformed json record"));
+        assert!(message.contains("line 2"), "got: {message}");
     }
 }

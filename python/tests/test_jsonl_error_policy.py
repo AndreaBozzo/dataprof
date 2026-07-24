@@ -158,8 +158,9 @@ def test_truncated_final_record_async_parity():
     assert report.rows == 1
     assert report.error_count == 1
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as excinfo:
         _async_bytes(TRUNCATED, jsonl_on_error="strict")
+    assert "line 2" in str(excinfo.value)
 
 
 def test_invalid_policy_value_rejected():
