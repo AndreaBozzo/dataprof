@@ -70,6 +70,10 @@ pub struct AsyncStreamingProfiler {
 /// delimiter whether it is read from disk or off a socket.
 const DELIMITER_SAMPLE_BYTES: u64 = 4096;
 
+/// Bytes per chunk when [`ChunkSize::Adaptive`] is in effect. A stream has no
+/// size to adapt to, so this is a fixed working-set target.
+const DEFAULT_CHUNK_BYTES: usize = 512 * 1024;
+
 impl AsyncStreamingProfiler {
     pub fn new() -> Self {
         Self {
@@ -187,7 +191,7 @@ impl AsyncStreamingProfiler {
         let start = std::time::Instant::now();
         let reader = source.into_async_read().await?;
 
-        let rows_per_chunk = self.rows_per_chunk();
+        let bytes_per_chunk = self.bytes_per_chunk();
         let (tx, rx) = mpsc::channel::<ParsedChunk>(self.channel_capacity);
 
         // Bridge the AsyncRead into a sync Read for parsing.
@@ -200,11 +204,15 @@ impl AsyncStreamingProfiler {
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
         let reader_handle = tokio::task::spawn_blocking(move || match format {
-            FileFormat::Csv => {
-                Self::reader_task(sync_reader, tx, rows_per_chunk, csv_flexible, csv_delimiter)
-            }
+            FileFormat::Csv => Self::reader_task(
+                sync_reader,
+                tx,
+                bytes_per_chunk,
+                csv_flexible,
+                csv_delimiter,
+            ),
             FileFormat::Json | FileFormat::Jsonl => {
-                Self::json_reader_task(sync_reader, tx, rows_per_chunk, format, json_error_policy)
+                Self::json_reader_task(sync_reader, tx, bytes_per_chunk, format, json_error_policy)
                     .map(|malformed_records| ReaderOutcome {
                         malformed_records,
                         ragged_rows: 0,
@@ -275,9 +283,19 @@ impl AsyncStreamingProfiler {
             last_record_at: None,
         };
 
+        // A scan that ran to the end of a source of known length consumed
+        // exactly that many bytes. The per-chunk tally is the best available
+        // answer for a bounded scan, but it is derived from parsed records and
+        // would otherwise leave a complete scan reporting fewer bytes than the
+        // source holds.
+        let bytes_consumed = match (truncation_reason.is_none(), source_info.size_hint) {
+            (true, Some(total)) => total,
+            _ => total_bytes,
+        };
+
         let mut execution = ExecutionMetadata::new(sampled_rows, num_columns, scan_time_ms)
             .with_engine("incremental")
-            .with_bytes_consumed(total_bytes)
+            .with_bytes_consumed(bytes_consumed)
             // Tolerant JSONL scans surface skipped malformed records so callers
             // can distinguish a partial profile from a clean one.
             .with_error_count(reader_outcome.malformed_records)
@@ -332,7 +350,7 @@ impl AsyncStreamingProfiler {
             std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
         >,
         tx: mpsc::Sender<ParsedChunk>,
-        rows_per_chunk: usize,
+        bytes_per_chunk: usize,
         flexible: bool,
         delimiter: Option<u8>,
     ) -> Result<ReaderOutcome, DataProfilerError> {
@@ -370,22 +388,31 @@ impl AsyncStreamingProfiler {
 
         let header_fields: Vec<String> = headers.iter().map(|f| f.to_string()).collect();
         let header_len = header_fields.len();
+        // Byte counts come from the parser's own position rather than from the
+        // parsed fields: a record's fields exclude delimiters, quotes and line
+        // endings, so summing them under-reports every row and would leave
+        // `bytes_consumed` short of the source even on a complete scan.
+        let mut byte_offset = csv_reader.position().byte();
         let header_chunk = ParsedChunk {
             records: vec![header_fields],
-            bytes_read: 0,
+            bytes_read: byte_offset,
         };
         let mut outcome = ReaderOutcome::default();
         if tx.blocking_send(header_chunk).is_err() {
             return Ok(outcome);
         }
 
-        // Read data records in chunks
-        let mut current_chunk: Vec<Vec<String>> = Vec::with_capacity(rows_per_chunk);
+        // Read data records, emitting a chunk once it holds the configured
+        // number of bytes. Chunking by bytes rather than by a row count keeps
+        // the working set bounded regardless of how wide the rows are.
+        let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut bytes_in_chunk: u64 = 0;
+        let mut record = csv::StringRecord::new();
 
-        for result in csv_reader.records() {
-            let record = result.map_err(|e| Self::csv_error(&e, flexible))?;
-
+        while csv_reader
+            .read_record(&mut record)
+            .map_err(|e| Self::csv_error(&e, flexible))?
+        {
             // A field count differing from the header is a structural violation.
             // Counted here, before the row is queued, so the signal covers every
             // record read rather than only the ones that survive sampling.
@@ -393,16 +420,16 @@ impl AsyncStreamingProfiler {
                 outcome.ragged_rows += 1;
             }
 
-            bytes_in_chunk += record.as_slice().len() as u64 + 1;
+            let position = csv_reader.position().byte();
+            bytes_in_chunk += position.saturating_sub(byte_offset);
+            byte_offset = position;
+
             let fields: Vec<String> = record.iter().map(|f| f.to_string()).collect();
             current_chunk.push(fields);
 
-            if current_chunk.len() >= rows_per_chunk {
+            if bytes_in_chunk as usize >= bytes_per_chunk {
                 let chunk = ParsedChunk {
-                    records: std::mem::replace(
-                        &mut current_chunk,
-                        Vec::with_capacity(rows_per_chunk),
-                    ),
+                    records: std::mem::take(&mut current_chunk),
                     bytes_read: bytes_in_chunk,
                 };
                 bytes_in_chunk = 0;
@@ -437,7 +464,7 @@ impl AsyncStreamingProfiler {
             std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
         >,
         tx: mpsc::Sender<ParsedChunk>,
-        rows_per_chunk: usize,
+        bytes_per_chunk: usize,
         format: FileFormat,
         error_policy: JsonErrorPolicy,
     ) -> Result<usize, DataProfilerError> {
@@ -446,7 +473,7 @@ impl AsyncStreamingProfiler {
 
         let mut buf_reader = std::io::BufReader::new(sync_reader);
         let mut known_columns: Vec<String> = Vec::new();
-        let mut current_chunk: Vec<Vec<String>> = Vec::with_capacity(rows_per_chunk);
+        let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut known_columns_set: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut bytes_in_chunk: u64 = 0;
@@ -512,7 +539,7 @@ impl AsyncStreamingProfiler {
 
             if !chunk.is_empty() {
                 let data_chunk = ParsedChunk {
-                    records: std::mem::replace(chunk, Vec::with_capacity(rows_per_chunk)),
+                    records: std::mem::take(chunk),
                     bytes_read: *bytes,
                 };
                 *bytes = 0;
@@ -563,7 +590,7 @@ impl AsyncStreamingProfiler {
                         current_chunk.push(row);
                         emitted_records += 1;
 
-                        if current_chunk.len() >= rows_per_chunk
+                        if bytes_in_chunk as usize >= bytes_per_chunk
                             && !send_chunk(
                                 &mut current_chunk,
                                 &mut bytes_in_chunk,
@@ -651,7 +678,7 @@ impl AsyncStreamingProfiler {
                                     current_chunk.push(row);
                                     emitted_records += 1;
 
-                                    if current_chunk.len() >= rows_per_chunk
+                                    if bytes_in_chunk as usize >= bytes_per_chunk
                                         && !send_chunk(
                                             &mut current_chunk,
                                             &mut bytes_in_chunk,
@@ -781,11 +808,19 @@ impl AsyncStreamingProfiler {
         progress_tracker.emit_started(estimated_total_rows, size_hint);
         progress_tracker.emit_schema(headers.clone());
 
+        // A row cap is a hard ceiling on what the caller authorized us to
+        // analyze, so it is checked per row. Evaluating it only per chunk
+        // returned every row of the chunk that crossed it — up to a whole chunk
+        // more data than requested, while the report named the smaller limit.
+        let row_limit = self.stop_condition.max_rows();
+
         // Process data chunks
         while let Some(chunk) = rx.recv().await {
             total_bytes += chunk.bytes_read;
             let chunk_rows = chunk.records.len();
             let chunk_bytes = chunk.bytes_read;
+            let mut rows_consumed = chunk_rows;
+            let mut hit_row_limit = false;
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
                 let global_row_idx = total_rows + row_idx;
@@ -800,9 +835,33 @@ impl AsyncStreamingProfiler {
 
                 column_stats.process_record(&headers, values);
                 sampled_rows += 1;
+
+                if let Some(limit) = row_limit
+                    && sampled_rows as u64 >= limit
+                {
+                    rows_consumed = row_idx + 1;
+                    hit_row_limit = true;
+                    break;
+                }
             }
 
-            total_rows += chunk_rows;
+            total_rows += rows_consumed;
+
+            if hit_row_limit {
+                // Reaching the cap is only a truncation if a row actually
+                // remained. Rows left in this chunk prove it outright;
+                // otherwise ask the reader for one more chunk, which resolves
+                // to `None` when the source is exhausted.
+                let more_rows_remain = rows_consumed < chunk_rows
+                    || rx.recv().await.is_some_and(|next| !next.records.is_empty());
+
+                if more_rows_remain {
+                    stop_eval.update(rows_consumed as u64, chunk_bytes, 0.0);
+                    truncation_reason = stop_eval.truncation_reason();
+                }
+                drop(rx);
+                break;
+            }
 
             // Check memory pressure
             if column_stats.is_memory_pressure() {
@@ -849,18 +908,14 @@ impl AsyncStreamingProfiler {
         ))
     }
 
-    /// Calculate rows per chunk based on ChunkSize config.
-    fn rows_per_chunk(&self) -> usize {
+    /// Bytes to accumulate per chunk, per the configured [`ChunkSize`].
+    ///
+    /// A stream does not know its own length, so `Custom` is called with `0`.
+    fn bytes_per_chunk(&self) -> usize {
         match self.chunk_size {
-            ChunkSize::Adaptive => 8192,
-            ChunkSize::Fixed(bytes) => {
-                // Estimate ~50 bytes per row on average
-                (bytes / 50).max(100)
-            }
-            ChunkSize::Custom(f) => {
-                // Use the custom function with a dummy file size (streams don't know size upfront)
-                f(0).max(100)
-            }
+            ChunkSize::Adaptive => DEFAULT_CHUNK_BYTES,
+            ChunkSize::Fixed(bytes) => bytes.max(1),
+            ChunkSize::Custom(f) => f(0).max(1),
         }
     }
 }

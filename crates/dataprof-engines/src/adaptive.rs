@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use dataprof_core::{DataProfilerError, MetricPack, QualityDimension, SemanticHints};
+use dataprof_core::{ChunkSize, DataProfilerError, MetricPack, QualityDimension, SemanticHints};
 use dataprof_csv::CsvParserConfig;
 use dataprof_runtime::ProfileReport;
 
@@ -26,6 +26,8 @@ pub struct AdaptiveProfiler {
     csv_config: Option<CsvParserConfig>,
     locale: Option<String>,
     semantic_hints: SemanticHints,
+    memory_limit_mb: Option<usize>,
+    chunk_size: Option<ChunkSize>,
 }
 
 impl AdaptiveProfiler {
@@ -36,7 +38,21 @@ impl AdaptiveProfiler {
             csv_config: None,
             locale: None,
             semantic_hints: SemanticHints::default(),
+            memory_limit_mb: None,
+            chunk_size: None,
         }
+    }
+
+    /// Set the memory limit, in MB, passed on to whichever engine is selected.
+    pub fn memory_limit_mb(mut self, limit: usize) -> Self {
+        self.memory_limit_mb = Some(limit);
+        self
+    }
+
+    /// Set the per-chunk read size, in bytes, for the streaming engine.
+    pub fn chunk_size(mut self, chunk_size: ChunkSize) -> Self {
+        self.chunk_size = Some(chunk_size);
+        self
     }
 
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
@@ -232,11 +248,20 @@ impl AdaptiveProfiler {
                 if let Some(ref l) = self.locale {
                     profiler = profiler.locale(l.clone());
                 }
+                if let Some(mb) = self.memory_limit_mb {
+                    profiler = profiler.memory_limit_mb(mb);
+                }
                 profiler = profiler.semantic_hints(self.semantic_hints.clone());
                 profiler.analyze_csv_file(file_path)
             }
             InternalEngineType::Incremental => {
                 let mut profiler = IncrementalProfiler::new();
+                if let Some(mb) = self.memory_limit_mb {
+                    profiler = profiler.memory_limit_mb(mb);
+                }
+                if let Some(ref cs) = self.chunk_size {
+                    profiler = profiler.chunk_size(cs.clone());
+                }
                 if let Some(ref dims) = self.quality_dimensions {
                     profiler = profiler.quality_dimensions(dims.clone());
                 }

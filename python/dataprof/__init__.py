@@ -906,8 +906,13 @@ def profile_file(
     Args:
         path: File path to profile.
         engine: Engine to use ("auto", "incremental", "columnar").
-        chunk_size: Fixed chunk size for streaming (None = adaptive).
-        memory_limit_mb: Memory limit in MB.
+        chunk_size: Bytes to read per streaming chunk (None = adaptive).
+            Bounds the working set and the granularity at which progress
+            and stop conditions are evaluated; it never changes the
+            result of a complete scan.
+        memory_limit_mb: Memory limit in MB, applied by the incremental,
+            columnar and async engines. Bounds retained per-column state;
+            it does not drop rows.
         format: Override format detection ("csv", "json", "jsonl", "parquet").
         max_rows: Maximum rows to process before stopping.
         csv_delimiter: Single-character CSV delimiter (default: detected
@@ -1011,8 +1016,13 @@ def profile(
     Args:
         source: Data source to profile.
         engine: Engine to use ("auto", "incremental", "columnar").
-        chunk_size: Fixed chunk size for streaming (None = adaptive).
-        memory_limit_mb: Memory limit in MB.
+        chunk_size: Bytes to read per streaming chunk (None = adaptive).
+            Bounds the working set and the granularity at which progress
+            and stop conditions are evaluated; it never changes the
+            result of a complete scan.
+        memory_limit_mb: Memory limit in MB, applied by the incremental,
+            columnar and async engines. Bounds retained per-column state;
+            it does not drop rows.
         format: Override format detection ("csv", "json", "jsonl", "parquet").
         max_rows: Maximum rows to process before stopping.
         name: Name for DataFrame sources in the report.
