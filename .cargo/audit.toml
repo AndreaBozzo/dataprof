@@ -1,0 +1,24 @@
+# Advisory dispositions for `cargo audit`.
+#
+# These mirror the `[advisories].ignore` list in deny.toml. Both tools read the
+# same RustSec database but their own config, so a disposition recorded in only
+# one of them leaves the other failing on an advisory that has been reviewed and
+# judged non-applicable.
+#
+# Every entry must be justified in docs/SECURITY.md, with the reasoning and the
+# date it is next reviewed. Do not add an ID here without adding it there.
+
+[advisories]
+ignore = [
+    # Marvin attack: a timing sidechannel in RSA *private-key* operations.
+    # dataprof reaches `rsa` only through sqlx-mysql, which uses it to encrypt a
+    # password with the server's public key. It never performs a private-key
+    # operation and holds no private key. No fixed release exists.
+    # Reviewed 2026-07-24, next review 2026-10-01. See docs/SECURITY.md.
+    "RUSTSEC-2023-0071",
+
+    # `paste` is unmaintained (not a vulnerability). Pulled in transitively by
+    # arrow-rs; no upstream replacement yet.
+    # Reviewed 2026-07-24, next review 2026-10-01. See docs/SECURITY.md.
+    "RUSTSEC-2024-0436",
+]

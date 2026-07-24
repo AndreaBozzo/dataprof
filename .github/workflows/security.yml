@@ -42,10 +42,19 @@ jobs:
           cache-prefix: rust-security
           components: rustfmt,clippy
 
-      - name: Run cargo deny
-        run: |
-          cargo install --locked cargo-deny
-          cargo deny check
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: Audit default feature graph
+        run: cargo deny check
+
+      # The default graph omits optional features that are nonetheless
+      # published — notably the database connectors, which pull in the whole
+      # SQLx client stack. Auditing only the default build reported green while
+      # a shipped feature graph carried an unreviewed advisory (#464), so every
+      # feature a user can turn on is checked here too.
+      - name: Audit complete feature graph
+        run: cargo deny --all-features check
 
   trivy:
     runs-on: ubuntu-latest

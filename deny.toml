@@ -69,8 +69,13 @@ feature-depth = 1
 #db-urls = ["https://github.com/rustsec/advisory-db"]
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
+#
+# Every entry below must state *why* the advisory does not apply to dataprof,
+# not merely that it is inconvenient. Each one is re-reviewed at the date given;
+# see docs/SECURITY.md for the standing dispositions and the review process.
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled in transitively by parquet (arrow-rs), no upstream replacement yet" },
+    { id = "RUSTSEC-2023-0071", reason = "Marvin attack in `rsa`: a timing sidechannel in RSA *private-key* operations. Reached only via sqlx-mysql, whose sole use of the crate (connection/auth.rs) imports RsaPublicKey and encrypts the password with OAEP when authenticating over a non-TLS link. It never constructs an RsaPrivateKey and never decrypts or signs, so there is no private-key operation to time, and dataprof holds no RSA private key. dataprof's sqlx uses runtime-tokio-rustls, and the same function returns before touching RSA when the connection is TLS. No fixed release of `rsa` exists (RustCrypto/RSA#626). Re-review 2026-10-01, or sooner if a fixed `rsa` ships or sqlx drops the dependency. See https://github.com/AndreaBozzo/dataprof/issues/464" },
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
@@ -94,7 +99,15 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
     "BSD-2-Clause",
-    # "ISC",
+    # Permissive, OSI-approved and FSF-free; equivalent in effect to BSD-2-Clause.
+    # Reached through the TLS stack (ring, rustls-webpki, untrusted) that the
+    # async-streaming, parquet-async and database features pull in, so the
+    # default-only audit never saw it.
+    "ISC",
+    # The Mozilla CA root bundle shipped by webpki-roots. A permissive *data*
+    # licence: use, modify and redistribute freely, with no copyleft and no
+    # obligation beyond not misrepresenting the source.
+    "CDLA-Permissive-2.0",
     # "Unicode-DFS-2016",
     "CC0-1.0",
     "Unicode-3.0",
