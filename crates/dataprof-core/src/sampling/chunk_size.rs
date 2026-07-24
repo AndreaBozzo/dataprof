@@ -17,7 +17,13 @@ pub enum ChunkSize {
     /// Fixed chunk size in **bytes**.
     Fixed(usize),
 
-    /// Derive a chunk size from the memory limit and the size of the source.
+    /// Let the engine choose the chunk size (default).
+    ///
+    /// Each engine resolves this against what it knows: the incremental engine
+    /// derives a size from its memory limit and the file size, while the async
+    /// reader — whose source has no length to adapt to — uses a fixed working-set
+    /// target. Unlike [`Fixed`](Self::Fixed), the resulting size is not a
+    /// guarantee, so it is not something to assert against.
     #[default]
     Adaptive,
 
@@ -28,6 +34,12 @@ pub enum ChunkSize {
 
 impl ChunkSize {
     /// Resolve to a concrete chunk size in bytes for a source of the given size.
+    ///
+    /// This is a standalone helper, not the path any engine takes: `Fixed` and
+    /// `Custom` resolve exactly as an engine would, but `Adaptive` here is
+    /// derived from *system* available memory, whereas an engine derives it
+    /// from its own configured memory limit. Do not use this to predict what an
+    /// engine will do with `Adaptive`.
     pub fn calculate(&self, file_size_bytes: u64) -> usize {
         match self {
             ChunkSize::Fixed(size) => *size,
@@ -36,6 +48,7 @@ impl ChunkSize {
         }
     }
 
+    /// Derive a chunk size from system available memory and the source size.
     fn adaptive_size(&self, file_size_bytes: u64) -> usize {
         let mut system = System::new_all();
         system.refresh_memory();
