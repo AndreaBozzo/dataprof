@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Python extension bindings for dataprof"
+readme = "README.md"
 
 [lib]
 name = "dataprof_python"
