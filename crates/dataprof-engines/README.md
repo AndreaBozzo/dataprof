@@ -29,7 +29,7 @@ cargo test -p dataprof-engines --all-features
 ```
 
 Most users should depend on the high-level
-[`dataprof` facade](https://github.com/AndreaBozzo/dataprof/blob/master/README.md).
+[`dataprof` facade](https://github.com/AndreaBozzo/dataprof/blob/HEAD/README.md).
 See the
-[workspace architecture](https://github.com/AndreaBozzo/dataprof/blob/master/docs/architecture/crate-redesign.md)
+[workspace architecture](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/architecture/crate-redesign.md)
 for crate ownership details.

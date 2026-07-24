@@ -30,6 +30,6 @@ cargo test -p dataprof-python --all-features
 ```
 
 See the
-[`dataprof` Python and Rust overview](https://github.com/AndreaBozzo/dataprof/blob/master/README.md)
+[`dataprof` Python and Rust overview](https://github.com/AndreaBozzo/dataprof/blob/HEAD/README.md)
 and the
-[workspace architecture](https://github.com/AndreaBozzo/dataprof/blob/master/docs/architecture/crate-redesign.md).
+[workspace architecture](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/architecture/crate-redesign.md).
