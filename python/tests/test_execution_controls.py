@@ -278,8 +278,9 @@ def test_async_json_bytes_account_for_the_complete_buffer(fmt, data):
     ],
 )
 def test_async_json_row_cap_keeps_partial_byte_accounting(fmt, data):
-    report = _async_bytes(data, fmt, max_rows=1)
+    report = _async_bytes(data, fmt, chunk_size=8, max_rows=1)
 
     assert report.rows == 1
     assert not report.source_exhausted
+    assert 0 < _bytes_consumed(report) < len(data)
     _assert_consistent(report, len(data), f"async bounded {fmt} bytes")
