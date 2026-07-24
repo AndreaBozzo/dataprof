@@ -1,5 +1,5 @@
 name: 'Run Tests'
-description: 'Execute DataProfiler test suite with configurable features'
+description: 'Execute the dataprof test suite with configurable features'
 inputs:
   test-type:
     description: 'Type of tests to run (core, integration, all)'

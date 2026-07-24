@@ -33,6 +33,8 @@
       color: var(--accent-ink);
     }
     .hero-sub { color: var(--muted); font-size: 1.12rem; max-width: 56ch; margin: 0 0 26px; }
+    .release-pill { display: table; margin-bottom: 10px; text-decoration: none; }
+    .release-pill:hover { filter: brightness(1.08); }
     .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; }
     .hero-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
     .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
@@ -106,7 +108,7 @@
       margin: 0 0 18px;
       max-width: 560px;
     }
-    .install-row code { flex: 1; overflow-x: auto; white-space: nowrap; padding: 8px 0; font-size: 0.9rem; }
+    .install-row code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 8px 0; font-size: 0.9rem; }
     .copy-btn {
       border: 1px solid rgba(255,255,255,0.18);
       background: rgba(255,255,255,0.06);
@@ -198,7 +200,7 @@
 
     @media (max-width: 900px) {
       .hero { padding-top: 48px; }
-      .hero-grid { grid-template-columns: 1fr; gap: 34px; }
+      .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 34px; }
       .bench-band { grid-template-columns: 1fr; padding: 32px 26px; }
       .site-nav a:not(.nav-cta) { display: none; }
     }
@@ -228,6 +230,7 @@
   <section class="hero wrap">
     <div class="hero-grid">
       <div>
+        <a class="pill release-pill" href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md">0.10.0 release notes &rarr;</a>
         <span class="eyebrow">Rust core &middot; Python native &middot; ISO 8000/25012</span>
         <h1>Know your data <em>before</em> it bites.</h1>
         <p class="hero-sub">
@@ -259,7 +262,7 @@ report.rows, report.columns
 <span class="t-out">(1_048_576, 14)</span>
 
 report.quality_score
-<span class="t-out">87.4</span>  <span class="t-cm"># 0&ndash;100 across five ISO dimensions</span>
+<span class="t-out">87.4</span>  <span class="t-cm"># 0&ndash;100 across assessed dimensions</span>
 
 age = report[<span class="t-str">"customer_age"</span>]
 age.data_type, age.null_percentage
@@ -335,8 +338,8 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
 before = dp.ProfileReport.<span class="t-fn">load</span>(<span class="t-str">"report.json"</span>)
 delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</span>(<span class="t-str">"data_clean.csv"</span>))</code></pre>
       <p class="note">Python 3.10+. Pre-built wheels have <strong>zero Python dependencies</strong> &mdash;
-        pandas is optional, only for DataFrame-typed exports.
-        See the <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/python/README.md">Python API guide</a>.</p>
+        pandas is optional, for DataFrame-typed exports and Parquet byte buffers.
+        See the <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md">Python API guide</a>.</p>
     </div>
 
     <div class="card quickstart-panel" id="panel-rust" role="tabpanel" aria-labelledby="tab-rust" hidden>
@@ -403,8 +406,9 @@ delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</
     <div class="section-head">
       <span class="eyebrow">ISO 8000-8 &middot; ISO/IEC 25012</span>
       <h2>A quality model you can point an auditor at</h2>
-      <p>Every profile scores data against the five dimensions defined by the international
-        data-quality standards, weighted into a single 0&ndash;100 score.</p>
+      <p>When quality analysis is requested, dataprof assesses up to seven dimensions
+        informed by international data-quality standards. Its configurable aggregate
+        score uses only the dimensions the data could actually support.</p>
     </div>
     <div class="dims">
       <article class="card dim">
@@ -426,6 +430,14 @@ delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</
       <article class="card dim">
         <h3>Timeliness</h3>
         <p>Future dates, stale-data ratio, temporal ordering violations.</p>
+      </article>
+      <article class="card dim">
+        <h3>Validity</h3>
+        <p>Conformance to confidently detected semantic patterns, with weak evidence left unassessed.</p>
+      </article>
+      <article class="card dim">
+        <h3>Precision</h3>
+        <p>Consistency of observed decimal scale within floating-point columns.</p>
       </article>
     </div>
   </section>
@@ -470,7 +482,7 @@ delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</
   <section id="research" class="block wrap">
     <div class="section-head">
       <span class="eyebrow">Academic work</span>
-      <h2>Peer-reviewed performance claims</h2>
+      <h2>A reproducible performance study</h2>
     </div>
     <div class="card paper-card">
       <p>dataprof is the subject of a paper submitted to <strong>IEEE ScalCom 2026</strong>,
@@ -505,9 +517,9 @@ delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</
     <span>dataprof &mdash; dual-licensed MIT or Apache-2.0</span>
     <span class="spacer"></span>
     <a href="https://github.com/AndreaBozzo/dataprof">GitHub</a>
-    <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/getting-started.md">Getting started</a>
-    <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/CHANGELOG.md">Changelog</a>
-    <a href="https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md">Contributing</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md">Getting started</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md">Contributing</a>
     <a href="benchmarks/">Benchmarks</a>
   </div>
 </footer>

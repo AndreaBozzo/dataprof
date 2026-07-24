@@ -24,7 +24,7 @@ uv pip install dataprof
 # or: pip install dataprof
 
 # Rust library -- add to Cargo.toml
-# dataprof = "0.9"
+# dataprof = "0.10"
 ```
 
 The published Python wheels cover the base package API for local files, DataFrames, and Arrow objects. If you need async URL profiling or database helpers, build the extension from source with the corresponding Rust features.
@@ -102,7 +102,10 @@ Measures how much data is present vs. missing.
 The completeness score is on the same 0–100 scale as the other dimensions. It
 combines cell completeness (`100 - missing_values_ratio`) and row completeness
 (`complete_records_ratio`), so inspect both underlying values when setting a
-quality gate.
+quality gate. `complete_records_ratio` is deliberately strict: every column is
+treated as required, so one sparse optional field can drive it to zero. Inspect
+`missing_values_ratio` and `null_columns` beside it; a richer optional-column
+policy is tracked in [#436](https://github.com/AndreaBozzo/dataprof/issues/436).
 
 ### Consistency
 
@@ -301,12 +304,17 @@ report = await dp.analyze_database_async(
 ### Rust
 
 ```rust
-use dataprof::{Profiler, DatabaseConfig};
+use dataprof::Profiler;
 
-let report = Profiler::new()
-    .connection_string("postgres://user:pass@localhost/mydb")
-    .analyze_query("SELECT * FROM users")
-    .await?;
+async fn profile_users() -> Result<(), dataprof::DataProfilerError> {
+    let report = Profiler::new()
+        .connection_string("postgres://user:pass@localhost/mydb")
+        .analyze_query("SELECT * FROM users")
+        .await?;
+
+    println!("Profiled {} rows", report.execution.rows_processed);
+    Ok(())
+}
 ```
 
 See the [Database Connectors Guide](database-connectors.md) for connection strings, SSL, retry configuration, and more.

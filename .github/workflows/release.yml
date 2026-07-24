@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
-      changelog: ${{ steps.changelog.outputs.changelog }}
     steps:
     - uses: actions/checkout@v7.0.1
       with:
@@ -36,6 +35,48 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Tag: $TAG, Version: $VERSION"
 
+    - name: Install Rust 1.96 for release metadata validation
+      uses: dtolnay/rust-toolchain@1.96
+
+    - name: Validate tag and release metadata
+      env:
+        VERSION: ${{ steps.tag.outputs.version }}
+      run: |
+        mapfile -t WORKSPACE_VERSIONS < <(
+          cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[].version' |
+            sort -u
+        )
+
+        if [ "${#WORKSPACE_VERSIONS[@]}" -ne 1 ] ||
+           [ "${WORKSPACE_VERSIONS[0]}" != "$VERSION" ]; then
+          echo "::error::Tag v$VERSION does not match every workspace package version."
+          printf 'Workspace versions: %s\n' "${WORKSPACE_VERSIONS[*]}"
+          exit 1
+        fi
+
+        START_COUNT=$(grep -c '^<!-- release-body:start -->$' docs/release-notes.md || true)
+        END_COUNT=$(grep -c '^<!-- release-body:end -->$' docs/release-notes.md || true)
+        if [ "$START_COUNT" -ne 1 ] || [ "$END_COUNT" -ne 1 ]; then
+          echo "::error::docs/release-notes.md must contain one release-body marker pair."
+          exit 1
+        fi
+
+        if ! grep -Fq "# dataprof $VERSION " docs/release-notes.md; then
+          echo "::error::Release-note title does not match v$VERSION."
+          exit 1
+        fi
+
+        NARRATIVE=$(awk '
+          /^<!-- release-body:start -->$/ { capture = 1; next }
+          /^<!-- release-body:end -->$/ { capture = 0; next }
+          capture { print }
+        ' docs/release-notes.md)
+        if [ -z "${NARRATIVE//[[:space:]]/}" ]; then
+          echo "::error::The marked release narrative is empty."
+          exit 1
+        fi
+
     - name: Generate changelog with git-cliff
       id: git-cliff
       uses: orhun/git-cliff-action@v4
@@ -46,63 +87,56 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build release notes
-      id: changelog
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         CLIFF_OUTPUT: ${{ steps.git-cliff.outputs.content }}
       run: |
         TAG="${{ steps.tag.outputs.tag }}"
         VERSION="${{ steps.tag.outputs.version }}"
 
-        echo "git-cliff content:"
-        echo "$CLIFF_OUTPUT"
-
-        # Use git-cliff output or fallback
-        if [ -z "$CLIFF_OUTPUT" ]; then
-          CLIFF_OUTPUT="- Various improvements and bug fixes"
+        if [ -z "${CLIFF_OUTPUT//[[:space:]]/}" ]; then
+          echo "::error::git-cliff produced an empty changelog."
+          exit 1
         fi
 
-        # Build release notes file
+        NARRATIVE=$(awk '
+          /^<!-- release-body:start -->$/ { capture = 1; next }
+          /^<!-- release-body:end -->$/ { capture = 0; next }
+          capture { print }
+        ' docs/release-notes.md)
+
+        # Nest git-cliff's version/category headings under "Full changelog".
+        CLIFF_OUTPUT=$(printf '%s\n' "$CLIFF_OUTPUT" |
+          sed -e 's/^### /#### /' -e 's/^## /### /')
+
         {
-          echo "## What's Changed"
+          printf '%s\n' "$NARRATIVE"
           echo ""
-          echo "$CLIFF_OUTPUT"
+          echo "## Full changelog"
           echo ""
-          echo "## Assets"
+          printf '%s\n' "$CLIFF_OUTPUT"
           echo ""
-          echo "### Python Packages"
+          echo "## Release artifacts"
+          echo ""
+          echo "### Python"
           echo "- **PyPI**: \`pip install dataprof==$VERSION\`"
           echo "- **GitHub Releases**: Baseline and optimized wheels are attached as release assets"
           echo ""
-          echo "### Source Archives"
+          echo "### Source"
           echo "- GitHub automatically attaches source \`.tar.gz\` and \`.zip\` archives for this tag"
           echo ""
-          echo "### Rust Status"
+          echo "### Rust"
           echo "- **Crates.io**: \`cargo add dataprof@$VERSION\`"
           echo "- The published \`dataprof\` crate is the stable Rust facade for profiling files, streams, tables, and database queries."
           echo "- Internal workspace crates are published so the facade can depend on versioned packages."
           echo "- This release ships libraries and Python packages; a CLI binary is not part of the release surface."
           echo ""
-          echo "## Installation"
-          echo ""
-          echo "\`\`\`bash"
-          echo "# Python package"
-          echo "pip install dataprof==$VERSION"
-          echo ""
-          echo "# Rust library"
-          echo "cargo add dataprof@$VERSION"
-          echo "\`\`\`"
-          echo ""
           echo "---"
           echo ""
-          echo "**Full changelog**: [CHANGELOG.md](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CHANGELOG.md)"
-          echo ""
-          echo "**Release notes and migration guide**: [release-notes.md](https://github.com/AndreaBozzo/dataprof/blob/master/docs/release-notes.md)"
+          echo "**Versioned documents**: [full changelog](https://github.com/AndreaBozzo/dataprof/blob/$TAG/docs/CHANGELOG.md) · [release notes and migration guide](https://github.com/AndreaBozzo/dataprof/blob/$TAG/docs/release-notes.md)"
         } > release_notes.md
 
-        echo "changelog<<EOF" >> $GITHUB_OUTPUT
-        cat release_notes.md >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        echo "Release body preview:"
+        cat release_notes.md
 
     - name: Create GitHub Release
       run: |

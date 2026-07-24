@@ -10,7 +10,7 @@
   [![PyPI](https://img.shields.io/pypi/v/dataprof.svg)](https://pypi.org/project/dataprof/)
   [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-  [Website](https://andreabozzo.github.io/dataprof/) · [Live benchmarks](https://andreabozzo.github.io/dataprof/benchmarks/) · [Getting started](docs/guides/getting-started.md)
+  [Website](https://andreabozzo.github.io/dataprof/) · [Live benchmarks](https://andreabozzo.github.io/dataprof/benchmarks/) · [Getting started](docs/guides/getting-started.md) · [0.10.0 release notes](docs/release-notes.md)
 
 </div>
 
@@ -129,8 +129,8 @@ two quality metrics that surprise people.
 
 ```toml
 [dependencies]
-dataprof = "0.9"
-# or: dataprof = { version = "0.9", default-features = false }
+dataprof = "0.10"
+# or: dataprof = { version = "0.10", default-features = false }
 ```
 
 Minimum supported Rust version: 1.96.
@@ -224,6 +224,7 @@ certified by ISO. Rust callers can customize the relative weights through
 ### Understand it
 
 - [Crate Redesign Notes](docs/architecture/crate-redesign.md) -- what the facade owns and why the workspace is split this way
+- [0.10.0 Release Notes](docs/release-notes.md) -- upgrade checklist, migration details, and known limitations
 - [Contributing](docs/CONTRIBUTING.md)
 - [Changelog](docs/CHANGELOG.md)
 
@@ -233,7 +234,7 @@ certified by ISO. Rust callers can customize the relative weights through
 
 ## Academic Work
 
-dataprof is the subject of a peer-reviewed paper submitted to **IEEE ScalCom 2026**:
+dataprof is the subject of a research paper submitted to **IEEE ScalCom 2026**:
 
 > A. Bozzo, "A Compiled Paradigm for Scalable and Sustainable Edge AI: Out-of-Core Execution and SIMD Acceleration in Telemetry Profiling," *IEEE ScalCom 2026* (under review).
 > [[Repository & reproducible benchmarks]](https://github.com/AndreaBozzo/scalcom2026-dataprof)

@@ -85,6 +85,9 @@ Two results surprise people, so both examples call them out explicitly:
 
 - **`completeness` scores complete *records***, not populated cells. A file where
   22% of cells are missing can score 0 if almost every row is missing something.
+  Optional-column semantics are tracked in
+  [#436](https://github.com/AndreaBozzo/dataprof/issues/436); inspect
+  `missing_values_ratio` and `null_columns` beside the strict record ratio.
 - **`null_columns` lists columns past the null threshold** (50% by default), not
   only columns that are entirely null.
 

@@ -1,6 +1,72 @@
-# Unreleased
+# dataprof 0.10.0 — Profiles that tell the truth
 
-## Security auditing covers every published feature graph
+<!-- release-body:start -->
+
+0.10.0 is a correctness-and-control release. Its theme is simple: a profiling
+option must take effect, damaged input must leave evidence, and a score must
+describe only what dataprof actually assessed. That sounds obvious; the
+pre-release dogfooding pass found several places where different engines,
+transports, or bindings had drifted away from that contract.
+
+This release makes sampling real across every supported path, forwards resource
+controls to the engines that use them, closes major parser gaps across
+file/bytes/async inputs, adds Validity and Precision to the quality model, and
+replaces vacuous-perfect dimension scores with assessed-only aggregation.
+Reports also gain stronger execution provenance, exact semantic-hint binding
+evidence, discoverable build capabilities, and clearer errors.
+
+The result is intentionally more honest, even where honesty changes a number or
+turns a formerly accepted call into an error.
+
+## Install
+
+```bash
+# Python
+pip install --upgrade dataprof==0.10.0
+
+# Rust
+cargo add dataprof@0.10.0
+```
+
+Python 3.10+ and Rust 1.96+ remain the supported minimums. dataprof 0.10.0 ships
+libraries and Python packages; there is no CLI binary.
+
+## Upgrade checklist
+
+| If you rely on… | What changed | What to do |
+| --- | --- | --- |
+| `quality_score` thresholds | The aggregate now scores only assessed dimensions, includes every sub-metric, and has seven default dimension weights. An unassessable report returns `None` in Python/Rust report helpers instead of a fabricated 100. | Re-run representative profiles and re-baseline every quality gate. Inspect `assessed_dimensions()` and the underlying facts beside the aggregate. |
+| `SamplingStrategy.importance(...)` | The signature is now `importance(weight_column, weight_threshold)`. Sampling is actually applied on supported CSV/async paths; unsupported readers reject it instead of profiling everything. | Name the numeric weight column explicitly and handle `ValueError` for unsupported source/engine combinations. |
+| `chunk_size` or `memory_limit_mb` | `chunk_size` consistently means bytes, and both controls now reach the engines that document them. | Remove any row-based interpretation of `chunk_size`; choose it as an I/O/memory granularity. |
+| broad `except RuntimeError` blocks | Missing files, invalid input/configuration, permissions, and I/O now map to idiomatic Python exceptions. Malformed CSV and JSON both raise `ValueError` in strict paths. | Catch `FileNotFoundError`, `ValueError`, `PermissionError`, or `OSError` as appropriate. |
+| semantic hints | Unknown or provably inert `positive_columns` / `temporal_columns` hints now raise instead of disappearing silently. | Correct stale column names and request the Quality metric pack when using value-driven hints. |
+| direct Rust metrics methods | `MetricsCalculator::calculate_{comprehensive,bifurcated}_metrics_with_positive_columns` gained `row_duplicates: Option<RowDuplicateSummary>`. | Pass `None` to keep the previous behavior, or provide the engine's row-duplicate summary. |
+
+## Release highlights
+
+- **Sampling is deterministic and stateful.** Fixed-size strategies hold the
+  final sample; progressive sampling measures the data; multi-stage composition
+  is validated before a scan begins.
+- **Execution metadata is internally consistent.** Hard row caps are exact,
+  fully consumed sources are exhausted, byte counts include syntax, and ragged
+  CSV recovery is visible.
+- **The hardened parser paths agree across transports.** Truncated JSONL
+  records, malformed JSON arrays, async delimiters, and malformed CSV now follow
+  explicit strict/tolerant policies. Remaining JSONL boundary choices are listed
+  under known limitations.
+- **Quality scores explain their denominator.** Validity and Precision bring the
+  model to seven dimensions, configurable weights renormalize over assessed
+  dimensions, and full-stream duplicate tracking feeds uniqueness.
+- **Errors and capabilities are usable API surfaces.** Callers can discover what
+  the installed build supports and handle failures by category without parsing
+  generic runtime strings.
+
+The sections below contain the migration details and the reasoning behind each
+compatibility-sensitive change.
+
+## Security and dependency integrity
+
+### Security auditing covers every published feature graph
 
 `cargo deny` ran against the default build only. Optional features are still
 published features — the database connectors pull in the whole SQLx client
@@ -18,7 +84,7 @@ Dependency updates that came with it:
   (excessive allocation size). No API changes were required.
 - `rand` 0.8.5 → 0.8.7 (transitive, via SQLx), clearing
   [GHSA-cq8v-f236-94qc](https://github.com/advisories/GHSA-cq8v-f236-94qc).
-- `spin` 0.9.8 → 0.9.9, which was a yanked release.
+- `spin` 0.9.8 → 0.9.9, replacing the yanked 0.9.8 release.
 - `Pygments` 2.19.2 → 2.20.0 in the Python environment, clearing
   [GHSA-5239-wwwm-4pmq](https://github.com/advisories/GHSA-5239-wwwm-4pmq).
   Dependabot was not watching the Python dependencies at all, so nothing would
@@ -34,7 +100,9 @@ and the code path is skipped entirely over TLS, which is how dataprof builds
 SQLx. No fixed release of `rsa` exists. The disposition is recorded in both
 `deny.toml` and `.cargo/audit.toml`, so `cargo deny` and `cargo audit` agree.
 
-## Sampling strategies actually sample
+## Execution controls that hold
+
+### Sampling strategies actually sample
 
 `sampling=` was undependable across engines and inputs. The documented default
 call, `dp.profile(path, sampling=...)`, dropped the strategy and profiled
@@ -95,7 +163,7 @@ Note that sampling bounds the cost of *analysis*, not of reading: a uniform
 sample requires seeing the whole source. Pair it with a `StopCondition` to bound
 I/O.
 
-## Execution controls take effect, and execution metadata tells the truth
+### Execution controls take effect, and execution metadata tells the truth
 
 `chunk_size` and `memory_limit_mb` were accepted and then dropped on the paths
 that document them, so a resource control could be silently ineffective. Both
@@ -150,7 +218,9 @@ are now covered by invariant tests on both the sync and async paths — a
 truncated scan is exactly a non-exhausted one, and an exhausted scan accounts
 for every byte of its source.
 
-## Ragged CSV rows leave a signal instead of vanishing
+## Parser behavior aligned across hardened paths
+
+### Ragged CSV rows leave a signal instead of vanishing
 
 A CSV row whose field count differs from the header — extra trailing fields, or
 missing ones — is still recovered (extra fields dropped, missing fields padded
@@ -186,7 +256,7 @@ structurally broken; the gap is tracked in
 
 Ragged rows do not yet influence the consistency dimension's score.
 
-## Truncated JSONL records are never a clean EOF
+### Truncated JSONL records are never a clean EOF
 
 An incomplete final JSONL object was silently discarded on file and async
 inputs because `serde_json` classifies both a clean end of input and a partial
@@ -196,7 +266,7 @@ distinguish an empty or whitespace-only remainder from a value that started but
 did not finish. Tolerant mode skips and counts the partial record; strict mode
 raises `ValueError`, matching synchronous bytes input.
 
-## Async CSV detects its delimiter instead of assuming a comma
+### Async CSV detects its delimiter instead of assuming a comma
 
 `csv_delimiter` was accepted and ignored on every async path, which always
 parsed on commas. A semicolon- or tab-separated stream therefore collapsed into
@@ -206,7 +276,7 @@ the stream using the same sample size and scoring as the file path — so the sa
 bytes yield the same columns whether they are read from disk, from memory, or
 off a URL.
 
-## Streaming JSON arrays enforce their container grammar
+### Streaming JSON arrays enforce their container grammar
 
 The file and async JSON readers streamed each array value correctly but treated
 commas as optional whitespace and stopped at either `]` or EOF. Missing,
@@ -217,7 +287,7 @@ closing bracket and trailing input. Tolerant mode retains a valid prefix but
 increments `error_count`; strict mode raises `ValueError`. A scan intentionally
 bounded by `max_rows` still does not validate values it did not read.
 
-## Malformed CSV raises `ValueError`, like malformed JSON
+### Malformed CSV raises `ValueError`, like malformed JSON
 
 A CSV parse failure reached Python as a `RuntimeError` while the equivalent JSON
 failure raised `ValueError`, so callers could not catch bad input as one
@@ -229,7 +299,9 @@ auto engine used to retry the file under its fallback parser and report
 means opting out of recovery, so the original error — naming the row and the
 expected field count — is returned directly.
 
-## Locale patterns require locale evidence before becoming report claims
+## Reports that explain what was assessed
+
+### Locale patterns require locale evidence before becoming report claims
 
 Ambiguous locale-specific shapes remain available in each column's detailed
 `patterns` evidence, but no longer appear as a top pattern in text, Markdown,
@@ -247,7 +319,7 @@ returned when its semantic validator rejects every regex match, and such a
 candidate cannot suppress another pattern during overlap resolution. This
 resolves [#429](https://github.com/AndreaBozzo/dataprof/issues/429).
 
-## Errors preserve source context and map to idiomatic Python exceptions
+### Errors preserve source context and map to idiomatic Python exceptions
 
 Failure diagnostics are now consistent about what failed, where, and what to do
 next. This is **compatibility-sensitive**: error messages and, on the Python
@@ -275,7 +347,7 @@ side, exception *types* have changed.
   instead of wrapping every failure in a generic `RuntimeError`. `except
   RuntimeError:` blocks that relied on the old behavior need updating.
 
-## Installed capabilities are discoverable
+### Installed capabilities are discoverable
 
 `dataprof.capabilities()` returns an immutable snapshot of the current build:
 local formats, compiled pandas/polars/Arrow interoperability, installed optional
@@ -284,7 +356,7 @@ availability, compiled connectors, and the package version. Discovery imports
 no heavyweight optional dependency and performs no file, database, or network
 operation.
 
-## Validity and Precision join the quality model
+### Validity and Precision join the quality model
 
 Two new selectively requestable dimensions are available in Rust and Python:
 
@@ -302,7 +374,7 @@ consistency, 0.15 uniqueness, 0.15 accuracy, 0.10 timeliness, 0.10 validity,
 and 0.05 precision. Re-baseline aggregate-score gates; underlying facts remain
 individually inspectable.
 
-## Quality score weights are configurable
+### Quality score weights are configurable
 
 The overall score's relative dimension weights now live in
 `IsoQualityConfig::score_weights`. `MetricsCalculator::with_thresholds(...)`
@@ -314,7 +386,7 @@ The documentation now describes ISO 8000 and ISO/IEC 25012 as sources for the
 quality-dimension concepts. Dataprof's aggregate score and its weights are a
 configurable project formula, not an ISO-mandated or certified score.
 
-## The quality score now only scores what was actually assessed
+### The quality score now only scores what was actually assessed
 
 **`quality_score` changes value for almost every dataset.** The facts
 (per-dimension counts and ratios) are unchanged; how they aggregate is not.
@@ -366,7 +438,7 @@ dimensions drop the most. At that stage the five-dimension weights remained
 subsequently expands and rebalances them. The formula remains dataprof's own,
 not an ISO-mandated one.
 
-## Duplicate rows are now counted over the full stream
+### Duplicate rows are now counted over the full stream
 
 The CSV, JSON, and streaming engines track row identity while they read:
 every record's fields fold into a length-prefixed signature fed to the same
@@ -388,7 +460,7 @@ exact-then-HLL distinct estimator that backs `unique_count`. As a result:
 gained a `row_duplicates: Option<RowDuplicateSummary>` parameter; pass `None`
 to keep the previous behavior.
 
-## Semantic hints are validated, not silently dropped
+### Semantic hints are validated, not silently dropped
 
 A semantic hint (`positive_columns`, `identifier_columns`, `temporal_columns`)
 is the user's chosen alternative to overconfident inference, so a hint that
@@ -414,9 +486,33 @@ outside the retained sample. Supplying `positive_columns` or
 those hints would have no consumer; `identifier_columns` remains usable because
 it affects column typing. The field is additive; older readers ignore it.
 
+## Known limitations carried into 0.11.0
+
+The dogfooding pass also found issues that need an explicit product decision or
+larger implementation change. They are documented and scheduled rather than
+hidden in 0.10:
+
+- The columnar CSV engine can pad a short row without incrementing
+  `ragged_row_count`; the default incremental engine reports it correctly
+  ([#470](https://github.com/AndreaBozzo/dataprof/issues/470)).
+- JSON and JSONL still need one cross-transport contract for zero-field records,
+  source field order, and physical record boundaries
+  ([#463](https://github.com/AndreaBozzo/dataprof/issues/463),
+  [#465](https://github.com/AndreaBozzo/dataprof/issues/465),
+  [#486](https://github.com/AndreaBozzo/dataprof/issues/486)).
+- Python Parquet byte buffers still require the pandas extra even though local
+  Parquet files work in the dependency-free wheel
+  ([#461](https://github.com/AndreaBozzo/dataprof/issues/461)).
+- A sparse optional column can make strict all-column
+  `complete_records_ratio` unhelpful; inspect cell completeness and the named
+  null-heavy columns alongside it
+  ([#436](https://github.com/AndreaBozzo/dataprof/issues/436)).
+
+<!-- release-body:end -->
+
 ---
 
-# DataProf 0.9.0 — Release Notes
+# dataprof 0.9.0 — Release Notes
 
 0.9.0 focuses on the Python surface: a report object that behaves like a report
 object, a first-class path for handing profiles to LLM agents, and a correctness
