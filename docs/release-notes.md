@@ -1,5 +1,39 @@
 # Unreleased
 
+## Security auditing covers every published feature graph
+
+`cargo deny` ran against the default build only. Optional features are still
+published features — the database connectors pull in the whole SQLx client
+stack, and the async and Parquet features pull in a TLS stack — so CI reported
+green while a shipped feature graph carried an advisory nobody had reviewed. The
+security workflow now audits both the default and the complete feature graph,
+and the two disagreed on more than advisories: the licence check had also never
+seen `ISC` or `CDLA-Permissive-2.0`, both reached only through the TLS stack and
+both permissive. They are now explicitly allowed.
+
+Dependency updates that came with it:
+
+- `arrow` and `parquet` 58 → 59, which removes the `thrift` dependency entirely
+  and with it [GHSA-2f9f-gq7v-9h6m](https://github.com/advisories/GHSA-2f9f-gq7v-9h6m)
+  (excessive allocation size). No API changes were required.
+- `rand` 0.8.5 → 0.8.7 (transitive, via SQLx), clearing
+  [GHSA-cq8v-f236-94qc](https://github.com/advisories/GHSA-cq8v-f236-94qc).
+- `spin` 0.9.8 → 0.9.9, which was a yanked release.
+- `Pygments` 2.19.2 → 2.20.0 in the Python environment, clearing
+  [GHSA-5239-wwwm-4pmq](https://github.com/advisories/GHSA-5239-wwwm-4pmq).
+  Dependabot was not watching the Python dependencies at all, so nothing would
+  have proposed this; it now covers `uv.lock` alongside Cargo and Actions.
+
+**RUSTSEC-2023-0071 (Marvin attack in `rsa`) is recorded as not applicable**,
+with the reasoning and a review date in
+[docs/SECURITY.md](SECURITY.md#accepted-advisories). In short: dataprof reaches
+`rsa` only through `sqlx-mysql`, whose sole use of it encrypts a password with
+the *server's* public key. It never performs a private-key operation and holds
+no private key, so there is nothing for a private-key timing attack to target —
+and the code path is skipped entirely over TLS, which is how dataprof builds
+SQLx. No fixed release of `rsa` exists. The disposition is recorded in both
+`deny.toml` and `.cargo/audit.toml`, so `cargo deny` and `cargo audit` agree.
+
 ## Sampling strategies actually sample
 
 `sampling=` was undependable across engines and inputs. The documented default

@@ -12,6 +12,20 @@ updates:
       prefix: "deps"
       include: "scope"
 
+  # Python dependencies (uv.lock). Without this nothing watched the Python
+  # environment, so an advisory against a transitive dev dependency stayed open
+  # with no update path — the gap that left Pygments unpatched (#464).
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
