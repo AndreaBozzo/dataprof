@@ -105,13 +105,35 @@ report = dp.profile(table)
 import dataprof as dp
 from dataprof import SamplingStrategy
 
-# Reservoir sampling: statistically representative subset
+# A uniform random sample of exactly 50,000 rows.
+# Holds 50,000 rows in memory: the sample is not settled until the file ends.
 report = dp.profile("huge.csv", sampling=SamplingStrategy.reservoir(50000))
 print(f"Sampled {report.rows} rows, sampling_ratio: {report.sampling_ratio}")
 
-# Systematic: every 10th row
+# Systematic: every 10th row. Decided per row, so no extra memory.
 report = dp.profile("huge.csv", sampling=SamplingStrategy.systematic(10))
+
+# Stratified: up to 1,000 rows per region, however many regions there are.
+report = dp.profile("huge.csv", sampling=SamplingStrategy.stratified(["region"], 1000))
+
+# Importance: only the rows you nominate as worth profiling.
+report = dp.profile("huge.csv", sampling=SamplingStrategy.importance("risk_score", 0.9))
+
+# Progressive: grow the sample until each numeric mean is within 1% of itself,
+# between 1,000 and 100,000 rows.
+report = dp.profile("huge.csv", sampling=SamplingStrategy.progressive(1000, 0.99, 100000))
+
+# Multi-stage: filters first, then one fixed-size stage.
+report = dp.profile(
+    "huge.csv",
+    sampling=SamplingStrategy.multi_stage(
+        [SamplingStrategy.systematic(10), SamplingStrategy.reservoir(50000)]
+    ),
+)
 ```
+
+Sampling limits how much data is **analyzed**, not how much is **read**: pair it
+with a `StopCondition` to bound I/O as well.
 
 ### Early termination with stop conditions
 

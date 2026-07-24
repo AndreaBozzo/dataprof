@@ -112,6 +112,31 @@ impl ReservoirSampler {
         self.stats.skip_count += skip;
     }
 
+    /// Which reservoir slot row number `seen` should replace, if any.
+    ///
+    /// Algorithm R over a full reservoir: the `seen`-th row of the stream
+    /// (1-based) replaces a uniformly chosen member with probability
+    /// `capacity / seen`, which leaves every row seen so far equally likely to
+    /// be in the sample. Returns `None` when the row is not selected.
+    ///
+    /// This is the primitive for sampling *rows*; [`process_record`] tracks
+    /// indices only and is kept for callers that sample by position.
+    ///
+    /// [`process_record`]: Self::process_record
+    pub fn replacement_slot(&mut self, seen: usize) -> Option<usize> {
+        if self.capacity == 0 || seen <= self.capacity {
+            return None;
+        }
+        self.total_processed = seen;
+        let draw = self.rng.random_range(0..seen);
+        if draw < self.capacity {
+            self.stats.replacement_count += 1;
+            Some(draw)
+        } else {
+            None
+        }
+    }
+
     /// Get current sample as a vector of indices
     pub fn get_sample_indices(&self) -> &[usize] {
         &self.reservoir

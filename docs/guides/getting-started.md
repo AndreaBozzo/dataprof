@@ -204,12 +204,13 @@ For very large files, you don't always need to read every row. dataprof provides
 
 ### Sampling
 
-Read a representative subset:
+Profile a representative subset instead of every row:
 
 ```python
-# Python: reservoir sampling (statistically representative)
+# Python: a uniform random sample of 100,000 rows
 from dataprof import SamplingStrategy
 report = dp.profile("huge.csv", sampling=SamplingStrategy.reservoir(100000))
+print(report.rows, report.sampling_applied, report.sampling_ratio)
 ```
 
 ```rust
@@ -219,6 +220,16 @@ let report = Profiler::new()
     .sampling(SamplingStrategy::Reservoir { size: 100_000 })
     .analyze_file("huge.csv")?;
 ```
+
+Sampling bounds the cost of **analysis**, not of reading. A uniform sample can
+only be drawn once the source has been seen to the end, so the file is still
+read in full and `reservoir(n)` holds `n` rows in memory. To read less, use a
+[stop condition](#stop-conditions) — the two compose.
+
+Sampling applies to CSV sources on the `auto` and `incremental` engines and to
+every `dataprof.asyncio` entry point. The columnar engine and the JSON and
+Parquet readers cannot sample row by row, so they raise rather than quietly
+returning a full profile.
 
 ### Stop Conditions
 

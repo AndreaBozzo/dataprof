@@ -68,7 +68,12 @@ impl PySamplingStrategy {
         })
     }
 
-    /// Progressive sampling — increases sample size until confidence is reached.
+    /// Progressive sampling — grows the sample until every numeric column's
+    /// mean is precise enough.
+    ///
+    /// `confidence_level` sets a target relative standard error of
+    /// `1 - confidence_level`; at 0.95 sampling stops once each numeric mean is
+    /// within 5% of itself. Bounded by `initial_size` and `max_size`.
     #[staticmethod]
     #[pyo3(signature = (initial_size, confidence_level=0.95, max_size=100_000))]
     fn progressive(initial_size: usize, confidence_level: f64, max_size: usize) -> PyResult<Self> {
@@ -103,16 +108,25 @@ impl PySamplingStrategy {
         })
     }
 
-    /// Importance sampling for anomaly detection.
+    /// Keep rows whose `weight_column` holds a number at or above the threshold.
+    ///
+    /// The caller states what matters — there is no built-in notion of an
+    /// important row. Rows where the column is missing or non-numeric are
+    /// excluded. This is a filter, so the profile describes the rows that met
+    /// the threshold, not the source as a whole.
     #[staticmethod]
-    fn importance(weight_threshold: f64) -> PyResult<Self> {
-        if !(0.0..=1.0).contains(&weight_threshold) {
-            return Err(PyValueError::new_err(
-                "weight_threshold must be between 0.0 and 1.0",
-            ));
+    fn importance(weight_column: String, weight_threshold: f64) -> PyResult<Self> {
+        if weight_column.is_empty() {
+            return Err(PyValueError::new_err("weight_column must not be empty"));
+        }
+        if !weight_threshold.is_finite() {
+            return Err(PyValueError::new_err("weight_threshold must be finite"));
         }
         Ok(Self {
-            inner: SamplingStrategy::Importance { weight_threshold },
+            inner: SamplingStrategy::Importance {
+                weight_column,
+                weight_threshold,
+            },
         })
     }
 

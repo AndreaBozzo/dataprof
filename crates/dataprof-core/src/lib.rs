@@ -41,8 +41,8 @@ pub use profile::{
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{MetricPack, QualityDimension};
 pub use sampling::{
-    ChunkSize, MultiReservoirSampler, ReservoirSampler, ReservoirStats, SamplingState,
-    SamplingStrategy, WeightedReservoirSampler,
+    ChunkSize, MultiReservoirSampler, ReservoirSampler, ReservoirStats, RowSampler, RowView,
+    SamplingState, SamplingStrategy, WeightedReservoirSampler,
 };
 pub use semantic::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 pub use source::{

@@ -1,5 +1,66 @@
 # Unreleased
 
+## Sampling strategies actually sample
+
+`sampling=` was undependable across engines and inputs. The documented default
+call, `dp.profile(path, sampling=...)`, dropped the strategy and profiled
+everything; forcing the incremental or async engine returned all rows, no rows,
+or an arbitrary subset depending on which strategy was chosen. The cause was
+that both engines asked a *stateless* helper about each row, which built fresh
+state every time and never passed the row's values — so stateful strategies
+behaved as if every row were the first, and row-aware ones could never match.
+
+Every strategy is now applied by one shared sampler that holds its state for the
+whole scan and can read the row it is deciding on.
+
+**Fixed-size samples are drawn at the end of the source.** Whether a row belongs
+in a uniform sample of *n* is not known until the stream ends — a row selected
+early can be evicted later — and streaming statistics cannot be retracted. So
+`random(n)` and `reservoir(n)` now hold their candidate rows and compute the
+profile from the surviving sample, at a cost of *n* rows of memory. They give
+the same guarantee (a uniform sample of exactly `n` rows, or the whole source if
+it is shorter); both names are kept because both are familiar. Every other
+strategy decides per row and adds no memory.
+
+**Two strategies were redefined, because their names promised more than their
+arithmetic delivered.**
+
+- `progressive(initial, confidence_level, max)` measured "confidence" as
+  `1 - 1/sqrt(n)`, which ignores the data entirely and cannot reach 0.95 below
+  400 rows — so for any smaller `max_size` the parameter did nothing and the
+  strategy just took `max_size` rows. It now measures the *relative standard
+  error* of each numeric column's mean and stops once every one is within
+  `1 - confidence_level` of its mean. Low-variance data stops early; volatile
+  data runs to `max_size`. A source with no numeric columns has no measurable
+  precision and samples `max_size` rows.
+- `importance(weight_threshold)` scored rows with a built-in heuristic under
+  which any complete row passed a threshold of 0.5, and applied no
+  inverse-probability correction. It now takes the column to weigh on:
+  `importance(weight_column, weight_threshold)` keeps rows whose value in that
+  column is a number at or above the threshold. **This is a breaking signature
+  change.** It is a filter, so the resulting profile describes the rows that met
+  the threshold, not the source as a whole.
+
+**Multi-stage composition is now defined.** Streaming stages act as filters in
+sequence, and at most one fixed-size stage may appear, last — it draws its
+sample from whatever the filters passed. Two fixed-size stages, or a filter
+after one, are refused before reading rather than silently dropping stages.
+
+**No path ignores the option any more.** `engine="auto"` routes a sampled CSV
+run to the engine that can honour it. The columnar engine, the JSON and Parquet
+readers, and synchronous bytes input raise instead of returning a full profile
+under a sampling request.
+
+`sampling_applied` and `sampling_ratio` now describe the rows that reached the
+profile, and a strategy that happened to keep every row no longer reports itself
+as sampling. Sampling also no longer marks a fully read source as unexhausted —
+that field answers whether the source ran out, which is what `truncation_reason`
+accompanies.
+
+Note that sampling bounds the cost of *analysis*, not of reading: a uniform
+sample requires seeing the whole source. Pair it with a `StopCondition` to bound
+I/O.
+
 ## Execution controls take effect, and execution metadata tells the truth
 
 `chunk_size` and `memory_limit_mb` were accepted and then dropped on the paths
