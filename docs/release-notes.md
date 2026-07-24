@@ -139,6 +139,12 @@ Byte caps remain chunk-boundary caps: `bytes_consumed` may exceed `MaxBytes` by
 at most one chunk, a bound the caller controls through `chunk_size`. Row caps
 have no such allowance.
 
+Python's `dataprof.asyncio.profile_bytes()` now preserves the buffer's known
+length in the async source metadata. Complete JSON and JSONL byte scans therefore
+report the exact input length in `bytes_consumed`, rather than an estimate
+derived from parsed values; bounded scans still report only the bytes they
+actually read.
+
 `rows_processed`, `bytes_consumed`, `source_exhausted` and `truncation_reason`
 are now covered by invariant tests on both the sync and async paths — a
 truncated scan is exactly a non-exhausted one, and an exhausted scan accounts
