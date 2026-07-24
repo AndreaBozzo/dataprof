@@ -21,6 +21,20 @@ struct ParsedChunk {
     bytes_read: u64,
 }
 
+/// Structural violations the blocking reader task observed while parsing.
+///
+/// Both counters describe what the *reader* saw, so an early-stopped scan
+/// reports the violations within the data it actually read.
+#[derive(Default)]
+struct ReaderOutcome {
+    /// Malformed JSON/JSONL records skipped under the tolerant policy
+    /// (always 0 for CSV, and in strict mode where the first one aborts).
+    malformed_records: usize,
+    /// CSV records whose field count differed from the header (always 0 for
+    /// JSON/JSONL, whose rows are aligned to the column set by construction).
+    ragged_rows: usize,
+}
+
 /// Async streaming profiler that accepts [`AsyncDataSource`] instead of file paths.
 ///
 /// Uses a bounded channel between a blocking CSV reader task and an async
@@ -46,7 +60,15 @@ pub struct AsyncStreamingProfiler {
     metric_packs: Option<Vec<MetricPack>>,
     semantic_hints: SemanticHints,
     json_error_policy: JsonErrorPolicy,
+    csv_flexible: bool,
+    csv_delimiter: Option<u8>,
 }
+
+/// Bytes sniffed from the head of a stream to detect its CSV delimiter.
+///
+/// Matches the file path's sample size so the same data yields the same
+/// delimiter whether it is read from disk or off a socket.
+const DELIMITER_SAMPLE_BYTES: u64 = 4096;
 
 impl AsyncStreamingProfiler {
     pub fn new() -> Self {
@@ -62,6 +84,8 @@ impl AsyncStreamingProfiler {
             metric_packs: None,
             semantic_hints: SemanticHints::default(),
             json_error_policy: JsonErrorPolicy::default(),
+            csv_flexible: true,
+            csv_delimiter: None,
         }
     }
 
@@ -117,6 +141,27 @@ impl AsyncStreamingProfiler {
         self
     }
 
+    /// Set how CSV records whose field count differs from the header are handled.
+    ///
+    /// `true` (default) recovers them — extra fields dropped, missing fields
+    /// padded to null — and counts every one in
+    /// [`ExecutionMetadata::ragged_row_count`], matching the incremental file
+    /// path. `false` rejects the first such record with a CSV parsing error.
+    pub fn csv_flexible(mut self, flexible: bool) -> Self {
+        self.csv_flexible = flexible;
+        self
+    }
+
+    /// Set the CSV field delimiter.
+    ///
+    /// When unset, it is detected from the head of the stream the same way the
+    /// file path detects it, so a semicolon- or tab-separated source profiles
+    /// identically over either transport.
+    pub fn csv_delimiter(mut self, delimiter: u8) -> Self {
+        self.csv_delimiter = Some(delimiter);
+        self
+    }
+
     /// Profile data from an async source, returning a [`ProfileReport`].
     ///
     /// Supports CSV, JSON, and JSONL formats. Parquet async support is tracked separately.
@@ -149,13 +194,21 @@ impl AsyncStreamingProfiler {
         let sync_reader = tokio_util::io::SyncIoBridge::new(reader);
 
         // Spawn the reader on a blocking thread — format determines the parser.
-        // The task reports how many malformed records were skipped (0 for CSV,
-        // and always 0 in strict JSON mode since the first one aborts).
+        // The task reports the structural violations it recovered from, so a
+        // report can never describe a repaired scan as a clean one.
         let json_error_policy = self.json_error_policy;
+        let csv_flexible = self.csv_flexible;
+        let csv_delimiter = self.csv_delimiter;
         let reader_handle = tokio::task::spawn_blocking(move || match format {
-            FileFormat::Csv => Self::reader_task(sync_reader, tx, rows_per_chunk).map(|()| 0usize),
+            FileFormat::Csv => {
+                Self::reader_task(sync_reader, tx, rows_per_chunk, csv_flexible, csv_delimiter)
+            }
             FileFormat::Json | FileFormat::Jsonl => {
                 Self::json_reader_task(sync_reader, tx, rows_per_chunk, format, json_error_policy)
+                    .map(|malformed_records| ReaderOutcome {
+                        malformed_records,
+                        ragged_rows: 0,
+                    })
             }
             _ => unreachable!(),
         });
@@ -179,12 +232,12 @@ impl AsyncStreamingProfiler {
             };
 
         // Wait for the reader task to finish and propagate any errors
-        let malformed_records = match reader_handle.await {
-            Ok(Ok(count)) => count,
+        let reader_outcome = match reader_handle.await {
+            Ok(Ok(outcome)) => outcome,
             Ok(Err(e)) => return Err(e),
             Err(join_err) if join_err.is_cancelled() => {
                 // We cancelled it ourselves — fine
-                0
+                ReaderOutcome::default()
             }
             Err(join_err) => {
                 return Err(DataProfilerError::StreamingError {
@@ -227,7 +280,10 @@ impl AsyncStreamingProfiler {
             .with_bytes_consumed(total_bytes)
             // Tolerant JSONL scans surface skipped malformed records so callers
             // can distinguish a partial profile from a clean one.
-            .with_error_count(malformed_records);
+            .with_error_count(reader_outcome.malformed_records)
+            // Ragged CSV records are recovered, never silently: the count is the
+            // same signal the incremental file path reports.
+            .with_ragged_row_count(reader_outcome.ragged_rows);
 
         if let Some(reason) = truncation_reason {
             execution = execution.with_truncation(reason);
@@ -248,35 +304,79 @@ impl AsyncStreamingProfiler {
         Ok(assembler.build())
     }
 
+    /// Map a `csv` crate error, pointing a strict-mode field-count failure at
+    /// the option that would have recovered it instead.
+    fn csv_error(err: &csv::Error, flexible: bool) -> DataProfilerError {
+        let suggestion = if !flexible && matches!(err.kind(), csv::ErrorKind::UnequalLengths { .. })
+        {
+            "Set csv_flexible=true to recover ragged rows; every recovered row is \
+             reported in execution.ragged_row_count."
+        } else {
+            "Check CSV formatting in the stream data"
+        };
+        DataProfilerError::CsvParsingError {
+            message: err.to_string(),
+            suggestion: suggestion.to_string(),
+        }
+    }
+
     /// Blocking reader task: uses the `csv` crate's RFC 4180-compliant parser
     /// over a `SyncIoBridge` to correctly handle quoted fields with embedded newlines.
+    ///
+    /// Records whose field count differs from the header are counted and
+    /// returned so the report can carry the structural signal; the alignment
+    /// itself (padding short rows, dropping extra fields) happens downstream in
+    /// `StreamingColumnCollection::process_record`, which keys on the header.
     fn reader_task(
         sync_reader: tokio_util::io::SyncIoBridge<
             std::pin::Pin<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
         >,
         tx: mpsc::Sender<ParsedChunk>,
         rows_per_chunk: usize,
-    ) -> Result<(), DataProfilerError> {
-        let mut csv_reader = csv::ReaderBuilder::new()
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(sync_reader);
+        flexible: bool,
+        delimiter: Option<u8>,
+    ) -> Result<ReaderOutcome, DataProfilerError> {
+        use std::io::Read;
+
+        let mut builder = csv::ReaderBuilder::new();
+        builder.has_headers(true).flexible(flexible);
+
+        // A stream cannot be rewound, so detection reads the head into memory
+        // and chains it back in front of the rest — the parser still sees the
+        // whole source, byte for byte.
+        let source: Box<dyn Read> = match delimiter {
+            Some(delimiter) => {
+                builder.delimiter(delimiter);
+                Box::new(sync_reader)
+            }
+            None => {
+                let mut preamble = Vec::new();
+                let mut head = sync_reader.take(DELIMITER_SAMPLE_BYTES);
+                head.read_to_end(&mut preamble)
+                    .map_err(DataProfilerError::from)?;
+                let detected =
+                    dataprof_csv::detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
+                builder.delimiter(detected);
+                Box::new(std::io::Cursor::new(preamble).chain(head.into_inner()))
+            }
+        };
+
+        let mut csv_reader = builder.from_reader(source);
 
         // Send headers as the first chunk
         let headers = csv_reader
             .headers()
-            .map_err(|e| DataProfilerError::CsvParsingError {
-                message: e.to_string(),
-                suggestion: "Check CSV formatting in the stream data".to_string(),
-            })?;
+            .map_err(|e| Self::csv_error(&e, flexible))?;
 
         let header_fields: Vec<String> = headers.iter().map(|f| f.to_string()).collect();
+        let header_len = header_fields.len();
         let header_chunk = ParsedChunk {
             records: vec![header_fields],
             bytes_read: 0,
         };
+        let mut outcome = ReaderOutcome::default();
         if tx.blocking_send(header_chunk).is_err() {
-            return Ok(());
+            return Ok(outcome);
         }
 
         // Read data records in chunks
@@ -284,10 +384,14 @@ impl AsyncStreamingProfiler {
         let mut bytes_in_chunk: u64 = 0;
 
         for result in csv_reader.records() {
-            let record = result.map_err(|e| DataProfilerError::CsvParsingError {
-                message: e.to_string(),
-                suggestion: "Check CSV formatting in the stream data".to_string(),
-            })?;
+            let record = result.map_err(|e| Self::csv_error(&e, flexible))?;
+
+            // A field count differing from the header is a structural violation.
+            // Counted here, before the row is queued, so the signal covers every
+            // record read rather than only the ones that survive sampling.
+            if record.len() != header_len {
+                outcome.ragged_rows += 1;
+            }
 
             bytes_in_chunk += record.as_slice().len() as u64 + 1;
             let fields: Vec<String> = record.iter().map(|f| f.to_string()).collect();
@@ -304,7 +408,7 @@ impl AsyncStreamingProfiler {
                 bytes_in_chunk = 0;
 
                 if tx.blocking_send(chunk).is_err() {
-                    return Ok(());
+                    return Ok(outcome);
                 }
             }
         }
@@ -318,7 +422,7 @@ impl AsyncStreamingProfiler {
             let _ = tx.blocking_send(chunk);
         }
 
-        Ok(())
+        Ok(outcome)
     }
 
     /// Blocking reader task for JSON/JSONL streams.
@@ -936,6 +1040,130 @@ mod tests {
             report.execution.truncation_reason,
             Some(TruncationReason::MaxRows(100))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_ragged_rows_are_counted() {
+        // Row 2 is short, row 3 is over-long: both differ from the 3-column
+        // header, both are recovered, and neither may vanish from the report.
+        let source =
+            csv_source(b"name,age,city\nAlice,25,NYC\nBob,30\nCarol,35,LA,EXTRA\nDave,40,SF\n");
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 4);
+        assert_eq!(
+            report.execution.ragged_row_count, 2,
+            "one short and one over-long row must both count as ragged"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_clean_reports_zero_ragged_rows() {
+        let source = csv_source(b"name,age,city\nAlice,25,NYC\nBob,30,LA\n");
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_strict_rejects_ragged_rows() {
+        let source = csv_source(b"a,b,c\n1,2,3\n4,5\n6,7,8,9\n");
+        let err = AsyncStreamingProfiler::new()
+            .csv_flexible(false)
+            .analyze_stream(source)
+            .await
+            .expect_err("strict mode must reject a ragged record");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("csv_flexible"),
+            "strict failure must name the recovering option: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_ragged_counted_across_chunk_boundaries() {
+        // Ragged rows are counted by the reader task, so the count must not
+        // depend on how the stream happens to be split into chunks.
+        let mut data = String::from("a,b,c\n");
+        for i in 0..500 {
+            if i % 100 == 0 {
+                data.push_str(&format!("{i},short\n"));
+            } else {
+                data.push_str(&format!("{i},{i},{i}\n"));
+            }
+        }
+
+        let source = BytesSource::new(
+            bytes::Bytes::from(data),
+            AsyncSourceInfo::new("chunked-ragged", FileFormat::Csv),
+        );
+        let report = AsyncStreamingProfiler::new()
+            .channel_capacity(1)
+            .chunk_size(ChunkSize::Fixed(5_000))
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 500);
+        assert_eq!(report.execution.ragged_row_count, 5);
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_detects_non_comma_delimiter() {
+        // Unset delimiter must be sniffed, not assumed: a semicolon file read
+        // as comma-separated collapses into one column and profiles as clean.
+        let source = csv_source(b"name;age;city\nAlice;25;NYC\nBob;30;LA\n");
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.column_profiles.len(), 3);
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_explicit_delimiter_is_honored() {
+        let source = csv_source(b"a|b\n1|2\n3|4\n");
+        let report = AsyncStreamingProfiler::new()
+            .csv_delimiter(b'|')
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.column_profiles.len(), 2);
+        assert_eq!(report.execution.rows_processed, 2);
+    }
+
+    #[tokio::test]
+    async fn test_async_csv_sniffing_keeps_every_row() {
+        // The sniffed head is chained back in front of the stream; a source
+        // longer than the sample must not lose the rows it was sniffed from.
+        let mut data = String::from("id\tvalue\n");
+        for i in 0..2_000 {
+            data.push_str(&format!("{i}\tvalue_{i}\n"));
+        }
+
+        let source = BytesSource::new(
+            bytes::Bytes::from(data),
+            AsyncSourceInfo::new("sniffed", FileFormat::Csv),
+        );
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.column_profiles.len(), 2);
+        assert_eq!(report.execution.rows_processed, 2_000);
     }
 
     fn jsonl_source(data: &'static [u8]) -> BytesSource {

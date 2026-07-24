@@ -330,6 +330,73 @@ async fn test_profiler_profile_url_csv() {
     server.join();
 }
 
+/// The delimiter is a property of the data, not of the transport: a
+/// semicolon-separated source must profile the same read from disk or off a
+/// stream. Previously the async reader always assumed a comma, collapsing such
+/// a source into a single column. #462.
+#[tokio::test]
+async fn test_async_delimiter_matches_the_file_path() {
+    let body = "name;age;city\nAlice;25;NYC\nBob;30;LA\n";
+
+    let mut tmp = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    write!(tmp, "{body}").unwrap();
+    tmp.flush().unwrap();
+    let from_file = Profiler::new().analyze_file(tmp.path()).unwrap();
+
+    let source = BytesSource::new(
+        bytes::Bytes::from(body),
+        AsyncSourceInfo::new("semicolon", FileFormat::Csv),
+    );
+    let from_stream = Profiler::new().profile_stream(source).await.unwrap();
+
+    assert_eq!(from_file.column_profiles.len(), 3);
+    assert_eq!(
+        from_stream.column_profiles.len(),
+        from_file.column_profiles.len(),
+        "async must detect the same delimiter as the file path"
+    );
+    assert_eq!(
+        from_stream.execution.rows_processed,
+        from_file.execution.rows_processed
+    );
+}
+
+/// An explicit delimiter was accepted and ignored on the async path.
+#[tokio::test]
+async fn test_async_explicit_delimiter_is_honored() {
+    let source = BytesSource::new(
+        bytes::Bytes::from_static(b"a|b|c\n1|2|3\n"),
+        AsyncSourceInfo::new("piped", FileFormat::Csv),
+    );
+
+    let report = Profiler::new()
+        .csv_delimiter(b'|')
+        .profile_stream(source)
+        .await
+        .unwrap();
+
+    assert_eq!(report.column_profiles.len(), 3);
+    assert_eq!(report.execution.rows_processed, 1);
+}
+
+/// A remote CSV rides the same async reader as byte streams, so a ragged
+/// download must carry the same structural signal rather than looking clean
+/// because it arrived over HTTP. #462.
+#[tokio::test]
+async fn test_profiler_profile_url_counts_ragged_rows() {
+    let server = spawn_csv_server(b"city,pop\nRome,2873\nMilan\nTurin,886,EXTRA\n");
+
+    let report = Profiler::new().profile_url(server.url()).await.unwrap();
+
+    assert_eq!(report.execution.rows_processed, 3);
+    assert_eq!(
+        report.execution.ragged_row_count, 2,
+        "a ragged remote CSV must not profile as clean"
+    );
+
+    server.join();
+}
+
 #[cfg(not(feature = "parquet-async"))]
 #[tokio::test]
 async fn test_profiler_profile_url_rejects_parquet_without_feature() {

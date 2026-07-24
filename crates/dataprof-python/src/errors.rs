@@ -18,6 +18,7 @@ use dataprof::{DataProfilerError, ProfileReport, SemanticHints};
 /// The category drives the exception type so callers can `except` on the
 /// idiomatic Python class instead of string-matching a `RuntimeError`:
 ///   * bad user input (config, semantic hints, unsupported format) → `ValueError`
+///   * malformed data — CSV *and* JSON alike → `ValueError`
 ///   * a missing file → `FileNotFoundError`
 ///   * permission / other I/O trouble → `PermissionError` / `IOError`
 ///   * everything else → `RuntimeError`
@@ -31,6 +32,7 @@ pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
         | DataProfilerError::InvalidConfiguration { .. }
         | DataProfilerError::DuplicateColumnName { .. }
         | DataProfilerError::JsonParsingError { .. }
+        | DataProfilerError::CsvParsingError { .. }
         | DataProfilerError::EncodingError { .. }
         | DataProfilerError::UnsupportedFormat { .. } => PyValueError::new_err(message),
         DataProfilerError::FileNotFound { .. } => PyFileNotFoundError::new_err(message),

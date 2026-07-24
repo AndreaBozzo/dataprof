@@ -107,6 +107,14 @@ impl AdaptiveProfiler {
                 if matches!(primary_err, DataProfilerError::DuplicateColumnName { .. }) {
                     return Err(primary_err);
                 }
+                // Likewise when the caller asked for strict CSV parsing: they
+                // opted out of recovery, so retrying under a second parser only
+                // trades their actionable diagnostic for "all engines failed".
+                if self.csv_config.as_ref().is_some_and(|c| !c.flexible)
+                    && matches!(primary_err, DataProfilerError::CsvParsingError { .. })
+                {
+                    return Err(primary_err);
+                }
                 #[cfg(feature = "arrow")]
                 let fallback = match engine {
                     InternalEngineType::Arrow => InternalEngineType::Incremental,

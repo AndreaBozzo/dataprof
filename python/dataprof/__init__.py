@@ -910,8 +910,12 @@ def profile_file(
         memory_limit_mb: Memory limit in MB.
         format: Override format detection ("csv", "json", "jsonl", "parquet").
         max_rows: Maximum rows to process before stopping.
-        csv_delimiter: Single-character CSV delimiter (default: comma).
-        csv_flexible: Allow variable-length CSV records.
+        csv_delimiter: Single-character CSV delimiter (default: detected
+            from the data).
+        csv_flexible: Allow variable-length CSV records. When True (default) a
+            row whose field count differs from the header is recovered and
+            counted in ``report.ragged_row_count``; False raises ValueError on
+            the first such row.
         jsonl_on_error: How to handle a malformed JSON/JSONL record: "skip"
             (default) skips it, counts it in ``report.execution.error_count``,
             and returns a partial profile; "strict" raises ValueError on the
@@ -1010,8 +1014,12 @@ def profile(
         format: Override format detection ("csv", "json", "jsonl", "parquet").
         max_rows: Maximum rows to process before stopping.
         name: Name for DataFrame sources in the report.
-        csv_delimiter: Single-character CSV delimiter (default: comma).
-        csv_flexible: Allow variable-length CSV records.
+        csv_delimiter: Single-character CSV delimiter (default: detected
+            from the data).
+        csv_flexible: Allow variable-length CSV records. When True (default) a
+            row whose field count differs from the header is recovered and
+            counted in ``report.ragged_row_count``; False raises ValueError on
+            the first such row.
         jsonl_on_error: How to handle a malformed JSON/JSONL record, applied
             identically to file, bytes, and async byte inputs: "skip" (default)
             skips it, counts it in ``report.execution.error_count``, and returns

@@ -902,6 +902,12 @@ impl Profiler {
         if let Some(mb) = self.config.memory_limit_mb {
             profiler = profiler.memory_limit_mb(mb);
         }
+        if let Some(flexible) = self.config.csv_flexible {
+            profiler = profiler.csv_flexible(flexible);
+        }
+        if let Some(delimiter) = self.config.csv_delimiter {
+            profiler = profiler.csv_delimiter(delimiter);
+        }
         if let Some(ref d) = self.config.quality_dimensions {
             profiler = profiler.quality_dimensions(d.clone());
         }
