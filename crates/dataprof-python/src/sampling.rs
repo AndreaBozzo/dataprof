@@ -152,6 +152,15 @@ impl PySamplingStrategy {
         }
     }
 
+    /// Whether this strategy would drop any row.
+    ///
+    /// `SamplingStrategy.none()` is a no-op, so callers that always pass a
+    /// strategy object are not treated as having asked for sampling.
+    #[getter]
+    fn is_noop(&self) -> bool {
+        matches!(self.inner, SamplingStrategy::None)
+    }
+
     fn __repr__(&self) -> String {
         format!("SamplingStrategy({})", self.inner.description())
     }

@@ -202,16 +202,25 @@ impl IncrementalProfiler {
                         // so the row is held rather than folded in; statistics are
                         // built from the surviving sample after the loop.
                         sampler.offer(values);
-                        continue;
+                    } else {
+                        // Process record incrementally (no memory accumulation)
+                        column_stats.process_record(&header_names, values);
+                        analyzed_rows += 1;
                     }
 
-                    // Process record incrementally (no memory accumulation)
-                    column_stats.process_record(&header_names, values);
-                    analyzed_rows += 1;
-
-                    // Per-row stop check for MaxRows to avoid chunk-boundary overshoot
+                    // Per-row stop check for MaxRows to avoid chunk-boundary
+                    // overshoot. A fixed-size strategy has folded nothing in yet
+                    // — its sample is drawn at end of scan — so the cap bounds
+                    // the rows read and the sample is taken from those.
+                    // Counting only folded rows would let `reservoir(100)` under
+                    // `max_rows(20)` return 100 rows.
+                    let rows_against_cap = if sampler.is_buffered() {
+                        sampler.iterated_rows()
+                    } else {
+                        analyzed_rows
+                    };
                     if let Some(limit) = row_limit
-                        && analyzed_rows as u64 >= limit
+                        && rows_against_cap as u64 >= limit
                     {
                         hit_row_limit = true;
 

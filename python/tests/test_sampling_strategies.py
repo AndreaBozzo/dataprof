@@ -193,6 +193,35 @@ def test_progressive_grows_when_the_data_is_volatile(tmp_path):
     assert report.rows == 500
 
 
+# --- Composed with a row cap ------------------------------------------------
+
+
+@pytest.mark.parametrize(("name", "factory", "expected"), _strategies())
+@pytest.mark.parametrize("limit", [1, 5, 20])
+def test_row_cap_bounds_every_strategy(csv_path, limit, name, factory, expected):
+    # A row cap is a hard ceiling whatever the strategy. A fixed-size sample
+    # folds nothing in until the scan ends, so a cap checked against folded rows
+    # never fired and random(100) under max_rows(20) returned 100 rows.
+    report = dp.profile(
+        csv_path,
+        engine="incremental",
+        sampling=factory(),
+        stop_condition=dp.StopCondition.max_rows(limit),
+    )
+    assert report.rows <= limit, f"{name} under max_rows({limit}) produced {report.rows}"
+
+
+def test_row_cap_below_a_fixed_size_sample_wins(csv_path):
+    report = dp.profile(
+        csv_path,
+        sampling=S.reservoir(50),
+        stop_condition=dp.StopCondition.max_rows(10),
+    )
+    assert report.rows == 10
+    assert not report.source_exhausted
+    assert report.truncation_reason is not None
+
+
 # --- Paths that cannot sample must refuse -----------------------------------
 
 
@@ -218,6 +247,22 @@ def test_sync_bytes_reject_sampling():
     message = str(excinfo.value)
     assert "sampling" in message
     assert "asyncio" in message, "the error must point at the path that samples bytes"
+
+
+def test_sync_bytes_accept_an_explicit_no_op_strategy():
+    # none() asks for nothing, so a caller that always passes a strategy object
+    # is not treated as having requested sampling.
+    report = dp.profile(_csv_text().encode(), format="csv", sampling=S.none())
+    assert report.rows == ROWS
+    assert not report.sampling_applied
+
+
+def test_an_explicit_no_op_strategy_is_accepted_everywhere(csv_path, tmp_path):
+    assert dp.profile(csv_path, engine="columnar", sampling=S.none()).rows == ROWS
+
+    jsonl = tmp_path / "data.jsonl"
+    jsonl.write_text("".join(f'{{"id":{i}}}\n' for i in range(50)))
+    assert dp.profile(str(jsonl), sampling=S.none()).rows == 50
 
 
 # --- Compositions that have no meaning must be refused ----------------------

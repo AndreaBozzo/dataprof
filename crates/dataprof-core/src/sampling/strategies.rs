@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 
 /// How rows are selected for profiling.
 ///
@@ -127,15 +128,15 @@ impl SamplingState {
             return false;
         }
 
+        // Length-prefixed so field boundaries are unambiguous: joining on a
+        // separator would merge ("a|b", "c") and ("a", "b|c") into one stratum
+        // and apply the cap to both together.
         let mut stratum = String::new();
-        for (position, column) in key_columns.iter().enumerate() {
+        for column in key_columns {
             let Some(value) = row.get(column) else {
                 return false;
             };
-            if position > 0 {
-                stratum.push('|');
-            }
-            stratum.push_str(value);
+            let _ = write!(stratum, "{}:{}", value.len(), value);
         }
 
         let taken = self.stratum_samples.entry(stratum).or_insert(0);

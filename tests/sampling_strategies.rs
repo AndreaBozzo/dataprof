@@ -13,7 +13,7 @@
 
 use std::io::Write;
 
-use dataprof::{EngineType, ProfileReport, Profiler, SamplingStrategy};
+use dataprof::{EngineType, ProfileReport, Profiler, SamplingStrategy, StopCondition};
 
 const ROWS: usize = 100;
 const GROUPS: usize = 5;
@@ -236,6 +236,83 @@ fn a_fixed_size_sample_produces_statistics_over_exactly_that_sample() {
             column.name
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Sampling composed with a row cap
+// ---------------------------------------------------------------------------
+
+/// A row cap is a hard ceiling on what reaches the profile, whatever the
+/// strategy. A fixed-size sample folds nothing in until the scan ends, so a cap
+/// checked against folded rows never fired and `random(100)` under
+/// `max_rows(20)` returned 100 rows — over the caller's ceiling, and reported
+/// as a complete scan.
+#[test]
+fn a_row_cap_bounds_every_strategy() {
+    let csv = write_csv();
+
+    for (name, strategy, _) in strategies() {
+        for limit in [1u64, 5, 20] {
+            let report = Profiler::new()
+                .engine(EngineType::Incremental)
+                .sampling(strategy.clone())
+                .stop_when(StopCondition::MaxRows(limit))
+                .analyze_file(csv.path())
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+
+            assert!(
+                report.execution.rows_processed as u64 <= limit,
+                "{name} under max_rows({limit}) produced {} rows",
+                report.execution.rows_processed
+            );
+        }
+    }
+}
+
+#[test]
+fn a_row_cap_below_a_fixed_size_sample_wins() {
+    // The cap bounds the rows read; the sample is drawn from those, so it can
+    // only be smaller than the cap, never larger.
+    let csv = write_csv();
+    let report = Profiler::new()
+        .sampling(SamplingStrategy::Reservoir { size: 50 })
+        .stop_when(StopCondition::MaxRows(10))
+        .analyze_file(csv.path())
+        .unwrap();
+
+    assert_eq!(report.execution.rows_processed, 10);
+    assert!(!report.execution.source_exhausted);
+    assert!(report.execution.truncation_reason.is_some());
+}
+
+// ---------------------------------------------------------------------------
+// Stratum identity
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strata_are_not_merged_by_values_containing_the_separator() {
+    // ("a|b", "c") and ("a", "b|c") join to the same string under a naive
+    // separator, which would merge two strata and apply one cap to both.
+    let mut file = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
+    writeln!(file, "left,right,value").unwrap();
+    for i in 0..10 {
+        writeln!(file, "a|b,c,{i}").unwrap();
+        writeln!(file, "a,b|c,{i}").unwrap();
+    }
+    file.flush().unwrap();
+
+    let report = Profiler::new()
+        .sampling(SamplingStrategy::Stratified {
+            key_columns: vec!["left".into(), "right".into()],
+            samples_per_stratum: 3,
+        })
+        .analyze_file(file.path())
+        .unwrap();
+
+    assert_eq!(
+        report.execution.rows_processed, 6,
+        "two distinct strata, three rows each"
+    );
 }
 
 // ---------------------------------------------------------------------------

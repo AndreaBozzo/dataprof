@@ -1173,10 +1173,11 @@ def profile(
                 "bytes and BytesIO sources require format='csv', 'json', 'jsonl', or 'parquet'. "
                 "For async byte streams, use dataprof.asyncio.profile_bytes(data, format='csv')."
             )
-        if sampling is not None:
+        if sampling is not None and not getattr(sampling, "is_noop", False):
             # Synchronous byte input is read by the pure-Python reader, which has
             # no row-by-row sampling stage. Returning a full profile while the
-            # caller asked for a sample would misreport what was analyzed.
+            # caller asked for a sample would misreport what was analyzed. An
+            # explicit SamplingStrategy.none() asks for nothing, so it passes.
             raise ValueError(
                 "sampling is not applied to synchronous bytes input. Write the data to a "
                 "file, or use dataprof.asyncio.profile_bytes(data, format=..., "

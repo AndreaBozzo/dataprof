@@ -844,8 +844,17 @@ impl AsyncStreamingProfiler {
                     sampled_rows += 1;
                 }
 
+                // A fixed-size strategy folds nothing in until the stream
+                // ends, so the cap bounds the rows read and the sample is drawn
+                // from those. Counting only folded rows would let the sample
+                // exceed the caller's hard ceiling.
+                let rows_against_cap = if sampler.is_buffered() {
+                    sampler.iterated_rows()
+                } else {
+                    sampler.sampled_rows()
+                };
                 if let Some(limit) = row_limit
-                    && sampler.sampled_rows() as u64 >= limit
+                    && rows_against_cap as u64 >= limit
                 {
                     rows_consumed = row_idx + 1;
                     hit_row_limit = true;
