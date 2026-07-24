@@ -45,8 +45,11 @@ When reporting a security vulnerability, please include:
 
 ## Dependency Auditing
 
-Every pull request and a weekly scheduled run audit the dependency graph with
-`cargo deny`, twice:
+A weekly scheduled run, and every pull request that can affect the dependency
+graph, audit it with `cargo deny`. Documentation-only pull requests are skipped
+by the workflow's `paths-ignore`; they cannot reach `Cargo.toml` or `Cargo.lock`,
+and the weekly run covers advisories published against dependencies that have
+not changed. The audit runs twice:
 
 ```bash
 cargo deny check                # the default build
