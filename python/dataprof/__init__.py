@@ -912,10 +912,12 @@ def profile_file(
         max_rows: Maximum rows to process before stopping.
         csv_delimiter: Single-character CSV delimiter (default: detected
             from the data).
-        csv_flexible: Allow variable-length CSV records. When True (default) a
-            row whose field count differs from the header is recovered and
-            counted in ``report.ragged_row_count``; False raises ValueError on
-            the first such row.
+        csv_flexible: Allow variable-length CSV records. Applies to file and
+            async inputs, where True (default) recovers a row whose field count
+            differs from the header and counts it in
+            ``report.ragged_row_count``, and False raises ValueError on the
+            first such row. CSV bytes are always parsed strictly, and
+            ``engine="columnar"`` does not report the count.
         jsonl_on_error: How to handle a malformed JSON/JSONL record: "skip"
             (default) skips it, counts it in ``report.execution.error_count``,
             and returns a partial profile; "strict" raises ValueError on the
@@ -1016,10 +1018,12 @@ def profile(
         name: Name for DataFrame sources in the report.
         csv_delimiter: Single-character CSV delimiter (default: detected
             from the data).
-        csv_flexible: Allow variable-length CSV records. When True (default) a
-            row whose field count differs from the header is recovered and
-            counted in ``report.ragged_row_count``; False raises ValueError on
-            the first such row.
+        csv_flexible: Allow variable-length CSV records. Applies to file and
+            async inputs, where True (default) recovers a row whose field count
+            differs from the header and counts it in
+            ``report.ragged_row_count``, and False raises ValueError on the
+            first such row. CSV bytes are always parsed strictly, and
+            ``engine="columnar"`` does not report the count.
         jsonl_on_error: How to handle a malformed JSON/JSONL record, applied
             identically to file, bytes, and async byte inputs: "skip" (default)
             skips it, counts it in ``report.execution.error_count``, and returns

@@ -153,7 +153,7 @@ Returned by `profile()` and all analysis functions.
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
 | `truncation_reason` | `str \| None` | Why processing stopped early |
 | `source_exhausted` | `bool` | Whether the entire source was read |
-| `ragged_row_count` | `int` | Rows whose field count differed from the header (`0` = clean parse) |
+| `ragged_row_count` | `int` | Rows whose field count differed from the header (`0` = clean parse). Reported for file and async CSV inputs; not by `engine="columnar"` |
 | `sampling_applied` | `bool` | Whether sampling was used |
 | `sampling_ratio` | `float \| None` | Fraction of data sampled |
 

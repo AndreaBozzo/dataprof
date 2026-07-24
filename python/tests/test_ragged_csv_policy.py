@@ -4,19 +4,21 @@ A row whose field count differs from the header is a structural violation. The
 shipped policy per transport is deliberately not uniform, and this file is the
 record of which difference is intended:
 
-===================  ==========================================================
-file (auto/columnar) recover, count in ``execution.ragged_row_count``
-async bytes / URL    recover, count — same signal as the file path
-sync bytes           reject with a ValueError naming the row (no flexible
-                     engine behind the pure-Python bytes reader)
-``csv_flexible``     ``False`` rejects on file *and* async paths
-===================  ==========================================================
+====================  =========================================================
+file (auto/increm.)   recover, count in ``execution.ragged_row_count``
+async bytes / URL     recover, count — same signal as the file path
+sync bytes            reject with a ValueError naming the row (no flexible
+                      engine behind the pure-Python bytes reader)
+``csv_flexible``      ``False`` rejects on file *and* async paths
+``engine="columnar"`` **not covered** — rejects extra fields, but pads missing
+                      ones and still reports 0. Tracked in #470.
+====================  =========================================================
 
-What no path may do is recover silently: a repaired scan must never report as a
-clean one. Every rejection is a ``ValueError`` — malformed data is bad input,
-the same category as malformed JSON — and carries the field counts rather than
-being buried under "all engines failed". The async cases are skipped when the
-extension is built without async support.
+What no covered path may do is recover silently: a repaired scan must never
+report as a clean one. Every rejection is a ``ValueError`` — malformed data is
+bad input, the same category as malformed JSON — and carries the field counts
+rather than being buried under "all engines failed". The async cases are skipped
+when the extension is built without async support.
 
 Run after building the extension:
     maturin develop --features python,python-async,async-streaming
@@ -82,6 +84,29 @@ def test_async_bytes_match_the_file_path(tmp_path):
     from_async = _async_bytes(RAGGED)
     assert from_async.rows == from_file.rows
     assert from_async.ragged_row_count == from_file.ragged_row_count
+
+
+# --- The columnar engine is a documented gap, not a covered path ------------
+
+
+def test_columnar_rejects_extra_fields(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        dp.profile(_write(tmp_path, RAGGED), engine="columnar")
+    assert "incorrect number of fields" in str(excinfo.value)
+
+
+def test_columnar_pads_missing_fields_without_counting(tmp_path):
+    # Pins the #470 gap rather than endorsing it: the Arrow backend pads a short
+    # row to null and reports a clean parse, so `engine="columnar"` is still a
+    # silent-clean path. When #470 lands this assertion must flip to 1 and the
+    # policy table at the top of this module must be updated with it.
+    short_only = b"name,age,city\nAlice,25,NYC\nBob,30\n"
+    report = dp.profile(_write(tmp_path, short_only), engine="columnar")
+
+    assert report.rows == 2
+    assert report.ragged_row_count == 0
+    # The default path sees the same file honestly.
+    assert dp.profile(_write(tmp_path, short_only)).ragged_row_count == 1
 
 
 # --- Clean input stays clean ------------------------------------------------

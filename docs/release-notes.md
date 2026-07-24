@@ -23,11 +23,18 @@ now also reaches that path — previously it was accepted and ignored there — 
 rejects the first ragged record instead of repairing it.
 
 Scope: the count is surfaced by the incremental engine, which drives the default
-CSV path, and by the async reader. The columnar (Arrow) engine rejects ragged
-rows outright. Byte inputs to the synchronous `profile()` still reject rather
-than recover, since they are read without the flexible engine; write the data to
-a file to profile it leniently. Ragged rows do not yet influence the consistency
-dimension's score.
+CSV path, and by the async reader. Byte inputs to the synchronous `profile()`
+still reject rather than recover, since they are read without the flexible
+engine; write the data to a file to profile it leniently.
+
+The explicitly selected columnar (Arrow) engine is not yet covered. It rejects a
+row with *extra* fields, but pads a row with *missing* fields to null and still
+reports `ragged_row_count: 0` — so `engine="columnar"` remains a silent-clean
+path for short rows. Prefer the default `engine="auto"` when a source may be
+structurally broken; the gap is tracked in
+[#470](https://github.com/AndreaBozzo/dataprof/issues/470).
+
+Ragged rows do not yet influence the consistency dimension's score.
 
 ## Async CSV detects its delimiter instead of assuming a comma
 
