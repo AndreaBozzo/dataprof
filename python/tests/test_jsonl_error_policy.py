@@ -24,6 +24,7 @@ import pytest
 # Malformed record in the middle position.
 MIXED = b'{"id":1,"x":10}\nnot-json\n{"id":2,"x":20}\n'
 ALL_BAD = b"not-json\nalso-bad\n"
+TRUNCATED = b'{"id":1}\n{"id":2'
 
 _HAS_ASYNC = dataprof.capabilities().async_streaming
 requires_async = pytest.mark.skipif(
@@ -134,6 +135,32 @@ def test_blank_lines_are_not_counted():
     report = dataprof.profile(data, format="jsonl")
     assert report.rows == 2
     assert report.error_count == 0
+
+
+def test_truncated_final_record_tolerant_parity(tmp_path):
+    path = _write(tmp_path, TRUNCATED)
+    for source in (path, TRUNCATED):
+        report = dataprof.profile(source, format="jsonl")
+        assert report.rows == 1
+        assert report.error_count == 1
+
+
+def test_truncated_final_record_strict_parity(tmp_path):
+    path = _write(tmp_path, TRUNCATED)
+    for source in (path, TRUNCATED):
+        with pytest.raises(ValueError):
+            dataprof.profile(source, format="jsonl", jsonl_on_error="strict")
+
+
+@requires_async
+def test_truncated_final_record_async_parity():
+    report = _async_bytes(TRUNCATED)
+    assert report.rows == 1
+    assert report.error_count == 1
+
+    with pytest.raises(ValueError) as excinfo:
+        _async_bytes(TRUNCATED, jsonl_on_error="strict")
+    assert "line 2" in str(excinfo.value)
 
 
 def test_invalid_policy_value_rejected():
