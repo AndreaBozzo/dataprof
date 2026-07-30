@@ -165,6 +165,21 @@ Good first issues in this repository usually mean:
 - [ ] Updated documentation if needed
 - [ ] Commit messages are clear and descriptive
 
+### Report schema release checklist
+
+When a change touches a serialized `ProfileReport` field or its Serde
+attributes:
+
+1. Decide whether the change is additive and compatible or requires a new
+   `REPORT_SCHEMA_VERSION`.
+2. Run `cargo run --example generate_profile_schema`.
+3. Run `cargo test --test profile_report_schema` and the focused Python report
+   tests.
+4. Review the generated diff for required fields, nullability, enum values,
+   primitive types, and additive-property behavior.
+5. For an incompatible change, add a new versioned artifact and keep every
+   schema still supported by readers.
+
 ### PR Size
 
 Small PRs are easier to review and merge. A good default is one behavior change

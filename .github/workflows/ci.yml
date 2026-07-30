@@ -102,6 +102,11 @@ jobs:
           cargo clippy --lib --tests --all-features -- -D warnings
           echo "Clippy analysis passed"
 
+      - name: Check profile report schema drift
+        run: |
+          cargo run --example generate_profile_schema
+          git diff --exit-code -- docs/schema/profile-report.v1.schema.json
+
       - name: Check documentation
         run: |
           echo "Checking documentation..."

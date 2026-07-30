@@ -1,5 +1,8 @@
 use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, SemanticHintBinding};
-use dataprof_metrics::{QualityAssessment, QualityMetrics};
+use dataprof_metrics::{
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
+    QualityMetrics, TimelinessMetrics, ValidityMetrics,
+};
 
 /// Version of the serialized `ProfileReport` schema written by this build.
 ///
@@ -23,12 +26,13 @@ pub const REPORT_SCHEMA_VERSION: u32 = 1;
 /// Quality assessment informed by ISO 8000/25012 concepts. This is the primary output of all
 /// profiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,
 /// `Profiler::profile_stream`, etc.).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct ProfileReport {
     /// Version of the serialized report schema (see [`REPORT_SCHEMA_VERSION`]).
     ///
     /// `0` means the document predates schema versioning (a 0.9-era report).
     /// Deserialization rejects versions newer than [`REPORT_SCHEMA_VERSION`].
+    #[schemars(schema_with = "schema_version_schema")]
     pub schema_version: u32,
     /// Unique identifier for this report (UUID v4)
     pub id: String,
@@ -51,6 +55,259 @@ pub struct ProfileReport {
     /// evidence was sampled. Additive field — older readers ignore it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub semantic_hint_bindings: Vec<SemanticHintBinding>,
+}
+
+fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "const": REPORT_SCHEMA_VERSION,
+        "minimum": 0
+    })
+}
+
+/// Both v1 serialization dialects accepted by dataprof.
+///
+/// Rust serializes the complete runtime model. The high-level Python wrapper
+/// predates that shape and exposes a deliberately flatter document. They share
+/// one schema version and compatibility policy, so the published artifact
+/// describes their union rather than pretending one dialect does not exist.
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+#[schemars(title = "ProfileReport")]
+enum SerializedProfileReport {
+    Rust(Box<ProfileReport>),
+    Python(Box<PythonProfileReportDocument>),
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonProfileReportDocument {
+    #[schemars(schema_with = "schema_version_schema")]
+    schema_version: u32,
+    source: String,
+    source_type: PythonSourceType,
+    execution: PythonExecutionDocument,
+    columns: Vec<PythonColumnDocument>,
+    quality: Option<PythonQualityDocument>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    semantic_hint_bindings: Vec<SemanticHintBinding>,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum PythonSourceType {
+    File,
+    Query,
+    Dataframe,
+    Stream,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonExecutionDocument {
+    engine: Option<String>,
+    rows_processed: usize,
+    columns_detected: usize,
+    scan_time_ms: u128,
+    source_exhausted: bool,
+    truncation_reason: Option<String>,
+    bytes_consumed: Option<u64>,
+    throughput_rows_sec: Option<f64>,
+    memory_peak_mb: Option<f64>,
+    error_count: usize,
+    ragged_row_count: usize,
+    sampling_applied: bool,
+    sampling_ratio: Option<f64>,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonColumnDocument {
+    name: String,
+    data_type: PythonDataType,
+    total_count: usize,
+    null_count: usize,
+    null_percentage: Option<f64>,
+    unique_count: Option<usize>,
+    unique_count_is_approximate: Option<bool>,
+    uniqueness_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invalid_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<PythonColumnStatsDocument>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    patterns: Option<Vec<PythonPatternDocument>>,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum PythonDataType {
+    String,
+    Identifier,
+    Integer,
+    Float,
+    Date,
+    Boolean,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonColumnStatsDocument {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mean: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    std_dev: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    variance: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    median: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skewness: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kurtosis: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coefficient_of_variation: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quartiles: Option<dataprof_core::Quartiles>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_approximate: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outlier_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avg_length: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    true_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    false_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    true_ratio: Option<f64>,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonPatternDocument {
+    name: String,
+    regex: String,
+    match_count: usize,
+    match_percentage: f64,
+    category: dataprof_core::PatternCategory,
+    confidence: f64,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonQualityDocument {
+    overall_score: f64,
+    assessed_dimensions: Vec<PythonQualityDimension>,
+    dimension_scores: std::collections::HashMap<PythonQualityDimension, Option<f64>>,
+    low_sample_warning: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completeness: Option<CompletenessMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    consistency: Option<ConsistencyMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uniqueness: Option<PythonUniquenessDocument>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accuracy: Option<AccuracyMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeliness: Option<TimelinessMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validity: Option<ValidityMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision: Option<PrecisionMetrics>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum PythonQualityDimension {
+    Completeness,
+    Consistency,
+    Uniqueness,
+    Accuracy,
+    Timeliness,
+    Validity,
+    Precision,
+}
+
+#[allow(dead_code)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct PythonUniquenessDocument {
+    duplicate_rows: usize,
+    key_uniqueness: f64,
+    high_cardinality_warning: bool,
+    rows_checked: usize,
+    key_column: Option<String>,
+    duplicate_rows_approximate: bool,
+}
+
+/// Generate the JSON Schema 2020-12 document for the current serialized report.
+///
+/// This is primarily used by the repository's schema generator and drift tests.
+/// The committed, versioned document under `docs/schema/` is the public
+/// interoperability contract.
+#[doc(hidden)]
+pub fn profile_report_schema_document() -> serde_json::Value {
+    let settings = schemars::generate::SchemaSettings::draft2020_12().for_serialize();
+    let schema = settings
+        .into_generator()
+        .into_root_schema_for::<SerializedProfileReport>();
+    let mut document =
+        serde_json::to_value(schema).expect("a Schemars schema must serialize to a JSON document");
+    let object = document
+        .as_object_mut()
+        .expect("a root Schemars schema must be a JSON object");
+    object.insert(
+        "$id".to_string(),
+        serde_json::Value::String(format!(
+            "https://andreabozzo.github.io/dataprof/schema/profile-report.v{REPORT_SCHEMA_VERSION}.schema.json"
+        )),
+    );
+    make_compatibility_defaults_optional(&mut document);
+    allow_additive_properties(&mut document);
+    document
+}
+
+fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
+    let Some(required) = document
+        .pointer_mut("/$defs/ExecutionMetadata/required")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    required.retain(|field| field.as_str() != Some("ragged_row_count"));
+}
+
+fn allow_additive_properties(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.get("additionalProperties") == Some(&serde_json::Value::Bool(false)) {
+                object.remove("additionalProperties");
+            }
+            for child in object.values_mut() {
+                allow_additive_properties(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                allow_additive_properties(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 impl ProfileReport {

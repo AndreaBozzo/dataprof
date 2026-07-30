@@ -21,6 +21,7 @@ log = { workspace = true }
 num_cpus = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+schemars = { workspace = true }
 sysinfo = { workspace = true }
 arrow = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }

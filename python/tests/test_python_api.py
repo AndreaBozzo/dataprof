@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 # Resolve fixture paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -1041,6 +1042,25 @@ class TestReportErgonomics:
             assert on_disk["schema_version"] == dataprof.REPORT_SCHEMA_VERSION
             loaded = dataprof.ProfileReport.load(path)
             assert loaded.to_dict()["schema_version"] == dataprof.REPORT_SCHEMA_VERSION
+        finally:
+            os.unlink(path)
+
+    def test_python_serialization_dialect_validates_against_published_schema(self, report):
+        schema_path = REPO_ROOT / "docs" / "schema" / "profile-report.v1.schema.json"
+        with schema_path.open(encoding="utf-8") as fh:
+            schema = json.load(fh)
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+
+        validator.validate(report.to_dict())
+        validator.validate(json.loads(report.to_json()))
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+        try:
+            report.save(path)
+            with open(path, encoding="utf-8") as fh:
+                validator.validate(json.load(fh))
         finally:
             os.unlink(path)
 

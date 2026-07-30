@@ -23,6 +23,22 @@ and, when enabled, `AsyncDataSource` and `BytesSource`.
 
 The default feature set is empty.
 
+## Serialized report contract
+
+`ProfileReport` serialization is versioned independently from the crate
+release through `REPORT_SCHEMA_VERSION`. The generated
+[JSON Schema 2020-12 artifact](../../docs/schema/profile-report.v1.schema.json)
+describes every supported v1 serialization dialect and is the contract for
+saved reports and downstream validators. Unknown additive object fields remain
+accepted, matching the reader compatibility policy.
+
+Regenerate and verify it from the workspace root:
+
+```bash
+cargo run --example generate_profile_schema
+cargo test --test profile_report_schema
+```
+
 ## Development
 
 ```bash

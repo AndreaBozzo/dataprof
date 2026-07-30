@@ -15,6 +15,7 @@ dataprof-core = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
 wide = { workspace = true }
 

@@ -1,5 +1,7 @@
 /// Supported file formats for data profiling
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum FileFormat {
     Csv,
@@ -39,7 +41,9 @@ pub enum JsonErrorPolicy {
 }
 
 /// Supported query engines for SQL-based profiling
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryEngine {
     Postgres,
@@ -65,7 +69,9 @@ impl std::fmt::Display for QueryEngine {
 }
 
 /// Source library for in-memory DataFrame profiling
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum DataFrameLibrary {
     Pandas,
@@ -87,7 +93,9 @@ impl std::fmt::Display for DataFrameLibrary {
 }
 
 /// Supported stream source systems
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum StreamSourceSystem {
     Kafka,
@@ -121,7 +129,7 @@ impl std::fmt::Display for StreamSourceSystem {
 }
 
 /// Metadata specific to Parquet files
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ParquetMetadata {
     /// Number of row groups in the Parquet file
     pub num_row_groups: usize,
@@ -138,7 +146,7 @@ pub struct ParquetMetadata {
 }
 
 /// Source-agnostic data source metadata.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DataSource {
     /// File-based data source (CSV, JSON, Parquet, etc.)

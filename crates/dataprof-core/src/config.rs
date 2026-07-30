@@ -9,7 +9,7 @@ use crate::errors::DataProfilerError;
 /// Weights do not need to sum to one: the score renormalizes them over the
 /// dimensions that were actually assessed. Values should be non-negative and
 /// at least one weight must be positive.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct QualityScoreWeights {
     pub completeness: f64,
