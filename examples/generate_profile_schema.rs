@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let parent = output
         .parent()
-        .ok_or("profile report schema output has no parent directory")?;
+        .expect("profile report schema output must have a parent directory");
     fs::create_dir_all(parent)?;
     fs::write(&output, json)?;
     println!("wrote {}", output.display());

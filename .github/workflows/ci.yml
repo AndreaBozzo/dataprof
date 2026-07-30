@@ -105,7 +105,11 @@ jobs:
       - name: Check profile report schema drift
         run: |
           cargo run --example generate_profile_schema
-          git diff --exit-code -- docs/schema/profile-report.v1.schema.json
+          if [ -n "$(git status --porcelain -- docs/schema/)" ]; then
+            git status --short -- docs/schema/
+            git diff -- docs/schema/
+            exit 1
+          fi
 
       - name: Check documentation
         run: |
