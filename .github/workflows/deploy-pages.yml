@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - 'site/**'
+      - 'docs/schema/**'
       - '.github/scripts/build_benchmark_pages.py'
       - '.github/workflows/deploy-pages.yml'
 
@@ -80,6 +81,8 @@ jobs:
 
           mkdir -p pages-content
           cp -r site/. pages-content/
+          mkdir -p pages-content/schema
+          cp -r docs/schema/*.json pages-content/schema/
 
           if [ -d "benchmark-reports/target/criterion" ]; then
             mkdir -p pages-content/benchmarks

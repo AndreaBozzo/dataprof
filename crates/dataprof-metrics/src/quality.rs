@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::errors::DataProfilerError;
 
 /// Completeness metrics (ISO 8000-8).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CompletenessMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub missing_values_ratio: f64,
@@ -20,7 +20,7 @@ pub struct CompletenessMetrics {
 }
 
 /// Consistency metrics (ISO 8000-61).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConsistencyMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub data_type_consistency: f64,
@@ -33,7 +33,7 @@ pub struct ConsistencyMetrics {
 }
 
 /// Uniqueness metrics (ISO 8000-110).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UniquenessMetrics {
     pub duplicate_rows: usize,
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
@@ -70,7 +70,7 @@ pub struct RowDuplicateSummary {
 }
 
 /// Accuracy metrics (ISO 25012).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AccuracyMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
@@ -84,7 +84,7 @@ pub struct AccuracyMetrics {
 }
 
 /// Timeliness metrics (ISO 8000-8).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimelinessMetrics {
     pub future_dates_count: usize,
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
@@ -109,7 +109,7 @@ pub struct TimelinessMetrics {
 }
 
 /// Validity metrics derived from confidently detected semantic patterns.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ValidityMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub valid_values_ratio: f64,
@@ -120,7 +120,7 @@ pub struct ValidityMetrics {
 }
 
 /// Precision metrics for effective decimal-scale consistency.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrecisionMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub decimal_places_consistency: f64,
@@ -131,7 +131,7 @@ pub struct PrecisionMetrics {
 }
 
 /// Comprehensive data quality metrics following industry standards.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QualityMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completeness: Option<CompletenessMetrics>,
@@ -524,7 +524,7 @@ impl QualityMetrics {
 }
 
 /// Confidence level for quality metrics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum MetricConfidence {
     Exact,
     Approximate {
@@ -539,7 +539,7 @@ pub enum MetricConfidence {
 }
 
 /// Wraps quality metrics with confidence information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QualityAssessment {
     pub metrics: QualityMetrics,
     pub confidence: MetricConfidence,

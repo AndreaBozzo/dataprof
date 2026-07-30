@@ -47,6 +47,7 @@ database = []  # No Python deps; compile the extension with python-async,databas
 [dependency-groups]
 dev = [
     "maturin>=1.5,<2.0",
+    "jsonschema>=4.25,<5",
     "pytest>=8.0",
     "ruff>=0.9",
     "ty>=0.0.56",

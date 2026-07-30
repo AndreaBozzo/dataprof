@@ -513,6 +513,12 @@ incompatibly, not on every dataprof release. The same field with the same
 semantics appears in reports serialized from Rust (`serde`), where readers
 enforce the identical policy.
 
+The committed [JSON Schema 2020-12 contract](../schema/profile-report.v1.schema.json)
+can validate `to_dict()`, `to_json()`, and JSON `save()` output in CI or another
+consumer. Version 1 includes both the high-level Python export shape and the
+complete Rust serialization shape; see the
+[schema notes](../schema/README.md) for compatibility and regeneration rules.
+
 When quality metrics are present, the `quality` block always carries a
 `low_sample_warning` boolean (`true` when the profiled sample was below the
 recommended minimum of 10 rows, `false` otherwise). It round-trips through

@@ -6,7 +6,7 @@ use crate::classification::DataType;
 use crate::pattern::Pattern;
 
 /// Profiling statistics for a single column.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ColumnProfile {
     pub name: String,
     pub data_type: DataType,
@@ -48,7 +48,7 @@ pub struct ColumnProfile {
 }
 
 /// Quartile statistics for numeric distributions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Quartiles {
     pub q1: f64,
     pub q2: f64,
@@ -57,7 +57,7 @@ pub struct Quartiles {
 }
 
 /// A value and its frequency count within a column.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FrequencyItem {
     pub value: String,
     pub count: usize,
@@ -66,7 +66,7 @@ pub struct FrequencyItem {
 }
 
 /// Statistics for numeric (integer or float) columns.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NumericStats {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub min: f64,
@@ -141,7 +141,7 @@ impl NumericStats {
 }
 
 /// Statistics for text/string columns.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextStats {
     pub min_length: usize,
     pub max_length: usize,
@@ -180,7 +180,7 @@ impl TextStats {
 }
 
 /// Statistics for date/datetime columns.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DateTimeStats {
     pub min_datetime: String,
     pub max_datetime: String,
@@ -208,7 +208,7 @@ impl DateTimeStats {
 }
 
 /// Statistics for boolean columns.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BooleanStats {
     pub true_count: usize,
     pub false_count: usize,
@@ -217,7 +217,7 @@ pub struct BooleanStats {
 }
 
 /// Type-specific statistics for a column, determined by the inferred data type.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ColumnStats {
     Numeric(NumericStats),
     Text(TextStats),

@@ -1,0 +1,2232 @@
+{
+  "$defs": {
+    "AccuracyMetrics": {
+      "description": "Accuracy metrics (ISO 25012).",
+      "properties": {
+        "negative_values_in_positive": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "numeric_values_checked": {
+          "default": 0,
+          "description": "Finite numeric values examined across all columns. 0 means the\ndimension had nothing to assess and it is excluded from the overall\nscore.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outlier_ratio": {
+          "format": "double",
+          "type": "number"
+        },
+        "range_violations": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outlier_ratio",
+        "range_violations",
+        "negative_values_in_positive",
+        "numeric_values_checked"
+      ],
+      "type": "object"
+    },
+    "BooleanStats": {
+      "description": "Statistics for boolean columns.",
+      "properties": {
+        "false_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "true_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "true_ratio": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "true_count",
+        "false_count",
+        "true_ratio"
+      ],
+      "type": "object"
+    },
+    "ColumnProfile": {
+      "description": "Profiling statistics for a single column.",
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/DataType"
+        },
+        "invalid_count": {
+          "description": "Non-null values that failed the column type's raw validity predicate:\nnon-finite or malformed numbers on numeric columns, and values that do\nnot parse directly as calendar dates on date columns. The date predicate\nintentionally does not trim surrounding whitespace; descriptive date\nstatistics may normalize whitespace independently.\n\nFor numeric columns, `mean`/`std_dev` cover\n`total_count - null_count - invalid_count` values. For date columns,\nthis count audits the strict raw-value quality predicate. `None` means\nthe check did not run (another column type, or statistics skipped) —\nnever \"no invalid values\", which is `Some(0)`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "null_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "patterns": {
+          "description": "Detected patterns, or `None` when pattern detection did not run.\n\n`None` and `Some(vec![])` are not interchangeable: the former means the\ncolumn was never scanned, the latter that it was scanned and nothing\nmatched. Consumers that gate on sensitivity -- redaction, agent-facing\noutput -- must treat `None` as \"unknown\", never as \"no sensitive data\".",
+          "items": {
+            "$ref": "#/$defs/Pattern"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "stats": {
+          "$ref": "#/$defs/ColumnStats"
+        },
+        "total_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unique_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "unique_count_is_approximate": {
+          "description": "Whether `unique_count` is an approximate (HyperLogLog) estimate rather\nthan an exact distinct count.\n\n`None` when `unique_count` is `None` (never computed); `Some(false)` for\nan exact count; `Some(true)` once the cardinality estimator has spilled\nto its HLL sketch (~1% relative error). Consumers running key or\nhigh-cardinality/uniqueness gates must treat `Some(true)` as \"do not rely\non this as an exact integer\" -- an exact-looking count with no provenance\nis unsafe for those checks.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "data_type",
+        "null_count",
+        "total_count",
+        "unique_count",
+        "stats",
+        "patterns"
+      ],
+      "type": "object"
+    },
+    "ColumnStats": {
+      "description": "Type-specific statistics for a column, determined by the inferred data type.",
+      "oneOf": [
+        {
+          "enum": [
+            "None"
+          ],
+          "type": "string"
+        },
+        {
+          "properties": {
+            "Numeric": {
+              "$ref": "#/$defs/NumericStats"
+            }
+          },
+          "required": [
+            "Numeric"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "Text": {
+              "$ref": "#/$defs/TextStats"
+            }
+          },
+          "required": [
+            "Text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "DateTime": {
+              "$ref": "#/$defs/DateTimeStats"
+            }
+          },
+          "required": [
+            "DateTime"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "Boolean": {
+              "$ref": "#/$defs/BooleanStats"
+            }
+          },
+          "required": [
+            "Boolean"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CompletenessMetrics": {
+      "description": "Completeness metrics (ISO 8000-8).",
+      "properties": {
+        "complete_records_ratio": {
+          "format": "double",
+          "type": "number"
+        },
+        "missing_values_ratio": {
+          "format": "double",
+          "type": "number"
+        },
+        "null_columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "total_cells": {
+          "default": 0,
+          "description": "Total cells examined (rows × columns). 0 means the dimension had\nnothing to assess and it is excluded from the overall score.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "missing_values_ratio",
+        "complete_records_ratio",
+        "null_columns",
+        "total_cells"
+      ],
+      "type": "object"
+    },
+    "ConsistencyMetrics": {
+      "description": "Consistency metrics (ISO 8000-61).",
+      "properties": {
+        "data_type_consistency": {
+          "format": "double",
+          "type": "number"
+        },
+        "encoding_issues": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "format_violations": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "values_checked": {
+          "default": 0,
+          "description": "Non-null values examined for type consistency. 0 means the dimension\nhad nothing to assess and it is excluded from the overall score.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "data_type_consistency",
+        "format_violations",
+        "encoding_issues",
+        "values_checked"
+      ],
+      "type": "object"
+    },
+    "DataFrameLibrary": {
+      "anyOf": [
+        {
+          "enum": [
+            "pandas",
+            "polars",
+            "pyarrow"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Source library for in-memory DataFrame profiling"
+    },
+    "DataSource": {
+      "description": "Source-agnostic data source metadata.",
+      "oneOf": [
+        {
+          "description": "File-based data source (CSV, JSON, Parquet, etc.)",
+          "properties": {
+            "format": {
+              "$ref": "#/$defs/FileFormat",
+              "description": "Detected or specified file format"
+            },
+            "modified_at": {
+              "description": "Last modification timestamp (ISO 8601 / RFC 3339)",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "parquet_metadata": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ParquetMetadata"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Parquet-specific metadata (only present for Parquet files)"
+            },
+            "path": {
+              "description": "Absolute or relative path to the file",
+              "type": "string"
+            },
+            "size_bytes": {
+              "description": "File size in bytes",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "file",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "path",
+            "format",
+            "size_bytes"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "SQL query-based data source",
+          "properties": {
+            "database": {
+              "description": "Target database name (if applicable)",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "engine": {
+              "$ref": "#/$defs/QueryEngine",
+              "description": "Database engine used for the query"
+            },
+            "execution_id": {
+              "description": "Unique execution identifier for tracing",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "statement": {
+              "description": "SQL statement executed",
+              "type": "string"
+            },
+            "type": {
+              "const": "query",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "engine",
+            "statement"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "In-memory DataFrame source (pandas/polars via PyCapsule)",
+          "properties": {
+            "column_count": {
+              "description": "Number of columns",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "memory_bytes": {
+              "description": "Memory usage in bytes (if available)",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "name": {
+              "description": "User-provided name for identification",
+              "type": "string"
+            },
+            "row_count": {
+              "description": "Number of rows at profiling time",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "source_library": {
+              "$ref": "#/$defs/DataFrameLibrary",
+              "description": "Source library (pandas, polars, pyarrow)"
+            },
+            "type": {
+              "const": "dataframe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "source_library",
+            "row_count",
+            "column_count"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Streaming data source",
+          "properties": {
+            "batch_id": {
+              "description": "Batch identifier for ordering and deduplication",
+              "type": "string"
+            },
+            "consumer_group": {
+              "description": "Consumer group for Kafka-style coordination (optional)",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "first_record_at": {
+              "description": "Timestamp of first record in batch (ISO 8601)",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "last_record_at": {
+              "description": "Timestamp of last record in batch (ISO 8601)",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "partition": {
+              "description": "Partition for parallel processing (optional)",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "session_id": {
+              "description": "Session ID for multi-tenant scenarios",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_system": {
+              "$ref": "#/$defs/StreamSourceSystem",
+              "description": "Source system identifier (kafka, kinesis, pulsar, http, etc.)"
+            },
+            "topic": {
+              "description": "Stream identifier (e.g., Kafka topic, Kinesis stream name)",
+              "type": "string"
+            },
+            "type": {
+              "const": "stream",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "topic",
+            "batch_id",
+            "source_system"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DataType": {
+      "description": "Inferred column data type.",
+      "oneOf": [
+        {
+          "const": "String",
+          "description": "Text or string values.",
+          "type": "string"
+        },
+        {
+          "const": "Identifier",
+          "description": "Identifier values that should be treated as semantic strings.",
+          "type": "string"
+        },
+        {
+          "const": "Integer",
+          "description": "Whole numbers in the i64 range.",
+          "type": "string"
+        },
+        {
+          "const": "Float",
+          "description": "Floating-point numbers.",
+          "type": "string"
+        },
+        {
+          "const": "Date",
+          "description": "Date or datetime values.",
+          "type": "string"
+        },
+        {
+          "const": "Boolean",
+          "description": "Boolean values.",
+          "type": "string"
+        }
+      ]
+    },
+    "DateTimeStats": {
+      "description": "Statistics for date/datetime columns.",
+      "properties": {
+        "day_of_week_distribution": {
+          "additionalProperties": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "duration_days": {
+          "format": "double",
+          "type": "number"
+        },
+        "hour_distribution": {
+          "patternProperties": {
+            "^\\d+$": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "max_datetime": {
+          "type": "string"
+        },
+        "min_datetime": {
+          "type": "string"
+        },
+        "month_distribution": {
+          "patternProperties": {
+            "^\\d+$": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "year_distribution": {
+          "patternProperties": {
+            "^-?\\d+$": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "min_datetime",
+        "max_datetime",
+        "duration_days",
+        "year_distribution",
+        "month_distribution",
+        "day_of_week_distribution"
+      ],
+      "type": "object"
+    },
+    "ExecutionMetadata": {
+      "description": "Metadata about the profiling execution.",
+      "properties": {
+        "bytes_consumed": {
+          "description": "Number of bytes consumed from the source, if known.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "columns_detected": {
+          "description": "Number of columns detected in the data.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "description": "Engine or parser that actually produced the report.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_count": {
+          "description": "Number of errors encountered during profiling.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_peak_mb": {
+          "description": "Peak process memory usage (resident set size) in megabytes observed\nduring profiling, sampled at chunk/batch boundaries. Absent when the\nplatform provided no reading or the input path does not track memory.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ragged_row_count": {
+          "default": 0,
+          "description": "Number of data rows whose field count differed from the header's.\n\nThese rows were recovered — extra trailing fields dropped, missing\ntrailing fields padded to null — so profiling continued, but each one\nis a structural violation in the source. A nonzero value means the file\ndid not parse cleanly even though a report was produced. Additive field:\nlegacy documents without it deserialize as `0`.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows_processed": {
+          "description": "Number of rows actually processed or analyzed.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sampling_applied": {
+          "description": "Whether sampling was applied.",
+          "type": "boolean"
+        },
+        "sampling_ratio": {
+          "description": "Ratio of rows analyzed to total rows when sampling is meaningful.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "scan_time_ms": {
+          "description": "Total execution time in milliseconds.",
+          "format": "uint128",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_exhausted": {
+          "description": "Whether the entire source was consumed.",
+          "type": "boolean"
+        },
+        "throughput_rows_sec": {
+          "description": "Throughput in rows per second, auto-calculated when possible.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "truncation_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TruncationReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "If the source was not exhausted, why processing stopped."
+        }
+      },
+      "required": [
+        "rows_processed",
+        "columns_detected",
+        "scan_time_ms",
+        "error_count",
+        "source_exhausted",
+        "sampling_applied"
+      ],
+      "type": "object"
+    },
+    "FileFormat": {
+      "anyOf": [
+        {
+          "enum": [
+            "csv",
+            "json",
+            "jsonl",
+            "parquet"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Supported file formats for data profiling"
+    },
+    "FrequencyItem": {
+      "description": "A value and its frequency count within a column.",
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "percentage": {
+          "format": "double",
+          "type": "number"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "count",
+        "percentage"
+      ],
+      "type": "object"
+    },
+    "MetricConfidence": {
+      "description": "Confidence level for quality metrics.",
+      "oneOf": [
+        {
+          "enum": [
+            "Exact"
+          ],
+          "type": "string"
+        },
+        {
+          "properties": {
+            "Approximate": {
+              "properties": {
+                "population_size": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "sample_size": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "sample_size",
+                "population_size"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Approximate"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "Mixed": {
+              "properties": {
+                "exact_dimensions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "sample_size": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sampled_dimensions": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "exact_dimensions",
+                "sampled_dimensions",
+                "sample_size"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Mixed"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NumericStats": {
+      "description": "Statistics for numeric (integer or float) columns.",
+      "properties": {
+        "coefficient_of_variation": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "is_approximate": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kurtosis": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max": {
+          "format": "double",
+          "type": "number"
+        },
+        "mean": {
+          "format": "double",
+          "type": "number"
+        },
+        "median": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min": {
+          "format": "double",
+          "type": "number"
+        },
+        "mode": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "outlier_count": {
+          "description": "Number of values flagged as IQR-based outliers in this column.\n\nUses the same Tukey-style detection (Q1 − k·IQR, Q3 + k·IQR with\nk = 1.5 by default) that feeds the global `accuracy.outlier_ratio`.\n`None` when outlier detection didn't run (sample below the configured\nminimum or non-numeric column).",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "quartiles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Quartiles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skewness": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "std_dev": {
+          "format": "double",
+          "type": "number"
+        },
+        "variance": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "mean",
+        "std_dev",
+        "variance"
+      ],
+      "type": "object"
+    },
+    "ParquetMetadata": {
+      "description": "Metadata specific to Parquet files",
+      "properties": {
+        "compressed_size_bytes": {
+          "description": "Total compressed size in bytes",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "compression": {
+          "description": "Compression codec used (e.g., \"SNAPPY\", \"GZIP\", \"ZSTD\", \"UNCOMPRESSED\")",
+          "type": "string"
+        },
+        "num_row_groups": {
+          "description": "Number of row groups in the Parquet file",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_summary": {
+          "description": "Arrow schema as string representation",
+          "type": "string"
+        },
+        "uncompressed_size_bytes": {
+          "description": "Estimated uncompressed size if available",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Parquet file version (e.g., \"1.0\", \"2.0\")",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "num_row_groups",
+        "compression",
+        "version",
+        "schema_summary",
+        "compressed_size_bytes",
+        "uncompressed_size_bytes"
+      ],
+      "type": "object"
+    },
+    "Pattern": {
+      "description": "A detected value pattern within a column (e.g. email, phone, UUID).",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/PatternCategory",
+          "description": "Semantic category (e.g. contact, network, financial)"
+        },
+        "confidence": {
+          "description": "Detection confidence score (0.0--1.0), derived from pattern specificity and match rate",
+          "format": "double",
+          "type": "number"
+        },
+        "match_count": {
+          "description": "Number of values matching this pattern",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "match_percentage": {
+          "description": "Percentage of non-null values matching (0.0--100.0)",
+          "format": "double",
+          "type": "number"
+        },
+        "name": {
+          "description": "Pattern name (e.g. \"Email\", \"Phone (US)\", \"UUID\")",
+          "type": "string"
+        },
+        "regex": {
+          "description": "Regex used for detection",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "regex",
+        "match_count",
+        "match_percentage",
+        "category",
+        "confidence"
+      ],
+      "type": "object"
+    },
+    "PatternCategory": {
+      "description": "Semantic category for a detected pattern.",
+      "oneOf": [
+        {
+          "const": "contact",
+          "description": "Email addresses, phone numbers.",
+          "type": "string"
+        },
+        {
+          "const": "identifier",
+          "description": "UUIDs, fiscal codes, tax IDs.",
+          "type": "string"
+        },
+        {
+          "const": "network",
+          "description": "IPv4, IPv6, MAC addresses, URLs.",
+          "type": "string"
+        },
+        {
+          "const": "geographic",
+          "description": "Coordinates and postal codes.",
+          "type": "string"
+        },
+        {
+          "const": "financial",
+          "description": "IBANs, credit cards, SWIFT/BIC.",
+          "type": "string"
+        },
+        {
+          "const": "file_path",
+          "description": "Unix or Windows file paths.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Uncategorized patterns.",
+          "type": "string"
+        }
+      ]
+    },
+    "PrecisionMetrics": {
+      "description": "Precision metrics for effective decimal-scale consistency.",
+      "properties": {
+        "decimal_places_consistency": {
+          "format": "double",
+          "type": "number"
+        },
+        "inconsistent_precision_values": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "numeric_values_checked": {
+          "default": 0,
+          "description": "Parseable finite values examined in floating-point columns.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "decimal_places_consistency",
+        "inconsistent_precision_values",
+        "numeric_values_checked"
+      ],
+      "type": "object"
+    },
+    "ProfileReport": {
+      "description": "Complete profiling report for a data source.\n\nContains column-level statistics, execution metadata, and an optional\nQuality assessment informed by ISO 8000/25012 concepts. This is the primary output of all\nprofiling operations (`Profiler::analyze_file`, `Profiler::analyze_source`,\n`Profiler::profile_stream`, etc.).",
+      "properties": {
+        "column_profiles": {
+          "description": "Column-level profiling results",
+          "items": {
+            "$ref": "#/$defs/ColumnProfile"
+          },
+          "type": "array"
+        },
+        "data_source": {
+          "$ref": "#/$defs/DataSource",
+          "description": "Data source metadata (file, query, etc.)"
+        },
+        "execution": {
+          "$ref": "#/$defs/ExecutionMetadata",
+          "description": "Execution metadata (timing, rows processed, truncation info, etc.)"
+        },
+        "id": {
+          "description": "Unique identifier for this report (UUID v4)",
+          "type": "string"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualityAssessment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Data quality assessment (optional — partial analysis may skip quality)"
+        },
+        "schema_version": {
+          "const": 1,
+          "description": "Version of the serialized report schema (see [`REPORT_SCHEMA_VERSION`]).\n\n`0` means the document predates schema versioning (a 0.9-era report).\nDeserialization rejects versions newer than [`REPORT_SCHEMA_VERSION`].",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "semantic_hint_bindings": {
+          "description": "Per-column evidence of how each semantic hint bound to the data.\n\nEmpty when no hints were supplied. Recorded for provenance: a hint proven\ninert over the full data is rejected before a report is returned, so a\nsuccessful report only carries bindings that matched something or whose\nevidence was sampled. Additive field — older readers ignore it.",
+          "items": {
+            "$ref": "#/$defs/SemanticHintBinding"
+          },
+          "type": "array"
+        },
+        "timestamp": {
+          "description": "Timestamp when the report was generated (ISO 8601 / RFC 3339)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "id",
+        "timestamp",
+        "data_source",
+        "column_profiles",
+        "execution"
+      ],
+      "type": "object"
+    },
+    "PythonColumnDocument": {
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/PythonDataType"
+        },
+        "invalid_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "null_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "null_percentage": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "patterns": {
+          "items": {
+            "$ref": "#/$defs/PythonPatternDocument"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PythonColumnStatsDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unique_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "unique_count_is_approximate": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "uniqueness_ratio": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "data_type",
+        "total_count",
+        "null_count",
+        "null_percentage",
+        "unique_count",
+        "unique_count_is_approximate",
+        "uniqueness_ratio"
+      ],
+      "type": "object"
+    },
+    "PythonColumnStatsDocument": {
+      "properties": {
+        "avg_length": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "coefficient_of_variation": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "false_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "is_approximate": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kurtosis": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_length": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mean": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "median": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min_length": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "outlier_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "quartiles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Quartiles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skewness": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "std_dev": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "true_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "true_ratio": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "variance": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PythonDataType": {
+      "enum": [
+        "string",
+        "identifier",
+        "integer",
+        "float",
+        "date",
+        "boolean"
+      ],
+      "type": "string"
+    },
+    "PythonExecutionDocument": {
+      "properties": {
+        "bytes_consumed": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "columns_detected": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "engine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memory_peak_mb": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ragged_row_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows_processed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sampling_applied": {
+          "type": "boolean"
+        },
+        "sampling_ratio": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "scan_time_ms": {
+          "format": "uint128",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source_exhausted": {
+          "type": "boolean"
+        },
+        "throughput_rows_sec": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "truncation_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "engine",
+        "rows_processed",
+        "columns_detected",
+        "scan_time_ms",
+        "source_exhausted",
+        "truncation_reason",
+        "bytes_consumed",
+        "throughput_rows_sec",
+        "memory_peak_mb",
+        "error_count",
+        "ragged_row_count",
+        "sampling_applied",
+        "sampling_ratio"
+      ],
+      "type": "object"
+    },
+    "PythonPatternDocument": {
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/PatternCategory"
+        },
+        "confidence": {
+          "format": "double",
+          "type": "number"
+        },
+        "match_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "match_percentage": {
+          "format": "double",
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "regex": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "regex",
+        "match_count",
+        "match_percentage",
+        "category",
+        "confidence"
+      ],
+      "type": "object"
+    },
+    "PythonProfileReportDocument": {
+      "properties": {
+        "columns": {
+          "items": {
+            "$ref": "#/$defs/PythonColumnDocument"
+          },
+          "type": "array"
+        },
+        "execution": {
+          "$ref": "#/$defs/PythonExecutionDocument"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PythonQualityDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "const": 1,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "semantic_hint_bindings": {
+          "items": {
+            "$ref": "#/$defs/SemanticHintBinding"
+          },
+          "type": "array"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_type": {
+          "$ref": "#/$defs/PythonSourceType"
+        }
+      },
+      "required": [
+        "schema_version",
+        "source",
+        "source_type",
+        "execution",
+        "columns",
+        "quality"
+      ],
+      "type": "object"
+    },
+    "PythonQualityDimension": {
+      "enum": [
+        "completeness",
+        "consistency",
+        "uniqueness",
+        "accuracy",
+        "timeliness",
+        "validity",
+        "precision"
+      ],
+      "type": "string"
+    },
+    "PythonQualityDocument": {
+      "properties": {
+        "accuracy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccuracyMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assessed_dimensions": {
+          "items": {
+            "$ref": "#/$defs/PythonQualityDimension"
+          },
+          "type": "array"
+        },
+        "completeness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompletenessMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "consistency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsistencyMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dimension_scores": {
+          "properties": {
+            "accuracy": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "completeness": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "consistency": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "precision": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "timeliness": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "uniqueness": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "validity": {
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "low_sample_warning": {
+          "type": "boolean"
+        },
+        "overall_score": {
+          "format": "double",
+          "type": "number"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrecisionMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "timeliness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimelinessMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uniqueness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PythonUniquenessDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidityMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "overall_score",
+        "assessed_dimensions",
+        "dimension_scores",
+        "low_sample_warning"
+      ],
+      "type": "object"
+    },
+    "PythonSourceType": {
+      "enum": [
+        "file",
+        "query",
+        "dataframe",
+        "stream"
+      ],
+      "type": "string"
+    },
+    "PythonUniquenessDocument": {
+      "properties": {
+        "duplicate_rows": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicate_rows_approximate": {
+          "type": "boolean"
+        },
+        "high_cardinality_warning": {
+          "type": "boolean"
+        },
+        "key_column": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_uniqueness": {
+          "format": "double",
+          "type": "number"
+        },
+        "rows_checked": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "duplicate_rows",
+        "key_uniqueness",
+        "high_cardinality_warning",
+        "rows_checked",
+        "key_column",
+        "duplicate_rows_approximate"
+      ],
+      "type": "object"
+    },
+    "QualityAssessment": {
+      "description": "Wraps quality metrics with confidence information.",
+      "properties": {
+        "confidence": {
+          "$ref": "#/$defs/MetricConfidence"
+        },
+        "metrics": {
+          "$ref": "#/$defs/QualityMetrics"
+        }
+      },
+      "required": [
+        "metrics",
+        "confidence"
+      ],
+      "type": "object"
+    },
+    "QualityMetrics": {
+      "description": "Comprehensive data quality metrics following industry standards.",
+      "properties": {
+        "accuracy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccuracyMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completeness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CompletenessMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "consistency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsistencyMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "low_sample_warning": {
+          "description": "True when the sample used to compute these metrics was below the\nminimum recommended size (10 rows). When set, the quality scores and\nper-dimension ratios should be treated as directional rather than\nreliable. Backwards-compatible: defaults to `false`.",
+          "type": "boolean"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PrecisionMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score_weights": {
+          "$ref": "#/$defs/QualityScoreWeights",
+          "description": "Weights used to aggregate dimension scores. Default weights are omitted\nfrom serialized reports; custom weights are retained for reproducible\nscore calculation after a round trip."
+        },
+        "timeliness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimelinessMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uniqueness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UniquenessMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "validity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidityMetrics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "QualityScoreWeights": {
+      "description": "Relative weights used to aggregate assessed quality dimensions.\n\nWeights do not need to sum to one: the score renormalizes them over the\ndimensions that were actually assessed. Values should be non-negative and\nat least one weight must be positive.",
+      "properties": {
+        "accuracy": {
+          "default": 0.15,
+          "format": "double",
+          "type": "number"
+        },
+        "completeness": {
+          "default": 0.25,
+          "format": "double",
+          "type": "number"
+        },
+        "consistency": {
+          "default": 0.2,
+          "format": "double",
+          "type": "number"
+        },
+        "precision": {
+          "default": 0.05,
+          "format": "double",
+          "type": "number"
+        },
+        "timeliness": {
+          "default": 0.1,
+          "format": "double",
+          "type": "number"
+        },
+        "uniqueness": {
+          "default": 0.15,
+          "format": "double",
+          "type": "number"
+        },
+        "validity": {
+          "default": 0.1,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "completeness",
+        "consistency",
+        "uniqueness",
+        "accuracy",
+        "timeliness",
+        "validity",
+        "precision"
+      ],
+      "type": "object"
+    },
+    "Quartiles": {
+      "description": "Quartile statistics for numeric distributions.",
+      "properties": {
+        "iqr": {
+          "format": "double",
+          "type": "number"
+        },
+        "q1": {
+          "format": "double",
+          "type": "number"
+        },
+        "q2": {
+          "format": "double",
+          "type": "number"
+        },
+        "q3": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "q1",
+        "q2",
+        "q3",
+        "iqr"
+      ],
+      "type": "object"
+    },
+    "QueryEngine": {
+      "anyOf": [
+        {
+          "enum": [
+            "postgres",
+            "mysql",
+            "sqlite",
+            "snowflake",
+            "bigquery"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Supported query engines for SQL-based profiling"
+    },
+    "SemanticHintBinding": {
+      "description": "Per-column evidence of whether a semantic hint actually bound to any value.\n\nA hint expresses user domain knowledge about a column; this records how much\nof the column that knowledge matched. `matched_values` counts the values of\nthe kind the hint expects (numeric for `positive`, date-parseable for\n`temporal`, every non-null value for `identifier`, which coerces the column).\n\n`exact` distinguishes a full-data count from a sampled one: a hint that\nmatched nothing (`matched_values == 0`) is only *proven* inert when the count\ncovers every row. A sampled zero is recorded but never treated as an error,\nbecause absence in a sample is not proof of absence in the data.",
+      "properties": {
+        "checked_values": {
+          "description": "Non-null values considered.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "column": {
+          "description": "The hinted column this evidence is for.",
+          "type": "string"
+        },
+        "exact": {
+          "description": "Whether the counts cover every row (`true`) or a sample (`false`).",
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/SemanticHintKind",
+          "description": "Which hint list named the column."
+        },
+        "matched_values": {
+          "description": "Values that matched the hint's expected kind.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "column",
+        "kind",
+        "checked_values",
+        "matched_values",
+        "exact"
+      ],
+      "type": "object"
+    },
+    "SemanticHintKind": {
+      "description": "The kind of a semantic hint, used for diagnostics and binding evidence.",
+      "oneOf": [
+        {
+          "const": "positive",
+          "description": "A [`SemanticHints::positive_columns`] entry.",
+          "type": "string"
+        },
+        {
+          "const": "identifier",
+          "description": "An [`SemanticHints::identifier_columns`] entry.",
+          "type": "string"
+        },
+        {
+          "const": "temporal",
+          "description": "A [`SemanticHints::temporal_columns`] entry.",
+          "type": "string"
+        }
+      ]
+    },
+    "StreamSourceSystem": {
+      "anyOf": [
+        {
+          "enum": [
+            "kafka",
+            "kinesis",
+            "pulsar",
+            "http",
+            "websocket",
+            "object_store",
+            "message_queue",
+            "database"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Supported stream source systems"
+    },
+    "TextStats": {
+      "description": "Statistics for text/string columns.",
+      "properties": {
+        "avg_length": {
+          "format": "double",
+          "type": "number"
+        },
+        "least_frequent": {
+          "items": {
+            "$ref": "#/$defs/FrequencyItem"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "max_length": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "min_length": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "most_frequent": {
+          "items": {
+            "$ref": "#/$defs/FrequencyItem"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "min_length",
+        "max_length",
+        "avg_length"
+      ],
+      "type": "object"
+    },
+    "TimelinessMetrics": {
+      "description": "Timeliness metrics (ISO 8000-8).",
+      "properties": {
+        "date_values_checked": {
+          "default": 0,
+          "description": "Non-null values examined in inferred or explicitly configured temporal\ncolumns. 0 means\nthe dimension had nothing to assess and it is excluded from the\noverall score.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "future_dates_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invalid_date_values": {
+          "default": 0,
+          "description": "Non-null values in inferred or explicitly configured temporal columns\nthat failed calendar-date parsing.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stale_data_ratio": {
+          "format": "double",
+          "type": "number"
+        },
+        "temporal_pairs_checked": {
+          "default": 0,
+          "description": "Start/end value pairs actually compared for temporal ordering.\n`temporal_violations` is bounded by this, not by\n`date_values_checked` — the pair scan may cover columns the date\nscan does not.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "temporal_violations": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "future_dates_count",
+        "stale_data_ratio",
+        "temporal_violations",
+        "invalid_date_values",
+        "date_values_checked",
+        "temporal_pairs_checked"
+      ],
+      "type": "object"
+    },
+    "TruncationReason": {
+      "description": "Reason why profiling was truncated before exhausting the source.",
+      "oneOf": [
+        {
+          "description": "Stopped after processing a maximum number of rows.",
+          "properties": {
+            "MaxRows": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "MaxRows"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stopped after consuming a maximum number of bytes.",
+          "properties": {
+            "MaxBytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "MaxBytes"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "MemoryPressure",
+          "description": "Stopped due to memory pressure.",
+          "type": "string"
+        },
+        {
+          "description": "Stopped due to a user-defined stop condition.",
+          "properties": {
+            "StopCondition": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "StopCondition"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "StreamClosed",
+          "description": "The input stream was closed by the producer.",
+          "type": "string"
+        },
+        {
+          "const": "Timeout",
+          "description": "Stopped due to a timeout.",
+          "type": "string"
+        }
+      ]
+    },
+    "UniquenessMetrics": {
+      "description": "Uniqueness metrics (ISO 8000-110).",
+      "properties": {
+        "duplicate_rows": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicate_rows_approximate": {
+          "description": "True when `duplicate_rows` comes from the full-stream distinct-count\nestimator after it spilled to its HLL sketch (~1% relative error on\nthe distinct count), rather than an exact count.",
+          "type": "boolean"
+        },
+        "high_cardinality_warning": {
+          "type": "boolean"
+        },
+        "key_column": {
+          "description": "Column whose uniqueness `key_uniqueness` describes. `None` means no\nkey column was identified; `key_uniqueness` then carries no signal\nand does not contribute to the dimension score.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_uniqueness": {
+          "format": "double",
+          "type": "number"
+        },
+        "rows_checked": {
+          "default": 0,
+          "description": "Rows scanned for exact duplicates. 0 means the dimension had nothing\nto assess and it is excluded from the overall score.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "duplicate_rows",
+        "key_uniqueness",
+        "high_cardinality_warning",
+        "rows_checked"
+      ],
+      "type": "object"
+    },
+    "ValidityMetrics": {
+      "description": "Validity metrics derived from confidently detected semantic patterns.",
+      "properties": {
+        "invalid_values": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "valid_values_ratio": {
+          "format": "double",
+          "type": "number"
+        },
+        "values_checked": {
+          "default": 0,
+          "description": "Non-null values checked against a dominant semantic pattern.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "valid_values_ratio",
+        "invalid_values",
+        "values_checked"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://andreabozzo.github.io/dataprof/schema/profile-report.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ProfileReport"
+    },
+    {
+      "$ref": "#/$defs/PythonProfileReportDocument"
+    }
+  ],
+  "description": "Both v1 serialization dialects accepted by dataprof.\n\nRust serializes the complete runtime model. The high-level Python wrapper\npredates that shape and exposes a deliberately flatter document. They share\none schema version and compatibility policy, so the published artifact\ndescribes their union rather than pretending one dialect does not exist.",
+  "title": "ProfileReport"
+}

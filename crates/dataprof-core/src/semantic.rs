@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::DataProfilerError;
 
 /// The kind of a semantic hint, used for diagnostics and binding evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SemanticHintKind {
     /// A [`SemanticHints::positive_columns`] entry.
@@ -36,7 +36,7 @@ impl SemanticHintKind {
 /// matched nothing (`matched_values == 0`) is only *proven* inert when the count
 /// covers every row. A sampled zero is recorded but never treated as an error,
 /// because absence in a sample is not proof of absence in the data.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SemanticHintBinding {
     /// The hinted column this evidence is for.
     pub column: String,

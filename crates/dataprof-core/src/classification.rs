@@ -1,5 +1,7 @@
 /// Inferred column data type.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum DataType {
     /// Text or string values.
     String,
@@ -16,7 +18,9 @@ pub enum DataType {
 }
 
 /// Semantic category for a detected pattern.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PatternCategory {
     /// Email addresses, phone numbers.

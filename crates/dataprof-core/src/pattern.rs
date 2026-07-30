@@ -1,7 +1,7 @@
 use crate::classification::PatternCategory;
 
 /// A detected value pattern within a column (e.g. email, phone, UUID).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct Pattern {
     /// Pattern name (e.g. "Email", "Phone (US)", "UUID")
     pub name: String,

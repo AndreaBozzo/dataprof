@@ -1,5 +1,5 @@
 /// Reason why profiling was truncated before exhausting the source.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum TruncationReason {
     /// Stopped after processing a maximum number of rows.
     MaxRows(u64),
@@ -16,7 +16,7 @@ pub enum TruncationReason {
 }
 
 /// Metadata about the profiling execution.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecutionMetadata {
     /// Engine or parser that actually produced the report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,6 +48,7 @@ pub struct ExecutionMetadata {
     /// did not parse cleanly even though a report was produced. Additive field:
     /// legacy documents without it deserialize as `0`.
     #[serde(default)]
+    #[schemars(default)]
     pub ragged_row_count: usize,
     /// Whether the entire source was consumed.
     pub source_exhausted: bool,
