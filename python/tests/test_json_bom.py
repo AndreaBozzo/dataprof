@@ -9,6 +9,13 @@ import dataprof
 import pytest
 from dataprof.asyncio import profile_bytes, profile_file
 
+_HAS_ASYNC = dataprof.capabilities().async_streaming
+requires_async = pytest.mark.skipif(
+    not _HAS_ASYNC,
+    reason="Async streaming not compiled. Build with --features "
+    "'python,python-async,async-streaming'.",
+)
+
 PAYLOADS = {
     "json": b'[{"id":1,"label":"alpha"},{"id":2,"label":"beta"}]',
     "jsonl": b'{"id":1,"label":"alpha"}\n{"id":2,"label":"beta"}\n',
@@ -57,6 +64,7 @@ def test_sync_file_accepts_one_leading_utf8_bom(tmp_path, fmt):
 
 
 @pytest.mark.parametrize("fmt", ["json", "jsonl"])
+@requires_async
 def test_async_bytes_and_file_accept_bom_and_count_source_bytes(tmp_path, fmt):
     data = codecs.BOM_UTF8 + PAYLOADS[fmt]
     path = tmp_path / f"bom.{fmt}"
