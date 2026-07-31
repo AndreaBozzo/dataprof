@@ -25,7 +25,12 @@ impl<R: Read> Utf8BomReader<R> {
         while prefix_len < prefix.len() {
             match inner.read(&mut prefix[prefix_len..]) {
                 Ok(0) => break,
-                Ok(read) => prefix_len += read,
+                Ok(read) => {
+                    prefix_len += read;
+                    if prefix[..prefix_len] != UTF8_BOM[..prefix_len] {
+                        break;
+                    }
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => return Err(error),
             }
@@ -85,10 +90,37 @@ impl<R: BufRead> BufRead for Utf8BomReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufReader, Cursor};
+    use std::cell::Cell;
+    use std::io::Cursor;
+    use std::rc::Rc;
+
+    #[derive(Debug)]
+    struct OneByteReader<'a> {
+        inner: Cursor<&'a [u8]>,
+        read_calls: Rc<Cell<usize>>,
+    }
+
+    impl Read for OneByteReader<'_> {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            self.read_calls.set(self.read_calls.get() + 1);
+            let limit = output.len().min(1);
+            self.inner.read(&mut output[..limit])
+        }
+    }
+
+    fn one_byte_reader(data: &[u8]) -> (OneByteReader<'_>, Rc<Cell<usize>>) {
+        let read_calls = Rc::new(Cell::new(0));
+        (
+            OneByteReader {
+                inner: Cursor::new(data),
+                read_calls: Rc::clone(&read_calls),
+            },
+            read_calls,
+        )
+    }
 
     fn read_all(data: &[u8]) -> (Vec<u8>, usize) {
-        let chunked = BufReader::with_capacity(1, Cursor::new(data));
+        let (chunked, _) = one_byte_reader(data);
         let mut reader = Utf8BomReader::new(chunked).unwrap();
         let stripped = reader.stripped_len();
         let mut output = Vec::new();
@@ -113,6 +145,20 @@ mod tests {
             let (output, _) = read_all(data);
             let expected = data.strip_prefix(&UTF8_BOM).unwrap_or(data);
             assert_eq!(output, expected);
+        }
+    }
+
+    #[test]
+    fn stops_reading_as_soon_as_the_prefix_cannot_be_a_bom() {
+        for data in [b"{}".as_slice(), b" \xEF\xBB\xBF{}".as_slice()] {
+            let (inner, read_calls) = one_byte_reader(data);
+            let mut reader = Utf8BomReader::new(inner).unwrap();
+
+            assert_eq!(read_calls.get(), 1);
+            let mut output = Vec::new();
+            reader.read_to_end(&mut output).unwrap();
+            assert_eq!(output, data);
+            assert_eq!(reader.stripped_len(), 0);
         }
     }
 }
