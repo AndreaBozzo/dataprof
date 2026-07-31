@@ -334,6 +334,26 @@ class TestProfileAdHocInputs:
         with pytest.raises(ValueError, match="dataprof.asyncio.profile_bytes"):
             dataprof.profile(b"a,b\n1,2\n")
 
+    def test_sync_bytes_reject_controls_they_cannot_apply(self):
+        data = b"a,b\n1,2\n3,4\n"
+        unsupported = [
+            lambda: dataprof.profile(data, format="csv", engine="incremental"),
+            lambda: dataprof.profile(data, format="csv", engine="not-an-engine"),
+            lambda: dataprof.profile(data, format="csv", chunk_size=1024),
+            lambda: dataprof.profile(data, format="csv", memory_limit_mb=1),
+            lambda: dataprof.profile(
+                data,
+                format="csv",
+                stop_condition=dataprof.StopCondition.max_rows(1),
+            ),
+            lambda: dataprof.profile(data, format="csv", on_progress=lambda _event: None),
+            lambda: dataprof.profile(data, format="csv", progress_interval_ms=1),
+            lambda: dataprof.profile(data, format="csv", csv_flexible=True),
+        ]
+        for call in unsupported:
+            with pytest.raises(ValueError, match="cannot apply"):
+                call()
+
     def test_ad_hoc_inputs_do_not_import_pandas(self, monkeypatch):
         """The base wheel has no dependencies; profiling must not reach for one."""
 
@@ -364,6 +384,17 @@ class TestProfileAdHocInputs:
         r = dataprof.profile({"x": ["a", "", None, "null", float("nan")]})
         assert r["x"].null_count == 4
         assert r["x"].unique_count == 1
+
+    def test_dict_infers_unsigned_values_beyond_i64_as_integer(self):
+        r = dataprof.profile({"x": [2**64 - 1, 2**64 - 2]})
+        assert r["x"].data_type == "integer"
+
+    def test_dict_keeps_non_finite_numeric_values_in_a_float_column(self):
+        r = dataprof.profile({"x": [1.0, float("inf"), float("-inf"), 2.0]})
+        assert r["x"].data_type == "float"
+        assert r["x"].invalid_count == 2
+        assert r["x"].min == 1.0
+        assert r["x"].max == 2.0
 
     def test_dict_rejects_ragged_columns(self):
         with pytest.raises(ValueError, match="differing lengths"):
@@ -429,6 +460,10 @@ class TestProfileAdHocInputs:
 
     def test_csv_bytes_auto_detect_delimiter_like_file_input(self):
         r = dataprof.profile(b"a;b\n1;2\n", format="csv")
+        assert list(r.column_profiles) == ["a", "b"]
+
+    def test_csv_bytes_strip_utf8_bom_from_first_header(self):
+        r = dataprof.profile(b"\xef\xbb\xbfa,b\n1,2\n", format="csv")
         assert list(r.column_profiles) == ["a", "b"]
 
     def test_csv_bytes_reject_ragged_rows(self):

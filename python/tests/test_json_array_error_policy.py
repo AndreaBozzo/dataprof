@@ -71,6 +71,13 @@ def test_bytes_reject_invalid_container(data, case):
         dataprof.profile(data, format="json")
 
 
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_bytes_reject_non_standard_numeric_constants(constant):
+    data = b'[{"id":1},{"id":' + constant + b"}]"
+    with pytest.raises(ValueError, match="non-standard numeric constant"):
+        dataprof.profile(data, format="json")
+
+
 @requires_async
 @pytest.mark.parametrize(("data", "case"), INVALID_WITH_VALID_PREFIX)
 def test_async_tolerant_surfaces_invalid_container(data, case):

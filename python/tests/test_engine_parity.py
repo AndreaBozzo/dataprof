@@ -411,3 +411,24 @@ def test_rectangular_source_has_one_profile_per_column(tmp_path):
         assert report.columns == len(list(report.column_profiles)) == 3, engine
         for col in report.column_profiles:
             assert report[col].total_count == report.rows, f"{engine} {col}"
+
+
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+def test_non_finite_csv_tokens_keep_numeric_type(engine, tmp_path):
+    path = tmp_path / "non_finite.csv"
+    path.write_text("x\n1.0\nInfinity\n-inf\n2.0\n")
+
+    column = dataprof.profile(path, engine=engine)["x"]
+    assert column.data_type == "float"
+    assert column.invalid_count == 2
+    assert column.min == 1.0
+    assert column.max == 2.0
+
+
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+def test_unsigned_values_beyond_i64_keep_integer_type(engine, tmp_path):
+    path = tmp_path / "unsigned.csv"
+    path.write_text(f"x\n{2**64 - 1}\n{2**64 - 2}\n")
+
+    column = dataprof.profile(path, engine=engine)["x"]
+    assert column.data_type == "integer"

@@ -48,12 +48,13 @@ pub fn infer_type(data: &[String]) -> DataType {
 
     for s in &non_empty {
         let trimmed = s.trim();
-        if trimmed.parse::<i64>().is_ok() {
+        if trimmed.parse::<i64>().is_ok() || trimmed.parse::<u64>().is_ok() {
             integer_count += 1;
             float_count += 1; // integers are also valid floats
-        } else if let Ok(f) = trimmed.parse::<f64>()
-            && f.is_finite()
-        {
+        } else if trimmed.parse::<f64>().is_ok() {
+            // Infinity is a numeric lexical form even though it cannot enter
+            // finite statistics. Classify the column as numeric and let the
+            // profile's invalid_count disclose the unusable value.
             float_count += 1;
         }
     }
@@ -133,6 +134,27 @@ mod tests {
     fn test_infer_mixed_numeric_as_float() {
         // Mix of integers and floats should be detected as Float
         let data = vec!["1".to_string(), "2.5".to_string(), "3".to_string()];
+        assert!(matches!(infer_type(&data), DataType::Float));
+    }
+
+    #[test]
+    fn test_infer_unsigned_integer_beyond_i64() {
+        let data = vec![
+            u64::MAX.to_string(),
+            (u64::MAX - 1).to_string(),
+            (i64::MAX as u64 + 1).to_string(),
+        ];
+        assert!(matches!(infer_type(&data), DataType::Integer));
+    }
+
+    #[test]
+    fn test_infer_non_finite_numeric_tokens_as_float() {
+        let data = vec![
+            "1.0".to_string(),
+            "Infinity".to_string(),
+            "-inf".to_string(),
+            "2.0".to_string(),
+        ];
         assert!(matches!(infer_type(&data), DataType::Float));
     }
 

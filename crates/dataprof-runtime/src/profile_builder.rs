@@ -323,7 +323,9 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
             .collect();
 
         if !non_empty.is_empty() {
-            let all_integers = non_empty.iter().all(|s| s.parse::<i64>().is_ok());
+            let all_integers = non_empty
+                .iter()
+                .all(|s| s.parse::<i64>().is_ok() || s.parse::<u64>().is_ok());
             if all_integers {
                 return DataType::Integer;
             }

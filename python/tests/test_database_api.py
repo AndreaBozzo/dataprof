@@ -121,6 +121,23 @@ class TestDatabaseAnalysis:
         )
         assert report.rows_processed == 5
 
+    def test_zero_batch_size_is_rejected(self, sqlite_db):
+        with pytest.raises(ValueError, match="greater than zero"):
+            _run(
+                analyze_database_async,
+                sqlite_db,
+                "SELECT * FROM test_users",
+                batch_size=0,
+            )
+
+    def test_duplicate_query_aliases_are_rejected(self, sqlite_db):
+        with pytest.raises(ValueError, match="[Dd]uplicate column name"):
+            _run(
+                analyze_database_async,
+                sqlite_db,
+                "SELECT id AS duplicate, age AS duplicate FROM test_users",
+            )
+
     def test_analyze_filtered_query(self, sqlite_db):
         report = _run(
             analyze_database_async,

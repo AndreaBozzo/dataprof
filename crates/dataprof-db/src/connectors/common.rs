@@ -94,6 +94,14 @@ macro_rules! streaming_profile_loop {
             }
 
             let columns = rows[0].columns();
+            let column_names: Vec<String> = columns
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect();
+            dataprof_core::validate_unique_column_names(
+                &column_names,
+                concat!($db_name, " query result"),
+            )?;
             let mut batch_result: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::with_capacity(columns.len());
 
@@ -144,29 +152,41 @@ macro_rules! process_rows_to_columns {
         use sqlx::{Column, Row};
 
         if $rows.is_empty() {
-            std::collections::HashMap::new()
+            Ok(std::collections::HashMap::new())
         } else {
             let columns = $rows[0].columns();
-            let mut result: std::collections::HashMap<String, Vec<String>> =
-                std::collections::HashMap::with_capacity(columns.len());
+            let column_names: Vec<String> = columns
+                .iter()
+                .map(|column| column.name().to_string())
+                .collect();
+            match dataprof_core::validate_unique_column_names(
+                &column_names,
+                "database query result",
+            ) {
+                Err(error) => Err(error),
+                Ok(()) => {
+                    let mut result: std::collections::HashMap<String, Vec<String>> =
+                        std::collections::HashMap::with_capacity(columns.len());
 
-            for col in columns {
-                result.insert(col.name().to_string(), Vec::with_capacity($rows.len()));
-            }
-
-            for row in &$rows {
-                for (i, col) in columns.iter().enumerate() {
-                    let value: Option<String> = $crate::db_column_to_string!(row, i);
-                    if let Some(column_data) = result.get_mut(col.name()) {
-                        // decode-audit: no-data — None is SQL NULL (or a type
-                        // db_column_to_string documents as unsupported); "" is
-                        // the profiler's textual null.
-                        column_data.push(value.unwrap_or_default());
+                    for col in columns {
+                        result.insert(col.name().to_string(), Vec::with_capacity($rows.len()));
                     }
+
+                    for row in &$rows {
+                        for (i, col) in columns.iter().enumerate() {
+                            let value: Option<String> = $crate::db_column_to_string!(row, i);
+                            if let Some(column_data) = result.get_mut(col.name()) {
+                                // decode-audit: no-data — None is SQL NULL (or a type
+                                // db_column_to_string documents as unsupported); "" is
+                                // the profiler's textual null.
+                                column_data.push(value.unwrap_or_default());
+                            }
+                        }
+                    }
+
+                    Ok(result)
                 }
             }
-
-            result
         }
     }};
 }

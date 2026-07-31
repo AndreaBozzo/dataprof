@@ -298,6 +298,23 @@ def _bytes_buffer(source: bytes | bytearray | memoryview | _io.BytesIO) -> _io.B
     return _io.BytesIO(bytes(source))
 
 
+class _NonStandardJsonConstant(ValueError):
+    """A JavaScript numeric constant that RFC 8259 JSON does not permit."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(value)
+        self.value = value
+
+
+def _reject_nonstandard_json_constant(value: str) -> None:
+    raise _NonStandardJsonConstant(value)
+
+
+def _strict_json_loads(text: str) -> Any:
+    """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions."""
+    return json.loads(text, parse_constant=_reject_nonstandard_json_constant)
+
+
 # --- Dependency-free columnar inputs (see _dataprof.profile_columns) ---
 #
 # dict, list-of-dicts, and decoded byte buffers all reduce to named columns of
@@ -409,7 +426,9 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     This follows the file-based CSV engine, where an empty field is missing data
     rather than an empty string.
     """
-    text = buffer.getvalue().decode("utf-8")
+    # Match the Rust CSV readers: a UTF-8 BOM marks the encoding and is not part
+    # of the first column's name.
+    text = buffer.getvalue().decode("utf-8-sig")
     if delimiter is None:
         try:
             delimiter = _csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
@@ -466,7 +485,7 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
         if not line.strip():
             continue
         try:
-            value = json.loads(line)
+            value = _strict_json_loads(line)
         except json.JSONDecodeError as exc:
             if on_error == "strict":
                 # ``lineno`` is the record's position in the input; ``exc.colno``
@@ -474,6 +493,15 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
                 # included.
                 raise ValueError(
                     f"jsonl bytes: malformed JSON record on line {lineno}, column {exc.colno}."
+                ) from None
+            skipped += 1
+            continue
+        except _NonStandardJsonConstant as exc:
+            if on_error == "strict":
+                column = line.find(exc.value) + 1
+                raise ValueError(
+                    f"jsonl bytes: malformed JSON record on line {lineno}, column {column} "
+                    f"(non-standard numeric constant {exc.value!r})."
                 ) from None
             skipped += 1
             continue
@@ -1011,7 +1039,10 @@ def profile(
 
     Accepts file paths (str/Path), pandas DataFrames, polars DataFrames,
     Arrow PyCapsule-compatible objects, dict/list-of-dicts, and bytes-like
-    file contents when ``format=`` is provided.
+    file contents when ``format=`` is provided. Synchronous bytes use the
+    in-memory columnar path and reject streaming-only controls such as
+    ``chunk_size``, ``memory_limit_mb``, ``stop_condition``, and progress
+    callbacks; use ``dataprof.asyncio.profile_bytes()`` for those.
 
     Args:
         source: Data source to profile.
@@ -1173,6 +1204,28 @@ def profile(
                 "bytes and BytesIO sources require format='csv', 'json', 'jsonl', or 'parquet'. "
                 "For async byte streams, use dataprof.asyncio.profile_bytes(data, format='csv')."
             )
+        unsupported: list[str] = []
+        if engine not in ("auto", "columnar"):
+            unsupported.append("engine")
+        if chunk_size is not None:
+            unsupported.append("chunk_size")
+        if memory_limit_mb is not None:
+            unsupported.append("memory_limit_mb")
+        if stop_condition is not None:
+            unsupported.append("stop_condition")
+        if on_progress is not None:
+            unsupported.append("on_progress")
+        if progress_interval_ms is not None:
+            unsupported.append("progress_interval_ms")
+        if csv_flexible is True:
+            unsupported.append("csv_flexible=True")
+        if unsupported:
+            joined = ", ".join(unsupported)
+            raise ValueError(
+                f"Synchronous bytes input cannot apply: {joined}. "
+                "Use max_rows for a row cap, or dataprof.asyncio.profile_bytes() "
+                "for streaming controls."
+            )
         if sampling is not None and not getattr(sampling, "is_noop", False):
             # Synchronous byte input is read by the pure-Python reader, which has
             # no row-by-row sampling stage. Returning a full profile while the
@@ -1196,11 +1249,15 @@ def profile(
         elif fmt == "json":
             text = buffer.getvalue().decode("utf-8")
             try:
-                rows = json.loads(text)
+                rows = _strict_json_loads(text)
             except json.JSONDecodeError as exc:
                 # Surface a dataprof error category, not a bare decoder exception.
                 raise ValueError(
                     f"json bytes: malformed JSON (line {exc.lineno}, column {exc.colno})."
+                ) from None
+            except _NonStandardJsonConstant as exc:
+                raise ValueError(
+                    f"json bytes: malformed JSON (non-standard numeric constant {exc.value!r})."
                 ) from None
             if isinstance(rows, dict):
                 if all(isinstance(values, (list, tuple)) for values in rows.values()):
