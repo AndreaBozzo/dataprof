@@ -11,6 +11,15 @@ use sqlx::sqlite::SqlitePoolOptions;
 
 /// Read a query's rows into the column-oriented map the profiler consumes.
 async fn columns_of(query: &str, ddl: &[&str]) -> std::collections::HashMap<String, Vec<String>> {
+    columns_result_of(query, ddl)
+        .await
+        .expect("unique query columns")
+}
+
+async fn columns_result_of(
+    query: &str,
+    ddl: &[&str],
+) -> Result<std::collections::HashMap<String, Vec<String>>, dataprof_core::DataProfilerError> {
     let pool = SqlitePoolOptions::new()
         .connect("sqlite::memory:")
         .await
@@ -101,4 +110,20 @@ async fn large_integers_are_not_truncated_through_a_float_arm() {
     .await;
 
     assert_eq!(cols["big"], vec!["9007199254740993"]);
+}
+
+#[tokio::test]
+async fn duplicate_query_aliases_are_rejected_before_columns_merge() {
+    let error = columns_result_of(
+        "SELECT a AS x, b AS x FROM t",
+        &[
+            "CREATE TABLE t (a INTEGER, b INTEGER)",
+            "INSERT INTO t VALUES (1, 10), (2, 20)",
+        ],
+    )
+    .await
+    .expect_err("duplicate aliases must not merge");
+
+    assert!(error.to_string().contains("Duplicate column name"));
+    assert!(error.to_string().contains('x'));
 }

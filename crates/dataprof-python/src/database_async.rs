@@ -5,6 +5,7 @@
 
 use pyo3::prelude::*;
 
+use crate::errors::analysis_error_to_py;
 use crate::types::PyProfileReport;
 #[cfg(feature = "database")]
 use dataprof::{DataProfilerError, DatabaseConfig, analyze_database, create_connector};
@@ -48,13 +49,18 @@ pub fn analyze_database_async<'py>(
     batch_size: usize,
     calculate_quality: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
+    if batch_size == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "batch_size must be greater than zero",
+        ));
+    }
     // Import pyo3_async_runtimes only when python-async feature is enabled
     #[cfg(feature = "python-async")]
     {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             analyze_database_internal(connection_string, query, batch_size, calculate_quality)
                 .await
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+                .map_err(|e| analysis_error_to_py(&e))
         })
     }
 

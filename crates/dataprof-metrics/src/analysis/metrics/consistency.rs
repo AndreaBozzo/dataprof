@@ -4,7 +4,9 @@
 //! Key metrics: data type consistency, format violations, encoding issues.
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column, is_valid_date_format};
-use crate::analysis::inference::{is_null_like_token, parse_strict_boolean_token};
+use crate::analysis::inference::{
+    is_integer_token, is_null_like_token, parse_strict_boolean_token,
+};
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
 use std::collections::HashMap;
@@ -61,7 +63,7 @@ impl ConsistencyCalculator {
 
                     // Check if value is consistent with inferred type
                     let is_consistent = match profile.data_type {
-                        DataType::Integer => trimmed.parse::<i64>().is_ok(),
+                        DataType::Integer => is_integer_token(trimmed),
                         DataType::Float => trimmed.parse::<f64>().is_ok(),
                         DataType::Date => is_valid_date_format(trimmed),
                         DataType::Boolean => parse_strict_boolean_token(trimmed).is_some(),
@@ -267,5 +269,25 @@ mod tests {
             metrics.data_type_consistency < 100.0,
             "likely date columns inferred as strings should still lose consistency when values are malformed"
         );
+    }
+
+    #[test]
+    fn unsigned_integer_tokens_are_consistent_with_integer_profiles() {
+        let data = HashMap::from([(
+            "value".to_string(),
+            vec![
+                "42".to_string(),
+                (i64::MAX as u64 + 1).to_string(),
+                u64::MAX.to_string(),
+            ],
+        )]);
+        let mut profile = string_profile("value");
+        profile.data_type = DataType::Integer;
+
+        let metrics = ConsistencyCalculator::calculate(&data, &[profile])
+            .expect("consistency metrics should be computed");
+
+        assert_eq!(metrics.values_checked, 3);
+        assert_eq!(metrics.data_type_consistency, 100.0);
     }
 }
