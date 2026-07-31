@@ -1243,11 +1243,11 @@ def profile(
         if fmt == "csv":
             columns = _columns_from_csv_bytes(buffer, csv_delimiter)
         elif fmt == "jsonl":
-            text = buffer.getvalue().decode("utf-8")
+            text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
             columns = _columns_from_records(rows, max_rows, sort_keys=True)
         elif fmt == "json":
-            text = buffer.getvalue().decode("utf-8")
+            text = buffer.getvalue().decode("utf-8-sig")
             try:
                 rows = _strict_json_loads(text)
             except json.JSONDecodeError as exc:

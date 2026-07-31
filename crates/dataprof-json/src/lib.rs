@@ -5,7 +5,7 @@ use std::path::Path;
 pub use dataprof_core::JsonErrorPolicy;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints, TruncationReason,
+    SemanticHints, TruncationReason, Utf8BomReader,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -83,7 +83,7 @@ pub struct JsonScanSummary {
 /// - **JSONL**: scans one top-level JSON value at a time from the reader.
 /// - **JSON array**: streams array elements without buffering the entire input.
 pub fn scan_json_from_reader<R, F>(
-    mut reader: R,
+    reader: R,
     config: &JsonParserConfig,
     mut on_object: F,
 ) -> Result<JsonScanSummary, DataProfilerError>
@@ -91,6 +91,7 @@ where
     R: BufRead,
     F: FnMut(&JsonObject),
 {
+    let mut reader = Utf8BomReader::new(reader).map_err(DataProfilerError::from)?;
     let format = match config.format {
         Some(JsonFormat::JsonArray) => FileFormat::Json,
         Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
@@ -603,6 +604,13 @@ mod tests {
         file
     }
 
+    fn write_bytes(content: &[u8]) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
     #[test]
     fn test_scan_jsonl_detects_format_and_rows() {
         let data = b"{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n";
@@ -639,6 +647,56 @@ mod tests {
         assert_eq!(summary.rows_read, 2);
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0], vec!["name".to_string()]);
+    }
+
+    #[test]
+    fn test_scan_accepts_one_leading_utf8_bom_for_json_and_jsonl() {
+        for (data, config, expected_format) in [
+            (
+                b"\xEF\xBB\xBF[{\"x\":1},{\"x\":2}]".as_slice(),
+                JsonParserConfig::default(),
+                FileFormat::Json,
+            ),
+            (
+                b"\xEF\xBB\xBF{\"x\":1}\n{\"x\":2}\n".as_slice(),
+                JsonParserConfig::default(),
+                FileFormat::Jsonl,
+            ),
+        ] {
+            let mut rows = 0;
+            let summary = scan_json_from_reader(Cursor::new(data), &config, |_| rows += 1)
+                .expect("leading UTF-8 BOM should be accepted");
+
+            assert_eq!(rows, 2);
+            assert_eq!(summary.rows_read, 2);
+            assert_eq!(summary.malformed_lines, 0);
+            assert_eq!(summary.format, expected_format);
+        }
+    }
+
+    #[test]
+    fn test_scan_does_not_strip_nonleading_or_second_utf8_bom() {
+        let strict = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+
+        for data in [
+            b" \xEF\xBB\xBF{\"x\":1}\n".as_slice(),
+            b"\xEF\xBB\xBF\xEF\xBB\xBF{\"x\":1}\n".as_slice(),
+            b"{\"x\":1}\n\xEF\xBB\xBF{\"x\":2}\n".as_slice(),
+        ] {
+            scan_json_from_reader(Cursor::new(data), &strict, |_| {})
+                .expect_err("only the BOM at absolute byte offset zero may be stripped");
+        }
+    }
+
+    #[test]
+    fn test_bom_only_input_matches_empty_input_policy() {
+        for config in [JsonParserConfig::default(), JsonParserConfig::jsonl()] {
+            let empty = scan_json_from_reader(Cursor::new(b""), &config, |_| {}).unwrap();
+            let bom =
+                scan_json_from_reader(Cursor::new(b"\xEF\xBB\xBF".as_slice()), &config, |_| {})
+                    .unwrap();
+            assert_eq!(bom, empty);
+        }
     }
 
     #[test]
@@ -1057,6 +1115,23 @@ mod tests {
                 format: FileFormat::Jsonl,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_bom_prefixed_file_preserves_source_size() {
+        let data = b"\xEF\xBB\xBF[{\"x\":1}]";
+        let json = write_bytes(data);
+        let report = analyze_json_file(json.path(), &JsonParserConfig::json_array()).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert!(matches!(
+            report.data_source,
+            DataSource::File {
+                format: FileFormat::Json,
+                size_bytes,
+                ..
+            } if size_bytes == data.len() as u64
         ));
     }
 
