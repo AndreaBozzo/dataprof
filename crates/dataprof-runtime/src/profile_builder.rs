@@ -11,7 +11,7 @@ use dataprof_core::{
     BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, SemanticHints, TextStats,
 };
 use dataprof_metrics::{
-    analysis::inference::{is_null_like_token, parse_strict_boolean_token},
+    analysis::inference::{is_integer_token, is_null_like_token, parse_strict_boolean_token},
     analysis::patterns::looks_like_date,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
     stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats_with_parsed_count},
@@ -315,31 +315,6 @@ pub fn profile_from_stats_with_hints(
 
 /// Infer [`DataType`] from [`StreamingStatistics`] sample values.
 pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
-    if stats.min.is_finite() && stats.max.is_finite() {
-        let sample_values = stats.sample_values();
-        let non_empty: Vec<&String> = sample_values
-            .iter()
-            .filter(|s| !is_null_like_token(s.trim()))
-            .collect();
-
-        if !non_empty.is_empty() {
-            let all_integers = non_empty
-                .iter()
-                .all(|s| s.parse::<i64>().is_ok() || s.parse::<u64>().is_ok());
-            if all_integers {
-                return DataType::Integer;
-            }
-
-            let numeric_count = non_empty
-                .iter()
-                .filter(|s| s.parse::<f64>().is_ok())
-                .count();
-            if numeric_count as f64 / non_empty.len() as f64 > 0.8 {
-                return DataType::Float;
-            }
-        }
-    }
-
     let sample_values = stats.sample_values();
     let non_empty: Vec<&String> = sample_values
         .iter()
@@ -347,6 +322,22 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
         .collect();
 
     if !non_empty.is_empty() {
+        let all_integers = non_empty.iter().all(|s| is_integer_token(s.trim()));
+        if all_integers {
+            return DataType::Integer;
+        }
+
+        // Numeric lexical forms remain numeric even if none are finite enough
+        // to enter the streaming aggregates. `build_column_profile` reports
+        // those unusable values through `invalid_count`.
+        let numeric_count = non_empty
+            .iter()
+            .filter(|s| s.trim().parse::<f64>().is_ok())
+            .count();
+        if numeric_count as f64 / non_empty.len() as f64 > 0.8 {
+            return DataType::Float;
+        }
+
         let date_like_count = non_empty
             .iter()
             .take(100)
@@ -407,6 +398,25 @@ mod tests {
         let age = profiles.iter().find(|p| p.name == "age").unwrap();
         assert_eq!(age.data_type, DataType::Integer);
         assert_eq!(age.total_count, 3);
+    }
+
+    #[test]
+    fn test_all_non_finite_tokens_keep_streaming_float_type() {
+        let mut collection = StreamingColumnCollection::new();
+        let headers = vec!["value".to_string()];
+
+        collection.process_record(&headers, vec!["Infinity".to_string()]);
+        collection.process_record(&headers, vec!["-inf".to_string()]);
+
+        let profiles = profiles_from_streaming(&collection, false, false, None);
+        let value = profiles
+            .iter()
+            .find(|profile| profile.name == "value")
+            .expect("value profile");
+
+        assert_eq!(value.data_type, DataType::Float);
+        assert_eq!(value.invalid_count, Some(2));
+        assert!(matches!(value.stats, ColumnStats::Numeric(_)));
     }
 
     #[test]

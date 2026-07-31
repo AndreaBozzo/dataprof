@@ -48,7 +48,7 @@ pub fn infer_type(data: &[String]) -> DataType {
 
     for s in &non_empty {
         let trimmed = s.trim();
-        if trimmed.parse::<i64>().is_ok() || trimmed.parse::<u64>().is_ok() {
+        if is_integer_token(trimmed) {
             integer_count += 1;
             float_count += 1; // integers are also valid floats
         } else if trimmed.parse::<f64>().is_ok() {
@@ -94,6 +94,15 @@ pub fn infer_type(data: &[String]) -> DataType {
     }
 
     DataType::String
+}
+
+/// Return whether a token is an integer representable by dataprof's signed or
+/// unsigned 64-bit integer contract.
+///
+/// Keep inference and quality validation on this shared predicate: values above
+/// `i64::MAX` are valid integer tokens even though they require `u64` to parse.
+pub fn is_integer_token(value: &str) -> bool {
+    value.parse::<i64>().is_ok() || value.parse::<u64>().is_ok()
 }
 
 pub fn is_null_like_token(value: &str) -> bool {
