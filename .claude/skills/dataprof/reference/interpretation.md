@@ -30,6 +30,9 @@ holds for every metric, not just quality dimensions.
 
 ## Quality dimensions, one by one
 
+Each dimension is a dict of its own evidence — `report.quality.completeness`,
+`report.quality.uniqueness`, and so on. The keys named below live inside it.
+
 **Completeness** — presence of values. `missing_values_ratio` is per-value;
 `complete_records_ratio` is per-row and drops sharply when any single optional
 column is sparse. Check both before describing a dataset as incomplete.
@@ -58,8 +61,8 @@ Reporting "0% valid" for an unpatterned column is wrong.
 not know how many decimals your business requires, and a low score is not
 evidence of rounding errors.
 
-The overall score is a weighted combination (`score_weights`). Report what drove
-it, not just the number.
+The overall score is a weighted combination (`score_weights()`). Report what
+drove it, not just the number.
 
 ## Approximation provenance
 

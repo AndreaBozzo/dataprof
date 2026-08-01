@@ -108,19 +108,43 @@ when set, the number came from an estimator rather than an exact count. Say so.
 
 ## DataQualityMetrics fields
 
-Dimension scores: `completeness`, `consistency`, `uniqueness`, `accuracy`,
-`timeliness`, `validity`, `precision`, plus `overall_quality_score`.
+Reach it with `report.quality`. Each dimension is a **dict of its own evidence**,
+not a bare number:
 
-`assessed_dimensions` and `dimension_scores` tell you which were actually
-computed — a dimension absent from `assessed_dimensions` was not assessed, and
-its score is `None` rather than zero.
+```python
+q = report.quality
 
-Supporting evidence: `missing_values_ratio`, `complete_records_ratio`,
-`null_columns`, `duplicate_rows`, `key_uniqueness`, `high_cardinality_warning`,
-`data_type_consistency`, `format_violations`, `encoding_issues`,
-`outlier_ratio`, `range_violations`, `negative_values_in_positive`,
-`future_dates_count`, `invalid_date_values`, `stale_data_ratio`,
-`temporal_violations`, `low_sample_warning`, `score_weights`.
+q.assessed_dimensions()   # -> list of dimensions actually computed
+q.dimension_scores()      # -> {dimension: score or None}
+q.overall_quality_score() # -> weighted total
+q.score_weights()         # -> the weights behind that total
+q.low_sample_warning      # -> too few rows to trust distributions
+
+q.completeness["missing_values_ratio"]
+q.uniqueness["duplicate_rows"]
+```
+
+A dimension missing from `assessed_dimensions()` was not assessed; its entry in
+`dimension_scores()` is `None`, never zero.
+
+| Dimension | Keys |
+| --- | --- |
+| `completeness` | `missing_values_ratio`, `complete_records_ratio`, `null_columns`, `total_cells` |
+| `consistency` | `data_type_consistency`, `format_violations`, `encoding_issues`, `values_checked` |
+| `uniqueness` | `duplicate_rows`, `duplicate_rows_approximate`, `key_uniqueness`, `key_column`, `high_cardinality_warning`, `rows_checked` |
+| `accuracy` | `outlier_ratio`, `range_violations`, `negative_values_in_positive`, `numeric_values_checked` |
+| `timeliness` | `future_dates_count`, `stale_data_ratio`, `temporal_violations`, `invalid_date_values`, `date_values_checked`, `temporal_pairs_checked` |
+| `validity` | `valid_values_ratio`, `invalid_values`, `values_checked` |
+| `precision` | `decimal_places_consistency`, `inconsistent_precision_values`, `numeric_values_checked` |
+
+<details>
+<summary>Old patterns: flat evidence accessors</summary>
+
+`q.missing_values_ratio`, `q.duplicate_rows`, `q.future_dates_count` and the
+other flat accessors still resolve but emit a `DeprecationWarning`. Read the
+nested dimension dict instead.
+
+</details>
 
 ## StructureReport fields
 

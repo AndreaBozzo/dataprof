@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,7 @@ from dataprof import Profiler, ProfileReport, StructureReport
 from dataprof.agent import AgentGuard, SandboxPolicy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+EVALS = REPO_ROOT / ".claude/skills/dataprof/evals"
 
 # Every file an agent runner loads as instructions. A new agent-facing doc
 # belongs here; that is the point of the list.
@@ -88,13 +91,22 @@ _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 # those names must exist on; a name may satisfy any type in the tuple.
 FIELD_SECTIONS: dict[str, tuple[Any, ...]] = {
     "ColumnProfile fields": (dataprof.ColumnProfile,),
-    "DataQualityMetrics fields": (dataprof.DataQualityMetrics,),
     "StructureReport fields": (
         dataprof.StructureReport,
         dataprof.StructureColumnSummary,
     ),
     "Capabilities fields": (dataprof.Capabilities,),
 }
+
+# Quality evidence is nested one level down — `quality.completeness` is a dict,
+# not a score — so its keys are checked against the live dicts instead of
+# against attributes. The reference documents them as a markdown table:
+#   | `completeness` | `missing_values_ratio`, `complete_records_ratio`, ... |
+QUALITY_TABLE_SECTION = "DataQualityMetrics fields"
+_TABLE_ROW = re.compile(r"^\|\s*`([a-z_]+)`\s*\|(.+?)\|\s*$", re.MULTILINE)
+
+# Attribute-style access to a quality accessor, as a doc would write it.
+_QUALITY_ATTR = re.compile(r"\b(?:quality|q)\.([a-z_][a-z0-9_]*)")
 
 # A bare backticked lowercase identifier inside a field-list section. Excludes
 # `None`/`False` (capitalized) and glob shorthand like `*_interop`.
@@ -114,6 +126,23 @@ def _docs() -> list[tuple[str, str]]:
 def _resolve(receiver: str, attribute: str) -> Any:
     """Return the documented attribute, or raise AttributeError."""
     return getattr(RECEIVERS[receiver], attribute)
+
+
+def _dimension(report: ProfileReport, name: str) -> dict[str, Any]:
+    """Return an assessed quality dimension, failing loudly if it is absent.
+
+    Both ``quality`` and each dimension are optional, and ``None`` means "not
+    assessed". A fixture that stopped producing a dimension would otherwise
+    surface as an opaque TypeError halfway through a comparison.
+    """
+    quality = report.quality
+    assert quality is not None, f"{report.source}: no quality metrics were computed"
+    dimension = getattr(quality, name)
+    assert isinstance(dimension, dict), (
+        f"{report.source}: quality dimension {name!r} was not assessed, so the "
+        "eval fixture no longer exercises what its rubric claims"
+    )
+    return dimension
 
 
 @pytest.mark.parametrize("rel,text", _docs(), ids=[rel for rel, _ in _docs()])
@@ -247,4 +276,169 @@ def test_agent_docs_name_the_redacting_summary() -> None:
     assert not unnamed, (
         f"agent docs omit to_llm_context(): {unnamed}. It is the redaction-"
         "enforcing summary; agent instructions must offer it."
+    )
+
+
+def test_documented_quality_dimension_keys_exist() -> None:
+    """Every key in the quality dimension table exists in the live dimension dict.
+
+    The dimensions are dicts, so their contents are invisible to both the
+    attribute check and the type stubs. Profile the eval fixtures and take the
+    union of keys each dimension actually produces — one fixture alone does not
+    exercise every dimension.
+    """
+    observed: dict[str, set[str]] = {}
+    for fixture in sorted((EVALS / "fixtures").glob("*.csv")):
+        quality = dataprof.profile(str(fixture)).quality
+        for dimension in (
+            "completeness",
+            "consistency",
+            "uniqueness",
+            "accuracy",
+            "timeliness",
+            "validity",
+            "precision",
+        ):
+            value = getattr(quality, dimension)
+            if isinstance(value, dict):
+                observed.setdefault(dimension, set()).update(value)
+
+    reference = (REPO_ROOT / ".claude/skills/dataprof/reference/api.md").read_text(encoding="utf-8")
+    table = _sections(reference)[QUALITY_TABLE_SECTION]
+
+    rows = _TABLE_ROW.findall(table)
+    assert rows, (
+        f"no dimension table found under '{QUALITY_TABLE_SECTION}'; the check "
+        "silently covers nothing if the table is reformatted"
+    )
+
+    wrong = []
+    for dimension, keys in rows:
+        if dimension not in observed:
+            wrong.append(f"{dimension} is not a quality dimension")
+            continue
+        wrong += [
+            f"{dimension}[{key!r}] not produced by dataprof"
+            for key in _BARE_FIELD.findall(keys)
+            if key not in observed[dimension]
+        ]
+
+    assert not wrong, f"reference/api.md documents quality keys that do not exist: {wrong}"
+
+
+def test_agent_docs_do_not_teach_deprecated_accessors() -> None:
+    """No agent doc may name a DataQualityMetrics accessor that warns on access.
+
+    Existence is not enough. The flat quality accessors were deprecated in 0.9
+    but still resolve, still appear in ``dir()``, and are unmarked in the stubs,
+    so a reference written by introspection documents them without noticing
+    (#509). Access each one and let the warning decide.
+    """
+    quality = dataprof.profile(
+        str(REPO_ROOT / ".claude/skills/dataprof/evals/fixtures/inventory_before.csv")
+    ).quality
+
+    deprecated = set()
+    for name in dir(type(quality)):
+        if name.startswith("_"):
+            continue
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", DeprecationWarning)
+            try:
+                getattr(quality, name)
+            except Exception:  # pragma: no cover - not an accessor we can probe
+                continue
+        if any(issubclass(w.category, DeprecationWarning) for w in caught):
+            deprecated.add(name)
+
+    assert deprecated, (
+        "probe found no deprecated quality accessors; if the deprecation was "
+        "lifted or removed, delete this test rather than letting it pass vacuously"
+    )
+
+    # Only attribute-style access counts. `missing_values_ratio` named as a key
+    # of the completeness dict is the correct way to reach the same evidence;
+    # `quality.missing_values_ratio` is the deprecated way.
+    taught = []
+    for rel, text in _docs():
+        body = re.sub(r"<details>.*?</details>", "", text, flags=re.DOTALL)
+        taught += [
+            f"{rel}: quality.{name}" for name in _QUALITY_ATTR.findall(body) if name in deprecated
+        ]
+
+    assert not taught, (
+        f"agent docs name deprecated quality accessors: {sorted(set(taught))}. "
+        "Document the nested dimension key instead; see #509."
+    )
+
+
+def test_eval_scenarios_reference_real_fixtures() -> None:
+    """Every file a scenario names exists, relative to the evals directory."""
+    scenarios = json.loads((EVALS / "scenarios.json").read_text(encoding="utf-8"))
+    missing = [
+        f"{s['id']}: {f}" for s in scenarios for f in s["files"] if not (EVALS / f).is_file()
+    ]
+    assert not missing, f"eval scenarios name fixtures that do not exist: {missing}"
+
+
+def test_eval_rubrics_cite_current_fixture_values() -> None:
+    """The numbers the rubrics grade against still match what dataprof produces.
+
+    The scenarios and their README quote concrete values — ragged row counts,
+    quality scores, missing-value ratios. If profiling changes and these are not
+    updated, the rubrics grade an agent against fiction, and a passing eval
+    means nothing.
+    """
+    ragged = dataprof.profile(str(EVALS / "fixtures/ragged_orders.csv"))
+    before = dataprof.profile(str(EVALS / "fixtures/inventory_before.csv"))
+    after = dataprof.profile(str(EVALS / "fixtures/inventory_after.csv"))
+    pii = dataprof.profile(str(EVALS / "fixtures/customers_pii.csv"))
+
+    quoted = (EVALS / "scenarios.json").read_text(encoding="utf-8") + (
+        EVALS / "README.md"
+    ).read_text(encoding="utf-8")
+
+    observed = {
+        "ragged_row_count": (ragged.ragged_row_count, 2),
+        "future_dates_count": (_dimension(ragged, "timeliness")["future_dates_count"], 1),
+        "duplicate_rows_before": (_dimension(before, "uniqueness")["duplicate_rows"], 1),
+        "duplicate_rows_after": (_dimension(after, "uniqueness")["duplicate_rows"], 0),
+    }
+    stale = [
+        f"{name}: rubrics say {expected}, profiling now gives {actual}"
+        for name, (actual, expected) in observed.items()
+        if actual != expected
+    ]
+
+    # Scores are quoted to one decimal; compare at that precision.
+    for label, actual, expected in (
+        ("before quality score", before.quality_score, 80.9),
+        ("after quality score", after.quality_score, 97.9),
+        (
+            "before missing ratio",
+            _dimension(before, "completeness")["missing_values_ratio"],
+            22.2,
+        ),
+    ):
+        if actual is None or round(actual, 1) != expected:
+            stale.append(f"{label}: rubrics say {expected}, profiling now gives {actual}")
+
+    # The redaction claim the PII rubric grades against, verified rather than assumed.
+    context = pii.to_llm_context(max_tokens=800, include_samples=True)
+    leaked = [
+        value
+        for value in ("alice@example.com", "IT60X0542811101000000123456", "+39 320 1234567")
+        if value in context
+    ]
+    if leaked:
+        stale.append(f"to_llm_context leaked sensitive values the rubric forbids: {leaked}")
+
+    for pattern in ("Email", "IBAN"):
+        if pattern not in quoted:
+            stale.append(f"README/scenarios no longer name the {pattern} pattern")
+
+    assert not stale, (
+        "eval rubrics are out of date with what dataprof produces: "
+        + "; ".join(stale)
+        + ". Update .claude/skills/dataprof/evals/ before trusting an eval run."
     )

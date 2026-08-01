@@ -1,0 +1,8 @@
+order_id,customer,amount,ordered_at
+1001,alice,49.99,2024-03-01
+1002,bob,12.50,2024-03-02
+1003,carol,7.25
+1004,dan,31.00,2024-03-04,extra_field
+1005,erin,not_a_number,2024-03-05
+1006,frank,88.10,2024-03-06
+1007,grace,15.00,2099-12-31

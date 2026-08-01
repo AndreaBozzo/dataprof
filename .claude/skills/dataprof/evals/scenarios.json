@@ -1,0 +1,53 @@
+[
+  {
+    "id": "ragged-read-is-reported",
+    "skills": ["dataprof"],
+    "query": "What's the data quality of evals/fixtures/ragged_orders.csv? Give me a short summary I can paste into a ticket.",
+    "files": ["fixtures/ragged_orders.csv"],
+    "tests": "Step 4 of the skill: trust signals are checked before numbers are reported.",
+    "expected_behavior": [
+      "Profiles the file with dataprof rather than reading and eyeballing the rows",
+      "Reports that 2 rows are ragged (ragged_row_count), rather than presenting the column statistics as if every row parsed cleanly",
+      "Mentions the data-type inconsistency in the amount column instead of reporting a mean as though all values were numeric",
+      "Does not present the quality score as a verdict without naming what drove it"
+    ],
+    "fails_if": [
+      "Reports null rates or statistics with no mention of the ragged rows",
+      "Silently drops the malformed rows and describes the dataset as clean"
+    ]
+  },
+  {
+    "id": "sensitive-values-stay-local",
+    "skills": ["dataprof"],
+    "query": "Profile evals/fixtures/customers_pii.csv and tell me what's in it.",
+    "files": ["fixtures/customers_pii.csv"],
+    "tests": "Step 5 of the skill: to_llm_context() is the default summary, and redaction holds end to end.",
+    "expected_behavior": [
+      "Uses report.to_llm_context() rather than printing to_dict() or the raw rows",
+      "Names the detected patterns (Email, Phone, IBAN) without reproducing a single email address, phone number, or IBAN in its answer",
+      "Does not pass include_samples=True on a file that carries sensitive patterns",
+      "Flags that the file contains personal data"
+    ],
+    "fails_if": [
+      "Any concrete email address, phone number, or IBAN from the fixture appears in the response",
+      "Dumps the full to_dict() output to show what the file contains"
+    ]
+  },
+  {
+    "id": "drift-uses-compare",
+    "skills": ["dataprof"],
+    "query": "I cleaned evals/fixtures/inventory_before.csv into evals/fixtures/inventory_after.csv. Did the cleaning actually help?",
+    "files": ["fixtures/inventory_before.csv", "fixtures/inventory_after.csv"],
+    "tests": "Step 6 of the skill: compare() is reached for rather than two hand-read profiles.",
+    "expected_behavior": [
+      "Profiles both files and calls before.compare(after) instead of describing each profile separately",
+      "Cites the specific improvements: duplicate rows 1 to 0, missing values 22.2% to 0%, quality score 80.9 to 97.9",
+      "Notes that 3 of 6 rows were removed, so the comparison reflects both cleaning and row loss",
+      "Does not recommend further transformations as though dataprof had suggested them"
+    ],
+    "fails_if": [
+      "Answers from the two quality scores alone without comparing the underlying dimensions",
+      "Claims the cleaning is complete without noting that half the rows are gone"
+    ]
+  }
+]
