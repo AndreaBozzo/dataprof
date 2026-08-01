@@ -9,11 +9,15 @@ These snippets teach coding agents how to use `dataprof` without dumping raw row
 
 When analyzing tabular data with dataprof:
 
-1. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
-2. Use `dp.profile(path)` for full profiling. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
-3. Export compact context with `report.to_llm_context()`, `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`) -- its `columns` entry grows with table width.
-4. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
-5. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
+1. Call `dp.capabilities()` before profiling Parquet, a URL, or a database -- optional features are compiled in, not always present.
+2. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
+3. Use `dp.profile(path)` for full profiling. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
+4. Before reporting any number, check `report.sampling_applied`, `report.truncation_reason`, `report.source_exhausted`, `report.low_sample_warning`, `report.error_count`, and `report.ragged_row_count`. A truncated or sampled read still returns confident-looking numbers.
+5. Export compact context with `report.to_llm_context()` -- the only export that enforces redaction -- or `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`); its `columns` entry grows with table width.
+6. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
+7. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
+
+`None` means "not analyzed" and empty means "analyzed, found nothing" -- never present a `None` score as perfect or replace it with zero.
 
 Always report the source path, metrics requested, and any sampling or max-row limit.
 ```
