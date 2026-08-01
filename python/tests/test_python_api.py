@@ -1461,6 +1461,45 @@ class TestToLlmContext:
         assert reloaded.to_llm_context() == report.to_llm_context()
 
 
+class TestPatternSummaryThreshold:
+    """A pattern below the summary confidence threshold is evidence, not a claim.
+
+    It stays in the detailed pattern list but must not surface as a report-level
+    semantic claim. Reloading through from_dict() lets the threshold be exercised
+    at an exact confidence rather than whatever detection happens to produce.
+    """
+
+    @pytest.fixture
+    def emails(self, tmp_path):
+        path = tmp_path / "emails.csv"
+        rows = ["email"] + [f"u{i}@example.com" for i in range(60)]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        return dataprof.profile(str(path)).to_dict()
+
+    @staticmethod
+    def _with_confidence(report_dict, confidence: float):
+        for column in report_dict["columns"]:
+            for pattern in column.get("patterns") or []:
+                pattern["confidence"] = confidence
+        return dataprof.ProfileReport.from_dict(report_dict)
+
+    def test_pattern_above_threshold_is_claimed(self, emails):
+        report = self._with_confidence(emails, 0.8)
+        assert "patterns:" in report.to_llm_context()
+        assert "Email" in report.to_markdown()
+
+    def test_pattern_below_threshold_is_not_claimed(self, emails):
+        # The evidence survives the round trip; only the claim is withheld.
+        report = self._with_confidence(emails, 0.3)
+        assert report["email"].patterns
+        assert "patterns:" not in report.to_llm_context()
+        assert "Email" not in report.to_markdown()
+
+    def test_threshold_is_inclusive(self, emails):
+        report = self._with_confidence(emails, 0.5)
+        assert "patterns:" in report.to_llm_context()
+
+
 # ─────────────────────────────────────────────────
 #  3. Partial analysis
 # ─────────────────────────────────────────────────

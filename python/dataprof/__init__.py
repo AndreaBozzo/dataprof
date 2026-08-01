@@ -734,7 +734,12 @@ def _dominant_pattern(col: ColumnProfile) -> _NativePattern | _DictPattern | Non
     candidates = [
         pattern for pattern in col.patterns if pattern.confidence >= _MIN_SUMMARY_PATTERN_CONFIDENCE
     ]
-    return max(candidates, key=lambda pattern: pattern.confidence, default=None)
+    # Guard the empty case rather than passing `default=None` to max(): that
+    # overload makes the key callable's parameter include None, so the lambda
+    # no longer type-checks.
+    if not candidates:
+        return None
+    return max(candidates, key=lambda pattern: pattern.confidence)
 
 
 def _pattern_cell(col: ColumnProfile) -> str:
