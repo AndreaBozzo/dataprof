@@ -37,6 +37,16 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENT_DOCS = (
     "AGENTS.md",
     ".claude/skills/dataprof/SKILL.md",
+    ".claude/skills/dataprof/reference/api.md",
+    ".claude/skills/dataprof/reference/interpretation.md",
+    ".cursor/rules/dataprof.mdc",
+    "docs/guides/agent-workflows.md",
+)
+
+# Docs that must offer the redacting summary. Reference files describe the wider
+# surface, so they are exempt; the instruction files an agent follows are not.
+INSTRUCTION_DOCS = (
+    ".claude/skills/dataprof/SKILL.md",
     ".cursor/rules/dataprof.mdc",
     "docs/guides/agent-workflows.md",
 )
@@ -72,6 +82,24 @@ _MENTION = re.compile(
     r"(?<![\w./-])(" + "|".join(sorted(RECEIVERS)) + r")\.([A-Za-z_][A-Za-z0-9_]*)"
 )
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
+
+# Field-list sections in the reference name attributes bare, without a receiver,
+# so the mention regex cannot see them. Map the section heading to the type(s)
+# those names must exist on; a name may satisfy any type in the tuple.
+FIELD_SECTIONS: dict[str, tuple[Any, ...]] = {
+    "ColumnProfile fields": (dataprof.ColumnProfile,),
+    "DataQualityMetrics fields": (dataprof.DataQualityMetrics,),
+    "StructureReport fields": (
+        dataprof.StructureReport,
+        dataprof.StructureColumnSummary,
+    ),
+    "Capabilities fields": (dataprof.Capabilities,),
+}
+
+# A bare backticked lowercase identifier inside a field-list section. Excludes
+# `None`/`False` (capitalized) and glob shorthand like `*_interop`.
+_BARE_FIELD = re.compile(r"`([a-z_][a-z0-9_]*)`")
+_HEADING = re.compile(r"^#{2,}\s+(.+?)\s*$", re.MULTILINE)
 
 
 def _docs() -> list[tuple[str, str]]:
@@ -158,6 +186,54 @@ def test_documented_keyword_arguments_are_accepted(rel: str, text: str) -> None:
     )
 
 
+def _sections(text: str) -> dict[str, str]:
+    """Split markdown into {heading: body} at heading level 2 and deeper."""
+    headings = list(_HEADING.finditer(text))
+    return {
+        m.group(1): text[
+            m.end() : (headings[i + 1].start() if i + 1 < len(headings) else len(text))
+        ]
+        for i, m in enumerate(headings)
+    }
+
+
+@pytest.mark.parametrize("rel,text", _docs(), ids=[rel for rel, _ in _docs()])
+def test_documented_fields_exist(rel: str, text: str) -> None:
+    """Bare field names listed under a typed section exist on that type.
+
+    The reference enumerates ~60 attributes with no receiver to anchor them, so
+    the mention check cannot see them. Without this they are the largest patch
+    of unverified surface in the skill — exactly where drift hides.
+    """
+    missing = []
+    for heading, body in _sections(text).items():
+        types = FIELD_SECTIONS.get(heading)
+        if types is None:
+            continue
+        for field in _BARE_FIELD.findall(body):
+            if not any(hasattr(t, field) for t in types):
+                names = "/".join(t.__name__ for t in types)
+                missing.append(f"{field} (not on {names})")
+
+    assert not missing, f"{rel} lists fields that do not exist: {sorted(set(missing))}."
+
+
+def test_field_sections_are_reachable() -> None:
+    """Every registered field section is actually present in the reference.
+
+    Renaming a heading would otherwise silently switch its field list off.
+    """
+    headings: set[str] = set()
+    for _, text in _docs():
+        headings |= set(_sections(text))
+
+    unreachable = sorted(set(FIELD_SECTIONS) - headings)
+    assert not unreachable, (
+        f"FIELD_SECTIONS names headings no agent doc contains: {unreachable}. "
+        "A renamed heading disables its field check silently."
+    )
+
+
 def test_agent_docs_name_the_redacting_summary() -> None:
     """The agent-safe summary must be reachable from the files agents load.
 
@@ -165,7 +241,9 @@ def test_agent_docs_name_the_redacting_summary() -> None:
     doc that teaches an agent to summarize a dataset without naming it is
     steering that agent toward the surfaces that do not redact.
     """
-    unnamed = [rel for rel, text in _docs() if rel != "AGENTS.md" and "to_llm_context" not in text]
+    unnamed = [
+        rel for rel, text in _docs() if rel in INSTRUCTION_DOCS and "to_llm_context" not in text
+    ]
     assert not unnamed, (
         f"agent docs omit to_llm_context(): {unnamed}. It is the redaction-"
         "enforcing summary; agent instructions must offer it."

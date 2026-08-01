@@ -30,7 +30,21 @@ Copy `.cursor/rules/dataprof.mdc` into a project that uses Cursor. It contains t
 
 Copy this repo's `.claude/skills/dataprof/` directory so that it lands at `.claude/skills/dataprof/SKILL.md` in your own project, or at `~/.claude/skills/dataprof/SKILL.md` to make it available everywhere. Keep the `dataprof/` directory -- a bare `.claude/skills/SKILL.md` will not load.
 
-It packages the structure -> profile -> summarize -> compare workflow as on-demand knowledge, and it loads from that path in this repo too.
+It packages the capabilities -> structure -> profile -> verify -> summarize -> compare workflow as on-demand knowledge, and it loads from that path in this repo too. Copy the whole directory, including `reference/`:
+
+```text
+.claude/skills/dataprof/
+|-- SKILL.md                      # the workflow, always loaded when triggered
+`-- reference/
+    |-- api.md                    # full API surface, loaded on demand
+    `-- interpretation.md         # what each signal does and does not mean
+```
+
+The reference files stay on disk and cost nothing until the agent needs them, which is what keeps `SKILL.md` short enough to be read in full.
+
+### Keeping it accurate
+
+`python/tests/test_agent_docs_sync.py` fails the build when any of these files names an API that does not exist, passes a keyword the callee does not accept, or lists a field that is not on the type its section claims. Add new agent-facing docs to `AGENT_DOCS` in that test so they are covered too.
 
 ## Agent-safe output
 

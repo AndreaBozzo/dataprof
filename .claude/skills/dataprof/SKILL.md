@@ -121,11 +121,12 @@ re-read and eyeball two files by hand.
 - **`None` means "not analyzed"; empty means "analyzed, found nothing."** Never
   present a `None` score as perfect, and never replace it with zero. This holds
   across every metric, not just quality dimensions.
-- **Validity** is assessed only for columns with a confidently detected pattern.
-  No pattern is not the same as invalid.
-- **Precision** measures consistency of effective decimal scale. It does not
-  infer a business-required number of decimal places.
 - A quality score is a measurement, not a verdict. Say what drove it.
+
+Before interpreting a specific dimension, an approximate count, a detected
+pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).
+It covers what each signal does and does not mean — including the ones that are
+easy to report backwards, like validity on unpatterned columns.
 
 ## When the path came from a model or an end user
 
@@ -158,18 +159,11 @@ message is safe to hand back to a model verbatim.
 - If the dataset may be sensitive, keep the work local and share only derived
   summaries.
 
-## Useful APIs
+## Reference
 
-- `dp.capabilities()` — what this installation supports
-- `dp.analyze_structure(path, max_rows=None)`
-- `dp.profile(source, metrics=None, quality_dimensions=None, max_rows=None, ...)`
-  — `metrics=None` means all packs
-- `dp.list_patterns()`, `dp.infer_schema(path)`, `dp.quick_row_count(path)`
-- `report.to_llm_context(max_tokens=1000, include_samples=False)` — redacting
-- `report.to_markdown()`, `report.quality_summary()`, `report.to_html()`
-- `report.to_dict()` — keys: `source`, `source_type`, `execution`, `columns`,
-  `quality`
-- `report.compare(other)`
-- `report.save(path)` and `dp.ProfileReport.load(path)` — persisted reports
-  carry `dp.REPORT_SCHEMA_VERSION`
-- `dataprof.agent.AgentGuard` / `SandboxPolicy` — untrusted paths
+- [reference/api.md](reference/api.md) — the full agent-relevant API surface:
+  every field on `ProfileReport`, `ColumnProfile`, `DataQualityMetrics`,
+  `StructureReport`, and `Capabilities`; the `Profiler` builder; persistence;
+  `SandboxPolicy` defaults.
+- [reference/interpretation.md](reference/interpretation.md) — what each signal
+  means and does not mean, dimension by dimension.
