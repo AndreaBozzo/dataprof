@@ -10,6 +10,7 @@ For remote Parquet coverage:
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import http.server
 import socketserver
@@ -67,6 +68,8 @@ def url_server():
     incidents_csv = INCIDENTS_CSV.read_bytes()
     checkout_jsonl = CHECKOUT_JSONL.read_bytes()
     parquet_bytes = PARQUET_FILE.read_bytes()
+    bom_json = codecs.BOM_UTF8 + b'[{"id":1,"score":2.5},{"id":2,"score":3.5}]'
+    bom_jsonl = codecs.BOM_UTF8 + b'{"id":1,"score":2.5}\n{"id":2,"score":3.5}\n'
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -115,6 +118,10 @@ def url_server():
                 return checkout_jsonl
             if self.path == "/data.parquet":
                 return parquet_bytes
+            if self.path == "/bom.json":
+                return bom_json
+            if self.path == "/bom.jsonl":
+                return bom_jsonl
             raise AssertionError(f"unexpected path: {self.path}")
 
     server = _ThreadingTcpServer(("127.0.0.1", 0), Handler)
@@ -127,6 +134,8 @@ def url_server():
             "csv": f"http://127.0.0.1:{port}/incidents.csv",
             "jsonl": f"http://127.0.0.1:{port}/checkout_events.jsonl",
             "parquet": f"http://127.0.0.1:{port}/data.parquet",
+            "bom_json": f"http://127.0.0.1:{port}/bom.json",
+            "bom_jsonl": f"http://127.0.0.1:{port}/bom.jsonl",
         }
     finally:
         with contextlib.suppress(Exception):
@@ -177,6 +186,20 @@ class TestAsyncUrlProfiling:
         assert report.columns == 10
         assert report.source_type == "stream"
         assert report["risk_score"].max == 0.98
+
+    @pytest.mark.parametrize("fmt", ["json", "jsonl"])
+    def test_profile_bom_prefixed_json_url(self, url_server, fmt):
+        report = _run(profile_url, url_server[f"bom_{fmt}"])
+        payload = (
+            b'[{"id":1,"score":2.5},{"id":2,"score":3.5}]'
+            if fmt == "json"
+            else b'{"id":1,"score":2.5}\n{"id":2,"score":3.5}\n'
+        )
+
+        assert report.rows == 2
+        assert report.columns == 2
+        assert report["score"].max == 3.5
+        assert report.to_dict()["execution"]["bytes_consumed"] == len(codecs.BOM_UTF8 + payload)
 
     def test_profile_parquet_url(self, url_server):
         try:

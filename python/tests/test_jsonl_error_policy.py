@@ -69,6 +69,21 @@ def test_bytes_tolerant_reports_partial_and_error_count():
     assert report.error_count == 1
 
 
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_bytes_tolerant_counts_non_standard_numeric_constants(constant):
+    data = b'{"id":1}\n{"id":' + constant + b"}\n"
+    report = dataprof.profile(data, format="jsonl")
+    assert report.rows == 1
+    assert report.error_count == 1
+
+
+@pytest.mark.parametrize("constant", [b"NaN", b"Infinity", b"-Infinity"])
+def test_bytes_strict_rejects_non_standard_numeric_constants(constant):
+    data = b'{"id":1}\n{"id":' + constant + b"}\n"
+    with pytest.raises(ValueError, match="non-standard numeric constant"):
+        dataprof.profile(data, format="jsonl", jsonl_on_error="strict")
+
+
 @requires_async
 def test_async_bytes_tolerant_reports_partial_and_error_count():
     report = _async_bytes(MIXED)

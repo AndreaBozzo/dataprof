@@ -63,11 +63,18 @@ async def profile_bytes(
         data: Raw bytes to profile.
         format: Data format ("csv", "json", "jsonl").
         **kwargs: Additional config options (passed to ProfilerConfig).
+            The async stream always uses the incremental engine, so
+            ``engine="columnar"`` is rejected.
 
     Returns:
         ProfileReport with analysis results.
     """
     _check_async()
+    if kwargs.get("engine") == "columnar":
+        raise ValueError(
+            "engine='columnar' is not available for async bytes input; "
+            "use engine='auto' or 'incremental'."
+        )
     config = ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_bytes_async(data, format, config)
     return ProfileReport(rust_report)

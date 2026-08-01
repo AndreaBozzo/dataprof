@@ -284,3 +284,43 @@ def test_async_json_row_cap_keeps_partial_byte_accounting(fmt, data):
     assert not report.source_exhausted
     assert 0 < _bytes_consumed(report) < len(data)
     _assert_consistent(report, len(data), f"async bounded {fmt} bytes")
+
+
+@requires_async
+def test_async_bytes_reject_columnar_engine():
+    with pytest.raises(ValueError, match="columnar"):
+        _async_bytes(_csv_bytes(3), engine="columnar")
+
+
+@requires_async
+def test_async_parquet_honors_row_cap(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    from dataprof.asyncio import profile_file
+
+    path = tmp_path / "data.parquet"
+    pq.write_table(pa.table({"id": list(range(10))}), path)
+
+    async def _inner():
+        return await profile_file(path, max_rows=3)
+
+    report = asyncio.run(_inner())
+    assert report.rows == 3
+    assert report.truncation_reason == "max_rows(3)"
+    assert not report.source_exhausted
+
+
+@requires_async
+def test_async_parquet_rejects_unsupported_stop_condition(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    from dataprof.asyncio import profile_file
+
+    path = tmp_path / "data.parquet"
+    pq.write_table(pa.table({"id": list(range(10))}), path)
+
+    async def _inner():
+        return await profile_file(path, stop_condition=dp.StopCondition.max_bytes(1))
+
+    with pytest.raises(ValueError, match="only row-limit"):
+        asyncio.run(_inner())

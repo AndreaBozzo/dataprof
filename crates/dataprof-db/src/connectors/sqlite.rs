@@ -129,7 +129,7 @@ impl DatabaseConnector for SqliteConnector {
                 DataProfilerError::database_query(&format!("Query execution failed: {}", e))
             })?;
 
-            Ok(process_rows_to_columns!(rows))
+            process_rows_to_columns!(rows)
         }
 
         #[cfg(not(feature = "sqlite"))]

@@ -187,6 +187,11 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 | bytes / BytesIO | Columnar | Python API only; requires `format=`. CSV, JSON and JSONL need no dependencies; Parquet bytes need the `pandas` extra |
 | Async byte stream | Incremental | Any `AsyncRead` source (HTTP, WebSocket, etc.) |
 
+Reported columns follow source order in every format and on every transport: the
+CSV header, the Parquet/Arrow schema, and for JSON/JSONL the first record's field
+order, with fields that only appear in later records appended where they were
+first seen. Converting a dataset between formats does not reshuffle the report.
+
 ## Quality Metrics
 
 dataprof reports seven quality dimensions informed by concepts in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):

@@ -126,7 +126,19 @@ A cell is missing when it is `None`, NaN, or a null-like token (`""`, `"null"`,
 *not* round-tripped through pandas, so an integer column containing a null stays
 `integer` rather than being widened to `float`.
 
-For async byte streams, use `dataprof.asyncio.profile_bytes()`.
+**Column order** follows the source on every input and transport: the CSV
+header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
+JSON/JSONL the field order of the first record, with fields that only appear in
+later records appended where they were first seen. Converting a dataset between
+formats therefore does not reshuffle the report.
+
+Synchronous byte inputs use the in-memory columnar path. They support
+`max_rows`, metric/quality selection, semantic hints, CSV delimiters, and JSONL
+error policy, but reject streaming-only controls (`chunk_size`,
+`memory_limit_mb`, `stop_condition`, progress callbacks, and flexible CSV
+recovery) instead of silently ignoring them. For those controls, use
+`dataprof.asyncio.profile_bytes()`. JSON and JSONL byte buffers follow RFC 8259:
+the non-standard `NaN` and `Infinity` constants are malformed input.
 
 **Engine options:**
 
@@ -593,6 +605,11 @@ report = await profile_bytes(csv_bytes, format="csv")
 report = await profile_url("https://example.com/data.parquet")
 ```
 
+Async byte streams use the incremental engine; `engine="columnar"` is rejected.
+Local async Parquet profiling honors `max_rows` and row-limit stop conditions,
+and rejects stop conditions or sampling strategies the Parquet reader cannot
+apply.
+
 Additional async utilities:
 
 ```python
@@ -641,6 +658,9 @@ async def main():
 
 asyncio.run(main())
 ```
+
+`batch_size` must be greater than zero. Query result column names must be
+unique; duplicate aliases are rejected before values can be merged.
 
 ## Arrow Interop
 

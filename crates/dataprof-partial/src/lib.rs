@@ -284,10 +284,9 @@ fn infer_schema_from_json_reader<R: BufRead>(
     let (_profiles, column_stats, rows_read, _malformed_lines, _detected_format) =
         dataprof_json::analyze_json_from_reader(reader, &config)?;
 
-    // column_names() returns HashMap keys in arbitrary order. Sort
-    // alphabetically so the output is deterministic across runs.
-    let mut names = column_stats.column_names();
-    names.sort();
+    // column_names() is already in first-seen source order, which is the
+    // public ordering contract for JSON/JSONL. Do not re-sort it.
+    let names = column_stats.column_names();
 
     Ok(schema_from_streaming_stats(
         &column_stats,
@@ -845,9 +844,10 @@ fn analyze_structure_json(
         _ => JsonParserConfig::default().with_max_rows(max_rows),
     };
 
-    let (mut profiles, column_stats, rows_sampled, malformed_lines, detected_format) =
+    // Profiles arrive in first-seen source order, the public ordering contract
+    // for JSON/JSONL. Do not re-sort them.
+    let (profiles, column_stats, rows_sampled, malformed_lines, detected_format) =
         dataprof_json::analyze_json_from_reader(reader, &config)?;
-    profiles.sort_by(|a, b| a.name.cmp(&b.name));
 
     let row_count = if rows_sampled < max_rows && malformed_lines == 0 {
         exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
@@ -1275,9 +1275,9 @@ mod tests {
         let result = infer_schema(f.path()).unwrap();
 
         assert_eq!(result.columns.len(), 2);
-        // JSON columns are sorted alphabetically
-        assert_eq!(result.columns[0].name, "age");
-        assert_eq!(result.columns[1].name, "name");
+        // Source field order, not alphabetical.
+        assert_eq!(result.columns[0].name, "name");
+        assert_eq!(result.columns[1].name, "age");
     }
 
     #[test]
@@ -1286,7 +1286,6 @@ mod tests {
         let result = infer_schema(f.path()).unwrap();
 
         assert_eq!(result.columns.len(), 2);
-        // JSON columns are sorted alphabetically
         assert_eq!(result.columns[0].name, "x");
         assert_eq!(result.columns[1].name, "y");
     }
@@ -1894,9 +1893,9 @@ mod async_tests {
         let result = infer_schema_stream(source).await.unwrap();
 
         assert_eq!(result.columns.len(), 2);
-        // JSON columns are sorted alphabetically
-        assert_eq!(result.columns[0].name, "age");
-        assert_eq!(result.columns[1].name, "name");
+        // Source field order, not alphabetical.
+        assert_eq!(result.columns[0].name, "name");
+        assert_eq!(result.columns[1].name, "age");
     }
 
     #[tokio::test]

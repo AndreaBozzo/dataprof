@@ -520,12 +520,16 @@ impl AsyncStreamingProfiler {
         use serde_json::Value;
         use std::io::BufRead;
 
-        let mut buf_reader = std::io::BufReader::new(sync_reader);
+        let buf_reader = std::io::BufReader::new(sync_reader);
+        let mut buf_reader =
+            dataprof_core::Utf8BomReader::new(buf_reader).map_err(DataProfilerError::from)?;
         let mut known_columns: Vec<String> = Vec::new();
         let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut known_columns_set: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        let mut bytes_in_chunk: u64 = 0;
+        // The BOM is part of the source and therefore of progress/byte
+        // accounting, even though it is not passed to the JSON decoder.
+        let mut bytes_in_chunk = buf_reader.stripped_len() as u64;
         let mut headers_sent = false;
         let mut malformed_records: usize = 0;
         let mut emitted_records: usize = 0;
@@ -533,6 +537,8 @@ impl AsyncStreamingProfiler {
         // Helper closure: convert a JSON object into a row aligned to known_columns.
         // New columns are only registered before headers are sent; once headers have
         // been emitted, the schema is frozen to keep rows aligned with the header set.
+        // `serde_json/preserve_order` makes `obj.keys()` yield source field order,
+        // so the header set matches the sync scanner's ordering contract.
         let process_object = |obj: &serde_json::Map<String, Value>,
                               known_cols: &mut Vec<String>,
                               known_cols_set: &mut std::collections::HashSet<String>,
@@ -1373,6 +1379,36 @@ mod tests {
             bytes::Bytes::from_static(data),
             AsyncSourceInfo::new("test", FileFormat::Json).size_hint(Some(data.len() as u64)),
         )
+    }
+
+    #[tokio::test]
+    async fn test_async_json_and_jsonl_accept_leading_utf8_bom_and_count_it() {
+        for source in [
+            json_source(b"\xEF\xBB\xBF[{\"id\":1},{\"id\":2}]"),
+            jsonl_source(b"\xEF\xBB\xBF{\"id\":1}\n{\"id\":2}\n"),
+        ] {
+            let expected_bytes = source.source_info().size_hint.unwrap();
+            let report = AsyncStreamingProfiler::new()
+                .analyze_stream(source)
+                .await
+                .unwrap();
+
+            assert_eq!(report.execution.rows_processed, 2);
+            assert_eq!(report.execution.error_count, 0);
+            assert_eq!(report.execution.bytes_consumed, Some(expected_bytes));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_jsonl_does_not_strip_later_utf8_bom() {
+        let source = jsonl_source(b"{\"id\":1}\n\xEF\xBB\xBF{\"id\":2}\n");
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.execution.error_count, 1);
     }
 
     #[tokio::test]

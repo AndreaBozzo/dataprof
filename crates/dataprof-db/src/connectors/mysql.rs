@@ -110,7 +110,7 @@ impl DatabaseConnector for MySqlConnector {
                 DataProfilerError::database_query(&format!("Query execution failed: {}", e))
             })?;
 
-            Ok(process_rows_to_columns!(rows))
+            process_rows_to_columns!(rows)
         }
 
         #[cfg(not(feature = "mysql"))]

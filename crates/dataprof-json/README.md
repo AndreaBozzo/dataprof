@@ -12,6 +12,14 @@ The main entry points are `JsonFormat`, `JsonParserConfig`,
 `scan_json_from_reader`, `analyze_json_from_reader`, and
 `analyze_json_file`.
 
+## Column order
+
+Columns are reported in source order: the first record's field order, with
+fields that only appear in later records appended where they were first seen.
+This matches CSV header order and Parquet schema order, so the same logical
+dataset profiles to the same column order in every format. The contract relies
+on the workspace enabling `serde_json/preserve_order`.
+
 ## Features
 
 This crate has no feature flags.

@@ -278,7 +278,36 @@ pub fn profile_report_schema_document() -> serde_json::Value {
     );
     make_compatibility_defaults_optional(&mut document);
     allow_additive_properties(&mut document);
+    canonicalize_key_order(&mut document);
     document
+}
+
+/// Sort every object's keys so the committed schema has one canonical byte
+/// layout.
+///
+/// Key order carries no meaning in JSON Schema, but the committed document is a
+/// reviewed artifact: it must not churn because `serde_json` switched its map
+/// backing (`preserve_order`) or because Schemars changed the order in which it
+/// builds a schema. Arrays such as `required` and `oneOf` keep their order,
+/// which *is* meaningful.
+fn canonicalize_key_order(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for child in object.values_mut() {
+                canonicalize_key_order(child);
+            }
+            let mut sorted: Vec<(String, serde_json::Value)> =
+                std::mem::take(object).into_iter().collect();
+            sorted.sort_by(|(left, _), (right, _)| left.cmp(right));
+            object.extend(sorted);
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                canonicalize_key_order(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {

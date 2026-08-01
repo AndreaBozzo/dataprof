@@ -167,6 +167,12 @@ pub async fn analyze_database(
     calculate_quality: bool,
     quality_dimensions: Option<Vec<QualityDimension>>,
 ) -> Result<ProfileReport, DataProfilerError> {
+    if config.batch_size == 0 {
+        return Err(DataProfilerError::InvalidConfiguration {
+            message: "database batch_size must be greater than zero".to_string(),
+            suggestion: "Set batch_size to a positive number of rows.".to_string(),
+        });
+    }
     let mut connector = create_connector(config.clone())?;
 
     connector.connect().await?;

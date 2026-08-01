@@ -5,7 +5,7 @@ use std::path::Path;
 pub use dataprof_core::JsonErrorPolicy;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints, TruncationReason,
+    SemanticHints, TruncationReason, Utf8BomReader,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -64,6 +64,11 @@ impl JsonParserConfig {
 }
 
 /// Borrowed JSON object callback payload.
+///
+/// The workspace enables `serde_json/preserve_order`, so iterating this map
+/// yields fields in the order they appear in the source document rather than
+/// alphabetically. That is what makes the column-ordering contract on
+/// [`analyze_json_from_reader`] possible.
 pub type JsonObject = serde_json::Map<String, Value>;
 
 /// Summary of a JSON/JSONL scan.
@@ -83,7 +88,7 @@ pub struct JsonScanSummary {
 /// - **JSONL**: scans one top-level JSON value at a time from the reader.
 /// - **JSON array**: streams array elements without buffering the entire input.
 pub fn scan_json_from_reader<R, F>(
-    mut reader: R,
+    reader: R,
     config: &JsonParserConfig,
     mut on_object: F,
 ) -> Result<JsonScanSummary, DataProfilerError>
@@ -91,6 +96,7 @@ where
     R: BufRead,
     F: FnMut(&JsonObject),
 {
+    let mut reader = Utf8BomReader::new(reader).map_err(DataProfilerError::from)?;
     let format = match config.format {
         Some(JsonFormat::JsonArray) => FileFormat::Json,
         Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
@@ -371,6 +377,10 @@ fn json_value_to_string(value: &Value) -> String {
 }
 
 /// Feed a JSON object's fields into a [`StreamingColumnCollection`].
+///
+/// Columns are registered in the order the fields appear in each record, so the
+/// resulting column order is the first record's field order with later-only
+/// fields appended where they were first seen.
 fn feed_json_object(
     obj: &JsonObject,
     prior_rows: usize,
@@ -402,6 +412,13 @@ fn feed_json_object(
 /// Analyze JSON/JSONL data from a buffered reader using streaming statistics.
 ///
 /// Returns `(column_profiles, streaming_stats, rows_read, malformed_lines, detected_format)`.
+///
+/// # Column order
+///
+/// Columns are returned in source order — the first record's field order, with
+/// fields that only appear in later records appended in first-seen order. This
+/// matches CSV (header order) and Parquet (schema order), so the same logical
+/// dataset profiles to the same column order in every format.
 pub fn analyze_json_from_reader<R: BufRead>(
     reader: R,
     config: &JsonParserConfig,
@@ -603,6 +620,13 @@ mod tests {
         file
     }
 
+    fn write_bytes(content: &[u8]) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
     #[test]
     fn test_scan_jsonl_detects_format_and_rows() {
         let data = b"{\"x\":1}\n{\"x\":2}\n{\"x\":3}\n";
@@ -639,6 +663,56 @@ mod tests {
         assert_eq!(summary.rows_read, 2);
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0], vec!["name".to_string()]);
+    }
+
+    #[test]
+    fn test_scan_accepts_one_leading_utf8_bom_for_json_and_jsonl() {
+        for (data, config, expected_format) in [
+            (
+                b"\xEF\xBB\xBF[{\"x\":1},{\"x\":2}]".as_slice(),
+                JsonParserConfig::default(),
+                FileFormat::Json,
+            ),
+            (
+                b"\xEF\xBB\xBF{\"x\":1}\n{\"x\":2}\n".as_slice(),
+                JsonParserConfig::default(),
+                FileFormat::Jsonl,
+            ),
+        ] {
+            let mut rows = 0;
+            let summary = scan_json_from_reader(Cursor::new(data), &config, |_| rows += 1)
+                .expect("leading UTF-8 BOM should be accepted");
+
+            assert_eq!(rows, 2);
+            assert_eq!(summary.rows_read, 2);
+            assert_eq!(summary.malformed_lines, 0);
+            assert_eq!(summary.format, expected_format);
+        }
+    }
+
+    #[test]
+    fn test_scan_does_not_strip_nonleading_or_second_utf8_bom() {
+        let strict = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+
+        for data in [
+            b" \xEF\xBB\xBF{\"x\":1}\n".as_slice(),
+            b"\xEF\xBB\xBF\xEF\xBB\xBF{\"x\":1}\n".as_slice(),
+            b"{\"x\":1}\n\xEF\xBB\xBF{\"x\":2}\n".as_slice(),
+        ] {
+            scan_json_from_reader(Cursor::new(data), &strict, |_| {})
+                .expect_err("only the BOM at absolute byte offset zero may be stripped");
+        }
+    }
+
+    #[test]
+    fn test_bom_only_input_matches_empty_input_policy() {
+        for config in [JsonParserConfig::default(), JsonParserConfig::jsonl()] {
+            let empty = scan_json_from_reader(Cursor::new(b""), &config, |_| {}).unwrap();
+            let bom =
+                scan_json_from_reader(Cursor::new(b"\xEF\xBB\xBF".as_slice()), &config, |_| {})
+                    .unwrap();
+            assert_eq!(bom, empty);
+        }
     }
 
     #[test]
@@ -999,6 +1073,58 @@ mod tests {
         assert_eq!(col_b.total_count, 2);
     }
 
+    /// Deliberately non-alphabetical field order: sorting would give
+    /// `active, amount, date, id`, so any re-sort is visible.
+    const UNSORTED_FIELDS: &str = r#"{"id":1,"amount":12.5,"active":true,"date":"2026-07-23"}"#;
+    const UNSORTED_ORDER: [&str; 4] = ["id", "amount", "active", "date"];
+
+    fn profile_names(report: &ProfileReport) -> Vec<&str> {
+        report
+            .column_profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn test_json_column_order_follows_source_not_alphabet() {
+        let array = write_file(&format!("[{UNSORTED_FIELDS},{UNSORTED_FIELDS}]"));
+        let jsonl = write_file(&format!("{UNSORTED_FIELDS}\n{UNSORTED_FIELDS}\n"));
+
+        for file in [&array, &jsonl] {
+            let report = analyze_json_file(file.path(), &JsonParserConfig::default()).unwrap();
+            assert_eq!(profile_names(&report), UNSORTED_ORDER);
+        }
+    }
+
+    #[test]
+    fn test_json_column_order_appends_later_keys_in_first_seen_order() {
+        // Each record introduces two keys in reverse-alphabetical order, so
+        // sorting would reshuffle both the leading pair and the appended pair.
+        let data = b"{\"zulu\":1,\"mike\":2}\n{\"zulu\":3,\"mike\":4,\"delta\":5,\"alpha\":6}\n";
+        let file = write_bytes(data);
+        let report = analyze_json_file(file.path(), &JsonParserConfig::jsonl()).unwrap();
+
+        assert_eq!(profile_names(&report), ["zulu", "mike", "delta", "alpha"]);
+    }
+
+    #[test]
+    fn test_json_column_order_survives_report_serialization() {
+        let file = write_file(&format!("[{UNSORTED_FIELDS}]"));
+        let report = analyze_json_file(file.path(), &JsonParserConfig::default()).unwrap();
+
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: Value = serde_json::from_str(&json).unwrap();
+        let names: Vec<&str> = restored["column_profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|profile| profile["name"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(names, UNSORTED_ORDER);
+    }
+
     #[test]
     fn test_analyze_json_backfills_columns_discovered_after_first_row() {
         let json = write_file(r#"[{"a":1},{"a":2,"b":3}]"#);
@@ -1057,6 +1183,23 @@ mod tests {
                 format: FileFormat::Jsonl,
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn test_bom_prefixed_file_preserves_source_size() {
+        let data = b"\xEF\xBB\xBF[{\"x\":1}]";
+        let json = write_bytes(data);
+        let report = analyze_json_file(json.path(), &JsonParserConfig::json_array()).unwrap();
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert!(matches!(
+            report.data_source,
+            DataSource::File {
+                format: FileFormat::Json,
+                size_bytes,
+                ..
+            } if size_bytes == data.len() as u64
         ));
     }
 

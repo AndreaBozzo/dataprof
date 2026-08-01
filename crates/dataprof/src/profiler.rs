@@ -994,13 +994,17 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
                 {
+                    self.ensure_row_limit_only("the async Parquet parser")?;
+                    self.ensure_no_sampling("the async Parquet parser")?;
                     // Parquet requires seeking — delegate to sync parser on a blocking thread.
                     let path = path.to_path_buf();
                     let dims = self.config.quality_dimensions.clone();
                     let semantic_hints = self.semantic_hints();
+                    let parquet_config = self.parquet_config_for_stop();
                     let report = tokio::task::spawn_blocking(move || {
-                        dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+                        dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
                             &path,
+                            &parquet_config,
                             dims.as_deref(),
                             &semantic_hints,
                         )
