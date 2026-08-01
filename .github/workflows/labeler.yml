@@ -1,0 +1,35 @@
+name: Labeler
+
+# Applies path-based area/type labels so triage does not depend on the author
+# remembering. Rules live in .github/labeler.yml.
+#
+# `pull_request_target` is required, not incidental: a `pull_request` run from a
+# fork gets a read-only token and cannot label. This event runs in the base
+# repository's context with the base repository's configuration, and the job
+# never checks out or executes PR code -- it only reads the changed-file list --
+# so the usual pull_request_target risk does not apply here.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Apply path labels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Apply labels from .github/labeler.yml
+        uses: actions/labeler@v7.0.0
+        with:
+          # Add only. Labels applied by a maintainer -- priority, difficulty,
+          # `on hold` -- must survive the next push to the branch.
+          sync-labels: false

@@ -1,0 +1,106 @@
+# Path-based PR labels, applied by .github/workflows/labeler.yml.
+#
+# Two matcher kinds are used deliberately:
+#
+#   any-glob-to-any-file  — "this PR touches that area". Used for `area: *`,
+#                           which are additive and may overlap.
+#   any-glob-to-all-files — "this PR is only that". Used for the type labels
+#                           (`documentation`, `type: example`) so a code PR that
+#                           adjusts a README does not get filed as a docs PR.
+#
+# Labels a human applies by judgement -- priority, difficulty, `good first
+# issue`, `type: epic`, `area: product` -- are deliberately absent: a path
+# cannot imply them. The workflow never removes labels, so anything set by hand
+# survives later pushes.
+
+# Rust code and the manifests that build it -- deliberately not every file
+# under crates/, so a crate README is documentation rather than a code change.
+"area: rust":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.rs"
+          - "**/Cargo.toml"
+          - "Cargo.lock"
+          - "clippy.toml"
+          - "deny.toml"
+          - "Cross.toml"
+
+# The Python surface is both the package and the PyO3 crate behind it; a change
+# to either can alter what users import.
+"area: python":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "python/**"
+          - "crates/dataprof-python/**"
+          - "pyproject.toml"
+          - "uv.lock"
+
+"area: database":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/dataprof-db/**"
+          - ".devcontainer/init-scripts/**"
+          - "docs/guides/database-connectors.md"
+
+"area: metrics":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/dataprof-metrics/**"
+
+"area: streaming":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/dataprof-engines/src/streaming/**"
+          - "python/dataprof/asyncio.py"
+          - "python/dataprof/asyncio.pyi"
+          - "tests/async_streaming.rs"
+
+"area: testing":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tests/**"
+          - "python/tests/**"
+          - "crates/*/tests/**"
+
+"area: agents":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "python/dataprof/agent.py"
+          - "python/tests/test_agent_guard.py"
+          - "docs/guides/agent-workflows.md"
+          - ".claude/**"
+          - "AGENTS.md"
+          - "CLAUDE.md"
+
+"area: performance":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "benches/**"
+          - ".github/workflows/benchmarks.yml"
+
+"area: front end":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "site/**"
+          - "assets/**"
+
+github_actions:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/actions/**"
+
+# Type labels: the whole PR must be that kind of change.
+#
+# `site/` is excluded on purpose -- it is the marketing page, covered by
+# `area: front end`, not prose a user reads to learn the library.
+documentation:
+  - changed-files:
+      - any-glob-to-all-files:
+          - "docs/**"
+          - "**/*.md"
+
+"type: example":
+  - changed-files:
+      - any-glob-to-all-files:
+          - "examples/**"
