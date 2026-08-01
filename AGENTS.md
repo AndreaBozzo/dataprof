@@ -40,8 +40,8 @@ uv run pytest python/tests/test_python_api.py -q
 # Gates that CI enforces — run before committing
 cargo fmt --all
 cargo clippy --all --all-targets -- -D warnings
-uv run ruff format python/ .github/scripts/
-uv run ruff check python/ .github/scripts/
+uv run ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
 uv run ty check python/
 ```
 

@@ -6,15 +6,26 @@ alwaysApply: false
 
 # dataprof Agent Workflow
 
-Use this rule when working with tabular data, data-quality checks, or drift investigations in a project that uses `dataprof`.
+Use this rule when working with tabular data, data-quality checks, or drift investigations in a project that uses `dataprof`. dataprof reports on data; it never transforms, cleans, or moves it.
 
 ## Workflow
 
-1. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
-2. Run `dp.profile(path)` when you need full profiling metrics. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
-3. Export compact context with `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`) -- its `columns` entry grows with table width.
-4. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
-5. Prefer summaries and quality metrics over raw row dumps.
+1. Call `dp.capabilities()` before profiling Parquet, a URL, or a database -- optional features are compiled in, not always present. Unsupported is not the same as broken.
+2. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
+3. Run `dp.profile(path)` when you need full profiling metrics. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
+4. **Before reporting any number**, check the trust signals: `report.sampling_applied`, `report.sampling_ratio`, `report.truncation_reason`, `report.source_exhausted`, `report.low_sample_warning`, `report.error_count`, `report.ragged_row_count`. A truncated or sampled read still returns confident-looking numbers; report the caveat alongside them.
+5. Summarize with `report.to_llm_context(max_tokens=500)` -- the only export that enforces redaction of detected sensitive patterns. `report.to_markdown()`, `report.quality_summary()`, and the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`) are the structured alternatives; its `columns` entry grows with table width.
+6. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
+
+## Reading the output honestly
+
+- `None` means "not analyzed"; empty means "analyzed, found nothing". Never present a `None` score as perfect or replace it with zero.
+- Validity is assessed only for columns with a confidently detected pattern -- no pattern is not the same as invalid.
+- Precision measures consistency of effective decimal scale, not a business-required number of decimals.
+
+## Untrusted paths
+
+If the path was chosen by a model or supplied by an untrusted caller, use `dataprof.agent.AgentGuard` with a `SandboxPolicy(roots=[...])` instead of calling `dp.profile()` directly. It sandboxes path resolution, bounds the work per call, and keeps file contents and host paths out of error messages.
 
 ## Guardrails
 

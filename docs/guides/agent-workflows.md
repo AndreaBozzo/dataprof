@@ -9,11 +9,15 @@ These snippets teach coding agents how to use `dataprof` without dumping raw row
 
 When analyzing tabular data with dataprof:
 
-1. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
-2. Use `dp.profile(path)` for full profiling. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
-3. Export compact context with `report.to_llm_context()`, `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`) -- its `columns` entry grows with table width.
-4. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
-5. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
+1. Call `dp.capabilities()` before profiling Parquet, a URL, or a database -- optional features are compiled in, not always present.
+2. Start with `dp.analyze_structure(path)` for a cheap first pass over columns, row shape, and obvious structural issues.
+3. Use `dp.profile(path)` for full profiling. It computes every metric pack by default; pass `metrics=[...]` only to narrow it to a subset of `schema`, `statistics`, `patterns`, `quality`.
+4. Before reporting any number, check `report.sampling_applied`, `report.truncation_reason`, `report.source_exhausted`, `report.low_sample_warning`, `report.error_count`, and `report.ragged_row_count`. A truncated or sampled read still returns confident-looking numbers.
+5. Export compact context with `report.to_llm_context()` -- the only export that enforces redaction -- or `report.to_markdown()`, `report.quality_summary()`, or the top-level fields of `report.to_dict()` (`source`, `source_type`, `execution`, `quality`); its `columns` entry grows with table width.
+6. Use `report.compare(other_report)` for before/after drift, pipeline changes, or data-cleaning validation.
+7. Prefer schema summaries, quality metrics, and selected column details over raw row dumps.
+
+`None` means "not analyzed" and empty means "analyzed, found nothing" -- never present a `None` score as perfect or replace it with zero.
 
 Always report the source path, metrics requested, and any sampling or max-row limit.
 ```
@@ -26,7 +30,26 @@ Copy `.cursor/rules/dataprof.mdc` into a project that uses Cursor. It contains t
 
 Copy this repo's `.claude/skills/dataprof/` directory so that it lands at `.claude/skills/dataprof/SKILL.md` in your own project, or at `~/.claude/skills/dataprof/SKILL.md` to make it available everywhere. Keep the `dataprof/` directory -- a bare `.claude/skills/SKILL.md` will not load.
 
-It packages the structure -> profile -> summarize -> compare workflow as on-demand knowledge, and it loads from that path in this repo too.
+It packages the capabilities -> structure -> profile -> verify -> summarize -> compare workflow as on-demand knowledge, and it loads from that path in this repo too. Copy the whole directory, including `reference/`:
+
+```text
+.claude/skills/dataprof/
+|-- SKILL.md                      # the workflow, always loaded when triggered
+|-- reference/
+|   |-- api.md                    # full API surface, loaded on demand
+|   `-- interpretation.md         # what each signal does and does not mean
+|-- scripts/
+|   `-- dp_context.py             # executed, not read; costs only its output
+`-- evals/                        # optional: scenarios for testing the skill
+```
+
+The reference files stay on disk and cost nothing until the agent needs them, which is what keeps `SKILL.md` short enough to be read in full. `evals/` is only needed if you want to re-test the skill; it can be left behind.
+
+`scripts/dp_context.py` covers the common calls -- summary, single column, structure-only, comparison, and sandboxed profiling of an untrusted path -- so an agent stops rewriting the same snippet each session. It is **not** a dataprof CLI: it is not packaged, not installed, and not a console script. dataprof still ships no binary.
+
+### Keeping it accurate
+
+`python/tests/test_agent_docs_sync.py` fails the build when any of these files names an API that does not exist, passes a keyword the callee does not accept, or lists a field that is not on the type its section claims. Add new agent-facing docs to `AGENT_DOCS` in that test so they are covered too.
 
 ## Agent-safe output
 
