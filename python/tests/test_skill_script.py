@@ -138,6 +138,48 @@ def test_sandbox_rejects_traversal_without_a_traceback() -> None:
     assert "Traceback" not in result.stderr
 
 
+def test_invalid_sandbox_root_is_sanitized() -> None:
+    """A bad --root fails cleanly instead of raising through argparse.
+
+    Regression: SandboxPolicy validates the root, and building the guard sat
+    outside the try block, so `--root /nonexistent` printed a traceback whose
+    ValueError named the resolved absolute host path.
+    """
+    result = run("x.csv", "--root", "/nonexistent/sandbox/path")
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "details withheld" in result.stderr
+    assert "nonexistent" not in result.stderr
+
+
+def test_engine_failures_do_not_echo_their_message() -> None:
+    """A non-guard failure is reduced to its type at the agent boundary.
+
+    Engine and filesystem errors can carry an absolute path or a fragment of the
+    row that failed to parse. Profiling a directory raises one such error.
+    """
+    result = run("docs")
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "details withheld" in result.stderr
+    assert "engines failed" not in result.stderr
+
+
+def test_guard_rejections_keep_their_safe_message() -> None:
+    """Sanitizing must not flatten guard errors, which are written to be shown.
+
+    Without this, the previous test could be satisfied by withholding
+    everything, leaving an agent with no idea why a path was refused.
+    """
+    result = run("../../../../etc/passwd", "--root", str(FIXTURES))
+
+    assert result.returncode == 1
+    assert "PathNotAllowedError" in result.stderr
+    assert "details withheld" not in result.stderr
+
+
 def test_missing_file_is_reported_cleanly() -> None:
     result = run(str(FIXTURES / "does_not_exist.csv"))
 

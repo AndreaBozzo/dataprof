@@ -1,3 +1,7 @@
+# Every path CI runs ruff over. Keep this list and the ruff steps in
+# .github/workflows/ci.yml identical, or `make check` passes what CI fails.
+RUFF_PATHS := python/ .github/scripts/ .claude/skills/dataprof/scripts/
+
 .PHONY: build dev build-db dev-db test test-rust test-python test-python-db test-db test-db-all test-db-live lint lint-rust lint-python fmt fmt-rust fmt-python clippy check clean
 
 # ── Build ────────────────────────────────────────
@@ -46,7 +50,7 @@ clippy:  ## Run clippy with strict warnings
 	cargo clippy --lib --tests --all-features -- -D warnings
 
 lint-python:  ## Run ruff linter + type check
-	uv run ruff check python/ .claude/skills/dataprof/scripts/
+	uv run ruff check $(RUFF_PATHS)
 
 # ── Format ───────────────────────────────────────
 
@@ -56,8 +60,8 @@ fmt-rust:  ## Format Rust code
 	cargo fmt
 
 fmt-python:  ## Format Python code
-	uv run ruff format python/ .claude/skills/dataprof/scripts/
-	uv run ruff check --fix python/ .claude/skills/dataprof/scripts/
+	uv run ruff format $(RUFF_PATHS)
+	uv run ruff check --fix $(RUFF_PATHS)
 
 # ── Check (CI-like) ─────────────────────────────
 

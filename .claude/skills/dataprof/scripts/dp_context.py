@@ -121,6 +121,34 @@ def _profiler(args: argparse.Namespace, dataprof: Any) -> Any:
     return AgentGuard(SandboxPolicy(roots=[args.root]))
 
 
+def _sanitize(runner: Any, exc: BaseException) -> str:
+    """Render an exception as a line that is safe to put in front of a model.
+
+    An arbitrary error from the engine or the filesystem may carry an absolute
+    host path or a fragment of the row that failed to parse — a script that
+    promises never to print cell values cannot echo those. Guard rejections are
+    already written to be safe and pass through intact.
+
+    Delegates to ``AgentGuard.sanitize_error`` when a guard is in play so the
+    two surfaces cannot drift apart, and applies the same policy when it is not.
+    """
+    if hasattr(runner, "sanitize_error"):
+        message = runner.sanitize_error(exc)
+    else:
+        from dataprof.agent import AgentSecurityError
+
+        message = (
+            str(exc)
+            if isinstance(exc, AgentSecurityError)
+            else "request failed (details withheld at the agent boundary)"
+        )
+
+    # sanitize_error already prefixes the type for non-guard errors but not for
+    # guard rejections; prefix uniformly so the caller always sees what failed.
+    name = type(exc).__name__
+    return message if message.startswith(name) else f"{name}: {message}"
+
+
 def _describe_column(report: Any, name: str) -> int:
     if name not in report:
         print(f"column {name!r} not found. Columns: {', '.join(report)}", file=sys.stderr)
@@ -180,7 +208,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--column and --compare are mutually exclusive")
 
     dataprof = _import_dataprof()
-    runner = _profiler(args, dataprof)
+
+    # SandboxPolicy validates --root, so building the guard can fail — and its
+    # message names the resolved directory. Sanitize it like any other error
+    # rather than letting a traceback carry a host path into the transcript.
+    try:
+        runner = _profiler(args, dataprof)
+    except Exception as exc:
+        print(_sanitize(None, exc), file=sys.stderr)
+        return 1
 
     # AgentGuard rejects a per-call max_rows outright, including an explicit
     # None, because the policy owns that ceiling. Only forward the flag when the
@@ -229,13 +265,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     except FileNotFoundError as exc:
+        # Echoes back only the path the caller just supplied, which tells them
+        # nothing they did not already know.
         print(f"{exc.filename}: no such file", file=sys.stderr)
         return 1
     except Exception as exc:
-        # AgentSecurityError messages are written to be safe to show a model;
-        # everything else is reported by type and message, without a traceback,
-        # so a stack trace never lands in a conversation.
-        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
+        print(_sanitize(runner, exc), file=sys.stderr)
         return 1
 
 
