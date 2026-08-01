@@ -35,12 +35,17 @@ It packages the capabilities -> structure -> profile -> verify -> summarize -> c
 ```text
 .claude/skills/dataprof/
 |-- SKILL.md                      # the workflow, always loaded when triggered
-`-- reference/
-    |-- api.md                    # full API surface, loaded on demand
-    `-- interpretation.md         # what each signal does and does not mean
+|-- reference/
+|   |-- api.md                    # full API surface, loaded on demand
+|   `-- interpretation.md         # what each signal does and does not mean
+|-- scripts/
+|   `-- dp_context.py             # executed, not read; costs only its output
+`-- evals/                        # optional: scenarios for testing the skill
 ```
 
-The reference files stay on disk and cost nothing until the agent needs them, which is what keeps `SKILL.md` short enough to be read in full.
+The reference files stay on disk and cost nothing until the agent needs them, which is what keeps `SKILL.md` short enough to be read in full. `evals/` is only needed if you want to re-test the skill; it can be left behind.
+
+`scripts/dp_context.py` covers the common calls -- summary, single column, structure-only, comparison, and sandboxed profiling of an untrusted path -- so an agent stops rewriting the same snippet each session. It is **not** a dataprof CLI: it is not packaged, not installed, and not a console script. dataprof still ships no binary.
 
 ### Keeping it accurate
 

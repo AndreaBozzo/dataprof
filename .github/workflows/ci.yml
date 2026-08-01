@@ -180,10 +180,10 @@ jobs:
             uv.lock
 
       - name: Check formatting
-        run: uv run ruff format --check python/ .github/scripts/
+        run: uv run ruff format --check python/ .github/scripts/ .claude/skills/dataprof/scripts/
 
       - name: Lint
-        run: uv run ruff check python/ .github/scripts/
+        run: uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
 
       # ty is pre-1.0 (Astral's type checker) but the codebase passes it, so
       # keep it blocking to prevent regressions.

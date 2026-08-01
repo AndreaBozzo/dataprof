@@ -9,6 +9,24 @@ description: Profiles CSV, JSON, JSONL, and Parquet files with dataprof to repor
 transforms, cleans, or moves it. It emits structured signals — interpreting them
 is your job, not dataprof's.
 
+## Fast path
+
+For the common cases, run the bundled script instead of writing the code. It is
+executed, not read, so it costs nothing but its output, and it never prints raw
+cell values:
+
+```bash
+python scripts/dp_context.py data.csv                    # summary + quality + caveats
+python scripts/dp_context.py data.csv --column email     # one column
+python scripts/dp_context.py data.csv --structure-only   # cheap first look
+python scripts/dp_context.py before.csv --compare after.csv
+python scripts/dp_context.py data.csv --root /srv/data   # untrusted path
+```
+
+Write Python directly when you need something the script does not cover —
+narrowing metric packs, semantic policies, sampling strategies, or feeding a
+DataFrame. The workflow below is that path.
+
 ## Workflow
 
 ### 1. Check what this installation can do
@@ -161,6 +179,7 @@ message is safe to hand back to a model verbatim.
 
 ## Reference
 
+- `scripts/dp_context.py` — run it (see **Fast path**); `--help` lists the flags.
 - [reference/api.md](reference/api.md) — the full agent-relevant API surface:
   every field on `ProfileReport`, `ColumnProfile`, `DataQualityMetrics`,
   `StructureReport`, and `Capabilities`; the `Profiler` builder; persistence;

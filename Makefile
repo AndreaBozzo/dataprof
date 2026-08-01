@@ -46,7 +46,7 @@ clippy:  ## Run clippy with strict warnings
 	cargo clippy --lib --tests --all-features -- -D warnings
 
 lint-python:  ## Run ruff linter + type check
-	uv run ruff check python/
+	uv run ruff check python/ .claude/skills/dataprof/scripts/
 
 # ── Format ───────────────────────────────────────
 
@@ -56,8 +56,8 @@ fmt-rust:  ## Format Rust code
 	cargo fmt
 
 fmt-python:  ## Format Python code
-	uv run ruff format python/
-	uv run ruff check --fix python/
+	uv run ruff format python/ .claude/skills/dataprof/scripts/
+	uv run ruff check --fix python/ .claude/skills/dataprof/scripts/
 
 # ── Check (CI-like) ─────────────────────────────
 
