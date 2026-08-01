@@ -36,7 +36,7 @@ jobs:
         echo "Tag: $TAG, Version: $VERSION"
 
     - name: Install Rust 1.96 for release metadata validation
-      uses: dtolnay/rust-toolchain@1.96
+      uses: dtolnay/rust-toolchain@1.100
 
     - name: Validate tag and release metadata
       env:
