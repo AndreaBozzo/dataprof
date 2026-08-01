@@ -379,8 +379,6 @@ def _columns_from_dict(source: dict[Any, Any]) -> list[_Column]:
 def _columns_from_records(
     rows: list[dict[Any, Any]],
     max_rows: int | None = None,
-    *,
-    sort_keys: bool = False,
 ) -> list[_Column]:
     """Convert a list of row dicts into columns, keyed in first-seen order.
 
@@ -394,10 +392,7 @@ def _columns_from_records(
     """
     key_rows = rows if max_rows is None else rows[:max_rows]
     cell_rows = rows if max_rows is None else rows[: max_rows + 1]
-    if sort_keys:
-        keys = list(dict.fromkeys(key for row in key_rows for key in sorted(row, key=str)))
-    else:
-        keys = list(dict.fromkeys(key for row in key_rows for key in row))
+    keys = list(dict.fromkeys(key for row in key_rows for key in row))
     if key_rows and not keys:
         raise ValueError(
             "list-of-dicts input contains rows but no columns, so their row count "
@@ -1245,7 +1240,7 @@ def profile(
         elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
-            columns = _columns_from_records(rows, max_rows, sort_keys=True)
+            columns = _columns_from_records(rows, max_rows)
         elif fmt == "json":
             text = buffer.getvalue().decode("utf-8-sig")
             try:
@@ -1263,9 +1258,9 @@ def profile(
                 if all(isinstance(values, (list, tuple)) for values in rows.values()):
                     columns = _columns_from_dict(rows)
                 else:
-                    columns = _columns_from_records([rows], max_rows, sort_keys=True)
+                    columns = _columns_from_records([rows], max_rows)
             elif _is_list_of_dicts(rows):
-                columns = _columns_from_records(rows, max_rows, sort_keys=True)
+                columns = _columns_from_records(rows, max_rows)
             else:
                 raise ValueError(
                     f"{fmt} bytes must decode to an object of columns or an array of "

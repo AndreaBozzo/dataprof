@@ -126,6 +126,12 @@ A cell is missing when it is `None`, NaN, or a null-like token (`""`, `"null"`,
 *not* round-tripped through pandas, so an integer column containing a null stays
 `integer` rather than being widened to `float`.
 
+**Column order** follows the source on every input and transport: the CSV
+header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
+JSON/JSONL the field order of the first record, with fields that only appear in
+later records appended where they were first seen. Converting a dataset between
+formats therefore does not reshuffle the report.
+
 Synchronous byte inputs use the in-memory columnar path. They support
 `max_rows`, metric/quality selection, semantic hints, CSV delimiters, and JSONL
 error policy, but reject streaming-only controls (`chunk_size`,
