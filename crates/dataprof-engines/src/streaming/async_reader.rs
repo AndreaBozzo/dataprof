@@ -537,6 +537,8 @@ impl AsyncStreamingProfiler {
         // Helper closure: convert a JSON object into a row aligned to known_columns.
         // New columns are only registered before headers are sent; once headers have
         // been emitted, the schema is frozen to keep rows aligned with the header set.
+        // `serde_json/preserve_order` makes `obj.keys()` yield source field order,
+        // so the header set matches the sync scanner's ordering contract.
         let process_object = |obj: &serde_json::Map<String, Value>,
                               known_cols: &mut Vec<String>,
                               known_cols_set: &mut std::collections::HashSet<String>,

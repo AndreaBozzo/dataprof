@@ -3,8 +3,9 @@ use crate::{classification::DataType, source::FileFormat};
 /// Result of fast schema inference — column names paired with inferred data types.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SchemaResult {
-    /// Columns with their inferred types. For CSV/Parquet the order matches
-    /// the source; for JSON/JSONL columns are sorted alphabetically.
+    /// Columns with their inferred types, in source order: CSV/Parquet follow
+    /// the header/schema, JSON/JSONL follow the first record's field order with
+    /// later-only fields appended in first-seen order.
     pub columns: Vec<ColumnSchema>,
     /// How many rows were sampled to infer the schema (0 for Parquet metadata).
     pub rows_sampled: usize,

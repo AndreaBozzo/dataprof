@@ -177,6 +177,20 @@ def test_engine_parity(engine, reference, tmp_path):
     assert_profiles_match(engine, report, reference, EXPECTED_EXCEPTIONS)
 
 
+# ── Column order (issue #465) ──
+#
+# Column order is part of the report, not an accident of the parser: a format
+# conversion must not reshuffle it. The fixture keys above are deliberately
+# non-alphabetical (sorting moves all_null to the front and whole to the back),
+# so the JSON paths that used to emit object keys alphabetically fail here.
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_engine_column_order_follows_source(engine, tmp_path):
+    report = build_report(engine, tmp_path)
+    assert list(report) == list(COLUMNS)
+
+
 # ── High-cardinality regression (issue #386) ──
 #
 # The columnar (Arrow) engine used to stop counting distinct values at an

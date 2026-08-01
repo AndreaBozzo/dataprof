@@ -516,9 +516,18 @@ class TestProfileAdHocInputs:
         assert list(r.column_profiles) == ["a"]
         assert not r.source_exhausted
 
-    def test_json_bytes_column_order_matches_file_parser(self):
-        r = dataprof.profile(b'[{"z": 1, "a": 2}, {"later": 3}]', format="json")
-        assert list(r.column_profiles) == ["a", "z", "later"]
+    def test_json_bytes_column_order_matches_file_parser(self, tmp_path):
+        # Source field order, with a later-only field appended where it first
+        # appears (#465). Sorting would give ["a", "later", "z"].
+        payload = b'[{"z": 1, "a": 2}, {"later": 3}]'
+        path = tmp_path / "order.json"
+        path.write_bytes(payload)
+
+        from_bytes = dataprof.profile(payload, format="json")
+        from_file = dataprof.profile(str(path))
+
+        assert list(from_bytes.column_profiles) == ["z", "a", "later"]
+        assert list(from_file.column_profiles) == list(from_bytes.column_profiles)
 
     def test_jsonl_bytes_input(self):
         r = dataprof.profile(b'{"a": 1}\n{"a": 2}\n', format="jsonl")
