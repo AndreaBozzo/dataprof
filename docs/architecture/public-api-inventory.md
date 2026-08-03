@@ -68,3 +68,30 @@ CI now enforces the lean facade combinations with `cargo check`,
 `public_api_facade` integration-test runs, and owning-crate unit tests for
 `dataprof-engines`, `dataprof-parquet`, and `dataprof-partial` so the facade
 cannot accidentally grow implementation ownership again.
+
+## Python Package Surface
+
+The Python package is held to the same rule as the Rust facade: what
+`__all__` declares is what is reachable. `python/tests/test_public_surface.py`
+enforces it for every module below, and carries the same names as
+`EXPECTED_SURFACE`, so growing the API is a deliberate edit rather than a side
+effect.
+
+| Module | Exports |
+| --- | --- |
+| `dataprof` | `Capabilities`, `capabilities`, `REPORT_SCHEMA_VERSION`, `profile`, `profile_file`, `Profiler`, `ProfileReport`, `ProfilerConfig`, `ColumnProfile`, `DataQualityMetrics`, `SamplingStrategy`, `StopCondition`, `ProgressEvent`, `list_patterns`, `infer_schema`, `quick_row_count`, `analyze_structure`, `SchemaResult`, `RowCountEstimate`, `StructureColumnSummary`, `StructureReport`, `RecordBatch`, `column_to_dict`, `asyncio`, `__version__`, `analyze_database_async`, `count_table_rows_async`, `get_table_schema_async`, `test_connection_async` |
+| `dataprof.agent` | `AgentGuard`, `AgentSecurityError`, `AgentTimeoutError`, `PathNotAllowedError`, `ResourceLimitExceededError`, `SandboxPolicy` |
+| `dataprof.asyncio` | `profile_bytes`, `profile_file`, `profile_url`, `infer_schema_stream`, `quick_row_count_stream` |
+| `dataprof.interop` | `analyze_file`, `profile_dataframe`, `profile_arrow`, `analyze_csv_to_arrow`, `analyze_parquet_to_arrow`, `column_to_dict`, `ProfilerConfig`, `ProfileReport`, `ColumnProfile`, `DataQualityMetrics`, `RecordBatch` |
+
+### Not Public
+
+Everything the implementation imports for its own use is bound under a private
+alias — `import os as _os`, `from typing import Any as _Any` — so it does not
+land in the package namespace. Before this was enforced, `dataprof.os`,
+`dataprof.json` and `dataprof.pathlib` were all importable, and
+`dataprof.asyncio` declared no `__all__` at all.
+
+The package's own submodules (`dataprof.agent`, `dataprof.interop`) become
+attributes of `dataprof` once imported anywhere in the process. That is normal
+package behaviour rather than a leak, and the guard ignores it.

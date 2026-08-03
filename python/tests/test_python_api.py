@@ -1785,6 +1785,7 @@ class TestNamespace:
             "StructureColumnSummary",
             "StructureReport",
             "RecordBatch",
+            "column_to_dict",
             "asyncio",
             "__version__",
             # Database helpers: exported unconditionally. Without a `database`
@@ -2592,7 +2593,13 @@ class TestColumnToDict:
         from_report = r.to_dict()["columns"][0]
         assert d == from_report
 
-    def test_column_to_dict_discoverable_from_interop_not_all(self, tmp_path):
+    def test_column_to_dict_is_exported_from_both_namespaces(self, tmp_path):
+        """#514 settled this: the name is public, so __all__ declares it.
+
+        It was reachable, documented in the stub and used in
+        docs/guides/examples.md while __all__ omitted it — public in every way
+        except the one that counts.
+        """
         import dataprof.interop as interop
 
         path = tmp_path / "data.csv"
@@ -2600,7 +2607,8 @@ class TestColumnToDict:
         r = dataprof.profile(str(path))
 
         assert hasattr(dataprof, "column_to_dict")
-        assert "column_to_dict" not in dataprof.__all__
+        assert "column_to_dict" in dataprof.__all__
+        assert "column_to_dict" in interop.__all__
         assert interop.column_to_dict(r["x"]) == dataprof.column_to_dict(r["x"])
 
 
