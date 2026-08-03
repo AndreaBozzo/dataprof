@@ -232,14 +232,18 @@ def _half_up(v: float, ndigits: int) -> float:
 
 
 def _r2(v: float | None) -> float | None:
-    """Round to 2 decimal places (percentages, ratios). None/NaN → None."""
+    """Round to 2 decimal places (0..100 percentages). None/NaN → None.
+
+    Ratios on a 0..1 scale use :func:`_r4` instead, so that both carry the same
+    resolution — 2dp on a ratio is a hundredth of 2dp on a percentage.
+    """
     if v is None or not math.isfinite(v):
         return None
     return _half_up(v, 2)
 
 
 def _r4(v: float | None) -> float | None:
-    """Round to 4 decimal places (statistical metrics). None/NaN → None."""
+    """Round to 4 decimal places (statistics, 0..1 ratios). None/NaN → None."""
     if v is None or not math.isfinite(v):
         return None
     return _half_up(v, 4)
@@ -570,8 +574,9 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
           "patterns": [{"name": ..., "regex": ..., ...}, ...]
         }
 
-    Floating-point values are rounded to match the Rust serialization
-    (2dp for percentages, 4dp for statistics).
+    Floating-point values are rounded: 2dp for ``0..100`` percentages, 4dp for
+    statistics and for ``0..1`` ratios such as ``uniqueness_ratio``, so that a
+    ratio carries the same resolution as the equivalent percentage.
     """
     col_data: dict[str, Any] = {
         "name": col.name,
@@ -581,7 +586,11 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
         "null_percentage": _r2(col.null_percentage),
         "unique_count": col.unique_count,
         "unique_count_is_approximate": col.unique_count_is_approximate,
-        "uniqueness_ratio": _r2(col.uniqueness_ratio),
+        # 4dp, not 2dp: this is a 0..1 ratio, so 2dp gave it a hundredth of the
+        # resolution the 0..100 percentages get, and rounded every column below
+        # 0.5% uniqueness to a flat 0.0 — a plausible-looking wrong number.
+        # Matches the sibling ratio `true_ratio` (#512).
+        "uniqueness_ratio": _r4(col.uniqueness_ratio),
     }
     # The key is omitted entirely when the numeric/date check did not run
     # (another column type, or statistics skipped), mirroring the Rust
@@ -669,7 +678,8 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "null_percentage": _r2(col.null_percentage),
         "unique_count": col.unique_count,
         "unique_count_is_approximate": col.unique_count_is_approximate,
-        "uniqueness_ratio": _r2(col.uniqueness_ratio),
+        # 4dp for the same reason as in column_to_dict() — see the note there.
+        "uniqueness_ratio": _r4(col.uniqueness_ratio),
         "invalid_count": col.invalid_count,
         "min": _r4(col.min),
         "max": _r4(col.max),
@@ -1737,6 +1747,11 @@ class _DictBackedReport:
         self.ragged_row_count = execution.get("ragged_row_count") or 0
         self.sampling_applied = bool(execution.get("sampling_applied", False))
         self.sampling_ratio = execution.get("sampling_ratio")
+        # Additive field, written by to_dict() only when hints were supplied.
+        # It was never read back, so a reloaded report reported no bindings —
+        # indistinguishable from a run profiled without hints at all (#512).
+        bindings = d.get("semantic_hint_bindings")
+        self.semantic_hint_bindings = list(bindings) if isinstance(bindings, list) else []
         quality = d.get("quality")
         self.quality = _DictQuality(quality) if isinstance(quality, dict) else None
         self.quality_score = quality.get("overall_score") if isinstance(quality, dict) else None
@@ -1926,9 +1941,9 @@ class ProfileReport:
     def to_dict(self) -> dict:
         """Convert the report to a nested Python dict.
 
-        All floating-point values are rounded (2dp for percentages, 4dp for
-        statistics) to match the Rust report serialization. The document
-        carries ``schema_version`` (``dataprof.REPORT_SCHEMA_VERSION``) so
+        All floating-point values are rounded: 2dp for ``0..100`` percentages,
+        4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``.
+        The document carries ``schema_version`` (``dataprof.REPORT_SCHEMA_VERSION``) so
         saved reports remain readable across releases; see
         :meth:`from_dict` for the compatibility policy.
         """
