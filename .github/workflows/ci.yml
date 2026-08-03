@@ -231,7 +231,12 @@ jobs:
     # This one installs the built wheel into a bare venv, the way a user would.
     name: Wheel Smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # A dependency bump changes Cargo.lock, which changes the rust-cache key, so
+    # every such PR builds ~400 crates cold. Warm, Windows takes 6 minutes; cold,
+    # it needs more than the 20 this used to allow, and a timeout is worse than a
+    # slow run because the cache is only written on success — so the next run is
+    # cold too, and it never recovers on its own.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -273,7 +278,16 @@ jobs:
             uv.lock
 
       - name: Build wheel
-        run: uv run maturin build --out dist
+        # Deliberately not `uv run maturin build`: that syncs the project first,
+        # which builds the extension through the PEP 517 backend into its own
+        # temporary target dir, and then maturin compiles the whole tree again
+        # into ./target. With a warm cache the duplication is invisible; on a
+        # cold one it cost nine minutes here and blew the Windows timeout.
+        # Nothing needs the project inside .venv — the wheel goes into a bare
+        # venv in the next step, which is the whole point of this job.
+        run: |
+          uv sync --no-install-project
+          uv run --no-sync maturin build --out dist
 
       - name: Install the wheel into a bare venv
         # --no-index proves the wheel needs nothing from PyPI: the base package
