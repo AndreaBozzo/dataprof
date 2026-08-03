@@ -22,6 +22,7 @@ declares on purpose, so it is checked for existence rather than for reachability
 """
 
 from __future__ import annotations
+import __future__
 
 import importlib
 from types import ModuleType
@@ -206,6 +207,35 @@ def test_typing_helpers_are_not_package_attributes():
         assert not hasattr(dataprof, leaked), (
             f"dataprof.{leaked} is importable; bind it as _{leaked} instead"
         )
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_SURFACE))
+def test_future_annotations_stay_enabled_under_the_private_alias(name):
+    """``from __future__ import annotations as _annotations`` is a real future statement.
+
+    Future statements accept an alias -- the grammar is ``feature ["as"
+    identifier]`` -- and the compiler enables the feature from the statement's
+    presence, not from the name it binds. The alias is load-bearing because the
+    *unaliased* form binds a public ``annotations`` attribute (a
+    ``__future__._Feature`` object) on every module that uses it, which is one of
+    the leaks this file exists to stop.
+
+    This is pinned because "you cannot alias a future import" is a
+    plausible-sounding objection that has already been raised once. Acting on it
+    brings the leak back; dropping the future statement instead makes every
+    annotation in these modules evaluate at runtime.
+    """
+    module = _module(name)
+    # The loader is typed as an optional protocol without get_code; every loader
+    # that imported these modules from source has it.
+    code = module.__loader__.get_code(module.__name__)  # ty: ignore[unresolved-attribute]
+    assert code is not None, f"{name}: cannot recover compiled code to check flags"
+    assert code.co_flags & __future__.annotations.compiler_flag, (
+        f"{name}: PEP 563 is not active -- annotations will be evaluated at runtime"
+    )
+    assert not hasattr(module, "annotations"), (
+        f"{name}: `annotations` is reachable, so the future import is unaliased again"
+    )
 
 
 def test_column_to_dict_is_public_and_consistent():
