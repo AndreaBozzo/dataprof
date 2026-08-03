@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import math
 import warnings
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 import dataprof
@@ -133,9 +133,20 @@ def _round_candidates(value: float) -> set[float]:
         candidates.add(
             float(Decimal(str(value)).quantize(Decimal(f"1e-{ndigits}"), rounding=ROUND_HALF_UP))
         )
-        # Binary multiply/round/divide — today's Rust behaviour.
+        # Binary multiply/round/divide — today's Rust behaviour. Note this
+        # cannot use Python's round(), which breaks ties to even while Rust's
+        # f64::round() breaks them away from zero: they disagree on exactly the
+        # tie cases this candidate exists to cover. Decimal(float) is the exact
+        # binary value, so quantizing it half-up reproduces f64::round().
         scale = 10.0**ndigits
-        candidates.add(round(value * scale) / scale)
+        scaled = value * scale
+        try:
+            rounded = float(Decimal(scaled).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        except InvalidOperation:
+            # Beyond the decimal context's precision the value is already
+            # integral at this scale, so rounding would not move it.
+            rounded = scaled
+        candidates.add(rounded / scale)
     return candidates
 
 

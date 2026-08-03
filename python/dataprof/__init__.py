@@ -574,8 +574,9 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
           "patterns": [{"name": ..., "regex": ..., ...}, ...]
         }
 
-    Floating-point values are rounded to match the Rust serialization
-    (2dp for percentages, 4dp for statistics).
+    Floating-point values are rounded: 2dp for ``0..100`` percentages, 4dp for
+    statistics and for ``0..1`` ratios such as ``uniqueness_ratio``, so that a
+    ratio carries the same resolution as the equivalent percentage.
     """
     col_data: dict[str, Any] = {
         "name": col.name,
@@ -1940,9 +1941,9 @@ class ProfileReport:
     def to_dict(self) -> dict:
         """Convert the report to a nested Python dict.
 
-        All floating-point values are rounded (2dp for percentages, 4dp for
-        statistics) to match the Rust report serialization. The document
-        carries ``schema_version`` (``dataprof.REPORT_SCHEMA_VERSION``) so
+        All floating-point values are rounded: 2dp for ``0..100`` percentages,
+        4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``.
+        The document carries ``schema_version`` (``dataprof.REPORT_SCHEMA_VERSION``) so
         saved reports remain readable across releases; see
         :meth:`from_dict` for the compatibility policy.
         """
