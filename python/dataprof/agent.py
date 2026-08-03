@@ -21,19 +21,19 @@ Every rejection raises a subclass of :class:`AgentSecurityError`, whose message
 is safe to hand back to a model verbatim.
 """
 
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-import os
-import pathlib
-import threading
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from typing import Any, TypeVar, cast
+import os as _os
+import pathlib as _pathlib
+import threading as _threading
+from collections.abc import Callable as _Callable, Sequence as _Sequence
+from dataclasses import dataclass as _dataclass
+from typing import Any as _Any, TypeVar as _TypeVar, cast as _cast
 
 from . import (
-    ProfileReport,
-    StopCondition,
-    StructureReport,
+    ProfileReport as _ProfileReport,
+    StopCondition as _StopCondition,
+    StructureReport as _StructureReport,
     analyze_structure as _analyze_structure,
     profile as _profile,
 )
@@ -47,7 +47,7 @@ __all__ = [
     "SandboxPolicy",
 ]
 
-_T = TypeVar("_T")
+_T = _TypeVar("_T")
 
 # Schemes an LLM is most likely to hand us when it wants remote data. A source
 # naming any of these is refused unless the policy opts into network access;
@@ -90,19 +90,19 @@ class AgentTimeoutError(AgentSecurityError):
 
 
 def _coerce_roots(
-    roots: Sequence[str | os.PathLike[str]] | str | os.PathLike[str],
-) -> tuple[pathlib.Path, ...]:
-    items: Sequence[str | os.PathLike[str]]
-    if isinstance(roots, (str, os.PathLike)):
+    roots: _Sequence[str | _os.PathLike[str]] | str | _os.PathLike[str],
+) -> tuple[_pathlib.Path, ...]:
+    items: _Sequence[str | _os.PathLike[str]]
+    if isinstance(roots, (str, _os.PathLike)):
         # A lone root is the common case; wrap it rather than making every
         # caller type `[root]`. The cast discards a spurious "sequence that is
         # also path-like" intersection the narrowing leaves behind.
-        items = [cast("str | os.PathLike[str]", roots)]
+        items = [_cast("str | _os.PathLike[str]", roots)]
     else:
         items = roots
-    resolved: list[pathlib.Path] = []
+    resolved: list[_pathlib.Path] = []
     for r in items:
-        p = pathlib.Path(r).expanduser().resolve()
+        p = _pathlib.Path(r).expanduser().resolve()
         if not p.is_dir():
             raise ValueError(f"sandbox root is not an existing directory: {p}")
         resolved.append(p)
@@ -116,7 +116,7 @@ def _coerce_roots(
 # init=False: the validating __init__ below is the point of this class, and
 # leaving it implicit would rely on dataclass declining to overwrite an
 # __init__ already present in the class body.
-@dataclass(frozen=True, init=False)
+@_dataclass(frozen=True, init=False)
 class SandboxPolicy:
     """Limits applied to every call made through an :class:`AgentGuard`.
 
@@ -141,7 +141,7 @@ class SandboxPolicy:
             refuses to include raw sample values.
     """
 
-    roots: tuple[pathlib.Path, ...]
+    roots: tuple[_pathlib.Path, ...]
     max_file_bytes: int = 256 * 1024 * 1024
     max_rows: int = 1_000_000
     max_bytes: int = 256 * 1024 * 1024
@@ -152,7 +152,7 @@ class SandboxPolicy:
 
     def __init__(
         self,
-        roots: Sequence[str | os.PathLike[str]] | str | os.PathLike[str],
+        roots: _Sequence[str | _os.PathLike[str]] | str | _os.PathLike[str],
         *,
         max_file_bytes: int = 256 * 1024 * 1024,
         max_rows: int = 1_000_000,
@@ -199,7 +199,7 @@ class AgentGuard:
 
     # -- path handling ----------------------------------------------------
 
-    def resolve_path(self, source: str | os.PathLike[str]) -> pathlib.Path:
+    def resolve_path(self, source: str | _os.PathLike[str]) -> _pathlib.Path:
         """Resolve a model-supplied source to a real file inside the sandbox.
 
         A relative source is interpreted against the sandbox roots, never
@@ -221,7 +221,7 @@ class AgentGuard:
         raw = self._require_pathlike(source)
         self._reject_network(raw)
 
-        candidate = pathlib.Path(raw).expanduser()
+        candidate = _pathlib.Path(raw).expanduser()
         attempts = (
             [candidate]
             if candidate.is_absolute()
@@ -230,8 +230,8 @@ class AgentGuard:
 
         # Resolve symlinks and `..` fully before comparing against the roots.
         # Comparing an unresolved path would let `root/../../etc` pass.
-        attempted: pathlib.Path | None = None
-        resolved: pathlib.Path | None = None
+        attempted: _pathlib.Path | None = None
+        resolved: _pathlib.Path | None = None
         for attempt in attempts:
             try:
                 candidate_resolved = attempt.resolve(strict=True)
@@ -270,7 +270,7 @@ class AgentGuard:
             )
         return resolved
 
-    def _containing_root(self, resolved: pathlib.Path) -> pathlib.Path | None:
+    def _containing_root(self, resolved: _pathlib.Path) -> _pathlib.Path | None:
         for root in self._policy.roots:
             try:
                 resolved.relative_to(root)
@@ -279,7 +279,7 @@ class AgentGuard:
             return root
         return None
 
-    def _traverses_symlink(self, attempted: pathlib.Path, resolved: pathlib.Path) -> bool:
+    def _traverses_symlink(self, attempted: _pathlib.Path, resolved: _pathlib.Path) -> bool:
         """True if reaching ``resolved`` went through a link.
 
         ``attempted`` is always absolute — either an absolute source or a root
@@ -294,8 +294,8 @@ class AgentGuard:
         if attempted.is_symlink():
             return True
         try:
-            folded = os.path.normcase(os.path.normpath(attempted))
-            return folded != os.path.normcase(str(resolved))
+            folded = _os.path.normcase(_os.path.normpath(attempted))
+            return folded != _os.path.normcase(str(resolved))
         except OSError:
             return True
 
@@ -311,11 +311,11 @@ class AgentGuard:
                 )
 
     @staticmethod
-    def _require_pathlike(source: Any) -> str:
+    def _require_pathlike(source: _Any) -> str:
         if isinstance(source, str):
             return source
-        if isinstance(source, os.PathLike):
-            fs = os.fspath(source)
+        if isinstance(source, _os.PathLike):
+            fs = _os.fspath(source)
             if isinstance(fs, str):
                 return fs
         raise PathNotAllowedError(
@@ -323,7 +323,7 @@ class AgentGuard:
             "in-memory sources bypass the sandbox and are not accepted here"
         )
 
-    def _describe(self, candidate: pathlib.Path) -> str:
+    def _describe(self, candidate: _pathlib.Path) -> str:
         """Render a rejected path without disclosing the host filesystem.
 
         A rejected path resolved outside the sandbox, so there is no in-root
@@ -333,18 +333,18 @@ class AgentGuard:
         return candidate.name or "<empty path>"
 
     @staticmethod
-    def _relative(resolved: pathlib.Path, root: pathlib.Path) -> str:
+    def _relative(resolved: _pathlib.Path, root: _pathlib.Path) -> str:
         return resolved.relative_to(root).as_posix()
 
     # -- bounded execution ------------------------------------------------
 
-    def stop_condition(self) -> StopCondition:
+    def stop_condition(self) -> _StopCondition:
         """The engine-level row and byte ceilings implied by the policy."""
-        return StopCondition.max_rows(self._policy.max_rows) | StopCondition.max_bytes(
+        return _StopCondition.max_rows(self._policy.max_rows) | _StopCondition.max_bytes(
             self._policy.max_bytes
         )
 
-    def run(self, fn: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
+    def run(self, fn: _Callable[..., _T], *args: _Any, **kwargs: _Any) -> _T:
         """Run ``fn`` under the policy's per-call deadline.
 
         The deadline bounds what the caller waits for and what the agent sees.
@@ -374,7 +374,7 @@ class AgentGuard:
             except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
                 failure.append(exc)
 
-        worker = threading.Thread(target=target, name="dataprof-agent", daemon=True)
+        worker = _threading.Thread(target=target, name="dataprof-agent", daemon=True)
         worker.start()
         worker.join(self._policy.timeout_seconds)
 
@@ -388,7 +388,7 @@ class AgentGuard:
 
     # -- guarded entry points ---------------------------------------------
 
-    def profile(self, source: str | os.PathLike[str], **kwargs: Any) -> ProfileReport:
+    def profile(self, source: str | _os.PathLike[str], **kwargs: _Any) -> _ProfileReport:
         """Profile a sandboxed file under the policy's bounds.
 
         The row and byte ceilings are set from the policy and cannot be widened
@@ -408,8 +408,8 @@ class AgentGuard:
         return self.run(_profile, str(path), stop_condition=self.stop_condition(), **kwargs)
 
     def analyze_structure(
-        self, source: str | os.PathLike[str], max_rows: int | None = None
-    ) -> StructureReport:
+        self, source: str | _os.PathLike[str], max_rows: int | None = None
+    ) -> _StructureReport:
         """Cheap structural first look at a sandboxed file.
 
         ``max_rows`` is clamped to the policy ceiling rather than rejected, so
@@ -422,7 +422,7 @@ class AgentGuard:
         return self.run(_analyze_structure, str(path), bounded)
 
     def llm_context(
-        self, report: ProfileReport, max_tokens: int = 1000, include_samples: bool = False
+        self, report: _ProfileReport, max_tokens: int = 1000, include_samples: bool = False
     ) -> str:
         """Render ``report`` as bounded, redacted model context.
 

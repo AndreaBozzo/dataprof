@@ -4,9 +4,9 @@ These are direct bindings to the Rust profiling engine, without the
 high-level dispatch and wrapping provided by ``dataprof.profile()``.
 """
 
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-import os
+import os as _os
 
 from dataprof._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
@@ -24,28 +24,28 @@ from dataprof._dataprof import (  # type: ignore[import-not-found]
 from . import column_to_dict
 
 
-def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
+def _normalize_pathlike(path: str | _os.PathLike[str], *, arg_name: str = "path") -> str:
     if isinstance(path, str):
         return path
-    if isinstance(path, os.PathLike):
-        normalized = os.fspath(path)
+    if isinstance(path, _os.PathLike):
+        normalized = _os.fspath(path)
         if isinstance(normalized, str):
             return normalized
     raise TypeError(f"Expected str or path-like object for {arg_name}, got {type(path).__name__}")
 
 
 def analyze_file(
-    path: str | os.PathLike[str],
+    path: str | _os.PathLike[str],
     config: ProfilerConfig | None = None,
 ) -> ProfileReport:
     return _analyze_file(_normalize_pathlike(path), config)
 
 
-def analyze_csv_to_arrow(path: str | os.PathLike[str]) -> RecordBatch:
+def analyze_csv_to_arrow(path: str | _os.PathLike[str]) -> RecordBatch:
     return _analyze_csv_to_arrow(_normalize_pathlike(path))
 
 
-def analyze_parquet_to_arrow(path: str | os.PathLike[str]) -> RecordBatch:
+def analyze_parquet_to_arrow(path: str | _os.PathLike[str]) -> RecordBatch:
     return _analyze_parquet_to_arrow(_normalize_pathlike(path))
 
 

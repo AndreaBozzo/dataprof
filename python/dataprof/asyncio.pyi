@@ -7,6 +7,14 @@ from typing import Any
 
 from . import ProfileReport, RowCountEstimate, SchemaResult
 
+__all__ = [
+    "profile_bytes",
+    "profile_file",
+    "profile_url",
+    "infer_schema_stream",
+    "quick_row_count_stream",
+]
+
 # True when the extension was built with the corresponding feature flags.
 _HAS_ASYNC: bool
 _HAS_URL: bool

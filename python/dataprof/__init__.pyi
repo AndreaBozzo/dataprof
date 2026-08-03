@@ -326,6 +326,7 @@ __all__ = [
     "StructureColumnSummary",
     "StructureReport",
     "RecordBatch",
+    "column_to_dict",
     "asyncio",
     "__version__",
 ]

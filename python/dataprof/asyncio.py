@@ -15,10 +15,10 @@ Example::
     asyncio.run(main())
 """
 
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
-from pathlib import Path
-from typing import Any
+from pathlib import Path as _Path
+from typing import Any as _Any
 
 try:
     from ._dataprof import (  # type: ignore[import-not-found]
@@ -39,8 +39,20 @@ try:
 except ImportError:
     _HAS_URL = False
 
-from . import ProfileReport, RowCountEstimate, SchemaResult
-from ._dataprof import ProfilerConfig  # type: ignore[import-not-found]
+from . import (
+    ProfileReport as _ProfileReport,
+    RowCountEstimate as _RowCountEstimate,
+    SchemaResult as _SchemaResult,
+)
+from ._dataprof import ProfilerConfig as _ProfilerConfig  # type: ignore[import-not-found]
+
+__all__ = [
+    "profile_bytes",
+    "profile_file",
+    "profile_url",
+    "infer_schema_stream",
+    "quick_row_count_stream",
+]
 
 
 def _check_async() -> None:
@@ -55,8 +67,8 @@ async def profile_bytes(
     data: bytes,
     *,
     format: str,
-    **kwargs: Any,
-) -> ProfileReport:
+    **kwargs: _Any,
+) -> _ProfileReport:
     """Profile in-memory bytes asynchronously.
 
     Args:
@@ -75,15 +87,15 @@ async def profile_bytes(
             "engine='columnar' is not available for async bytes input; "
             "use engine='auto' or 'incremental'."
         )
-    config = ProfilerConfig(**kwargs) if kwargs else None
+    config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_bytes_async(data, format, config)
-    return ProfileReport(rust_report)
+    return _ProfileReport(rust_report)
 
 
 async def profile_file(
-    path: str | Path,
-    **kwargs: Any,
-) -> ProfileReport:
+    path: str | _Path,
+    **kwargs: _Any,
+) -> _ProfileReport:
     """Profile a local file asynchronously.
 
     All formats supported including Parquet.
@@ -96,17 +108,17 @@ async def profile_file(
         ProfileReport with analysis results.
     """
     _check_async()
-    config = ProfilerConfig(**kwargs) if kwargs else None
+    config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_file_async(str(path), config)
-    return ProfileReport(rust_report)
+    return _ProfileReport(rust_report)
 
 
 async def profile_url(
     url: str,
     *,
     format: str | None = None,
-    **kwargs: Any,
-) -> ProfileReport:
+    **kwargs: _Any,
+) -> _ProfileReport:
     """Profile data from a remote URL asynchronously.
 
     Supports CSV, JSON, and JSONL when async streaming is compiled in.
@@ -127,16 +139,16 @@ async def profile_url(
             "--features 'python-async,async-streaming'. Remote Parquet "
             "also requires 'parquet-async'."
         )
-    config = ProfilerConfig(**kwargs) if kwargs else None
+    config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_url_async(url, format, config)
-    return ProfileReport(rust_report)
+    return _ProfileReport(rust_report)
 
 
 async def infer_schema_stream(
     data: bytes,
     *,
     format: str,
-) -> SchemaResult:
+) -> _SchemaResult:
     """Infer schema from in-memory bytes asynchronously.
 
     Reads only a small sample. Parquet is not supported.
@@ -156,7 +168,7 @@ async def quick_row_count_stream(
     data: bytes,
     *,
     format: str,
-) -> RowCountEstimate:
+) -> _RowCountEstimate:
     """Quick row count from in-memory bytes asynchronously.
 
     Always a full scan. Parquet not supported.

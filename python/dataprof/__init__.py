@@ -1,30 +1,30 @@
 """dataprof - High-performance data profiling library."""
 
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
 import csv as _csv
 import decimal as _decimal
 import errno as _errno
-import functools
+import functools as _functools
 import html as _html
 import importlib as _importlib
 import io as _io
-import json
-import math
-import os
-import pathlib
-import warnings
-from collections.abc import Callable, Iterator
+import json as _json
+import math as _math
+import os as _os
+import pathlib as _pathlib
+import warnings as _warnings
+from collections.abc import Callable as _Callable, Iterator as _Iterator
 from dataclasses import dataclass as _dataclass
 from importlib import util as _importlib_util
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING as _TYPE_CHECKING, Any as _Any, cast as _cast
 
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     from ._dataprof import Pattern as _NativePattern
 else:
     # Pattern objects are returned by the extension and described by its stub,
     # but the class itself is not exported as a runtime module attribute.
-    _NativePattern = Any
+    _NativePattern = _Any
 
 from ._dataprof import (
     ColumnProfile,
@@ -203,6 +203,7 @@ __all__ = [
     "StructureColumnSummary",
     "StructureReport",
     "RecordBatch",
+    "column_to_dict",
     "asyncio",
     "__version__",
 ]
@@ -249,14 +250,14 @@ def _r2(v: float | None) -> float | None:
     Ratios on a 0..1 scale use :func:`_r4` instead, so that both carry the same
     resolution — 2dp on a ratio is a hundredth of 2dp on a percentage.
     """
-    if v is None or not math.isfinite(v):
+    if v is None or not _math.isfinite(v):
         return None
     return _half_up(v, 2)
 
 
 def _r4(v: float | None) -> float | None:
     """Round to 4 decimal places (statistics, 0..1 ratios). None/NaN → None."""
-    if v is None or not math.isfinite(v):
+    if v is None or not _math.isfinite(v):
         return None
     return _half_up(v, 4)
 
@@ -281,7 +282,7 @@ _QUALITY_DIMENSIONS = (
 )
 
 
-def _round_dimension(values: dict[str, Any]) -> dict[str, Any]:
+def _round_dimension(values: dict[str, _Any]) -> dict[str, _Any]:
     """Round a quality dimension dict the way the Rust serializer does.
 
     Every float across the seven dimension structs is a ``0..100`` percentage
@@ -303,12 +304,12 @@ def _pct_str(value: float | None) -> str:
     return f"{r:.1f}%" if r is not None else "—"
 
 
-def _normalize_pathlike(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
+def _normalize_pathlike(path: str | _os.PathLike[str], *, arg_name: str = "path") -> str:
     """Normalize Python path-like input to the string form expected by Rust."""
     if isinstance(path, str):
         return path
-    if isinstance(path, os.PathLike):
-        normalized = os.fspath(path)
+    if isinstance(path, _os.PathLike):
+        normalized = _os.fspath(path)
         if isinstance(normalized, str):
             return normalized
     raise TypeError(
@@ -350,9 +351,9 @@ def _reject_nonstandard_json_constant(value: str) -> None:
     raise _NonStandardJsonConstant(value)
 
 
-def _strict_json_loads(text: str) -> Any:
+def _strict_json_loads(text: str) -> _Any:
     """Decode RFC 8259 JSON, rejecting Python's NaN/Infinity extensions."""
-    return json.loads(text, parse_constant=_reject_nonstandard_json_constant)
+    return _json.loads(text, parse_constant=_reject_nonstandard_json_constant)
 
 
 # --- Dependency-free columnar inputs (see _dataprof.profile_columns) ---
@@ -376,13 +377,13 @@ def _cell_to_str(value: object) -> str | None:
         return None
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, float) and math.isnan(value):
+    if isinstance(value, float) and _math.isnan(value):
         return None
     if isinstance(value, str):
         return value
     if isinstance(value, (dict, list)):
         try:
-            return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            return _json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         except (TypeError, ValueError):
             # Contents aren't JSON-serialisable (datetime, set, circular ref, ...);
             # fall back to str() so one odd cell doesn't abort profiling.
@@ -390,7 +391,7 @@ def _cell_to_str(value: object) -> str | None:
     return str(value)
 
 
-def _columns_from_dict(source: dict[Any, Any]) -> list[_Column]:
+def _columns_from_dict(source: dict[_Any, _Any]) -> list[_Column]:
     """Convert a dict of equal-length sequences into columns."""
     columns: list[_Column] = []
     normalized_names: set[str] = set()
@@ -417,7 +418,7 @@ def _columns_from_dict(source: dict[Any, Any]) -> list[_Column]:
 
 
 def _columns_from_records(
-    rows: list[dict[Any, Any]],
+    rows: list[dict[_Any, _Any]],
     max_rows: int | None = None,
 ) -> list[_Column]:
     """Convert a list of row dicts into columns, keyed in first-seen order.
@@ -521,7 +522,7 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
             continue
         try:
             value = _strict_json_loads(line)
-        except json.JSONDecodeError as exc:
+        except _json.JSONDecodeError as exc:
             if on_error == "strict":
                 # ``lineno`` is the record's position in the input; ``exc.colno``
                 # locates the fault within that line. The record text is never
@@ -547,34 +548,34 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     return rows, skipped
 
 
-def _normalize_existing_file(path: str | os.PathLike[str], *, arg_name: str = "path") -> str:
+def _normalize_existing_file(path: str | _os.PathLike[str], *, arg_name: str = "path") -> str:
     normalized = _normalize_pathlike(path, arg_name=arg_name)
     try:
-        pathlib.Path(normalized).stat()
+        _pathlib.Path(normalized).stat()
     except FileNotFoundError:
-        raise FileNotFoundError(_errno.ENOENT, os.strerror(_errno.ENOENT), normalized) from None
+        raise FileNotFoundError(_errno.ENOENT, _os.strerror(_errno.ENOENT), normalized) from None
     return normalized
 
 
-def infer_schema(path: str | os.PathLike[str]) -> SchemaResult:
+def infer_schema(path: str | _os.PathLike[str]) -> SchemaResult:
     """Infer a file schema from a string path or path-like object."""
     return _infer_schema(_normalize_existing_file(path))
 
 
-def quick_row_count(path: str | os.PathLike[str]) -> RowCountEstimate:
+def quick_row_count(path: str | _os.PathLike[str]) -> RowCountEstimate:
     """Estimate or count rows from a string path or path-like object."""
     return _quick_row_count(_normalize_existing_file(path))
 
 
 def analyze_structure(
-    path: str | os.PathLike[str],
+    path: str | _os.PathLike[str],
     max_rows: int | None = None,
 ) -> StructureReport:
     """Analyze file structure with a bounded, lightweight pass."""
     return _analyze_structure(_normalize_existing_file(path), max_rows)
 
 
-def list_patterns(locale: str | None = None) -> list[dict[str, Any]]:
+def list_patterns(locale: str | None = None) -> list[dict[str, _Any]]:
     """List supported pattern detectors.
 
     Args:
@@ -594,7 +595,7 @@ def list_patterns(locale: str | None = None) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
+def column_to_dict(col: ColumnProfile) -> dict[str, _Any]:
     """Convert a single ColumnProfile to the nested dict layout used by
     :meth:`ProfileReport.to_dict`.
 
@@ -614,7 +615,7 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
     statistics and for ``0..1`` ratios such as ``uniqueness_ratio``, so that a
     ratio carries the same resolution as the equivalent percentage.
     """
-    col_data: dict[str, Any] = {
+    col_data: dict[str, _Any] = {
         "name": col.name,
         "data_type": col.data_type,
         "total_count": col.total_count,
@@ -670,7 +671,7 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
             }
         )
     if col.true_count is not None:
-        bool_stats: dict[str, Any] = col_data.setdefault("stats", {})
+        bool_stats: dict[str, _Any] = col_data.setdefault("stats", {})
         bool_stats["true_count"] = col.true_count
         bool_stats["false_count"] = col.false_count
         bool_stats["true_ratio"] = _r4(col.true_ratio)
@@ -690,7 +691,7 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
     return col_data
 
 
-def _column_record(col: ColumnProfile) -> dict[str, Any]:
+def _column_record(col: ColumnProfile) -> dict[str, _Any]:
     """Build a flat dict of all column stats with proper rounding.
 
     Used by to_dataframe(), to_polars(), to_arrow(), describe(), save().
@@ -955,7 +956,7 @@ def _fit_section(header: str, items: list[str], budget: int) -> tuple[list[str],
 
 
 def profile_file(
-    path: str | os.PathLike[str],
+    path: str | _os.PathLike[str],
     *,
     engine: str = "auto",
     chunk_size: int | None = None,
@@ -967,7 +968,7 @@ def profile_file(
     jsonl_on_error: str = "skip",
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
-    on_progress: Callable[[ProgressEvent], None] | None = None,
+    on_progress: _Callable[[ProgressEvent], None] | None = None,
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
@@ -1063,7 +1064,7 @@ def profile_file(
 
 
 def profile(
-    source: Any,
+    source: _Any,
     *,
     engine: str = "auto",
     chunk_size: int | None = None,
@@ -1076,7 +1077,7 @@ def profile(
     jsonl_on_error: str = "skip",
     sampling: SamplingStrategy | None = None,
     stop_condition: StopCondition | None = None,
-    on_progress: Callable[[ProgressEvent], None] | None = None,
+    on_progress: _Callable[[ProgressEvent], None] | None = None,
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
@@ -1156,7 +1157,7 @@ def profile(
         raise ValueError(f"jsonl_on_error must be 'skip' or 'strict', got {jsonl_on_error!r}.")
 
     # File path — build config and delegate to Rust
-    if isinstance(source, (str, pathlib.PurePath)):
+    if isinstance(source, (str, _pathlib.PurePath)):
         return profile_file(
             source,
             engine=engine,
@@ -1222,7 +1223,7 @@ def profile(
     def _warn_if_config_ignored():
         ignored = [k for k, v in _file_only_kwargs.items() if v]
         if ignored:
-            warnings.warn(
+            _warnings.warn(
                 f"Config kwargs {ignored} are ignored for DataFrame/Arrow sources. "
                 "These options only apply to file paths.",
                 stacklevel=3,
@@ -1300,7 +1301,7 @@ def profile(
             text = buffer.getvalue().decode("utf-8-sig")
             try:
                 rows = _strict_json_loads(text)
-            except json.JSONDecodeError as exc:
+            except _json.JSONDecodeError as exc:
                 # Surface a dataprof error category, not a bare decoder exception.
                 raise ValueError(
                     f"json bytes: malformed JSON (line {exc.lineno}, column {exc.colno})."
@@ -1356,7 +1357,7 @@ def profile(
 
 
 # Stop-when shorthand strings for the Profiler builder
-_STOP_SHORTHANDS: dict[str, Callable[[], StopCondition]] = {
+_STOP_SHORTHANDS: dict[str, _Callable[[], StopCondition]] = {
     "schema_stable": lambda: StopCondition.schema_stable(1000),
     "schema_inference": lambda: StopCondition.schema_inference(),
     "quality_sample": lambda: StopCondition.quality_sample(),
@@ -1379,7 +1380,7 @@ class Profiler:
     """
 
     def __init__(self) -> None:
-        self._kwargs: dict[str, Any] = {}
+        self._kwargs: dict[str, _Any] = {}
 
     def engine(self, engine: str) -> Profiler:
         """Set profiling engine ("auto", "incremental", "columnar")."""
@@ -1502,7 +1503,7 @@ class Profiler:
         self._kwargs["metrics"] = normalized_packs
         return self
 
-    def profile(self, source: Any) -> ProfileReport:
+    def profile(self, source: _Any) -> ProfileReport:
         """Profile the given source with accumulated settings.
 
         Accepts file paths (str/Path), pandas DataFrames, polars DataFrames,
@@ -1528,7 +1529,7 @@ class Profiler:
 class _DictPattern:
     """Read-only stand-in for a native Pattern, built from a to_dict() entry."""
 
-    def __init__(self, d: dict[str, Any]):
+    def __init__(self, d: dict[str, _Any]):
         self.name = d.get("name")
         self.regex = d.get("regex")
         self.match_count = d.get("match_count")
@@ -1564,7 +1565,7 @@ class _DictColumn:
         "true_ratio",
     )
 
-    def __init__(self, d: dict[str, Any]):
+    def __init__(self, d: dict[str, _Any]):
         for attr in self._STAT_ATTRS:
             setattr(self, attr, None)
         self.name = d.get("name")
@@ -1605,12 +1606,12 @@ class _DictQuality:
         "precision": 0.05,
     }
 
-    def __init__(self, d: dict[str, Any]):
+    def __init__(self, d: dict[str, _Any]):
         self._d = d
         self.low_sample_warning = bool(d.get("low_sample_warning", False))
 
     def _warn_flat_accessor(self, name: str) -> None:
-        warnings.warn(
+        _warnings.warn(
             f"DataQualityMetrics.{name} is deprecated; use the nested dimension "
             "properties such as completeness, consistency, uniqueness, accuracy, "
             "or timeliness instead.",
@@ -1618,7 +1619,7 @@ class _DictQuality:
             stacklevel=3,
         )
 
-    def _dimension_value(self, dimension: str, key: str, default: Any) -> Any:
+    def _dimension_value(self, dimension: str, key: str, default: _Any) -> _Any:
         value = self._d.get(dimension)
         if isinstance(value, dict):
             return value.get(key, default)
@@ -1705,31 +1706,31 @@ class _DictQuality:
         return self._dimension_value("timeliness", "invalid_date_values", 0)
 
     @property
-    def completeness(self) -> dict[str, Any] | None:
+    def completeness(self) -> dict[str, _Any] | None:
         return self._d.get("completeness")
 
     @property
-    def consistency(self) -> dict[str, Any] | None:
+    def consistency(self) -> dict[str, _Any] | None:
         return self._d.get("consistency")
 
     @property
-    def uniqueness(self) -> dict[str, Any] | None:
+    def uniqueness(self) -> dict[str, _Any] | None:
         return self._d.get("uniqueness")
 
     @property
-    def accuracy(self) -> dict[str, Any] | None:
+    def accuracy(self) -> dict[str, _Any] | None:
         return self._d.get("accuracy")
 
     @property
-    def timeliness(self) -> dict[str, Any] | None:
+    def timeliness(self) -> dict[str, _Any] | None:
         return self._d.get("timeliness")
 
     @property
-    def validity(self) -> dict[str, Any] | None:
+    def validity(self) -> dict[str, _Any] | None:
         return self._d.get("validity")
 
     @property
-    def precision(self) -> dict[str, Any] | None:
+    def precision(self) -> dict[str, _Any] | None:
         return self._d.get("precision")
 
     @property
@@ -1758,7 +1759,7 @@ class _DictQuality:
 class _DictBackedReport:
     """Read-only stand-in for the native ProfileReport, built from to_dict()."""
 
-    def __init__(self, d: dict[str, Any]):
+    def __init__(self, d: dict[str, _Any]):
         execution = d.get("execution") or {}
         self.source = d.get("source")
         self.source_type = d.get("source_type")
@@ -1826,7 +1827,7 @@ class ProfileReport:
     def columns(self) -> int:
         return self._report.columns_detected
 
-    @functools.cached_property
+    @_functools.cached_property
     def column_profiles(self) -> dict[str, ColumnProfile]:
         """Column profiles as a ``name → ColumnProfile`` mapping.
 
@@ -1840,7 +1841,7 @@ class ProfileReport:
         cols = self._report.column_profiles
         d = {col.name: col for col in cols}
         if len(d) != len(cols):
-            warnings.warn(
+            _warnings.warn(
                 f"Dataset has duplicate column names — {len(cols) - len(d)} "
                 "column(s) shadowed in dict access. Use .profiles "
                 "for the full list.",
@@ -1873,7 +1874,7 @@ class ProfileReport:
         return self._report.quality
 
     @property
-    def semantic_hint_bindings(self) -> list[dict[str, Any]]:
+    def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
         """Per-column evidence of how each semantic hint bound to the data.
 
         Empty unless ``positive_columns``/``identifier_columns``/
@@ -1960,7 +1961,7 @@ class ProfileReport:
             return False
         return key in self.column_profiles
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self) -> _Iterator[str]:
         return iter(self.column_profiles)
 
     def __len__(self) -> int:
@@ -2033,9 +2034,9 @@ class ProfileReport:
 
     def to_json(self, indent: int = 2) -> str:
         """Export the report as a JSON string."""
-        return json.dumps(self.to_dict(), indent=indent)
+        return _json.dumps(self.to_dict(), indent=indent)
 
-    def _records(self) -> list[dict[str, Any]]:
+    def _records(self) -> list[dict[str, _Any]]:
         """Build enriched, rounded records for all columns."""
         return [_column_record(col) for col in self._report.column_profiles]
 
@@ -2080,7 +2081,7 @@ class ProfileReport:
             ) from None
         return pa.Table.from_pylist(self._records())
 
-    def describe(self) -> Any:
+    def describe(self) -> _Any:
         """Transposed statistical summary, similar to pandas DataFrame.describe().
 
         Rows are stats (count, null%, unique, mean, std, min, 25%, 50%, 75%,
@@ -2088,10 +2089,10 @@ class ProfileReport:
         Returns a pandas DataFrame if pandas is available, otherwise a
         dict-of-dicts.
         """
-        summary: dict[str, dict[str, Any]] = {}
+        summary: dict[str, dict[str, _Any]] = {}
         for col in self._report.column_profiles:
             q = _round_quartiles(col.quartiles)
-            d: dict[str, Any] = {
+            d: dict[str, _Any] = {
                 "count": col.total_count,
                 "null%": _r2(col.null_percentage),
                 "unique": col.unique_count,
@@ -2120,7 +2121,7 @@ class ProfileReport:
         except ImportError:
             return summary
 
-    def quality_summary(self) -> dict[str, Any]:
+    def quality_summary(self) -> dict[str, _Any]:
         """Single-row quality summary for easy aggregation.
 
         Returns a dict with source, rows, quality_score, per-dimension scores,
@@ -2132,7 +2133,7 @@ class ProfileReport:
         vacuous 100.
         """
         q = self._report.quality
-        row: dict[str, Any] = {
+        row: dict[str, _Any] = {
             "source": self._report.source,
             "rows": self._report.rows_processed,
             "quality_score": _r2(self._report.quality_score),
@@ -2150,7 +2151,7 @@ class ProfileReport:
                 row[name] = _r2(score)
         return row
 
-    def save(self, path: str | os.PathLike[str]) -> ProfileReport:
+    def save(self, path: str | _os.PathLike[str]) -> ProfileReport:
         """Save the report to a file.
 
         Supported formats (by extension):
@@ -2363,7 +2364,7 @@ class ProfileReport:
 
         return "\n".join([*header, *body])
 
-    def compare(self, other: ProfileReport) -> dict[str, Any]:
+    def compare(self, other: ProfileReport) -> dict[str, _Any]:
         """Compare this report with another and return a dict of deltas.
 
         The result captures quality drift and schema differences between two
@@ -2444,7 +2445,7 @@ class ProfileReport:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ProfileReport:
+    def from_dict(cls, data: dict[str, _Any]) -> ProfileReport:
         """Rebuild a read-only ProfileReport from a dict produced by :meth:`to_dict`.
 
         The reconstructed report is backed by a lightweight proxy rather than
@@ -2498,7 +2499,7 @@ class ProfileReport:
             raise ValueError("from_dict(): 'columns' must be a list of mappings.")
         # _DictBackedReport is a read-only proxy that duck-types the raw Rust
         # report; it intentionally isn't a nominal _RustProfileReport.
-        return cls(cast("_RustProfileReport", _DictBackedReport(data)))
+        return cls(_cast("_RustProfileReport", _DictBackedReport(data)))
 
     @classmethod
     def from_json(cls, text: str) -> ProfileReport:
@@ -2510,13 +2511,13 @@ class ProfileReport:
             ValueError: if ``text`` is not valid JSON from ``to_json()``.
         """
         try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:
+            data = _json.loads(text)
+        except _json.JSONDecodeError as exc:
             raise ValueError(f"from_json() received invalid JSON: {exc}") from exc
         return cls.from_dict(data)
 
     @classmethod
-    def load(cls, path: str | os.PathLike[str]) -> ProfileReport:
+    def load(cls, path: str | _os.PathLike[str]) -> ProfileReport:
         """Reload a report previously written with :meth:`save`.
 
         This is the path-based counterpart to :meth:`from_json` (which takes a
