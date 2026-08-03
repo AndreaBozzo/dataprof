@@ -1,12 +1,14 @@
+use bytes::Bytes;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::file::reader::ChunkReader;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_core::{
-    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
-    QualityDimension, SemanticHints, TruncationReason,
+    DataFrameLibrary, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
+    ParquetMetadata, QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 
@@ -133,14 +135,44 @@ pub fn analyze_parquet_with_config_dims(
     )
 }
 
+/// Profile Parquet bytes held in memory, without touching the filesystem.
+///
+/// Reads through the same Arrow reader as [`analyze_parquet_with_config_dims_and_hints`],
+/// so a buffer and the file holding those same bytes profile identically. `name`
+/// labels the source in the report, since an in-memory buffer has no path.
+pub fn analyze_parquet_bytes(
+    data: Bytes,
+    name: &str,
+    config: &ParquetConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
+    let byte_len = data.len() as u64;
+    analyze_parquet_chunks(
+        data,
+        ParquetOrigin::Memory {
+            name: name.to_string(),
+            byte_len,
+        },
+        config,
+        quality_dimensions,
+        semantic_hints,
+    )
+}
+
+/// Where the Parquet bytes came from. The reader and every statistic are shared;
+/// only the report's [`DataSource`] differs.
+enum ParquetOrigin {
+    File { path: String, size_bytes: u64 },
+    Memory { name: String, byte_len: u64 },
+}
+
 pub fn analyze_parquet_with_config_dims_and_hints(
     file_path: &Path,
     config: &ParquetConfig,
     quality_dimensions: Option<&[QualityDimension]>,
     semantic_hints: &SemanticHints,
 ) -> Result<ProfileReport, DataProfilerError> {
-    let start = std::time::Instant::now();
-
     let file = File::open(file_path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             DataProfilerError::FileNotFound {
@@ -150,10 +182,30 @@ pub fn analyze_parquet_with_config_dims_and_hints(
             DataProfilerError::from(error)
         }
     })?;
-    let metadata = file.metadata()?;
-    let file_size_bytes = metadata.len();
+    let file_size_bytes = file.metadata()?.len();
 
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|error| {
+    analyze_parquet_chunks(
+        file,
+        ParquetOrigin::File {
+            path: file_path.display().to_string(),
+            size_bytes: file_size_bytes,
+        },
+        config,
+        quality_dimensions,
+        semantic_hints,
+    )
+}
+
+fn analyze_parquet_chunks<R: ChunkReader + 'static>(
+    chunks: R,
+    origin: ParquetOrigin,
+    config: &ParquetConfig,
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
+    let start = std::time::Instant::now();
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(chunks).map_err(|error| {
         DataProfilerError::ParquetError {
             message: format!("Failed to create Parquet reader: {}", error),
         }
@@ -226,21 +278,32 @@ pub fn analyze_parquet_with_config_dims_and_hints(
         execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
     }
 
-    let mut assembler = ReportAssembler::new(
-        DataSource::File {
-            path: file_path.display().to_string(),
+    let data_source = match origin {
+        ParquetOrigin::File { path, size_bytes } => DataSource::File {
+            path,
             format: FileFormat::Parquet,
-            size_bytes: file_size_bytes,
+            size_bytes,
             modified_at: None,
             parquet_metadata,
         },
-        execution,
-    )
-    .columns(column_profiles)
-    .with_row_duplicates(analyzer.row_duplicate_summary())
-    .with_quality_data(sample_columns)
-    .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
-    .with_semantic_hints(semantic_hints.clone());
+        // A buffer has no path, and `DataSource::File` is where Parquet metadata
+        // lives, so the in-memory case reports the same shape every other
+        // byte-buffer input reports and drops the file-level metadata.
+        ParquetOrigin::Memory { name, byte_len } => DataSource::DataFrame {
+            name,
+            source_library: DataFrameLibrary::Custom("dataprof".to_string()),
+            row_count: total_rows,
+            column_count: num_columns,
+            memory_bytes: Some(byte_len),
+        },
+    };
+
+    let mut assembler = ReportAssembler::new(data_source, execution)
+        .columns(column_profiles)
+        .with_row_duplicates(analyzer.row_duplicate_summary())
+        .with_quality_data(sample_columns)
+        .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
+        .with_semantic_hints(semantic_hints.clone());
     if let Some(dimensions) = quality_dimensions {
         assembler = assembler.with_requested_dimensions(dimensions.to_vec());
     }
@@ -251,13 +314,127 @@ pub fn analyze_parquet_with_config_dims_and_hints(
 mod tests {
     use super::*;
     use anyhow::Result;
-    use arrow::array::{Float64Array, Int32Array, StringArray};
+    use arrow::array::{BooleanArray, Date32Array, Float64Array, Int32Array, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
+
+    /// Write `batch` to Parquet and return the encoded bytes.
+    fn to_parquet_bytes(batch: &RecordBatch) -> Result<Vec<u8>> {
+        let mut buffer = Vec::new();
+        let props = WriterProperties::builder().build();
+        let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), Some(props))?;
+        writer.write(batch)?;
+        writer.close()?;
+        Ok(buffer)
+    }
+
+    /// A batch exercising the shapes whose typing differs between readers:
+    /// nullable integers, booleans, dates, non-finite floats, and strings.
+    fn mixed_batch() -> Result<RecordBatch> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, true),
+            Field::new("flag", DataType::Boolean, true),
+            Field::new("day", DataType::Date32, true),
+            Field::new("ratio", DataType::Float64, true),
+            Field::new("label", DataType::Utf8, true),
+        ]));
+
+        Ok(RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int32Array::from(vec![Some(1), None, Some(3)])),
+                Arc::new(BooleanArray::from(vec![Some(true), Some(false), None])),
+                Arc::new(Date32Array::from(vec![Some(19000), None, Some(19002)])),
+                Arc::new(Float64Array::from(vec![
+                    Some(1.5),
+                    Some(f64::NAN),
+                    Some(f64::INFINITY),
+                ])),
+                Arc::new(StringArray::from(vec![Some("a"), None, Some("c")])),
+            ],
+        )?)
+    }
+
+    #[test]
+    fn test_parquet_bytes_and_file_profile_identically() -> Result<()> {
+        let batch = mixed_batch()?;
+        let encoded = to_parquet_bytes(&batch)?;
+
+        let temp_file = NamedTempFile::new()?;
+        std::fs::write(temp_file.path(), &encoded)?;
+
+        let from_file = analyze_parquet_with_quality(temp_file.path())?;
+        let from_bytes = analyze_parquet_bytes(
+            Bytes::from(encoded),
+            "buffer",
+            &ParquetConfig::default(),
+            None,
+            &SemanticHints::default(),
+        )?;
+
+        assert_eq!(
+            from_bytes.execution.rows_processed,
+            from_file.execution.rows_processed
+        );
+        // Column order and every per-column statistic must match: the two paths
+        // share one reader, so any divergence here is a wiring mistake.
+        assert_eq!(
+            from_bytes.column_profiles.len(),
+            from_file.column_profiles.len()
+        );
+        for (bytes_profile, file_profile) in from_bytes
+            .column_profiles
+            .iter()
+            .zip(from_file.column_profiles.iter())
+        {
+            assert_eq!(bytes_profile.name, file_profile.name);
+            assert_eq!(
+                serde_json::to_value(bytes_profile)?,
+                serde_json::to_value(file_profile)?,
+                "{}",
+                file_profile.name
+            );
+        }
+        assert_eq!(from_bytes.quality_score(), from_file.quality_score());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parquet_bytes_honor_max_rows() -> Result<()> {
+        let encoded = to_parquet_bytes(&mixed_batch()?)?;
+        let report = analyze_parquet_bytes(
+            Bytes::from(encoded),
+            "buffer",
+            &ParquetConfig::default().with_max_rows(2),
+            None,
+            &SemanticHints::default(),
+        )?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert!(report.execution.truncation_reason.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parquet_bytes_reject_a_non_parquet_buffer() {
+        let error = analyze_parquet_bytes(
+            Bytes::from_static(b"not parquet at all"),
+            "buffer",
+            &ParquetConfig::default(),
+            None,
+            &SemanticHints::default(),
+        )
+        .expect_err("a buffer that is not Parquet must not profile");
+
+        assert!(
+            matches!(error, DataProfilerError::ParquetError { .. }),
+            "{error}"
+        );
+    }
 
     #[test]
     fn test_analyze_parquet_basic() -> Result<()> {

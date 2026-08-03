@@ -934,6 +934,7 @@ dependencies = [
  "futures",
  "parquet",
  "reqwest",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

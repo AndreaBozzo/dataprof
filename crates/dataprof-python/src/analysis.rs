@@ -35,6 +35,53 @@ pub fn analyze_file(
     Ok(PyProfileReport::new(report))
 }
 
+/// Analyze Parquet bytes held in memory and return a full profile report.
+///
+/// Reads through the compiled Arrow/Parquet stack, the same one the file path
+/// uses, so a buffer and the file holding those bytes profile identically and
+/// neither needs a third-party Python package.
+///
+/// The GIL is released while the buffer is decoded and profiled.
+///
+/// `dataprof` is depended on with default features, which include `parquet`,
+/// so this is compiled into every wheel — the same reason
+/// `capabilities().local_parquet` is unconditionally true.
+#[pyfunction]
+#[pyo3(signature = (data, name = "parquet_bytes".to_string(), max_rows = None, config = None))]
+pub fn profile_parquet_bytes(
+    py: Python<'_>,
+    data: Vec<u8>,
+    name: String,
+    max_rows: Option<usize>,
+    config: Option<&PyProfilerConfig>,
+) -> PyResult<PyProfileReport> {
+    use dataprof::{ParquetConfig, analyze_parquet_bytes};
+
+    let quality_dimensions = config.and_then(|cfg| cfg.quality_dimensions.clone());
+    let semantic_hints = config.map(|cfg| cfg.semantic_hints()).unwrap_or_default();
+    let effective_max_rows =
+        max_rows.or_else(|| config.and_then(|cfg| cfg.max_rows.map(|rows| rows as usize)));
+
+    let mut parquet_config = ParquetConfig::default();
+    if let Some(cap) = effective_max_rows {
+        parquet_config = parquet_config.with_max_rows(cap);
+    }
+
+    let report = py
+        .detach(|| {
+            analyze_parquet_bytes(
+                data.into(),
+                &name,
+                &parquet_config,
+                quality_dimensions.as_deref(),
+                &semantic_hints,
+            )
+        })
+        .map_err(|e| analysis_error_to_py(&e))?;
+
+    Ok(PyProfileReport::new(report))
+}
+
 /// List supported pattern detectors and their metadata.
 #[pyfunction]
 #[pyo3(signature = (locale=None))]

@@ -16,7 +16,7 @@ uv pip install dataprof
 pip install dataprof
 ```
 
-Requires Python 3.10+. The package ships pre-built wheels for Linux, macOS, and Windows, and declares **no Python dependencies**. The base API needs nothing else: local file profiling, DataFrame and Arrow inputs, ad-hoc dict/bytes inputs, and report exports. Install the `pandas` extra only for pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet byte buffers.
+Requires Python 3.10+. The package ships pre-built wheels for Linux, macOS, and Windows, and declares **no Python dependencies**. The base API needs nothing else: local file profiling, DataFrame and Arrow inputs, ad-hoc dict/bytes inputs, and report exports. Install the `pandas` extra only for pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame).
 
 Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
 
@@ -118,8 +118,10 @@ dp.profile(
 | `bytes` or `io.BytesIO` | In-memory file contents; requires `format="csv"`, `"json"`, `"jsonl"`, or `"parquet"` |
 
 Dict, row-dict, and byte inputs are profiled by the Rust core directly, so they
-need no third-party package. The one exception is `format="parquet"` for byte
-buffers, which needs a columnar reader and therefore the `pandas` extra.
+need no third-party package. That includes `format="parquet"`: byte buffers go
+through the same compiled Arrow reader as Parquet files, so the two report the
+same types, column order, and statistics, and `capabilities().local_parquet`
+predicts both.
 
 A cell is missing when it is `None`, NaN, or a null-like token (`""`, `"null"`,
 `"nan"`) -- the same rule the CSV and Arrow paths use. Note that a `dict` is

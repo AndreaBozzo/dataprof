@@ -49,8 +49,8 @@ pub use dataprof_metrics::{
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};
 #[cfg(feature = "parquet")]
 pub use dataprof_parquet::{
-    ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_quality,
-    analyze_parquet_with_quality_dims, is_parquet_file,
+    ParquetConfig, analyze_parquet_bytes, analyze_parquet_with_config,
+    analyze_parquet_with_quality, analyze_parquet_with_quality_dims, is_parquet_file,
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{ProfileReport, REPORT_SCHEMA_VERSION};
