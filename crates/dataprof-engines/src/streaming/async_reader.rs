@@ -69,6 +69,112 @@ fn malformed_json_array_error(message: &str) -> DataProfilerError {
     }
 }
 
+/// One record read from a JSON or JSONL stream.
+///
+/// This mirrors `dataprof_json::JsonRecord`; the two scanners are kept
+/// byte-for-byte equivalent so a payload profiles identically whether it
+/// arrives as a file or as an async stream.
+enum JsonRecord {
+    /// A JSON object — the only value with named fields to profile as a row.
+    Object(serde_json::Map<String, serde_json::Value>),
+    /// Valid JSON that is not an object, carrying the value's kind for the
+    /// error message.
+    NonObject(&'static str),
+    /// The bytes are not valid JSON.
+    Malformed(serde_json::Error),
+}
+
+/// Read one JSON value and leave the reader positioned immediately after it.
+///
+/// `first` is the value's first byte, already located by
+/// [`peek_non_whitespace`] but not yet consumed.
+fn read_json_record<R: std::io::BufRead>(
+    reader: &mut R,
+    first: u8,
+) -> Result<JsonRecord, DataProfilerError> {
+    // A number is the only JSON value that is not self-delimiting: serde finds
+    // its end by peeking one byte past it and then drops that byte along with
+    // the deserializer. Inside an array that byte is the `,` or `]` the scanner
+    // needs next, so numbers are read byte-wise instead.
+    if first == b'-' || first.is_ascii_digit() {
+        let token = read_number_token(reader)?;
+        return Ok(match serde_json::from_str::<serde_json::Value>(&token) {
+            Ok(_) => JsonRecord::NonObject("number"),
+            Err(err) => JsonRecord::Malformed(err),
+        });
+    }
+
+    let mut de = serde_json::Deserializer::from_reader(reader);
+    Ok(
+        match <serde_json::Value as serde::Deserialize>::deserialize(&mut de) {
+            Ok(serde_json::Value::Object(obj)) => JsonRecord::Object(obj),
+            Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+            Err(err) => JsonRecord::Malformed(err),
+        },
+    )
+}
+
+/// Read the bytes that can spell a JSON number, stopping at the first byte that
+/// cannot. The token is returned unvalidated — the caller decides whether it
+/// actually parses, so `1.2.3` stays a malformed record rather than a number.
+///
+/// Leading whitespace is consumed first: the JSONL loop locates the next
+/// value's first byte without consuming what precedes it, because serde needs
+/// that whitespace to keep its line and column context.
+fn read_number_token<R: std::io::BufRead>(reader: &mut R) -> Result<String, DataProfilerError> {
+    peek_non_whitespace(reader)?;
+    let mut token = String::new();
+    loop {
+        let (consume, token_ended) = {
+            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+            if buf.is_empty() {
+                break;
+            }
+            let consume = buf
+                .iter()
+                .take_while(|byte| is_json_number_byte(**byte))
+                .count();
+            // decode-audit: impossible — every byte accepted above is ASCII.
+            token.push_str(
+                std::str::from_utf8(&buf[..consume]).expect("JSON number bytes are ASCII"),
+            );
+            (consume, consume < buf.len())
+        };
+        reader.consume(consume);
+        if token_ended {
+            break;
+        }
+    }
+    Ok(token)
+}
+
+fn is_json_number_byte(byte: u8) -> bool {
+    byte.is_ascii_digit() || matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E')
+}
+
+fn json_value_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+/// Build a strict-mode error for valid JSON that is not a row object. This is a
+/// distinct category from a syntax failure: the document parsed, it just does
+/// not hold records. `position` is 1-based over the records scanned so far.
+fn non_object_record_error(kind: &str, position: usize) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!(
+            "non-object JSON record at position {position}: \
+             expected an object with fields to profile, found {kind}"
+        ),
+    }
+}
+
 fn drain_to_end<R: std::io::BufRead>(reader: &mut R) -> Result<usize, DataProfilerError> {
     let mut consumed = 0;
     loop {
@@ -614,36 +720,61 @@ impl AsyncStreamingProfiler {
                     // Distinguish clean exhaustion from an incomplete trailing
                     // value. serde reports both as `Category::Eof`, but only an
                     // empty/whitespace-only remainder is a clean end of stream.
-                    let has_value = loop {
+                    let first = loop {
                         let whitespace_only_len = {
                             let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
                             if buf.is_empty() {
-                                break false;
+                                break None;
                             }
-                            if buf.iter().all(u8::is_ascii_whitespace) {
-                                Some(buf.len())
-                            } else {
-                                None
+                            match buf.iter().find(|byte| !byte.is_ascii_whitespace()) {
+                                // Leave a mixed whitespace/value buffer untouched
+                                // so serde retains its line and column context.
+                                Some(&byte) => break Some(byte),
+                                None => buf.len(),
                             }
-                        };
-                        let Some(whitespace_only_len) = whitespace_only_len else {
-                            // Leave a mixed whitespace/value buffer untouched so
-                            // serde retains its line and column context.
-                            break true;
                         };
                         buf_reader.consume(whitespace_only_len);
                     };
-                    if !has_value {
+                    let Some(first) = first else {
                         break;
-                    }
-
-                    let parsed = {
-                        let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
-                        <Value as serde::Deserialize>::deserialize(&mut de)
                     };
-                    let v = match parsed {
-                        Ok(v) => v,
-                        Err(e) => {
+
+                    match read_json_record(&mut buf_reader, first)? {
+                        JsonRecord::Object(obj) => {
+                            let row = process_object(
+                                &obj,
+                                &mut known_columns,
+                                &mut known_columns_set,
+                                headers_sent,
+                            );
+                            bytes_in_chunk += row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
+                            current_chunk.push(row);
+                            emitted_records += 1;
+
+                            if bytes_in_chunk as usize >= bytes_per_chunk
+                                && !send_chunk(
+                                    &mut current_chunk,
+                                    &mut bytes_in_chunk,
+                                    &known_columns,
+                                    &mut headers_sent,
+                                    &tx,
+                                )?
+                            {
+                                return Ok(malformed_records);
+                            }
+                        }
+                        JsonRecord::NonObject(kind) => {
+                            if error_policy == JsonErrorPolicy::Strict {
+                                return Err(non_object_record_error(
+                                    kind,
+                                    emitted_records + malformed_records + 1,
+                                ));
+                            }
+                            malformed_records += 1;
+                            // Approximate progress for a record that yields no row.
+                            bytes_in_chunk += 10;
+                        }
+                        JsonRecord::Malformed(e) => {
                             if error_policy == JsonErrorPolicy::Strict {
                                 return Err(DataProfilerError::JsonParsingError {
                                     message: format!("malformed JSON record: {e}"),
@@ -658,31 +789,6 @@ impl AsyncStreamingProfiler {
                             buf_reader
                                 .read_until(b'\n', &mut discard)
                                 .map_err(DataProfilerError::from)?;
-                            continue;
-                        }
-                    };
-
-                    if let Value::Object(obj) = v {
-                        let row = process_object(
-                            &obj,
-                            &mut known_columns,
-                            &mut known_columns_set,
-                            headers_sent,
-                        );
-                        bytes_in_chunk += row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
-                        current_chunk.push(row);
-                        emitted_records += 1;
-
-                        if bytes_in_chunk as usize >= bytes_per_chunk
-                            && !send_chunk(
-                                &mut current_chunk,
-                                &mut bytes_in_chunk,
-                                &known_columns,
-                                &mut headers_sent,
-                                &tx,
-                            )?
-                        {
-                            return Ok(malformed_records);
                         }
                     }
                 }
@@ -748,9 +854,8 @@ impl AsyncStreamingProfiler {
                             break;
                         }
 
-                        let mut de = serde_json::Deserializer::from_reader(&mut buf_reader);
-                        match serde::Deserialize::deserialize(&mut de) {
-                            Ok(Value::Object(obj)) => {
+                        match read_json_record(&mut buf_reader, next)? {
+                            JsonRecord::Object(obj) => {
                                 let row = process_object(
                                     &obj,
                                     &mut known_columns,
@@ -774,11 +879,21 @@ impl AsyncStreamingProfiler {
                                     return Ok(malformed_records);
                                 }
                             }
-                            Ok(_) => {
-                                // Skip non-object items, approximate 10 bytes progress
+                            JsonRecord::NonObject(kind) => {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(non_object_record_error(
+                                        kind,
+                                        emitted_records + malformed_records + 1,
+                                    ));
+                                }
+                                // The element was consumed in full, so the array
+                                // grammar is still intact and the objects after
+                                // it are still profileable.
+                                malformed_records += 1;
+                                // Approximate progress for a record that yields no row.
                                 bytes_in_chunk += 10;
                             }
-                            Err(e) => {
+                            JsonRecord::Malformed(e) => {
                                 // A corrupt element leaves the array parser unable
                                 // to resync, so we stop here either way; strict mode
                                 // surfaces the failure instead of a partial profile.
@@ -843,7 +958,9 @@ impl AsyncStreamingProfiler {
         // file/bytes paths, rather than surfacing a generic "empty stream" error.
         if emitted_records == 0 && malformed_records > 0 {
             return Err(DataProfilerError::JsonParsingError {
-                message: "No valid JSON records found (all records were malformed)".to_string(),
+                message: "No valid JSON records found \
+                          (every record was malformed or not a JSON object)"
+                    .to_string(),
             });
         }
 
@@ -1443,6 +1560,113 @@ mod tests {
             assert!(message.to_lowercase().contains("malformed json record"));
             assert!(!message.contains("not-json"), "leaked record: {message}");
         }
+    }
+
+    /// Every JSON value that is not an object, so none of them can be a row.
+    /// Numbers appear twice on purpose: they are the one value serde reads from
+    /// a reader by peeking one byte past the end.
+    const NON_OBJECT_VALUES: &[(&str, &str)] = &[
+        ("null", "null"),
+        ("boolean", "true"),
+        ("number", "42"),
+        ("number", "-1.5e3"),
+        ("string", r#""text""#),
+        ("array", "[1, 2]"),
+    ];
+
+    #[tokio::test]
+    async fn test_async_tolerant_counts_non_object_records_and_keeps_scanning() {
+        for (kind, value) in NON_OBJECT_VALUES {
+            for (fmt, data) in [
+                (
+                    FileFormat::Jsonl,
+                    format!("{{\"id\":1}}\n{value}\n{{\"id\":2}}\n"),
+                ),
+                (
+                    FileFormat::Json,
+                    format!("[{{\"id\":1}}, {value}, {{\"id\":2}}]"),
+                ),
+            ] {
+                let label = format!("{fmt:?}/{kind}");
+                let source =
+                    BytesSource::new(bytes::Bytes::from(data), AsyncSourceInfo::new("test", fmt));
+                let report = AsyncStreamingProfiler::new()
+                    .analyze_stream(source)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    report.execution.rows_processed, 2,
+                    "{label}: record after it was lost"
+                );
+                assert_eq!(
+                    report.execution.error_count, 1,
+                    "{label}: was silently dropped"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_strict_rejects_the_first_non_object_record() {
+        for (kind, value) in NON_OBJECT_VALUES {
+            for (fmt, data) in [
+                (
+                    FileFormat::Jsonl,
+                    format!("{{\"id\":1}}\n{value}\n{{\"id\":2}}\n"),
+                ),
+                (
+                    FileFormat::Json,
+                    format!("[{{\"id\":1}}, {value}, {{\"id\":2}}]"),
+                ),
+            ] {
+                let label = format!("{fmt:?}/{kind}");
+                let source =
+                    BytesSource::new(bytes::Bytes::from(data), AsyncSourceInfo::new("test", fmt));
+                let err = AsyncStreamingProfiler::new()
+                    .json_error_policy(JsonErrorPolicy::Strict)
+                    .analyze_stream(source)
+                    .await
+                    .expect_err("strict mode must reject a non-object record");
+
+                let message = err.to_string();
+                assert!(
+                    message.contains("non-object JSON record"),
+                    "{label}: {message}"
+                );
+                assert!(message.contains("at position 2"), "{label}: {message}");
+                assert!(
+                    message.contains(&format!("found {kind}")),
+                    "{label}: {message}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_number_element_does_not_swallow_the_array_delimiter() {
+        // serde ends a number by peeking one byte past it and drops that byte
+        // with the deserializer; here it is the `,` the array scanner needs.
+        let source = json_source(br#"[{"id":1}, 1, 2, 3, {"id":2}, 4, {"id":3}]"#);
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .unwrap();
+        assert_eq!(report.execution.rows_processed, 3);
+        assert_eq!(report.execution.error_count, 4);
+    }
+
+    #[tokio::test]
+    async fn test_async_input_of_only_non_object_records_fails() {
+        let source = jsonl_source(b"\"just a string\"\n1\n[2]\n");
+        let err = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .expect_err("nothing profileable should not return a clean empty profile");
+
+        assert!(
+            err.to_string().contains("No valid JSON records found"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

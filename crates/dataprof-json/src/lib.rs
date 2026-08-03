@@ -76,6 +76,9 @@ pub type JsonObject = serde_json::Map<String, Value>;
 #[non_exhaustive]
 pub struct JsonScanSummary {
     pub rows_read: usize,
+    /// Records that were read but not profiled: malformed JSON, and valid JSON
+    /// values that are not objects and therefore carry no fields. Both are
+    /// counted so a tolerant scan never looks like a clean one.
     pub malformed_lines: usize,
     pub format: FileFormat,
     /// The scan stopped at `max_rows` while records still remained. A source
@@ -87,6 +90,15 @@ pub struct JsonScanSummary {
 ///
 /// - **JSONL**: scans one top-level JSON value at a time from the reader.
 /// - **JSON array**: streams array elements without buffering the entire input.
+///
+/// # Record policy
+///
+/// Only JSON objects are profileable records — they are the only JSON value
+/// with named fields to turn into columns. A record that is valid JSON but not
+/// an object (a scalar, an array, `null`) is never silently discarded: under
+/// [`JsonErrorPolicy::Skip`] it is counted in
+/// [`JsonScanSummary::malformed_lines`] and scanning continues with the next
+/// record, and under [`JsonErrorPolicy::Strict`] the first one fails the scan.
 pub fn scan_json_from_reader<R, F>(
     reader: R,
     config: &JsonParserConfig,
@@ -125,14 +137,25 @@ where
             // incomplete trailing value as `Category::Eof`. Check whether a
             // non-whitespace value actually starts here so only the former is
             // treated as normal exhaustion.
-            if consume_leading_whitespace(&mut reader)?.is_none() {
+            let Some(first) = consume_leading_whitespace(&mut reader)? else {
                 break;
-            }
+            };
 
-            let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
-            let value: Value = match Value::deserialize(&mut deserializer) {
-                Ok(v) => v,
-                Err(err) => {
+            match read_json_record(&mut reader, first)? {
+                JsonRecord::Object(obj) => {
+                    on_object(&obj);
+                    rows_read += 1;
+                }
+                JsonRecord::NonObject(kind) => {
+                    if config.error_policy == JsonErrorPolicy::Strict {
+                        return Err(non_object_record_error(
+                            kind,
+                            rows_read + malformed_lines + 1,
+                        ));
+                    }
+                    malformed_lines += 1;
+                }
+                JsonRecord::Malformed(err) => {
                     if config.error_policy == JsonErrorPolicy::Strict {
                         return Err(malformed_record_error(&err));
                     }
@@ -141,13 +164,7 @@ where
                         break;
                     }
                     skip_to_next_line(&mut reader)?;
-                    continue;
                 }
-            };
-
-            if let Value::Object(ref obj) = value {
-                on_object(obj);
-                rows_read += 1;
             }
         },
         FileFormat::Json => {
@@ -237,14 +254,24 @@ where
                             break;
                         }
 
-                        let mut deserializer = serde_json::Deserializer::from_reader(&mut reader);
-                        match Value::deserialize(&mut deserializer) {
-                            Ok(Value::Object(obj)) => {
+                        match read_json_record(&mut reader, next)? {
+                            JsonRecord::Object(obj) => {
                                 on_object(&obj);
                                 rows_read += 1;
                             }
-                            Ok(_) => {}
-                            Err(err) => {
+                            JsonRecord::NonObject(kind) => {
+                                if config.error_policy == JsonErrorPolicy::Strict {
+                                    return Err(non_object_record_error(
+                                        kind,
+                                        rows_read + malformed_lines + 1,
+                                    ));
+                                }
+                                // The element was consumed in full, so the array
+                                // grammar is still intact and the objects after
+                                // it are still profileable.
+                                malformed_lines += 1;
+                            }
+                            JsonRecord::Malformed(err) => {
                                 if config.error_policy == JsonErrorPolicy::Strict {
                                     return Err(malformed_record_error(&err));
                                 }
@@ -302,6 +329,127 @@ where
         format,
         truncated,
     })
+}
+
+/// One record read from a JSON or JSONL source.
+enum JsonRecord {
+    /// A JSON object — the only value with named fields to profile as a row.
+    Object(JsonObject),
+    /// Valid JSON that is not an object, carrying the value's kind for the
+    /// error message.
+    NonObject(&'static str),
+    /// The bytes are not valid JSON.
+    Malformed(serde_json::Error),
+}
+
+/// Read one JSON value and leave the reader positioned immediately after it.
+///
+/// `first` is the value's first byte, already located by
+/// [`consume_leading_whitespace`] but not yet consumed.
+fn read_json_record<R: BufRead>(
+    reader: &mut R,
+    first: u8,
+) -> Result<JsonRecord, DataProfilerError> {
+    // A number is the only JSON value that is not self-delimiting: serde finds
+    // its end by peeking one byte past it and then drops that byte along with
+    // the deserializer. Inside an array that byte is the `,` or `]` the scanner
+    // needs next, so numbers are read byte-wise instead.
+    if first == b'-' || first.is_ascii_digit() {
+        let token = read_number_token(reader)?;
+        return Ok(match serde_json::from_str::<Value>(&token) {
+            Ok(_) => JsonRecord::NonObject("number"),
+            Err(err) => JsonRecord::Malformed(err),
+        });
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    Ok(match Value::deserialize(&mut deserializer) {
+        Ok(Value::Object(obj)) => JsonRecord::Object(obj),
+        Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+        Err(err) => JsonRecord::Malformed(err),
+    })
+}
+
+/// Read the bytes that can spell a JSON number, stopping at the first byte that
+/// cannot. The token is returned unvalidated — the caller decides whether it
+/// actually parses, so `1.2.3` stays a malformed record rather than a number.
+///
+/// Leading whitespace is consumed first: [`consume_leading_whitespace`] reports
+/// the next value's first byte without consuming what precedes it, because
+/// serde needs that whitespace to keep its line and column context.
+fn read_number_token<R: BufRead>(reader: &mut R) -> Result<String, DataProfilerError> {
+    skip_ascii_whitespace(reader)?;
+    let mut token = String::new();
+    loop {
+        let (consume, token_ended) = {
+            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+            if buf.is_empty() {
+                break;
+            }
+            let consume = buf
+                .iter()
+                .take_while(|byte| is_json_number_byte(**byte))
+                .count();
+            // decode-audit: impossible — every byte accepted above is ASCII.
+            token.push_str(
+                std::str::from_utf8(&buf[..consume]).expect("JSON number bytes are ASCII"),
+            );
+            (consume, consume < buf.len())
+        };
+        reader.consume(consume);
+        if token_ended {
+            break;
+        }
+    }
+    Ok(token)
+}
+
+fn is_json_number_byte(byte: u8) -> bool {
+    byte.is_ascii_digit() || matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E')
+}
+
+/// Advance the reader past any ASCII whitespace at its current position.
+fn skip_ascii_whitespace<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
+    loop {
+        let (consume, done) = {
+            let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+            let consume = buf
+                .iter()
+                .take_while(|byte| byte.is_ascii_whitespace())
+                .count();
+            (consume, consume < buf.len())
+        };
+        reader.consume(consume);
+        if done {
+            return Ok(());
+        }
+    }
+}
+
+fn json_value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Build a strict-mode error for valid JSON that is not a row object. This is a
+/// distinct category from a syntax failure: the document parsed, it just does
+/// not hold records. `position` is 1-based over the records scanned so far.
+fn non_object_record_error(kind: &str, position: usize) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!(
+            "non-object JSON record at position {position}: \
+             expected an object with fields to profile, found {kind}"
+        ),
+    }
 }
 
 /// Build a strict-mode parse error from a serde failure. The serde message
@@ -554,7 +702,8 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     if rows_read == 0 {
         if malformed_lines > 0 {
             return Err(DataProfilerError::JsonParsingError {
-                message: "No valid JSON records found in file (malformed JSON encountered)"
+                message: "No valid JSON records found in file \
+                          (every record was malformed or not a JSON object)"
                     .to_string(),
             });
         }
@@ -817,6 +966,127 @@ mod tests {
         assert_eq!(summary.rows_read, 1);
         assert_eq!(summary.malformed_lines, 0);
         assert_eq!(object_field_counts, vec![2]);
+    }
+
+    /// Every JSON value that is not an object, so none of them can be a row.
+    /// Numbers are listed twice on purpose: they are the one value serde reads
+    /// from a reader by peeking one byte past the end.
+    const NON_OBJECT_VALUES: &[(&str, &str)] = &[
+        ("null", "null"),
+        ("boolean", "true"),
+        ("number", "42"),
+        ("number", "-1.5e3"),
+        ("string", r#""text""#),
+        ("array", "[1, 2]"),
+    ];
+
+    #[test]
+    fn test_jsonl_counts_non_object_records_and_keeps_scanning() {
+        for (kind, value) in NON_OBJECT_VALUES {
+            let data = format!("{{\"id\":1}}\n{value}\n{{\"id\":2}}\n");
+            let mut rows = 0;
+
+            let summary = scan_json_from_reader(
+                Cursor::new(data.as_bytes()),
+                &JsonParserConfig::jsonl(),
+                |_| rows += 1,
+            )
+            .unwrap();
+
+            assert_eq!(summary.rows_read, 2, "{kind}: record after it was lost");
+            assert_eq!(summary.malformed_lines, 1, "{kind}: was silently dropped");
+            assert_eq!(rows, 2, "{kind}");
+        }
+    }
+
+    #[test]
+    fn test_json_array_counts_non_object_elements_and_keeps_scanning() {
+        for (kind, value) in NON_OBJECT_VALUES {
+            let data = format!("[{{\"id\":1}}, {value}, {{\"id\":2}}]");
+            let mut rows = 0;
+
+            let summary = scan_json_from_reader(
+                Cursor::new(data.as_bytes()),
+                &JsonParserConfig::json_array(),
+                |_| rows += 1,
+            )
+            .unwrap();
+
+            assert_eq!(summary.rows_read, 2, "{kind}: element after it was lost");
+            assert_eq!(summary.malformed_lines, 1, "{kind}: was silently dropped");
+            assert_eq!(rows, 2, "{kind}");
+        }
+    }
+
+    #[test]
+    fn test_strict_policy_rejects_the_first_non_object_record() {
+        for (kind, value) in NON_OBJECT_VALUES {
+            for (config, data) in [
+                (
+                    JsonParserConfig::jsonl(),
+                    format!("{{\"id\":1}}\n{value}\n{{\"id\":2}}\n"),
+                ),
+                (
+                    JsonParserConfig::json_array(),
+                    format!("[{{\"id\":1}}, {value}, {{\"id\":2}}]"),
+                ),
+            ] {
+                let config = config.with_error_policy(JsonErrorPolicy::Strict);
+                let err = scan_json_from_reader(Cursor::new(data.as_bytes()), &config, |_| {})
+                    .expect_err("{kind}: strict mode must reject a non-object record");
+
+                let message = err.to_string();
+                assert!(message.contains("non-object JSON record"), "{message}");
+                assert!(message.contains("at position 2"), "{message}");
+                assert!(message.contains(&format!("found {kind}")), "{message}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_number_element_does_not_swallow_the_array_delimiter() {
+        // serde ends a number by peeking one byte past it and drops that byte
+        // with the deserializer; here it is the `,` the array scanner needs.
+        let data = br#"[{"id":1}, 1, 2, 3, {"id":2}, 4, {"id":3}]"#;
+        let mut rows = 0;
+
+        let summary = scan_json_from_reader(
+            Cursor::new(data.as_ref()),
+            &JsonParserConfig::json_array(),
+            |_| rows += 1,
+        )
+        .unwrap();
+
+        assert_eq!(summary.rows_read, 3);
+        assert_eq!(summary.malformed_lines, 4);
+        assert_eq!(rows, 3);
+    }
+
+    #[test]
+    fn test_number_shaped_garbage_stays_a_malformed_record() {
+        // `1.2.3` is read by the byte-wise number scanner but is not a number,
+        // so it must not be reported as a valid non-object record.
+        let data = b"{\"id\":1}\n1.2.3\n";
+        let config = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+        let err = scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {})
+            .expect_err("number-shaped garbage should be malformed");
+
+        assert!(
+            err.to_string().contains("malformed JSON record"),
+            "{err}, expected the malformed category"
+        );
+    }
+
+    #[test]
+    fn test_input_of_only_non_object_records_fails() {
+        let file = write_file("\"just a string\"\n1\n[2]\n");
+        let err = analyze_json_file(file.path(), &JsonParserConfig::jsonl())
+            .expect_err("nothing profileable should not return a clean empty profile");
+
+        assert!(
+            err.to_string().contains("No valid JSON records found"),
+            "{err}"
+        );
     }
 
     #[test]

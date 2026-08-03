@@ -506,14 +506,31 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
     return [(str(name), cells[i]) for i, name in enumerate(header)]
 
 
+def _json_kind(value: object) -> str:
+    """Name a decoded JSON value's type the way the Rust scanners do."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
 def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
     """Scan JSONL text into row objects, honoring the malformed-record policy.
 
-    Mirrors the file/async JSONL scanners: blank lines are ignored, only object
-    records become rows (other JSON values are skipped without counting), and a
-    malformed record is either skipped-and-counted ("skip") or raised on
-    ("strict"). Error messages carry the 1-based line number, never the record
-    contents. Input that yields no valid record but had malformed lines fails.
+    Mirrors the file/async JSONL scanners: blank lines are ignored, and only
+    object records become rows. A record that is either malformed or valid JSON
+    that is not an object is skipped-and-counted ("skip") or raised on
+    ("strict") — a non-object record is never silently discarded, because that
+    would turn the source into a smaller clean-looking dataset. Error messages
+    carry the 1-based line number, never the record contents. Input that yields
+    no valid record but had skipped ones fails.
     """
     rows: list[dict] = []
     skipped = 0
@@ -543,8 +560,44 @@ def _scan_jsonl_records(text: str, on_error: str) -> tuple[list[dict], int]:
             continue
         if isinstance(value, dict):
             rows.append(value)
+            continue
+        if on_error == "strict":
+            raise ValueError(
+                f"jsonl bytes: non-object JSON record on line {lineno}: expected an "
+                f"object with fields to profile, found {_json_kind(value)}."
+            )
+        skipped += 1
     if not rows and skipped:
-        raise ValueError("jsonl bytes: no valid JSON records found (all records were malformed).")
+        raise ValueError(
+            "jsonl bytes: no valid JSON records found "
+            "(every record was malformed or not a JSON object)."
+        )
+    return rows, skipped
+
+
+def _scan_json_array_records(values: list, on_error: str) -> tuple[list[dict], int]:
+    """Apply the same record policy to the elements of a JSON array document.
+
+    Only objects are rows; any other element is counted ("skip") or raised on
+    ("strict") rather than dropped. Positions are 1-based over the elements.
+    """
+    rows: list[dict] = []
+    skipped = 0
+    for position, value in enumerate(values, start=1):
+        if isinstance(value, dict):
+            rows.append(value)
+            continue
+        if on_error == "strict":
+            raise ValueError(
+                f"json bytes: non-object JSON record at position {position}: expected an "
+                f"object with fields to profile, found {_json_kind(value)}."
+            )
+        skipped += 1
+    if not rows and skipped:
+        raise ValueError(
+            "json bytes: no valid JSON records found "
+            "(every record was malformed or not a JSON object)."
+        )
     return rows, skipped
 
 
@@ -1002,10 +1055,12 @@ def profile_file(
             ``report.ragged_row_count``, and False raises ValueError on the
             first such row. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
-        jsonl_on_error: How to handle a malformed JSON/JSONL record: "skip"
-            (default) skips it, counts it in ``report.execution.error_count``,
-            and returns a partial profile; "strict" raises ValueError on the
-            first malformed record. A file with no valid records always fails.
+        jsonl_on_error: How to handle a JSON/JSONL record that cannot become a
+            row — malformed JSON, or valid JSON that is not an object and so
+            has no fields to profile: "skip" (default) skips it, counts it in
+            ``report.execution.error_count``, and returns a partial profile;
+            "strict" raises ValueError on the first such record. A file with no
+            valid records always fails.
         sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.
@@ -1116,11 +1171,13 @@ def profile(
             ``report.ragged_row_count``, and False raises ValueError on the
             first such row. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
-        jsonl_on_error: How to handle a malformed JSON/JSONL record, applied
-            identically to file, bytes, and async byte inputs: "skip" (default)
-            skips it, counts it in ``report.execution.error_count``, and returns
-            a partial profile; "strict" raises ValueError on the first malformed
-            record. Input with no valid records always raises.
+        jsonl_on_error: How to handle a JSON/JSONL record that cannot become a
+            row — malformed JSON, or valid JSON that is not an object and so has
+            no fields to profile — applied identically to file, bytes, and async
+            byte inputs: "skip" (default) skips it, counts it in
+            ``report.execution.error_count``, and returns a partial profile;
+            "strict" raises ValueError on the first such record. Input with no
+            valid records always raises.
         sampling: Sampling strategy (e.g. SamplingStrategy.random(1000)).
         stop_condition: Early stop condition (e.g. StopCondition.max_rows(5000)).
             Cannot be used together with max_rows.
@@ -1315,8 +1372,12 @@ def profile(
                     columns = _columns_from_dict(rows)
                 else:
                     columns = _columns_from_records([rows], max_rows)
-            elif _is_list_of_dicts(rows):
-                columns = _columns_from_records(rows, max_rows)
+            elif isinstance(rows, list):
+                # An array is a document of records: elements that are not
+                # objects follow the same policy the file and async scanners
+                # apply, instead of rejecting the whole array.
+                records, skipped = _scan_json_array_records(rows, jsonl_on_error)
+                columns = _columns_from_records(records, max_rows)
             else:
                 raise ValueError(
                     f"{fmt} bytes must decode to an object of columns or an array of "
@@ -1918,12 +1979,12 @@ class ProfileReport:
 
     @property
     def error_count(self) -> int:
-        """Number of records skipped because they could not be parsed.
+        """Number of records skipped because they could not become rows.
 
         Nonzero means the profile is partial: for tolerant JSON/JSONL parsing
-        (``jsonl_on_error="skip"``, the default) each malformed record is
-        skipped and counted here rather than aborting the run. Zero means every
-        record parsed cleanly.
+        (``jsonl_on_error="skip"``, the default) each record that is malformed,
+        or that is valid JSON but not an object, is skipped and counted here
+        rather than aborting the run. Zero means every record became a row.
         """
         return self._report.error_count
 
