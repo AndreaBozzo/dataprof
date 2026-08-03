@@ -113,6 +113,19 @@ def test_column_order_follows_the_parquet_schema(tmp_path):
     assert list(dp.profile(data, format="parquet")) == ["zeta", "alpha", "mid"]
 
 
+def _raised(call) -> Exception:
+    """Return the exception ``call`` raised, failing if it raised nothing.
+
+    Comparing two ``None``s would let a parity assertion pass while neither
+    path rejected anything, so the rejection itself is asserted first.
+    """
+    try:
+        call()
+    except Exception as exc:  # noqa: BLE001 - which type it is, is the assertion
+        return exc
+    raise AssertionError("expected the call to raise, but it returned a report")
+
+
 def test_duplicate_column_names_are_rejected(tmp_path):
     """Parquet permits repeated field names; a profile keyed by name cannot."""
     table = pa.Table.from_arrays(
@@ -122,17 +135,11 @@ def test_duplicate_column_names_are_rejected(tmp_path):
     path = _write(tmp_path, table, "dup.parquet")
     data = path.read_bytes()
 
-    file_error: Exception | None = None
-    bytes_error: Exception | None = None
-    try:
-        dp.profile(str(path))
-    except Exception as exc:  # noqa: BLE001 - the point is which type it is
-        file_error = exc
-    try:
-        dp.profile(data, format="parquet")
-    except Exception as exc:  # noqa: BLE001
-        bytes_error = exc
+    file_error = _raised(lambda: dp.profile(str(path)))
+    bytes_error = _raised(lambda: dp.profile(data, format="parquet"))
 
+    assert "Duplicate column name" in str(file_error)
+    assert "Duplicate column name" in str(bytes_error)
     assert type(file_error) is type(bytes_error), (
         f"file raised {file_error!r} but bytes raised {bytes_error!r}"
     )
@@ -164,18 +171,9 @@ def test_a_buffer_that_is_not_parquet_fails_like_the_file_path(tmp_path):
     path = tmp_path / "bad.parquet"
     path.write_bytes(b"definitely not parquet")
 
-    file_error: Exception | None = None
-    bytes_error: Exception | None = None
-    try:
-        dp.profile(str(path))
-    except Exception as exc:  # noqa: BLE001
-        file_error = exc
-    try:
-        dp.profile(b"definitely not parquet", format="parquet")
-    except Exception as exc:  # noqa: BLE001
-        bytes_error = exc
+    file_error = _raised(lambda: dp.profile(str(path)))
+    bytes_error = _raised(lambda: dp.profile(b"definitely not parquet", format="parquet"))
 
-    assert file_error is not None and bytes_error is not None
     assert type(file_error) is type(bytes_error)
 
 
