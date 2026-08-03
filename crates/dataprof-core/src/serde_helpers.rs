@@ -1,8 +1,40 @@
 //! Custom serde serialization helpers for formatting numeric values with appropriate precision.
+//!
+//! # The rounding convention
+//!
+//! Every serialized float in a dataprof report follows one convention, and the
+//! Python bindings implement the same one so that both layers report identical
+//! numbers for identical data (#513).
+//!
+//! **Precision** is chosen by what the number *is*, not by which struct it
+//! lives in:
+//!
+//! | Kind | Precision | Examples |
+//! | --- | --- | --- |
+//! | `0..100` percentage | 2dp | `null_percentage`, `missing_values_ratio`, `coefficient_of_variation` |
+//! | statistic | 4dp | `mean`, `std_dev`, `variance`, `skewness`, `kurtosis`, `avg_length` |
+//! | data value | 4dp | `min`, `max`, `median`, `mode` |
+//! | `0..1` ratio | 4dp | `true_ratio`, `uniqueness_ratio` |
+//!
+//! A `0..1` ratio takes 4dp so that it carries the same resolution as the
+//! equivalent percentage at 2dp; rounding one at 2dp would collapse every value
+//! below 0.005 to zero. Data values take 4dp because a profiler must not report
+//! a `min` the column never contained.
+//!
+//! Quartiles are the deliberate exception: they stay at 2dp because they are
+//! read as distribution landmarks rather than as exact values.
+//!
+//! **Tie-breaking** rounds the stored `f64`, ties away from zero — that is,
+//! `(v * 10^n).round() / 10^n`, since [`f64::round`] rounds half away from
+//! zero. This reports the value actually held rather than the shortest decimal
+//! string that happens to print for it. The two differ only when a value's
+//! shortest representation is an exact tie at the target precision while its
+//! binary value is not: `23.0 / 4000.0 * 100.0` prints as `0.575` but is stored
+//! just below it, and so rounds to `0.57`.
 
 use serde::Serializer;
 
-/// Round f64 to 2 decimal places (for percentages and simple ratios).
+/// Round f64 to 2 decimal places (for `0..100` percentages).
 /// Returns null for NaN or infinite values.
 pub fn round_2<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -14,7 +46,7 @@ where
     serializer.serialize_f64((value * 100.0).round() / 100.0)
 }
 
-/// Round f64 to 4 decimal places (for statistical metrics like mean, std_dev).
+/// Round f64 to 4 decimal places (statistics, data values, and `0..1` ratios).
 /// Returns null for NaN or infinite values.
 pub fn round_4<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -26,7 +58,7 @@ where
     serializer.serialize_f64((value * 10000.0).round() / 10000.0)
 }
 
-/// Round `Option<f64>` to 2 decimal places.
+/// Round `Option<f64>` to 2 decimal places (for `0..100` percentages).
 /// Returns null for None or non-finite values.
 pub fn round_2_opt<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -41,7 +73,7 @@ where
     }
 }
 
-/// Round `Option<f64>` to 4 decimal places.
+/// Round `Option<f64>` to 4 decimal places (statistics, data values, ratios).
 /// Returns null for None or non-finite values.
 pub fn round_4_opt<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
 where
@@ -56,7 +88,8 @@ where
     }
 }
 
-/// Round Quartiles fields to 2 decimal places.
+/// Round Quartiles fields to 2 decimal places: distribution landmarks are
+/// read as approximate positions, not as exact values.
 pub mod quartiles {
     use super::*;
     use crate::profile::Quartiles;

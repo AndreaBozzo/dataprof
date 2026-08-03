@@ -1,0 +1,67 @@
+{
+  "columns": {
+    "amount": {
+      "coefficient_of_variation": 42.8,
+      "kurtosis": -1.2976,
+      "max": 5.9382,
+      "mean": 3.4691,
+      "median": 3.4691,
+      "min": 1.0001,
+      "quartiles": {
+        "iqr": 2.47,
+        "q1": 2.23,
+        "q2": 3.47,
+        "q3": 4.7
+      },
+      "skewness": -0.0,
+      "std_dev": 1.4848,
+      "variance": 2.2046
+    },
+    "flag": {
+      "true_ratio": 0.6486
+    },
+    "label": {
+      "avg_length": 4.9189
+    },
+    "score": {
+      "coefficient_of_variation": 18.76,
+      "kurtosis": -1.3775,
+      "max": 17.407,
+      "mean": 13.5367,
+      "median": 13.7035,
+      "min": 10.0,
+      "mode": 10.0,
+      "quartiles": {
+        "iqr": 4.94,
+        "q1": 11.23,
+        "q2": 13.7,
+        "q3": 16.17
+      },
+      "skewness": 0.0834,
+      "std_dev": 2.5394,
+      "variance": 6.4484
+    }
+  },
+  "description": "Rounded floats both layers must emit for tests/fixtures/rounding_parity.csv (#513). tests/report_rounding_parity.rs asserts the Rust report against this file and python/tests/test_rounding_parity.py asserts ProfileReport.to_dict() against it, so a precision or tie-breaking change on either side fails.",
+  "quality": {
+    "accuracy": {
+      "outlier_ratio": 0.0
+    },
+    "completeness": {
+      "complete_records_ratio": 100.0,
+      "missing_values_ratio": 0.0
+    },
+    "consistency": {
+      "data_type_consistency": 100.0
+    },
+    "precision": {
+      "decimal_places_consistency": 66.22
+    },
+    "uniqueness": {
+      "key_uniqueness": 100.0
+    },
+    "validity": {
+      "valid_values_ratio": 100.0
+    }
+  }
+}
