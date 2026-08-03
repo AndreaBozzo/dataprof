@@ -140,6 +140,15 @@ recovery) instead of silently ignoring them. For those controls, use
 `dataprof.asyncio.profile_bytes()`. JSON and JSONL byte buffers follow RFC 8259:
 the non-standard `NaN` and `Infinity` constants are malformed input.
 
+**JSON record policy.** Only JSON objects are profileable records — they are the
+only JSON value with named fields to become columns. A record that is valid JSON
+but not an object (a scalar, an array, `null`) is never silently dropped: with
+`jsonl_on_error="skip"` (the default) it is counted in `error_count` and the
+records after it still profile, and with `jsonl_on_error="strict"` the first one
+raises `ValueError` naming its position and JSON kind. Input whose every record
+is non-object fails, exactly as all-malformed input does. File, byte, and async
+byte transports apply this identically.
+
 **Engine options:**
 
 | Engine | When to use |
