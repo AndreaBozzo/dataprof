@@ -205,10 +205,17 @@ reloaded = dp.ProfileReport.from_json(report.to_json())  # from a JSON string
 reloaded = dp.ProfileReport.from_dict(report.to_dict())  # from a dict
 ```
 
-**Rounding:** All floating-point values in exported data are rounded to match the CLI
-JSON output -- 2 decimal places for percentages and ratios, 4 decimal places for
-statistical metrics. Raw property access on `ColumnProfile` returns unrounded Rust
-values; use the export methods for clean output.
+**Rounding:** All floating-point values in exported data are rounded -- 2 decimal
+places for `0..100` percentages, 4 decimal places for statistical metrics and for
+`0..1` ratios such as `uniqueness_ratio` and `true_ratio`, so that a ratio carries
+the same resolution as the equivalent percentage. Raw property access on
+`ColumnProfile` returns unrounded Rust values; use the export methods for clean
+output.
+
+**Round-trip fidelity:** a report reloaded with `from_dict`, `from_json`, or
+`load` reports the same values as the report it was saved from, at the precision
+above. Reloaded reports are read-only proxies rather than native reports, so the
+two are different objects with the same answers.
 
 ## `ColumnProfile`
 
