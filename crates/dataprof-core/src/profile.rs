@@ -68,9 +68,12 @@ pub struct FrequencyItem {
 /// Statistics for numeric (integer or float) columns.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NumericStats {
-    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    // min/max/median/mode are data values, not summary percentages: they are
+    // rounded at the statistics precision so a column whose values carry more
+    // than two decimals is not reported with a min it never contained.
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub min: f64,
-    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub max: f64,
     #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub mean: f64,
@@ -80,7 +83,7 @@ pub struct NumericStats {
     pub variance: f64,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_helpers::round_2_opt"
+        serialize_with = "crate::serde_helpers::round_4_opt"
     )]
     pub median: Option<f64>,
     #[serde(
@@ -90,7 +93,7 @@ pub struct NumericStats {
     pub quartiles: Option<Quartiles>,
     #[serde(
         skip_serializing_if = "Option::is_none",
-        serialize_with = "crate::serde_helpers::round_2_opt"
+        serialize_with = "crate::serde_helpers::round_4_opt"
     )]
     pub mode: Option<f64>,
     #[serde(
@@ -145,7 +148,9 @@ impl NumericStats {
 pub struct TextStats {
     pub min_length: usize,
     pub max_length: usize,
-    #[serde(serialize_with = "crate::serde_helpers::round_2")]
+    // A mean, so it rounds at the statistics precision rather than the
+    // percentage one.
+    #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub avg_length: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub most_frequent: Option<Vec<FrequencyItem>>,

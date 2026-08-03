@@ -214,21 +214,33 @@ __all__ = [
 
 
 def _half_up(v: float, ndigits: int) -> float:
-    """Round using half-away-from-zero, matching Rust f64::round() semantics.
+    """Round ``v`` at ``ndigits``, ties away from zero, as the Rust layer does.
 
-    Python's built-in round() uses bankers rounding (ties-to-even), which can
-    disagree with the Rust report serialization on edge cases like 1.005.
+    This mirrors ``(v * 10^n).round() / 10^n`` from
+    ``crates/dataprof-core/src/serde_helpers.rs`` step for step: scale in binary,
+    round the scaled value half away from zero (which is what ``f64::round()``
+    does), then scale back.
+
+    It rounds the *stored* float rather than the shortest decimal string that
+    prints for it, and that distinction is the whole point (#513). Rounding
+    ``Decimal(str(v))`` instead would take ``23 / 4000 * 100`` — which prints as
+    ``0.575`` but is stored just below it — up to ``0.58``, where the Rust
+    serializer emits ``0.57``. Two layers, one number: the layers must agree,
+    and the engine's answer is the one that wins.
     """
+    scale = 10.0**ndigits
     with _decimal.localcontext() as ctx:
         ctx.rounding = _decimal.ROUND_HALF_UP
         try:
-            d = _decimal.Decimal(str(v)).quantize(_decimal.Decimal(10) ** -ndigits)
-            return float(d)
+            # Decimal(float) is the exact binary value, so quantizing it to an
+            # integer under ROUND_HALF_UP reproduces f64::round() exactly.
+            rounded = float(_decimal.Decimal(v * scale).quantize(_decimal.Decimal(1)))
         except _decimal.InvalidOperation:
-            # Very large or very small numbers (e.g. variance ~1e+29) can't be
-            # quantized to N decimal places — return as-is since rounding wouldn't
-            # change the value at that magnitude anyway.
+            # Very large or very small numbers (e.g. variance ~1e+29) exceed the
+            # decimal context's precision — return as-is, since a value that big
+            # is already integral at this scale and rounding cannot move it.
             return v
+    return rounded / scale
 
 
 def _r2(v: float | None) -> float | None:
@@ -254,6 +266,30 @@ def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
     if q is None:
         return None
     return {k: _half_up(v, 2) for k, v in q.items()}
+
+
+# The seven quality dimensions, in scoring order. Keeping one list rather than
+# several is the point: duplicated copies of this exact set are what drifted.
+_QUALITY_DIMENSIONS = (
+    "completeness",
+    "consistency",
+    "uniqueness",
+    "accuracy",
+    "timeliness",
+    "validity",
+    "precision",
+)
+
+
+def _round_dimension(values: dict[str, Any]) -> dict[str, Any]:
+    """Round a quality dimension dict the way the Rust serializer does.
+
+    Every float across the seven dimension structs is a ``0..100`` percentage
+    carrying ``round_2`` on the Rust side, so rounding floats by type matches it
+    field for field without a per-field list to keep in sync. Counts, flags and
+    column names pass through untouched.
+    """
+    return {k: _r2(v) if isinstance(v, float) else v for k, v in values.items()}
 
 
 def _pct_str(value: float | None) -> str:
@@ -610,7 +646,9 @@ def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
                 "mode": _r4(col.mode),
                 "skewness": _r4(col.skewness),
                 "kurtosis": _r4(col.kurtosis),
-                "coefficient_of_variation": _r4(col.coefficient_of_variation),
+                # A 0..100 percentage (std_dev/mean * 100), so 2dp like every
+                # other percentage — not 4dp like the statistics around it.
+                "coefficient_of_variation": _r2(col.coefficient_of_variation),
                 "quartiles": _round_quartiles(col.quartiles),
                 "is_approximate": col.is_approximate,
                 "outlier_count": col.outlier_count,
@@ -690,7 +728,9 @@ def _column_record(col: ColumnProfile) -> dict[str, Any]:
         "mode": _r4(col.mode),
         "skewness": _r4(col.skewness),
         "kurtosis": _r4(col.kurtosis),
-        "coefficient_of_variation": _r4(col.coefficient_of_variation),
+        # A 0..100 percentage (std_dev/mean * 100), so 2dp like every other
+        # percentage — not 4dp like the statistics around it.
+        "coefficient_of_variation": _r2(col.coefficient_of_variation),
         "q1": rq["q1"] if rq else None,
         "q2": rq["q2"] if rq else None,
         "q3": rq["q3"] if rq else None,
@@ -1712,17 +1752,7 @@ class _DictQuality:
         scores = self._d.get("dimension_scores")
         if isinstance(scores, dict):
             return scores
-        return dict.fromkeys(
-            (
-                "completeness",
-                "consistency",
-                "uniqueness",
-                "accuracy",
-                "timeliness",
-                "validity",
-                "precision",
-            )
-        )
+        return dict.fromkeys(_QUALITY_DIMENSIONS)
 
 
 class _DictBackedReport:
@@ -1963,27 +1993,14 @@ class ProfileReport:
             # so consumers never have to infer absence, and from_dict round-trips
             # both states. See docs/python/README.md report-schema notes.
             quality_dict["low_sample_warning"] = bool(q.low_sample_warning)
-            comp = q.completeness
-            if comp is not None:
-                quality_dict["completeness"] = comp
-            cons = q.consistency
-            if cons is not None:
-                quality_dict["consistency"] = cons
-            uniq = q.uniqueness
-            if uniq is not None:
-                quality_dict["uniqueness"] = uniq
-            acc = q.accuracy
-            if acc is not None:
-                quality_dict["accuracy"] = acc
-            tim = q.timeliness
-            if tim is not None:
-                quality_dict["timeliness"] = tim
-            validity = q.validity
-            if validity is not None:
-                quality_dict["validity"] = validity
-            precision = q.precision
-            if precision is not None:
-                quality_dict["precision"] = precision
+            # The dimension dicts used to be passed through raw while the Rust
+            # serializer rounded every float in them to 2dp, so the two layers
+            # reported different numbers for the same field — 4.833333333333333
+            # here against 4.83 there (#513).
+            for dimension in _QUALITY_DIMENSIONS:
+                values = getattr(q, dimension)
+                if values is not None:
+                    quality_dict[dimension] = _round_dimension(values)
 
         document = {
             "schema_version": REPORT_SCHEMA_VERSION,

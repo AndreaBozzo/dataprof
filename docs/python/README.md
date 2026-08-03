@@ -205,12 +205,32 @@ reloaded = dp.ProfileReport.from_json(report.to_json())  # from a JSON string
 reloaded = dp.ProfileReport.from_dict(report.to_dict())  # from a dict
 ```
 
-**Rounding:** All floating-point values in exported data are rounded -- 2 decimal
-places for `0..100` percentages, 4 decimal places for statistical metrics and for
-`0..1` ratios such as `uniqueness_ratio` and `true_ratio`, so that a ratio carries
-the same resolution as the equivalent percentage. Raw property access on
-`ColumnProfile` returns unrounded Rust values; use the export methods for clean
-output.
+### Rounding
+
+All floating-point values in exported data are rounded. The precision is chosen
+by what the number *is*, not by which object it lives on:
+
+| Kind | Precision | Examples |
+| --- | --- | --- |
+| `0..100` percentage | 2dp | `null_percentage`, `coefficient_of_variation`, every float in the quality dimension dicts |
+| statistic | 4dp | `mean`, `std_dev`, `variance`, `skewness`, `kurtosis`, `avg_length` |
+| data value | 4dp | `min`, `max`, `median`, `mode` |
+| `0..1` ratio | 4dp | `uniqueness_ratio`, `true_ratio` |
+
+A `0..1` ratio takes 4dp so it carries the same resolution as the equivalent
+percentage at 2dp. Data values take 4dp because a profiler must not report a
+`min` the column never contained. Quartiles are the deliberate exception: they
+stay at 2dp, being distribution landmarks rather than exact values.
+
+**Ties** round the stored float, away from zero. This is the value actually
+held, not the shortest decimal string that prints for it -- `23 / 4000 * 100`
+prints as `0.575` but is stored just below it, and so rounds to `0.57`.
+
+The Rust and Python layers implement the same convention and are held to shared
+fixtures (`tests/fixtures/rounding_parity.json` and
+`report_rounding_parity.json`), so the same data profiled through either gives
+the same numbers. Raw property access on `ColumnProfile` returns unrounded Rust
+values; use the export methods for rounded output.
 
 **Round-trip fidelity:** a report reloaded with `from_dict`, `from_json`, or
 `load` reports the same values as the report it was saved from, at the precision
