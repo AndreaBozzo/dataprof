@@ -15,12 +15,32 @@ Exits non-zero on the first failed check.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import tempfile
 from pathlib import Path
 
 import dataprof as dp
+
+# A 669-byte Parquet file: id (nullable int32) = [1, 2, null], label (nullable
+# utf8) = ["a", "b", null]. Embedded rather than generated because this venv has
+# no pyarrow to write one with — which is exactly the condition under test.
+PARQUET_FIXTURE = base64.b64decode(
+    "UEFSMRUEFRAVEEwVBBUAEgAAAQAAAAIAAAAVABUSFRIsFQYVEBUGFQYcGAQCAAAAGAQBAAAA"
+    "FgIoBAIAAAAYBAEAAAAREQAAAAIAAAADAwEDAhUEFRQVFEwVBBUAEgAAAQAAAGEBAAAAYhUA"
+    "FRIVEiwVBhUQFQYVBhw2AigBYhgBYRERAAAAAgAAAAMDAQMCFQQZPDUAGAZzY2hlbWEVBAAV"
+    "AiUCGAJpZAAVDCUCGAVsYWJlbCUATBwAAAAWBhkcGSwmABwVAhk1AAYQGRgCaWQVABYGFpwB"
+    "FpwBJjQmCBwYBAIAAAAYBAEAAAAWAigEAgAAABgEAQAAABERABksFQQVABUCABUAFRAVAgA8"
+    "KQYZJgIEAAAAJgAcFQwZNQAGEBkYBWxhYmVsFQAWBhZ8Fnwm1AEmpAEcNgIoAWIYAWEREQAZ"
+    "LBUEFQAVAgAVABUQFQIAPBYEGQYZJgIEAAAAFpgCFgYmCBaYAgAZHBgMQVJST1c6c2NoZW1h"
+    "GOwBLy8vLy82Z0FBQUFRQUFBQUFBQUtBQXdBQmdBRkFBZ0FDZ0FBQUFBQkJBQU1BQUFBQ0FB"
+    "SUFBQUFCQUFJQUFBQUJBQUFBQUlBQUFCRUFBQUFCQUFBQU5ULy8vOEFBQUVGRUFBQUFCd0FB"
+    "QUFFQUFBQUFBQUFBQVVBQUFCc1lXSmxiQUFBQUFRQUJBQUVBQUFBRUFBVUFBZ0FCZ0FIQUF3"
+    "QUFBQVFBQkFBQUFBQUFBRUNFQUFBQUJ3QUFBQUVBQUFBQUFBQUFBSUFBQUJwWkFBQUNBQU1B"
+    "QWdBQndBSUFBQUFBQUFBQVNBQUFBQT0AGCBwYXJxdWV0LWNwcC1hcnJvdyB2ZXJzaW9uIDI1"
+    "LjAuMBksHAAAHAAAAAUCAABQQVIx"
+)
 
 
 def check(condition: bool, label: str) -> None:
@@ -71,6 +91,32 @@ def acceptance_pandas_paths_fail_loudly() -> None:
         check("install" in str(exc).lower(), "to_dataframe() says how to fix it")
     else:
         raise AssertionError("to_dataframe() must raise ImportError without pandas")
+
+
+def acceptance_parquet_needs_no_dependencies(workdir: Path) -> None:
+    """Parquet files and byte buffers are both part of the base-wheel contract.
+
+    The byte path used to route through ``pandas.read_parquet``, so it failed in
+    exactly this venv while ``capabilities().local_parquet`` reported true.
+    """
+    print("acceptance: parquet without dependencies")
+    check(dp.capabilities().local_parquet, "capabilities() reports local_parquet")
+
+    path = workdir / "fixture.parquet"
+    path.write_bytes(PARQUET_FIXTURE)
+
+    from_file = dp.profile(str(path))
+    from_bytes = dp.profile(PARQUET_FIXTURE, format="parquet")
+
+    check(from_bytes.rows == 3, "parquet bytes profile 3 rows")
+    check(list(from_bytes) == ["id", "label"], "parquet bytes keep schema order")
+    check(list(from_bytes) == list(from_file), "bytes and file agree on columns")
+    check(from_bytes.rows == from_file.rows, "bytes and file agree on row count")
+    check(
+        from_bytes.to_dict()["columns"] == from_file.to_dict()["columns"],
+        "bytes and file agree on every column statistic",
+    )
+    check("pandas" not in sys.modules, "profiling parquet bytes does not import pandas")
 
 
 def acceptance_export_reload_compare(workdir: Path) -> None:
@@ -133,6 +179,7 @@ def main() -> int:
         assert_no_optional_deps()
         acceptance_first_profile()
         acceptance_pandas_paths_fail_loudly()
+        acceptance_parquet_needs_no_dependencies(workdir)
         acceptance_export_reload_compare(workdir)
         acceptance_agent_output_is_redacted(workdir)
 

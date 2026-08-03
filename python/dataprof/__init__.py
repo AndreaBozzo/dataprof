@@ -48,6 +48,7 @@ from ._dataprof import (
     profile_arrow as _profile_arrow,
     profile_columns as _profile_columns,
     profile_dataframe as _profile_dataframe,
+    profile_parquet_bytes as _profile_parquet_bytes,
     quick_row_count as _quick_row_count,
 )
 
@@ -108,6 +109,8 @@ class Capabilities:
     local_csv: bool
     local_json: bool
     local_jsonl: bool
+    #: Local Parquet, covering both file paths and byte buffers — they share one
+    #: compiled reader, so no caller has to distinguish the two.
     local_parquet: bool
     pandas_interop: bool
     pandas_installed: bool
@@ -1384,9 +1387,18 @@ def profile(
                     f"row objects, got {type(rows).__name__}."
                 )
         elif fmt == "parquet":
-            # Parquet needs a columnar reader; pandas pulls in pyarrow for us.
-            pd = _require_pandas("parquet byte buffers")
-            return _profile_python_dataframe(pd.read_parquet(buffer), "parquet_bytes")
+            # Read by the compiled Arrow/Parquet stack, the same one the file
+            # path uses. Routing through pandas would put an optional
+            # dependency behind an API documented as needing none, and would
+            # change types and column order on the way through.
+            return ProfileReport(
+                _profile_parquet_bytes(
+                    buffer.getvalue(),
+                    name or "parquet_bytes",
+                    max_rows,
+                    _df_config(),
+                )
+            )
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
 

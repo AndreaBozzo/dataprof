@@ -12,7 +12,7 @@ readme = "README.md"
 [features]
 default = []
 arrow = ["dep:arrow", "dep:csv", "dep:dataprof-csv", "dataprof-core/arrow"]
-parquet = ["dep:parquet", "arrow"]
+parquet = ["dep:parquet", "dep:bytes", "arrow"]
 parquet-async = ["parquet", "parquet/async", "dep:bytes", "dep:futures", "dep:reqwest"]
 
 [dependencies]
@@ -29,5 +29,8 @@ parquet = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Compares whole column profiles structurally, so a new field is covered by the
+# file/bytes parity test without anyone remembering to list it.
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

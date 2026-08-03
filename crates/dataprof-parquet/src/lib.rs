@@ -24,8 +24,8 @@ pub use record_batch_analyzer::RecordBatchAnalyzer;
 
 #[cfg(feature = "parquet")]
 pub use parser::{
-    ParquetConfig, analyze_parquet_with_config, analyze_parquet_with_config_dims,
-    analyze_parquet_with_config_dims_and_hints, analyze_parquet_with_quality,
-    analyze_parquet_with_quality_dims, analyze_parquet_with_quality_dims_and_hints,
-    is_parquet_file,
+    ParquetConfig, analyze_parquet_bytes, analyze_parquet_with_config,
+    analyze_parquet_with_config_dims, analyze_parquet_with_config_dims_and_hints,
+    analyze_parquet_with_quality, analyze_parquet_with_quality_dims,
+    analyze_parquet_with_quality_dims_and_hints, is_parquet_file,
 };
