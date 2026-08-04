@@ -384,6 +384,7 @@ def profile_columns(
     max_rows: int | None,
     config: ProfilerConfig | None,
     error_count: int = 0,
+    row_count: int | None = None,
 ) -> ProfileReport: ...
 def profile_parquet_bytes(
     data: bytes,

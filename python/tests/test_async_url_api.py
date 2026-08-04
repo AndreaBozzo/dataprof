@@ -70,6 +70,7 @@ def url_server():
     parquet_bytes = PARQUET_FILE.read_bytes()
     bom_json = codecs.BOM_UTF8 + b'[{"id":1,"score":2.5},{"id":2,"score":3.5}]'
     bom_jsonl = codecs.BOM_UTF8 + b'{"id":1,"score":2.5}\n{"id":2,"score":3.5}\n'
+    fieldless_json = b"[{},{}]"
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -122,6 +123,8 @@ def url_server():
                 return bom_json
             if self.path == "/bom.jsonl":
                 return bom_jsonl
+            if self.path == "/fieldless.json":
+                return fieldless_json
             raise AssertionError(f"unexpected path: {self.path}")
 
     server = _ThreadingTcpServer(("127.0.0.1", 0), Handler)
@@ -136,6 +139,7 @@ def url_server():
             "parquet": f"http://127.0.0.1:{port}/data.parquet",
             "bom_json": f"http://127.0.0.1:{port}/bom.json",
             "bom_jsonl": f"http://127.0.0.1:{port}/bom.jsonl",
+            "fieldless_json": f"http://127.0.0.1:{port}/fieldless.json",
         }
     finally:
         with contextlib.suppress(Exception):
@@ -200,6 +204,18 @@ class TestAsyncUrlProfiling:
         assert report.columns == 2
         assert report["score"].max == 3.5
         assert report.to_dict()["execution"]["bytes_consumed"] == len(codecs.BOM_UTF8 + payload)
+
+    def test_profile_fieldless_records_url(self, url_server):
+        """Records with no fields are rows against no columns (#463).
+
+        The URL transport shares the async streaming reader, so it must report
+        the same shape the file and bytes paths do rather than failing on an
+        empty schema.
+        """
+        report = _run(profile_url, url_server["fieldless_json"])
+
+        assert (report.rows, report.columns) == (2, 0)
+        assert report.error_count == 0
 
     def test_profile_parquet_url(self, url_server):
         try:

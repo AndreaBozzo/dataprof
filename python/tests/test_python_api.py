@@ -424,6 +424,25 @@ class TestProfileAdHocInputs:
         with pytest.raises(ValueError, match="same number of cells"):
             _dataprof.profile_columns([("a", ["1"]), ("b", ["1", "2"])], "x", None, None)
 
+    def test_raw_extension_carries_a_row_count_without_columns(self):
+        """`row_count` is how a fieldless-record source states its row count.
+
+        With no columns there are no cells to derive it from, so the count would
+        otherwise collapse to zero and erase the rows.
+        """
+        from dataprof import _dataprof
+
+        report = dataprof.ProfileReport(_dataprof.profile_columns([], "x", None, None, 0, 3))
+        assert (report.rows, report.columns) == (3, 0)
+
+    def test_raw_extension_rejects_a_row_count_the_columns_contradict(self):
+        """Where the cells already carry the row count, a disagreeing
+        `row_count` is a caller bug and must not be quietly ignored."""
+        from dataprof import _dataprof
+
+        with pytest.raises(ValueError, match="row_count is 5"):
+            _dataprof.profile_columns([("a", ["1", "2"])], "x", None, None, 0, 5)
+
     def test_list_of_dicts_fills_missing_keys_with_nulls(self):
         r = dataprof.profile([{"a": 1}, {"b": 2}])
         assert list(r.column_profiles) == ["a", "b"]
@@ -447,8 +466,10 @@ class TestProfileAdHocInputs:
             dataprof.profile([{1: "a", "1": "b"}])
 
     def test_non_empty_list_of_empty_records_is_not_reported_as_zero_rows(self):
-        with pytest.raises(ValueError, match="rows but no columns"):
-            dataprof.profile([{}])
+        # Records with no fields are rows against no columns, the same shape the
+        # file scanner reports for `[{}]`. Reporting zero rows would erase them.
+        r = dataprof.profile([{}])
+        assert (r.rows, r.columns) == (1, 0)
 
     def test_csv_bytes_treat_empty_field_as_null(self):
         r = dataprof.profile(b"a,b\n1,\n2,x\n", format="csv")
