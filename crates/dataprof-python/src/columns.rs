@@ -33,9 +33,15 @@ pub type PyColumn = (String, Vec<Option<String>>);
 /// Column order is preserved as given, so reports over the same input are
 /// byte-identical across processes.
 ///
+/// `row_count` states how many rows the source held. It is only needed when
+/// `columns` is empty and the source still had rows -- JSON records with no
+/// fields, which the file scanner counts as rows against no columns. When
+/// columns are present their cell count already carries the row count, and a
+/// `row_count` that disagrees with it is rejected rather than silently ignored.
+///
 /// Raises `ValueError` when the columns do not all have the same length.
 #[pyfunction]
-#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0))]
+#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None))]
 pub fn profile_columns(
     py: Python<'_>,
     columns: Vec<PyColumn>,
@@ -43,6 +49,7 @@ pub fn profile_columns(
     max_rows: Option<usize>,
     config: Option<&PyProfilerConfig>,
     error_count: usize,
+    row_count: Option<usize>,
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -60,12 +67,24 @@ pub fn profile_columns(
     // This function is reachable from Python without going through `dp.profile`,
     // so ragged input must raise rather than panic across the FFI boundary --
     // and a short first column must not silently truncate the rest.
-    let source_rows = columns.first().map(|(_, cells)| cells.len()).unwrap_or(0);
+    let source_rows = match columns.first() {
+        Some((_, cells)) => cells.len(),
+        // No columns: the cells cannot carry a row count, so the caller states it.
+        None => row_count.unwrap_or(0),
+    };
     if let Some((name, cells)) = columns.iter().find(|(_, c)| c.len() != source_rows) {
         return Err(PyValueError::new_err(format!(
             "profile_columns: every column must have the same number of cells; \
              column {name:?} has {}, expected {source_rows}",
             cells.len()
+        )));
+    }
+    if let Some(stated) = row_count
+        && !columns.is_empty()
+        && stated != source_rows
+    {
+        return Err(PyValueError::new_err(format!(
+            "profile_columns: row_count is {stated} but the columns hold {source_rows} cells each"
         )));
     }
 

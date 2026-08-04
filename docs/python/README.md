@@ -151,6 +151,23 @@ raises `ValueError` naming its position and JSON kind. Input whose every record
 is non-object fails, exactly as all-malformed input does. File, byte, and async
 byte transports apply this identically.
 
+**Records with no fields.** A JSON object with no fields (`{}`) is a record: it
+was read and analysed, and nothing was found in it. It profiles as a row against
+zero columns, so `[{}, {}]` reports `rows == 2, columns == 0` on every transport
+— file, bytes, async bytes, URL, and a Python list of dicts. That keeps three
+shapes distinct:
+
+| Shape | Meaning | Example |
+|---|---|---|
+| `rows > 0`, `columns == 0` | rows were read; none of them had fields | `[{}, {}]` |
+| `rows == 0`, `columns == 0` | the input held no records | `[]` |
+| `rows == 0`, `columns > 0` | a known schema with no rows under it | a CSV header line |
+
+A zero-column report is a normal report: it serialises, round-trips, and
+renders. `len(report)` counts columns, so it is `0` while `report.rows` is not.
+A record with no fields is well-formed, so it is clean under both error
+policies and never counted in `error_count`.
+
 **Engine options:**
 
 | Engine | When to use |

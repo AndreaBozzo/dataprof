@@ -355,6 +355,9 @@ impl AsyncStreamingProfiler {
         let json_error_policy = self.json_error_policy;
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
+        // JSON records with no fields are rows against an empty schema; a CSV
+        // stream with no header line has nothing to profile.
+        let allow_empty_schema = matches!(format, FileFormat::Json | FileFormat::Jsonl);
         let reader_handle = tokio::task::spawn_blocking(move || match format {
             FileFormat::Csv => Self::reader_task(
                 sync_reader,
@@ -374,7 +377,9 @@ impl AsyncStreamingProfiler {
         });
 
         // Process chunks on the current task
-        let process_result = self.process_chunks(rx, source_info.size_hint).await;
+        let process_result = self
+            .process_chunks(rx, source_info.size_hint, allow_empty_schema)
+            .await;
 
         // If processing failed, prefer the reader's error when it also failed:
         // a strict-mode malformed record aborts the reader before any data
@@ -681,13 +686,22 @@ impl AsyncStreamingProfiler {
         };
 
         // Helper closure: send headers (first chunk) and flush accumulated rows.
+        //
+        // Records with no fields are still rows — the file scanner counts them
+        // against zero columns — so a header chunk carrying no column names is
+        // legal. It is only sent once the source is exhausted (`final_flush`):
+        // sending headers freezes the schema, and while input remains a later
+        // record may still introduce the columns these rows are missing. Until
+        // then the fieldless rows stay buffered rather than being emitted ahead
+        // of the headers, where the receiver would read them *as* the headers.
         let send_chunk = |chunk: &mut Vec<Vec<String>>,
                           bytes: &mut u64,
                           cols: &[String],
                           headers_sent: &mut bool,
-                          tx: &mpsc::Sender<ParsedChunk>|
+                          tx: &mpsc::Sender<ParsedChunk>,
+                          final_flush: bool|
          -> Result<bool, DataProfilerError> {
-            if !*headers_sent && !cols.is_empty() {
+            if !*headers_sent && (!cols.is_empty() || final_flush) {
                 let header_chunk = ParsedChunk {
                     records: vec![cols.to_vec()],
                     bytes_read: 0,
@@ -698,7 +712,7 @@ impl AsyncStreamingProfiler {
                 *headers_sent = true;
             }
 
-            if !chunk.is_empty() {
+            if *headers_sent && !chunk.is_empty() {
                 let data_chunk = ParsedChunk {
                     records: std::mem::take(chunk),
                     bytes_read: *bytes,
@@ -758,6 +772,7 @@ impl AsyncStreamingProfiler {
                                     &known_columns,
                                     &mut headers_sent,
                                     &tx,
+                                    false,
                                 )?
                             {
                                 return Ok(malformed_records);
@@ -874,6 +889,7 @@ impl AsyncStreamingProfiler {
                                         &known_columns,
                                         &mut headers_sent,
                                         &tx,
+                                        false,
                                     )?
                                 {
                                     return Ok(malformed_records);
@@ -972,6 +988,7 @@ impl AsyncStreamingProfiler {
                 &known_columns,
                 &mut headers_sent,
                 &tx,
+                true,
             );
         }
 
@@ -985,6 +1002,7 @@ impl AsyncStreamingProfiler {
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
         size_hint: Option<u64>,
+        allow_empty_schema: bool,
     ) -> Result<
         (
             Vec<String>,
@@ -1040,7 +1058,10 @@ impl AsyncStreamingProfiler {
             .next()
             .expect("non-empty header chunk has a first record");
 
-        if headers.is_empty() {
+        // A JSON source may legitimately have no columns: records with no fields
+        // are rows against an empty schema. A CSV stream cannot — its first line
+        // is the schema, so an empty one means there is nothing to profile.
+        if headers.is_empty() && !allow_empty_schema {
             return Err(DataProfilerError::StreamingError {
                 message: "No column headers found in stream".to_string(),
             });
@@ -1513,6 +1534,53 @@ mod tests {
             assert_eq!(report.execution.rows_processed, 2);
             assert_eq!(report.execution.error_count, 0);
             assert_eq!(report.execution.bytes_consumed, Some(expected_bytes));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_records_with_no_fields_are_rows_against_no_columns() {
+        // A record with no fields was read and analysed; nothing was found in
+        // it. The file scanner counts it as a row, so the stream must too --
+        // and it must not be mistaken for an input holding no records at all.
+        for (data, rows) in [
+            (jsonl_source(b"{}\n"), 1),
+            (jsonl_source(b"{}\n{}\n"), 2),
+            (json_source(b"[{}]"), 1),
+            (json_source(b"[{},{}]"), 2),
+            // No records at all: zero rows against the same zero columns.
+            (json_source(b"[]"), 0),
+        ] {
+            let report = AsyncStreamingProfiler::new()
+                .analyze_stream(data)
+                .await
+                .expect("a fieldless record is well-formed JSON");
+
+            assert_eq!(report.execution.rows_processed, rows);
+            assert_eq!(report.execution.columns_detected, 0);
+            assert_eq!(report.execution.error_count, 0);
+            assert!(report.column_profiles.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_async_fieldless_records_do_not_hide_the_columns_around_them() {
+        // The schema is discovered from the records, so an empty first record
+        // must not freeze it: the fields that follow still become columns, and
+        // the fieldless row reads as null across them.
+        for data in [
+            jsonl_source(b"{}\n{\"a\":1}\n"),
+            jsonl_source(b"{\"a\":1}\n{}\n"),
+            json_source(b"[{},{\"a\":1}]"),
+        ] {
+            let report = AsyncStreamingProfiler::new()
+                .analyze_stream(data)
+                .await
+                .unwrap();
+
+            assert_eq!(report.execution.rows_processed, 2);
+            assert_eq!(report.column_profiles.len(), 1);
+            assert_eq!(report.column_profiles[0].name, "a");
+            assert_eq!(report.column_profiles[0].null_count, 1);
         }
     }
 

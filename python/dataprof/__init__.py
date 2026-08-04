@@ -423,8 +423,13 @@ def _columns_from_dict(source: dict[_Any, _Any]) -> list[_Column]:
 def _columns_from_records(
     rows: list[dict[_Any, _Any]],
     max_rows: int | None = None,
-) -> list[_Column]:
+) -> tuple[list[_Column], int]:
     """Convert a list of row dicts into columns, keyed in first-seen order.
+
+    Returns the columns and the source row count. The row count is carried
+    separately because records with no fields at all produce no columns to hold
+    it: ``[{}, {}]`` is two rows against zero columns, the same shape the file
+    scanner reports, not an empty input.
 
     Rows need not share keys; a row missing a key contributes a null there.
 
@@ -437,11 +442,6 @@ def _columns_from_records(
     key_rows = rows if max_rows is None else rows[:max_rows]
     cell_rows = rows if max_rows is None else rows[: max_rows + 1]
     keys = list(dict.fromkeys(key for row in key_rows for key in row))
-    if key_rows and not keys:
-        raise ValueError(
-            "list-of-dicts input contains rows but no columns, so their row count "
-            "cannot be represented. Provide at least one key or pass an empty list."
-        )
 
     normalized_names = [str(key) for key in keys]
     if len(set(normalized_names)) != len(normalized_names):
@@ -453,10 +453,11 @@ def _columns_from_records(
             f"{collisions!r}. Use distinct string column names."
         )
 
-    return [
+    columns = [
         (name, [_cell_to_str(row.get(key)) for row in cell_rows])
         for key, name in zip(keys, normalized_names, strict=True)
     ]
+    return columns, len(cell_rows)
 
 
 def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[_Column]:
@@ -1294,20 +1295,27 @@ def profile(
         return ProfileReport(rust_report)
 
     def _profile_python_columns(
-        columns: list[_Column], default_name: str, error_count: int = 0
+        columns: list[_Column],
+        default_name: str,
+        error_count: int = 0,
+        row_count: int | None = None,
     ) -> ProfileReport:
         rust_report = _profile_columns(
-            columns, name or default_name, max_rows, _df_config(), error_count
+            columns, name or default_name, max_rows, _df_config(), error_count, row_count
         )
         return ProfileReport(rust_report)
 
     if isinstance(source, dict):
+        # A dict is a mapping of column name to cells, so an empty one is a
+        # source with no columns and therefore no rows. That is a different
+        # input from a record with no fields (`[{}]`), which is one row.
         _warn_if_config_ignored()
         return _profile_python_columns(_columns_from_dict(source), "dataframe")
 
     if _is_list_of_dicts(source):
         _warn_if_config_ignored()
-        return _profile_python_columns(_columns_from_records(source, max_rows), "dataframe")
+        record_columns, record_rows = _columns_from_records(source, max_rows)
+        return _profile_python_columns(record_columns, "dataframe", row_count=record_rows)
 
     if isinstance(source, (bytes, bytearray, memoryview, _io.BytesIO)):
         if format is None:
@@ -1351,12 +1359,13 @@ def profile(
         buffer = _bytes_buffer(source)
 
         skipped = 0
+        row_count: int | None = None
         if fmt == "csv":
             columns = _columns_from_csv_bytes(buffer, csv_delimiter)
         elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
-            columns = _columns_from_records(rows, max_rows)
+            columns, row_count = _columns_from_records(rows, max_rows)
         elif fmt == "json":
             text = buffer.getvalue().decode("utf-8-sig")
             try:
@@ -1371,16 +1380,20 @@ def profile(
                     f"json bytes: malformed JSON (non-standard numeric constant {exc.value!r})."
                 ) from None
             if isinstance(rows, dict):
-                if all(isinstance(values, (list, tuple)) for values in rows.values()):
+                # `all(...)` is vacuously true for `{}`, which would read an
+                # empty object as a column-oriented document holding no rows.
+                # The file scanner reads a root `{}` as one record instead, so
+                # require at least one column before taking that branch.
+                if rows and all(isinstance(values, (list, tuple)) for values in rows.values()):
                     columns = _columns_from_dict(rows)
                 else:
-                    columns = _columns_from_records([rows], max_rows)
+                    columns, row_count = _columns_from_records([rows], max_rows)
             elif isinstance(rows, list):
                 # An array is a document of records: elements that are not
                 # objects follow the same policy the file and async scanners
                 # apply, instead of rejecting the whole array.
                 records, skipped = _scan_json_array_records(rows, jsonl_on_error)
-                columns = _columns_from_records(records, max_rows)
+                columns, row_count = _columns_from_records(records, max_rows)
             else:
                 raise ValueError(
                     f"{fmt} bytes must decode to an object of columns or an array of "
@@ -1402,7 +1415,7 @@ def profile(
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
 
-        return _profile_python_columns(columns, f"{fmt}_bytes", skipped)
+        return _profile_python_columns(columns, f"{fmt}_bytes", skipped, row_count)
 
     # DataFrame detection via module name
     source_module = type(source).__module__ or ""
