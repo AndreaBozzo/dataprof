@@ -569,6 +569,19 @@ impl Profiler {
     }
 
     /// A JSON parser config carrying the configured row cap and error policy.
+    /// A JSON parser config for `format`, carrying the row cap and error policy.
+    ///
+    /// The grammar is passed explicitly rather than sniffed: a leading `{` opens
+    /// both a JSON object document and a JSONL file, and only the caller — via
+    /// the file extension or an explicit `.format()` — knows which it has.
+    fn json_config_for(&self, format: FileFormat) -> dataprof_json::JsonParserConfig {
+        let grammar = match format {
+            FileFormat::Json => dataprof_json::JsonFormat::Json,
+            _ => dataprof_json::JsonFormat::Jsonl,
+        };
+        self.json_config_for_stop().with_format(grammar)
+    }
+
     fn json_config_for_stop(&self) -> dataprof_json::JsonParserConfig {
         let config = dataprof_json::JsonParserConfig::default()
             .with_error_policy(self.config.json_error_policy);
@@ -616,7 +629,7 @@ impl Profiler {
                 self.ensure_no_sampling("the JSON parser")?;
                 dataprof_json::analyze_json_file_with_options(
                     file_path,
-                    &self.json_config_for_stop(),
+                    &self.json_config_for(format),
                     &options,
                 )
             }
@@ -691,7 +704,7 @@ impl Profiler {
                 self.ensure_no_sampling("the JSON parser")?;
                 return dataprof_json::analyze_json_file_with_options(
                     file_path,
-                    &self.json_config_for_stop(),
+                    &self.json_config_for(format),
                     &options,
                 );
             }
@@ -767,7 +780,7 @@ impl Profiler {
             FileFormat::Json | FileFormat::Jsonl => {
                 return dataprof_json::analyze_json_file_with_options(
                     file_path,
-                    &self.json_config_for_stop(),
+                    &self.json_config_for(format),
                     &options,
                 );
             }
