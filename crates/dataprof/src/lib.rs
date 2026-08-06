@@ -43,8 +43,8 @@ pub use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
     PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, TimelinessMetrics,
     UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
-    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats, detect_patterns,
-    infer_type, is_null_like_token, list_patterns,
+    analyze_column_with_analysis_options, calculate_datetime_stats, calculate_numeric_stats,
+    calculate_text_stats, detect_patterns, infer_type, is_null_like_token, list_patterns,
 };
 #[cfg(feature = "parquet-async")]
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};
@@ -73,5 +73,5 @@ pub use dataprof_partial::{
 pub use dataprof_db::{
     DatabaseConfig, DatabaseConnector, DatabaseCredentials, MySqlConnector, PostgresConnector,
     RetryConfig, SamplingConfig, SamplingStrategy as DbSamplingStrategy, SqliteConnector,
-    SslConfig, analyze_database, create_connector,
+    SslConfig, analyze_database, analyze_database_with_options, create_connector,
 };

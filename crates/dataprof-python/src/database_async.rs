@@ -5,10 +5,14 @@
 
 use pyo3::prelude::*;
 
+use crate::config::PyProfilerConfig;
 use crate::errors::analysis_error_to_py;
 use crate::types::PyProfileReport;
 #[cfg(feature = "database")]
-use dataprof::{DataProfilerError, DatabaseConfig, analyze_database, create_connector};
+use dataprof::{
+    AnalysisOptions, DataProfilerError, DatabaseConfig, MetricPack, analyze_database_with_options,
+    create_connector,
+};
 
 /// Async Python wrapper for database analysis
 ///
@@ -20,6 +24,8 @@ use dataprof::{DataProfilerError, DatabaseConfig, analyze_database, create_conne
 /// * `query` - SQL query to analyze
 /// * `batch_size` - Optional batch size for streaming (default: 10000)
 /// * `calculate_quality` - Whether to calculate quality metrics (default: false)
+/// * `config` - Optional profiler config carrying `metrics`, `quality_dimensions`,
+///   and `locale`, honoured the same way every file path honours them
 ///
 /// # Returns
 /// A dictionary containing column profiles and optional quality report
@@ -28,37 +34,65 @@ use dataprof::{DataProfilerError, DatabaseConfig, analyze_database, create_conne
 /// ```python
 /// import asyncio
 /// import dataprof
+/// from dataprof import ProfilerConfig
 ///
 /// async def analyze_db():
 ///     result = await dataprof.analyze_database_async(
 ///         "postgresql://user:pass@localhost/db",
 ///         "SELECT * FROM users LIMIT 1000",
 ///         batch_size=1000,
-///         calculate_quality=True
+///         calculate_quality=True,
+///         config=ProfilerConfig(locale="IT"),
 ///     )
 ///     print(result)
 ///
 /// asyncio.run(analyze_db())
 /// ```
 #[pyfunction]
-#[pyo3(signature = (connection_string, query, batch_size=10000, calculate_quality=false))]
+#[pyo3(signature = (connection_string, query, batch_size=10000, calculate_quality=false, config=None))]
 pub fn analyze_database_async<'py>(
     py: Python<'py>,
     connection_string: String,
     query: String,
     batch_size: usize,
     calculate_quality: bool,
+    config: Option<&PyProfilerConfig>,
 ) -> PyResult<Bound<'py, PyAny>> {
     if batch_size == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "batch_size must be greater than zero",
         ));
     }
+    // Resolve the selection before the future: `config` is borrowed from Python
+    // and cannot cross the await boundary.
+    #[cfg(all(feature = "database", feature = "python-async"))]
+    let options = {
+        let selected = config
+            .map(PyProfilerConfig::analysis_options)
+            .unwrap_or_default();
+        if calculate_quality {
+            selected
+        } else {
+            // `calculate_quality=False` is the older, coarser way to say "no
+            // quality pack"; express it as a pack so one value carries the
+            // whole selection from here on.
+            let packs = selected
+                .effective_metric_packs()
+                .unwrap_or_else(MetricPack::all)
+                .into_iter()
+                .filter(|pack| *pack != MetricPack::Quality)
+                .collect();
+            selected.with_metric_packs(Some(packs))
+        }
+    };
+    #[cfg(not(all(feature = "database", feature = "python-async")))]
+    let _ = (config, calculate_quality);
+
     // Import pyo3_async_runtimes only when python-async feature is enabled
     #[cfg(feature = "python-async")]
     {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            analyze_database_internal(connection_string, query, batch_size, calculate_quality)
+            analyze_database_internal(connection_string, query, batch_size, options)
                 .await
                 .map_err(|e| analysis_error_to_py(&e))
         })
@@ -78,7 +112,7 @@ async fn analyze_database_internal(
     connection_string: String,
     query: String,
     batch_size: usize,
-    calculate_quality: bool,
+    options: AnalysisOptions,
 ) -> Result<PyProfileReport, DataProfilerError> {
     // Create database configuration
     let config = DatabaseConfig {
@@ -88,7 +122,7 @@ async fn analyze_database_internal(
     };
 
     // Analyze the database query
-    let report = analyze_database(config, &query, calculate_quality, None).await?;
+    let report = analyze_database_with_options(config, &query, &options).await?;
 
     Ok(PyProfileReport::new(report))
 }
