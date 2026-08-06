@@ -177,6 +177,18 @@ impl IncrementalProfiler {
                     header_record.iter().map(|s| s.to_string()).collect();
 
                 for (row_idx, record) in records.iter().enumerate() {
+                    // A cap of zero rows is met before any row is read. The
+                    // check below runs after a row is processed, which is right
+                    // for every positive cap but would let `max_rows(0)` return
+                    // one row — a cap the caller set and the report then claims
+                    // to have honoured.
+                    if row_limit == Some(0) {
+                        hit_row_limit = true;
+                        source_exhausted = false;
+                        stop_eval.update(0, 0, 0.0);
+                        break;
+                    }
+
                     // A record whose field count differs from the header is a
                     // structural violation. It is still recovered below (padded
                     // or truncated to header width), but must not vanish from
