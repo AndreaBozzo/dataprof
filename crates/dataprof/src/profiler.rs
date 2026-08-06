@@ -3,9 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof_core::{
-    ChunkSize, DataProfilerError, DataSource, FileFormat, MetricPack, ProgressEvent, ProgressSink,
-    QualityDimension, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHints,
-    StopCondition, StructureReport,
+    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, FileFormat, MetricPack,
+    ProgressEvent, ProgressSink, QualityDimension, RowCountEstimate, SamplingStrategy,
+    SchemaResult, SemanticHints, StopCondition, StructureReport,
 };
 #[cfg(feature = "database")]
 use dataprof_db::DatabaseConfig;
@@ -52,9 +52,11 @@ pub struct ProfilerConfig {
     /// locale patterns are suppressed (unless they have a very high match rate).
     /// `None` = no locale preference (default).
     ///
-    /// Applies to file-based (CSV/Parquet) and DataFrame/Arrow profiling engines.
-    /// Database-backed (`analyze_query`) and async streaming entry points do not
-    /// currently forward this setting.
+    /// Applies to every file format (CSV, JSON/JSONL, Parquet), to DataFrame and
+    /// Arrow sources, and to the async streaming entry points — a locale ranks
+    /// the same patterns whichever path read the data. Database-backed
+    /// profiling (`analyze_query`) does not detect patterns, so it has nothing
+    /// to rank.
     pub locale: Option<String>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
@@ -492,6 +494,20 @@ impl Profiler {
         Ok(())
     }
 
+    /// The caller's full analysis selection, as every parser and engine needs it.
+    ///
+    /// Built in one place and passed whole, so a path cannot pick up the
+    /// dimensions and hints while quietly dropping the metric packs or the
+    /// locale — which is exactly how JSON, Parquet, and the async pipeline came
+    /// to compute work the caller had deselected.
+    fn analysis_options(&self) -> AnalysisOptions {
+        AnalysisOptions::default()
+            .with_metric_packs(self.config.metric_packs.clone())
+            .with_quality_dimensions(self.config.quality_dimensions.clone())
+            .with_locale(self.config.locale.clone())
+            .with_semantic_hints(self.semantic_hints())
+    }
+
     /// The metric packs to compute, with an empty quality-dimension selection
     /// folded in.
     ///
@@ -499,10 +515,7 @@ impl Profiler {
     /// depend on whether `quality_dimensions` or `metric_packs` was called
     /// first.
     fn effective_metric_packs(&self) -> Option<Vec<MetricPack>> {
-        MetricPack::resolve_with_dimensions(
-            self.config.metric_packs.as_deref(),
-            self.config.quality_dimensions.as_deref(),
-        )
+        self.analysis_options().effective_metric_packs()
     }
 
     /// Reject a stop condition richer than a plain row limit.
@@ -597,17 +610,15 @@ impl Profiler {
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let dims = self.config.quality_dimensions.as_deref();
-        let semantic_hints = self.semantic_hints();
+        let options = self.analysis_options();
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
                 self.ensure_row_limit_only("the JSON parser")?;
                 self.ensure_no_sampling("the JSON parser")?;
-                dataprof_json::analyze_json_file_with_dimensions_and_hints(
+                dataprof_json::analyze_json_file_with_options(
                     file_path,
                     &self.json_config_for_stop(),
-                    dims,
-                    &semantic_hints,
+                    &options,
                 )
             }
             FileFormat::Parquet => {
@@ -615,11 +626,10 @@ impl Profiler {
                 {
                     self.ensure_row_limit_only("the Parquet parser")?;
                     self.ensure_no_sampling("the Parquet parser")?;
-                    dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
+                    dataprof_parquet::analyze_parquet_with_options(
                         file_path,
                         &self.parquet_config_for_stop(),
-                        dims,
-                        &semantic_hints,
+                        &options,
                     )
                 }
                 #[cfg(not(feature = "parquet"))]
@@ -657,7 +667,7 @@ impl Profiler {
                     if let Some(l) = &self.config.locale {
                         profiler = profiler.locale(l.clone());
                     }
-                    profiler = profiler.semantic_hints(semantic_hints);
+                    profiler = profiler.semantic_hints(options.semantic_hints().clone());
                     let csv_config = self.csv_config_for_file(file_path);
                     profiler = profiler.csv_config(csv_config);
                     // Format already resolved here; skip the engine's extension-based
@@ -674,18 +684,16 @@ impl Profiler {
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let dims = self.config.quality_dimensions.as_deref();
-        let semantic_hints = self.semantic_hints();
+        let options = self.analysis_options();
         // IncrementalProfiler only supports CSV
         match format {
             FileFormat::Json | FileFormat::Jsonl => {
                 self.ensure_row_limit_only("the JSON parser")?;
                 self.ensure_no_sampling("the JSON parser")?;
-                return dataprof_json::analyze_json_file_with_dimensions_and_hints(
+                return dataprof_json::analyze_json_file_with_options(
                     file_path,
                     &self.json_config_for_stop(),
-                    dims,
-                    &semantic_hints,
+                    &options,
                 );
             }
             FileFormat::Parquet => {
@@ -693,11 +701,10 @@ impl Profiler {
                 {
                     self.ensure_row_limit_only("the Parquet parser")?;
                     self.ensure_no_sampling("the Parquet parser")?;
-                    return dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
+                    return dataprof_parquet::analyze_parquet_with_options(
                         file_path,
                         &self.parquet_config_for_stop(),
-                        dims,
-                        &semantic_hints,
+                        &options,
                     );
                 }
                 #[cfg(not(feature = "parquet"))]
@@ -727,7 +734,7 @@ impl Profiler {
         if let Some(l) = &self.config.locale {
             profiler = profiler.locale(l.clone());
         }
-        profiler = profiler.semantic_hints(semantic_hints);
+        profiler = profiler.semantic_hints(options.semantic_hints().clone());
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);
 
@@ -740,8 +747,7 @@ impl Profiler {
         file_path: &Path,
         format: FileFormat,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let dims = self.config.quality_dimensions.as_deref();
-        let semantic_hints = self.semantic_hints();
+        let options = self.analysis_options();
         // Every columnar path enforces a row cap, but none can evaluate a richer
         // stop condition per chunk, and none samples row by row.
         self.ensure_row_limit_only("the columnar engine")?;
@@ -749,11 +755,10 @@ impl Profiler {
         match format {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet")]
-                return dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
+                return dataprof_parquet::analyze_parquet_with_options(
                     file_path,
                     &self.parquet_config_for_stop(),
-                    dims,
-                    &semantic_hints,
+                    &options,
                 );
                 #[cfg(not(feature = "parquet"))]
                 return Err(DataProfilerError::UnsupportedFormat {
@@ -761,11 +766,10 @@ impl Profiler {
                 });
             }
             FileFormat::Json | FileFormat::Jsonl => {
-                return dataprof_json::analyze_json_file_with_dimensions_and_hints(
+                return dataprof_json::analyze_json_file_with_options(
                     file_path,
                     &self.json_config_for_stop(),
-                    dims,
-                    &semantic_hints,
+                    &options,
                 );
             }
             _ => {}
@@ -788,7 +792,7 @@ impl Profiler {
             if let Some(l) = &self.config.locale {
                 profiler = profiler.locale(l.clone());
             }
-            profiler = profiler.semantic_hints(semantic_hints);
+            profiler = profiler.semantic_hints(options.semantic_hints().clone());
             // ArrowProfiler reads the row cap off the CSV config; the incremental
             // engine evaluates the stop condition itself, so only set it here.
             let csv_config = self
@@ -948,13 +952,7 @@ impl Profiler {
         if let Some(delimiter) = self.config.csv_delimiter {
             profiler = profiler.csv_delimiter(delimiter);
         }
-        if let Some(ref d) = self.config.quality_dimensions {
-            profiler = profiler.quality_dimensions(d.clone());
-        }
-        if let Some(p) = self.effective_metric_packs() {
-            profiler = profiler.metric_packs(p);
-        }
-        profiler = profiler.semantic_hints(self.semantic_hints());
+        profiler = profiler.analysis_options(self.analysis_options());
 
         let report = profiler.analyze_stream(source).await?;
         self.validate_semantic_hints(&report)?;
@@ -998,15 +996,13 @@ impl Profiler {
                     self.ensure_no_sampling("the async Parquet parser")?;
                     // Parquet requires seeking — delegate to sync parser on a blocking thread.
                     let path = path.to_path_buf();
-                    let dims = self.config.quality_dimensions.clone();
-                    let semantic_hints = self.semantic_hints();
+                    let options = self.analysis_options();
                     let parquet_config = self.parquet_config_for_stop();
                     let report = tokio::task::spawn_blocking(move || {
-                        dataprof_parquet::analyze_parquet_with_config_dims_and_hints(
+                        dataprof_parquet::analyze_parquet_with_options(
                             &path,
                             &parquet_config,
-                            dims.as_deref(),
-                            &semantic_hints,
+                            &options,
                         )
                     })
                     .await
@@ -1125,11 +1121,10 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet-async")]
                 {
-                    let report = dataprof_parquet::analyze_parquet_async_http_dims_with_hints(
+                    let report = dataprof_parquet::analyze_parquet_async_http_with_options(
                         url,
                         &dataprof_parquet::ParquetConfig::default(),
-                        self.config.quality_dimensions.clone(),
-                        &self.semantic_hints(),
+                        &self.analysis_options(),
                     )
                     .await?;
                     self.validate_semantic_hints(&report)?;

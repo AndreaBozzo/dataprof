@@ -1,7 +1,7 @@
 //! Asynchronous Parquet HTTP reading module
 use bytes::Bytes;
 use dataprof_core::{
-    DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
+    AnalysisOptions, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
     QualityDimension, SemanticHints,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
@@ -233,6 +233,20 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
     quality_dimensions: Option<Vec<QualityDimension>>,
     semantic_hints: &SemanticHints,
 ) -> Result<ProfileReport, DataProfilerError> {
+    let options = AnalysisOptions::default()
+        .with_quality_dimensions(quality_dimensions)
+        .with_semantic_hints(semantic_hints.clone());
+    analyze_parquet_async_http_with_options(url, config, &options).await
+}
+
+/// Like [`analyze_parquet_async_http`], honouring the caller's full analysis
+/// selection so a remote Parquet profile matches the local one option for option.
+pub async fn analyze_parquet_async_http_with_options(
+    url: &str,
+    config: &ParquetConfig,
+    options: &AnalysisOptions,
+) -> Result<ProfileReport, DataProfilerError> {
+    let semantic_hints = options.semantic_hints();
     let start = std::time::Instant::now();
 
     let reader = HttpParquetReader::try_new(url).await?;
@@ -280,7 +294,12 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
         analyzer.process_batch(&batch)?;
     }
 
-    let column_profiles = analyzer.to_profiles_with_hints(false, false, None, semantic_hints);
+    let column_profiles = analyzer.to_profiles_with_hints(
+        !options.include_statistics(),
+        !options.include_patterns(),
+        options.locale(),
+        semantic_hints,
+    );
     let total_rows = analyzer.total_rows();
 
     let sample_columns = analyzer.create_sample_columns();
@@ -298,7 +317,7 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
 
     let num_columns = column_profiles.len();
 
-    let mut assembler = ReportAssembler::new(
+    Ok(ReportAssembler::new(
         DataSource::File {
             path: url.to_string(),
             format: FileFormat::Parquet,
@@ -312,11 +331,8 @@ pub async fn analyze_parquet_async_http_dims_with_hints(
     .with_row_duplicates(analyzer.row_duplicate_summary())
     .with_quality_data(sample_columns)
     .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
-    .with_semantic_hints(semantic_hints.clone());
-    if let Some(dims) = quality_dimensions {
-        assembler = assembler.with_requested_dimensions(dims);
-    }
-    Ok(assembler.build())
+    .with_analysis_options(options)
+    .build())
 }
 
 #[cfg(test)]

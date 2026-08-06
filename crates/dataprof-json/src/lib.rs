@@ -4,8 +4,8 @@ use std::path::Path;
 
 pub use dataprof_core::JsonErrorPolicy;
 use dataprof_core::{
-    ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, QualityDimension,
-    SemanticHints, TruncationReason, Utf8BomReader,
+    AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
+    QualityDimension, SemanticHints, TruncationReason, Utf8BomReader,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -597,8 +597,9 @@ pub fn analyze_json_from_reader_with_hints<R: BufRead>(
     ),
     DataProfilerError,
 > {
+    let options = AnalysisOptions::default().with_semantic_hints(semantic_hints.clone());
     let (profiles, stats, rows_read, malformed_lines, format, _truncated) =
-        analyze_json_from_reader_full(reader, config, semantic_hints)?;
+        analyze_json_from_reader_full(reader, config, &options)?;
     Ok((profiles, stats, rows_read, malformed_lines, format))
 }
 
@@ -608,7 +609,7 @@ pub fn analyze_json_from_reader_with_hints<R: BufRead>(
 fn analyze_json_from_reader_full<R: BufRead>(
     reader: R,
     config: &JsonParserConfig,
-    semantic_hints: &SemanticHints,
+    options: &AnalysisOptions,
 ) -> Result<
     (
         Vec<ColumnProfile>,
@@ -620,6 +621,7 @@ fn analyze_json_from_reader_full<R: BufRead>(
     ),
     DataProfilerError,
 > {
+    let semantic_hints = options.semantic_hints();
     let mut column_stats = StreamingColumnCollection::new().with_semantic_hints(semantic_hints);
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
@@ -638,9 +640,9 @@ fn analyze_json_from_reader_full<R: BufRead>(
 
     let profiles = profile_builder::profiles_from_streaming_with_hints(
         &column_stats,
-        false,
-        false,
-        None,
+        !options.include_statistics(),
+        !options.include_patterns(),
+        options.locale(),
         semantic_hints,
     );
 
@@ -682,6 +684,22 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     quality_dimensions: Option<&[QualityDimension]>,
     semantic_hints: &SemanticHints,
 ) -> Result<ProfileReport, DataProfilerError> {
+    let options = AnalysisOptions::default()
+        .with_quality_dimensions(quality_dimensions.map(<[_]>::to_vec))
+        .with_semantic_hints(semantic_hints.clone());
+    analyze_json_file_with_options(file_path, config, &options)
+}
+
+/// Analyze a JSON or JSONL file, honouring the caller's full analysis selection.
+///
+/// This is the entry point that carries metric packs and locale as well as
+/// dimensions and hints, so a JSON profile reports exactly the analysis the
+/// caller asked for — the same selection the CSV engines apply.
+pub fn analyze_json_file_with_options(
+    file_path: &Path,
+    config: &JsonParserConfig,
+    options: &AnalysisOptions,
+) -> Result<ProfileReport, DataProfilerError> {
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     let start = std::time::Instant::now();
 
@@ -689,7 +707,7 @@ pub fn analyze_json_file_with_dimensions_and_hints(
     let buf_reader = std::io::BufReader::new(file);
 
     let (column_profiles, column_stats, rows_read, malformed_lines, format, truncated) =
-        analyze_json_from_reader_full(buf_reader, config, semantic_hints)?;
+        analyze_json_from_reader_full(buf_reader, config, options)?;
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -707,16 +725,14 @@ pub fn analyze_json_file_with_dimensions_and_hints(
                     .to_string(),
             });
         }
-        let mut assembler = ReportAssembler::new(
+        return Ok(ReportAssembler::new(
             file_source,
             ExecutionMetadata::new(0, 0, start.elapsed().as_millis()).with_engine("json"),
         )
         .columns(column_profiles)
-        .with_quality_data(HashMap::new());
-        if let Some(dimensions) = quality_dimensions {
-            assembler = assembler.with_requested_dimensions(dimensions.to_vec());
-        }
-        return Ok(assembler.build());
+        .with_quality_data(HashMap::new())
+        .with_analysis_options(options)
+        .build());
     }
 
     let sample_columns = profile_builder::quality_check_samples(&column_stats);
@@ -734,16 +750,13 @@ pub fn analyze_json_file_with_dimensions_and_hints(
         execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
     }
 
-    let mut assembler = ReportAssembler::new(file_source, execution)
+    Ok(ReportAssembler::new(file_source, execution)
         .columns(column_profiles)
         .with_quality_data(sample_columns)
         .with_row_duplicates(column_stats.row_duplicate_summary())
         .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
-        .with_semantic_hints(semantic_hints.clone());
-    if let Some(dimensions) = quality_dimensions {
-        assembler = assembler.with_requested_dimensions(dimensions.to_vec());
-    }
-    Ok(assembler.build())
+        .with_analysis_options(options)
+        .build())
 }
 
 fn map_io_error(file_path: &Path, error: std::io::Error) -> DataProfilerError {

@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_core::{
-    DataFrameLibrary, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    ParquetMetadata, QualityDimension, SemanticHints, TruncationReason,
+    AnalysisOptions, DataFrameLibrary, DataProfilerError, DataSource, ExecutionMetadata,
+    FileFormat, ParquetMetadata, QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 
@@ -147,6 +147,17 @@ pub fn analyze_parquet_bytes(
     quality_dimensions: Option<&[QualityDimension]>,
     semantic_hints: &SemanticHints,
 ) -> Result<ProfileReport, DataProfilerError> {
+    let options = options_from_dims_and_hints(quality_dimensions, semantic_hints);
+    analyze_parquet_bytes_with_options(data, name, config, &options)
+}
+
+/// Like [`analyze_parquet_bytes`], honouring the caller's full analysis selection.
+pub fn analyze_parquet_bytes_with_options(
+    data: Bytes,
+    name: &str,
+    config: &ParquetConfig,
+    options: &AnalysisOptions,
+) -> Result<ProfileReport, DataProfilerError> {
     let byte_len = data.len() as u64;
     analyze_parquet_chunks(
         data,
@@ -155,9 +166,18 @@ pub fn analyze_parquet_bytes(
             byte_len,
         },
         config,
-        quality_dimensions,
-        semantic_hints,
+        options,
     )
+}
+
+/// Widen the legacy dimensions-and-hints parameter pair into the full selection.
+fn options_from_dims_and_hints(
+    quality_dimensions: Option<&[QualityDimension]>,
+    semantic_hints: &SemanticHints,
+) -> AnalysisOptions {
+    AnalysisOptions::default()
+        .with_quality_dimensions(quality_dimensions.map(<[_]>::to_vec))
+        .with_semantic_hints(semantic_hints.clone())
 }
 
 /// Where the Parquet bytes came from. The reader and every statistic are shared;
@@ -172,6 +192,20 @@ pub fn analyze_parquet_with_config_dims_and_hints(
     config: &ParquetConfig,
     quality_dimensions: Option<&[QualityDimension]>,
     semantic_hints: &SemanticHints,
+) -> Result<ProfileReport, DataProfilerError> {
+    let options = options_from_dims_and_hints(quality_dimensions, semantic_hints);
+    analyze_parquet_with_options(file_path, config, &options)
+}
+
+/// Analyze a Parquet file, honouring the caller's full analysis selection.
+///
+/// This is the entry point that carries metric packs and locale as well as
+/// dimensions and hints, so a Parquet profile reports exactly the analysis the
+/// caller asked for — the same selection the CSV engines apply.
+pub fn analyze_parquet_with_options(
+    file_path: &Path,
+    config: &ParquetConfig,
+    options: &AnalysisOptions,
 ) -> Result<ProfileReport, DataProfilerError> {
     let file = File::open(file_path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -191,8 +225,7 @@ pub fn analyze_parquet_with_config_dims_and_hints(
             size_bytes: file_size_bytes,
         },
         config,
-        quality_dimensions,
-        semantic_hints,
+        options,
     )
 }
 
@@ -200,9 +233,9 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
     chunks: R,
     origin: ParquetOrigin,
     config: &ParquetConfig,
-    quality_dimensions: Option<&[QualityDimension]>,
-    semantic_hints: &SemanticHints,
+    options: &AnalysisOptions,
 ) -> Result<ProfileReport, DataProfilerError> {
+    let semantic_hints = options.semantic_hints();
     let start = std::time::Instant::now();
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(chunks).map_err(|error| {
@@ -252,7 +285,12 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
         analyzer.process_batch(&batch)?;
     }
 
-    let column_profiles = analyzer.to_profiles_with_hints(false, false, None, semantic_hints);
+    let column_profiles = analyzer.to_profiles_with_hints(
+        !options.include_statistics(),
+        !options.include_patterns(),
+        options.locale(),
+        semantic_hints,
+    );
     let total_rows = analyzer.total_rows();
     let sample_columns = analyzer.create_sample_columns();
     let scan_time_ms = start.elapsed().as_millis();
@@ -298,16 +336,13 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
         },
     };
 
-    let mut assembler = ReportAssembler::new(data_source, execution)
+    Ok(ReportAssembler::new(data_source, execution)
         .columns(column_profiles)
         .with_row_duplicates(analyzer.row_duplicate_summary())
         .with_quality_data(sample_columns)
         .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
-        .with_semantic_hints(semantic_hints.clone());
-    if let Some(dimensions) = quality_dimensions {
-        assembler = assembler.with_requested_dimensions(dimensions.to_vec());
-    }
-    Ok(assembler.build())
+        .with_analysis_options(options)
+        .build())
 }
 
 #[cfg(test)]
