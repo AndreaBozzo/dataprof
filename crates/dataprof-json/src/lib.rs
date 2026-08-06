@@ -13,19 +13,33 @@ use dataprof_runtime::{
 use serde::Deserialize;
 use serde_json::Value;
 
-/// JSON/JSONL format hint.
+/// Which grammar a JSON source is read with.
+///
+/// The two are deliberately distinct: whitespace is insignificant inside a
+/// standard JSON document and load-bearing in JSONL, so one input cannot be
+/// valid under both readings and mean the same thing. Callers pick with
+/// `format="json"` / `format="jsonl"`, or by file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonFormat {
-    /// Standard JSON array of objects (`[{...}, {...}]`).
-    JsonArray,
-    /// JSON Lines — one JSON object per line.
+    /// A standard JSON document, in either of the two shapes that carry
+    /// records: an array of objects (`[{...}, {...}]`), or a single object
+    /// (`{...}`) as one record. Values may span lines and be pretty-printed,
+    /// and exactly one document must fill the whole input.
+    Json,
+    /// JSON Lines — one record per physical line. A record may not span lines,
+    /// and a line may not hold more than one value.
     Jsonl,
 }
 
 /// Configuration for JSON/JSONL parsing and scanning.
 #[derive(Debug, Clone, Default)]
 pub struct JsonParserConfig {
-    /// Force a specific format (None = auto-detect from content).
+    /// The grammar to read with. `None` detects it from the first byte, which
+    /// resolves `[` to [`JsonFormat::Json`] and everything else to
+    /// [`JsonFormat::Jsonl`] — a leading `{` opens both a JSON object document
+    /// and a JSONL file, so callers that know which they have (from the file
+    /// extension or an explicit `format=`) should say so rather than rely on
+    /// detection.
     pub format: Option<JsonFormat>,
     /// Maximum rows to process (None = all rows).
     pub max_rows: Option<usize>,
@@ -46,7 +60,7 @@ impl JsonParserConfig {
         self
     }
 
-    /// Force JSONL format.
+    /// Read as JSON Lines: one record per physical line.
     pub fn jsonl() -> Self {
         Self {
             format: Some(JsonFormat::Jsonl),
@@ -54,12 +68,19 @@ impl JsonParserConfig {
         }
     }
 
-    /// Force JSON array format.
-    pub fn json_array() -> Self {
+    /// Read as a standard JSON document: an array of records, or a single
+    /// object as one record.
+    pub fn json_document() -> Self {
         Self {
-            format: Some(JsonFormat::JsonArray),
+            format: Some(JsonFormat::Json),
             ..Default::default()
         }
+    }
+
+    /// Set the grammar explicitly.
+    pub fn with_format(mut self, format: JsonFormat) -> Self {
+        self.format = Some(format);
+        self
     }
 }
 
@@ -88,8 +109,13 @@ pub struct JsonScanSummary {
 
 /// Scan JSON or JSONL input and invoke `on_object` for each object record.
 ///
-/// - **JSONL**: scans one top-level JSON value at a time from the reader.
-/// - **JSON array**: streams array elements without buffering the entire input.
+/// - **JSONL**: one record per physical line. A record may not span lines and a
+///   line may not hold more than one value, so a concatenation whose delimiter
+///   was lost is reported rather than read as several clean records. Blank lines
+///   are separators: neither records nor errors.
+/// - **JSON**: one standard document. An array of objects streams element by
+///   element without buffering the whole input; a single object is read whole
+///   and is one record, which is why it may be pretty-printed across lines.
 ///
 /// # Record policy
 ///
@@ -110,8 +136,11 @@ where
 {
     let mut reader = Utf8BomReader::new(reader).map_err(DataProfilerError::from)?;
     let format = match config.format {
-        Some(JsonFormat::JsonArray) => FileFormat::Json,
+        Some(JsonFormat::Json) => FileFormat::Json,
         Some(JsonFormat::Jsonl) => FileFormat::Jsonl,
+        // A leading `{` is the first byte of both a JSON object document and a
+        // JSONL file, so detection can only resolve the array case and has to
+        // fall back to JSONL. Callers that know better pass `format`.
         None => match consume_leading_whitespace(&mut reader)? {
             Some(b'[') => FileFormat::Json,
             _ => FileFormat::Jsonl,
@@ -123,83 +152,70 @@ where
     let mut truncated = false;
 
     match format {
-        FileFormat::Jsonl => loop {
-            if let Some(max) = config.max_rows
-                && rows_read >= max
-            {
-                // Reaching the cap is not truncation unless a record actually
-                // remains: a file with exactly `max_rows` rows was read in full.
-                truncated = consume_leading_whitespace(&mut reader)?.is_some();
-                break;
-            }
-
-            // `serde_json` classifies both a clean end of input and an
-            // incomplete trailing value as `Category::Eof`. Check whether a
-            // non-whitespace value actually starts here so only the former is
-            // treated as normal exhaustion.
-            let Some(first) = consume_leading_whitespace(&mut reader)? else {
-                break;
-            };
-
-            match read_json_record(&mut reader, first)? {
-                JsonRecord::Object(obj) => {
-                    on_object(&obj);
-                    rows_read += 1;
-                }
-                JsonRecord::NonObject(kind) => {
-                    if config.error_policy == JsonErrorPolicy::Strict {
-                        return Err(non_object_record_error(
-                            kind,
-                            rows_read + malformed_lines + 1,
-                        ));
-                    }
-                    malformed_lines += 1;
-                }
-                JsonRecord::Malformed(err) => {
-                    if config.error_policy == JsonErrorPolicy::Strict {
-                        return Err(malformed_record_error(&err));
-                    }
-                    malformed_lines += 1;
-                    if err.classify() == serde_json::error::Category::Eof {
-                        break;
-                    }
-                    skip_to_next_line(&mut reader)?;
-                }
-            }
-        },
-        FileFormat::Json => {
-            let mut found_array = false;
+        // JSONL is line-delimited: exactly one record per non-blank physical
+        // line. Reading it as a whitespace-delimited stream of values instead
+        // made `{"a":1}{"b":2}` — a concatenation with the delimiter lost —
+        // profile as two clean rows, which is precisely the corruption a
+        // profiler exists to surface.
+        FileFormat::Jsonl => {
+            let mut line = String::new();
+            let mut line_number = 0;
             loop {
-                let mut consume = 0;
+                if let Some(max) = config.max_rows
+                    && rows_read >= max
                 {
-                    let buf = reader.fill_buf().map_err(DataProfilerError::from)?;
-                    if buf.is_empty() {
-                        break;
-                    }
-                    for &byte in buf {
-                        consume += 1;
-                        if byte == b'[' {
-                            found_array = true;
-                            break;
-                        } else if !byte.is_ascii_whitespace() {
-                            break;
-                        }
-                    }
-                }
-                reader.consume(consume);
-                if found_array || consume == 0 {
+                    // Reaching the cap is not truncation unless a record
+                    // actually remains: a file with exactly `max_rows` records
+                    // was read in full. Blank lines are not records.
+                    truncated = next_record_line(&mut reader, &mut line, &mut line_number)?;
                     break;
                 }
+
+                if !next_record_line(&mut reader, &mut line, &mut line_number)? {
+                    break;
+                }
+
+                match read_jsonl_line(&line) {
+                    JsonRecord::Object(obj) => {
+                        on_object(&obj);
+                        rows_read += 1;
+                    }
+                    JsonRecord::NonObject(kind) => {
+                        if config.error_policy == JsonErrorPolicy::Strict {
+                            return Err(non_object_record_error(
+                                kind,
+                                rows_read + malformed_lines + 1,
+                            ));
+                        }
+                        malformed_lines += 1;
+                    }
+                    JsonRecord::Malformed(err) => {
+                        if config.error_policy == JsonErrorPolicy::Strict {
+                            return Err(malformed_jsonl_record_error(line_number, &err));
+                        }
+                        malformed_lines += 1;
+                    }
+                }
             }
+        }
+        FileFormat::Json => {
+            // Which of the two record-carrying shapes this document is. The
+            // first non-whitespace byte decides, and is left unconsumed so the
+            // object branch still sees the value it opens.
+            let found_array = consume_leading_whitespace(&mut reader)? == Some(b'[');
 
             if !found_array {
-                if config.format.is_some() {
-                    return Err(DataProfilerError::JsonParsingError {
-                        message: "Expected JSON array (starts with '[') but input does not match"
-                            .to_string(),
-                    });
-                }
+                // The other shape a standard JSON document takes: a single
+                // object, which is one record. It may be pretty-printed across
+                // lines, which is why this is not the JSONL grammar.
+                let (object_rows, object_malformed) =
+                    scan_single_json_object(&mut reader, config, &mut on_object)?;
+                rows_read += object_rows;
+                malformed_lines += object_malformed;
             } else {
+                // The array loop starts after the opening bracket.
+                consume_peeked(&mut reader)?;
+
                 let mut expect_value = true;
                 let mut allow_end = true;
                 let mut array_closed = false;
@@ -229,7 +245,7 @@ where
                                 drain_remainder = true;
                                 break;
                             }
-                            reader.consume(1);
+                            consume_peeked(&mut reader)?;
                             array_closed = true;
                             break;
                         }
@@ -284,12 +300,12 @@ where
                     } else {
                         match next {
                             b',' => {
-                                reader.consume(1);
+                                consume_peeked(&mut reader)?;
                                 expect_value = true;
                                 allow_end = false;
                             }
                             b']' => {
-                                reader.consume(1);
+                                consume_peeked(&mut reader)?;
                                 array_closed = true;
                                 break;
                             }
@@ -329,6 +345,97 @@ where
         format,
         truncated,
     })
+}
+
+/// Read the next line that holds a record into `line`, skipping blank ones.
+///
+/// Returns whether a record line was found. Blank lines are separators, not
+/// records: they are skipped without counting as rows or as errors. `line_number`
+/// counts every physical line read, blank ones included, so a diagnostic points
+/// at the line the user would open the file to.
+fn next_record_line<R: BufRead>(
+    reader: &mut R,
+    line: &mut String,
+    line_number: &mut usize,
+) -> Result<bool, DataProfilerError> {
+    loop {
+        line.clear();
+        let read = reader.read_line(line).map_err(DataProfilerError::from)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        *line_number += 1;
+        if !line.trim().is_empty() {
+            return Ok(true);
+        }
+    }
+}
+
+/// Parse one JSONL line as exactly one JSON value.
+///
+/// `serde_json::from_str` requires the value to fill the whole input, so a line
+/// carrying two adjacent or space-separated values is a malformed record rather
+/// than two clean ones — the boundary rule that separates JSONL from a stream of
+/// JSON values.
+fn read_jsonl_line(line: &str) -> JsonRecord {
+    match serde_json::from_str::<Value>(line.trim()) {
+        Ok(Value::Object(obj)) => JsonRecord::Object(obj),
+        Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+        Err(err) => JsonRecord::Malformed(err),
+    }
+}
+
+/// Read a whole-input single JSON object as one record.
+///
+/// Returns `(rows_read, malformed)`. Anything that is not exactly one object
+/// filling the input is an error under [`JsonErrorPolicy::Strict`] and a counted
+/// malformed record otherwise, so a truncated or concatenated document never
+/// profiles as clean.
+fn scan_single_json_object<R, F>(
+    reader: &mut R,
+    config: &JsonParserConfig,
+    on_object: &mut F,
+) -> Result<(usize, usize), DataProfilerError>
+where
+    R: BufRead,
+    F: FnMut(&JsonObject),
+{
+    let mut text = String::new();
+    reader
+        .read_to_string(&mut text)
+        .map_err(DataProfilerError::from)?;
+
+    if text.trim().is_empty() {
+        return Ok((0, 0));
+    }
+
+    // A row cap of zero asks for no records, so the document is not read. It is
+    // still well-formed, so this is not a malformed result — but note the report
+    // does not carry a truncation reason either, because the `rows_read == 0`
+    // path in `analyze_json_file_with_options` returns before applying one. That
+    // gap is shared by all three shapes and is tracked separately.
+    if config.max_rows == Some(0) {
+        return Ok((0, 0));
+    }
+
+    match serde_json::from_str::<Value>(text.trim()) {
+        Ok(Value::Object(obj)) => {
+            on_object(&obj);
+            Ok((1, 0))
+        }
+        Ok(value) => {
+            if config.error_policy == JsonErrorPolicy::Strict {
+                return Err(non_object_record_error(json_value_kind(&value), 1));
+            }
+            Ok((0, 1))
+        }
+        Err(err) => {
+            if config.error_policy == JsonErrorPolicy::Strict {
+                return Err(json_document_error(&err));
+            }
+            Ok((0, 1))
+        }
+    }
 }
 
 /// One record read from a JSON or JSONL source.
@@ -408,6 +515,20 @@ fn is_json_number_byte(byte: u8) -> bool {
     byte.is_ascii_digit() || matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E')
 }
 
+/// Consume the byte [`consume_leading_whitespace`] just reported, along with the
+/// whitespace it looked past.
+///
+/// That function only peeks — it leaves the whitespace queued so serde keeps its
+/// line and column context — so consuming one byte would eat a space rather than
+/// the delimiter. Getting this wrong made a pretty-printed JSON array report a
+/// phantom malformed record, because the `]` survived the consume and then
+/// looked like content after the closing bracket.
+fn consume_peeked<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
+    skip_ascii_whitespace(reader)?;
+    reader.consume(1);
+    Ok(())
+}
+
 /// Advance the reader past any ASCII whitespace at its current position.
 fn skip_ascii_whitespace<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
     loop {
@@ -461,9 +582,42 @@ fn malformed_record_error(err: &serde_json::Error) -> DataProfilerError {
     }
 }
 
+/// Build a strict-mode parse error for a JSONL record, located by its physical
+/// line.
+///
+/// Each line is parsed on its own, so the decoder's own line number is always 1
+/// and would be misleading; the column it reports is within the line and so is
+/// also the column in the file. The record's text is never included. Matches the
+/// phrasing the Python bytes reader uses for the same failure.
+fn malformed_jsonl_record_error(line: usize, err: &serde_json::Error) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!(
+            "malformed JSON record on line {line}, column {}: a JSONL record must be one complete JSON value on one line",
+            err.column()
+        ),
+    }
+}
+
 fn malformed_array_error(message: &str) -> DataProfilerError {
     DataProfilerError::JsonParsingError {
         message: format!("malformed JSON array: {message}"),
+    }
+}
+
+/// Build a strict-mode error for a standard JSON document that is not exactly
+/// one value.
+///
+/// The most common cause is JSONL read with the JSON grammar — several objects
+/// back to back parse as one value plus trailing characters — so the message
+/// names the option that would read it correctly.
+fn json_document_error(err: &serde_json::Error) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!(
+            // One source line on purpose: rustfmt may join a `\`-continued
+            // literal and leave its indentation inside the string, which silently
+            // corrupted this very message once.
+            "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
+        ),
     }
 }
 
@@ -499,14 +653,6 @@ fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, 
 
         reader.consume(bytes_to_consume);
     }
-}
-
-fn skip_to_next_line<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
-    let mut discarded = Vec::new();
-    reader
-        .read_until(b'\n', &mut discarded)
-        .map_err(DataProfilerError::from)?;
-    Ok(())
 }
 
 /// Convert a JSON [`Value`] to a flat string for column storage.
@@ -700,6 +846,13 @@ pub fn analyze_json_file_with_options(
     config: &JsonParserConfig,
     options: &AnalysisOptions,
 ) -> Result<ProfileReport, DataProfilerError> {
+    // An explicit grammar wins; otherwise the file name gets a say before
+    // content sniffing, which cannot tell a JSON object from a JSONL stream.
+    let mut config = config.clone();
+    if config.format.is_none() {
+        config.format = grammar_for_extension(file_path);
+    }
+    let config = &config;
     let metadata = std::fs::metadata(file_path).map_err(|error| map_io_error(file_path, error))?;
     let start = std::time::Instant::now();
 
@@ -708,6 +861,7 @@ pub fn analyze_json_file_with_options(
 
     let (column_profiles, column_stats, rows_read, malformed_lines, format, truncated) =
         analyze_json_from_reader_full(buf_reader, config, options)?;
+    let read_as_json_document = format == FileFormat::Json;
 
     let file_source = DataSource::File {
         path: file_path.display().to_string(),
@@ -719,10 +873,19 @@ pub fn analyze_json_file_with_options(
 
     if rows_read == 0 {
         if malformed_lines > 0 {
+            // Nothing parsed under the JSON grammar most often means the source
+            // is JSONL, so say so here too: under the default skip policy this
+            // is the only error the caller sees.
+            let hint = if read_as_json_document {
+                ". A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
+            } else {
+                ""
+            };
             return Err(DataProfilerError::JsonParsingError {
-                message: "No valid JSON records found in file \
-                          (every record was malformed or not a JSON object)"
-                    .to_string(),
+                message: format!(
+                    "No valid JSON records found in file \
+                     (every record was malformed or not a JSON object){hint}"
+                ),
             });
         }
         return Ok(ReportAssembler::new(
@@ -759,6 +922,24 @@ pub fn analyze_json_file_with_options(
         .build())
 }
 
+/// The grammar a file name advertises, if it advertises one.
+///
+/// Content sniffing resolves a leading `[` on its own, but not a leading `{`:
+/// that is the first byte of both a JSON object document and a JSONL file. The
+/// extension is the evidence that separates them, and a `.json` file holding one
+/// pretty-printed object is an ordinary thing to profile. `None` means the name
+/// says nothing and the content decides.
+fn grammar_for_extension(file_path: &Path) -> Option<JsonFormat> {
+    let extension = file_path.extension().and_then(|ext| ext.to_str())?;
+    if extension.eq_ignore_ascii_case("json") {
+        Some(JsonFormat::Json)
+    } else if extension.eq_ignore_ascii_case("jsonl") || extension.eq_ignore_ascii_case("ndjson") {
+        Some(JsonFormat::Jsonl)
+    } else {
+        None
+    }
+}
+
 fn map_io_error(file_path: &Path, error: std::io::Error) -> DataProfilerError {
     if error.kind() == std::io::ErrorKind::NotFound {
         DataProfilerError::FileNotFound {
@@ -775,8 +956,19 @@ mod tests {
     use std::io::{Cursor, Write};
     use tempfile::NamedTempFile;
 
+    /// A temp file with no extension, so `analyze_json_file` falls back to the
+    /// JSONL grammar the way an unnamed stream does.
     fn write_file(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{}", content).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    /// A temp file named `.json`, so `analyze_json_file` reads it as a standard
+    /// JSON document — the grammar the extension advertises.
+    fn write_json_file(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::with_suffix(".json").unwrap();
         write!(file, "{}", content).unwrap();
         file.flush().unwrap();
         file
@@ -895,13 +1087,14 @@ mod tests {
         ];
 
         for (data, expected_rows, case) in cases {
-            let skip = JsonParserConfig::json_array();
+            let skip = JsonParserConfig::json_document();
             let summary =
                 scan_json_from_reader(Cursor::new(data), &skip, |_| {}).expect("tolerant scan");
             assert_eq!(summary.rows_read, expected_rows, "{case}");
             assert_eq!(summary.malformed_lines, 1, "{case}");
 
-            let strict = JsonParserConfig::json_array().with_error_policy(JsonErrorPolicy::Strict);
+            let strict =
+                JsonParserConfig::json_document().with_error_policy(JsonErrorPolicy::Strict);
             let err = scan_json_from_reader(Cursor::new(data), &strict, |_| {})
                 .expect_err("strict mode must reject invalid array grammar");
             assert!(
@@ -916,7 +1109,7 @@ mod tests {
     #[test]
     fn test_json_array_max_rows_does_not_validate_unread_values() {
         let data = br#"[{"x":1},not-valid-json"#;
-        let config = JsonParserConfig::json_array().with_max_rows(1);
+        let config = JsonParserConfig::json_document().with_max_rows(1);
         let summary = scan_json_from_reader(Cursor::new(data.as_ref()), &config, |_| {}).unwrap();
 
         assert_eq!(summary.rows_read, 1);
@@ -957,8 +1150,13 @@ mod tests {
         assert_eq!(rows, 2);
     }
 
+    /// A pretty-printed root object is one record under the JSON grammar and a
+    /// malformed record under JSONL (#486). It cannot be both: whitespace is
+    /// insignificant in a JSON document and is the record delimiter in JSONL, so
+    /// reading a multi-line object as JSONL would mean each of its lines is a
+    /// record — none of which is valid JSON on its own.
     #[test]
-    fn test_scan_pretty_printed_root_object_is_one_jsonl_row() {
+    fn test_pretty_printed_root_object_is_one_row_under_the_json_grammar() {
         let data = br#"{
     "type": "FeatureCollection",
     "features": [
@@ -970,15 +1168,33 @@ mod tests {
 
         let summary = scan_json_from_reader(
             Cursor::new(data.as_ref()),
-            &JsonParserConfig::default(),
+            &JsonParserConfig::json_document(),
             |obj| object_field_counts.push(obj.len()),
         )
         .unwrap();
 
-        assert_eq!(summary.format, FileFormat::Jsonl);
+        assert_eq!(summary.format, FileFormat::Json);
         assert_eq!(summary.rows_read, 1);
         assert_eq!(summary.malformed_lines, 0);
         assert_eq!(object_field_counts, vec![2]);
+    }
+
+    #[test]
+    fn test_pretty_printed_root_object_is_not_valid_jsonl() {
+        let data = br#"{
+    "type": "FeatureCollection"
+}"#;
+        let err = scan_json_from_reader(
+            Cursor::new(data.as_ref()),
+            &JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict),
+            |_| {},
+        )
+        .expect_err("a record spanning lines is not JSONL");
+
+        assert!(
+            err.to_string().contains("malformed JSON record"),
+            "{err}, expected the malformed category"
+        );
     }
 
     /// Every JSON value that is not an object, so none of them can be a row.
@@ -1020,7 +1236,7 @@ mod tests {
 
             let summary = scan_json_from_reader(
                 Cursor::new(data.as_bytes()),
-                &JsonParserConfig::json_array(),
+                &JsonParserConfig::json_document(),
                 |_| rows += 1,
             )
             .unwrap();
@@ -1040,7 +1256,7 @@ mod tests {
                     format!("{{\"id\":1}}\n{value}\n{{\"id\":2}}\n"),
                 ),
                 (
-                    JsonParserConfig::json_array(),
+                    JsonParserConfig::json_document(),
                     format!("[{{\"id\":1}}, {value}, {{\"id\":2}}]"),
                 ),
             ] {
@@ -1065,7 +1281,7 @@ mod tests {
 
         let summary = scan_json_from_reader(
             Cursor::new(data.as_ref()),
-            &JsonParserConfig::json_array(),
+            &JsonParserConfig::json_document(),
             |_| rows += 1,
         )
         .unwrap();
@@ -1103,16 +1319,39 @@ mod tests {
     }
 
     #[test]
-    fn test_forced_json_array_requires_opening_bracket() {
+    /// The JSON grammar accepts both shapes that carry records, so a bare object
+    /// is one row rather than an error (#486).
+    fn test_json_grammar_reads_a_bare_object_as_one_row() {
         let data = br#"{"x":1}"#;
+        let mut rows = 0;
+        let summary = scan_json_from_reader(
+            Cursor::new(data.as_ref()),
+            &JsonParserConfig::json_document(),
+            |_| rows += 1,
+        )
+        .unwrap();
+
+        assert_eq!(summary.rows_read, 1);
+        assert_eq!(summary.malformed_lines, 0);
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    /// Several objects back to back are not a JSON document. The error names
+    /// the option that reads them, because this is what a JSONL file looks like
+    /// when it is read with the wrong grammar.
+    fn test_json_grammar_rejects_concatenated_objects() {
+        let data = br#"{"x":1}{"x":2}"#;
         let err = scan_json_from_reader(
             Cursor::new(data.as_ref()),
-            &JsonParserConfig::json_array(),
+            &JsonParserConfig::json_document().with_error_policy(JsonErrorPolicy::Strict),
             |_| {},
         )
-        .expect_err("forced json array should reject non-array input");
+        .expect_err("two objects are not one JSON document");
 
-        assert!(err.to_string().contains("Expected JSON array"));
+        let message = err.to_string();
+        assert!(message.contains("malformed JSON document"), "{message}");
+        assert!(message.contains("format=\"jsonl\""), "{message}");
     }
 
     #[test]
@@ -1473,7 +1712,7 @@ mod tests {
     fn test_bom_prefixed_file_preserves_source_size() {
         let data = b"\xEF\xBB\xBF[{\"x\":1}]";
         let json = write_bytes(data);
-        let report = analyze_json_file(json.path(), &JsonParserConfig::json_array()).unwrap();
+        let report = analyze_json_file(json.path(), &JsonParserConfig::json_document()).unwrap();
 
         assert_eq!(report.execution.rows_processed, 1);
         assert!(matches!(
@@ -1550,7 +1789,8 @@ mod tests {
 
     #[test]
     fn test_single_root_object_via_analyze_json_file() {
-        let file = write_file(r#"{"type":"FeatureCollection","features":[{"id":1},{"id":2}]}"#);
+        let file =
+            write_json_file(r#"{"type":"FeatureCollection","features":[{"id":1},{"id":2}]}"#);
         let config = JsonParserConfig::default();
         let report = analyze_json_file(file.path(), &config).unwrap();
 
@@ -1568,11 +1808,13 @@ mod tests {
   ]
 }"#;
         let cursor = Cursor::new(data.as_ref());
-        let config = JsonParserConfig::default();
+        // A reader has no file name, so the grammar cannot be inferred and is
+        // named explicitly; `analyze_json_file` takes it from the extension.
+        let config = JsonParserConfig::json_document();
 
         let (profiles, _stats, rows, malformed, format) =
             analyze_json_from_reader(cursor, &config).unwrap();
-        assert_eq!(format, FileFormat::Jsonl);
+        assert_eq!(format, FileFormat::Json);
         assert_eq!(rows, 1);
         assert_eq!(malformed, 0);
         assert_eq!(profiles.len(), 2);
@@ -1580,7 +1822,7 @@ mod tests {
 
     #[test]
     fn test_single_root_object_pretty_printed_via_analyze_json_file() {
-        let file = write_file(
+        let file = write_json_file(
             "{\n  \"type\": \"FeatureCollection\",\n  \"features\": [\n    {\"id\": 1},\n    {\"id\": 2}\n  ]\n}\n",
         );
         let config = JsonParserConfig::default();

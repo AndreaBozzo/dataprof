@@ -63,6 +63,17 @@ fn peek_non_whitespace<R: std::io::BufRead>(
     }
 }
 
+/// Build a strict-mode error for a standard JSON document that is not exactly
+/// one value. Mirrors `dataprof_json::json_document_error`.
+fn json_document_error(err: &serde_json::Error) -> DataProfilerError {
+    DataProfilerError::JsonParsingError {
+        message: format!(
+            // One source line on purpose: see dataprof_json::json_document_error.
+            "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
+        ),
+    }
+}
+
 fn malformed_json_array_error(message: &str) -> DataProfilerError {
     DataProfilerError::JsonParsingError {
         message: format!("malformed JSON array: {message}"),
@@ -82,6 +93,19 @@ enum JsonRecord {
     NonObject(&'static str),
     /// The bytes are not valid JSON.
     Malformed(serde_json::Error),
+}
+
+/// Parse one JSONL line as exactly one JSON value.
+///
+/// `serde_json::from_str` requires the value to fill the whole input, so a line
+/// carrying two adjacent or space-separated values is a malformed record rather
+/// than two clean ones. Mirrors `dataprof_json::read_jsonl_line`.
+fn read_jsonl_line(line: &str) -> JsonRecord {
+    match serde_json::from_str::<serde_json::Value>(line.trim()) {
+        Ok(serde_json::Value::Object(obj)) => JsonRecord::Object(obj),
+        Ok(value) => JsonRecord::NonObject(json_value_kind(&value)),
+        Err(err) => JsonRecord::Malformed(err),
+    }
 }
 
 /// Read one JSON value and leave the reader positioned immediately after it.
@@ -732,33 +756,36 @@ impl AsyncStreamingProfiler {
 
         match format {
             FileFormat::Jsonl => {
-                // True streaming: deserialize one record at a time so a malformed
-                // record can be recovered from (skip to next line) or reported,
-                // matching the sync `scan_json_from_reader` contract.
+                // True streaming, one physical line at a time: JSONL is
+                // line-delimited, so a line is exactly one record and a record
+                // never spans lines. This is the same grammar
+                // `dataprof_json::scan_json_from_reader` applies, which is what
+                // keeps a payload profiling identically over either transport.
+                let mut line = String::new();
+                // Counts every physical line, blank ones included, so a
+                // diagnostic points at the line the user would open.
+                let mut line_number = 0usize;
                 loop {
-                    // Distinguish clean exhaustion from an incomplete trailing
-                    // value. serde reports both as `Category::Eof`, but only an
-                    // empty/whitespace-only remainder is a clean end of stream.
-                    let first = loop {
-                        let whitespace_only_len = {
-                            let buf = buf_reader.fill_buf().map_err(DataProfilerError::from)?;
-                            if buf.is_empty() {
-                                break None;
-                            }
-                            match buf.iter().find(|byte| !byte.is_ascii_whitespace()) {
-                                // Leave a mixed whitespace/value buffer untouched
-                                // so serde retains its line and column context.
-                                Some(&byte) => break Some(byte),
-                                None => buf.len(),
-                            }
-                        };
-                        buf_reader.consume(whitespace_only_len);
+                    // Blank lines are separators, not records.
+                    let found = loop {
+                        line.clear();
+                        let read = buf_reader
+                            .read_line(&mut line)
+                            .map_err(DataProfilerError::from)?;
+                        if read == 0 {
+                            break false;
+                        }
+                        line_number += 1;
+                        if !line.trim().is_empty() {
+                            break true;
+                        }
                     };
-                    let Some(first) = first else {
+                    if !found {
                         break;
-                    };
+                    }
+                    bytes_in_chunk += line.len() as u64;
 
-                    match read_json_record(&mut buf_reader, first)? {
+                    match read_jsonl_line(&line) {
                         JsonRecord::Object(obj) => {
                             let row = process_object(
                                 &obj,
@@ -796,32 +823,72 @@ impl AsyncStreamingProfiler {
                         }
                         JsonRecord::Malformed(e) => {
                             if error_policy == JsonErrorPolicy::Strict {
+                                // Each line is parsed on its own, so the
+                                // decoder's own line number is always 1 and
+                                // would mislead; its column is within the line
+                                // and so is also the column in the source.
                                 return Err(DataProfilerError::JsonParsingError {
-                                    message: format!("malformed JSON record: {e}"),
+                                    message: format!(
+                                        "malformed JSON record on line {line_number}, column {}: a JSONL record must be one complete JSON value on one line",
+                                        e.column()
+                                    ),
                                 });
                             }
+                            // The offending line has already been consumed in
+                            // full, so the next read starts at the next record.
                             malformed_records += 1;
-                            if e.classify() == serde_json::error::Category::Eof {
-                                break;
-                            }
-                            // Recover by discarding the rest of the offending line.
-                            let mut discard = Vec::new();
-                            buf_reader
-                                .read_until(b'\n', &mut discard)
-                                .map_err(DataProfilerError::from)?;
                         }
                     }
                 }
             }
-            _ => {
-                // JSON array: stream elements efficiently
+            _ => 'document: {
+                // A standard JSON document takes either of the two shapes that
+                // carry records. An array streams element by element; a single
+                // object is one record and is read whole, which is why it may be
+                // pretty-printed across lines.
                 let (opening, whitespace) = peek_non_whitespace(&mut buf_reader)?;
                 bytes_in_chunk += whitespace as u64;
                 if opening != Some(b'[') {
-                    return Err(DataProfilerError::JsonParsingError {
-                        message: "Expected JSON array (starts with '[') but input does not match"
-                            .to_string(),
-                    });
+                    use std::io::Read as _;
+                    let mut text = String::new();
+                    buf_reader
+                        .read_to_string(&mut text)
+                        .map_err(DataProfilerError::from)?;
+                    bytes_in_chunk += text.len() as u64;
+
+                    if !text.trim().is_empty() {
+                        match serde_json::from_str::<serde_json::Value>(text.trim()) {
+                            Ok(serde_json::Value::Object(obj)) => {
+                                let row = process_object(
+                                    &obj,
+                                    &mut known_columns,
+                                    &mut known_columns_set,
+                                    headers_sent,
+                                );
+                                current_chunk.push(row);
+                                emitted_records += 1;
+                            }
+                            Ok(value) => {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(non_object_record_error(
+                                        json_value_kind(&value),
+                                        1,
+                                    ));
+                                }
+                                malformed_records += 1;
+                            }
+                            Err(e) => {
+                                if error_policy == JsonErrorPolicy::Strict {
+                                    return Err(json_document_error(&e));
+                                }
+                                malformed_records += 1;
+                            }
+                        }
+                    }
+
+                    // Fall out to the shared tail so the "nothing profileable"
+                    // guard and the final flush still run.
+                    break 'document;
                 }
                 buf_reader.consume(1);
                 bytes_in_chunk += 1;
@@ -1348,15 +1415,23 @@ mod tests {
         assert!(progress_count.load(std::sync::atomic::Ordering::Relaxed) >= 2);
     }
 
+    /// A bare object is the second shape a standard JSON document takes, so it
+    /// is one record rather than an error (#486) — and a record with no fields
+    /// is still a row (#533), on this transport as on every other.
     #[tokio::test]
-    async fn test_unsupported_format_rejected() {
+    async fn test_json_document_reads_a_bare_object_as_one_row() {
         let source = BytesSource::new(
             bytes::Bytes::from_static(b"{}"),
             AsyncSourceInfo::new("json-test", FileFormat::Json),
         );
-        let profiler = AsyncStreamingProfiler::new();
-        let result = profiler.analyze_stream(source).await;
-        assert!(result.is_err());
+        let report = AsyncStreamingProfiler::new()
+            .analyze_stream(source)
+            .await
+            .expect("a bare object is a valid JSON document");
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.execution.error_count, 0);
+        assert!(report.column_profiles.is_empty());
     }
 
     #[tokio::test]

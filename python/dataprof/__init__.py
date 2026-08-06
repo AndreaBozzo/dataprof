@@ -1056,6 +1056,12 @@ def profile_file(
             columnar and async engines. Bounds retained per-column state;
             it does not drop rows.
         format: Override format detection ("csv", "json", "jsonl", "parquet").
+            "json" reads one standard JSON document — an array of objects, or
+            one object as a single record — which may be pretty-printed across
+            lines. "jsonl" reads one record per physical line: a record may not
+            span lines, and a line may not hold more than one value. Byte
+            sources have no extension to read the grammar from, so they require
+            this argument.
         max_rows: Maximum rows to process before stopping.
         csv_delimiter: Single-character CSV delimiter (default: detected
             from the data).
@@ -1171,6 +1177,12 @@ def profile(
             columnar and async engines. Bounds retained per-column state;
             it does not drop rows.
         format: Override format detection ("csv", "json", "jsonl", "parquet").
+            "json" reads one standard JSON document — an array of objects, or
+            one object as a single record — which may be pretty-printed across
+            lines. "jsonl" reads one record per physical line: a record may not
+            span lines, and a line may not hold more than one value. Byte
+            sources have no extension to read the grammar from, so they require
+            this argument.
         max_rows: Maximum rows to process before stopping.
         name: Name for DataFrame sources in the report.
         csv_delimiter: Single-character CSV delimiter (default: detected

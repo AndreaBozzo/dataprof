@@ -60,8 +60,8 @@ fn parser_and_metrics_reexports_compile() {
     let jsonl_config = JsonParserConfig::jsonl().with_max_rows(10);
     assert_eq!(jsonl_config.format, Some(JsonFormat::Jsonl));
     assert_eq!(
-        JsonParserConfig::json_array().format,
-        Some(JsonFormat::JsonArray)
+        JsonParserConfig::json_document().format,
+        Some(JsonFormat::Json)
     );
 }
 

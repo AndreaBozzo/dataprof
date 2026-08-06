@@ -184,12 +184,35 @@ report = dp.profile("messy.csv", csv_flexible=True)
 
 ### JSON and JSONL
 
-JSON files should contain an array of objects. JSONL files should have one JSON object per line.
+These are two different grammars, and dataprof holds you to whichever one you
+asked for.
+
+**`.json` — a standard JSON document.** Exactly one array of objects
+(`[{...}, {...}]`) or one object (`{...}`) as a single record. Whitespace is
+insignificant, so the document may be pretty-printed across as many lines as
+you like.
+
+**`.jsonl` — JSON Lines.** One record per physical line. A record may not span
+lines, and a line may not hold more than one value. Blank lines are separators
+and are neither records nor errors.
 
 ```python
 report = dp.profile("users.json")
 report = dp.profile("events.jsonl")
+
+# Bytes need the grammar named, since there is no extension to read it from.
+report = dp.profile(payload, format="jsonl")
 ```
+
+The distinction matters most where the two would otherwise disagree. Objects
+written back to back with the newline lost — `{"a":1}{"b":2}` — are not two
+records under either grammar: as JSONL the line holds two values, and as JSON
+the input holds two documents. Both are reported rather than profiled, because
+a concatenation that silently reads as clean data is the failure a profiler
+exists to catch.
+
+Every transport applies the same rule: file paths, byte buffers, and the async
+entry points all agree on what a record is.
 
 ### Parquet
 

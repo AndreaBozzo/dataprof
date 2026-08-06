@@ -278,7 +278,7 @@ fn infer_schema_from_json_reader<R: BufRead>(
 ) -> Result<SchemaResult, DataProfilerError> {
     let config = match format {
         FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(SCHEMA_SAMPLE_ROWS),
-        FileFormat::Json => JsonParserConfig::json_array().with_max_rows(SCHEMA_SAMPLE_ROWS),
+        FileFormat::Json => JsonParserConfig::json_document().with_max_rows(SCHEMA_SAMPLE_ROWS),
         _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS),
     };
     let (_profiles, column_stats, rows_read, _malformed_lines, _detected_format) =
@@ -840,7 +840,7 @@ fn analyze_structure_json(
     let reader = BufReader::new(file);
     let config = match format {
         FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(max_rows),
-        FileFormat::Json => JsonParserConfig::json_array().with_max_rows(max_rows),
+        FileFormat::Json => JsonParserConfig::json_document().with_max_rows(max_rows),
         _ => JsonParserConfig::default().with_max_rows(max_rows),
     };
 
