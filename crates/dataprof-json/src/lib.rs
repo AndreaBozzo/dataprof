@@ -409,8 +409,11 @@ where
         return Ok((0, 0));
     }
 
-    // A row cap of zero asks for no records; the document is still well-formed,
-    // so this is a truncated read rather than a malformed one.
+    // A row cap of zero asks for no records, so the document is not read. It is
+    // still well-formed, so this is not a malformed result — but note the report
+    // does not carry a truncation reason either, because the `rows_read == 0`
+    // path in `analyze_json_file_with_options` returns before applying one. That
+    // gap is shared by all three shapes and is tracked separately.
     if config.max_rows == Some(0) {
         return Ok((0, 0));
     }
@@ -589,8 +592,7 @@ fn malformed_record_error(err: &serde_json::Error) -> DataProfilerError {
 fn malformed_jsonl_record_error(line: usize, err: &serde_json::Error) -> DataProfilerError {
     DataProfilerError::JsonParsingError {
         message: format!(
-            "malformed JSON record on line {line}, column {}: a JSONL record must be one \
-             complete JSON value on one line",
+            "malformed JSON record on line {line}, column {}: a JSONL record must be one complete JSON value on one line",
             err.column()
         ),
     }
@@ -611,8 +613,10 @@ fn malformed_array_error(message: &str) -> DataProfilerError {
 fn json_document_error(err: &serde_json::Error) -> DataProfilerError {
     DataProfilerError::JsonParsingError {
         message: format!(
-            "malformed JSON document: {err}. A JSON source must hold exactly one \
-             array or object; for one record per line use format=\"jsonl\""
+            // One source line on purpose: rustfmt may join a `\`-continued
+            // literal and leave its indentation inside the string, which silently
+            // corrupted this very message once.
+            "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
         ),
     }
 }
@@ -873,8 +877,7 @@ pub fn analyze_json_file_with_options(
             // is JSONL, so say so here too: under the default skip policy this
             // is the only error the caller sees.
             let hint = if read_as_json_document {
-                ". A JSON source must hold exactly one array or object; \
-                 for one record per line use format=\"jsonl\""
+                ". A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
             } else {
                 ""
             };

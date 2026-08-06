@@ -68,7 +68,8 @@ fn peek_non_whitespace<R: std::io::BufRead>(
 fn json_document_error(err: &serde_json::Error) -> DataProfilerError {
     DataProfilerError::JsonParsingError {
         message: format!(
-            "malformed JSON document: {err}. A JSON source must hold exactly one              array or object; for one record per line use format=\"jsonl\""
+            // One source line on purpose: see dataprof_json::json_document_error.
+            "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
         ),
     }
 }
@@ -828,7 +829,7 @@ impl AsyncStreamingProfiler {
                                 // and so is also the column in the source.
                                 return Err(DataProfilerError::JsonParsingError {
                                     message: format!(
-                                        "malformed JSON record on line {line_number}, column {}:                                          a JSONL record must be one complete JSON value on one line",
+                                        "malformed JSON record on line {line_number}, column {}: a JSONL record must be one complete JSON value on one line",
                                         e.column()
                                     ),
                                 });

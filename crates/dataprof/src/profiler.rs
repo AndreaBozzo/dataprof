@@ -568,7 +568,6 @@ impl Profiler {
         self.config.stop_condition.max_rows().map(|n| n as usize)
     }
 
-    /// A JSON parser config carrying the configured row cap and error policy.
     /// A JSON parser config for `format`, carrying the row cap and error policy.
     ///
     /// The grammar is passed explicitly rather than sniffed: a leading `{` opens
@@ -582,6 +581,8 @@ impl Profiler {
         self.json_config_for_stop().with_format(grammar)
     }
 
+    /// A JSON parser config carrying the configured row cap and error policy,
+    /// leaving the grammar to be detected.
     fn json_config_for_stop(&self) -> dataprof_json::JsonParserConfig {
         let config = dataprof_json::JsonParserConfig::default()
             .with_error_policy(self.config.json_error_policy);
