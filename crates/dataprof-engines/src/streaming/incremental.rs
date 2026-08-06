@@ -185,7 +185,11 @@ impl IncrementalProfiler {
                     if row_limit == Some(0) {
                         hit_row_limit = true;
                         source_exhausted = false;
-                        stop_eval.update(0, 0, 0.0);
+                        // No rows were consumed, but this chunk was read off
+                        // disk to discover that. Reporting zero bytes here would
+                        // contradict `source_exhausted: false` — a scan that
+                        // stopped early having read nothing at all.
+                        stop_eval.update(0, actual_bytes as u64, 0.0);
                         break;
                     }
 

@@ -417,6 +417,23 @@ def test_an_empty_source_is_not_a_truncated_one(label, name, payload, tmp_path):
     )
 
 
+@pytest.mark.parametrize("engine", ["auto", "incremental"])
+def test_max_rows_zero_still_reports_the_bytes_it_read(engine, tmp_path):
+    # Stopping before the first row does not mean nothing was read: a chunk came
+    # off disk to discover the cap was already met. Reporting zero bytes here
+    # would contradict `source_exhausted=False` — a scan that stopped early
+    # having read nothing at all — which is exactly the contradiction
+    # `_assert_consistent` exists to catch.
+    rows = 500
+    path = Path(_write_csv(tmp_path, rows))
+    size = path.stat().st_size
+
+    report = dp.profile(path, engine=engine, max_rows=0)
+
+    assert report.rows == 0
+    _assert_consistent(report, size, f"{engine} max_rows=0")
+
+
 @pytest.mark.parametrize("cap", [1, 2, 5, 9])
 def test_positive_caps_are_unchanged(cap, tmp_path):
     # The zero fix must not shift any other cap by one in either direction.
