@@ -70,14 +70,20 @@ try:
         query: str,
         batch_size: int = 10000,
         calculate_quality: bool = False,
+        config: _Any | None = None,
     ) -> ProfileReport:
         """Profile the rows returned by ``query``.
+
+        ``config`` takes a :class:`ProfilerConfig` carrying ``metrics``,
+        ``quality_dimensions``, and ``locale``; they apply here exactly as they
+        do on every file path. ``calculate_quality=False`` remains the coarse
+        way to drop the quality pack.
 
         The native call yields a raw core report; wrap it so the result carries
         the same surface as every other ``ProfileReport`` in this package.
         """
         rust_report = await _analyze_database_async(
-            connection_string, query, batch_size, calculate_quality
+            connection_string, query, batch_size, calculate_quality, config
         )
         return ProfileReport(rust_report)
 

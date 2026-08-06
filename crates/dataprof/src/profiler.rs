@@ -52,11 +52,10 @@ pub struct ProfilerConfig {
     /// locale patterns are suppressed (unless they have a very high match rate).
     /// `None` = no locale preference (default).
     ///
-    /// Applies to every file format (CSV, JSON/JSONL, Parquet), to DataFrame and
-    /// Arrow sources, and to the async streaming entry points — a locale ranks
-    /// the same patterns whichever path read the data. Database-backed
-    /// profiling (`analyze_query`) does not detect patterns, so it has nothing
-    /// to rank.
+    /// Applies everywhere patterns are detected: every file format (CSV,
+    /// JSON/JSONL, Parquet), DataFrame and Arrow sources, the async streaming
+    /// entry points, and database queries. A locale ranks the same patterns
+    /// whichever path read the data.
     pub locale: Option<String>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
@@ -845,24 +844,15 @@ impl Profiler {
     /// # }
     /// ```
     pub async fn analyze_query(&self, query: &str) -> Result<ProfileReport, DataProfilerError> {
-        let semantic_hints = self.semantic_hints();
-        if !semantic_hints.is_empty() {
-            return Err(DataProfilerError::UnsupportedDataSource {
-                message: "positive_columns, identifier_columns, and temporal_columns are not supported for database profiling yet".to_string(),
-            });
-        }
-        let config = self
-            .config
-            .database_config
-            .clone()
-            .ok_or(DataProfilerError::DatabaseConfigError {
-            message:
-                "No database connection configured. Use .database() or .connection_string() first."
-                    .to_string(),
-        })?;
-
-        dataprof_db::analyze_database(config, query, true, self.config.quality_dimensions.clone())
-            .await
+        // Semantic hints are rejected inside `analyze_database_with_options`,
+        // before it connects — the database boundary is what lacks the
+        // capability.
+        dataprof_db::analyze_database_with_options(
+            self.database_config()?,
+            query,
+            &self.analysis_options(),
+        )
+        .await
     }
 
     /// Profile a database query without computing quality metrics.
@@ -873,23 +863,29 @@ impl Profiler {
         &self,
         query: &str,
     ) -> Result<ProfileReport, DataProfilerError> {
-        let semantic_hints = self.semantic_hints();
-        if !semantic_hints.is_empty() {
-            return Err(DataProfilerError::UnsupportedDataSource {
-                message: "positive_columns, identifier_columns, and temporal_columns are not supported for database profiling yet".to_string(),
-            });
-        }
-        let config = self
-            .config
+        // The configured selection minus the quality pack, rather than a
+        // separate code path: statistics, patterns, and the locale still apply.
+        let packs = self
+            .effective_metric_packs()
+            .unwrap_or_else(MetricPack::all)
+            .into_iter()
+            .filter(|pack| *pack != MetricPack::Quality)
+            .collect();
+        let options = self.analysis_options().with_metric_packs(Some(packs));
+
+        dataprof_db::analyze_database_with_options(self.database_config()?, query, &options).await
+    }
+
+    /// The configured database connection, or the error that says none was set.
+    fn database_config(&self) -> Result<DatabaseConfig, DataProfilerError> {
+        self.config
             .database_config
             .clone()
             .ok_or(DataProfilerError::DatabaseConfigError {
             message:
                 "No database connection configured. Use .database() or .connection_string() first."
                     .to_string(),
-        })?;
-
-        dataprof_db::analyze_database(config, query, false, None).await
+        })
     }
 }
 

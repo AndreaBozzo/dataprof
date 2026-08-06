@@ -5,8 +5,10 @@
 //! feature-gated sqlx-based connectors.
 
 pub(crate) use dataprof_core::DataProfilerError;
-use dataprof_core::{DataSource, ExecutionMetadata, QualityDimension, QueryEngine};
-use dataprof_metrics::analyze_column;
+use dataprof_core::{
+    AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, QualityDimension, QueryEngine,
+};
+use dataprof_metrics::analyze_column_with_analysis_options;
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 use std::collections::HashMap;
 
@@ -167,6 +169,41 @@ pub async fn analyze_database(
     calculate_quality: bool,
     quality_dimensions: Option<Vec<QualityDimension>>,
 ) -> Result<ProfileReport, DataProfilerError> {
+    let mut options = AnalysisOptions::default().with_quality_dimensions(quality_dimensions);
+    if !calculate_quality {
+        // Everything but quality, spelled as packs so the selection travels as
+        // one value from here on.
+        options = options.with_metric_packs(Some(
+            MetricPack::all()
+                .into_iter()
+                .filter(|pack| *pack != MetricPack::Quality)
+                .collect(),
+        ));
+    }
+    analyze_database_with_options(config, query, &options).await
+}
+
+/// Analyze a database table or query, honouring the caller's full analysis
+/// selection.
+///
+/// This is the entry point that carries metric packs and locale as well as
+/// quality dimensions, so a query profile reports exactly the analysis the
+/// caller asked for — the same selection every file path applies.
+pub async fn analyze_database_with_options(
+    config: DatabaseConfig,
+    query: &str,
+    options: &AnalysisOptions,
+) -> Result<ProfileReport, DataProfilerError> {
+    // Rejected here rather than in the caller: this is the boundary that lacks
+    // the capability, and a hint that reached the connectors would be silently
+    // ignored. Checked before connecting so nothing is scanned first.
+    if !options.semantic_hints().is_empty() {
+        return Err(DataProfilerError::UnsupportedDataSource {
+            message: "positive_columns, identifier_columns, and temporal_columns are not \
+                      supported for database profiling yet"
+                .to_string(),
+        });
+    }
     if config.batch_size == 0 {
         return Err(DataProfilerError::InvalidConfiguration {
             message: "database batch_size must be greater than zero".to_string(),
@@ -259,7 +296,7 @@ pub async fn analyze_database(
     let actual_rows_processed = columns.values().next().map(|v| v.len()).unwrap_or(0);
 
     for (name, data) in &columns {
-        let profile = analyze_column(name, data);
+        let profile = analyze_column_with_analysis_options(name, data, options);
         column_profiles.push(profile);
     }
 
@@ -275,7 +312,7 @@ pub async fn analyze_database(
             .with_source_exhausted(false);
     }
 
-    let mut assembler = ReportAssembler::new(
+    Ok(ReportAssembler::new(
         DataSource::Query {
             engine: query_engine,
             statement: query.to_string(),
@@ -284,18 +321,10 @@ pub async fn analyze_database(
         },
         execution,
     )
-    .columns(column_profiles);
-
-    if calculate_quality {
-        assembler = assembler.with_quality_data(columns);
-        if let Some(dims) = quality_dimensions {
-            assembler = assembler.with_requested_dimensions(dims);
-        }
-    } else {
-        assembler = assembler.skip_quality();
-    }
-
-    Ok(assembler.build())
+    .columns(column_profiles)
+    .with_quality_data(columns)
+    .with_analysis_options(options)
+    .build())
 }
 
 /// Detect query engine from connection string
