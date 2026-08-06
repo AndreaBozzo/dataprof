@@ -2,10 +2,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use dataprof_core::{
-    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, JsonErrorPolicy,
-    MetricPack, ProgressSink, QualityDimension, RowSampler, RowView, SamplingStrategy,
-    SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator, StreamSourceSystem,
-    TruncationReason,
+    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
+    JsonErrorPolicy, MetricPack, ProgressSink, QualityDimension, RowSampler, RowView,
+    SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
+    StreamSourceSystem, TruncationReason,
 };
 use dataprof_runtime::{
     ProfileReport, ReportAssembler, StreamingColumnCollection, profile_builder,
@@ -208,9 +208,7 @@ pub struct AsyncStreamingProfiler {
     progress_sink: ProgressSink,
     progress_interval: Duration,
     stop_condition: StopCondition,
-    quality_dimensions: Option<Vec<QualityDimension>>,
-    metric_packs: Option<Vec<MetricPack>>,
-    semantic_hints: SemanticHints,
+    options: AnalysisOptions,
     json_error_policy: JsonErrorPolicy,
     csv_flexible: bool,
     csv_delimiter: Option<u8>,
@@ -236,9 +234,7 @@ impl AsyncStreamingProfiler {
             progress_sink: ProgressSink::None,
             progress_interval: Duration::from_millis(500),
             stop_condition: StopCondition::Never,
-            quality_dimensions: None,
-            metric_packs: None,
-            semantic_hints: SemanticHints::default(),
+            options: AnalysisOptions::default(),
             json_error_policy: JsonErrorPolicy::default(),
             csv_flexible: true,
             csv_delimiter: None,
@@ -276,18 +272,34 @@ impl AsyncStreamingProfiler {
         self
     }
 
+    /// Set the whole analysis selection at once.
+    ///
+    /// Preferred over the individual setters: the async pipeline must apply the
+    /// same selection the synchronous engines do, and passing it as one value is
+    /// what keeps a new option from reaching only some of them.
+    pub fn analysis_options(mut self, options: AnalysisOptions) -> Self {
+        self.options = options;
+        self
+    }
+
     pub fn quality_dimensions(mut self, dims: Vec<QualityDimension>) -> Self {
-        self.quality_dimensions = Some(dims);
+        self.options = std::mem::take(&mut self.options).with_quality_dimensions(Some(dims));
         self
     }
 
     pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
-        self.metric_packs = Some(packs);
+        self.options = std::mem::take(&mut self.options).with_metric_packs(Some(packs));
+        self
+    }
+
+    /// Set the locale used to rank detected patterns.
+    pub fn locale(mut self, locale: String) -> Self {
+        self.options = std::mem::take(&mut self.options).with_locale(Some(locale));
         self
     }
 
     pub fn semantic_hints(mut self, hints: SemanticHints) -> Self {
-        self.semantic_hints = hints;
+        self.options = std::mem::take(&mut self.options).with_semantic_hints(hints);
         self
     }
 
@@ -412,16 +424,12 @@ impl AsyncStreamingProfiler {
         };
 
         // Build the report
-        let packs = self.metric_packs.as_deref();
-        let skip_stats = !MetricPack::include_statistics(packs);
-        let skip_patterns = !MetricPack::include_patterns(packs);
-
         let column_profiles = profile_builder::profiles_from_streaming_with_hints(
             &column_stats,
-            skip_stats,
-            skip_patterns,
-            None,
-            &self.semantic_hints,
+            !self.options.include_statistics(),
+            !self.options.include_patterns(),
+            self.options.locale(),
+            self.options.semantic_hints(),
         );
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let scan_time_ms = start.elapsed().as_millis();
@@ -470,16 +478,13 @@ impl AsyncStreamingProfiler {
             execution = execution.with_sampling(sampled_rows as f64 / total_rows as f64);
         }
 
-        let mut assembler = ReportAssembler::new(data_source, execution)
+        Ok(ReportAssembler::new(data_source, execution)
             .columns(column_profiles)
             .with_quality_data(sample_columns)
             .with_row_duplicates(column_stats.row_duplicate_summary())
             .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
-            .with_semantic_hints(self.semantic_hints.clone());
-        if let Some(ref dims) = self.quality_dimensions {
-            assembler = assembler.with_requested_dimensions(dims.clone());
-        }
-        Ok(assembler.build())
+            .with_analysis_options(&self.options)
+            .build())
     }
 
     /// Map a `csv` crate error, pointing a strict-mode field-count failure at
@@ -1015,7 +1020,7 @@ impl AsyncStreamingProfiler {
         DataProfilerError,
     > {
         let mut column_stats = StreamingColumnCollection::memory_limit(self.memory_limit_mb)
-            .with_semantic_hints(&self.semantic_hints);
+            .with_semantic_hints(self.options.semantic_hints());
         let mut progress_tracker =
             ProgressTracker::new(self.progress_sink.clone(), self.progress_interval);
         let mut total_rows: usize = 0;

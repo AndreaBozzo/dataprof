@@ -23,8 +23,8 @@ pub use profiler::{
 };
 
 pub use dataprof_core::{
-    BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats, CountMethod,
-    DataFrameLibrary, DataProfilerError, DataSource, DataType, DataprofConfig,
+    AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats,
+    CountMethod, DataFrameLibrary, DataProfilerError, DataSource, DataType, DataprofConfig,
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
     InputValidator, IsoQualityConfig, MetricPack, NumericStats, OutputFormat, ParquetMetadata,
     Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension, QualityScoreWeights,
@@ -36,7 +36,8 @@ pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
 };
 pub use dataprof_json::{
-    JsonErrorPolicy, JsonFormat, JsonParserConfig, analyze_json_file, analyze_json_from_reader,
+    JsonErrorPolicy, JsonFormat, JsonParserConfig, analyze_json_file,
+    analyze_json_file_with_options, analyze_json_from_reader,
 };
 pub use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
@@ -49,8 +50,9 @@ pub use dataprof_metrics::{
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};
 #[cfg(feature = "parquet")]
 pub use dataprof_parquet::{
-    ParquetConfig, analyze_parquet_bytes, analyze_parquet_with_config,
-    analyze_parquet_with_quality, analyze_parquet_with_quality_dims, is_parquet_file,
+    ParquetConfig, analyze_parquet_bytes, analyze_parquet_bytes_with_options,
+    analyze_parquet_with_config, analyze_parquet_with_options, analyze_parquet_with_quality,
+    analyze_parquet_with_quality_dims, is_parquet_file,
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{ProfileReport, REPORT_SCHEMA_VERSION};

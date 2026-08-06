@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof::{
-    ChunkSize, EngineType, FileFormat, JsonErrorPolicy, MetricPack, Profiler, QualityDimension,
-    SemanticHints, StopCondition,
+    AnalysisOptions, ChunkSize, EngineType, FileFormat, JsonErrorPolicy, MetricPack, Profiler,
+    QualityDimension, SemanticHints, StopCondition,
 };
 
 use super::progress::py_callback_to_sink;
@@ -324,6 +324,20 @@ impl PyProfilerConfig {
         .with_temporal_columns(self.temporal_columns.clone())
     }
 
+    /// The analysis selection this config asks for.
+    ///
+    /// The entry points that bypass `Profiler` — the in-memory ones and the
+    /// Parquet byte buffer — pass this instead of picking out the two or three
+    /// options they happen to know about, so every Python surface honours the
+    /// same `metrics=`, `quality_dimensions=`, and `locale=`.
+    pub(crate) fn analysis_options(&self) -> AnalysisOptions {
+        AnalysisOptions::default()
+            .with_metric_packs(self.metric_packs.clone())
+            .with_quality_dimensions(self.quality_dimensions.clone())
+            .with_locale(self.locale.clone())
+            .with_semantic_hints(self.semantic_hints())
+    }
+
     /// Metric packs with an empty quality-dimension selection folded in.
     ///
     /// The in-memory entry points (`profile_columns`, the Arrow exporters) gate
@@ -331,10 +345,7 @@ impl PyProfilerConfig {
     /// the same rule here — otherwise `quality_dimensions=[]` would mean one
     /// thing for a file and another for a DataFrame.
     pub(crate) fn effective_metric_packs(&self) -> Option<Vec<MetricPack>> {
-        MetricPack::resolve_with_dimensions(
-            self.metric_packs.as_deref(),
-            self.quality_dimensions.as_deref(),
-        )
+        self.analysis_options().effective_metric_packs()
     }
 }
 

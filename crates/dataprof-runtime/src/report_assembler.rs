@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use dataprof_core::{
-    ColumnProfile, DataSource, DataType, ExecutionMetadata, QualityDimension, SemanticHintBinding,
-    SemanticHintKind, SemanticHints,
+    AnalysisOptions, ColumnProfile, DataSource, DataType, ExecutionMetadata, QualityDimension,
+    SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
     MetricConfidence, MetricsCalculator, QualityAssessment, RowDuplicateSummary,
@@ -82,6 +82,21 @@ impl ReportAssembler {
     /// Set semantic hints used by quality metrics.
     pub fn with_semantic_hints(mut self, hints: SemanticHints) -> Self {
         self.semantic_hints = hints;
+        self
+    }
+
+    /// Apply the caller's analysis selection: requested dimensions, semantic
+    /// hints, and whether quality is computed at all.
+    ///
+    /// Callers still pass their quality sample with
+    /// [`with_quality_data`](Self::with_quality_data); this decides whether it is
+    /// used. Deselecting the quality pack leaves the report with no quality
+    /// object rather than an assessment with every dimension absent — "not
+    /// analyzed" and "analyzed, nothing found" are different answers.
+    pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
+        self.skip_quality = !options.include_quality();
+        self.semantic_hints = options.semantic_hints().clone();
+        self.requested_dimensions = options.quality_dimensions().map(<[_]>::to_vec);
         self
     }
 

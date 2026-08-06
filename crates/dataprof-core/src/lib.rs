@@ -1,3 +1,4 @@
+pub mod analysis_options;
 pub mod classification;
 pub mod config;
 pub mod errors;
@@ -19,6 +20,7 @@ pub mod source;
 pub mod stop_condition;
 pub mod validation;
 
+pub use analysis_options::AnalysisOptions;
 pub use classification::{DataType, PatternCategory};
 #[cfg(feature = "database")]
 pub use config::{DatabaseSamplingConfig, DatabaseSettings};

@@ -55,10 +55,9 @@ pub fn profile_parquet_bytes(
     max_rows: Option<usize>,
     config: Option<&PyProfilerConfig>,
 ) -> PyResult<PyProfileReport> {
-    use dataprof::{ParquetConfig, analyze_parquet_bytes};
+    use dataprof::{ParquetConfig, analyze_parquet_bytes_with_options};
 
-    let quality_dimensions = config.and_then(|cfg| cfg.quality_dimensions.clone());
-    let semantic_hints = config.map(|cfg| cfg.semantic_hints()).unwrap_or_default();
+    let options = config.map(|cfg| cfg.analysis_options()).unwrap_or_default();
     let effective_max_rows =
         max_rows.or_else(|| config.and_then(|cfg| cfg.max_rows.map(|rows| rows as usize)));
 
@@ -69,13 +68,7 @@ pub fn profile_parquet_bytes(
 
     let report = py
         .detach(|| {
-            analyze_parquet_bytes(
-                data.into(),
-                &name,
-                &parquet_config,
-                quality_dimensions.as_deref(),
-                &semantic_hints,
-            )
+            analyze_parquet_bytes_with_options(data.into(), &name, &parquet_config, &options)
         })
         .map_err(|e| analysis_error_to_py(&e))?;
 
