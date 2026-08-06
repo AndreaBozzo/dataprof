@@ -207,3 +207,78 @@ mod async_transport {
         assert_eq!(names, SOURCE_ORDER);
     }
 }
+
+#[cfg(feature = "sqlite")]
+mod database {
+    use super::*;
+
+    use dataprof::{DatabaseConfig, Profiler};
+
+    /// A SQLite table whose columns are declared in [`SOURCE_ORDER`].
+    async fn fixture() -> (tempfile::TempDir, String) {
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("column_order.db");
+        std::fs::File::create(&db_path).unwrap();
+        let db_path = db_path.display().to_string();
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&format!("sqlite://{db_path}"))
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE t (id INTEGER, amount REAL, active INTEGER, date TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        for (id, amount, active) in [(1, 12.5, 1), (2, 7.25, 0)] {
+            sqlx::query("INSERT INTO t VALUES (?, ?, ?, ?)")
+                .bind(id as i64)
+                .bind(amount)
+                .bind(active as i64)
+                .bind("2026-07-23")
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool.close().await;
+
+        (dir, db_path)
+    }
+
+    fn profiler(db_path: &str) -> Profiler {
+        Profiler::new().database(DatabaseConfig {
+            connection_string: db_path.to_string(),
+            load_credentials_from_env: false,
+            ..Default::default()
+        })
+    }
+
+    /// Database results used to come back through a `HashMap`, so a query
+    /// reported its columns in hash order — the one input path where a format
+    /// conversion reshuffled the report (#496).
+    #[tokio::test]
+    async fn database_agrees_with_the_file_formats_on_column_order() {
+        let (_dir, db_path) = fixture().await;
+
+        let report = profiler(&db_path)
+            .analyze_query("SELECT * FROM t")
+            .await
+            .unwrap();
+
+        assert_eq!(column_names(&report), SOURCE_ORDER);
+    }
+
+    #[tokio::test]
+    async fn a_query_reports_its_own_select_list_order() {
+        let (_dir, db_path) = fixture().await;
+
+        let report = profiler(&db_path)
+            .analyze_query("SELECT date, id, active, amount FROM t")
+            .await
+            .unwrap();
+
+        assert_eq!(column_names(&report), ["date", "id", "active", "amount"]);
+    }
+}

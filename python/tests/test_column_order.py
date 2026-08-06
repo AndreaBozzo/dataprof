@@ -99,3 +99,69 @@ def test_to_dict_export_keeps_report_column_order(tmp_path):
     report = dataprof.profile(_write(tmp_path, "json"))
     exported = [column["name"] for column in report.to_dict()["columns"]]
     assert exported == SOURCE_ORDER
+
+
+# ---------------------------------------------------------------------------
+# Database (#496)
+# ---------------------------------------------------------------------------
+#
+# Query results used to come back through a Rust `HashMap`, so a query reported
+# its columns in hash order — the one input path where a format conversion
+# reshuffled the report. Hash iteration is not stable between processes either,
+# so the order was not even consistently wrong.
+
+_HAS_DATABASE = dataprof.capabilities().database
+requires_database = pytest.mark.skipif(
+    not _HAS_DATABASE,
+    reason="Database support not compiled. Build with --features "
+    "'python,python-async,database,sqlite'.",
+)
+
+
+@pytest.fixture()
+def sqlite_db(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "column_order.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE t (id INTEGER, amount REAL, active INTEGER, date TEXT)")
+    conn.executemany(
+        "INSERT INTO t VALUES (?, ?, ?, ?)",
+        [(row["id"], row["amount"], int(row["active"]), row["date"]) for row in ROWS],
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+@requires_database
+def test_database_agrees_with_the_file_formats_on_column_order(sqlite_db, tmp_path):
+    report = asyncio.run(dataprof.analyze_database_async(str(sqlite_db), "SELECT * FROM t"))
+
+    assert list(report) == SOURCE_ORDER
+    assert list(report) == list(dataprof.profile(_write(tmp_path, "csv")))
+
+
+@requires_database
+def test_a_query_reports_its_own_select_list_order(sqlite_db):
+    report = asyncio.run(
+        dataprof.analyze_database_async(str(sqlite_db), "SELECT date, id, active, amount FROM t")
+    )
+    assert list(report) == ["date", "id", "active", "amount"]
+
+
+@requires_database
+def test_database_column_order_is_stable_across_runs(sqlite_db):
+    # The report is what a user reads; two profiles of the same query must not
+    # disagree.
+    orders = {
+        tuple(
+            asyncio.run(
+                dataprof.analyze_database_async(
+                    str(sqlite_db), "SELECT date, id, active, amount FROM t"
+                )
+            )
+        )
+        for _ in range(5)
+    }
+    assert len(orders) == 1, f"repeated runs disagreed on column order: {orders}"

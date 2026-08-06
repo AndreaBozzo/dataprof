@@ -1,7 +1,12 @@
 //! Streaming utilities for processing large database result sets
 
 use crate::DataProfilerError;
-use std::collections::HashMap;
+use crate::query_columns::QueryColumns;
+
+/// Merging lives with [`QueryColumns`], which owns the ordering rule; re-exported
+/// here because the streaming macros have always reached for it through this
+/// module.
+pub use crate::query_columns::merge_column_batches;
 
 /// Configuration for streaming database results
 #[derive(Debug, Clone)]
@@ -21,27 +26,8 @@ impl Default for StreamingConfig {
     }
 }
 
-/// Utility to merge multiple batches of column data
-pub fn merge_column_batches(
-    batches: Vec<HashMap<String, Vec<String>>>,
-) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
-    if batches.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let mut merged: HashMap<String, Vec<String>> = HashMap::new();
-
-    for batch in batches {
-        for (column_name, column_data) in batch {
-            merged.entry(column_name).or_default().extend(column_data);
-        }
-    }
-
-    Ok(merged)
-}
-
 /// Calculate memory usage of column data (rough estimate)
-pub fn estimate_memory_usage(columns: &HashMap<String, Vec<String>>) -> usize {
+pub fn estimate_memory_usage(columns: &QueryColumns) -> usize {
     columns
         .iter()
         .map(|(name, data)| name.len() + data.iter().map(|s| s.len()).sum::<usize>())
@@ -50,10 +36,10 @@ pub fn estimate_memory_usage(columns: &HashMap<String, Vec<String>>) -> usize {
 
 /// Sample large datasets to fit within memory constraints
 pub fn apply_sampling_if_needed(
-    mut columns: HashMap<String, Vec<String>>,
+    mut columns: QueryColumns,
     max_memory_mb: usize,
     sampling_ratio: f64,
-) -> Result<(HashMap<String, Vec<String>>, bool), DataProfilerError> {
+) -> Result<(QueryColumns, bool), DataProfilerError> {
     let memory_usage_bytes = estimate_memory_usage(&columns);
     let memory_usage_mb = memory_usage_bytes / 1_048_576;
 
@@ -61,13 +47,13 @@ pub fn apply_sampling_if_needed(
         return Ok((columns, false));
     }
 
-    // decode-audit: no-data — an empty column map has zero rows; the sampling
+    // decode-audit: no-data — an empty column set has zero rows; the sampling
     // below then returns an empty result rather than fabricating data.
-    let total_rows = columns.values().next().map(|v| v.len()).unwrap_or(0);
+    let total_rows = columns.row_count();
     let target_rows = (total_rows as f64 * sampling_ratio) as usize;
 
     if target_rows == 0 {
-        return Ok((HashMap::new(), true));
+        return Ok((QueryColumns::new(), true));
     }
 
     let step = total_rows / target_rows;
@@ -152,22 +138,27 @@ mod tests {
 
     #[test]
     fn test_merge_column_batches() {
-        let batch1 = {
-            let mut map = HashMap::new();
-            map.insert("col1".to_string(), vec!["a".to_string(), "b".to_string()]);
-            map.insert("col2".to_string(), vec!["1".to_string(), "2".to_string()]);
-            map
+        let batch = |a: [&str; 2], b: [&str; 2]| -> QueryColumns {
+            [
+                (
+                    "col1".to_string(),
+                    a.iter().map(|v| v.to_string()).collect(),
+                ),
+                (
+                    "col2".to_string(),
+                    b.iter().map(|v| v.to_string()).collect(),
+                ),
+            ]
+            .into_iter()
+            .collect()
         };
 
-        let batch2 = {
-            let mut map = HashMap::new();
-            map.insert("col1".to_string(), vec!["c".to_string(), "d".to_string()]);
-            map.insert("col2".to_string(), vec!["3".to_string(), "4".to_string()]);
-            map
-        };
+        let merged = merge_column_batches(vec![
+            batch(["a", "b"], ["1", "2"]),
+            batch(["c", "d"], ["3", "4"]),
+        ]);
 
-        let merged = merge_column_batches(vec![batch1, batch2]).expect("Failed to merge batches");
-
+        assert_eq!(merged.names().collect::<Vec<_>>(), ["col1", "col2"]);
         assert_eq!(
             merged.get("col1").expect("col1 not found"),
             &vec!["a", "b", "c", "d"]
@@ -180,11 +171,12 @@ mod tests {
 
     #[test]
     fn test_memory_estimation() {
-        let mut columns = HashMap::new();
-        columns.insert(
+        let columns: QueryColumns = [(
             "test".to_string(),
             vec!["hello".to_string(), "world".to_string()],
-        );
+        )]
+        .into_iter()
+        .collect();
 
         let memory = estimate_memory_usage(&columns);
         assert_eq!(memory, 14);

@@ -10,10 +10,10 @@ use dataprof_core::{
 };
 use dataprof_metrics::analyze_column_with_analysis_options;
 use dataprof_runtime::{ProfileReport, ReportAssembler};
-use std::collections::HashMap;
 
 pub mod connection;
 pub mod connectors;
+pub mod query_columns;
 pub mod retry;
 pub mod sampling;
 pub mod security;
@@ -21,6 +21,7 @@ pub mod streaming;
 
 pub use connection::*;
 pub use connectors::*;
+pub use query_columns::QueryColumns;
 pub use retry::*;
 pub use sampling::*;
 pub use security::*;
@@ -63,17 +64,14 @@ pub trait DatabaseConnector: Send + Sync {
     async fn disconnect(&mut self) -> Result<(), DataProfilerError>;
 
     /// Execute a query and get column data for profiling
-    async fn profile_query(
-        &mut self,
-        query: &str,
-    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError>;
+    async fn profile_query(&mut self, query: &str) -> Result<QueryColumns, DataProfilerError>;
 
     /// Execute a query with streaming for large result sets
     async fn profile_query_streaming(
         &mut self,
         query: &str,
         batch_size: usize,
-    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError>;
+    ) -> Result<QueryColumns, DataProfilerError>;
 
     /// Get table schema information
     async fn get_table_schema(
@@ -290,15 +288,17 @@ pub async fn analyze_database_with_options(
         .build());
     }
 
-    let mut column_profiles = Vec::new();
     // decode-audit: no-data — the empty-columns case returned early above, so
     // this default is only a guard; every column vec has the same length.
-    let actual_rows_processed = columns.values().next().map(|v| v.len()).unwrap_or(0);
+    let actual_rows_processed = columns.row_count();
 
-    for (name, data) in &columns {
-        let profile = analyze_column_with_analysis_options(name, data, options);
-        column_profiles.push(profile);
-    }
+    // `columns` keeps the query's column order, so the report reports columns in
+    // the order they were selected — the same source-order contract CSV, Parquet
+    // and JSON honour.
+    let column_profiles: Vec<_> = columns
+        .iter()
+        .map(|(name, data)| analyze_column_with_analysis_options(name, data, options))
+        .collect();
 
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
@@ -322,7 +322,9 @@ pub async fn analyze_database_with_options(
         execution,
     )
     .columns(column_profiles)
-    .with_quality_data(columns)
+    // Quality metrics look every column up by name and never iterate for
+    // presentation, so dropping the order here costs nothing.
+    .with_quality_data(columns.into_map())
     .with_analysis_options(options)
     .build())
 }
