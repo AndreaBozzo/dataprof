@@ -324,3 +324,128 @@ def test_async_parquet_rejects_unsupported_stop_condition(tmp_path):
 
     with pytest.raises(ValueError, match="only row-limit"):
         asyncio.run(_inner())
+
+
+# ---------------------------------------------------------------------------
+# A cap of zero rows (#541)
+# ---------------------------------------------------------------------------
+#
+# ``max_rows=0`` is the boundary where the two promises above meet: it must read
+# no rows, and it must say the source was cut short. Both halves were broken,
+# differently per path. The CSV and async readers checked the cap *after*
+# processing a row, so a cap of zero returned one row — every positive cap was
+# exact, which is why this hid. The JSON file path counted the truncation
+# correctly and then dropped it, returning a report indistinguishable from a
+# complete profile of an empty source.
+
+
+def _json_fixtures(tmp_path: Path) -> dict[str, tuple[Path, bytes, str]]:
+    """The same two records in each shape, plus the single-object document."""
+    shapes = {
+        "csv": ("data.csv", b"x\n1\n2\n", "csv"),
+        "jsonl": ("data.jsonl", b'{"x":1}\n{"x":2}\n', "jsonl"),
+        "json array": ("array.json", b'[{"x":1},{"x":2}]', "json"),
+        # One record, so "nothing was read" is unambiguous rather than partial.
+        "json object": ("object.json", b'{"x":1}', "json"),
+    }
+    out = {}
+    for label, (name, payload, fmt) in shapes.items():
+        path = tmp_path / name
+        path.write_bytes(payload)
+        out[label] = (path, payload, fmt)
+    return out
+
+
+@pytest.mark.parametrize("label", ["csv", "jsonl", "json array", "json object"])
+def test_max_rows_zero_reads_nothing_and_says_so(label, tmp_path):
+    path, payload, fmt = _json_fixtures(tmp_path)[label]
+
+    for transport, report in [
+        ("file", dp.profile(path, max_rows=0)),
+        ("bytes", dp.profile(payload, format=fmt, max_rows=0)),
+    ]:
+        assert report.rows == 0, f"{label} {transport}: a cap of zero is a hard cap"
+        assert report.truncation_reason == "max_rows(0)", (
+            f"{label} {transport}: a scan cut short before the first record must say so, "
+            f"got {report.truncation_reason!r}"
+        )
+        assert not report.source_exhausted, f"{label} {transport}: records remained unread"
+
+
+def test_max_rows_zero_on_parquet_reads_nothing_and_says_so(tmp_path):
+    pa = pytest.importorskip("pyarrow", reason="pyarrow writes the fixture")
+    pq = pytest.importorskip("pyarrow.parquet", reason="pyarrow writes the fixture")
+
+    path = tmp_path / "data.parquet"
+    pq.write_table(pa.table({"x": [1, 2]}), path)
+
+    report = dp.profile(path, max_rows=0)
+    assert report.rows == 0
+    assert report.truncation_reason == "max_rows(0)"
+
+
+@requires_async
+@pytest.mark.parametrize("label", ["csv", "jsonl", "json array", "json object"])
+def test_max_rows_zero_on_async_reads_nothing_and_says_so(label, tmp_path):
+    path, _payload, _fmt = _json_fixtures(tmp_path)[label]
+
+    from dataprof.asyncio import profile_file
+
+    report = asyncio.run(profile_file(path, max_rows=0))
+    assert report.rows == 0, f"{label}: a cap of zero is a hard cap"
+    assert report.truncation_reason == "max_rows(0)", f"{label}: got {report.truncation_reason!r}"
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "payload"),
+    [
+        ("csv header only", "empty.csv", b"x\n"),
+        ("jsonl no records", "empty.jsonl", b""),
+        ("json empty array", "empty.json", b"[]"),
+    ],
+)
+def test_an_empty_source_is_not_a_truncated_one(label, name, payload, tmp_path):
+    # The counterpart that makes the assertion above meaningful: reporting
+    # truncation unconditionally would satisfy those tests and lie here.
+    path = tmp_path / name
+    path.write_bytes(payload)
+
+    report = dp.profile(path, max_rows=0)
+    assert report.rows == 0
+    assert report.truncation_reason is None, (
+        f"{label}: nothing was left unread, so nothing was truncated"
+    )
+
+
+@pytest.mark.parametrize("engine", ["auto", "incremental"])
+def test_max_rows_zero_still_reports_the_bytes_it_read(engine, tmp_path):
+    # Stopping before the first row does not mean nothing was read: a chunk came
+    # off disk to discover the cap was already met. Reporting zero bytes here
+    # would contradict `source_exhausted=False` — a scan that stopped early
+    # having read nothing at all — which is exactly the contradiction
+    # `_assert_consistent` exists to catch.
+    rows = 500
+    path = Path(_write_csv(tmp_path, rows))
+    size = path.stat().st_size
+
+    report = dp.profile(path, engine=engine, max_rows=0)
+
+    assert report.rows == 0
+    _assert_consistent(report, size, f"{engine} max_rows=0")
+
+
+@pytest.mark.parametrize("cap", [1, 2, 5, 9])
+def test_positive_caps_are_unchanged(cap, tmp_path):
+    # The zero fix must not shift any other cap by one in either direction.
+    rows = 5
+    csv_path = Path(_write_csv(tmp_path, rows))
+    jsonl_path = tmp_path / "data.jsonl"
+    jsonl_path.write_bytes(b"".join(b'{"x":%d}\n' % i for i in range(rows)))
+
+    expected = min(cap, rows)
+    assert dp.profile(csv_path, max_rows=cap).rows == expected
+    assert dp.profile(jsonl_path, max_rows=cap).rows == expected
+    if _HAS_ASYNC:
+        from dataprof.asyncio import profile_file
+
+        assert asyncio.run(profile_file(csv_path, max_rows=cap)).rows == expected

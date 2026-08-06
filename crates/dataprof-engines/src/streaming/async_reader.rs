@@ -1162,6 +1162,17 @@ impl AsyncStreamingProfiler {
             let mut hit_row_limit = false;
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
+                // A cap of zero rows is met before any row is read. The check
+                // below runs after a row is processed, which is right for every
+                // positive cap but would let `max_rows(0)` return one row — a
+                // cap the caller set and the report then claims to have
+                // honoured.
+                if row_limit == Some(0) {
+                    rows_consumed = row_idx;
+                    hit_row_limit = true;
+                    break;
+                }
+
                 if !sampler.accept(RowView::new(&headers, &values)) {
                     continue;
                 }

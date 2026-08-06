@@ -208,10 +208,11 @@ where
                 // The other shape a standard JSON document takes: a single
                 // object, which is one record. It may be pretty-printed across
                 // lines, which is why this is not the JSONL grammar.
-                let (object_rows, object_malformed) =
+                let (object_rows, object_malformed, object_truncated) =
                     scan_single_json_object(&mut reader, config, &mut on_object)?;
                 rows_read += object_rows;
                 malformed_lines += object_malformed;
+                truncated |= object_truncated;
             } else {
                 // The array loop starts after the opening bracket.
                 consume_peeked(&mut reader)?;
@@ -387,7 +388,7 @@ fn read_jsonl_line(line: &str) -> JsonRecord {
 
 /// Read a whole-input single JSON object as one record.
 ///
-/// Returns `(rows_read, malformed)`. Anything that is not exactly one object
+/// Returns `(rows_read, malformed, truncated)`. Anything that is not exactly one object
 /// filling the input is an error under [`JsonErrorPolicy::Strict`] and a counted
 /// malformed record otherwise, so a truncated or concatenated document never
 /// profiles as clean.
@@ -395,7 +396,7 @@ fn scan_single_json_object<R, F>(
     reader: &mut R,
     config: &JsonParserConfig,
     on_object: &mut F,
-) -> Result<(usize, usize), DataProfilerError>
+) -> Result<(usize, usize, bool), DataProfilerError>
 where
     R: BufRead,
     F: FnMut(&JsonObject),
@@ -406,34 +407,33 @@ where
         .map_err(DataProfilerError::from)?;
 
     if text.trim().is_empty() {
-        return Ok((0, 0));
+        return Ok((0, 0, false));
     }
 
-    // A row cap of zero asks for no records, so the document is not read. It is
-    // still well-formed, so this is not a malformed result — but note the report
-    // does not carry a truncation reason either, because the `rows_read == 0`
-    // path in `analyze_json_file_with_options` returns before applying one. That
-    // gap is shared by all three shapes and is tracked separately.
+    // A row cap of zero asks for no records, so the document is not read. The
+    // record it holds is left unread, which is a truncation and has to be
+    // reported as one — an unread record and an empty source must not produce
+    // the same report.
     if config.max_rows == Some(0) {
-        return Ok((0, 0));
+        return Ok((0, 0, true));
     }
 
     match serde_json::from_str::<Value>(text.trim()) {
         Ok(Value::Object(obj)) => {
             on_object(&obj);
-            Ok((1, 0))
+            Ok((1, 0, false))
         }
         Ok(value) => {
             if config.error_policy == JsonErrorPolicy::Strict {
                 return Err(non_object_record_error(json_value_kind(&value), 1));
             }
-            Ok((0, 1))
+            Ok((0, 1, false))
         }
         Err(err) => {
             if config.error_policy == JsonErrorPolicy::Strict {
                 return Err(json_document_error(&err));
             }
-            Ok((0, 1))
+            Ok((0, 1, false))
         }
     }
 }
@@ -888,14 +888,20 @@ pub fn analyze_json_file_with_options(
                 ),
             });
         }
-        return Ok(ReportAssembler::new(
-            file_source,
-            ExecutionMetadata::new(0, 0, start.elapsed().as_millis()).with_engine("json"),
-        )
-        .columns(column_profiles)
-        .with_quality_data(HashMap::new())
-        .with_analysis_options(options)
-        .build());
+        // A row cap that stopped the scan before the first record still has to
+        // be disclosed. Without this the report reads exactly like a complete
+        // profile of an empty source, which is the one thing a truncated scan
+        // must never be mistaken for.
+        let mut execution =
+            ExecutionMetadata::new(0, 0, start.elapsed().as_millis()).with_engine("json");
+        if truncated && let Some(max) = config.max_rows {
+            execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+        }
+        return Ok(ReportAssembler::new(file_source, execution)
+            .columns(column_profiles)
+            .with_quality_data(HashMap::new())
+            .with_analysis_options(options)
+            .build());
     }
 
     let sample_columns = profile_builder::quality_check_samples(&column_stats);
