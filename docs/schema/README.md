@@ -42,3 +42,120 @@ When changing a serialized report field, review compatibility first. Additive
 fields with reader defaults stay in the current schema version; an incompatible
 change requires incrementing `REPORT_SCHEMA_VERSION` and committing a new
 versioned schema without deleting schemas that supported releases still read.
+
+## Validate a saved report
+
+The schema is also useful to consumers that store reports outside dataprof. The
+published URL is stable across package releases:
+
+```text
+https://andreabozzo.github.io/dataprof/schema/profile-report.v1.schema.json
+```
+
+For example, create a full JSON report and validate it with the optional
+`jsonschema` package. The package is a validation-tool dependency only; it is
+not required by the base `dataprof` wheel.
+
+```bash
+python -m pip install jsonschema
+python - <<'PY'
+import copy
+import json
+import os
+from pathlib import Path
+from urllib.request import urlopen
+
+from jsonschema import Draft202012Validator
+
+SCHEMA_URL = (
+    "https://andreabozzo.github.io/dataprof/schema/"
+    "profile-report.v1.schema.json"
+)
+REPORT_PATH = Path("report.json")
+schema_source = os.environ.get("DATAPROF_SCHEMA", SCHEMA_URL)
+
+if schema_source.startswith(("http://", "https://")):
+    with urlopen(schema_source) as response:  # noqa: S310 - URL is explicit above
+        schema = json.load(response)
+else:
+    schema = json.loads(Path(schema_source).read_text(encoding="utf-8"))
+
+Draft202012Validator.check_schema(schema)
+report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
+validator = Draft202012Validator(schema)
+errors = sorted(validator.iter_errors(report), key=lambda error: list(error.path))
+if errors:
+    for error in errors:
+        print(f"{REPORT_PATH}: {error.message}")
+    raise SystemExit(1)
+print(f"{REPORT_PATH}: valid")
+
+# A deliberately invalid document fails for a useful reason, rather than
+# merely failing because the file could not be read.
+invalid_report = copy.deepcopy(report)
+invalid_report["schema_version"] = "not-an-integer"
+invalid_errors = list(validator.iter_errors(invalid_report))
+assert invalid_errors, "the invalid schema_version should be rejected"
+print(f"invalid example: rejected ({invalid_errors[0].message})")
+PY
+```
+
+The `report.json` input above can be produced by the normal Python API:
+
+```python
+import dataprof as dp
+
+dp.profile("data.csv").save("report.json")
+```
+
+For offline or project CI validation, save the Python block above as
+`validate_report.py` and use the checked-in artifact instead of the network URL:
+
+```bash
+DATAPROF_SCHEMA=docs/schema/profile-report.v1.schema.json python validate_report.py
+```
+
+A minimal GitHub Actions job can validate every report committed under
+`reports/` without adding anything to the runtime package:
+
+```yaml
+name: Validate dataprof reports
+
+on: [push, pull_request]
+
+jobs:
+  reports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python -m pip install jsonschema
+      - name: Validate saved reports
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          from jsonschema import Draft202012Validator
+
+          schema_path = Path("docs/schema/profile-report.v1.schema.json")
+          schema = json.loads(schema_path.read_text(encoding="utf-8"))
+          validator = Draft202012Validator(schema)
+          report_paths = sorted(Path("reports").rglob("*.json"))
+          if not report_paths:
+              raise SystemExit("no JSON reports found under reports/")
+
+          failures = []
+          for report_path in report_paths:
+              report = json.loads(report_path.read_text(encoding="utf-8"))
+              failures.extend(
+                  f"{report_path}: {error.message}"
+                  for error in validator.iter_errors(report)
+              )
+          if failures:
+              raise SystemExit("\n".join(failures))
+          print(f"validated {len(report_paths)} report(s)")
+          PY
+```
