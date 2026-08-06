@@ -9,8 +9,8 @@
 
 use sqlx::sqlite::SqlitePoolOptions;
 
-/// Read a query's rows into the column-oriented map the profiler consumes.
-async fn columns_of(query: &str, ddl: &[&str]) -> std::collections::HashMap<String, Vec<String>> {
+/// Read a query's rows into the column-oriented result the profiler consumes.
+async fn columns_of(query: &str, ddl: &[&str]) -> dataprof_db::QueryColumns {
     columns_result_of(query, ddl)
         .await
         .expect("unique query columns")
@@ -19,7 +19,7 @@ async fn columns_of(query: &str, ddl: &[&str]) -> std::collections::HashMap<Stri
 async fn columns_result_of(
     query: &str,
     ddl: &[&str],
-) -> Result<std::collections::HashMap<String, Vec<String>>, dataprof_core::DataProfilerError> {
+) -> Result<dataprof_db::QueryColumns, dataprof_core::DataProfilerError> {
     let pool = SqlitePoolOptions::new()
         .connect("sqlite::memory:")
         .await

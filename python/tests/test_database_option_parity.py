@@ -108,10 +108,9 @@ def test_schema_pack_omits_patterns_and_quality(sqlite_db) -> None:
     assert report.quality_score is None, "absent quality has no score"
     for column in report.profiles:
         assert column.patterns is None, f"{column.name} kept patterns"
-    # Schema itself survives: a narrowed profile, not an empty one. Compared as
-    # a set because the database path does not preserve query column order —
-    # that is #496, and asserting on it here would couple the two.
-    assert sorted(c.name for c in report.profiles) == ["amount", "cap", "id"]
+    # Schema itself survives: a narrowed profile, not an empty one. Order is
+    # query order since #496; `test_column_order.py` is what pins that.
+    assert [c.name for c in report.profiles] == ["id", "cap", "amount"]
 
 
 def test_empty_quality_dimensions_means_not_analyzed(sqlite_db) -> None:

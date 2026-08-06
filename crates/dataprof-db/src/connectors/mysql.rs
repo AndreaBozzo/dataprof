@@ -7,11 +7,10 @@ use super::common::{build_count_query, not_connected_error};
 use crate::connection::ConnectionInfo;
 #[cfg(feature = "mysql")]
 use crate::security::validate_sql_identifier;
-use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector};
+use crate::{DataProfilerError, DatabaseConfig, DatabaseConnector, QueryColumns};
 #[cfg(feature = "mysql")]
 use crate::{process_rows_to_columns, streaming_profile_loop};
 use async_trait::async_trait;
-use std::collections::HashMap;
 
 #[cfg(feature = "mysql")]
 use {sqlx::mysql::MySqlPool, sqlx::mysql::MySqlPoolOptions};
@@ -98,10 +97,7 @@ impl DatabaseConnector for MySqlConnector {
     }
 
     #[allow(unused_variables)]
-    async fn profile_query(
-        &mut self,
-        query: &str,
-    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
+    async fn profile_query(&mut self, query: &str) -> Result<QueryColumns, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;
@@ -122,7 +118,7 @@ impl DatabaseConnector for MySqlConnector {
         &mut self,
         query: &str,
         batch_size: usize,
-    ) -> Result<HashMap<String, Vec<String>>, DataProfilerError> {
+    ) -> Result<QueryColumns, DataProfilerError> {
         #[cfg(feature = "mysql")]
         {
             let pool = self.pool.as_ref().ok_or_else(not_connected_error)?;

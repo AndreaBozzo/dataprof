@@ -77,7 +77,7 @@ macro_rules! streaming_profile_loop {
         use $crate::streaming::{StreamingProgress, merge_column_batches};
 
         let mut progress = StreamingProgress::new(Some($total_rows as u64));
-        let mut all_batches: Vec<std::collections::HashMap<String, Vec<String>>> = Vec::new();
+        let mut all_batches: Vec<$crate::QueryColumns> = Vec::new();
         let mut offset = 0usize;
 
         loop {
@@ -102,22 +102,18 @@ macro_rules! streaming_profile_loop {
                 &column_names,
                 concat!($db_name, " query result"),
             )?;
-            let mut batch_result: std::collections::HashMap<String, Vec<String>> =
-                std::collections::HashMap::with_capacity(columns.len());
-
-            for col in columns {
-                batch_result.insert(col.name().to_string(), Vec::with_capacity(rows.len()));
-            }
+            // Built from the driver's column list, so the batch carries the
+            // query's column order and values are filed by position.
+            let mut batch_result =
+                $crate::QueryColumns::with_names(column_names.clone(), rows.len());
 
             for row in &rows {
-                for (i, col) in columns.iter().enumerate() {
+                for i in 0..columns.len() {
                     let value: Option<String> = $crate::db_column_to_string!(row, i);
-                    if let Some(column_data) = batch_result.get_mut(col.name()) {
-                        // decode-audit: no-data — None is SQL NULL (or a type
-                        // db_column_to_string documents as unsupported); "" is
-                        // the profiler's textual null.
-                        column_data.push(value.unwrap_or_default());
-                    }
+                    // decode-audit: no-data — None is SQL NULL (or a type
+                    // db_column_to_string documents as unsupported); "" is
+                    // the profiler's textual null.
+                    batch_result.push_value(i, value.unwrap_or_default());
                 }
             }
 
@@ -141,18 +137,18 @@ macro_rules! streaming_profile_loop {
             }
         }
 
-        merge_column_batches(all_batches)
+        Ok(merge_column_batches(all_batches))
     }};
 }
 
-/// Macro to process rows into column-oriented HashMap.
+/// Macro to process rows into column-oriented results, in query column order.
 #[macro_export]
 macro_rules! process_rows_to_columns {
     ($rows:expr) => {{
         use sqlx::{Column, Row};
 
         if $rows.is_empty() {
-            Ok(std::collections::HashMap::new())
+            Ok($crate::QueryColumns::new())
         } else {
             let columns = $rows[0].columns();
             let column_names: Vec<String> = columns
@@ -165,22 +161,17 @@ macro_rules! process_rows_to_columns {
             ) {
                 Err(error) => Err(error),
                 Ok(()) => {
-                    let mut result: std::collections::HashMap<String, Vec<String>> =
-                        std::collections::HashMap::with_capacity(columns.len());
-
-                    for col in columns {
-                        result.insert(col.name().to_string(), Vec::with_capacity($rows.len()));
-                    }
+                    // Built from the driver's column list, so the result carries
+                    // the query's column order and values are filed by position.
+                    let mut result = $crate::QueryColumns::with_names(column_names, $rows.len());
 
                     for row in &$rows {
-                        for (i, col) in columns.iter().enumerate() {
+                        for i in 0..columns.len() {
                             let value: Option<String> = $crate::db_column_to_string!(row, i);
-                            if let Some(column_data) = result.get_mut(col.name()) {
-                                // decode-audit: no-data — None is SQL NULL (or a type
-                                // db_column_to_string documents as unsupported); "" is
-                                // the profiler's textual null.
-                                column_data.push(value.unwrap_or_default());
-                            }
+                            // decode-audit: no-data — None is SQL NULL (or a type
+                            // db_column_to_string documents as unsupported); "" is
+                            // the profiler's textual null.
+                            result.push_value(i, value.unwrap_or_default());
                         }
                     }
 

@@ -28,3 +28,6 @@ serde = { workspace = true }
 sqlx = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
