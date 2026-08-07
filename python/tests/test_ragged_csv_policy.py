@@ -1,4 +1,4 @@
-"""Ragged CSV policy parity across file, bytes, and async inputs (#418, #462).
+"""Ragged CSV policy parity across file, bytes, and async inputs (#418, #462, #470).
 
 A row whose field count differs from the header is a structural violation. The
 shipped policy per transport is deliberately not uniform, and this file is the
@@ -7,11 +7,11 @@ record of which difference is intended:
 ====================  =========================================================
 file (auto/increm.)   recover, count in ``execution.ragged_row_count``
 async bytes / URL     recover, count — same signal as the file path
+``engine="columnar"`` recover, count — identical numbers to the file path, in
+                      both directions (missing *and* extra fields)
 sync bytes            reject with a ValueError naming the row (no flexible
                       engine behind the pure-Python bytes reader)
-``csv_flexible``      ``False`` rejects on file *and* async paths
-``engine="columnar"`` **not covered** — rejects extra fields, but pads missing
-                      ones and still reports 0. Tracked in #470.
+``csv_flexible``      ``False`` rejects on the file, async and columnar paths
 ====================  =========================================================
 
 What no covered path may do is recover silently: a repaired scan must never
@@ -86,27 +86,58 @@ def test_async_bytes_match_the_file_path(tmp_path):
     assert from_async.ragged_row_count == from_file.ragged_row_count
 
 
-# --- The columnar engine is a documented gap, not a covered path ------------
+# --- The columnar engine is now a covered path (#470) -----------------------
 
 
-def test_columnar_rejects_extra_fields(tmp_path):
-    with pytest.raises(ValueError) as excinfo:
-        dp.profile(_write(tmp_path, RAGGED), engine="columnar")
-    assert "incorrect number of fields" in str(excinfo.value)
+def test_columnar_recovers_and_counts_both_directions(tmp_path):
+    # Arrow pads a short row to null and cannot decode an over-long one at all,
+    # so neither half of the count survives the decode. A `csv`-crate pre-scan
+    # supplies both before Arrow starts — measured at ~3% of the engine's wall
+    # time, because the per-value analysis dominates, not the parse.
+    report = dp.profile(_write(tmp_path, RAGGED), engine="columnar")
+
+    assert report.rows == 4
+    assert report.columns == 3, "the surplus field must not become a column"
+    assert report.ragged_row_count == 2
 
 
-def test_columnar_pads_missing_fields_without_counting(tmp_path):
-    # Pins the #470 gap rather than endorsing it: the Arrow backend pads a short
-    # row to null and reports a clean parse, so `engine="columnar"` is still a
-    # silent-clean path. When #470 lands this assertion must flip to 1 and the
-    # policy table at the top of this module must be updated with it.
+def test_columnar_matches_the_default_engine(tmp_path):
+    # Engine choice is a performance knob. It must not change the numbers.
+    path = _write(tmp_path, RAGGED)
+    from_default = dp.profile(path)
+    from_columnar = dp.profile(path, engine="columnar")
+
+    assert from_columnar.rows == from_default.rows
+    assert from_columnar.columns == from_default.columns
+    assert from_columnar.ragged_row_count == from_default.ragged_row_count
+
+
+def test_columnar_counts_missing_fields(tmp_path):
+    # The regression this file used to pin: a short row padded to null and
+    # reported as a clean parse, so the file scored a perfect consistency.
     short_only = b"name,age,city\nAlice,25,NYC\nBob,30\n"
-    report = dp.profile(_write(tmp_path, short_only), engine="columnar")
+    path = _write(tmp_path, short_only)
 
+    report = dp.profile(path, engine="columnar")
     assert report.rows == 2
-    assert report.ragged_row_count == 0
-    # The default path sees the same file honestly.
-    assert dp.profile(_write(tmp_path, short_only)).ragged_row_count == 1
+    assert report.ragged_row_count == 1
+    assert dp.profile(path).ragged_row_count == 1
+
+
+def test_columnar_clean_reports_zero(tmp_path):
+    # A trailing empty field is a present field, and Arrow renders it as null
+    # exactly like a padded one — so the count must not be inferred from nulls.
+    trailing_empty = b"name,age,city\nAlice,25,NYC\nCarol,35,\n"
+    assert dp.profile(_write(tmp_path, trailing_empty), engine="columnar").ragged_row_count == 0
+
+
+def test_columnar_csv_flexible_false_rejects(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        dp.profile(_write(tmp_path, RAGGED), engine="columnar", csv_flexible=False)
+    message = str(excinfo.value)
+    # The pre-scan rejects before Arrow does, so strict parsing reports the same
+    # field counts here as on the file path instead of Arrow's opaque wording.
+    assert "3 fields" in message, message
 
 
 # --- Clean input stays clean ------------------------------------------------
