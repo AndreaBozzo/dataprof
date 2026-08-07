@@ -21,6 +21,16 @@ use std::sync::Arc;
 /// Sample cap for numeric columns (matches SAMPLE_THRESHOLD in stats::numeric)
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
 
+/// What a pass with the `csv` crate learns about a file that Arrow cannot
+/// report on its own: see [`ArrowProfiler::pre_scan`].
+struct CsvPreScan {
+    headers: csv::StringRecord,
+    /// Rows whose field count differs from the header, in either direction.
+    ragged_row_count: usize,
+    /// Width of the widest record, never less than the header width.
+    max_fields: usize,
+}
+
 /// Columnar profiler using Apache Arrow for efficient column-oriented processing
 pub struct ArrowProfiler {
     batch_size: usize,
@@ -80,37 +90,99 @@ impl ArrowProfiler {
         self
     }
 
+    /// One `csv`-crate pass over the file, taken before Arrow decodes it.
+    ///
+    /// Arrow cannot report either half of the ragged-row contract. A short row
+    /// is padded to null, and Arrow's own output cannot tell that padding apart
+    /// from a genuinely empty trailing field — both arrive as null — so the
+    /// count is unrecoverable after the fact. An over-long row is not decoded at
+    /// all. This pass answers both questions before the decode starts.
+    ///
+    /// It is a second read of the file on the engine chosen for speed, so the
+    /// cost was measured rather than assumed: on a 218 MB / 2M-row CSV it adds
+    /// ~0.3s to a ~9s profile, about 3%. Parsing is not what this engine spends
+    /// its time on; the per-value analysis is.
+    fn pre_scan(&self, file_path: &Path) -> Result<CsvPreScan, DataProfilerError> {
+        let mut builder = csv::ReaderBuilder::new();
+        builder.has_headers(true);
+        let (flexible, max_rows) = match self.csv_config {
+            Some(ref config) => {
+                if let Some(delim) = config.delimiter {
+                    builder.delimiter(delim);
+                }
+                builder.quote(config.quote_char);
+                if config.trim_whitespace {
+                    builder.trim(csv::Trim::All);
+                }
+                (config.flexible, config.max_rows)
+            }
+            None => (false, None),
+        };
+        // Strict parsing rejects here, one reader earlier than Arrow would, so
+        // the caller gets the same field-count diagnostic as every other path
+        // instead of Arrow's "incorrect number of fields".
+        builder.flexible(flexible);
+
+        let mut reader = builder.from_path(file_path)?;
+        let headers = reader.headers()?.clone();
+        let header_width = headers.len();
+
+        let mut ragged_row_count = 0;
+        let mut max_fields = header_width;
+        // The row cap bounds the count too: a ragged row this profile never
+        // reaches is not part of it and must not show up in its report.
+        let mut rows_scanned = 0;
+        let mut record = csv::ByteRecord::new();
+        while max_rows.is_none_or(|max| rows_scanned < max)
+            && reader.read_byte_record(&mut record)?
+        {
+            rows_scanned += 1;
+            if record.len() != header_width {
+                ragged_row_count += 1;
+                max_fields = max_fields.max(record.len());
+            }
+        }
+
+        Ok(CsvPreScan {
+            headers,
+            ragged_row_count,
+            max_fields,
+        })
+    }
+
     pub fn analyze_csv_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let start = std::time::Instant::now();
         let file = File::open(file_path)?;
         let file_size_bytes = file.metadata()?.len();
         let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
-        // Read first to infer schema from headers
-        let mut header_builder = csv::ReaderBuilder::new();
-        header_builder.has_headers(true);
-        if let Some(ref config) = self.csv_config {
-            if let Some(delim) = config.delimiter {
-                header_builder.delimiter(delim);
-            }
-            header_builder.flexible(config.flexible);
-            header_builder.quote(config.quote_char);
-            if config.trim_whitespace {
-                header_builder.trim(csv::Trim::All);
-            }
-        }
-        let mut reader = header_builder.from_path(file_path)?;
+        // Read the header and the field-count shape of the body up front; see
+        // `pre_scan` for why Arrow cannot supply either.
+        let scan = self.pre_scan(file_path)?;
+        let headers = scan.headers;
 
-        // Get headers to create Arrow schema
-        let headers = reader.headers()?.clone();
         // Reject duplicate headers before building the name-keyed analyzer map,
         // which would otherwise merge two columns into one profile.
         let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
         dataprof_core::validate_unique_column_names(&header_names, "CSV header")?;
+        let header_width = header_names.len();
+
         let mut fields = Vec::new();
         for header in headers.iter() {
             // Start with string type, Arrow will convert during processing
             fields.push(Field::new(header, arrow::datatypes::DataType::Utf8, true));
+        }
+        // `arrow-csv` has no counterpart to `with_truncated_rows` for a row that
+        // is *wider* than the schema — it aborts the scan. Widening the schema to
+        // the widest record in the file gives those surplus fields somewhere to
+        // land; they are projected away below, which is the same recovery the
+        // incremental engine performs when it truncates a record to header width.
+        for overflow in header_width..scan.max_fields {
+            fields.push(Field::new(
+                format!("__dataprof_overflow_{overflow}"),
+                arrow::datatypes::DataType::Utf8,
+                true,
+            ));
         }
         let schema = Arc::new(Schema::new(fields));
 
@@ -135,10 +207,10 @@ impl ArrowProfiler {
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
             std::collections::HashMap::new();
 
-        for field in schema.fields() {
+        for name in &header_names {
             column_analyzers.insert(
-                field.name().to_string(),
-                ColumnAnalyzer::new(field.data_type()),
+                name.clone(),
+                ColumnAnalyzer::new(&arrow::datatypes::DataType::Utf8),
             );
         }
 
@@ -157,8 +229,22 @@ impl ArrowProfiler {
         let mut truncated = false;
         let mut memory_sampler = PeakMemorySampler::new();
 
+        let projection: Vec<usize> = (0..header_width).collect();
+
         for batch_result in csv_reader {
             let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, &error))?;
+
+            // Drop the overflow columns before anything observes the batch, so
+            // duplicate tracking, hint bindings and the profiles themselves all
+            // see exactly the columns the header declared.
+            if batch.num_columns() > header_width {
+                batch =
+                    batch
+                        .project(&projection)
+                        .map_err(|error| DataProfilerError::ArrowError {
+                            message: error.to_string(),
+                        })?;
+            }
 
             if let Some(max) = max_rows {
                 if total_rows >= max {
@@ -226,8 +312,9 @@ impl ArrowProfiler {
         let num_columns = column_profiles.len();
 
         memory_sampler.sample();
-        let mut execution =
-            ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("columnar");
+        let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms)
+            .with_engine("columnar")
+            .with_ragged_row_count(scan.ragged_row_count);
         if let Some(peak_mb) = memory_sampler.peak_mb() {
             execution = execution.with_memory_peak_mb(peak_mb);
         }
@@ -271,7 +358,7 @@ fn map_arrow_csv_error(file_path: &Path, error: &arrow::error::ArrowError) -> Da
         return DataProfilerError::CsvParsingError {
             message,
             suggestion: format!(
-                "The explicit columnar CSV engine currently requires rectangular rows. '{}' contains ragged records that the Arrow backend cannot recover from. Use engine='auto' or engine='incremental' for malformed CSV, or clean the file before forcing engine='columnar'.",
+                "The columnar engine sizes its schema from a pre-scan of '{}', so a row Arrow still finds ragged means the two parsers disagree on where records end — most often unbalanced quotes or an embedded newline. Use engine='auto' or engine='incremental', which parse the file only once.",
                 file_path.display()
             ),
         };
@@ -1082,31 +1169,113 @@ mod tests {
         assert_eq!(report.column_profiles.len(), 3);
         assert_eq!(city_col.total_count, 2);
         assert_eq!(city_col.null_count, 1);
+        // Padding the row is the recovery; reporting it is the contract (#470).
+        assert_eq!(report.execution.ragged_row_count, 1);
 
         Ok(())
     }
 
     #[test]
-    fn test_arrow_profiler_reports_clear_error_for_extra_fields() {
+    fn test_arrow_profiler_recovers_and_counts_extra_fields() -> Result<(), DataProfilerError> {
+        // Arrow aborts on a row wider than its schema, so the pre-scan widens
+        // the schema and the surplus fields are projected away — the same
+        // recovery the incremental engine performs, with the same count.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30,Milan,unexpected")?;
+        temp_file.flush()?;
+
+        let profiler = ArrowProfiler::new().csv_config(CsvParserConfig::default());
+        let report = profiler.analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.column_profiles.len(), 3);
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 1);
+
+        let city_col = report
+            .column_profiles
+            .iter()
+            .find(|p| p.name == "city")
+            .expect("city column should exist");
+        assert_eq!(city_col.total_count, 2);
+        assert_eq!(
+            city_col.null_count, 0,
+            "the dropped field is the 4th, not city"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_ragged_count_respects_the_row_cap() -> Result<(), DataProfilerError> {
+        // The ragged row sits past the cap, so this profile never reads it and
+        // must not report it.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30")?;
+        temp_file.flush()?;
+
+        let config = CsvParserConfig {
+            max_rows: Some(1),
+            ..CsvParserConfig::default()
+        };
+        let report = ArrowProfiler::new()
+            .csv_config(config)
+            .analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.execution.ragged_row_count, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_counts_nothing_for_a_rectangular_file() -> Result<(), DataProfilerError>
+    {
+        // A trailing empty field is a present field. Arrow renders it as null,
+        // exactly like a padded one, which is why the count cannot come from
+        // Arrow's output — and why this case has to be pinned.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Carol,35,")?;
+        temp_file.flush()?;
+
+        let report = ArrowProfiler::new()
+            .csv_config(CsvParserConfig::default())
+            .analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_strict_rejects_ragged_rows_with_field_counts() {
+        // Strict parsing still rejects, but the pre-scan gets there first, so
+        // the diagnostic names the field counts the way every other path does
+        // instead of Arrow's opaque "incorrect number of fields".
         let mut temp_file = NamedTempFile::new().expect("temp file should be created");
         writeln!(temp_file, "name,age,city").expect("header should write");
         writeln!(temp_file, "Alice,25,Rome").expect("row should write");
         writeln!(temp_file, "Bob,30,Milan,unexpected").expect("ragged row should write");
         temp_file.flush().expect("temp file should flush");
 
-        let profiler = ArrowProfiler::new().csv_config(CsvParserConfig::default());
-        let error = profiler
+        let config = CsvParserConfig {
+            flexible: false,
+            ..CsvParserConfig::default()
+        };
+        let error = ArrowProfiler::new()
+            .csv_config(config)
             .analyze_csv_file(temp_file.path())
-            .expect_err("extra fields should still fail in the Arrow CSV backend");
+            .expect_err("strict parsing must reject a ragged row");
 
         match error {
-            DataProfilerError::CsvParsingError {
-                message,
-                suggestion,
-            } => {
-                assert!(message.contains("incorrect number of fields"));
-                assert!(suggestion.contains("engine='auto'"));
-                assert!(suggestion.contains("engine='incremental'"));
+            DataProfilerError::CsvParsingError { message, .. } => {
+                assert!(message.contains("3 fields"), "{message}");
             }
             other => panic!("expected CsvParsingError, got {other:?}"),
         }

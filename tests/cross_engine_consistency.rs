@@ -893,3 +893,74 @@ fn test_unique_headers_preserve_column_count_and_totals() {
         }
     }
 }
+
+/// A ragged row must read the same through either engine (#470).
+///
+/// The columnar engine used to pad a short row to null and report a clean
+/// parse, while rejecting an over-long one outright — so `engine="columnar"`
+/// was both the only silently-clean CSV path and the only one that refused
+/// data the default engine handled. Both directions now recover and count.
+#[test]
+fn ragged_rows_report_identically_across_engines() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "name,age,city").unwrap();
+    writeln!(f, "Alice,25,Rome").unwrap();
+    writeln!(f, "Bob,30").unwrap(); // short: two fields
+    writeln!(f, "Carol,35,LA,EXTRA").unwrap(); // over-long: four fields
+    writeln!(f, "Dave,40,SF").unwrap();
+    f.flush().unwrap();
+
+    let incremental = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(f.path())
+        .expect("incremental recovers ragged rows");
+    let columnar = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(f.path())
+        .expect("columnar recovers ragged rows");
+
+    assert_eq!(incremental.execution.rows_processed, 4);
+    assert_eq!(
+        columnar.execution.rows_processed, incremental.execution.rows_processed,
+        "both engines must see every row"
+    );
+    assert_eq!(incremental.execution.ragged_row_count, 2);
+    assert_eq!(
+        columnar.execution.ragged_row_count, incremental.execution.ragged_row_count,
+        "the columnar engine must not report a repaired scan as a clean one"
+    );
+    assert_eq!(
+        columnar.column_profiles.len(),
+        3,
+        "the surplus field must not become a fourth column"
+    );
+}
+
+/// Recovery truncates an over-long row to header width, so two rows differing
+/// only past the header are the same row. The fields the columnar engine has
+/// to decode somewhere must not leak into duplicate tracking (#470).
+#[test]
+fn surplus_fields_do_not_leak_into_duplicate_detection() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "name,age,city").unwrap();
+    writeln!(f, "Alice,25,Rome").unwrap();
+    writeln!(f, "Alice,25,Rome,X").unwrap();
+    f.flush().unwrap();
+
+    for engine in [EngineType::Incremental, EngineType::Columnar] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(f.path())
+            .expect("ragged rows profile");
+        let uniqueness = report
+            .quality
+            .as_ref()
+            .and_then(|q| q.metrics.uniqueness.as_ref())
+            .unwrap_or_else(|| panic!("{engine:?} uniqueness should be assessed"));
+
+        assert_eq!(
+            uniqueness.duplicate_rows, 1,
+            "{engine:?} must see the truncated row as a duplicate"
+        );
+    }
+}
