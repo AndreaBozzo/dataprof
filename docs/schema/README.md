@@ -56,6 +56,13 @@ For example, create a full JSON report and validate it with the optional
 `jsonschema` package. The package is a validation-tool dependency only; it is
 not required by the base `dataprof` wheel.
 
+Because the schema allows unknown additive properties, a successful validation
+confirms required fields and primitive types but does not reject extra keys.
+The Python API writes the `PythonProfileReportDocument` shape, so the examples
+below pin validation to that branch of the versioned schema. This keeps errors
+focused on the fields that matter to Python consumers instead of reporting the
+whole document as failing a top-level `anyOf`.
+
 ```bash
 python -m pip install jsonschema
 python - <<'PY'
@@ -75,18 +82,23 @@ REPORT_PATH = Path("report.json")
 schema_source = os.environ.get("DATAPROF_SCHEMA", SCHEMA_URL)
 
 if schema_source.startswith(("http://", "https://")):
-    with urlopen(schema_source) as response:  # noqa: S310 - URL is explicit above
+    with urlopen(schema_source, timeout=30) as response:  # noqa: S310 - project default or caller-supplied URL
         schema = json.load(response)
 else:
     schema = json.loads(Path(schema_source).read_text(encoding="utf-8"))
 
-Draft202012Validator.check_schema(schema)
+document_schema = {key: value for key, value in schema.items() if key != "anyOf"}
+document_schema["$ref"] = "#/$defs/PythonProfileReportDocument"
+Draft202012Validator.check_schema(document_schema)
 report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
-validator = Draft202012Validator(schema)
-errors = sorted(validator.iter_errors(report), key=lambda error: list(error.path))
+validator = Draft202012Validator(document_schema)
+errors = sorted(
+    validator.iter_errors(report),
+    key=lambda error: [str(path_part) for path_part in error.path],
+)
 if errors:
     for error in errors:
-        print(f"{REPORT_PATH}: {error.message}")
+        print(f"{REPORT_PATH}: {error.json_path}: {error.message}")
     raise SystemExit(1)
 print(f"{REPORT_PATH}: valid")
 
@@ -96,7 +108,10 @@ invalid_report = copy.deepcopy(report)
 invalid_report["schema_version"] = "not-an-integer"
 invalid_errors = list(validator.iter_errors(invalid_report))
 assert invalid_errors, "the invalid schema_version should be rejected"
-print(f"invalid example: rejected ({invalid_errors[0].message})")
+print(
+    "invalid example: rejected "
+    f"({invalid_errors[0].json_path}: {invalid_errors[0].message})"
+)
 PY
 ```
 
@@ -142,7 +157,12 @@ jobs:
 
           schema_path = Path("docs/schema/profile-report.v1.schema.json")
           schema = json.loads(schema_path.read_text(encoding="utf-8"))
-          validator = Draft202012Validator(schema)
+          document_schema = {
+              key: value for key, value in schema.items() if key != "anyOf"
+          }
+          document_schema["$ref"] = "#/$defs/PythonProfileReportDocument"
+          Draft202012Validator.check_schema(document_schema)
+          validator = Draft202012Validator(document_schema)
           report_paths = sorted(Path("reports").rglob("*.json"))
           if not report_paths:
               raise SystemExit("no JSON reports found under reports/")
@@ -151,7 +171,7 @@ jobs:
           for report_path in report_paths:
               report = json.loads(report_path.read_text(encoding="utf-8"))
               failures.extend(
-                  f"{report_path}: {error.message}"
+                  f"{report_path}: {error.json_path}: {error.message}"
                   for error in validator.iter_errors(report)
               )
           if failures:
