@@ -40,6 +40,27 @@ column is sparse. Check both before describing a dataset as incomplete.
 **Consistency** — whether values in a column agree on type and format.
 `data_type_consistency` and `format_violations` are the evidence.
 
+Read it against the column's `data_type`, because that is what it is measured
+against. Type inference calls a column numeric only while more than 80% of its
+values parse as numbers; below that it falls back to `string`, where every value
+conforms and consistency is 100% by construction. The score is therefore not
+monotonic in quality across that boundary:
+
+| non-numeric share | inferred type | data_type_consistency | overall |
+| --- | --- | --- | --- |
+| 10% | float | 90.0 | 97.5 |
+| 18% | float | 82.0 | 95.5 |
+| 19% | float | 81.0 | 95.25 |
+| 20% | string | 100.0 | 100.0 |
+| 50% | string | 100.0 | 100.0 |
+
+A perfect consistency score on a `string` column means "these are all valid
+strings", which is true of any text whatsoever. It is evidence only when the
+column is genuinely textual. When a column is typed `string` but should hold
+numbers, dates, or identifiers, the consistency score is not measuring the thing
+you care about, and saying so is more useful than repeating the number. Tracked
+as issue #544.
+
 **Uniqueness** — duplicate rows and key behavior. `key_uniqueness` and
 `duplicate_rows` are the evidence. A high-cardinality column is not a key, and
 `high_cardinality_warning` is not a defect.

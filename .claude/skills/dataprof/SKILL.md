@@ -139,7 +139,19 @@ re-read and eyeball two files by hand.
 - **`None` means "not analyzed"; empty means "analyzed, found nothing."** Never
   present a `None` score as perfect, and never replace it with zero. This holds
   across every metric, not just quality dimensions.
+- **`report.quality` itself can be `None`.** Database reports currently carry no
+  quality assessment at all, so `report.quality.overall_quality_score()` raises
+  `AttributeError` on a path where `report.quality_score` simply returns `None`.
+  Check before dereferencing, and report "not assessed" rather than a number.
 - A quality score is a measurement, not a verdict. Say what drove it.
+- **A high score on a messy-looking column deserves a second look.** Consistency
+  is measured against the column's *inferred* type. A column where fewer than
+  80% of values parse as numeric is typed `string`, at which point every value
+  conforms and consistency reports 100%. So a column can score better the dirtier
+  it is: 18% junk scores 95.5, and 20% junk scores a perfect 100. If a column is
+  typed `string` but the name or the data suggests it should be numeric, a date,
+  or an identifier, say that the score does not reflect the mismatch. Tracked as
+  issue #544; until it is fixed, the score alone will not catch this.
 
 Before interpreting a specific dimension, an approximate count, a detected
 pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).

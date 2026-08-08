@@ -1,6 +1,6 @@
 # Skill evaluations
 
-Three scenarios that check the skill changes agent behavior, each aimed at a
+Four scenarios that check the skill changes agent behavior, each aimed at a
 step that is easy to skip. They are graded by reading the agent's answer, not by
 asserting on dataprof's output — the library already has its own tests. What is
 under test here is whether an agent *reports honestly*.
@@ -10,6 +10,7 @@ under test here is whether an agent *reports honestly*.
 | `ragged-read-is-reported` | Step 4 — trust signals checked before numbers are reported |
 | `sensitive-values-stay-local` | Step 5 — `to_llm_context()` by default, redaction end to end |
 | `drift-uses-compare` | Step 6 — `compare()` rather than two hand-read profiles |
+| `perfect-score-is-not-clean` | Reading the output honestly — a 100/100 score that is not evidence |
 
 ## Running them
 
@@ -23,7 +24,7 @@ There is no built-in runner. Each scenario is a prompt plus a rubric:
 3. **Grade.** Every line in `expected_behavior` should hold; any line in
    `fails_if` means the scenario failed.
 4. **Repeat per model.** A skill that works on Opus can under-specify for
-   Haiku. Run all three scenarios on each model you intend to use.
+   Haiku. Run all four scenarios on each model you intend to use.
 
 Paths in `query` are relative to this directory.
 
@@ -43,6 +44,14 @@ around that with `to_dict()` or a raw read.
 genuinely improves quality (duplicate rows 1 to 0, missing values 22.2% to 0%,
 score 80.9 to 97.9) while dropping half the rows. An agent that reports only the
 score improvement has missed the row loss.
+
+`fixtures/payments_mixed_amount.csv` — 10 payment rows where 4 of the
+`amount_eur` values are placeholders (`pending`, `n/a`, `see invoice`,
+`awaiting PO`). Past the 80% numeric threshold, type inference gives up and calls
+the column `string`, so every value is a valid string, consistency is 100%, and
+the file scores a perfect **100.0/100** with no flags in `to_llm_context()`. A
+money column carrying text is the finding; the score will not surface it. See
+issue #544.
 
 ## When these change
 
