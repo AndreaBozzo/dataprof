@@ -232,13 +232,32 @@ def main(argv: list[str] | None = None) -> int:
             count = f"{rows.count}" + ("" if rows.exact else " (estimated)")
             print(f"source: {structure.source}")
             print(f"format: {structure.format}  rows: {count}")
+            # The row count comes from a full scan while the per-column numbers
+            # come from a bounded head sample. Printing them adjacently without
+            # saying so invites reading a sample's distinct count as the
+            # dataset's — off by 5x on the first file this was tried on.
+            sampled = structure.truncated or structure.source_exhausted is False
+            if sampled:
+                print(
+                    f"  NOTE: per-column numbers below describe the first "
+                    f"{structure.rows_sampled} rows, not all {rows.count}. "
+                    f"Distinct counts are lower bounds. Null rates and inferred "
+                    f"types are sample estimates and can move either way: a "
+                    f"column typed numeric here can turn out to be text once the "
+                    f"remaining rows are read. Do not report any of these as "
+                    f"dataset values; run a full profile before you do."
+                )
             for column in structure.columns:
                 # null_ratio is 0..1, not a percentage. Scaling it here rather
                 # than labelling a ratio with a % sign, which is wrong by 100x.
                 nulls = f"{column.null_ratio * 100:.1f}%" if column.null_ratio is not None else "?"
+                # "~" marks a distinct count the profiler itself calls approximate,
+                # which is a different caveat from the sampling one above.
+                approx = "~" if column.distinct_count_approximate else ""
+                scope = " (of sample)" if sampled else ""
                 print(
                     f"  {column.name}: {column.data_type} "
-                    f"nulls={nulls} unique={column.unique_count}"
+                    f"nulls={nulls} unique={approx}{column.unique_count}{scope}"
                 )
             for warning in structure.warnings or []:
                 print(f"  warning: {warning}")

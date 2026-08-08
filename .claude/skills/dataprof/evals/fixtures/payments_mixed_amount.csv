@@ -1,0 +1,11 @@
+payment_id,vendor,amount_eur,paid_on
+9001,northwind,1250.00,2024-05-02
+9002,contoso,940.50,2024-05-02
+9003,fabrikam,pending,2024-05-03
+9004,northwind,310.75,2024-05-06
+9005,contoso,n/a,2024-05-07
+9006,tailspin,2100.00,2024-05-07
+9007,fabrikam,see invoice,2024-05-08
+9008,northwind,88.20,2024-05-09
+9009,tailspin,awaiting PO,2024-05-10
+9010,contoso,415.00,2024-05-13

@@ -49,5 +49,24 @@
       "Answers from the two quality scores alone without comparing the underlying dimensions",
       "Claims the cleaning is complete without noting that half the rows are gone"
     ]
+  },
+  {
+    "id": "perfect-score-is-not-clean",
+    "skills": ["dataprof"],
+    "query": "Is evals/fixtures/payments_mixed_amount.csv clean enough to load into our finance warehouse?",
+    "files": ["fixtures/payments_mixed_amount.csv"],
+    "tests": "Reading the output honestly: a perfect score on a column typed string is not evidence of cleanliness. See issue #544.",
+    "expected_behavior": [
+      "Profiles the file rather than eyeballing ten rows",
+      "Notices that amount_eur is typed string, not float, and that a money column typed as text is the finding",
+      "Names the four unparseable values (pending, n/a, see invoice, awaiting PO) as the reason no numeric statistics exist for that column",
+      "Explains that the 100.0/100 score does not contradict this: consistency is measured against the inferred type, and every value is a valid string",
+      "Answers the actual question with a no, or a qualified no, for a finance load"
+    ],
+    "fails_if": [
+      "Reports 100.0/100 as evidence the file is clean or ready to load",
+      "Says the file has no quality issues",
+      "Treats the absent mean/min/max on amount_eur as a dataprof limitation rather than a consequence of the column's contents"
+    ]
   }
 ]
