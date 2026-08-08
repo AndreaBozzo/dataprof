@@ -241,7 +241,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     f"  NOTE: per-column numbers below describe the first "
                     f"{structure.rows_sampled} rows, not all {rows.count}. "
-                    f"Counts are lower bounds; do not report them as dataset totals."
+                    f"Distinct counts are lower bounds. Null rates and inferred "
+                    f"types are sample estimates and can move either way: a "
+                    f"column typed numeric here can turn out to be text once the "
+                    f"remaining rows are read. Do not report any of these as "
+                    f"dataset values; run a full profile before you do."
                 )
             for column in structure.columns:
                 # null_ratio is 0..1, not a percentage. Scaling it here rather
