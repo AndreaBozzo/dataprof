@@ -2208,7 +2208,89 @@ class TestDescribe:
 
 
 # ─────────────────────────────────────────────────
-#  16. quality_summary
+#  16. quality score monotonicity (#544)
+# ─────────────────────────────────────────────────
+
+
+def _numeric_with_junk(junk: int, rows: int = 200) -> io.BytesIO:
+    """One column of `rows` values, `junk` of them non-numeric."""
+    values = [str(1000 + i) for i in range(rows - junk)]
+    values += [f"junk{i}" for i in range(junk)]
+    return io.BytesIO(("v\n" + "\n".join(values) + "\n").encode())
+
+
+def _type_consistency(report: dataprof.ProfileReport) -> float:
+    """``data_type_consistency``, failing loudly when it was not assessed.
+
+    Both ``quality`` and each dimension are optional, and ``None`` means "not
+    assessed" rather than "nothing wrong"; letting that through would make a
+    dimension that stopped being computed look like a passing comparison.
+    """
+    quality = report.quality
+    assert quality is not None, "no quality metrics were computed"
+    consistency = quality.consistency
+    assert isinstance(consistency, dict), "the consistency dimension was not assessed"
+    return consistency["data_type_consistency"]
+
+
+def _quality_score(report: dataprof.ProfileReport) -> float:
+    score = report.quality_score
+    assert score is not None, "no quality score was computed"
+    return score
+
+
+class TestQualityScoreMonotonicity:
+    """Adding junk to a column must never raise its quality score (#544).
+
+    A column that lost its numeric majority fell back to ``string``; every value
+    conforms to ``string``, so consistency reported a perfect 100 however mixed
+    the column actually was. 20% junk scored 100.0 while 18% junk scored 95.5.
+    """
+
+    def test_mixed_column_never_scores_perfect(self):
+        for junk in range(10, 200, 10):
+            report = dataprof.profile(_numeric_with_junk(junk), format="csv")
+            consistency = _type_consistency(report)
+            score = _quality_score(report)
+            assert consistency < 100.0, (
+                f"{junk}/200 junk values reported {consistency} type consistency"
+            )
+            assert score < 100.0, f"{junk}/200 junk values scored a perfect {score}"
+
+    def test_score_never_rises_as_junk_replaces_numbers(self):
+        previous = None
+        for junk in range(0, 101, 10):  # 0% up to the 50/50 point
+            score = _quality_score(dataprof.profile(_numeric_with_junk(junk), format="csv"))
+            if previous is not None:
+                assert score <= previous, (
+                    f"score rose from {previous} to {score} at {junk}/200 junk values"
+                )
+            previous = score
+
+    def test_wholly_textual_column_is_not_penalised(self):
+        # The far end of the sweep is an ordinary text column, not a mixture,
+        # and must still read as consistent.
+        report = dataprof.profile(_numeric_with_junk(200), format="csv")
+        assert report.profiles[0].data_type == "string"
+        assert _type_consistency(report) == 100.0
+
+    def test_engines_agree_on_type_consistency(self, tmp_path):
+        # Consistency is measured over reservoir samples, so the engines have to
+        # agree on the sample as well as on the arithmetic. Engine selection
+        # only applies to file sources, so this cannot use a buffer.
+        path = tmp_path / "mixed.csv"
+        path.write_bytes(_numeric_with_junk(50).getvalue())
+        scores = {
+            engine: _type_consistency(
+                dataprof.Profiler().engine(engine).profile(path),
+            )
+            for engine in ("auto", "incremental", "columnar")
+        }
+        assert set(scores.values()) == {75.0}, scores
+
+
+# ─────────────────────────────────────────────────
+#  17. quality_summary
 # ─────────────────────────────────────────────────
 
 

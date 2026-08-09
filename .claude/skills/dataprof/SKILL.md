@@ -145,13 +145,14 @@ re-read and eyeball two files by hand.
   Check before dereferencing, and report "not assessed" rather than a number.
 - A quality score is a measurement, not a verdict. Say what drove it.
 - **A high score on a messy-looking column deserves a second look.** Consistency
-  is measured against the column's *inferred* type. A column where fewer than
-  80% of values parse as numeric is typed `string`, at which point every value
-  conforms and consistency reports 100%. So a column can score better the dirtier
-  it is: 18% junk scores 95.5, and 20% junk scores a perfect 100. If a column is
-  typed `string` but the name or the data suggests it should be numeric, a date,
-  or an identifier, say that the score does not reflect the mismatch. Tracked as
-  issue #544; until it is fixed, the score alone will not catch this.
+  is measured against the column's type, and a `string` column is scored on the
+  share of values in its largest lexical class (numeric, date, boolean, text).
+  A perfect score therefore means the column holds one kind of value — for a
+  `string` column, ordinary text — not that the text is fit for your purpose. And
+  the score is symmetric around a 50/50 mix: 20% junk and 80% junk both report
+  80. If a column is typed `string` but its name or data suggests it should hold
+  numbers, dates, or identifiers, say so; read `sample_values` rather than the
+  score alone.
 
 Before interpreting a specific dimension, an approximate count, a detected
 pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).

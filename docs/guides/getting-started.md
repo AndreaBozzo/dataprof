@@ -111,9 +111,19 @@ policy is tracked in [#436](https://github.com/AndreaBozzo/dataprof/issues/436).
 
 Measures whether values conform to their expected types and formats.
 
-- `data_type_consistency` -- fraction of values matching the inferred type
+- `data_type_consistency` -- fraction of values matching the column's type
 - `format_violations` -- values that don't match detected patterns (e.g. an email column with non-email values)
 - `encoding_issues` -- invalid character encoding detected
+
+For a column with an inferred type, `data_type_consistency` is the fraction of
+non-null values conforming to that type. A `string` column is scored differently,
+because every value conforms to `string` and the metric would report 100% for
+any mixture: each value is assigned to one lexical class -- numeric, date,
+boolean, or text -- and the score is the share held by the largest class. So a
+column of 60% numbers and 40% junk reports 60, while a genuinely textual column
+reports 100. Two exceptions keep the plain type check: columns you declared via
+`identifier_columns`, whose schemes mix forms on purpose, and columns whose name
+announces dates, which stay held to dates.
 
 ### Uniqueness
 

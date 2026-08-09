@@ -393,6 +393,7 @@ def test_eval_rubrics_cite_current_fixture_values() -> None:
     before = dataprof.profile(str(EVALS / "fixtures/inventory_before.csv"))
     after = dataprof.profile(str(EVALS / "fixtures/inventory_after.csv"))
     pii = dataprof.profile(str(EVALS / "fixtures/customers_pii.csv"))
+    payments = dataprof.profile(str(EVALS / "fixtures/payments_mixed_amount.csv"))
 
     quoted = (EVALS / "scenarios.json").read_text(encoding="utf-8") + (
         EVALS / "README.md"
@@ -414,6 +415,10 @@ def test_eval_rubrics_cite_current_fixture_values() -> None:
     for label, actual, expected in (
         ("before quality score", before.quality_score, 80.9),
         ("after quality score", after.quality_score, 97.9),
+        # The high-score-is-not-clean rubric grades against this one. It went
+        # stale unnoticed when #544 changed string-column consistency, because
+        # the fixture was quoted here but never profiled.
+        ("payments quality score", payments.quality_score, 97.9),
         (
             "before missing ratio",
             _dimension(before, "completeness")["missing_values_ratio"],

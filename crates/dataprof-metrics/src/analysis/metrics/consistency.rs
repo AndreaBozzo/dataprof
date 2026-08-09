@@ -5,7 +5,7 @@
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column, is_valid_date_format};
 use crate::analysis::inference::{
-    is_integer_token, is_null_like_token, parse_strict_boolean_token,
+    is_date_token, is_integer_token, is_null_like_token, parse_strict_boolean_token,
 };
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
@@ -18,6 +18,77 @@ pub(crate) struct ConsistencyMetrics {
     pub format_violations: usize,
     pub encoding_issues: usize,
     pub values_checked: usize,
+}
+
+/// Mutually exclusive lexical form of a single non-null value.
+///
+/// The variants partition non-null values — every value belongs to exactly one —
+/// which is what lets the share held by the largest class stand in for
+/// consistency on a column that has no inferred type of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LexicalClass {
+    Numeric,
+    Date,
+    Boolean,
+    Text,
+}
+
+/// [`LexicalClass`] indexed by discriminant, used to count without a `HashMap`
+/// so that a tie between two classes resolves the same way on every run.
+/// `lexical_class_order_matches_discriminants` pins the two together.
+const LEXICAL_CLASS_ORDER: [LexicalClass; 4] = [
+    LexicalClass::Numeric,
+    LexicalClass::Date,
+    LexicalClass::Boolean,
+    LexicalClass::Text,
+];
+
+/// Classify one trimmed, non-null value.
+///
+/// The precedence matches the order `infer_type` tries types on whole columns,
+/// so a column that just missed a type threshold reports the same share of
+/// matching values that it reported while it still had that type. Integers and
+/// fractions share `Numeric` deliberately: `["1.5", "2", "3"]` is one numeric
+/// column, not a two-class mixture.
+///
+/// Dates use [`is_date_token`], the union of the forms inference and validation
+/// each recognize. Using only the validation set would drop ISO datetimes and
+/// dotted dates into `Text` alongside genuine junk, and a column of 70%
+/// datetimes and 30% junk would report a perfect score again.
+fn lexical_class(value: &str) -> LexicalClass {
+    if is_integer_token(value) || value.parse::<f64>().is_ok() {
+        LexicalClass::Numeric
+    } else if is_date_token(value) {
+        LexicalClass::Date
+    } else if parse_strict_boolean_token(value).is_some() {
+        LexicalClass::Boolean
+    } else {
+        LexicalClass::Text
+    }
+}
+
+/// The class holding the most non-null values, or `None` when the column has no
+/// non-null values to classify.
+fn dominant_lexical_class(values: &[String]) -> Option<LexicalClass> {
+    let mut counts = [0usize; LEXICAL_CLASS_ORDER.len()];
+    for value in values {
+        let trimmed = value.trim();
+        if !is_null_like_token(trimmed) {
+            counts[lexical_class(trimmed) as usize] += 1;
+        }
+    }
+
+    // Strict `>` leaves the earliest-declared class holding a tie. Which class
+    // wins does not change the reported share — both hold the same count — it
+    // only keeps the answer stable across runs.
+    let mut best: Option<(usize, usize)> = None;
+    for (index, count) in counts.into_iter().enumerate() {
+        if count > 0 && best.is_none_or(|(_, best_count)| count > best_count) {
+            best = Some((index, count));
+        }
+    }
+
+    best.map(|(index, _)| LEXICAL_CLASS_ORDER[index])
 }
 
 /// Calculator for consistency dimension metrics
@@ -53,6 +124,28 @@ impl ConsistencyCalculator {
 
         for profile in column_profiles {
             if let Some(column_data) = data.get(&profile.name) {
+                // Every value conforms to `String`, so scoring a string column
+                // against its own type reports 100% for any mixture of forms and
+                // erases the finding this metric exists to make: below the
+                // inference thresholds a half-numeric column used to score a
+                // perfect 100. Score those columns against their largest lexical
+                // class instead, which reports ~50% for a half-numeric column,
+                // leaves genuinely textual columns at 100%, and puts no
+                // threshold in between to fall off.
+                //
+                // Two kinds of string column keep the older rule. `Identifier`
+                // is only ever set by an explicit semantic hint, and identifier
+                // schemes mix forms on purpose ("A1", "123"). A column whose
+                // *name* announces dates is held to dates however its values
+                // happen to classify.
+                let dominant_class = if profile.data_type == DataType::String
+                    && !is_likely_date_column(&profile.name)
+                {
+                    dominant_lexical_class(column_data)
+                } else {
+                    None
+                };
+
                 for value in column_data {
                     let trimmed = value.trim();
                     if is_null_like_token(trimmed) {
@@ -67,9 +160,13 @@ impl ConsistencyCalculator {
                         DataType::Float => trimmed.parse::<f64>().is_ok(),
                         DataType::Date => is_valid_date_format(trimmed),
                         DataType::Boolean => parse_strict_boolean_token(trimmed).is_some(),
-                        DataType::String | DataType::Identifier => {
-                            !is_likely_date_column(&profile.name) || is_valid_date_format(trimmed)
-                        }
+                        DataType::String | DataType::Identifier => match dominant_class {
+                            Some(class) => lexical_class(trimmed) == class,
+                            None => {
+                                !is_likely_date_column(&profile.name)
+                                    || is_valid_date_format(trimmed)
+                            }
+                        },
                     };
 
                     if is_consistent {
@@ -229,6 +326,170 @@ mod tests {
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }
+    }
+
+    /// `data_type_consistency` for one string column of `values`.
+    fn string_column_consistency(name: &str, values: Vec<String>) -> f64 {
+        let data = HashMap::from([(name.to_string(), values)]);
+        ConsistencyCalculator::calculate(&data, &[string_profile(name)])
+            .expect("consistency metrics should be computed")
+            .data_type_consistency
+    }
+
+    /// `junk` non-numeric values padded out to 1000 with integers, the shape
+    /// from the report in #544.
+    fn numeric_with_junk(junk: usize) -> Vec<String> {
+        (0..1000 - junk)
+            .map(|i| (1000 + i).to_string())
+            .chain((0..junk).map(|i| format!("junk{i}")))
+            .collect()
+    }
+
+    #[test]
+    fn lexical_class_order_matches_discriminants() {
+        for (index, class) in LEXICAL_CLASS_ORDER.into_iter().enumerate() {
+            assert_eq!(
+                class as usize, index,
+                "LEXICAL_CLASS_ORDER must be indexed by discriminant: {class:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_string_column_reports_the_share_of_its_dominant_class() {
+        // 800 integers and 200 non-numeric values. Inference falls back to
+        // String here, which used to report a perfect 100.
+        assert_eq!(string_column_consistency("v", numeric_with_junk(200)), 80.0);
+        assert_eq!(string_column_consistency("v", numeric_with_junk(500)), 50.0);
+        // Past the halfway mark the text values are the dominant class and the
+        // shrinking numeric minority is what costs the column its consistency.
+        assert_eq!(string_column_consistency("v", numeric_with_junk(800)), 80.0);
+    }
+
+    #[test]
+    fn every_inference_supported_date_form_is_its_own_class() {
+        // The date forms inference recognizes are not the forms date *validation*
+        // recognizes, and neither set contains the other. Classifying against
+        // validation alone put ISO datetimes and dotted dates in the text class
+        // beside genuine junk, so a column just under the 70% date threshold
+        // reported a perfect score — the original bug, one type over.
+        for (label, date) in [
+            ("iso datetime", "2024-01-01T10:00:00"),
+            ("spaced datetime", "2024-01-01 10:00:00"),
+            ("dotted", "01.02.2024"),
+            ("iso date", "2024-01-01"),
+            ("lenient slash", "1/2/2024"),
+        ] {
+            let values: Vec<String> = std::iter::repeat_n(date.to_string(), 70)
+                .chain((0..30).map(|i| format!("junk{i}")))
+                .collect();
+            assert_eq!(
+                string_column_consistency("v", values),
+                70.0,
+                "{label} was not scored as a date form distinct from junk"
+            );
+        }
+    }
+
+    #[test]
+    fn genuinely_textual_column_stays_fully_consistent() {
+        let names = ["Alice", "Bob", "Charlie", "Dora"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(string_column_consistency("name", names), 100.0);
+
+        // The 100%-junk end of the sweep is a text column like any other.
+        assert_eq!(
+            string_column_consistency("v", numeric_with_junk(1000)),
+            100.0
+        );
+    }
+
+    #[test]
+    fn whole_and_fractional_numbers_are_one_class() {
+        // Splitting Integer from Float here would report 66.7% for an ordinary
+        // numeric column that happens to contain whole numbers.
+        let values = ["1.5", "2", "3.25", "4"].map(String::from).to_vec();
+        assert_eq!(string_column_consistency("v", values), 100.0);
+    }
+
+    #[test]
+    fn identifier_columns_may_mix_forms_without_penalty() {
+        // `Identifier` comes from an explicit semantic hint, so a scheme that
+        // mixes numeric and alphanumeric keys is intended, not a defect.
+        let mut profile = string_profile("customer_id");
+        profile.data_type = DataType::Identifier;
+        let data = HashMap::from([(
+            "customer_id".to_string(),
+            ["A1", "123", "B2", "456"].map(String::from).to_vec(),
+        )]);
+
+        let metrics = ConsistencyCalculator::calculate(&data, &[profile])
+            .expect("consistency metrics should be computed");
+
+        assert_eq!(metrics.data_type_consistency, 100.0);
+    }
+
+    #[test]
+    fn no_column_holding_more_than_one_class_scores_perfect() {
+        // Invariant (a): a perfect consistency score means one lexical class.
+        for junk in (10..=990).step_by(10) {
+            let consistency = string_column_consistency("v", numeric_with_junk(junk));
+            assert!(
+                consistency < 100.0,
+                "{junk} junk values in 1000 scored {consistency}, but the column holds two classes"
+            );
+        }
+    }
+
+    #[test]
+    fn moving_values_into_the_minority_never_raises_consistency() {
+        // Invariant (b). Each step moves ten more values out of the dominant
+        // class, so this asserts a strict decrease rather than merely
+        // "non-increasing": a flat sequence satisfies the invariant while
+        // ignoring the values being moved, which is precisely what the old
+        // every-value-conforms-to-String rule did.
+        //
+        // Approaching a 50/50 split from the numeric side.
+        let mut previous = f64::INFINITY;
+        for junk in (0..=500).step_by(10) {
+            let consistency = string_column_consistency("v", numeric_with_junk(junk));
+            assert!(
+                consistency < previous,
+                "consistency held at {previous} through {junk} junk values"
+            );
+            previous = consistency;
+        }
+
+        // And from the text side, where the numeric values are now the
+        // minority being added to.
+        let mut previous = f64::INFINITY;
+        for junk in (50..=100).rev().map(|tenth| tenth * 10) {
+            let consistency = string_column_consistency("v", numeric_with_junk(junk));
+            assert!(
+                consistency < previous,
+                "consistency held at {previous} through {junk} junk values"
+            );
+            previous = consistency;
+        }
+    }
+
+    #[test]
+    fn consistency_is_continuous_across_the_inference_threshold() {
+        // 19% junk still infers as Float and scores against numeric parsing;
+        // 20% falls back to String and scores against the dominant class. The
+        // fix is only worth having if nothing jumps at the handover.
+        let mut float_profile = string_profile("v");
+        float_profile.data_type = DataType::Float;
+        let below = HashMap::from([("v".to_string(), numeric_with_junk(190))]);
+        let below_consistency = ConsistencyCalculator::calculate(&below, &[float_profile])
+            .expect("consistency metrics should be computed")
+            .data_type_consistency;
+
+        let above_consistency = string_column_consistency("v", numeric_with_junk(200));
+
+        assert_eq!(below_consistency, 81.0);
+        assert_eq!(above_consistency, 80.0);
     }
 
     #[test]

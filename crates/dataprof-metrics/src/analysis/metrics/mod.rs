@@ -57,7 +57,7 @@ mod precision;
 mod testing;
 mod timeliness;
 mod uniqueness;
-mod utils;
+pub(crate) mod utils;
 mod validity;
 
 // Re-export public types for backward compatibility
