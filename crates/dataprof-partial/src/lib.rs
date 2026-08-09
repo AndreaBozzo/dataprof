@@ -1039,13 +1039,17 @@ fn schema_from_streaming_stats(
 ) -> SchemaResult {
     let columns = headers
         .iter()
-        .filter_map(|name| {
-            column_stats
-                .get_column_stats(name)
-                .map(|stats| ColumnSchema {
-                    name: name.clone(),
-                    data_type: profile_builder::infer_data_type_streaming(stats),
-                })
+        .map(|name| {
+            // A header can declare a column before any row creates statistics.
+            // String is the existing type convention when no values were observed.
+            let data_type = column_stats.get_column_stats(name).map_or(
+                dataprof_core::DataType::String,
+                profile_builder::infer_data_type_streaming,
+            );
+            ColumnSchema {
+                name: name.clone(),
+                data_type,
+            }
         })
         .collect();
 
@@ -1252,6 +1256,51 @@ mod tests {
         assert_eq!(result.columns[2].name, "salary");
         assert_eq!(result.columns[2].data_type, DataType::Float);
         assert!(result.rows_sampled > 0);
+    }
+
+    #[test]
+    fn test_infer_schema_header_only_csv_preserves_declared_columns() {
+        let f = write_temp_csv("name,age\n");
+
+        let schema = infer_schema(f.path()).unwrap();
+        let structure = analyze_structure(f.path(), None).unwrap();
+
+        assert_eq!(schema.rows_sampled, 0);
+        assert!(schema.schema_stable);
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .map(|column| (column.name.as_str(), column.data_type.clone()))
+                .collect::<Vec<_>>(),
+            vec![("name", DataType::String), ("age", DataType::String),]
+        );
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            structure
+                .columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_infer_schema_empty_json_formats_have_no_columns() {
+        for (label, file) in [
+            ("json", write_temp_json("[]")),
+            ("jsonl", write_temp_jsonl("")),
+        ] {
+            let schema = infer_schema(file.path()).unwrap();
+
+            assert_eq!(schema.rows_sampled, 0, "{label}");
+            assert!(schema.schema_stable, "{label}");
+            assert!(schema.columns.is_empty(), "{label}");
+        }
     }
 
     #[test]
@@ -1884,6 +1933,23 @@ mod async_tests {
         assert_eq!(result.columns[2].data_type, DataType::Float);
         assert!(result.rows_sampled > 0);
         assert!(result.schema_stable); // small data — all rows consumed
+    }
+
+    #[tokio::test]
+    async fn test_infer_schema_stream_header_only_csv_preserves_declared_columns() {
+        let source = csv_source(b"name,age\n");
+        let result = infer_schema_stream(source).await.unwrap();
+
+        assert_eq!(result.rows_sampled, 0);
+        assert!(result.schema_stable);
+        assert_eq!(
+            result
+                .columns
+                .iter()
+                .map(|column| (column.name.as_str(), column.data_type.clone()))
+                .collect::<Vec<_>>(),
+            vec![("name", DataType::String), ("age", DataType::String),]
+        );
     }
 
     #[tokio::test]

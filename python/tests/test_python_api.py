@@ -1533,6 +1533,21 @@ class TestPartialAnalysis:
         assert len(result.column_names) == result.num_columns
         assert result.rows_sampled > 0
 
+    def test_header_only_csv_surfaces_agree_on_declared_schema(self, tmp_path):
+        path = tmp_path / "header_only.csv"
+        path.write_text("name,age\n")
+
+        profile = dataprof.profile(path)
+        schema = dataprof.infer_schema(path)
+        structure = dataprof.analyze_structure(path)
+
+        expected_names = ["name", "age"]
+        assert profile.rows == schema.rows_sampled == structure.rows_sampled == 0
+        assert list(profile) == list(schema.column_names) == expected_names
+        assert [column.name for column in structure.columns] == expected_names
+        assert [column["data_type"] for column in schema.columns] == ["string", "string"]
+        assert schema.schema_stable is True
+
     def test_infer_schema_path_object(self):
         result = dataprof.infer_schema(Path(CSV_FILE))
         assert result.num_columns > 0
