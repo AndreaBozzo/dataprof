@@ -151,6 +151,7 @@ pub fn parse_strict_boolean_token(value: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn test_infer_integer() {
@@ -447,5 +448,96 @@ mod tests {
         // Validate that all hardcoded regex patterns compile successfully
         // This test will fail at initialization if any pattern is invalid
         assert_eq!(DATE_REGEXES.len(), 8);
+    }
+
+    /// Every date pattern dataprof recognizes, paired with an example of it.
+    ///
+    /// Keyed by regex source rather than by example, because the two sets
+    /// overlap: the lenient `^\d{1,2}/\d{1,2}/\d{4}$` also matches `15/01/2024`,
+    /// so a table checked only by "some example matches this pattern" stays green
+    /// when a pattern is added or its example deleted. Pinning the pattern set
+    /// makes any change to either set fail here until this table is updated.
+    ///
+    /// The four patterns the two sets share appear once, so this is the union.
+    const DATE_FORM_EXAMPLES: [(&str, &str); 11] = [
+        (r"^\d{4}-\d{2}-\d{2}$", "2024-01-15"),
+        (r"^\d{2}/\d{2}/\d{4}$", "15/01/2024"),
+        (r"^\d{2}-\d{2}-\d{4}$", "15-01-2024"),
+        (r"^\d{4}/\d{2}/\d{2}$", "2024/01/15"),
+        (r"^\d{2}\.\d{2}\.\d{4}$", "15.01.2024"),
+        (
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$",
+            "2024-01-15T10:30:00",
+        ),
+        (
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+            "2024-01-15 10:30:00",
+        ),
+        (
+            r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$",
+            "15/01/2024 10:30:00",
+        ),
+        (r"^\d{1,2}/\d{1,2}/\d{4}$", "1/2/2024"),
+        (r"^\d{4}-\d{1,2}-\d{1,2}$", "2024-1-5"),
+        (r"^\d{1,2}-\d{1,2}-\d{4}$", "1-2-2024"),
+    ];
+
+    #[test]
+    fn is_date_token_accepts_every_form_either_regex_set_recognizes() {
+        // The two sets exist for different jobs — one types a column, the other
+        // validates its values — and neither contains the other. When they were
+        // used independently a column of clean ISO datetimes was typed `Date` on
+        // one set and then failed every value against the other, scoring 0%
+        // consistency. `is_date_token` is the union both jobs now share.
+        let validation = &crate::analysis::metrics::utils::DATE_VALIDATION_REGEXES;
+        let recognized: BTreeSet<&str> = DATE_REGEXES
+            .iter()
+            .chain(validation.iter())
+            .map(|regex| regex.as_str())
+            .collect();
+        let covered: BTreeSet<&str> = DATE_FORM_EXAMPLES
+            .iter()
+            .map(|(pattern, _)| *pattern)
+            .collect();
+
+        // Adding, removing, or editing a pattern in either set fails here until
+        // this table is updated, so no date form can arrive without an example.
+        assert_eq!(
+            recognized, covered,
+            "the recognized date patterns and the examples below have diverged"
+        );
+
+        for (pattern, example) in DATE_FORM_EXAMPLES {
+            let regex = DATE_REGEXES
+                .iter()
+                .chain(validation.iter())
+                .find(|regex| regex.as_str() == pattern)
+                .expect("checked by the set equality above");
+            assert!(
+                regex.is_match(example),
+                "{example:?} is not an example of {pattern}"
+            );
+            assert!(
+                is_date_token(example),
+                "{example:?} is a recognized date form but is_date_token rejects it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_date_is_not_a_date_token() {
+        // The union must not become a predicate that accepts anything; a date
+        // column full of malformed values still has to lose consistency.
+        for value in [
+            "not-a-date",
+            "2024",
+            "15/01",
+            "2024-13-45x",
+            "",
+            "junk1",
+            "10:30:00",
+        ] {
+            assert!(!is_date_token(value), "{value:?} was accepted as a date");
+        }
     }
 }

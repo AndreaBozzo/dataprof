@@ -3,7 +3,7 @@
 //! Measures the coherence and contradiction-free nature of data.
 //! Key metrics: data type consistency, format violations, encoding issues.
 
-use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column, is_valid_date_format};
+use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column};
 use crate::analysis::inference::{
     is_date_token, is_integer_token, is_null_like_token, parse_strict_boolean_token,
 };
@@ -154,18 +154,24 @@ impl ConsistencyCalculator {
 
                     total_values += 1;
 
-                    // Check if value is consistent with inferred type
+                    // Check if value is consistent with inferred type. Dates are
+                    // validated against `is_date_token`, the union of the forms
+                    // inference recognizes and the forms date validation accepts.
+                    // `infer_type` keeps typing columns on the narrower
+                    // `is_inferred_date_token`, so the union is a superset of
+                    // every form that can make a column `Date` — which is the
+                    // property that matters here. Validating against the other
+                    // set instead scored a column of clean ISO datetimes or
+                    // dotted dates at 0%, because inference had typed it on forms
+                    // that set does not accept and every value then failed.
                     let is_consistent = match profile.data_type {
                         DataType::Integer => is_integer_token(trimmed),
                         DataType::Float => trimmed.parse::<f64>().is_ok(),
-                        DataType::Date => is_valid_date_format(trimmed),
+                        DataType::Date => is_date_token(trimmed),
                         DataType::Boolean => parse_strict_boolean_token(trimmed).is_some(),
                         DataType::String | DataType::Identifier => match dominant_class {
                             Some(class) => lexical_class(trimmed) == class,
-                            None => {
-                                !is_likely_date_column(&profile.name)
-                                    || is_valid_date_format(trimmed)
-                            }
+                            None => !is_likely_date_column(&profile.name) || is_date_token(trimmed),
                         },
                     };
 
@@ -336,6 +342,16 @@ mod tests {
             .data_type_consistency
     }
 
+    /// `data_type_consistency` for one column of `values` typed `data_type`.
+    fn typed_column_consistency(name: &str, data_type: DataType, values: Vec<String>) -> f64 {
+        let mut profile = string_profile(name);
+        profile.data_type = data_type;
+        let data = HashMap::from([(name.to_string(), values)]);
+        ConsistencyCalculator::calculate(&data, &[profile])
+            .expect("consistency metrics should be computed")
+            .data_type_consistency
+    }
+
     /// `junk` non-numeric values padded out to 1000 with integers, the shape
     /// from the report in #544.
     fn numeric_with_junk(junk: usize) -> Vec<String> {
@@ -364,6 +380,53 @@ mod tests {
         // Past the halfway mark the text values are the dominant class and the
         // shrinking numeric minority is what costs the column its consistency.
         assert_eq!(string_column_consistency("v", numeric_with_junk(800)), 80.0);
+    }
+
+    #[test]
+    fn a_date_column_is_validated_against_the_forms_that_typed_it() {
+        // Inference types a column `Date` on forms the validation regexes do not
+        // accept, so validating against the narrower set failed every value in a
+        // clean column: 28 identical ISO datetimes scored 0.0 consistency, and
+        // the file's overall score came out at 60.94 for perfect data.
+        for (label, date) in [
+            ("iso datetime", "2024-01-15T10:30:00"),
+            ("fractional iso datetime", "2024-01-15T10:30:00.123"),
+            ("spaced datetime", "2024-01-15 10:30:00"),
+            ("dotted", "15.01.2024"),
+            ("slashed datetime", "15/01/2024 10:30:00"),
+            ("iso date", "2024-01-15"),
+        ] {
+            let values = vec![date.to_string(); 28];
+            assert_eq!(
+                typed_column_consistency("ts", DataType::Date, values),
+                100.0,
+                "a column of {label} values is typed Date but scored as malformed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_date_column_of_malformed_values_still_loses_consistency() {
+        // Sharing one predicate must not turn the date branch permissive.
+        let values = ["2024-01-15", "not-a-date", "2024", "2024-01-16"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(typed_column_consistency("ts", DataType::Date, values), 50.0);
+    }
+
+    #[test]
+    fn a_date_named_string_column_accepts_every_recognized_date_form() {
+        // The date-named string column keeps its stricter name-driven rule, but
+        // "is this a date" has to mean the same thing there too.
+        let values = [
+            "2024-01-15T10:30:00",
+            "15.01.2024",
+            "2024-01-15 10:30:00",
+            "2024-01-15",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(string_column_consistency("event_date", values), 100.0);
     }
 
     #[test]
