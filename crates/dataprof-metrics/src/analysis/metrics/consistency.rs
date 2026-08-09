@@ -154,12 +154,16 @@ impl ConsistencyCalculator {
 
                     total_values += 1;
 
-                    // Check if value is consistent with inferred type. Dates use
-                    // `is_date_token`, the same predicate that types a column as
-                    // `Date` in the first place. Validating against a narrower
-                    // set scored a column of clean ISO datetimes or dotted dates
-                    // at 0%: inference typed it `Date` on forms the validation
-                    // regexes did not accept, so every value in it failed.
+                    // Check if value is consistent with inferred type. Dates are
+                    // validated against `is_date_token`, the union of the forms
+                    // inference recognizes and the forms date validation accepts.
+                    // `infer_type` keeps typing columns on the narrower
+                    // `is_inferred_date_token`, so the union is a superset of
+                    // every form that can make a column `Date` — which is the
+                    // property that matters here. Validating against the other
+                    // set instead scored a column of clean ISO datetimes or
+                    // dotted dates at 0%, because inference had typed it on forms
+                    // that set does not accept and every value then failed.
                     let is_consistent = match profile.data_type {
                         DataType::Integer => is_integer_token(trimmed),
                         DataType::Float => trimmed.parse::<f64>().is_ok(),
