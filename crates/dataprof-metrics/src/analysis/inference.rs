@@ -448,4 +448,60 @@ mod tests {
         // This test will fail at initialization if any pattern is invalid
         assert_eq!(DATE_REGEXES.len(), 8);
     }
+
+    /// One example per date form dataprof recognizes, across both regex sets.
+    const DATE_FORM_EXAMPLES: [&str; 11] = [
+        "2024-01-15",
+        "15/01/2024",
+        "15-01-2024",
+        "2024/01/15",
+        "15.01.2024",
+        "2024-01-15T10:30:00",
+        "2024-01-15 10:30:00",
+        "15/01/2024 10:30:00",
+        "1/2/2024",
+        "2024-1-5",
+        "1-2-2024",
+    ];
+
+    #[test]
+    fn is_date_token_accepts_every_form_either_regex_set_recognizes() {
+        // The two sets exist for different jobs — one types a column, the other
+        // validates its values — and neither contains the other. When they were
+        // used independently a column of clean ISO datetimes was typed `Date` on
+        // one set and then failed every value against the other, scoring 0%
+        // consistency. `is_date_token` is the union both jobs now share.
+        for example in DATE_FORM_EXAMPLES {
+            assert!(is_date_token(example), "{example} is not a recognized date");
+        }
+
+        // Every regex in either set has an example above, so a date form cannot
+        // be added to dataprof without this test being extended to cover it.
+        let validation = crate::analysis::metrics::utils::DATE_VALIDATION_REGEXES.iter();
+        for regex in DATE_REGEXES.iter().chain(validation) {
+            assert!(
+                DATE_FORM_EXAMPLES
+                    .iter()
+                    .any(|example| regex.is_match(example)),
+                "no example matches {regex}, so nothing checks that consistency scores it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_date_is_not_a_date_token() {
+        // The union must not become a predicate that accepts anything; a date
+        // column full of malformed values still has to lose consistency.
+        for value in [
+            "not-a-date",
+            "2024",
+            "15/01",
+            "2024-13-45x",
+            "",
+            "junk1",
+            "10:30:00",
+        ] {
+            assert!(!is_date_token(value), "{value:?} was accepted as a date");
+        }
+    }
 }
