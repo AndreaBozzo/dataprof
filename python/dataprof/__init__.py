@@ -939,21 +939,27 @@ def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     emitted -- a flag that fires on almost every column is noise, not signal.
     """
     flags: list[tuple[float, str]] = []
-    null_pct = col.null_percentage or 0.0
+    rounded_null_pct = _r2(col.null_percentage)
+    null_pct_for_flags = rounded_null_pct if rounded_null_pct is not None else 0.0
+    total = col.total_count or 0
     name = _one_line(col.name)
 
-    if null_pct >= 100.0:
+    # Do not infer "all-null" from the rounded percentage: a non-null value
+    # can legitimately round 99.996% up to 100.0%. Counts preserve the exact
+    # structural distinction, while the threshold and rendered percentage use
+    # the same serialized precision so native and round-tripped reports agree.
+    is_all_null = total > 0 and col.null_count is not None and col.null_count == total
+    if is_all_null:
         flags.append((100.0, f"{name}: all-null"))
-    elif null_pct >= _NULL_HEAVY_PCT:
-        flags.append((null_pct, f"{name}: null-heavy ({_r2(null_pct):.1f}% null)"))
+    elif rounded_null_pct is not None and rounded_null_pct >= _NULL_HEAVY_PCT:
+        flags.append((rounded_null_pct, f"{name}: null-heavy ({rounded_null_pct:.1f}% null)"))
 
     # A single distinct value carries no information. Suppress when the column
     # is already reported as null-heavy, where it is a restatement, not a flag.
-    if col.unique_count == 1 and null_pct < _NULL_HEAVY_PCT and (col.total_count or 0) > 1:
+    if col.unique_count == 1 and null_pct_for_flags < _NULL_HEAVY_PCT and total > 1:
         flags.append((60.0, f"{name}: constant (1 distinct value)"))
 
     outliers = col.outlier_count or 0
-    total = col.total_count or 0
     if outliers > 0 and total > 0:
         pct = 100.0 * outliers / total
         flags.append((min(50.0, pct), f"{name}: {outliers} outliers ({pct:.1f}%)"))
