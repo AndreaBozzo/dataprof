@@ -83,10 +83,7 @@ pub fn infer_type(data: &[String]) -> DataType {
     // Treat supported date formats cumulatively so mixed date columns still infer as dates.
     let date_matches = non_empty
         .iter()
-        .filter(|s| {
-            let trimmed = s.trim();
-            DATE_REGEXES.iter().any(|regex| regex.is_match(trimmed))
-        })
+        .filter(|s| is_inferred_date_token(s.trim()))
         .count();
 
     if date_matches as f64 / non_empty.len() as f64 > 0.7 {
@@ -94,6 +91,34 @@ pub fn infer_type(data: &[String]) -> DataType {
     }
 
     DataType::String
+}
+
+/// Whether a value carries one of the date forms `infer_type` counts towards
+/// typing a column as [`DataType::Date`].
+///
+/// Deliberately narrower than [`is_date_token`]: this set decides the *type*, so
+/// widening it changes which columns are dates.
+pub(crate) fn is_inferred_date_token(value: &str) -> bool {
+    DATE_REGEXES.iter().any(|regex| regex.is_match(value))
+}
+
+/// Whether a value has the lexical form of a date in any format dataprof
+/// recognizes.
+///
+/// The union of the forms [`is_inferred_date_token`] scores when typing a column
+/// and the forms `is_valid_date_format` accepts when validating one. Neither set
+/// contains the other — inference alone misses `1/2/2024`, validation alone
+/// misses dotted dates and both datetime forms — and a value that only one of
+/// them recognizes is still a date rather than free text.
+///
+/// Classifying against only one set silently reunites dates with junk: a column
+/// of 70% ISO datetimes and 30% junk falls short of the inference threshold, and
+/// if the datetimes then fail the date test too, every value lands in the text
+/// class and the column reports a perfect consistency score. Reconciling the two
+/// sets into one is tracked separately; until then this union is what "looks like
+/// a date" means for classification.
+pub(crate) fn is_date_token(value: &str) -> bool {
+    is_inferred_date_token(value) || crate::analysis::metrics::utils::is_valid_date_format(value)
 }
 
 /// Return whether a token is an integer representable by dataprof's signed or

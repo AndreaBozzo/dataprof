@@ -10,7 +10,7 @@ under test here is whether an agent *reports honestly*.
 | `ragged-read-is-reported` | Step 4 — trust signals checked before numbers are reported |
 | `sensitive-values-stay-local` | Step 5 — `to_llm_context()` by default, redaction end to end |
 | `drift-uses-compare` | Step 6 — `compare()` rather than two hand-read profiles |
-| `perfect-score-is-not-clean` | Reading the output honestly — a 100/100 score that is not evidence |
+| `high-score-is-not-clean` | Reading the output honestly — a high score that is not evidence |
 
 ## Running them
 
@@ -48,10 +48,12 @@ score improvement has missed the row loss.
 `fixtures/payments_mixed_amount.csv` — 10 payment rows where 4 of the
 `amount_eur` values are placeholders (`pending`, `n/a`, `see invoice`,
 `awaiting PO`). Past the 80% numeric threshold, type inference gives up and calls
-the column `string`, so every value is a valid string, consistency is 100%, and
-the file scores a perfect **100.0/100** with no flags in `to_llm_context()`. A
-money column carrying text is the finding; the score will not surface it. See
-issue #544.
+the column `string`. Consistency now scores that column on its dominant lexical
+class, so it contributes 6 of 10 values and the file scores **97.9/100** rather
+than the 100.0/100 it reported before #544 was fixed. That is still high enough
+to read as clean, and `to_llm_context()` still shows no per-column flag (#561), so
+a money column carrying text remains a finding the score alone will not make for
+you.
 
 ## When these change
 

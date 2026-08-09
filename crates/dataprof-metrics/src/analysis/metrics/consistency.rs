@@ -5,7 +5,7 @@
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column, is_valid_date_format};
 use crate::analysis::inference::{
-    is_integer_token, is_null_like_token, parse_strict_boolean_token,
+    is_date_token, is_integer_token, is_null_like_token, parse_strict_boolean_token,
 };
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
@@ -50,10 +50,15 @@ const LEXICAL_CLASS_ORDER: [LexicalClass; 4] = [
 /// matching values that it reported while it still had that type. Integers and
 /// fractions share `Numeric` deliberately: `["1.5", "2", "3"]` is one numeric
 /// column, not a two-class mixture.
+///
+/// Dates use [`is_date_token`], the union of the forms inference and validation
+/// each recognize. Using only the validation set would drop ISO datetimes and
+/// dotted dates into `Text` alongside genuine junk, and a column of 70%
+/// datetimes and 30% junk would report a perfect score again.
 fn lexical_class(value: &str) -> LexicalClass {
     if is_integer_token(value) || value.parse::<f64>().is_ok() {
         LexicalClass::Numeric
-    } else if is_valid_date_format(value) {
+    } else if is_date_token(value) {
         LexicalClass::Date
     } else if parse_strict_boolean_token(value).is_some() {
         LexicalClass::Boolean
@@ -359,6 +364,31 @@ mod tests {
         // Past the halfway mark the text values are the dominant class and the
         // shrinking numeric minority is what costs the column its consistency.
         assert_eq!(string_column_consistency("v", numeric_with_junk(800)), 80.0);
+    }
+
+    #[test]
+    fn every_inference_supported_date_form_is_its_own_class() {
+        // The date forms inference recognizes are not the forms date *validation*
+        // recognizes, and neither set contains the other. Classifying against
+        // validation alone put ISO datetimes and dotted dates in the text class
+        // beside genuine junk, so a column just under the 70% date threshold
+        // reported a perfect score — the original bug, one type over.
+        for (label, date) in [
+            ("iso datetime", "2024-01-01T10:00:00"),
+            ("spaced datetime", "2024-01-01 10:00:00"),
+            ("dotted", "01.02.2024"),
+            ("iso date", "2024-01-01"),
+            ("lenient slash", "1/2/2024"),
+        ] {
+            let values: Vec<String> = std::iter::repeat_n(date.to_string(), 70)
+                .chain((0..30).map(|i| format!("junk{i}")))
+                .collect();
+            assert_eq!(
+                string_column_consistency("v", values),
+                70.0,
+                "{label} was not scored as a date form distinct from junk"
+            );
+        }
     }
 
     #[test]
