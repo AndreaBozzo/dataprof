@@ -798,17 +798,14 @@ fn analyze_structure_csv(
         config = config.with_delimiter(delimiter);
     }
 
-    let (profiles, column_stats, rows_sampled, headers) =
+    let (profiles, column_stats, rows_sampled, _) =
         dataprof_csv::analyze_csv_from_reader(file, &config)?;
     let row_count = if rows_sampled < max_rows {
         exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
     } else {
         quick_row_count_with_format(path, FileFormat::Csv)?
     };
-    let mut columns = structure_columns_from_profiles(&profiles, &column_stats, "sample");
-    if columns.is_empty() && !headers.is_empty() {
-        columns = empty_structure_columns_from_headers(&headers, "sample");
-    }
+    let columns = structure_columns_from_profiles(&profiles, &column_stats, "sample");
 
     let (source_exhausted, truncated, truncation_reason) =
         sample_status(&row_count, rows_sampled, max_rows);
@@ -952,26 +949,6 @@ fn structure_columns_from_profiles(
         .collect()
 }
 
-fn empty_structure_columns_from_headers(
-    headers: &[String],
-    provenance: &str,
-) -> Vec<StructureColumnSummary> {
-    headers
-        .iter()
-        .map(|name| StructureColumnSummary {
-            name: name.clone(),
-            data_type: dataprof_core::DataType::String,
-            total_count: Some(0),
-            null_count: Some(0),
-            null_ratio: None,
-            unique_count: Some(0),
-            uniqueness_ratio: None,
-            distinct_count_approximate: Some(false),
-            provenance: provenance.to_string(),
-        })
-        .collect()
-}
-
 fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
     if denominator == 0 {
         None
@@ -1039,17 +1016,13 @@ fn schema_from_streaming_stats(
 ) -> SchemaResult {
     let columns = headers
         .iter()
-        .map(|name| {
-            // A header can declare a column before any row creates statistics.
-            // String is the existing type convention when no values were observed.
-            let data_type = column_stats.get_column_stats(name).map_or(
-                dataprof_core::DataType::String,
-                profile_builder::infer_data_type_streaming,
-            );
-            ColumnSchema {
-                name: name.clone(),
-                data_type,
-            }
+        .filter_map(|name| {
+            column_stats
+                .get_column_stats(name)
+                .map(|stats| ColumnSchema {
+                    name: name.clone(),
+                    data_type: profile_builder::infer_data_type_streaming(stats),
+                })
         })
         .collect();
 
@@ -1287,6 +1260,16 @@ mod tests {
                 .map(|column| column.name.as_str())
                 .collect::<Vec<_>>()
         );
+        for column in &structure.columns {
+            assert_eq!(column.data_type, DataType::String);
+            assert_eq!(column.total_count, Some(0));
+            assert_eq!(column.null_count, Some(0));
+            assert_eq!(column.null_ratio, None);
+            assert_eq!(column.unique_count, Some(0));
+            assert_eq!(column.uniqueness_ratio, None);
+            assert_eq!(column.distinct_count_approximate, Some(false));
+            assert_eq!(column.provenance, "sample");
+        }
     }
 
     #[test]

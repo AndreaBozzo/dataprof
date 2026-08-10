@@ -25,6 +25,68 @@ fn create_sorted_30k_csv() -> NamedTempFile {
     f
 }
 
+#[test]
+fn test_header_only_csv_columns_match_across_engines_and_serialization() {
+    let mut csv = NamedTempFile::new().unwrap();
+    writeln!(csv, "name,age").unwrap();
+    csv.flush().unwrap();
+
+    let standard = analyze_csv_file(csv.path(), &CsvParserConfig::default())
+        .expect("standard CSV analysis should succeed");
+    let reports = [
+        ("standard", standard),
+        (
+            "auto",
+            Profiler::new()
+                .engine(EngineType::Auto)
+                .analyze_file(csv.path())
+                .expect("auto analysis should succeed"),
+        ),
+        (
+            "incremental",
+            Profiler::new()
+                .engine(EngineType::Incremental)
+                .analyze_file(csv.path())
+                .expect("incremental analysis should succeed"),
+        ),
+        (
+            "columnar",
+            Profiler::new()
+                .engine(EngineType::Columnar)
+                .analyze_file(csv.path())
+                .expect("columnar analysis should succeed"),
+        ),
+    ];
+
+    for (engine, report) in reports {
+        assert_eq!(report.execution.rows_processed, 0, "{engine}");
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.data_type.clone()))
+                .collect::<Vec<_>>(),
+            vec![("name", DataType::String), ("age", DataType::String)],
+            "{engine}"
+        );
+        assert!(report.quality.is_some(), "{engine}");
+
+        let serialized = serde_json::to_value(&report).expect("report should serialize");
+        let serialized_columns = serialized["column_profiles"]
+            .as_array()
+            .expect("column_profiles should be an array");
+        assert_eq!(
+            serialized_columns
+                .iter()
+                .map(|column| column["name"].as_str().expect("column name"))
+                .collect::<Vec<_>>(),
+            vec!["name", "age"],
+            "{engine}"
+        );
+        assert!(serialized["quality"].is_object(), "{engine}");
+    }
+}
+
 /// Base numeric statistics must be exact — computed over every value, not the
 /// bounded sample — and identical across engines, even when the data is
 /// sorted and larger than the sample capacity (#424).

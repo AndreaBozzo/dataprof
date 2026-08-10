@@ -281,6 +281,8 @@ pub fn analyze_csv_from_reader_with_hints<R: Read>(
     };
 
     let mut column_stats = StreamingColumnCollection::new().with_semantic_hints(semantic_hints);
+    // A header declares the columns even when no data records follow it.
+    column_stats.init_columns(&header_names);
     let mut rows_read = 0;
 
     for result in csv_reader.records() {
@@ -562,13 +564,32 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_csv_file_empty_file() {
+    fn test_analyze_csv_file_header_only_preserves_declared_columns() {
         let csv = write_csv("name,age\n");
         let config = CsvParserConfig::default();
         let report = analyze_csv_file(csv.path(), &config).unwrap();
 
-        assert_eq!(report.column_profiles.len(), 0);
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.data_type.clone()))
+                .collect::<Vec<_>>(),
+            vec![("name", DataType::String), ("age", DataType::String)]
+        );
         assert_eq!(report.execution.rows_processed, 0);
+        assert!(report.quality.is_some());
+    }
+
+    #[test]
+    fn test_analyze_csv_file_empty_file_has_no_columns() {
+        let csv = write_csv("");
+        let config = CsvParserConfig::default();
+        let report = analyze_csv_file(csv.path(), &config).unwrap();
+
+        assert!(report.column_profiles.is_empty());
+        assert_eq!(report.execution.rows_processed, 0);
+        assert!(report.quality.is_none());
     }
 
     #[test]
