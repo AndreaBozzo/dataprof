@@ -191,6 +191,28 @@ async fn test_profiler_profile_stream_csv() {
     assert!(report.execution.source_exhausted);
 }
 
+#[tokio::test]
+async fn test_profiler_profile_stream_header_only_csv_preserves_schema() {
+    let csv = b"name,age,salary\n";
+    let source = BytesSource::new(
+        bytes::Bytes::from_static(csv),
+        AsyncSourceInfo::new("header-only-csv", FileFormat::Csv).size_hint(Some(csv.len() as u64)),
+    );
+
+    let report = Profiler::new().profile_stream(source).await.unwrap();
+
+    let names: Vec<&str> = report
+        .column_profiles
+        .iter()
+        .map(|profile| profile.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["name", "age", "salary"]);
+    assert!(report.column_profiles.iter().all(|profile| {
+        profile.data_type == dataprof::DataType::String && profile.total_count == 0
+    }));
+    assert_eq!(report.execution.rows_processed, 0);
+}
+
 /// Verify `Profiler::profile_stream()` works with JSON format.
 #[tokio::test]
 async fn test_profiler_profile_stream_json() {

@@ -1139,6 +1139,11 @@ impl AsyncStreamingProfiler {
             });
         }
 
+        // Headers are the declared schema even when the stream contains no
+        // records. Pre-register them so the public async path preserves the
+        // same header-only CSV invariant as the file-based engines.
+        column_stats.init_columns(&headers);
+
         // Estimate total rows for progress (if we know the total size)
         let estimated_total_rows = size_hint.map(|total| {
             (total as usize) / 50 // rough estimate: ~50 bytes per row
@@ -1339,7 +1344,18 @@ mod tests {
         let profiler = AsyncStreamingProfiler::new();
         let report = profiler.analyze_stream(source).await.unwrap();
 
-        assert_eq!(report.column_profiles.len(), 0);
+        let names: Vec<&str> = report
+            .column_profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["name", "age", "salary"]);
+        assert!(
+            report
+                .column_profiles
+                .iter()
+                .all(|profile| profile.data_type == DataType::String && profile.total_count == 0)
+        );
         assert_eq!(report.execution.rows_processed, 0);
     }
 
