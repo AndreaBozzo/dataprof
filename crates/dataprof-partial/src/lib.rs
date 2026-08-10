@@ -21,7 +21,7 @@ use dataprof_core::{
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_json::JsonParserConfig;
-use dataprof_runtime::{StreamingColumnCollection, profile_builder};
+use dataprof_runtime::StreamingColumnCollection;
 
 /// Schema inference sample size (rows to read for CSV/JSON).
 const SCHEMA_SAMPLE_ROWS: usize = 1000;
@@ -260,15 +260,11 @@ fn infer_schema_from_csv_reader<R: Read>(
     let config = CsvParserConfig::default()
         .has_header(has_header)
         .max_rows(Some(SCHEMA_SAMPLE_ROWS));
-    let (_profiles, column_stats, rows_read, headers) =
+    let (profiles, _column_stats, rows_read, _headers) =
         dataprof_csv::analyze_csv_from_reader(reader, &config)?;
 
-    Ok(schema_from_streaming_stats(
-        &column_stats,
-        &headers,
-        rows_read,
-        0, // caller patches timing
-    ))
+    // Zero elapsed: the caller patches the timing.
+    Ok(schema_from_profiles(&profiles, rows_read, 0))
 }
 
 /// Infer schema from any JSON/JSONL reader. Reads up to `SCHEMA_SAMPLE_ROWS` rows.
@@ -281,19 +277,11 @@ fn infer_schema_from_json_reader<R: BufRead>(
         FileFormat::Json => JsonParserConfig::json_document().with_max_rows(SCHEMA_SAMPLE_ROWS),
         _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS),
     };
-    let (_profiles, column_stats, rows_read, _malformed_lines, _detected_format) =
+    let (profiles, _column_stats, rows_read, _malformed_lines, _detected_format) =
         dataprof_json::analyze_json_from_reader(reader, &config)?;
 
-    // column_names() is already in first-seen source order, which is the
-    // public ordering contract for JSON/JSONL. Do not re-sort it.
-    let names = column_stats.column_names();
-
-    Ok(schema_from_streaming_stats(
-        &column_stats,
-        &names,
-        rows_read,
-        0, // caller patches timing
-    ))
+    // Zero elapsed: the caller patches the timing.
+    Ok(schema_from_profiles(&profiles, rows_read, 0))
 }
 
 /// Infer schema from a generic reader, dispatching by format.
@@ -798,17 +786,14 @@ fn analyze_structure_csv(
         config = config.with_delimiter(delimiter);
     }
 
-    let (profiles, column_stats, rows_sampled, headers) =
+    let (profiles, column_stats, rows_sampled, _) =
         dataprof_csv::analyze_csv_from_reader(file, &config)?;
     let row_count = if rows_sampled < max_rows {
         exact_row_count_from_sample(rows_sampled, start.elapsed().as_millis())
     } else {
         quick_row_count_with_format(path, FileFormat::Csv)?
     };
-    let mut columns = structure_columns_from_profiles(&profiles, &column_stats, "sample");
-    if columns.is_empty() && !headers.is_empty() {
-        columns = empty_structure_columns_from_headers(&headers, "sample");
-    }
+    let columns = structure_columns_from_profiles(&profiles, &column_stats, "sample");
 
     let (source_exhausted, truncated, truncation_reason) =
         sample_status(&row_count, rows_sampled, max_rows);
@@ -952,26 +937,6 @@ fn structure_columns_from_profiles(
         .collect()
 }
 
-fn empty_structure_columns_from_headers(
-    headers: &[String],
-    provenance: &str,
-) -> Vec<StructureColumnSummary> {
-    headers
-        .iter()
-        .map(|name| StructureColumnSummary {
-            name: name.clone(),
-            data_type: dataprof_core::DataType::String,
-            total_count: Some(0),
-            null_count: Some(0),
-            null_ratio: None,
-            unique_count: Some(0),
-            uniqueness_ratio: None,
-            distinct_count_approximate: Some(false),
-            provenance: provenance.to_string(),
-        })
-        .collect()
-}
-
 fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
     if denominator == 0 {
         None
@@ -1031,25 +996,23 @@ fn delimiter_to_string(delimiter: u8) -> String {
     }
 }
 
-fn schema_from_streaming_stats(
-    column_stats: &StreamingColumnCollection,
-    headers: &[String],
+/// Build a schema from the profiles the parser already produced.
+///
+/// Profiles are one per declared column, in first-seen source order: the CSV
+/// header order, or the public ordering contract for JSON/JSONL. Do not re-sort
+/// them. Reading the type off the profile keeps `infer_schema` and `profile`
+/// from ever naming a column's type differently, and leaves no column to drop
+/// or default.
+fn schema_from_profiles(
+    profiles: &[ColumnProfile],
     rows_sampled: usize,
     elapsed_ms: u128,
 ) -> SchemaResult {
-    let columns = headers
+    let columns = profiles
         .iter()
-        .map(|name| {
-            // A header can declare a column before any row creates statistics.
-            // String is the existing type convention when no values were observed.
-            let data_type = column_stats.get_column_stats(name).map_or(
-                dataprof_core::DataType::String,
-                profile_builder::infer_data_type_streaming,
-            );
-            ColumnSchema {
-                name: name.clone(),
-                data_type,
-            }
+        .map(|profile| ColumnSchema {
+            name: profile.name.clone(),
+            data_type: profile.data_type.clone(),
         })
         .collect();
 
@@ -1287,6 +1250,16 @@ mod tests {
                 .map(|column| column.name.as_str())
                 .collect::<Vec<_>>()
         );
+        for column in &structure.columns {
+            assert_eq!(column.data_type, DataType::String);
+            assert_eq!(column.total_count, Some(0));
+            assert_eq!(column.null_count, Some(0));
+            assert_eq!(column.null_ratio, None);
+            assert_eq!(column.unique_count, Some(0));
+            assert_eq!(column.uniqueness_ratio, None);
+            assert_eq!(column.distinct_count_approximate, Some(false));
+            assert_eq!(column.provenance, "sample");
+        }
     }
 
     #[test]
