@@ -27,10 +27,12 @@ import json
 import math
 import warnings
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from types import SimpleNamespace
 from typing import Any
 
 import dataprof
 import pytest
+from dataprof import _column_flags  # ty: ignore[unresolved-import]
 
 # Members that cannot participate in a value-parity sweep, each for a reason
 # that is not "it disagrees":
@@ -51,14 +53,6 @@ _UNCOMPARABLE_REPORT_MEMBERS = frozenset(
         "describe",
     }
 )
-
-# Known divergence, pinned by test_llm_context_flags_survive_roundtrip below
-# rather than silenced here: `to_llm_context` recomputes its flags from
-# `null_percentage`, comparing the threshold against the unrounded value while
-# rendering the rounded one, so a column at 19.998% null renders "20.0% null"
-# yet is not flagged -- until a round-trip stores 20.0 and it is. Fixing it
-# changes which flags agent-facing output emits, so it is tracked separately.
-_KNOWN_DIVERGENT_REPORT_MEMBERS = frozenset({"to_llm_context"})
 
 # Rounding precisions the report serializer documents: 2dp for 0..100
 # percentages, 4dp for statistics and 0..1 ratios.
@@ -271,7 +265,7 @@ def test_report_members_survive_roundtrip(rich_report, tmp_path, via):
         rich_report,
         restored,
         "ProfileReport",
-        skip=_UNCOMPARABLE_REPORT_MEMBERS | _KNOWN_DIVERGENT_REPORT_MEMBERS,
+        skip=_UNCOMPARABLE_REPORT_MEMBERS,
     )
 
 
@@ -323,7 +317,7 @@ def test_sparse_report_survives_roundtrip(sparse_report, tmp_path, via):
         sparse_report,
         restored,
         "ProfileReport",
-        skip=_UNCOMPARABLE_REPORT_MEMBERS | _KNOWN_DIVERGENT_REPORT_MEMBERS,
+        skip=_UNCOMPARABLE_REPORT_MEMBERS,
     )
     _assert_members_agree(native_quality, restored.quality, "DataQualityMetrics")
 
@@ -341,22 +335,41 @@ def test_unassessed_dimension_does_not_read_back_as_zero(sparse_report, tmp_path
             )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known: to_llm_context thresholds flags on the unrounded "
-    "null_percentage but renders the rounded one, so a round-trip can add a "
-    "flag. Fixing it changes agent-facing output; tracked separately.",
-)
 def test_llm_context_flags_survive_roundtrip(rich_report):
-    """Pins the divergence excluded from the sweep, so it cannot be forgotten.
+    """Flags use serialized null percentages consistently across a round-trip.
 
     ``notes`` is 19.998% null: native renders it as "20.0% null" without the
     null-heavy flag, while the round-tripped report stores 20.0 and flags it.
-    When the threshold and the rendering are reconciled this test starts
-    passing, and strict xfail turns that into a failure demanding its removal.
+    Both reports should now render and classify the column identically.
     """
     restored = dataprof.ProfileReport.from_dict(rich_report.to_dict())
     assert rich_report.to_llm_context() == restored.to_llm_context()
+
+
+def test_all_null_flag_requires_exact_counts():
+    """A rounded 100.0% null percentage is not proof that every value is null."""
+    almost_all_null = SimpleNamespace(
+        name="almost",
+        null_percentage=99.996,
+        null_count=24_999,
+        total_count=25_000,
+        unique_count=1,
+        outlier_count=0,
+    )
+    flags = _column_flags(almost_all_null)
+    texts = [text for _, text in flags]
+    assert "almost: all-null" not in texts
+    assert "almost: null-heavy (100.0% null)" in texts
+
+    genuinely_all_null = SimpleNamespace(
+        name="empty",
+        null_percentage=100.0,
+        null_count=25_000,
+        total_count=25_000,
+        unique_count=0,
+        outlier_count=0,
+    )
+    assert [text for _, text in _column_flags(genuinely_all_null)] == ["empty: all-null"]
 
 
 def test_small_uniqueness_ratio_is_not_rounded_to_zero(rich_report):
