@@ -354,7 +354,7 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
     let file = std::fs::File::open(file_path).map_err(|error| map_io_error(file_path, error))?;
     let buf_reader = std::io::BufReader::new(file);
 
-    let (column_profiles, column_stats, rows_read, header_names) =
+    let (column_profiles, column_stats, rows_read, _header_names) =
         analyze_csv_from_reader_with_hints(buf_reader, config, semantic_hints)?;
 
     let file_source = DataSource::File {
@@ -365,11 +365,12 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
         parquet_metadata: None,
     };
 
+    // Every header name is pre-registered above, so no profiles means no header
+    // declared a column: the source is empty, not merely rowless.
     if column_profiles.is_empty() && rows_read == 0 {
         return Ok(ReportAssembler::new(
             file_source,
-            ExecutionMetadata::new(0, header_names.len(), start.elapsed().as_millis())
-                .with_engine("csv"),
+            ExecutionMetadata::new(0, 0, start.elapsed().as_millis()).with_engine("csv"),
         )
         .skip_quality()
         .build());
@@ -589,6 +590,10 @@ mod tests {
 
         assert!(report.column_profiles.is_empty());
         assert_eq!(report.execution.rows_processed, 0);
+        assert_eq!(report.execution.columns_detected, 0);
+        // Records this path's behaviour, not a settled contract: the engines
+        // answer the same empty file with a quality block scoring 0.0/Exact
+        // over nothing at all. See #573.
         assert!(report.quality.is_none());
     }
 
