@@ -1546,6 +1546,8 @@ class TestPartialAnalysis:
         assert list(profile) == list(schema.column_names) == expected_names
         assert [column.name for column in structure.columns] == expected_names
         assert [column["data_type"] for column in schema.columns] == ["string", "string"]
+        assert [profile[name].data_type for name in expected_names] == ["string", "string"]
+        assert [column.data_type for column in structure.columns] == ["string", "string"]
         assert schema.schema_stable is True
 
     def test_infer_schema_path_object(self):
