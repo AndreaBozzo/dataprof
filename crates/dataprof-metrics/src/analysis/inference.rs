@@ -1,6 +1,8 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
+use dataprof_core::{LexicalClass, TypeHomogeneity};
+
 use crate::types::DataType;
 
 // Pre-compile regex patterns for better performance
@@ -148,10 +150,106 @@ pub fn parse_strict_boolean_token(value: &str) -> Option<bool> {
     }
 }
 
+/// Classify one trimmed, non-null value into its [`LexicalClass`].
+///
+/// The precedence matches the order [`infer_type`] tries types on whole columns,
+/// so a column that just missed a type threshold reports the same share of
+/// matching values that it reported while it still had that type. Integers and
+/// fractions share [`LexicalClass::Numeric`] deliberately: `["1.5", "2", "3"]`
+/// is one numeric column, not a two-class mixture.
+///
+/// Dates use [`is_date_token`], the union of the forms inference and validation
+/// each recognize. Using only the validation set would drop ISO datetimes and
+/// dotted dates into `Text` alongside genuine junk.
+pub fn lexical_class(value: &str) -> LexicalClass {
+    if is_integer_token(value) || value.parse::<f64>().is_ok() {
+        LexicalClass::Numeric
+    } else if is_date_token(value) {
+        LexicalClass::Date
+    } else if parse_strict_boolean_token(value).is_some() {
+        LexicalClass::Boolean
+    } else {
+        LexicalClass::Text
+    }
+}
+
+/// Distribute `values` across the lexical classes, skipping null-like tokens.
+///
+/// This is the single classifier behind both the consistency score of a column
+/// with no inferred type and the `type_homogeneity` a profile reports, so the
+/// two can never disagree about what a column holds.
+pub fn classify_lexical_forms<S: AsRef<str>>(values: &[S]) -> TypeHomogeneity {
+    let mut homogeneity = TypeHomogeneity::default();
+    for value in values {
+        let trimmed = value.as_ref().trim();
+        if !is_null_like_token(trimmed) {
+            homogeneity.record(lexical_class(trimmed));
+        }
+    }
+    homogeneity
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn each_value_lands_in_exactly_one_class() {
+        for (value, expected) in [
+            ("42", LexicalClass::Numeric),
+            ("-1.5", LexicalClass::Numeric),
+            (u64::MAX.to_string().as_str(), LexicalClass::Numeric),
+            ("2024-01-15", LexicalClass::Date),
+            ("2024-01-15T10:30:00", LexicalClass::Date),
+            ("15.01.2024", LexicalClass::Date),
+            ("true", LexicalClass::Boolean),
+            ("FALSE", LexicalClass::Boolean),
+            ("junk0", LexicalClass::Text),
+            ("N/A", LexicalClass::Text),
+        ] {
+            assert_eq!(lexical_class(value), expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn classification_counts_only_non_null_values() {
+        // Null-like tokens are absence, not a lexical form: counting them would
+        // make a sparse numeric column look mixed.
+        let values = ["1", "2", "", "null", "NaN", "junk", "2024-01-15"].map(String::from);
+
+        let counts = classify_lexical_forms(&values);
+
+        assert_eq!(counts.numeric, 2);
+        assert_eq!(counts.date, 1);
+        assert_eq!(counts.text, 1);
+        assert_eq!(counts.classified_count(), 4);
+    }
+
+    #[test]
+    fn classification_matches_the_consistency_score_it_shares_a_classifier_with() {
+        // 800 integers and 200 junk values: the shape from #544. The dominant
+        // share and the consistency score of the same column are one number,
+        // computed once, so the flag and the score can never disagree.
+        let values: Vec<String> = (0..800)
+            .map(|i| (1000 + i).to_string())
+            .chain((0..200).map(|i| format!("junk{i}")))
+            .collect();
+
+        let counts = classify_lexical_forms(&values);
+
+        assert_eq!(counts.dominant(), Some((LexicalClass::Numeric, 800)));
+        assert_eq!(counts.dominant_share(), Some(0.8));
+    }
+
+    #[test]
+    fn a_column_of_only_nulls_is_classified_and_holds_nothing() {
+        let values = ["", "   ", "NULL"].map(String::from);
+
+        // Not the same as "never classified": the caller can tell the two apart
+        // because one is `Some` and the other is absent from the profile.
+        assert_eq!(classify_lexical_forms(&values), TypeHomogeneity::default());
+    }
 
     #[test]
     fn test_infer_integer() {

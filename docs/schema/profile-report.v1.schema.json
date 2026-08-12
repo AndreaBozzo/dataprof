@@ -99,6 +99,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "type_homogeneity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TypeHomogeneity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the column's non-null values distribute across lexical classes.\n\n`data_type` cannot answer \"did this column have a dominant form?\": a\ncolumn of names and a column that is 60% numbers are both `String`, and\n`invalid_count` is absent on string columns by contract. This carries the\nevidence, so a consumer can tell a textual column from one that defeated\ntype inference.\n\nCounted over the values the profiler retained — the engine's bounded\nreservoir sample on a large source, the whole column on a small or\nin-memory one. `classified_count()` against `total_count - null_count`\nis what says which happened; treat the shares as sampled whenever it is\nshort.\n\n`None` means the classification did not run, never \"one uniform class\":\na column that was classified and had nothing to classify (all-null, or\nzero rows) is `Some` with every count zero."
+        },
         "unique_count": {
           "format": "uint",
           "minimum": 0,
@@ -1147,6 +1158,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "type_homogeneity": {
+          "additionalProperties": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "Counts per lexical class, keyed `numeric` / `date` / `boolean` / `text`.\nThe Python dialect writes the counts as a map rather than the Rust\nstruct, but the keys and their meaning are the same.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "unique_count": {
           "format": "uint",
           "minimum": 0,
@@ -2146,6 +2169,38 @@
           "type": "string"
         }
       ]
+    },
+    "TypeHomogeneity": {
+      "description": "How a column's non-null values distribute across [`LexicalClass`]es.\n\nRaw counts rather than a share, so that a reader can state the mixture it\nactually found (\"60% numeric, 40% text\") instead of the dominant class and\nan unnamed remainder, and so a serialized report carries no rounded\nderivative of a number it does not also carry exactly.\n\nAll four counts are always present. Every field zero means the column was\nclassified and had no non-null values to classify — \"analyzed, found\nnothing\", which is not the same as an absent `type_homogeneity`.",
+      "properties": {
+        "boolean": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "date": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "numeric": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "numeric",
+        "date",
+        "boolean",
+        "text"
+      ],
+      "type": "object"
     },
     "UniquenessMetrics": {
       "description": "Uniqueness metrics (ISO 8000-110).",

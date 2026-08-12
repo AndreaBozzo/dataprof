@@ -2,7 +2,9 @@ use dataprof_core::AnalysisOptions;
 
 use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
-use crate::analysis::inference::{infer_type, is_null_like_token, parse_strict_boolean_token};
+use crate::analysis::inference::{
+    classify_lexical_forms, infer_type, is_null_like_token, parse_strict_boolean_token,
+};
 use crate::analysis::patterns::detect_patterns;
 use crate::stats::numeric::compute_numeric_stats_with_parsed_count;
 use crate::stats::{calculate_datetime_stats, calculate_text_stats};
@@ -187,6 +189,11 @@ fn analyze_column_with_options(
         // exact whenever it was computed at all.
         unique_count_is_approximate: unique_count.map(|_| false),
         invalid_count,
+        // Classified over `data`, which on this path is the whole column, so the
+        // counts are exact rather than sampled. Not gated by the analysis
+        // selection: which forms a column holds is schema-level evidence like
+        // the inferred type itself, not a statistic derived from a pack.
+        type_homogeneity: Some(classify_lexical_forms(data)),
         stats,
         patterns,
     }
@@ -246,6 +253,62 @@ mod tests {
 
         assert_eq!(profile.null_count, 0); // Trimmed values are not null
         assert!(matches!(profile.data_type, DataType::Integer));
+    }
+
+    #[test]
+    fn type_homogeneity_covers_the_whole_column_on_this_path() {
+        // The in-memory path holds every value, so the counts are exact rather
+        // than sampled: they must add up to the non-null total.
+        let data: Vec<String> = (0..80)
+            .map(|i| i.to_string())
+            .chain((0..20).map(|i| format!("junk{i}")))
+            .chain(std::iter::once(String::new()))
+            .collect();
+
+        let profile = analyze_column("v", &data);
+        let counts = profile
+            .type_homogeneity
+            .expect("classification runs on every column");
+
+        assert_eq!(counts.numeric, 80);
+        assert_eq!(counts.text, 20);
+        assert_eq!(
+            counts.classified_count(),
+            profile.total_count - profile.null_count
+        );
+    }
+
+    #[test]
+    fn type_homogeneity_is_recorded_even_when_the_column_is_ordinary() {
+        // Absence has to mean "not classified". A clean numeric column reports
+        // one class holding everything, not a missing field.
+        let data = ["1", "2", "3"].map(String::from).to_vec();
+
+        let counts = analyze_column("v", &data)
+            .type_homogeneity
+            .expect("present");
+
+        assert_eq!(counts.dominant_share(), Some(1.0));
+    }
+
+    #[test]
+    fn a_narrowed_metric_selection_still_classifies_the_column() {
+        // Which forms a column holds is schema-level evidence like the inferred
+        // type, not a statistic a narrowed pack selection can take away.
+        let data = ["1", "2", "junk"].map(String::from).to_vec();
+        let options = AnalysisOptions::default().with_metric_packs(Some(vec![]));
+        assert!(!options.include_statistics());
+
+        let profile = analyze_column_with_analysis_options("v", &data, &options);
+
+        assert!(matches!(profile.stats, ColumnStats::None));
+        assert_eq!(
+            profile
+                .type_homogeneity
+                .expect("present")
+                .classified_count(),
+            3
+        );
     }
 
     #[test]

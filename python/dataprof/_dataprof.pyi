@@ -155,6 +155,15 @@ class ColumnProfile:
     unique_count: int | None
     unique_count_is_approximate: bool | None
     invalid_count: int | None
+    #: Non-null values per lexical class -- ``numeric``, ``date``, ``boolean``,
+    #: ``text`` -- over the values the profiler retained. Answers what
+    #: ``data_type`` cannot: whether a ``string`` column is ordinary text or one
+    #: that defeated type inference. All four keys are always present; all-zero
+    #: means "classified, nothing to classify" (all-null or zero rows), while
+    #: ``None`` means the classification did not run. Sum the counts and compare
+    #: against ``total_count - null_count`` to tell an exact count from one
+    #: bounded by the engine's reservoir sample.
+    type_homogeneity: dict[str, int] | None
     null_percentage: float | None
     uniqueness_ratio: float | None
     min: float | None

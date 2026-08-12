@@ -10,6 +10,7 @@ use dataprof::{
     ColumnStats, CsvParserConfig, DataType, MetricConfidence, QualityDimension, analyze_csv_file,
 };
 use dataprof::{EngineType, Profiler};
+use serde_json::json;
 use tempfile::NamedTempFile;
 
 /// 30k rows of *sorted* values — larger than the 10k per-column sample
@@ -1023,6 +1024,100 @@ fn surplus_fields_do_not_leak_into_duplicate_detection() {
         assert_eq!(
             uniqueness.duplicate_rows, 1,
             "{engine:?} must see the truncated row as a duplicate"
+        );
+    }
+}
+
+/// A column that defeated type inference is `String`, the same type a column of
+/// names gets, and `invalid_count` is absent on string columns by contract. The
+/// evidence that tells the two apart is `type_homogeneity`, and every engine has
+/// to report the same counts for the same input or an agent's reading of a
+/// column depends on which engine happened to profile it (#561).
+#[test]
+fn type_homogeneity_agrees_across_engines() {
+    let mut f = NamedTempFile::new().unwrap();
+    writeln!(f, "amount,name,when").unwrap();
+    for i in 0..200 {
+        // amount: 150 numbers and 50 placeholders — under the 80% threshold, so
+        // inference gives up and the column is typed `string`.
+        let amount = if i % 4 == 0 {
+            "pending".to_string()
+        } else {
+            format!("{}.50", 100 + i)
+        };
+        writeln!(f, "{amount},person{i},2024-01-15").unwrap();
+    }
+    f.flush().unwrap();
+
+    let standard = analyze_csv_file(f.path(), &CsvParserConfig::default())
+        .expect("standard CSV analysis should succeed");
+    let reports = [
+        ("standard", standard),
+        (
+            "auto",
+            Profiler::new()
+                .engine(EngineType::Auto)
+                .analyze_file(f.path())
+                .expect("auto analysis should succeed"),
+        ),
+        (
+            "incremental",
+            Profiler::new()
+                .engine(EngineType::Incremental)
+                .analyze_file(f.path())
+                .expect("incremental analysis should succeed"),
+        ),
+        (
+            "columnar",
+            Profiler::new()
+                .engine(EngineType::Columnar)
+                .analyze_file(f.path())
+                .expect("columnar analysis should succeed"),
+        ),
+    ];
+
+    for (engine, report) in reports {
+        let counts = |name: &str| {
+            let column = report
+                .column_profiles
+                .iter()
+                .find(|column| column.name == name)
+                .unwrap_or_else(|| panic!("[{engine}] {name} column"));
+            (
+                column.data_type.clone(),
+                column
+                    .type_homogeneity
+                    .unwrap_or_else(|| panic!("[{engine}] {name} must be classified")),
+            )
+        };
+
+        let (amount_type, amount) = counts("amount");
+        assert_eq!(
+            amount_type,
+            DataType::String,
+            "[{engine}] the fixture must reproduce the inference fallback"
+        );
+        assert_eq!(amount.numeric, 150, "[{engine}] amount numeric");
+        assert_eq!(amount.text, 50, "[{engine}] amount text");
+        assert_eq!(amount.dominant_share(), Some(0.75), "[{engine}] amount");
+
+        // A genuinely textual column is the control: same `String` type, one
+        // class, no mixture to report.
+        let (name_type, name) = counts("name");
+        assert_eq!(name_type, DataType::String, "[{engine}] name");
+        assert_eq!(name.text, 200, "[{engine}] name text");
+        assert_eq!(name.dominant_share(), Some(1.0), "[{engine}] name");
+
+        // Dates are their own class, not text that happens to look structured.
+        let (_, when) = counts("when");
+        assert_eq!(when.date, 200, "[{engine}] when date");
+
+        // And it survives serialization with the counts intact.
+        let serialized = serde_json::to_value(&report).expect("report should serialize");
+        assert_eq!(
+            serialized["column_profiles"][0]["type_homogeneity"],
+            json!({"numeric": 150, "date": 0, "boolean": 0, "text": 50}),
+            "[{engine}] serialized amount counts"
         );
     }
 }

@@ -5,7 +5,8 @@
 
 use super::utils::{DATE_FORMAT_REGEXES, is_likely_date_column};
 use crate::analysis::inference::{
-    is_date_token, is_integer_token, is_null_like_token, parse_strict_boolean_token,
+    classify_lexical_forms, is_date_token, is_integer_token, is_null_like_token, lexical_class,
+    parse_strict_boolean_token,
 };
 use crate::core::errors::DataProfilerError;
 use crate::types::{ColumnProfile, DataType};
@@ -18,77 +19,6 @@ pub(crate) struct ConsistencyMetrics {
     pub format_violations: usize,
     pub encoding_issues: usize,
     pub values_checked: usize,
-}
-
-/// Mutually exclusive lexical form of a single non-null value.
-///
-/// The variants partition non-null values — every value belongs to exactly one —
-/// which is what lets the share held by the largest class stand in for
-/// consistency on a column that has no inferred type of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LexicalClass {
-    Numeric,
-    Date,
-    Boolean,
-    Text,
-}
-
-/// [`LexicalClass`] indexed by discriminant, used to count without a `HashMap`
-/// so that a tie between two classes resolves the same way on every run.
-/// `lexical_class_order_matches_discriminants` pins the two together.
-const LEXICAL_CLASS_ORDER: [LexicalClass; 4] = [
-    LexicalClass::Numeric,
-    LexicalClass::Date,
-    LexicalClass::Boolean,
-    LexicalClass::Text,
-];
-
-/// Classify one trimmed, non-null value.
-///
-/// The precedence matches the order `infer_type` tries types on whole columns,
-/// so a column that just missed a type threshold reports the same share of
-/// matching values that it reported while it still had that type. Integers and
-/// fractions share `Numeric` deliberately: `["1.5", "2", "3"]` is one numeric
-/// column, not a two-class mixture.
-///
-/// Dates use [`is_date_token`], the union of the forms inference and validation
-/// each recognize. Using only the validation set would drop ISO datetimes and
-/// dotted dates into `Text` alongside genuine junk, and a column of 70%
-/// datetimes and 30% junk would report a perfect score again.
-fn lexical_class(value: &str) -> LexicalClass {
-    if is_integer_token(value) || value.parse::<f64>().is_ok() {
-        LexicalClass::Numeric
-    } else if is_date_token(value) {
-        LexicalClass::Date
-    } else if parse_strict_boolean_token(value).is_some() {
-        LexicalClass::Boolean
-    } else {
-        LexicalClass::Text
-    }
-}
-
-/// The class holding the most non-null values, or `None` when the column has no
-/// non-null values to classify.
-fn dominant_lexical_class(values: &[String]) -> Option<LexicalClass> {
-    let mut counts = [0usize; LEXICAL_CLASS_ORDER.len()];
-    for value in values {
-        let trimmed = value.trim();
-        if !is_null_like_token(trimmed) {
-            counts[lexical_class(trimmed) as usize] += 1;
-        }
-    }
-
-    // Strict `>` leaves the earliest-declared class holding a tie. Which class
-    // wins does not change the reported share — both hold the same count — it
-    // only keeps the answer stable across runs.
-    let mut best: Option<(usize, usize)> = None;
-    for (index, count) in counts.into_iter().enumerate() {
-        if count > 0 && best.is_none_or(|(_, best_count)| count > best_count) {
-            best = Some((index, count));
-        }
-    }
-
-    best.map(|(index, _)| LEXICAL_CLASS_ORDER[index])
 }
 
 /// Calculator for consistency dimension metrics
@@ -141,7 +71,9 @@ impl ConsistencyCalculator {
                 let dominant_class = if profile.data_type == DataType::String
                     && !is_likely_date_column(&profile.name)
                 {
-                    dominant_lexical_class(column_data)
+                    classify_lexical_forms(column_data)
+                        .dominant()
+                        .map(|(class, _)| class)
                 } else {
                     None
                 };
@@ -329,6 +261,7 @@ mod tests {
             unique_count: None,
             unique_count_is_approximate: None,
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }
@@ -359,16 +292,6 @@ mod tests {
             .map(|i| (1000 + i).to_string())
             .chain((0..junk).map(|i| format!("junk{i}")))
             .collect()
-    }
-
-    #[test]
-    fn lexical_class_order_matches_discriminants() {
-        for (index, class) in LEXICAL_CLASS_ORDER.into_iter().enumerate() {
-            assert_eq!(
-                class as usize, index,
-                "LEXICAL_CLASS_ORDER must be indexed by discriminant: {class:?}"
-            );
-        }
     }
 
     #[test]

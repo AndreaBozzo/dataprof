@@ -135,6 +135,11 @@ struct PythonColumnDocument {
     uniqueness_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     invalid_count: Option<usize>,
+    /// Counts per lexical class, keyed `numeric` / `date` / `boolean` / `text`.
+    /// The Python dialect writes the counts as a map rather than the Rust
+    /// struct, but the keys and their meaning are the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    type_homogeneity: Option<std::collections::BTreeMap<String, usize>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<PythonColumnStatsDocument>,
     #[serde(skip_serializing_if = "Option::is_none")]

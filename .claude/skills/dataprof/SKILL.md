@@ -150,9 +150,22 @@ re-read and eyeball two files by hand.
   A perfect score therefore means the column holds one kind of value — for a
   `string` column, ordinary text — not that the text is fit for your purpose. And
   the score is symmetric around a 50/50 mix: 20% junk and 80% junk both report
-  80. If a column is typed `string` but its name or data suggests it should hold
-  numbers, dates, or identifiers, say so; read `sample_values` rather than the
-  score alone.
+  80.
+- **`data_type` alone does not tell you whether a column is uniform.** A column
+  of names and a column that is 60% numbers are both `string`. The per-column
+  evidence is `type_homogeneity` — counts of non-null values by lexical class —
+  and `to_llm_context()` renders it as a `mixed types` flag once at least 5% of
+  the values fall outside the dominant class:
+
+  ```
+  flags (1):
+  - amount_eur: mixed types (60% numeric, 40% text)
+  ```
+
+  Report that mixture rather than the type. The counts come from the values the
+  profiler retained, so on a large source they describe the 10k reservoir
+  sample; the flag says `sampled N of M values` when that is the case, and
+  summing the counts against `total_count - null_count` tells you directly.
 
 Before interpreting a specific dimension, an approximate count, a detected
 pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).

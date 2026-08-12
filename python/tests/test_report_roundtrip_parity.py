@@ -350,11 +350,13 @@ def test_all_null_flag_requires_exact_counts():
     """A rounded 100.0% null percentage is not proof that every value is null."""
     almost_all_null = SimpleNamespace(
         name="almost",
+        data_type="string",
         null_percentage=99.996,
         null_count=24_999,
         total_count=25_000,
         unique_count=1,
         outlier_count=0,
+        type_homogeneity=None,
     )
     flags = _column_flags(almost_all_null)
     texts = [text for _, text in flags]
@@ -363,11 +365,14 @@ def test_all_null_flag_requires_exact_counts():
 
     genuinely_all_null = SimpleNamespace(
         name="empty",
+        data_type="string",
         null_percentage=100.0,
         null_count=25_000,
         total_count=25_000,
         unique_count=0,
         outlier_count=0,
+        # Classified, and there was nothing to classify.
+        type_homogeneity={"numeric": 0, "date": 0, "boolean": 0, "text": 0},
     )
     assert [text for _, text in _column_flags(genuinely_all_null)] == ["empty: all-null"]
 

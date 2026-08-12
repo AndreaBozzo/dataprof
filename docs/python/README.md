@@ -277,6 +277,7 @@ Per-column profiling statistics.
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |
 | `invalid_count` | `int \| None` | Non-null values that did not parse as a finite number (parse failures and non-finite tokens like `inf`/`NaN`) and are excluded from the statistics. `None` = check did not run (non-numeric column, or statistics skipped); `0` = every non-null value parsed |
+| `type_homogeneity` | `dict[str, int] \| None` | Non-null values counted by lexical class: `{"numeric", "date", "boolean", "text"}`. Tells a `string` column of ordinary text from one that defeated type inference, which `data_type` cannot. All four keys are always present; all-zero = classified with nothing to classify (all-null or no rows); `None` = the classification did not run. Counted over the values the profiler retained, so sum them against `total_count - null_count` to tell an exact count from one bounded by the 10k reservoir sample |
 | `null_percentage` | `float` | Null ratio (0.0--100.0) |
 | `uniqueness_ratio` | `float` | Unique values / total values |
 | `min` | `float \| None` | Minimum (numeric columns) |
@@ -477,7 +478,8 @@ table = report.to_arrow()
 ```
 
 Columns included: `name`, `data_type`, `total_count`, `null_count`, `null_percentage`,
-`unique_count`, `uniqueness_ratio`, `min`, `max`, `mean`, `std_dev`, `variance`,
+`unique_count`, `uniqueness_ratio`, `dominant_type`, `dominant_type_share`,
+`min`, `max`, `mean`, `std_dev`, `variance`,
 `median`, `mode`, `skewness`, `kurtosis`, `coefficient_of_variation`, `q1`, `q2`,
 `q3`, `iqr`, `is_approximate`, `min_length`, `max_length`, `avg_length`,
 `top_pattern`, `top_pattern_pct`.

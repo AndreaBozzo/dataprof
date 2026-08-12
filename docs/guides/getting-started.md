@@ -125,6 +125,20 @@ reports 100. Two exceptions keep the plain type check: columns you declared via
 `identifier_columns`, whose schemes mix forms on purpose, and columns whose name
 announces dates, which stay held to dates.
 
+`data_type_consistency` is a dataset-level number and cannot say *which* column
+is mixed. Each column carries its own evidence in `type_homogeneity`, a count of
+non-null values per lexical class:
+
+```python
+report["amount_eur"].type_homogeneity
+# {"numeric": 6, "date": 0, "boolean": 0, "text": 4}
+```
+
+`None` there means the classification did not run; four zero counts mean it ran
+and the column had nothing to classify. The counts cover the values the profiler
+retained, so compare their sum against `total_count - null_count` to see whether
+they describe the whole column or the engine's reservoir sample.
+
 ### Uniqueness
 
 Measures duplication in the data.

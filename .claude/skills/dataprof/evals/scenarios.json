@@ -59,6 +59,7 @@
     "expected_behavior": [
       "Profiles the file rather than eyeballing ten rows",
       "Notices that amount_eur is typed string, not float, and that a money column typed as text is the finding",
+      "Surfaces the mixed types flag on amount_eur (60% numeric, 40% text) rather than reading the schema line alone",
       "Names the four unparseable values (pending, n/a, see invoice, awaiting PO) as the reason no numeric statistics exist for that column",
       "Explains that the 97.9/100 score does not contradict this: the column is scored on its dominant lexical class, so 6 numeric values out of 10 leave the file looking mostly fine",
       "Answers the actual question with a no, or a qualified no, for a finance load"

@@ -1,6 +1,7 @@
 pub use dataprof_core::{
-    BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, FrequencyItem, Locale,
-    MetricPack, NumericStats, Pattern, PatternCategory, QualityDimension, Quartiles, TextStats,
+    BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, FrequencyItem, LexicalClass,
+    Locale, MetricPack, NumericStats, Pattern, PatternCategory, QualityDimension, Quartiles,
+    TextStats, TypeHomogeneity,
 };
 
 pub use crate::quality::{

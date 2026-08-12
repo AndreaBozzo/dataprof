@@ -8,6 +8,7 @@ means and — more importantly — what it does not.
 
 - The absence rule
 - Quality dimensions, one by one
+- Type homogeneity
 - Approximation provenance
 - Patterns and sensitive data
 - Comparisons
@@ -61,9 +62,11 @@ perfect score means one kind — which for a `string` column is ordinary text, n
 a guarantee the text is useful.
 
 The score is symmetric around a 50/50 mix: 20% junk and 80% junk both report 80,
-because the minority is what costs the column its consistency in each case. Read
-it with the column's `data_type` and its `sample_values`, not alone. A column
-that is 80% junk is typed `string` because that is what it mostly is.
+because the minority is what costs the column its consistency in each case. A
+column that is 80% junk is typed `string` because that is what it mostly is.
+
+The dataset-level score cannot tell you *which* column is mixed; the per-column
+evidence is `type_homogeneity` (see below). Read the two together.
 
 Two kinds of column keep the plain type check rather than the dominant-class
 rule, so a low score there means something different: columns declared through
@@ -94,6 +97,34 @@ evidence of rounding errors.
 
 The overall score is a weighted combination (`score_weights()`). Report what
 drove it, not just the number.
+
+## Type homogeneity
+
+`report["col"].type_homogeneity` counts the column's non-null values by lexical
+class: `{"numeric": 600, "date": 0, "boolean": 0, "text": 400}`. It answers the
+question `data_type` cannot — a column of names and a column that is 60% numbers
+are both `string` — and it is the only per-column evidence that a column defeated
+type inference, because `invalid_count` is absent on string columns by contract.
+
+The absence rule applies with a twist worth stating twice:
+
+- `None` — the classification did not run (a report reloaded from a document
+  written before the field existed, or a hand-edited one).
+- all four counts `0` — classified, and there was nothing to classify: the
+  column is all-null or has no rows.
+
+Never read the second as the first, or either as "one uniform class".
+
+The counts cover the values the profiler retained, which on a source larger than
+the 10k per-column reservoir is a sample. Sum them and compare against
+`total_count - null_count`: short means the shares are sampled, and you should
+say so. `to_llm_context()` does this for you and appends `sampled N of M values`
+to the flag.
+
+A `mixed types` flag appears in `to_llm_context()` once at least 5% of a
+column's classified values fall outside its dominant class. That threshold is
+display only — it changes no score — and `identifier` columns are exempt,
+because an ID scheme mixing `A1` and `123` is intended rather than a defect.
 
 ## Approximation provenance
 

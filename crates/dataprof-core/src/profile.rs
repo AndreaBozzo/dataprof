@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::classification::DataType;
+use crate::classification::{DataType, TypeHomogeneity};
 use crate::pattern::Pattern;
 
 /// Profiling statistics for a single column.
@@ -37,6 +37,25 @@ pub struct ColumnProfile {
     /// never "no invalid values", which is `Some(0)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invalid_count: Option<usize>,
+    /// How the column's non-null values distribute across lexical classes.
+    ///
+    /// `data_type` cannot answer "did this column have a dominant form?": a
+    /// column of names and a column that is 60% numbers are both `String`, and
+    /// `invalid_count` is absent on string columns by contract. This carries the
+    /// evidence, so a consumer can tell a textual column from one that defeated
+    /// type inference.
+    ///
+    /// Counted over the values the profiler retained — the engine's bounded
+    /// reservoir sample on a large source, the whole column on a small or
+    /// in-memory one. `classified_count()` against `total_count - null_count`
+    /// is what says which happened; treat the shares as sampled whenever it is
+    /// short.
+    ///
+    /// `None` means the classification did not run, never "one uniform class":
+    /// a column that was classified and had nothing to classify (all-null, or
+    /// zero rows) is `Some` with every count zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_homogeneity: Option<TypeHomogeneity>,
     pub stats: ColumnStats,
     /// Detected patterns, or `None` when pattern detection did not run.
     ///
@@ -245,6 +264,7 @@ mod tests {
             unique_count: Some(8),
             unique_count_is_approximate: Some(false),
             invalid_count: Some(0),
+            type_homogeneity: None,
             stats: ColumnStats::Numeric(NumericStats {
                 min: 1.0,
                 max: 100.0,
@@ -298,6 +318,7 @@ mod tests {
             unique_count: Some(3),
             unique_count_is_approximate: Some(false),
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::Text(TextStats {
                 min_length: 3,
                 max_length: 7,
