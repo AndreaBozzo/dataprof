@@ -135,11 +135,13 @@ struct PythonColumnDocument {
     uniqueness_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     invalid_count: Option<usize>,
-    /// Counts per lexical class, keyed `numeric` / `date` / `boolean` / `text`.
-    /// The Python dialect writes the counts as a map rather than the Rust
-    /// struct, but the keys and their meaning are the same.
+    /// Counts per lexical class. The Python dialect writes them as a plain
+    /// mapping, but it is the same four-key object the Rust dialect writes, so
+    /// it is described by the same definition: a reader that accepted a partial
+    /// mapping here would validate a document the Python loader then discards
+    /// as incomplete rather than inventing the missing counts.
     #[serde(skip_serializing_if = "Option::is_none")]
-    type_homogeneity: Option<std::collections::BTreeMap<String, usize>>,
+    type_homogeneity: Option<dataprof_core::TypeHomogeneity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<PythonColumnStatsDocument>,
     #[serde(skip_serializing_if = "Option::is_none")]

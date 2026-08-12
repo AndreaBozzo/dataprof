@@ -10,8 +10,10 @@ acceptance criterion 4 of #544, the half an agent actually reads.
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
+from jsonschema import Draft202012Validator
 
 try:
     import dataprof as dp
@@ -106,6 +108,60 @@ class TestTypeHomogeneity:
 
         assert restored["v"].type_homogeneity is None
         assert "type_homogeneity" not in restored.to_dict()["columns"][0]
+
+    def test_the_published_schema_rejects_what_the_loader_discards(self):
+        # A partial mapping validating against the schema while the loader
+        # treats it as absence would let a document be "valid" and still lose
+        # the field on reload. The Python dialect is described by the same
+        # four-key definition the Rust dialect is.
+        schema_path = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "docs"
+            / "schema"
+            / "profile-report.v1.schema.json"
+        )
+        validator = Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8")))
+
+        document = {
+            "schema_version": dp.REPORT_SCHEMA_VERSION,
+            "source": "hand-edited.csv",
+            "source_type": "file",
+            "execution": {
+                "engine": None,
+                "rows_processed": 1,
+                "columns_detected": 1,
+                "scan_time_ms": 0,
+                "source_exhausted": True,
+                "truncation_reason": None,
+                "bytes_consumed": None,
+                "throughput_rows_sec": None,
+                "memory_peak_mb": None,
+                "error_count": 0,
+                "ragged_row_count": 0,
+                "sampling_applied": False,
+                "sampling_ratio": None,
+            },
+            "columns": [
+                {
+                    "name": "v",
+                    "data_type": "string",
+                    "total_count": 1,
+                    "null_count": 0,
+                    "null_percentage": 0.0,
+                    "unique_count": 1,
+                    "unique_count_is_approximate": False,
+                    "uniqueness_ratio": 1.0,
+                    "type_homogeneity": {"numeric": 0, "date": 0, "boolean": 0, "text": 1},
+                }
+            ],
+            "quality": None,
+        }
+        validator.validate(document)
+
+        document["columns"][0]["type_homogeneity"] = {"numeric": 3}
+        assert list(validator.iter_errors(document)), (
+            "a partial count map must not validate, because the loader drops it"
+        )
 
     def test_a_malformed_mapping_reads_as_absence(self):
         # An invented count is worse than a gap: a partial mapping cannot be

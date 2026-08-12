@@ -1159,16 +1159,15 @@
           "type": "integer"
         },
         "type_homogeneity": {
-          "additionalProperties": {
-            "format": "uint",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "description": "Counts per lexical class, keyed `numeric` / `date` / `boolean` / `text`.\nThe Python dialect writes the counts as a map rather than the Rust\nstruct, but the keys and their meaning are the same.",
-          "type": [
-            "object",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TypeHomogeneity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Counts per lexical class. The Python dialect writes them as a plain\nmapping, but it is the same four-key object the Rust dialect writes, so\nit is described by the same definition: a reader that accepted a partial\nmapping here would validate a document the Python loader then discards\nas incomplete rather than inventing the missing counts."
         },
         "unique_count": {
           "format": "uint",

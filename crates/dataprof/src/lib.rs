@@ -26,12 +26,12 @@ pub use dataprof_core::{
     AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats,
     CountMethod, DataFrameLibrary, DataProfilerError, DataSource, DataType, DataprofConfig,
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
-    InputValidator, IsoQualityConfig, Locale, MetricPack, NumericStats, OutputFormat,
+    InputValidator, IsoQualityConfig, LexicalClass, Locale, MetricPack, NumericStats, OutputFormat,
     ParquetMetadata, Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension,
     QualityScoreWeights, Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult,
     SemanticHintBinding, SemanticHintKind, SemanticHints, StopCondition, StopEvaluator,
-    StructureColumnSummary, StructureReport, TextStats, TruncationReason, ValidationError,
-    validate_unique_column_names,
+    StructureColumnSummary, StructureReport, TextStats, TruncationReason, TypeHomogeneity,
+    ValidationError, validate_unique_column_names,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
@@ -45,7 +45,8 @@ pub use dataprof_metrics::{
     PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, TimelinessMetrics,
     UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
     analyze_column_with_analysis_options, calculate_datetime_stats, calculate_numeric_stats,
-    calculate_text_stats, detect_patterns, infer_type, is_null_like_token, list_patterns,
+    calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, is_null_like_token,
+    lexical_class, list_patterns,
 };
 #[cfg(feature = "parquet-async")]
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};
