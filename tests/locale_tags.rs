@@ -82,7 +82,7 @@ fn every_spelling_of_a_locale_profiles_alike() {
 
 #[test]
 fn an_unrecognised_tag_is_rejected_naming_the_supported_set() {
-    for tag in ["XX", "ZZZZ", "de-CH", "en", "italiano"] {
+    for tag in ["XX", "ZZZZ", "de-CH", "de-CH-x-IT", "en", "italiano"] {
         let error = Locale::parse_optional(Some(tag))
             .expect_err(&format!("tag {tag:?} should not be accepted"));
 

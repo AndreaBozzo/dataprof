@@ -33,7 +33,7 @@ IT_SPELLINGS = ("IT", "it", "It", " it ", "ITA", "ita", "it-IT", "it_IT")
 # Tags that name no supported locale. "de-CH" is the interesting one: falling
 # back to its language subtag would answer a Swiss request with Germany's
 # patterns, which is a guess.
-UNKNOWN_TAGS = ("XX", "ZZZZ", "de-CH", "en", "italiano", "-", "0")
+UNKNOWN_TAGS = ("XX", "ZZZZ", "de-CH", "de-CH-x-IT", "en", "italiano", "-", "0")
 
 
 def _patterns(locale: str | None) -> list[tuple[str, float]]:

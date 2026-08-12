@@ -83,17 +83,28 @@ impl Locale {
 
     /// Resolve a normalised tag, or `None` when it names no supported locale.
     ///
-    /// A single subtag is read as a region code (`"IT"`, `"it"`, `"ITA"`). With
-    /// more than one, the region is the last subtag, so both the BCP 47 and the
-    /// POSIX spellings resolve (`"it-IT"`, `"it_IT"`, `"en-GB"`). A tag naming a
-    /// region the catalogue has no patterns for (`"de-CH"`) does not fall back
-    /// to its language subtag: it names a locale dataprof does not support, and
-    /// answering with Germany's patterns would be a guess.
+    /// Two forms resolve: a bare region code (`"IT"`, `"it"`, `"ITA"`) and a
+    /// language-region pair, in either the BCP 47 or the POSIX spelling
+    /// (`"it-IT"`, `"it_IT"`, `"en-GB"`). A stray separator is tolerated; a
+    /// longer tag is not, because its last subtag is not its region — the
+    /// script, variant, extension and private-use subtags all sit after it, so
+    /// reading `de-CH-x-IT` as Italy would answer a Swiss request with Italy's
+    /// patterns.
+    ///
+    /// A tag naming a region the catalogue has no patterns for (`"de-CH"`) does
+    /// not fall back to its language subtag either: it names a locale dataprof
+    /// does not support, and answering with Germany's patterns would be a guess.
     fn resolve(tag: &str) -> Option<Self> {
-        let region = tag
+        let subtags: Vec<&str> = tag
             .split(['-', '_'])
-            .rfind(|subtag| !subtag.is_empty())?
-            .to_ascii_uppercase();
+            .filter(|subtag| !subtag.is_empty())
+            .collect();
+
+        let region = match subtags.as_slice() {
+            // One subtag is the region itself; two are language and region.
+            [region] | [_, region] => region.to_ascii_uppercase(),
+            _ => return None,
+        };
 
         Self::all()
             .into_iter()
@@ -159,10 +170,42 @@ mod tests {
     fn an_unsupported_region_is_an_error_not_a_fallback() {
         // Switzerland has no catalogue; resolving de-CH to Germany would be a
         // guess, and accepting it silently is the bug this type exists for.
-        for tag in ["XX", "de-CH", "es", "en", "ZZZZ", "it-IT-u-ca-gregory"] {
+        for tag in ["XX", "de-CH", "es", "en", "ZZZZ"] {
             assert!(
                 tag.parse::<Locale>().is_err(),
                 "tag {tag:?} was accepted as a locale"
+            );
+        }
+    }
+
+    #[test]
+    fn a_subtag_past_the_region_is_not_read_as_the_region() {
+        // Script, variant, extension and private-use subtags all sit after the
+        // region, so the last subtag of a longer tag is not it: `de-CH-x-IT`
+        // names Switzerland, and reading it as Italy would be the same silent
+        // wrong answer from the other direction.
+        for tag in [
+            "de-CH-x-IT",
+            "it-IT-u-ca-gregory",
+            "zh-Hans-CN",
+            "sr-Latn-RS-x-US",
+        ] {
+            assert!(
+                tag.parse::<Locale>().is_err(),
+                "tag {tag:?} was accepted as a locale"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stray_separator_is_tolerated() {
+        // A trailing or doubled separator is a typo for the tag, not a longer
+        // tag: the subtags it actually carries still name one region.
+        for tag in ["IT-", "_it_", "it--IT", "-IT"] {
+            assert_eq!(
+                tag.parse::<Locale>(),
+                Ok(Locale::It),
+                "tag {tag:?} should resolve to IT"
             );
         }
     }
