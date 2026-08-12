@@ -322,6 +322,7 @@ impl ArrowProfiler {
             execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
         }
 
+        let empty_source = column_profiles.is_empty() && total_rows == 0;
         let mut assembler = ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -335,7 +336,7 @@ impl ArrowProfiler {
         .columns(column_profiles)
         .with_row_duplicates(row_tracker.summary());
 
-        if MetricPack::include_quality(packs) {
+        if MetricPack::include_quality(packs) && !empty_source {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_exact_value_hint_bindings(hint_bindings.bindings(headers.iter()))

@@ -397,6 +397,7 @@ impl IncrementalProfiler {
             execution = execution.with_source_exhausted(false);
         }
 
+        let empty_source = column_profiles.is_empty() && analyzed_rows == 0;
         let mut assembler = ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -409,7 +410,7 @@ impl IncrementalProfiler {
         )
         .columns(column_profiles);
 
-        if MetricPack::include_quality(packs) {
+        if MetricPack::include_quality(packs) && !empty_source {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_row_duplicates(column_stats.row_duplicate_summary())
