@@ -14,7 +14,7 @@
 use std::io::Write;
 
 use dataprof::{
-    ColumnStats, DatabaseConfig, MetricPack, ProfileReport, Profiler, QualityDimension,
+    ColumnStats, DatabaseConfig, Locale, MetricPack, ProfileReport, Profiler, QualityDimension,
     SemanticHints,
 };
 use tempfile::NamedTempFile;
@@ -187,7 +187,7 @@ async fn locale_reaches_pattern_detection_and_matches_csv() {
         .await
         .expect("query profiling should succeed");
     let localized = sqlite_profiler(&db_path)
-        .locale("IT")
+        .locale(Locale::It)
         .analyze_query(QUERY)
         .await
         .expect("localized query profiling should succeed");
@@ -210,7 +210,7 @@ async fn locale_reaches_pattern_detection_and_matches_csv() {
     // The product contract: the same rows profile the same way whether they
     // came out of a query or off disk.
     let csv_localized = Profiler::new()
-        .locale("IT")
+        .locale(Locale::It)
         .analyze_file(csv.path())
         .expect("csv profiling should succeed");
     assert_eq!(
@@ -228,7 +228,7 @@ async fn no_quality_entry_point_keeps_statistics_and_patterns() {
     let (_dir, db_path) = sqlite_fixture().await;
 
     let report = sqlite_profiler(&db_path)
-        .locale("IT")
+        .locale(Locale::It)
         .analyze_query_no_quality(QUERY)
         .await
         .expect("query profiling should succeed");

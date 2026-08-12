@@ -98,7 +98,7 @@ dp.profile(
     progress_interval_ms=None,       # int -- ms between progress events
     metrics=None,                    # list[str] -- "schema", "statistics", "patterns", "quality"
     quality_dimensions=None,         # list[str] -- subset of dimensions to compute
-    locale=None,                     # str -- pattern locale hint, e.g. "IT"
+    locale=None,                     # str -- "CA"|"DE"|"FR"|"GB"|"IT"|"US"
     positive_columns=None,           # list[str] -- columns expected to be non-negative
     identifier_columns=None,         # list[str] -- semantic IDs, not measures
     temporal_columns=None,           # list[str] -- columns assessed for timeliness

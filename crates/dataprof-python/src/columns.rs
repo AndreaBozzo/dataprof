@@ -58,7 +58,7 @@ pub fn profile_columns(
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
     let include_quality = MetricPack::include_quality(packs);
-    let locale = config.and_then(|c| c.locale.as_deref());
+    let locale = config.and_then(|c| c.locale);
     let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
 
     let effective_max_rows =

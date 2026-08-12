@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof::{
-    AnalysisOptions, ChunkSize, EngineType, FileFormat, JsonErrorPolicy, MetricPack, Profiler,
-    QualityDimension, SemanticHints, StopCondition,
+    AnalysisOptions, ChunkSize, EngineType, FileFormat, JsonErrorPolicy, Locale, MetricPack,
+    Profiler, QualityDimension, SemanticHints, StopCondition,
 };
 
 use super::progress::py_callback_to_sink;
@@ -33,7 +33,7 @@ pub struct PyProfilerConfig {
     pub(crate) progress_interval_ms: Option<u64>,
     pub(crate) quality_dimensions: Option<Vec<QualityDimension>>,
     pub(crate) metric_packs: Option<Vec<MetricPack>>,
-    pub(crate) locale: Option<String>,
+    pub(crate) locale: Option<Locale>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
     pub(crate) temporal_columns: Vec<String>,
@@ -127,6 +127,11 @@ impl PyProfilerConfig {
             })
             .transpose()?;
 
+        // Parse the locale tag here rather than storing it raw: an unrecognised
+        // tag suppresses every locale-specific pattern, so accepting one would
+        // return a plausible, emptier report with nothing saying why.
+        let locale = Locale::parse_optional(locale.as_deref()).map_err(PyValueError::new_err)?;
+
         // Parse metrics strings into MetricPack enums
         let metric_packs = metrics
             .map(|packs| {
@@ -214,10 +219,10 @@ impl PyProfilerConfig {
         }
     }
 
-    /// Locale for pattern detection
+    /// Locale for pattern detection, normalised to ISO 3166-1 alpha-2
     #[getter]
     fn locale(&self) -> Option<&str> {
-        self.locale.as_deref()
+        self.locale.map(|locale| locale.as_str())
     }
 
     /// Columns expected to contain non-negative numeric values
@@ -300,7 +305,7 @@ impl PyProfilerConfig {
         if let Some(ref packs) = self.metric_packs {
             profiler = profiler.metric_packs(packs.clone());
         }
-        if let Some(ref l) = self.locale {
+        if let Some(l) = self.locale {
             profiler = profiler.locale(l);
         }
         if !self.positive_columns.is_empty() {
@@ -334,7 +339,7 @@ impl PyProfilerConfig {
         AnalysisOptions::default()
             .with_metric_packs(self.metric_packs.clone())
             .with_quality_dimensions(self.quality_dimensions.clone())
-            .with_locale(self.locale.clone())
+            .with_locale(self.locale)
             .with_semantic_hints(self.semantic_hints())
     }
 

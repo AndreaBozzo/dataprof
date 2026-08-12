@@ -116,6 +116,11 @@ A detected pattern is a detection, not a guarantee. Locale matters: without a
 pattern result looks surprising, check whether a locale should have been set
 before reporting it as a finding.
 
+The supported locales are `CA`, `DE`, `FR`, `GB`, `IT`, `US`. Case, the alpha-3
+code (`ITA`) and the BCP 47 / POSIX forms (`it-IT`, `it_IT`) all normalise to
+the same locale; any other tag raises `ValueError` instead of returning a report
+with every locale-specific pattern suppressed.
+
 ## Comparisons
 
 `before.compare(after)` returns deltas. Two caveats:

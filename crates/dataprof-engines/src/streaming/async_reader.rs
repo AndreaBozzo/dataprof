@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use dataprof_core::{
     AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
-    JsonErrorPolicy, MetricPack, ProgressSink, QualityDimension, RowSampler, RowView,
+    JsonErrorPolicy, Locale, MetricPack, ProgressSink, QualityDimension, RowSampler, RowView,
     SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
     StreamSourceSystem, TruncationReason,
 };
@@ -317,7 +317,7 @@ impl AsyncStreamingProfiler {
     }
 
     /// Set the locale used to rank detected patterns.
-    pub fn locale(mut self, locale: String) -> Self {
+    pub fn locale(mut self, locale: Locale) -> Self {
         self.options = std::mem::take(&mut self.options).with_locale(Some(locale));
         self
     }

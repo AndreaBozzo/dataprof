@@ -4,7 +4,7 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat,
+    ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat, Locale,
     MetricPack, PeakMemorySampler, QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_csv::CsvParserConfig;
@@ -38,7 +38,7 @@ pub struct ArrowProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
-    locale: Option<String>,
+    locale: Option<Locale>,
     semantic_hints: SemanticHints,
 }
 
@@ -80,7 +80,7 @@ impl ArrowProfiler {
         self
     }
 
-    pub fn locale(mut self, locale: String) -> Self {
+    pub fn locale(mut self, locale: Locale) -> Self {
         self.locale = Some(locale);
         self
     }
@@ -300,7 +300,7 @@ impl ArrowProfiler {
                     name.clone(),
                     skip_stats,
                     skip_patterns,
-                    self.locale.as_deref(),
+                    self.locale,
                     &self.semantic_hints,
                 );
                 column_profiles.push(profile);
@@ -877,7 +877,7 @@ impl ColumnAnalyzer {
         name: String,
         skip_statistics: bool,
         skip_patterns: bool,
-        locale: Option<&str>,
+        locale: Option<Locale>,
         semantic_hints: &SemanticHints,
     ) -> ColumnProfile {
         let data_type = if semantic_hints.is_identifier_column(&name) {

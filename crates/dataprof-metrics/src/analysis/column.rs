@@ -1,6 +1,6 @@
 use dataprof_core::AnalysisOptions;
 
-use crate::types::{ColumnProfile, ColumnStats, DataType};
+use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
 use crate::analysis::inference::{infer_type, is_null_like_token, parse_strict_boolean_token};
 use crate::analysis::patterns::detect_patterns;
@@ -12,13 +12,13 @@ use crate::stats::{calculate_datetime_stats, calculate_text_stats};
 /// The streaming engines express the same choices through
 /// `profile_builder::build_column_profile`; this is the in-memory equivalent for
 /// callers that hold a whole column as `Vec<String>` (the database connectors).
-struct ColumnAnalysis<'a> {
+struct ColumnAnalysis {
     /// Produce [`ColumnStats::None`] instead of computing statistics.
     skip_statistics: bool,
     /// Produce `patterns: None` instead of running detection.
     skip_patterns: bool,
     /// Locale used to rank detected patterns.
-    locale: Option<&'a str>,
+    locale: Option<Locale>,
     /// Leave `unique_count` absent instead of counting distinct values.
     skip_unique_count: bool,
 }
@@ -86,7 +86,7 @@ pub fn analyze_column_with_analysis_options(
 fn analyze_column_with_options(
     name: &str,
     data: &[String],
-    analysis: &ColumnAnalysis<'_>,
+    analysis: &ColumnAnalysis,
 ) -> ColumnProfile {
     let total_count = data.len();
 

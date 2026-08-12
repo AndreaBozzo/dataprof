@@ -642,13 +642,18 @@ def list_patterns(locale: str | None = None) -> list[dict[str, _Any]]:
     """List supported pattern detectors.
 
     Args:
-        locale: Optional ISO 3166-1 alpha-2 locale. When provided, the result
-            includes universal patterns plus locale-specific patterns matching
-            the locale, case-insensitively.
+        locale: Optional locale. When provided, the result includes universal
+            patterns plus the patterns specific to that locale. Supported:
+            "CA", "DE", "FR", "GB", "IT", "US". Case, the ISO 3166-1 alpha-3
+            spelling ("ITA") and the BCP 47 / POSIX forms ("it-IT", "it_IT")
+            all normalise; an empty string means no locale.
 
     Returns:
         A list of dicts with ``name``, ``regex``, ``category``, ``locale``, and
         ``min_threshold`` keys, in detector order.
+
+    Raises:
+        ValueError: If ``locale`` names no supported locale.
     """
     return _list_patterns(locale)
 
@@ -1101,8 +1106,10 @@ def profile_file(
         metrics: List of metric packs to compute. Valid values: "schema"
             (always included), "statistics", "patterns", "quality".
             None = all packs (default).
-        locale: ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT",
-            "US", "GB").
+        locale: Locale for pattern detection. Supported: "CA", "DE", "FR",
+            "GB", "IT", "US"; "it", "ITA" and "it-IT" all mean "IT", and an
+            unsupported tag raises ValueError rather than silently suppressing
+            every locale-specific pattern.
         positive_columns: Columns whose numeric values are expected to be
             non-negative.
         identifier_columns: Numeric-looking columns to treat as semantic
@@ -1225,9 +1232,12 @@ def profile(
             (always included), "statistics", "patterns", "quality".
             None = all packs (default). Omitting a pack skips that
             category of computation entirely.
-        locale: ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT",
-            "US", "GB"). Boosts confidence for locale-matching patterns and
-            suppresses non-matching locale patterns. None = no preference.
+        locale: Locale for pattern detection. Boosts confidence for
+            locale-matching patterns and suppresses non-matching locale
+            patterns. None = no preference. Supported: "CA", "DE", "FR", "GB",
+            "IT", "US"; "it", "ITA" and "it-IT" all mean "IT", and an
+            unsupported tag raises ValueError rather than silently suppressing
+            every locale-specific pattern.
         positive_columns: Columns whose numeric values are expected to be
             non-negative.
         identifier_columns: Numeric-looking columns to treat as semantic
@@ -1578,7 +1588,11 @@ class Profiler:
         return self
 
     def locale(self, locale: str) -> Profiler:
-        """Set locale for pattern detection (e.g. "IT", "US", "GB")."""
+        """Set locale for pattern detection (e.g. "IT", "US", "GB").
+
+        Raises ValueError at profiling time if the tag names no supported
+        locale; see :func:`profile` for the accepted spellings.
+        """
         self._kwargs["locale"] = locale
         return self
 

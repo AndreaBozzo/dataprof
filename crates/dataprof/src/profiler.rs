@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dataprof_core::{
-    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, FileFormat, MetricPack,
+    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, FileFormat, Locale, MetricPack,
     ProgressEvent, ProgressSink, QualityDimension, RowCountEstimate, SamplingStrategy,
     SchemaResult, SemanticHints, StopCondition, StructureReport,
 };
@@ -47,7 +47,7 @@ pub struct ProfilerConfig {
     /// Which metric packs to compute. `None` = all (default).
     /// Controls whether statistics, patterns, and quality are included.
     pub metric_packs: Option<Vec<MetricPack>>,
-    /// ISO 3166-1 alpha-2 locale for pattern detection (e.g. "IT", "US", "GB").
+    /// Locale for pattern detection (e.g. [`Locale::It`]).
     /// When set, locale-matching patterns get a confidence boost and non-matching
     /// locale patterns are suppressed (unless they have a very high match rate).
     /// `None` = no locale preference (default).
@@ -56,7 +56,7 @@ pub struct ProfilerConfig {
     /// JSON/JSONL, Parquet), DataFrame and Arrow sources, the async streaming
     /// entry points, and database queries. A locale ranks the same patterns
     /// whichever path read the data.
-    pub locale: Option<String>,
+    pub locale: Option<Locale>,
     /// Columns whose numeric values are expected to be non-negative.
     pub positive_columns: Vec<String>,
     /// Columns that should be treated as semantic identifiers, not measures.
@@ -253,12 +253,25 @@ impl Profiler {
         self
     }
 
-    /// Set the locale for pattern detection (e.g. "IT", "US", "GB").
+    /// Set the locale for pattern detection.
     ///
     /// Locale-matching patterns get a confidence boost; non-matching locale
     /// patterns are suppressed unless they have a very high match rate.
-    pub fn locale(mut self, locale: impl Into<String>) -> Self {
-        self.config.locale = Some(locale.into());
+    ///
+    /// Parse a tag that came from a user or another language with
+    /// [`Locale::parse_optional`], which normalises the common spellings and
+    /// rejects the rest:
+    ///
+    /// ```
+    /// use dataprof::{Locale, Profiler};
+    ///
+    /// let profiler = Profiler::new().locale(Locale::It);
+    /// let from_user = Locale::parse_optional(Some("it-IT")).unwrap();
+    /// assert_eq!(from_user, Some(Locale::It));
+    /// # let _ = profiler;
+    /// ```
+    pub fn locale(mut self, locale: Locale) -> Self {
+        self.config.locale = Some(locale);
         self
     }
 
@@ -503,7 +516,7 @@ impl Profiler {
         AnalysisOptions::default()
             .with_metric_packs(self.config.metric_packs.clone())
             .with_quality_dimensions(self.config.quality_dimensions.clone())
-            .with_locale(self.config.locale.clone())
+            .with_locale(self.config.locale)
             .with_semantic_hints(self.semantic_hints())
     }
 
@@ -677,8 +690,8 @@ impl Profiler {
                     if let Some(p) = self.effective_metric_packs() {
                         profiler = profiler.metric_packs(p);
                     }
-                    if let Some(l) = &self.config.locale {
-                        profiler = profiler.locale(l.clone());
+                    if let Some(l) = self.config.locale {
+                        profiler = profiler.locale(l);
                     }
                     profiler = profiler.semantic_hints(options.semantic_hints().clone());
                     let csv_config = self.csv_config_for_file(file_path);
@@ -744,8 +757,8 @@ impl Profiler {
         if let Some(p) = self.effective_metric_packs() {
             profiler = profiler.metric_packs(p);
         }
-        if let Some(l) = &self.config.locale {
-            profiler = profiler.locale(l.clone());
+        if let Some(l) = self.config.locale {
+            profiler = profiler.locale(l);
         }
         profiler = profiler.semantic_hints(options.semantic_hints().clone());
         let csv_config = self.csv_config_for_file(file_path);
@@ -802,8 +815,8 @@ impl Profiler {
             if let Some(p) = self.effective_metric_packs() {
                 profiler = profiler.metric_packs(p);
             }
-            if let Some(l) = &self.config.locale {
-                profiler = profiler.locale(l.clone());
+            if let Some(l) = self.config.locale {
+                profiler = profiler.locale(l);
             }
             profiler = profiler.semantic_hints(options.semantic_hints().clone());
             // ArrowProfiler reads the row cap off the CSV config; the incremental

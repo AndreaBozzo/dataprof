@@ -8,6 +8,7 @@
 //! [`AnalysisOptions`] bundles them so a path either carries the whole selection
 //! or does not compile.
 
+use crate::locale::Locale;
 use crate::quality::{MetricPack, QualityDimension};
 use crate::semantic::SemanticHints;
 
@@ -19,7 +20,7 @@ use crate::semantic::SemanticHints;
 pub struct AnalysisOptions {
     metric_packs: Option<Vec<MetricPack>>,
     quality_dimensions: Option<Vec<QualityDimension>>,
-    locale: Option<String>,
+    locale: Option<Locale>,
     semantic_hints: SemanticHints,
 }
 
@@ -36,8 +37,12 @@ impl AnalysisOptions {
         self
     }
 
-    /// Set the ISO 3166-1 alpha-2 locale used to rank detected patterns.
-    pub fn with_locale(mut self, locale: Option<String>) -> Self {
+    /// Set the locale used to rank detected patterns.
+    ///
+    /// Parse a user-supplied tag with [`Locale::parse_optional`] first, so an
+    /// unrecognised tag is rejected where it is written rather than silently
+    /// suppressing every locale-specific pattern.
+    pub fn with_locale(mut self, locale: Option<Locale>) -> Self {
         self.locale = locale;
         self
     }
@@ -82,8 +87,8 @@ impl AnalysisOptions {
     /// A locale only ranks patterns, so it has no effect of its own when
     /// [`include_patterns`](Self::include_patterns) is false and detection never
     /// runs.
-    pub fn locale(&self) -> Option<&str> {
-        self.locale.as_deref()
+    pub fn locale(&self) -> Option<Locale> {
+        self.locale
     }
 
     /// The requested quality dimensions, if the caller narrowed them.
@@ -147,9 +152,9 @@ mod tests {
     #[test]
     fn a_locale_alone_does_not_re_enable_pattern_detection() {
         let options = AnalysisOptions::default()
-            .with_locale(Some("IT".to_string()))
+            .with_locale(Some(Locale::It))
             .with_metric_packs(Some(vec![MetricPack::Schema]));
-        assert_eq!(options.locale(), Some("IT"));
+        assert_eq!(options.locale(), Some(Locale::It));
         assert!(!options.include_patterns());
     }
 }

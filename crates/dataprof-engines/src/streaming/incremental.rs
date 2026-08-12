@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use dataprof_core::{
-    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, MetricPack,
+    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, Locale, MetricPack,
     PeakMemorySampler, ProgressSink, QualityDimension, RowSampler, RowView, SamplingStrategy,
     SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
 };
@@ -26,7 +26,7 @@ pub struct IncrementalProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
-    locale: Option<String>,
+    locale: Option<Locale>,
     semantic_hints: SemanticHints,
 }
 
@@ -88,7 +88,7 @@ impl IncrementalProfiler {
         self
     }
 
-    pub fn locale(mut self, locale: String) -> Self {
+    pub fn locale(mut self, locale: Locale) -> Self {
         self.locale = Some(locale);
         self
     }
@@ -349,7 +349,7 @@ impl IncrementalProfiler {
             &column_stats,
             skip_stats,
             skip_patterns,
-            self.locale.as_deref(),
+            self.locale,
             &self.semantic_hints,
         );
 
