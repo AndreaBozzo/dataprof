@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use dataprof_core::{
-    BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, SemanticHints, TextStats,
+    BooleanStats, ColumnProfile, ColumnStats, DataType, DateTimeStats, Locale, SemanticHints,
+    TextStats,
 };
 use dataprof_metrics::{
     analysis::inference::{is_integer_token, is_null_like_token, parse_strict_boolean_token},
@@ -41,7 +42,7 @@ pub struct ColumnProfileInput<'a> {
     /// When true, skip pattern detection (produce `patterns: None`).
     pub skip_patterns: bool,
     /// Optional locale for pattern detection (e.g. "IT", "US").
-    pub locale: Option<&'a str>,
+    pub locale: Option<Locale>,
     /// Exact aggregates over every numeric value the engine streamed.
     ///
     /// When present, these override the sample-derived `min`, `max`, `mean`,
@@ -219,7 +220,7 @@ pub fn profiles_from_streaming(
     column_stats: &StreamingColumnCollection,
     skip_statistics: bool,
     skip_patterns: bool,
-    locale: Option<&str>,
+    locale: Option<Locale>,
 ) -> Vec<ColumnProfile> {
     profiles_from_streaming_with_hints(
         column_stats,
@@ -235,7 +236,7 @@ pub fn profiles_from_streaming_with_hints(
     column_stats: &StreamingColumnCollection,
     skip_statistics: bool,
     skip_patterns: bool,
-    locale: Option<&str>,
+    locale: Option<Locale>,
     semantic_hints: &SemanticHints,
 ) -> Vec<ColumnProfile> {
     let mut profiles = Vec::new();
@@ -263,7 +264,7 @@ pub fn profile_from_stats(
     stats: &StreamingStatistics,
     skip_statistics: bool,
     skip_patterns: bool,
-    locale: Option<&str>,
+    locale: Option<Locale>,
 ) -> ColumnProfile {
     profile_from_stats_with_hints(
         name,
@@ -281,7 +282,7 @@ pub fn profile_from_stats_with_hints(
     stats: &StreamingStatistics,
     skip_statistics: bool,
     skip_patterns: bool,
-    locale: Option<&str>,
+    locale: Option<Locale>,
     semantic_hints: &SemanticHints,
 ) -> ColumnProfile {
     let data_type = if semantic_hints.is_identifier_column(name) {

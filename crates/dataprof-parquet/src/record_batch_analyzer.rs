@@ -5,7 +5,7 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataType, SemanticHintBinding, SemanticHintKind, SemanticHints,
+    ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
@@ -190,7 +190,7 @@ impl RecordBatchAnalyzer {
         &self,
         skip_statistics: bool,
         skip_patterns: bool,
-        locale: Option<&str>,
+        locale: Option<Locale>,
     ) -> Vec<ColumnProfile> {
         self.to_profiles_with_hints(
             skip_statistics,
@@ -204,7 +204,7 @@ impl RecordBatchAnalyzer {
         &self,
         skip_statistics: bool,
         skip_patterns: bool,
-        locale: Option<&str>,
+        locale: Option<Locale>,
         semantic_hints: &SemanticHints,
     ) -> Vec<ColumnProfile> {
         self.column_order
@@ -1018,7 +1018,7 @@ impl ColumnAnalyzer {
         name: String,
         skip_statistics: bool,
         skip_patterns: bool,
-        locale: Option<&str>,
+        locale: Option<Locale>,
         semantic_hints: &SemanticHints,
     ) -> ColumnProfile {
         let data_type = if semantic_hints.is_identifier_column(&name) {

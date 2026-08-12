@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use dataprof_core::{ChunkSize, DataProfilerError, MetricPack, QualityDimension, SemanticHints};
+use dataprof_core::{
+    ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension, SemanticHints,
+};
 use dataprof_csv::CsvParserConfig;
 use dataprof_runtime::ProfileReport;
 
@@ -24,7 +26,7 @@ pub struct AdaptiveProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
     csv_config: Option<CsvParserConfig>,
-    locale: Option<String>,
+    locale: Option<Locale>,
     semantic_hints: SemanticHints,
     memory_limit_mb: Option<usize>,
     chunk_size: Option<ChunkSize>,
@@ -70,7 +72,7 @@ impl AdaptiveProfiler {
         self
     }
 
-    pub fn locale(mut self, locale: String) -> Self {
+    pub fn locale(mut self, locale: Locale) -> Self {
         self.locale = Some(locale);
         self
     }
@@ -245,8 +247,8 @@ impl AdaptiveProfiler {
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());
                 }
-                if let Some(ref l) = self.locale {
-                    profiler = profiler.locale(l.clone());
+                if let Some(l) = self.locale {
+                    profiler = profiler.locale(l);
                 }
                 if let Some(mb) = self.memory_limit_mb {
                     profiler = profiler.memory_limit_mb(mb);
@@ -271,8 +273,8 @@ impl AdaptiveProfiler {
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());
                 }
-                if let Some(ref l) = self.locale {
-                    profiler = profiler.locale(l.clone());
+                if let Some(l) = self.locale {
+                    profiler = profiler.locale(l);
                 }
                 profiler = profiler.semantic_hints(self.semantic_hints.clone());
                 profiler.analyze_file(file_path)

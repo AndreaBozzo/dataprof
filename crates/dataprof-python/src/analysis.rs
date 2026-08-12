@@ -1,8 +1,9 @@
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-use dataprof::{Profiler, list_patterns as dataprof_list_patterns};
+use dataprof::{Locale, Profiler, list_patterns as dataprof_list_patterns};
 
 use super::config::PyProfilerConfig;
 use super::errors::analysis_error_to_py;
@@ -82,6 +83,8 @@ pub fn list_patterns(
     py: Python<'_>,
     locale: Option<&str>,
 ) -> PyResult<Vec<HashMap<String, Py<PyAny>>>> {
+    let locale = Locale::parse_optional(locale).map_err(PyValueError::new_err)?;
+
     dataprof_list_patterns(locale)
         .into_iter()
         .map(|pattern| {

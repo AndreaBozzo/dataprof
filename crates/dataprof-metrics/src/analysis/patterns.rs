@@ -2,7 +2,7 @@ use regex::{Regex, RegexSet};
 use std::sync::LazyLock;
 
 use crate::analysis::validators;
-use crate::types::{Pattern, PatternCategory};
+use crate::types::{Locale, Pattern, PatternCategory};
 
 /// Internal pattern definition with metadata for overlap resolution and confidence scoring.
 struct PatternDef {
@@ -11,8 +11,8 @@ struct PatternDef {
     category: PatternCategory,
     /// 0-255: higher = more structurally specific regex (fewer false positives).
     specificity: u8,
-    /// ISO 3166-1 alpha-2 locale, or None for universal patterns.
-    locale: Option<&'static str>,
+    /// Locale this pattern belongs to, or None for universal patterns.
+    locale: Option<Locale>,
     /// Per-pattern minimum match percentage to report (replaces uniform 5% threshold).
     min_threshold: f64,
     /// Optional semantic validator run on regex-matched values.
@@ -58,7 +58,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for Phone (US)"),
             category: PatternCategory::Contact,
             specificity: 70,
-            locale: Some("US"),
+            locale: Some(Locale::Us),
             min_threshold: 5.0,
             validator: None,
         },
@@ -68,7 +68,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for Phone (IT)"),
             category: PatternCategory::Contact,
             specificity: 70,
-            locale: Some("IT"),
+            locale: Some(Locale::It),
             min_threshold: 5.0,
             validator: None,
         },
@@ -150,7 +150,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for Codice Fiscale"),
             category: PatternCategory::Identifier,
             specificity: 95,
-            locale: Some("IT"),
+            locale: Some(Locale::It),
             min_threshold: 5.0,
             validator: Some(validators::validate_codice_fiscale),
         },
@@ -160,7 +160,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for P.IVA"),
             category: PatternCategory::Identifier,
             specificity: 40,
-            locale: Some("IT"),
+            locale: Some(Locale::It),
             min_threshold: 25.0,
             validator: Some(validators::validate_piva_it),
         },
@@ -170,7 +170,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for CAP"),
             category: PatternCategory::Geographic,
             specificity: 35,
-            locale: Some("IT"),
+            locale: Some(Locale::It),
             min_threshold: 20.0,
             validator: Some(validators::validate_cap_it),
         },
@@ -180,7 +180,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for ZIP Code"),
             category: PatternCategory::Geographic,
             specificity: 35,
-            locale: Some("US"),
+            locale: Some(Locale::Us),
             min_threshold: 15.0,
             validator: None,
         },
@@ -221,7 +221,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for SSN (US)"),
             category: PatternCategory::Identifier,
             specificity: 70,
-            locale: Some("US"),
+            locale: Some(Locale::Us),
             min_threshold: 10.0,
             validator: Some(validators::validate_ssn_us),
         },
@@ -231,7 +231,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for UK Postcode"),
             category: PatternCategory::Geographic,
             specificity: 50,
-            locale: Some("GB"),
+            locale: Some(Locale::Gb),
             min_threshold: 15.0,
             validator: None,
         },
@@ -241,7 +241,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for German PLZ"),
             category: PatternCategory::Geographic,
             specificity: 30,
-            locale: Some("DE"),
+            locale: Some(Locale::De),
             min_threshold: 20.0,
             validator: None,
         },
@@ -251,7 +251,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for Canadian Postal Code"),
             category: PatternCategory::Geographic,
             specificity: 50,
-            locale: Some("CA"),
+            locale: Some(Locale::Ca),
             min_threshold: 15.0,
             validator: None,
         },
@@ -261,7 +261,7 @@ static PATTERN_DEFS: LazyLock<Vec<PatternDef>> = LazyLock::new(|| {
                 .expect("BUG: Invalid regex for French Code Postal"),
             category: PatternCategory::Geographic,
             specificity: 30,
-            locale: Some("FR"),
+            locale: Some(Locale::Fr),
             min_threshold: 20.0,
             validator: None,
         },
@@ -448,13 +448,12 @@ fn compute_confidence(specificity: u8, match_percentage: f64, validator_pass_rat
 /// List supported pattern detectors in detector order.
 ///
 /// Passing a locale returns universal patterns plus patterns specific to that
-/// ISO 3166-1 alpha-2 locale. Locale matching is case-insensitive.
-pub fn list_patterns(locale: Option<&str>) -> Vec<PatternMetadata> {
-    let normalized_locale = locale.map(|l| l.trim().to_ascii_uppercase());
-
+/// locale. Parse a user-supplied tag with [`Locale::parse_optional`] so an
+/// unrecognised one is rejected rather than narrowing the catalogue to nothing.
+pub fn list_patterns(locale: Option<Locale>) -> Vec<PatternMetadata> {
     PATTERN_DEFS
         .iter()
-        .filter(|def| match normalized_locale.as_deref() {
+        .filter(|def| match locale {
             None => true,
             Some(locale) => def.locale.is_none() || def.locale == Some(locale),
         })
@@ -462,7 +461,7 @@ pub fn list_patterns(locale: Option<&str>) -> Vec<PatternMetadata> {
             name: def.name.to_string(),
             regex: def.regex.as_str().to_string(),
             category: def.category.clone(),
-            locale: def.locale.map(str::to_string),
+            locale: def.locale.map(|locale| locale.as_str().to_string()),
             min_threshold: def.min_threshold,
         })
         .collect()
@@ -476,22 +475,16 @@ pub fn list_patterns(locale: Option<&str>) -> Vec<PatternMetadata> {
 ///
 /// # Arguments
 /// * `data` - Slice of string values to analyze
-/// * `locale` - Optional ISO 3166-1 alpha-2 locale (e.g. "IT", "US", "GB").
-///   Matching is case-insensitive. When set, locale-matching patterns receive
-///   a confidence boost and non-matching locale patterns are suppressed.
-///   Without a locale, locale-specific candidates remain available as evidence
-///   but receive a confidence penalty, with a further penalty for ambiguous
-///   matches shared by patterns from different locales.
+/// * `locale` - Optional locale (e.g. [`Locale::It`]). When set, locale-matching
+///   patterns receive a confidence boost and non-matching locale patterns are
+///   suppressed. Without a locale, locale-specific candidates remain available
+///   as evidence but receive a confidence penalty, with a further penalty for
+///   ambiguous matches shared by patterns from different locales.
 ///
 /// # Returns
 /// Vector of detected patterns sorted by confidence descending, after overlap
 /// suppression and locale filtering.
-pub fn detect_patterns(data: &[String], locale: Option<&str>) -> Vec<Pattern> {
-    let normalized_locale = locale
-        .map(str::trim)
-        .filter(|locale| !locale.is_empty())
-        .map(str::to_ascii_uppercase);
-
+pub fn detect_patterns(data: &[String], locale: Option<Locale>) -> Vec<Pattern> {
     // Filter empty and whitespace-only strings for robust analysis
     let non_empty: Vec<&str> = data
         .iter()
@@ -632,11 +625,9 @@ pub fn detect_patterns(data: &[String], locale: Option<&str>) -> Vec<Pattern> {
                 pm.validator_pass_rate,
             );
 
-            if let Some(configured_locale) = normalized_locale.as_deref() {
+            if let Some(configured_locale) = locale {
                 match pm.def.locale {
-                    Some(pattern_locale)
-                        if pattern_locale.eq_ignore_ascii_case(configured_locale) =>
-                    {
+                    Some(pattern_locale) if pattern_locale == configured_locale => {
                         confidence = (confidence * 1.2).min(1.0);
                         if pm.match_percentage >= 80.0 && pm.validator_pass_rate >= 0.8 {
                             confidence = confidence.max(0.5);
@@ -1454,7 +1445,8 @@ mod tests {
 
     #[test]
     fn test_list_patterns_filters_locale_case_insensitive() {
-        let patterns = list_patterns(Some("it"));
+        let locale = Locale::parse_optional(Some("it")).expect("'it' is a supported spelling");
+        let patterns = list_patterns(locale);
 
         assert!(patterns.iter().any(|pattern| pattern.name == "Email"));
         assert!(patterns.iter().any(|pattern| pattern.name == "Phone (IT)"));
@@ -1510,7 +1502,7 @@ mod tests {
     fn test_locale_it_boosts_cap_confidence() {
         let data: Vec<String> = (20100..=20200).map(|n| format!("{:05}", n)).collect();
         let without_locale = detect_patterns(&data, None);
-        let with_locale = detect_patterns(&data, Some("IT"));
+        let with_locale = detect_patterns(&data, Some(Locale::It));
 
         let cap_no_locale = without_locale.iter().find(|p| p.name == "CAP (IT)");
         let cap_it_locale = with_locale.iter().find(|p| p.name == "CAP (IT)");
@@ -1538,7 +1530,7 @@ mod tests {
         for i in 0..100 {
             data.push(format!("text_{}", i));
         }
-        let with_us = detect_patterns(&data, Some("US"));
+        let with_us = detect_patterns(&data, Some(Locale::Us));
 
         // CAP (IT) has low specificity (35) and locale=IT.
         // With US locale and low match rate, it should be suppressed
@@ -1552,7 +1544,7 @@ mod tests {
     #[test]
     fn test_explicit_locale_suppresses_non_matching_even_at_high_match_rate() {
         let data: Vec<String> = (20100..=20200).map(|n| format!("{:05}", n)).collect();
-        let with_us = detect_patterns(&data, Some("US"));
+        let with_us = detect_patterns(&data, Some(Locale::Us));
 
         let cap_us = with_us.iter().find(|p| p.name == "CAP (IT)");
         assert!(
@@ -1567,21 +1559,38 @@ mod tests {
     }
 
     #[test]
-    fn test_locale_is_case_insensitive() {
+    fn test_every_spelling_of_a_locale_detects_alike() {
         let data: Vec<String> = (20100..=20200).map(|n| format!("{:05}", n)).collect();
-        let uppercase = detect_patterns(&data, Some("IT"));
-        let lowercase = detect_patterns(&data, Some("it"));
+        let reference = detect_patterns(&data, Some(Locale::It));
+        let reference_cap = reference
+            .iter()
+            .find(|p| p.name == "CAP (IT)")
+            .expect("the IT locale should detect CAP");
 
-        let uppercase_cap = uppercase
-            .iter()
-            .find(|p| p.name == "CAP (IT)")
-            .expect("uppercase locale should detect CAP");
-        let lowercase_cap = lowercase
-            .iter()
-            .find(|p| p.name == "CAP (IT)")
-            .expect("lowercase locale should detect CAP");
-        assert_eq!(uppercase_cap.confidence, lowercase_cap.confidence);
-        assert!(lowercase.iter().all(|p| p.name != "ZIP Code (US)"));
+        for tag in ["IT", "it", "ITA", "it-IT", "it_IT"] {
+            let locale = Locale::parse_optional(Some(tag))
+                .unwrap_or_else(|error| panic!("tag {tag:?} was rejected: {error}"));
+            let detected = detect_patterns(&data, locale);
+            let cap = detected
+                .iter()
+                .find(|p| p.name == "CAP (IT)")
+                .unwrap_or_else(|| panic!("tag {tag:?} should detect CAP"));
+            assert_eq!(cap.confidence, reference_cap.confidence, "tag {tag:?}");
+            assert!(detected.iter().all(|p| p.name != "ZIP Code (US)"));
+        }
+    }
+
+    #[test]
+    fn test_every_supported_locale_has_patterns() {
+        // A locale that selects nothing would reproduce the silent narrowing
+        // that accepting unrecognised tags used to cause.
+        for locale in Locale::all() {
+            let specific = list_patterns(Some(locale))
+                .into_iter()
+                .filter(|pattern| pattern.locale.as_deref() == Some(locale.as_str()))
+                .count();
+            assert!(specific > 0, "{locale} has no patterns in the catalogue");
+        }
     }
 
     #[test]
@@ -1637,7 +1646,7 @@ mod tests {
     #[test]
     fn test_e2e_confidence_never_exceeds_one() {
         let data: Vec<String> = (0..200).map(|i| format!("user{}@example.com", i)).collect();
-        let patterns = detect_patterns(&data, Some("US"));
+        let patterns = detect_patterns(&data, Some(Locale::Us));
 
         for p in &patterns {
             assert!(

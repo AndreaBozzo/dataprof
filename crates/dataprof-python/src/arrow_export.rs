@@ -395,7 +395,7 @@ pub fn profile_dataframe(
         .process_batch(&batch)
         .map_err(crate::errors::analyzer_error_to_py)?;
 
-    let locale = config.and_then(|c| c.locale.as_deref());
+    let locale = config.and_then(|c| c.locale);
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = if include_quality {
@@ -511,7 +511,7 @@ pub fn profile_arrow(
         .process_batch(&batch)
         .map_err(crate::errors::analyzer_error_to_py)?;
 
-    let locale = config.and_then(|c| c.locale.as_deref());
+    let locale = config.and_then(|c| c.locale);
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = analyzer.create_sample_columns();

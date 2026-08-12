@@ -11,7 +11,7 @@
 
 use std::io::Write;
 
-use dataprof::{ColumnStats, MetricPack, ProfileReport, Profiler, QualityDimension};
+use dataprof::{ColumnStats, Locale, MetricPack, ProfileReport, Profiler, QualityDimension};
 use tempfile::NamedTempFile;
 
 /// Five records with an Italian postal code column. `cap` is what makes locale
@@ -212,7 +212,7 @@ fn locale_reaches_pattern_detection_on_every_format() {
             .analyze_file(file.path())
             .unwrap_or_else(|e| panic!("[{label}] profiling failed: {e}"));
         let localized = Profiler::new()
-            .locale("IT")
+            .locale(Locale::It)
             .analyze_file(file.path())
             .unwrap_or_else(|e| panic!("[{label}] localized profiling failed: {e}"));
 
@@ -309,10 +309,10 @@ mod async_transport {
     fn async_paths_honour_the_locale_and_match_the_sync_result() {
         for (label, file) in fixtures() {
             let sync = Profiler::new()
-                .locale("IT")
+                .locale(Locale::It)
                 .analyze_file(file.path())
                 .unwrap_or_else(|e| panic!("[{label}] sync profiling failed: {e}"));
-            let async_ = profile_async(Profiler::new().locale("IT"), file.path());
+            let async_ = profile_async(Profiler::new().locale(Locale::It), file.path());
 
             assert_eq!(
                 pattern_names(&sync, "cap"),

@@ -26,11 +26,12 @@ pub use dataprof_core::{
     AnalysisOptions, BooleanStats, ChunkSize, ColumnProfile, ColumnSchema, ColumnStats,
     CountMethod, DataFrameLibrary, DataProfilerError, DataSource, DataType, DataprofConfig,
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
-    InputValidator, IsoQualityConfig, MetricPack, NumericStats, OutputFormat, ParquetMetadata,
-    Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension, QualityScoreWeights,
-    Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult, SemanticHintBinding,
-    SemanticHintKind, SemanticHints, StopCondition, StopEvaluator, StructureColumnSummary,
-    StructureReport, TextStats, TruncationReason, ValidationError, validate_unique_column_names,
+    InputValidator, IsoQualityConfig, Locale, MetricPack, NumericStats, OutputFormat,
+    ParquetMetadata, Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension,
+    QualityScoreWeights, Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult,
+    SemanticHintBinding, SemanticHintKind, SemanticHints, StopCondition, StopEvaluator,
+    StructureColumnSummary, StructureReport, TextStats, TruncationReason, ValidationError,
+    validate_unique_column_names,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,

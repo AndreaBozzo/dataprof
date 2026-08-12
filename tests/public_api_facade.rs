@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use dataprof::{
     ChunkSize, CsvParserConfig, DataSource, DataType, EngineType, FileFormat, JsonFormat,
-    JsonParserConfig, MetricPack, OutputFormat, Profiler, ProfilerConfig, ProgressSink,
+    JsonParserConfig, Locale, MetricPack, OutputFormat, Profiler, ProfilerConfig, ProgressSink,
     QualityDimension, SamplingStrategy, StopCondition, analyze_column_fast, analyze_structure,
     calculate_numeric_stats, calculate_text_stats, detect_patterns, infer_type,
 };
@@ -20,7 +20,7 @@ fn stable_facade_builder_surface_compiles() {
         .csv_flexible(true)
         .quality_dimensions(vec![QualityDimension::Completeness])
         .metric_packs(vec![MetricPack::Schema, MetricPack::Quality])
-        .locale("IT")
+        .locale(Locale::It)
         .progress_interval(Duration::from_millis(25))
         .progress_sink(ProgressSink::None);
 
@@ -49,7 +49,7 @@ fn parser_and_metrics_reexports_compile() {
     assert_eq!(analyze_column_fast("n", &numeric_values).name, "n");
     let _numeric_stats = calculate_numeric_stats(&numeric_values);
     let _text_stats = calculate_text_stats(&text_values);
-    let _patterns = detect_patterns(&text_values, Some("US"));
+    let _patterns = detect_patterns(&text_values, Some(Locale::Us));
 
     let csv_config = CsvParserConfig::strict()
         .with_delimiter(b';')
