@@ -663,6 +663,56 @@ def list_patterns(locale: str | None = None) -> list[dict[str, _Any]]:
 # ---------------------------------------------------------------------------
 
 
+#: The lexical classes ``type_homogeneity`` counts, in the order ties resolve
+#: in. Mirrors the declaration order the Rust classifier uses to pick a dominant
+#: class, so both layers name the same winner when two classes hold equal counts.
+#: Serialization keys are sorted instead — see :func:`_homogeneity_counts`.
+_LEXICAL_CLASS_ORDER = ("numeric", "date", "boolean", "text")
+
+
+def _homogeneity_counts(value: _Any) -> dict[str, int] | None:
+    """Normalize a ``type_homogeneity`` mapping, or ``None`` when there is none.
+
+    Absence is preserved rather than filled in: ``None`` means the
+    classification did not run, and must never read back as four zero counts,
+    which mean "classified, and there was nothing to classify". A malformed or
+    incomplete mapping is treated as absence for the same reason -- an invented
+    count is worse than a gap.
+
+    Keys come back sorted, matching the order the native extension builds them
+    in, so the two report backings serialize byte-identical documents.
+    """
+    if not isinstance(value, dict):
+        return None
+    counts: dict[str, int] = {}
+    for name in sorted(_LEXICAL_CLASS_ORDER):
+        count = value.get(name)
+        # bool before int: bool is an int subclass, and True == 1.
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return None
+        counts[name] = count
+    return counts
+
+
+def _type_mixture(col: ColumnProfile) -> list[tuple[str, int, float]]:
+    """Lexical classes holding at least one value, largest first.
+
+    Each entry is ``(class, count, share)`` with ``share`` in ``0..1``. Empty
+    when the column was not classified, or was classified and held no non-null
+    values -- the caller cannot tell those apart from here, and must read
+    ``type_homogeneity`` itself if the difference matters.
+    """
+    counts = _homogeneity_counts(col.type_homogeneity)
+    if counts is None:
+        return []
+    total = sum(counts.values())
+    if total == 0:
+        return []
+    present = [(name, n) for name, n in counts.items() if n]
+    present.sort(key=lambda item: (-item[1], _LEXICAL_CLASS_ORDER.index(item[0])))
+    return [(name, n, n / total) for name, n in present]
+
+
 def column_to_dict(col: ColumnProfile) -> dict[str, _Any]:
     """Convert a single ColumnProfile to the nested dict layout used by
     :meth:`ProfileReport.to_dict`.
@@ -702,6 +752,11 @@ def column_to_dict(col: ColumnProfile) -> dict[str, _Any]:
     # serialization; a clean checked column serializes 0.
     if col.invalid_count is not None:
         col_data["invalid_count"] = col.invalid_count
+    # Same omit-when-absent rule: the key is missing when the classification did
+    # not run, so a reloaded report cannot mistake absence for four zero counts.
+    homogeneity = _homogeneity_counts(col.type_homogeneity)
+    if homogeneity is not None:
+        col_data["type_homogeneity"] = homogeneity
     if col.min is not None:
         col_data["stats"] = {
             k: v
@@ -777,6 +832,13 @@ def _column_record(col: ColumnProfile) -> dict[str, _Any]:
         top_pattern_category = best.category
         top_pattern_confidence = round(best.confidence, 4)
 
+    # These exports are flat -- a CSV column cannot hold the four-way count map
+    # -- so the record carries the two scalars derived from it. Both are None
+    # when the column was not classified, or held nothing to classify.
+    mixture = _type_mixture(col)
+    dominant_type = mixture[0][0] if mixture else None
+    dominant_type_share = _r4(mixture[0][2]) if mixture else None
+
     return {
         "name": col.name,
         "data_type": col.data_type,
@@ -788,6 +850,8 @@ def _column_record(col: ColumnProfile) -> dict[str, _Any]:
         # 4dp for the same reason as in column_to_dict() — see the note there.
         "uniqueness_ratio": _r4(col.uniqueness_ratio),
         "invalid_count": col.invalid_count,
+        "dominant_type": dominant_type,
+        "dominant_type_share": dominant_type_share,
         "min": _r4(col.min),
         "max": _r4(col.max),
         "mean": _r4(col.mean),
@@ -879,6 +943,12 @@ _CHARS_PER_TOKEN = 4
 #: A column is flagged ``null-heavy`` at or above this null percentage.
 _NULL_HEAVY_PCT = 20.0
 
+#: A column is flagged ``mixed types`` once at least this percentage of its
+#: classified values falls outside its dominant lexical class. Display only: it
+#: changes no score, and exists so that one stray ``N/A`` in a clean numeric
+#: column does not spend budget competing with the findings an agent asked for.
+_MIXED_TYPE_PCT = 5.0
+
 #: Pattern categories whose concrete values should stay out of agent-facing
 #: output even when ``include_samples=True`` asks for numeric extrema.
 _SENSITIVE_PATTERN_CATEGORIES = {
@@ -937,6 +1007,52 @@ def _may_expose_values(col: ColumnProfile) -> bool:
     )
 
 
+def _share_pct(share: float) -> str:
+    """Render a ``0..1`` share as a percentage that never rounds down to zero.
+
+    A class holding one value in ten thousand is 0.01%, and printing that as
+    "0% date" beside a real mixture states something untrue about the data.
+    """
+    pct = round(share * 100, 1)
+    if pct == 0.0 and share > 0.0:
+        return "<0.1"
+    return f"{pct:g}"
+
+
+def _mixed_type_flag(col: ColumnProfile) -> tuple[float, str] | None:
+    """Flag a column whose values do not agree on one lexical class.
+
+    This is the signal ``data_type`` cannot carry: below the inference
+    thresholds a half-numeric column is typed ``string``, identical in the
+    schema listing to a column of names. The flag states the mixture actually
+    found rather than restating the type.
+
+    Suppressed for ``identifier`` columns, where mixing forms ("A1", "123") is
+    what an ID scheme does rather than a defect -- the same exemption the
+    consistency dimension makes.
+    """
+    if col.data_type == "identifier":
+        return None
+    mixture = _type_mixture(col)
+    if len(mixture) < 2:
+        return None
+    outside_pct = 100.0 * (1.0 - mixture[0][2])
+    if outside_pct < _MIXED_TYPE_PCT:
+        return None
+
+    name = _one_line(col.name)
+    shares = ", ".join(f"{_share_pct(share)}% {cls}" for cls, _, share in mixture)
+
+    # The counts cover what the profiler retained, which on a large source is a
+    # bounded sample of the column. Disclose that where it is true, rather than
+    # letting a share taken over 10k values read as a fact about 10M.
+    classified = sum(count for _, count, _ in mixture)
+    non_null = (col.total_count or 0) - (col.null_count or 0)
+    scope = f"; sampled {classified:,} of {non_null:,} values" if classified < non_null else ""
+
+    return (outside_pct, f"{name}: mixed types ({shares}{scope})")
+
+
 def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     """Derive ``(severity, text)`` quality flags for one column.
 
@@ -968,6 +1084,10 @@ def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     if outliers > 0 and total > 0:
         pct = 100.0 * outliers / total
         flags.append((min(50.0, pct), f"{name}: {outliers} outliers ({pct:.1f}%)"))
+
+    mixed = _mixed_type_flag(col)
+    if mixed is not None:
+        flags.append(mixed)
 
     return flags
 
@@ -1701,6 +1821,9 @@ class _DictColumn:
         self.unique_count_is_approximate = d.get("unique_count_is_approximate")
         self.uniqueness_ratio = d.get("uniqueness_ratio")
         self.invalid_count = d.get("invalid_count")
+        # Normalized on the way in, so a hand-edited or truncated mapping reads
+        # back as "not classified" rather than as counts that were never taken.
+        self.type_homogeneity = _homogeneity_counts(d.get("type_homogeneity"))
         # Overlay only known stat attributes — never setattr arbitrary keys from
         # (possibly malformed) input, which could inject unexpected/dunder names.
         stats = d.get("stats")

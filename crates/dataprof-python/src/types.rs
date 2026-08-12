@@ -65,6 +65,19 @@ pub struct PyColumnProfile {
     /// statistics skipped); `Some(0)` = every non-null value was valid.
     #[pyo3(get)]
     pub invalid_count: Option<usize>,
+    /// Count of non-null values per lexical class — `numeric`, `date`,
+    /// `boolean`, `text` — over the values the profiler retained.
+    ///
+    /// Answers what `data_type` cannot: whether a `string` column is ordinary
+    /// text or a column that defeated type inference. All four keys are always
+    /// present; every count zero means the column was classified and had
+    /// nothing to classify (all-null, or zero rows). `None` = the
+    /// classification did not run, never "one uniform class".
+    ///
+    /// Sum the counts and compare against `total_count - null_count` to tell a
+    /// full-column count from one bounded by the engine's reservoir sample.
+    #[pyo3(get)]
+    pub type_homogeneity: Option<std::collections::BTreeMap<String, usize>>,
     /// Percentage of null values, or `None` for a zero-row column where the
     /// ratio (`null_count / total_count`) is undefined — absent means "not
     /// measured", never "0% nulls".
@@ -213,6 +226,18 @@ impl From<&ColumnProfile> for PyColumnProfile {
             .as_ref()
             .map(|ps| ps.iter().map(PyPattern::from).collect());
 
+        // A BTreeMap, not a HashMap: the Python dict keeps insertion order, so
+        // an unordered map would hand the same profile a different key order
+        // from run to run and make serialized reports differ for no reason.
+        let type_homogeneity = profile.type_homogeneity.as_ref().map(|h| {
+            std::collections::BTreeMap::from([
+                ("numeric".to_string(), h.numeric),
+                ("date".to_string(), h.date),
+                ("boolean".to_string(), h.boolean),
+                ("text".to_string(), h.text),
+            ])
+        });
+
         Self {
             name: profile.name.clone(),
             data_type: match profile.data_type {
@@ -228,6 +253,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
             unique_count: profile.unique_count,
             unique_count_is_approximate: profile.unique_count_is_approximate,
             invalid_count: profile.invalid_count,
+            type_homogeneity,
             null_percentage,
             uniqueness_ratio,
             min,

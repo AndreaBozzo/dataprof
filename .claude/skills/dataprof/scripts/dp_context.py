@@ -165,6 +165,10 @@ def _describe_column(report: Any, name: str) -> int:
         "unique_count": column.unique_count,
         "uniqueness_ratio": column.uniqueness_ratio,
         "approximate": bool(column.is_approximate or column.unique_count_is_approximate),
+        # Counts by lexical class, which is what says whether a `string` column
+        # is text or a column that defeated type inference. Counts, not values:
+        # nothing here echoes a cell.
+        "type_homogeneity": column.type_homogeneity,
         "patterns": patterns,
     }
     # Pattern names only. Values are withheld unconditionally: this script has

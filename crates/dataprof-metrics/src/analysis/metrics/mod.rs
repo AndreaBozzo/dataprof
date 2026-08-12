@@ -789,6 +789,7 @@ mod tests {
             unique_count: Some(100),
             unique_count_is_approximate: Some(false),
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];
@@ -841,6 +842,7 @@ mod tests {
             unique_count: Some(1),
             unique_count_is_approximate: Some(false),
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];
@@ -882,6 +884,7 @@ mod tests {
             unique_count: Some(10),
             unique_count_is_approximate: Some(false),
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }];

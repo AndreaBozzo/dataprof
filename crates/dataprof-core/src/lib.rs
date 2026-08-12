@@ -22,7 +22,7 @@ pub mod stop_condition;
 pub mod validation;
 
 pub use analysis_options::AnalysisOptions;
-pub use classification::{DataType, PatternCategory};
+pub use classification::{DataType, LexicalClass, PatternCategory, TypeHomogeneity};
 #[cfg(feature = "database")]
 pub use config::{DatabaseSamplingConfig, DatabaseSettings};
 pub use config::{

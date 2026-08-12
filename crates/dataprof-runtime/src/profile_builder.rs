@@ -12,7 +12,9 @@ use dataprof_core::{
     TextStats,
 };
 use dataprof_metrics::{
-    analysis::inference::{is_integer_token, is_null_like_token, parse_strict_boolean_token},
+    analysis::inference::{
+        classify_lexical_forms, is_integer_token, is_null_like_token, parse_strict_boolean_token,
+    },
     analysis::patterns::looks_like_date,
     calculate_datetime_stats, calculate_text_stats, detect_patterns,
     stats::numeric::{calculate_coefficient_of_variation, compute_numeric_stats_with_parsed_count},
@@ -210,6 +212,12 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         unique_count: input.unique_count,
         unique_count_is_approximate: input.unique_count_is_approximate,
         invalid_count,
+        // Classified over the retained sample, so the counts are bounded by the
+        // engine's reservoir on a large source. `classified_count()` against
+        // `total_count - null_count` is what tells a reader which happened.
+        // Not gated by `skip_statistics`: which forms a column holds is
+        // schema-level evidence like the inferred type, not a statistic.
+        type_homogeneity: Some(classify_lexical_forms(input.sample_values)),
         stats,
         patterns,
     }
@@ -418,6 +426,43 @@ mod tests {
         assert_eq!(value.data_type, DataType::Float);
         assert_eq!(value.invalid_count, Some(2));
         assert!(matches!(value.stats, ColumnStats::Numeric(_)));
+    }
+
+    #[test]
+    fn type_homogeneity_is_classified_from_the_retained_sample() {
+        // The streaming path only holds its reservoir, so the counts describe
+        // the sample. `classified_count()` short of the non-null total is the
+        // signal that the shares are sampled — nothing else discloses it.
+        let samples = ["1", "2", "junk", ""].map(String::from).to_vec();
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "v".to_string(),
+            data_type: DataType::String,
+            total_count: 4_000,
+            null_count: 1_000,
+            unique_count: Some(3),
+            unique_count_is_approximate: Some(false),
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None,
+            // Not gated by the analysis selection: a column's lexical makeup is
+            // schema-level evidence, like its inferred type.
+            skip_statistics: true,
+            skip_patterns: true,
+            exact_numeric: None,
+            exact_date_matches: None,
+            locale: None,
+        });
+
+        let counts = profile
+            .type_homogeneity
+            .expect("classification runs on every column");
+        assert_eq!(counts.numeric, 2);
+        assert_eq!(counts.text, 1);
+        assert_eq!(counts.classified_count(), 3, "null-like values are skipped");
+        assert!(
+            counts.classified_count() < profile.total_count - profile.null_count,
+            "a sample-derived count must read as short of the column"
+        );
     }
 
     #[test]

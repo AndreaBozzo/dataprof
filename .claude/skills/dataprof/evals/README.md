@@ -51,9 +51,9 @@ score improvement has missed the row loss.
 the column `string`. Consistency now scores that column on its dominant lexical
 class, so it contributes 6 of 10 values and the file scores **97.9/100** rather
 than the 100.0/100 it reported before #544 was fixed. That is still high enough
-to read as clean, and `to_llm_context()` still shows no per-column flag (#561), so
-a money column carrying text remains a finding the score alone will not make for
-you.
+to read as clean, which is the point of the scenario: the finding is in
+`to_llm_context()`'s per-column flag —
+`amount_eur: mixed types (60% numeric, 40% text)` — not in the score.
 
 ## When these change
 

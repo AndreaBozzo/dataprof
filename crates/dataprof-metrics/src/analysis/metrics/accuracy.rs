@@ -240,6 +240,7 @@ mod tests {
             unique_count: None,
             unique_count_is_approximate: None,
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }

@@ -442,6 +442,16 @@ def test_eval_rubrics_cite_current_fixture_values() -> None:
         if pattern not in quoted:
             stale.append(f"README/scenarios no longer name the {pattern} pattern")
 
+    # The high-score-is-not-clean rubric now grades against a per-column flag
+    # rather than the score alone, and quotes its wording. A flag that changed
+    # shape would leave the rubric grading against a line dataprof no longer
+    # emits — the same way the score went stale under #544.
+    payments_flag = "amount_eur: mixed types (60% numeric, 40% text)"
+    if payments_flag not in payments.to_llm_context():
+        stale.append(f"to_llm_context no longer emits the quoted flag {payments_flag!r}")
+    if payments_flag not in quoted:
+        stale.append("README/scenarios no longer quote the amount_eur mixed-types flag")
+
     assert not stale, (
         "eval rubrics are out of date with what dataprof produces: "
         + "; ".join(stale)

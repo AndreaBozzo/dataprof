@@ -101,6 +101,7 @@ mod tests {
             unique_count: Some(4),
             unique_count_is_approximate: Some(false),
             invalid_count: None,
+            type_homogeneity: None,
             stats: ColumnStats::None,
             patterns: Some(vec![]),
         }

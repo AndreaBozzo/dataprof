@@ -2,9 +2,10 @@ use std::time::Duration;
 
 use dataprof::{
     ChunkSize, CsvParserConfig, DataSource, DataType, EngineType, FileFormat, JsonFormat,
-    JsonParserConfig, Locale, MetricPack, OutputFormat, Profiler, ProfilerConfig, ProgressSink,
-    QualityDimension, SamplingStrategy, StopCondition, analyze_column_fast, analyze_structure,
-    calculate_numeric_stats, calculate_text_stats, detect_patterns, infer_type,
+    JsonParserConfig, LexicalClass, Locale, MetricPack, OutputFormat, Profiler, ProfilerConfig,
+    ProgressSink, QualityDimension, SamplingStrategy, StopCondition, TypeHomogeneity,
+    analyze_column, analyze_column_fast, analyze_structure, calculate_numeric_stats,
+    calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, lexical_class,
 };
 
 #[test]
@@ -47,6 +48,16 @@ fn parser_and_metrics_reexports_compile() {
 
     assert_eq!(infer_type(&numeric_values), DataType::Integer);
     assert_eq!(analyze_column_fast("n", &numeric_values).name, "n");
+
+    // A `ColumnProfile` field a consumer cannot name is a field they cannot
+    // match on or construct, so the classification types travel with it.
+    assert_eq!(lexical_class("42"), LexicalClass::Numeric);
+    let homogeneity: TypeHomogeneity = classify_lexical_forms(&numeric_values);
+    assert_eq!(homogeneity.dominant(), Some((LexicalClass::Numeric, 3)));
+    assert_eq!(
+        analyze_column("n", &numeric_values).type_homogeneity,
+        Some(homogeneity)
+    );
     let _numeric_stats = calculate_numeric_stats(&numeric_values);
     let _text_stats = calculate_text_stats(&text_values);
     let _patterns = detect_patterns(&text_values, Some(Locale::Us));
