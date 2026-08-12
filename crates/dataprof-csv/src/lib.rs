@@ -145,10 +145,10 @@ fn split_sample_records(text: &str) -> (Vec<&str>, bool) {
 ///
 /// The sample is split into logical records with quote handling, so quoted
 /// fields containing embedded newlines or delimiter characters do not skew
-/// detection. Tests comma, semicolon, tab, and pipe over the first 5 records:
-/// a delimiter whose modal field count is greater than one always beats one
-/// that only ever yields single-field records, then higher record agreement
-/// and higher field counts win.
+/// detection. Tests comma, semicolon, tab, and pipe over the first 5 non-blank
+/// records: a delimiter whose modal field count is greater than one always
+/// beats one that only ever yields single-field records, then higher record
+/// agreement and higher field counts win.
 ///
 /// Falls back to comma if no candidate splits the sample.
 pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
@@ -174,7 +174,14 @@ pub fn detect_delimiter<R: Read>(reader: R) -> std::io::Result<u8> {
 
     for &delimiter in &delimiters {
         let mut counts = std::collections::HashMap::new();
-        for record in records.iter().take(5) {
+        // Blank records carry no delimiter signal: a header followed by
+        // trailing blank lines must not outvote the true delimiter with
+        // single-field "records" (gh #559).
+        let scored = records
+            .iter()
+            .filter(|record| !record.trim().is_empty())
+            .take(5);
+        for record in scored {
             let fields = count_fields(record, delimiter as char);
             *counts.entry(fields).or_insert(0usize) += 1;
         }
@@ -697,6 +704,22 @@ mod tests {
     fn test_detect_delimiter_from_path_semicolon() {
         let csv = write_csv("id;name;salary\n1;Alice;50000\n2;Bob;60000\n");
         assert_eq!(detect_delimiter_from_path(csv.path()).unwrap(), b';');
+    }
+
+    #[test]
+    fn test_detect_delimiter_blank_records_do_not_outvote_header() {
+        // A header-only file with trailing blank lines: the blank records are
+        // single-field for every candidate, so counting them made `;` win on
+        // perfect consistency and collapse the whole header into one column
+        // (gh #559).
+        let data = b"name,age\n\n\n";
+        assert_eq!(detect_delimiter(Cursor::new(data.as_ref())).unwrap(), b',');
+
+        let semicolon = b"name;age\n\n";
+        assert_eq!(
+            detect_delimiter(Cursor::new(semicolon.as_ref())).unwrap(),
+            b';'
+        );
     }
 
     #[test]
