@@ -1031,6 +1031,8 @@ impl Profiler {
                     .await
                     .map_err(|e| DataProfilerError::StreamingError {
                         message: format!("Blocking task failed: {e}"),
+                        suggestion: "Retry the request; if the task panicked, report the issue"
+                            .to_string(),
                     })??;
                     self.validate_semantic_hints(&report)?;
                     Ok(report)
@@ -1167,12 +1169,14 @@ impl Profiler {
                         .await
                         .map_err(|e| DataProfilerError::StreamingError {
                             message: format!("HTTP request failed: {e}"),
+                            suggestion: "Check the URL and network connectivity".to_string(),
                         })?;
 
                 let status = response.status();
                 if !status.is_success() {
                     return Err(DataProfilerError::StreamingError {
                         message: format!("HTTP {status} for {url}"),
+                        suggestion: "Check that the URL is public and the server is up".to_string(),
                     });
                 }
 

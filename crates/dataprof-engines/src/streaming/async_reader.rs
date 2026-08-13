@@ -372,6 +372,10 @@ impl AsyncStreamingProfiler {
                         "AsyncStreamingProfiler does not support {:?} format",
                         format
                     ),
+                    suggestion: format!(
+                        "Stream {} input instead, or call the synchronous profiler",
+                        format
+                    ),
                 });
             }
         }
@@ -443,6 +447,7 @@ impl AsyncStreamingProfiler {
             Err(join_err) => {
                 return Err(DataProfilerError::StreamingError {
                     message: format!("Reader task panicked: {}", join_err),
+                    suggestion: String::new(),
                 });
             }
         };
@@ -1112,6 +1117,7 @@ impl AsyncStreamingProfiler {
             .await
             .ok_or_else(|| DataProfilerError::StreamingError {
                 message: "Stream ended before any data was received".to_string(),
+                suggestion: "Check that the source is reachable and not empty".to_string(),
             })?;
 
         total_bytes += header_chunk.bytes_read;
@@ -1119,6 +1125,7 @@ impl AsyncStreamingProfiler {
         if header_chunk.records.is_empty() {
             return Err(DataProfilerError::StreamingError {
                 message: "Stream header chunk was empty".to_string(),
+                suggestion: "Check that the source is reachable and not empty".to_string(),
             });
         }
 
@@ -1136,6 +1143,7 @@ impl AsyncStreamingProfiler {
         if headers.is_empty() && !allow_empty_schema {
             return Err(DataProfilerError::StreamingError {
                 message: "No column headers found in stream".to_string(),
+                suggestion: "Provide a header row in the first chunk of the stream".to_string(),
             });
         }
 

@@ -121,10 +121,8 @@ pub enum DataProfilerError {
         recommendation: String,
     },
 
-    #[error(
-        "Streaming processing failed: {message}\nTry setting a smaller chunk size on the profiler builder (e.g. `.chunk_size(ChunkSize::Fixed(1000))`)"
-    )]
-    StreamingError { message: String },
+    #[error("Streaming processing failed: {message}\n{suggestion}")]
+    StreamingError { message: String, suggestion: String },
 
     #[error("SIMD acceleration not available: {reason}\nFalling back to standard processing")]
     SimdUnavailable { reason: String },
@@ -377,6 +375,15 @@ impl DataProfilerError {
     pub fn streaming_error(message: &str) -> Self {
         DataProfilerError::StreamingError {
             message: message.to_string(),
+            suggestion: String::new(),
+        }
+    }
+
+    /// Create streaming error with context and a suggested remedy
+    pub fn streaming_error_with_suggestion(message: &str, suggestion: &str) -> Self {
+        DataProfilerError::StreamingError {
+            message: message.to_string(),
+            suggestion: suggestion.to_string(),
         }
     }
 
@@ -495,10 +502,7 @@ impl DataProfilerError {
                     to: "utf8".to_string(),
                 }]
             }
-            DataProfilerError::StreamingError { .. } => vec![
-                RecoveryStrategy::ChunkSizeReduction { new_size: 500 },
-                RecoveryStrategy::MemoryOptimization,
-            ],
+            DataProfilerError::StreamingError { .. } => vec![RecoveryStrategy::MemoryOptimization],
             _ => vec![],
         }
     }
@@ -542,10 +546,13 @@ impl DataProfilerError {
             DataProfilerError::MemoryLimitExceeded => {
                 Some("Use streaming mode or increase available memory.".to_string())
             }
-            DataProfilerError::StreamingError { .. } => Some(
-                "Set a smaller chunk size on the profiler builder, e.g. `.chunk_size(ChunkSize::Fixed(1000))`."
-                    .to_string(),
-            ),
+            DataProfilerError::StreamingError { suggestion, .. } => {
+                if suggestion.is_empty() {
+                    None
+                } else {
+                    Some(suggestion.clone())
+                }
+            }
             DataProfilerError::DataQualityIssue { recommendation, .. } => {
                 Some(recommendation.clone())
             }
@@ -840,6 +847,39 @@ mod tests {
         let error_string = config_error.to_string();
         assert!(error_string.contains("Invalid chunk size"));
         assert!(error_string.contains("Use a value between"));
+    }
+
+    #[test]
+    fn streaming_error_without_suggestion_prints_no_stale_advice() {
+        let err = DataProfilerError::StreamingError {
+            message: "Reader task panicked: boxed error".to_string(),
+            suggestion: String::new(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Reader task panicked"));
+        assert!(!msg.contains("chunk size"), "stale remedy leaked: {msg}");
+        assert!(err.suggestion().is_none());
+    }
+
+    #[test]
+    fn streaming_error_with_suggestion_prints_the_remedy_exactly_once() {
+        let err = DataProfilerError::StreamingError {
+            message: "Parquet schema inference requires random access".to_string(),
+            suggestion: "Use infer_schema() with a file path instead".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("random access"), "{msg}");
+        assert_eq!(
+            msg.matches("Use infer_schema() with a file path instead")
+                .count(),
+            1,
+            "remedy must appear exactly once: {msg}"
+        );
+        assert!(!msg.contains("chunk size"), "stale remedy leaked: {msg}");
+        assert_eq!(
+            err.suggestion(),
+            Some("Use infer_schema() with a file path instead".to_string())
+        );
     }
 
     #[test]
