@@ -959,6 +959,44 @@ impl Profiler {
     ) -> Result<ProfileReport, DataProfilerError> {
         use dataprof_engines::streaming::AsyncStreamingProfiler;
 
+        let source_info = source.source_info();
+        if source_info.format == FileFormat::Parquet {
+            // A fully materialized byte buffer supports random access: route it
+            // to the same blocking Parquet reader the sync path uses, so
+            // `profile_bytes(..., format="parquet")` stops being refused (gh #551).
+            if let Some(data) = source.take_bytes() {
+                #[cfg(feature = "parquet")]
+                {
+                    self.ensure_row_limit_only("the async Parquet reader")?;
+                    self.ensure_no_sampling("the async Parquet reader")?;
+                    let name = source_info.label.clone();
+                    let options = self.analysis_options();
+                    let parquet_config = self.parquet_config_for_stop();
+                    let report = tokio::task::spawn_blocking(move || {
+                        dataprof_parquet::analyze_parquet_bytes_with_options(
+                            data,
+                            &name,
+                            &parquet_config,
+                            &options,
+                        )
+                    })
+                    .await
+                    .map_err(|e| DataProfilerError::StreamingError {
+                        message: format!("Blocking task failed: {e}"),
+                        suggestion: String::new(),
+                    })??;
+                    self.validate_semantic_hints(&report)?;
+                    return Ok(report);
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    return Err(DataProfilerError::UnsupportedFormat {
+                        format: "parquet (enable the `parquet` feature)".to_string(),
+                    });
+                }
+            }
+        }
+
         let mut profiler = AsyncStreamingProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
             .sampling(self.config.sampling.clone())

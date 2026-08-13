@@ -81,6 +81,18 @@ pub trait AsyncDataSource: Send {
         self,
     ) -> Result<Pin<Box<dyn AsyncRead + Send + Unpin>>, DataProfilerError>;
 
+    /// Consume this source into its fully materialized bytes, when it has any.
+    ///
+    /// Defaults to `None`: most sources are true streams. [`BytesSource`]
+    /// overrides this so random-access formats (Parquet) can take the
+    /// blocking reader path instead of being refused.
+    fn take_bytes(self) -> Option<bytes::Bytes>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// Metadata about this source (label, format, optional size).
     fn source_info(&self) -> AsyncSourceInfo;
 }
@@ -108,6 +120,10 @@ impl AsyncDataSource for BytesSource {
     ) -> Result<Pin<Box<dyn AsyncRead + Send + Unpin>>, DataProfilerError> {
         let cursor = std::io::Cursor::new(self.data);
         Ok(Box::pin(cursor))
+    }
+
+    fn take_bytes(self) -> Option<bytes::Bytes> {
+        Some(self.data)
     }
 
     fn source_info(&self) -> AsyncSourceInfo {
@@ -196,6 +212,17 @@ mod tests {
         let mut buf = String::new();
         reader.read_to_string(&mut buf).await.unwrap();
         assert_eq!(buf, "name,age\nAlice,30\nBob,25\n");
+    }
+
+    #[tokio::test]
+    async fn test_bytes_source_take_bytes() {
+        let csv_data = b"name,age\nAlice,30\n";
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(csv_data),
+            AsyncSourceInfo::new("test-buffer", FileFormat::Csv),
+        );
+        let taken = source.take_bytes();
+        assert_eq!(taken.as_deref(), Some(csv_data.as_slice()));
     }
 
     #[tokio::test]

@@ -189,3 +189,21 @@ def test_bytes_report_is_labelled_as_an_in_memory_source(tmp_path):
 def test_name_overrides_the_default_label(tmp_path):
     data = _write(tmp_path, pa.table({"id": [1, 2]})).read_bytes()
     assert "orders" in dp.profile(data, format="parquet", name="orders").source
+
+
+def test_async_profile_bytes_matches_sync(tmp_path):
+    """dp.asyncio.profile_bytes routes a materialized Parquet buffer through
+    the blocking reader instead of refusing it (gh #551)."""
+    import asyncio
+
+    from dataprof.asyncio import profile_bytes
+
+    table = pa.table({"id": [1, 2, 3], "name": ["a", "b", None]})
+    data = _write(tmp_path, table).read_bytes()
+
+    sync = dp.profile(data, format="parquet")
+    async_report = asyncio.run(profile_bytes(data, format="parquet"))
+
+    assert async_report.rows == sync.rows
+    assert list(async_report) == list(sync)
+    assert async_report.to_dict()["columns"] == sync.to_dict()["columns"]
