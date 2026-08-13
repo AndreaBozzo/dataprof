@@ -11,8 +11,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use dataprof::{
-    DataFrameLibrary, DataSource, ExecutionMetadata, MetricPack, TruncationReason, infer_type,
-    is_null_like_token,
+    DataFrameLibrary, DataSource, ExecutionMetadata, FileFormat, MetricPack, TruncationReason,
+    infer_type, is_null_like_token,
 };
 use dataprof_runtime::{
     ColumnProfileInput, ReportAssembler, RowUniquenessTracker, build_column_profile,
@@ -41,7 +41,7 @@ pub type PyColumn = (String, Vec<Option<String>>);
 ///
 /// Raises `ValueError` when the columns do not all have the same length.
 #[pyfunction]
-#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None))]
+#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None, source_type = "dataframe".to_string(), source_format = None))]
 pub fn profile_columns(
     py: Python<'_>,
     columns: Vec<PyColumn>,
@@ -50,6 +50,8 @@ pub fn profile_columns(
     config: Option<&PyProfilerConfig>,
     error_count: usize,
     row_count: Option<usize>,
+    source_type: String,
+    source_format: Option<String>,
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -187,18 +189,32 @@ pub fn profile_columns(
         .map(|v| v.len() as u64)
         .sum();
 
-    let mut assembler = ReportAssembler::new(
+    let data_source = if source_type == "bytes" {
+        let format = match source_format.as_deref() {
+            Some("csv") => FileFormat::Csv,
+            Some("json") => FileFormat::Json,
+            Some("jsonl") => FileFormat::Jsonl,
+            Some("parquet") => FileFormat::Parquet,
+            other => FileFormat::Unknown(other.unwrap_or_default().to_string()),
+        };
+        DataSource::Bytes {
+            name,
+            format,
+            size_bytes: memory_bytes,
+        }
+    } else {
         DataSource::DataFrame {
             name,
             source_library: DataFrameLibrary::Custom("python".to_string()),
             row_count: num_rows,
             column_count: num_cols,
             memory_bytes: Some(memory_bytes),
-        },
-        exec,
-    )
-    .columns(column_profiles)
-    .with_row_duplicates(row_duplicates);
+        }
+    };
+
+    let mut assembler = ReportAssembler::new(data_source, exec)
+        .columns(column_profiles)
+        .with_row_duplicates(row_duplicates);
 
     if include_quality {
         assembler = assembler

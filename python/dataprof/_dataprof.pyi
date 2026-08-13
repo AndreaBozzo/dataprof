@@ -394,6 +394,8 @@ def profile_columns(
     config: ProfilerConfig | None,
     error_count: int = 0,
     row_count: int | None = None,
+    source_type: str = "dataframe",
+    source_format: str | None = None,
 ) -> ProfileReport: ...
 def profile_parquet_bytes(
     data: bytes,

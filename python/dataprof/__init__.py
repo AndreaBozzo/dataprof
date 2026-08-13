@@ -1453,9 +1453,18 @@ def profile(
         default_name: str,
         error_count: int = 0,
         row_count: int | None = None,
+        source_type: str = "dataframe",
+        source_format: str | None = None,
     ) -> ProfileReport:
         rust_report = _profile_columns(
-            columns, name or default_name, max_rows, _df_config(), error_count, row_count
+            columns,
+            name or default_name,
+            max_rows,
+            _df_config(),
+            error_count,
+            row_count,
+            source_type,
+            source_format,
         )
         return ProfileReport(rust_report)
 
@@ -1569,7 +1578,9 @@ def profile(
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
 
-        return _profile_python_columns(columns, f"{fmt}_bytes", skipped, row_count)
+        return _profile_python_columns(
+            columns, f"{fmt}_bytes", skipped, row_count, "bytes", fmt
+        )
 
     # DataFrame detection via module name
     source_module = type(source).__module__ or ""

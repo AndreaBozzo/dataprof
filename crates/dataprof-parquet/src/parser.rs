@@ -325,14 +325,12 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
             parquet_metadata,
         },
         // A buffer has no path, and `DataSource::File` is where Parquet metadata
-        // lives, so the in-memory case reports the same shape every other
-        // byte-buffer input reports and drops the file-level metadata.
-        ParquetOrigin::Memory { name, byte_len } => DataSource::DataFrame {
+        // lives, so the in-memory case reports the byte-buffer shape and drops
+        // the file-level metadata.
+        ParquetOrigin::Memory { name, byte_len } => DataSource::Bytes {
             name,
-            source_library: DataFrameLibrary::Custom("dataprof".to_string()),
-            row_count: total_rows,
-            column_count: num_columns,
-            memory_bytes: Some(byte_len),
+            format: FileFormat::Parquet,
+            size_bytes: byte_len,
         },
     };
 

@@ -65,7 +65,7 @@
           "$ref": "#/$defs/DataType"
         },
         "invalid_count": {
-          "description": "Non-null values that failed the column type's raw validity predicate:\nnon-finite or malformed numbers on numeric columns, and values that do\nnot parse directly as calendar dates on date columns. The date predicate\nintentionally does not trim surrounding whitespace; descriptive date\nstatistics may normalize whitespace independently.\n\nFor numeric columns, `mean`/`std_dev` cover\n`total_count - null_count - invalid_count` values. For date columns,\nthis count audits the strict raw-value quality predicate. `None` means\nthe check did not run (another column type, or statistics skipped) —\nnever \"no invalid values\", which is `Some(0)`.",
+          "description": "Non-null values that failed the column type's raw validity predicate:\nnon-finite or malformed numbers on numeric columns, and values that do\nnot parse directly as calendar dates on date columns. The date predicate\nintentionally does not trim surrounding whitespace; descriptive date\nstatistics may normalize whitespace independently.\n\nFor numeric columns, `mean`/`std_dev` cover\n`total_count - null_count - invalid_count` values. For date columns,\nthis count audits the strict raw-value quality predicate. `None` means\nthe check did not run (another column type, or statistics skipped) \u2014\nnever \"no invalid values\", which is `Some(0)`.",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -108,7 +108,7 @@
               "type": "null"
             }
           ],
-          "description": "How the column's non-null values distribute across lexical classes.\n\n`data_type` cannot answer \"did this column have a dominant form?\": a\ncolumn of names and a column that is 60% numbers are both `String`, and\n`invalid_count` is absent on string columns by contract. This carries the\nevidence, so a consumer can tell a textual column from one that defeated\ntype inference.\n\nCounted over the values the profiler retained — the engine's bounded\nreservoir sample on a large source, the whole column on a small or\nin-memory one. `classified_count()` against `total_count - null_count`\nis what says which happened; treat the shares as sampled whenever it is\nshort.\n\n`None` means the classification did not run, never \"one uniform class\":\na column that was classified and had nothing to classify (all-null, or\nzero rows) is `Some` with every count zero."
+          "description": "How the column's non-null values distribute across lexical classes.\n\n`data_type` cannot answer \"did this column have a dominant form?\": a\ncolumn of names and a column that is 60% numbers are both `String`, and\n`invalid_count` is absent on string columns by contract. This carries the\nevidence, so a consumer can tell a textual column from one that defeated\ntype inference.\n\nCounted over the values the profiler retained \u2014 the engine's bounded\nreservoir sample on a large source, the whole column on a small or\nin-memory one. `classified_count()` against `total_count - null_count`\nis what says which happened; treat the shares as sampled whenever it is\nshort.\n\n`None` means the classification did not run, never \"one uniform class\":\na column that was classified and had nothing to classify (all-null, or\nzero rows) is `Some` with every count zero."
         },
         "unique_count": {
           "format": "uint",
@@ -211,7 +211,7 @@
         },
         "total_cells": {
           "default": 0,
-          "description": "Total cells examined (rows × columns). 0 means the dimension had\nnothing to assess and it is excluded from the overall score.",
+          "description": "Total cells examined (rows \u00d7 columns). 0 means the dimension had\nnothing to assess and it is excluded from the overall score.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -616,7 +616,7 @@
         },
         "ragged_row_count": {
           "default": 0,
-          "description": "Number of data rows whose field count differed from the header's.\n\nThese rows were recovered — extra trailing fields dropped, missing\ntrailing fields padded to null — so profiling continued, but each one\nis a structural violation in the source. A nonzero value means the file\ndid not parse cleanly even though a report was produced. Additive field:\nlegacy documents without it deserialize as `0`.",
+          "description": "Number of data rows whose field count differed from the header's.\n\nThese rows were recovered \u2014 extra trailing fields dropped, missing\ntrailing fields padded to null \u2014 so profiling continued, but each one\nis a structural violation in the source. A nonzero value means the file\ndid not parse cleanly even though a report was produced. Additive field:\nlegacy documents without it deserialize as `0`.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -845,7 +845,7 @@
           ]
         },
         "outlier_count": {
-          "description": "Number of values flagged as IQR-based outliers in this column.\n\nUses the same Tukey-style detection (Q1 − k·IQR, Q3 + k·IQR with\nk = 1.5 by default) that feeds the global `accuracy.outlier_ratio`.\n`None` when outlier detection didn't run (sample below the configured\nminimum or non-numeric column).",
+          "description": "Number of values flagged as IQR-based outliers in this column.\n\nUses the same Tukey-style detection (Q1 \u2212 k\u00b7IQR, Q3 + k\u00b7IQR with\nk = 1.5 by default) that feeds the global `accuracy.outlier_ratio`.\n`None` when outlier detection didn't run (sample below the configured\nminimum or non-numeric column).",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -1076,7 +1076,7 @@
               "type": "null"
             }
           ],
-          "description": "Data quality assessment (optional — partial analysis may skip quality)"
+          "description": "Data quality assessment (optional \u2014 partial analysis may skip quality)"
         },
         "schema_version": {
           "const": 1,
@@ -1085,7 +1085,7 @@
           "type": "integer"
         },
         "semantic_hint_bindings": {
-          "description": "Per-column evidence of how each semantic hint bound to the data.\n\nEmpty when no hints were supplied. Recorded for provenance: a hint proven\ninert over the full data is rejected before a report is returned, so a\nsuccessful report only carries bindings that matched something or whose\nevidence was sampled. Additive field — older readers ignore it.",
+          "description": "Per-column evidence of how each semantic hint bound to the data.\n\nEmpty when no hints were supplied. Recorded for provenance: a hint proven\ninert over the full data is rejected before a report is returned, so a\nsuccessful report only carries bindings that matched something or whose\nevidence was sampled. Additive field \u2014 older readers ignore it.",
           "items": {
             "$ref": "#/$defs/SemanticHintBinding"
           },
@@ -1700,7 +1700,8 @@
         "file",
         "query",
         "dataframe",
-        "stream"
+        "stream",
+        "bytes"
       ],
       "type": "string"
     },
@@ -2088,7 +2089,7 @@
         },
         "temporal_pairs_checked": {
           "default": 0,
-          "description": "Start/end value pairs actually compared for temporal ordering.\n`temporal_violations` is bounded by this, not by\n`date_values_checked` — the pair scan may cover columns the date\nscan does not.",
+          "description": "Start/end value pairs actually compared for temporal ordering.\n`temporal_violations` is bounded by this, not by\n`date_values_checked` \u2014 the pair scan may cover columns the date\nscan does not.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
@@ -2170,7 +2171,7 @@
       ]
     },
     "TypeHomogeneity": {
-      "description": "How a column's non-null values distribute across [`LexicalClass`]es.\n\nRaw counts rather than a share, so that a reader can state the mixture it\nactually found (\"60% numeric, 40% text\") instead of the dominant class and\nan unnamed remainder, and so a serialized report carries no rounded\nderivative of a number it does not also carry exactly.\n\nAll four counts are always present. Every field zero means the column was\nclassified and had no non-null values to classify — \"analyzed, found\nnothing\", which is not the same as an absent `type_homogeneity`.",
+      "description": "How a column's non-null values distribute across [`LexicalClass`]es.\n\nRaw counts rather than a share, so that a reader can state the mixture it\nactually found (\"60% numeric, 40% text\") instead of the dominant class and\nan unnamed remainder, and so a serialized report carries no rounded\nderivative of a number it does not also carry exactly.\n\nAll four counts are always present. Every field zero means the column was\nclassified and had no non-null values to classify \u2014 \"analyzed, found\nnothing\", which is not the same as an absent `type_homogeneity`.",
       "properties": {
         "boolean": {
           "format": "uint",

@@ -178,10 +178,10 @@ def test_a_buffer_that_is_not_parquet_fails_like_the_file_path(tmp_path):
 
 
 def test_bytes_report_is_labelled_as_an_in_memory_source(tmp_path):
-    """A buffer has no path, so it reports the in-memory shape, not a fake one."""
+    """A buffer has no path, so it reports the byte-buffer shape, not a fake one."""
     data = _write(tmp_path, pa.table({"id": [1, 2]})).read_bytes()
     report = dp.profile(data, format="parquet")
-    assert report.source_type == "dataframe"
+    assert report.source_type == "bytes"
     assert "parquet_bytes" in report.source
     assert "pandas" not in report.source
 
