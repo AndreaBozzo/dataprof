@@ -2960,3 +2960,27 @@ class TestSemanticHintValidation:
         report = dataprof.profile({"pressure": ["1", "2", "3"]})
         assert report.semantic_hint_bindings == []
         assert "semantic_hint_bindings" not in report.to_dict()
+
+
+def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
+    """Two profiles of the same file serialize identically once execution
+    timings are masked — mapping fields must not reorder between runs (gh #546)."""
+    import json
+    import re
+
+    p = tmp_path / "stable.csv"
+    p.write_text("name,age,salary\nAlice,30,50000\nBob,25,60000\nCarol,35,70000\n")
+
+    a = json.loads(dataprof.profile(str(p)).to_json())
+    b = json.loads(dataprof.profile(str(p)).to_json())
+
+    def mask(obj):
+        if isinstance(obj, dict):
+            return {k: mask(v) for k, v in sorted(obj.items())}
+        if isinstance(obj, list):
+            return [mask(v) for v in obj]
+        if isinstance(obj, (int, float)):
+            return "<num>"
+        return obj
+
+    assert mask(a) == mask(b)

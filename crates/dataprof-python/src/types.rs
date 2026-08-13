@@ -109,7 +109,7 @@ pub struct PyColumnProfile {
     #[pyo3(get)]
     pub coefficient_of_variation: Option<f64>,
     #[pyo3(get)]
-    pub quartiles: Option<std::collections::HashMap<String, f64>>,
+    pub quartiles: Option<std::collections::BTreeMap<String, f64>>,
     #[pyo3(get)]
     pub is_approximate: Option<bool>,
     #[pyo3(get)]
@@ -168,7 +168,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
         ) = match &profile.stats {
             ColumnStats::Numeric(n) => {
                 let q_map = n.quartiles.as_ref().map(|q| {
-                    let mut m = std::collections::HashMap::new();
+                    let mut m = std::collections::BTreeMap::new();
                     m.insert("q1".to_string(), q.q1);
                     m.insert("q2".to_string(), q.q2);
                     m.insert("q3".to_string(), q.q3);
@@ -432,9 +432,9 @@ impl PyDataQualityMetrics {
 
     /// Relative weights used by the aggregate quality score.
     #[getter]
-    fn score_weights(&self) -> std::collections::HashMap<String, f64> {
+    fn score_weights(&self) -> std::collections::BTreeMap<String, f64> {
         let weights = self.inner.score_weights;
-        std::collections::HashMap::from([
+        std::collections::BTreeMap::from([
             ("completeness".to_string(), weights.completeness),
             ("consistency".to_string(), weights.consistency),
             ("uniqueness".to_string(), weights.uniqueness),
@@ -452,12 +452,12 @@ impl PyDataQualityMetrics {
     fn completeness(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .completeness
             .as_ref()
             .map(|c| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "missing_values_ratio".into(),
                     c.missing_values_ratio
@@ -494,12 +494,12 @@ impl PyDataQualityMetrics {
     fn consistency(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .consistency
             .as_ref()
             .map(|c| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "data_type_consistency".into(),
                     c.data_type_consistency
@@ -529,12 +529,12 @@ impl PyDataQualityMetrics {
     fn uniqueness(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .uniqueness
             .as_ref()
             .map(|u| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "duplicate_rows".into(),
                     u.duplicate_rows.into_pyobject(py)?.unbind().into_any(),
@@ -581,12 +581,12 @@ impl PyDataQualityMetrics {
     fn accuracy(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .accuracy
             .as_ref()
             .map(|a| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "outlier_ratio".into(),
                     a.outlier_ratio.into_pyobject(py)?.unbind().into_any(),
@@ -619,12 +619,12 @@ impl PyDataQualityMetrics {
     fn timeliness(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .timeliness
             .as_ref()
             .map(|t| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "future_dates_count".into(),
                     t.future_dates_count.into_pyobject(py)?.unbind().into_any(),
@@ -662,12 +662,12 @@ impl PyDataQualityMetrics {
     fn validity(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .validity
             .as_ref()
             .map(|v| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "valid_values_ratio".into(),
                     v.valid_values_ratio.into_pyobject(py)?.unbind().into_any(),
@@ -690,12 +690,12 @@ impl PyDataQualityMetrics {
     fn precision(
         &self,
         py: Python<'_>,
-    ) -> PyResult<Option<std::collections::HashMap<String, Py<PyAny>>>> {
+    ) -> PyResult<Option<std::collections::BTreeMap<String, Py<PyAny>>>> {
         self.inner
             .precision
             .as_ref()
             .map(|p| -> PyResult<_> {
-                let mut m = std::collections::HashMap::new();
+                let mut m = std::collections::BTreeMap::new();
                 m.insert(
                     "decimal_places_consistency".into(),
                     p.decimal_places_consistency
@@ -742,8 +742,8 @@ impl PyDataQualityMetrics {
 
     /// Per-dimension scores (0-100). A dimension maps to None when it was
     /// not computed or had nothing to assess.
-    fn dimension_scores(&self) -> std::collections::HashMap<String, Option<f64>> {
-        std::collections::HashMap::from([
+    fn dimension_scores(&self) -> std::collections::BTreeMap<String, Option<f64>> {
+        std::collections::BTreeMap::from([
             ("completeness".to_string(), self.inner.completeness_score()),
             ("consistency".to_string(), self.inner.consistency_score()),
             ("uniqueness".to_string(), self.inner.uniqueness_score()),
