@@ -1,0 +1,200 @@
+# Throwaway spike workflow for #586.
+#
+# Answers: can the optional Python features be built for every target the
+# release matrix publishes, and what do they cost in wheel size?
+#
+# Mirrors the baseline legs of `python-wheels` in release.yml. The `optimized`
+# legs are deliberately absent: they are excluded from the PyPI upload
+# (release.yml downloads `wheels-*-baseline` only), so they are irrelevant here.
+#
+# Delete this file once #586 is answered.
+name: Spike - wheel feature matrix
+
+on:
+  # A workflow_dispatch-only workflow is not dispatchable until it exists on the
+  # default branch, so the spike branch also triggers on push. `inputs` is null
+  # for a push event; every use below carries the same default as a fallback.
+  push:
+    branches: [feature/586-wheel-feature-spike]
+  workflow_dispatch:
+    inputs:
+      features:
+        description: Feature set to build
+        required: true
+        default: python,python-async,async-streaming,parquet-async,database,postgres,mysql,sqlite
+      baseline_version:
+        description: Published version to compare wheel size against
+        required: true
+        default: 0.10.0
+      scope:
+        description: >-
+          linux = ubuntu x86_64 + aarch64 only (aarch64 is the leg most likely
+          to fail, and Linux runners bill at 1x). all = add Windows and both
+          macOS legs; macOS bills at 10x, so only widen once Linux is green.
+        required: true
+        default: linux
+        type: choice
+        options: [linux, all]
+
+env:
+  FEATURES: ${{ inputs.features || 'python,python-async,async-streaming,parquet-async,database,postgres,mysql,sqlite' }}
+  BASELINE_VERSION: ${{ inputs.baseline_version || '0.10.0' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # The matrix is built here rather than inline so `scope` can widen it without
+  # editing this file. rustflags are copied verbatim from the baseline legs of
+  # `python-wheels` in release.yml; if those change, change them here too.
+  plan:
+    name: Plan matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Emitted as literal JSON rather than assembled with jq: the rustflags
+          # values contain no quotes or backslashes, so nothing needs escaping,
+          # and this stays checkable by eye.
+          X='-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2'
+          A='-C target-cpu=generic -C opt-level=2'
+
+          linux='
+            {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true},
+            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false}'
+          extended='
+            {"os":"windows-latest","target":"x64","rustflags":"'"$X"'","native":true},
+            {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true},
+            {"os":"macos-latest","target":"aarch64","rustflags":"'"$A"'","native":true}'
+
+          if [ "${{ inputs.scope || 'linux' }}" = "all" ]; then
+            include="[$linux,$extended]"
+          else
+            include="[$linux]"
+          fi
+          include=$(echo "$include" | tr -d '\n' | tr -s ' ')
+
+          # Fail loudly here rather than letting a malformed matrix turn into an
+          # inscrutable "fromJSON" error on the downstream job.
+          python3 -c "import json,sys; m=json.loads(sys.argv[1]); print('legs:', len(m)); [print('  -', j['os'], j['target'], 'native=%s' % j['native']) for j in m]" "$include"
+
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.os }}-${{ matrix.target }}
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One target failing is a result, not a reason to cancel the others.
+      # Knowing exactly which legs break is the entire point of the spike.
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Record start time
+        id: start
+        shell: bash
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Build wheel with the full feature set
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --features "${{ env.FEATURES }}"
+          sccache: 'true'
+          manylinux: auto
+          rust-toolchain: stable
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+
+      - name: Measure
+        id: measure
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel=$(find dist -name '*.whl' | head -n1)
+          if [ -z "$wheel" ]; then
+            echo "No wheel produced" >&2
+            exit 1
+          fi
+          bytes=$(wc -c < "$wheel")
+          elapsed=$(( $(date +%s) - ${{ steps.start.outputs.epoch }} ))
+          echo "bytes=$bytes" >> "$GITHUB_OUTPUT"
+          echo "wheel=$(basename "$wheel")" >> "$GITHUB_OUTPUT"
+          echo "### ${{ matrix.os }}-${{ matrix.target }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- wheel: \`$(basename "$wheel")\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- size: $(( bytes / 1024 )) KiB" >> "$GITHUB_STEP_SUMMARY"
+          echo "- build: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compare against the published wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p baseline
+          # --no-deps so we measure the dataprof wheel alone. If no wheel matches
+          # this platform on PyPI, say so rather than silently skipping.
+          if pip download "dataprof==${{ env.BASELINE_VERSION }}" \
+              --no-deps --only-binary=:all: -d baseline 2>/dev/null; then
+            old=$(find baseline -name '*.whl' | head -n1)
+            old_bytes=$(wc -c < "$old")
+            new_bytes=${{ steps.measure.outputs.bytes }}
+            echo "- published $(basename "$old"): $(( old_bytes / 1024 )) KiB" >> "$GITHUB_STEP_SUMMARY"
+            echo "- delta: $(( (new_bytes - old_bytes) / 1024 )) KiB (x$(awk "BEGIN{printf \"%.2f\", $new_bytes/$old_bytes}"))" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- published wheel: none matched this platform, no comparison" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Cross-compiled aarch64 Linux wheels cannot run on the x86_64 runner that
+      # built them, so the capability assertion is skipped there by necessity.
+      # That leg proves buildability only.
+      - name: Install the wheel and assert capabilities
+        if: matrix.native
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .spike-venv
+          if [ -d .spike-venv/Scripts ]; then py=.spike-venv/Scripts/python; else py=.spike-venv/bin/python; fi
+          "$py" -m pip install --quiet --upgrade pip
+          "$py" -m pip install --quiet dist/*.whl
+          "$py" - <<'PY'
+          import dataprof
+
+          caps = dataprof.capabilities()
+          print("capabilities:", caps)
+
+          # Assert on the public capability fields, not on hasattr: the package
+          # installs _database_unavailable stubs under the real function names
+          # (python/dataprof/__init__.py), so hasattr passes either way and
+          # would prove nothing.
+          expected = {
+              "async_streaming": True,
+              "url_profiling": True,
+              "remote_parquet": True,
+              "database": True,
+          }
+          bad = {k: getattr(caps, k) for k, v in expected.items() if getattr(caps, k) != v}
+          assert not bad, f"missing capabilities: {bad}"
+          assert caps.database_connectors == ("postgres", "mysql", "sqlite"), caps.database_connectors
+
+          # capabilities() reads compile-time cfg flags, so confirm the async
+          # entry points really imported rather than trusting the flag alone.
+          from dataprof.asyncio import profile_file, profile_url  # noqa: F401
+
+          print("OK")
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: spike-wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
