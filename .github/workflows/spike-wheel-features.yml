@@ -16,11 +16,19 @@ on:
   # for a push event; every use below carries the same default as a fallback.
   #
   # Those push fallbacks are the knob for each experiment while this workflow
-  # lives only on the spike branch. Currently set to: aarch64 only, sccache off,
-  # testing whether sccache wrapping aarch64-unknown-linux-gnu-gcc is what makes
-  # ring's .S files fail with "ARM assembler must define __ARM_ARCH".
-  # Reset to scope=linux / sccache=true before quoting any number as
-  # representative of the real release job, which sets sccache: 'true'.
+  # lives only on the spike branch.
+  #
+  # Experiment log:
+  #   1. scope=linux, sccache=true  -> aarch64 fails building ring:
+  #      "ARM assembler must define __ARM_ARCH" (44x). x86_64 green.
+  #   2. scope=aarch64, sccache=false -> identical failure, 0 sccache-wrapped
+  #      compiler invocations. sccache ruled out as the cause.
+  #   3. (current) scope=aarch64, sccache=true, CFLAGS_aarch64_unknown_linux_gnu
+  #      =-D__ARM_ARCH=8 -> testing whether the cross-gcc simply never defines
+  #      the macro that ring's asm_base.h requires.
+  #
+  # Reset to scope=linux before quoting any number as representative of the
+  # real release job.
   push:
     branches: [feature/586-wheel-feature-spike]
   workflow_dispatch:
@@ -42,6 +50,14 @@ on:
         default: linux
         type: choice
         options: [linux, aarch64, all]
+      arm_cflags:
+        description: >-
+          CFLAGS injected into the aarch64 build container for ring's assembly
+          step. Empty reproduces the failure. sccache was ruled out as the
+          cause, so this tests whether the cross-gcc simply never defines
+          __ARM_ARCH.
+        required: false
+        default: '-D__ARM_ARCH=8'
       sccache:
         description: >-
           Set false to test whether sccache is what breaks ring's aarch64
@@ -133,9 +149,13 @@ jobs:
           # with "Couldn't find any python interpreters". It also matches
           # release.yml:409, so the build time measured here is the real one.
           args: --release --out dist --find-interpreter --features "${{ env.FEATURES }}"
-          sccache: ${{ inputs.sccache || 'false' }}
+          sccache: ${{ inputs.sccache || 'true' }}
           manylinux: auto
           rust-toolchain: stable
+          # maturin-action builds Linux wheels inside a container, so a plain
+          # `env:` on this step does not reach the compiler. docker-options is
+          # the only way to get a variable to the cc crate in there.
+          docker-options: -e CFLAGS_aarch64_unknown_linux_gnu=${{ inputs.arm_cflags || '-D__ARM_ARCH=8' }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
 
