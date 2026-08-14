@@ -23,12 +23,14 @@ on:
   #      "ARM assembler must define __ARM_ARCH" (44x). x86_64 green.
   #   2. scope=aarch64, sccache=false -> identical failure, 0 sccache-wrapped
   #      compiler invocations. sccache ruled out as the cause.
-  #   3. (current) scope=aarch64, sccache=true, CFLAGS_aarch64_unknown_linux_gnu
-  #      =-D__ARM_ARCH=8 -> testing whether the cross-gcc simply never defines
-  #      the macro that ring's asm_base.h requires.
-  #
-  # Reset to scope=linux before quoting any number as representative of the
-  # real release job.
+  #   3. scope=aarch64 with CFLAGS_aarch64_unknown_linux_gnu=-D__ARM_ARCH=8
+  #      -> GREEN. ring, libsqlite3-sys, sqlx-{sqlite,postgres,mysql}, rustls,
+  #      reqwest and tokio all compiled; 7 wheels; 0 __ARM_ARCH errors. So the
+  #      whole feature set cross-compiles once that one macro is defined.
+  #   4. (current) scope=linux, sccache=true, ARM fix retained -> re-validates
+  #      x86_64 under the strengthened async assertion (runs 1-2 predate it and
+  #      only checked that dataprof.asyncio imports, which passes even on a
+  #      wheel with no async support), and confirms aarch64 is reproducible.
   push:
     branches: [feature/586-wheel-feature-spike]
   workflow_dispatch:
@@ -96,16 +98,16 @@ jobs:
           A='-C target-cpu=generic -C opt-level=2'
 
           linux='
-            {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true},
-            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false}'
+            {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"manylinux2014_x86_64"},
+            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false,"pip_platform":"manylinux2014_aarch64"}'
           arm_only='
-            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false}'
+            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false,"pip_platform":"manylinux2014_aarch64"}'
           extended='
-            {"os":"windows-latest","target":"x64","rustflags":"'"$X"'","native":true},
-            {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true},
-            {"os":"macos-latest","target":"aarch64","rustflags":"'"$A"'","native":true}'
+            {"os":"windows-latest","target":"x64","rustflags":"'"$X"'","native":true,"pip_platform":"win_amd64"},
+            {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"macosx_10_12_x86_64"},
+            {"os":"macos-latest","target":"aarch64","rustflags":"'"$A"'","native":true,"pip_platform":"macosx_11_0_arm64"}'
 
-          case "${{ inputs.scope || 'aarch64' }}" in
+          case "${{ inputs.scope || 'linux' }}" in
             all)     include="[$linux,$extended]" ;;
             aarch64) include="[$arm_only]" ;;
             *)       include="[$linux]" ;;
@@ -117,6 +119,35 @@ jobs:
           python3 -c "import json,sys; m=json.loads(sys.argv[1]); print('legs:', len(m)); [print('  -', j['os'], j['target'], 'native=%s' % j['native']) for j in m]" "$include"
 
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
+  # Evidence for the ring failure, and for any upstream report about it.
+  # ring's asm_base.h asserts that any ARM assembler defines __ARM_ARCH,
+  # citing "GCC 4.8+ and Clang 3.2+". This job checks whether that actually
+  # holds for the aarch64 cross-gcc in the image maturin-action uses, rather
+  # than assuming it. Answers whether the toolchain predates ring's documented
+  # floor (not upstream's problem) or is modern and still lacks the macro
+  # (a real gap in ring's assumption for aarch64).
+  arm-toolchain-probe:
+    name: Probe aarch64 cross-gcc for __ARM_ARCH
+    runs-on: ubuntu-latest
+    container: ghcr.io/rust-cross/manylinux2014-cross:aarch64
+    steps:
+      - name: Compiler identity and predefined macros
+        shell: bash
+        run: |
+          set -uo pipefail
+          cc=aarch64-unknown-linux-gnu-gcc
+          echo "## aarch64 cross toolchain probe" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          "$cc" --version 2>&1 | head -1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # Once as C, once as preprocessed assembly: ring's failure is on .S
+          # files, and the two modes do not have to agree.
+          for mode in c assembler-with-cpp; do
+            got=$(: | "$cc" -dM -E -x "$mode" - 2>/dev/null | grep -E "__ARM_ARCH|__aarch64__" | sort | xargs)
+            echo "mode=$mode -> ${got:-<none>}" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: ${{ matrix.os }}-${{ matrix.target }}
@@ -202,8 +233,14 @@ jobs:
           mkdir -p baseline
           # --no-deps so we measure the dataprof wheel alone. If no wheel matches
           # this platform on PyPI, say so rather than silently skipping.
+          #
+          # --platform is load-bearing: without it pip resolves for the RUNNER,
+          # not the build target, so the cross-compiled aarch64 leg silently
+          # downloaded an x86_64 wheel and compared against the wrong
+          # architecture. --platform requires --only-binary, already present.
           if pip download "dataprof==${{ env.BASELINE_VERSION }}" \
-              --no-deps --only-binary=:all: -d baseline 2>/dev/null; then
+              --no-deps --only-binary=:all: --python-version 310 \
+              --platform "${{ matrix.pip_platform }}" -d baseline 2>/dev/null; then
             old=$(find baseline -name '*.whl' | head -n1)
             old_bytes=$(wc -c < "$old")
             new_bytes=${{ steps.measure.outputs.bytes }}
