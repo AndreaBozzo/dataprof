@@ -27,10 +27,12 @@ on:
   #      -> GREEN. ring, libsqlite3-sys, sqlx-{sqlite,postgres,mysql}, rustls,
   #      reqwest and tokio all compiled; 7 wheels; 0 __ARM_ARCH errors. So the
   #      whole feature set cross-compiles once that one macro is defined.
-  #   4. (current) scope=linux, sccache=true, ARM fix retained -> re-validates
-  #      x86_64 under the strengthened async assertion (runs 1-2 predate it and
-  #      only checked that dataprof.asyncio imports, which passes even on a
-  #      wheel with no async support), and confirms aarch64 is reproducible.
+  #   4. scope=linux, sccache=true, ARM fix retained -> both legs GREEN.
+  #      x86_64 re-validated under the strengthened async assertion (runs 1-2
+  #      predate it and only checked that dataprof.asyncio imports, which
+  #      passes even on a wheel with no async support). aarch64 reproducible.
+  #   5. (current) scope=all -> adds Windows x64 and both macOS legs, the last
+  #      targets never built with the full feature set. macOS bills at 10x.
   push:
     branches: [feature/586-wheel-feature-spike]
   workflow_dispatch:
@@ -107,7 +109,7 @@ jobs:
             {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"macosx_10_12_x86_64"},
             {"os":"macos-latest","target":"aarch64","rustflags":"'"$A"'","native":true,"pip_platform":"macosx_11_0_arm64"}'
 
-          case "${{ inputs.scope || 'linux' }}" in
+          case "${{ inputs.scope || 'all' }}" in
             all)     include="[$linux,$extended]" ;;
             aarch64) include="[$arm_only]" ;;
             *)       include="[$linux]" ;;
