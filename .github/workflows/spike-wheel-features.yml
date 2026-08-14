@@ -110,7 +110,11 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --features "${{ env.FEATURES }}"
+          # --find-interpreter is required, not optional: inside the manylinux
+          # container maturin has no interpreter on PATH to bind to and fails
+          # with "Couldn't find any python interpreters". It also matches
+          # release.yml:409, so the build time measured here is the real one.
+          args: --release --out dist --find-interpreter --features "${{ env.FEATURES }}"
           sccache: 'true'
           manylinux: auto
           rust-toolchain: stable
@@ -122,20 +126,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wheel=$(find dist -name '*.whl' | head -n1)
-          if [ -z "$wheel" ]; then
+          # --find-interpreter produces one wheel per CPython in the container,
+          # so report every one rather than sampling the first and calling it
+          # "the" size.
+          count=$(find dist -name '*.whl' | wc -l)
+          if [ "$count" -eq 0 ]; then
             echo "No wheel produced" >&2
             exit 1
           fi
-          bytes=$(wc -c < "$wheel")
           elapsed=$(( $(date +%s) - ${{ steps.start.outputs.epoch }} ))
-          echo "bytes=$bytes" >> "$GITHUB_OUTPUT"
-          echo "wheel=$(basename "$wheel")" >> "$GITHUB_OUTPUT"
-          echo "### ${{ matrix.os }}-${{ matrix.target }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- wheel: \`$(basename "$wheel")\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- size: $(( bytes / 1024 )) KiB" >> "$GITHUB_STEP_SUMMARY"
-          echo "- build: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "### ${{ matrix.os }}-${{ matrix.target }}"
+            echo ""
+            echo "$count wheel(s), ${elapsed}s for the whole step"
+            echo ""
+            echo "| wheel | KiB |"
+            echo "| --- | ---: |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for w in dist/*.whl; do
+            echo "| \`$(basename "$w")\` | $(( $(wc -c < "$w") / 1024 )) |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          # Representative wheel for the size comparison below: cp310 if present,
+          # otherwise the first, so the delta is computed against a like-for-like
+          # interpreter rather than whichever happened to sort first.
+          rep=$(find dist -name '*cp310*.whl' | head -n1)
+          [ -n "$rep" ] || rep=$(find dist -name '*.whl' | head -n1)
+          echo "bytes=$(wc -c < "$rep")" >> "$GITHUB_OUTPUT"
+          echo "wheel=$(basename "$rep")" >> "$GITHUB_OUTPUT"
 
       - name: Compare against the published wheel
         shell: bash
@@ -166,7 +186,12 @@ jobs:
           python -m venv .spike-venv
           if [ -d .spike-venv/Scripts ]; then py=.spike-venv/Scripts/python; else py=.spike-venv/bin/python; fi
           "$py" -m pip install --quiet --upgrade pip
-          "$py" -m pip install --quiet dist/*.whl
+          # Resolve from the dist directory rather than globbing: with several
+          # interpreter-specific wheels present, a glob hands pip wheels its
+          # interpreter cannot install. --no-index keeps it off PyPI, so a
+          # failure here means the local wheel is genuinely unusable.
+          "$py" -m pip install --quiet --no-index --find-links dist dataprof
+          "$py" -c "import dataprof, sys; print('installed', dataprof.__version__, 'on', sys.version)"
           "$py" - <<'PY'
           import dataprof
 
