@@ -14,6 +14,13 @@ on:
   # A workflow_dispatch-only workflow is not dispatchable until it exists on the
   # default branch, so the spike branch also triggers on push. `inputs` is null
   # for a push event; every use below carries the same default as a fallback.
+  #
+  # Those push fallbacks are the knob for each experiment while this workflow
+  # lives only on the spike branch. Currently set to: aarch64 only, sccache off,
+  # testing whether sccache wrapping aarch64-unknown-linux-gnu-gcc is what makes
+  # ring's .S files fail with "ARM assembler must define __ARM_ARCH".
+  # Reset to scope=linux / sccache=true before quoting any number as
+  # representative of the real release job, which sets sccache: 'true'.
   push:
     branches: [feature/586-wheel-feature-spike]
   workflow_dispatch:
@@ -34,7 +41,16 @@ on:
         required: true
         default: linux
         type: choice
-        options: [linux, all]
+        options: [linux, aarch64, all]
+      sccache:
+        description: >-
+          Set false to test whether sccache is what breaks ring's aarch64
+          assembly build. release.yml sets it true, so keep it true for any
+          run whose numbers are meant to represent the real release job.
+        required: true
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
 
 env:
   FEATURES: ${{ inputs.features || 'python,python-async,async-streaming,parquet-async,database,postgres,mysql,sqlite' }}
@@ -66,16 +82,18 @@ jobs:
           linux='
             {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true},
             {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false}'
+          arm_only='
+            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false}'
           extended='
             {"os":"windows-latest","target":"x64","rustflags":"'"$X"'","native":true},
             {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true},
             {"os":"macos-latest","target":"aarch64","rustflags":"'"$A"'","native":true}'
 
-          if [ "${{ inputs.scope || 'linux' }}" = "all" ]; then
-            include="[$linux,$extended]"
-          else
-            include="[$linux]"
-          fi
+          case "${{ inputs.scope || 'aarch64' }}" in
+            all)     include="[$linux,$extended]" ;;
+            aarch64) include="[$arm_only]" ;;
+            *)       include="[$linux]" ;;
+          esac
           include=$(echo "$include" | tr -d '\n' | tr -s ' ')
 
           # Fail loudly here rather than letting a malformed matrix turn into an
@@ -115,7 +133,7 @@ jobs:
           # with "Couldn't find any python interpreters". It also matches
           # release.yml:409, so the build time measured here is the real one.
           args: --release --out dist --find-interpreter --features "${{ env.FEATURES }}"
-          sccache: 'true'
+          sccache: ${{ inputs.sccache || 'false' }}
           manylinux: auto
           rust-toolchain: stable
         env:
@@ -212,9 +230,25 @@ jobs:
           assert not bad, f"missing capabilities: {bad}"
           assert caps.database_connectors == ("postgres", "mysql", "sqlite"), caps.database_connectors
 
-          # capabilities() reads compile-time cfg flags, so confirm the async
-          # entry points really imported rather than trusting the flag alone.
-          from dataprof.asyncio import profile_file, profile_url  # noqa: F401
+          # capabilities() reads compile-time cfg flags, so exercise the real
+          # path too. Importing from dataprof.asyncio proves nothing: the module
+          # and its function objects import fine on a wheel with no async
+          # support, and the ImportError is deferred to call time by
+          # _check_async(). Verified against a baseline wheel, where the import
+          # succeeds and only the call raises. So this has to call.
+          import asyncio
+          import pathlib
+          import tempfile
+
+          from dataprof.asyncio import profile_file
+
+          with tempfile.TemporaryDirectory() as d:
+              csv = pathlib.Path(d) / "tiny.csv"
+              csv.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+              report = asyncio.run(profile_file(str(csv)))
+              assert report.rows == 2, report.rows
+              assert report.columns == 2, report.columns
+              print("async profile OK:", report.rows, "rows,", report.columns, "columns")
 
           print("OK")
           PY
