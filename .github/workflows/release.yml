@@ -406,7 +406,10 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --find-interpreter --features python
+        # The shipped feature set is declared once, in `[tool.maturin] features`
+        # in pyproject.toml; building without --features keeps the wheel and the
+        # PEP 517 sdist build from silently diverging (see issue #589).
+        args: --release --out dist --find-interpreter
         sccache: 'true'
         manylinux: auto
         # Ensure compatibility flags are properly set
