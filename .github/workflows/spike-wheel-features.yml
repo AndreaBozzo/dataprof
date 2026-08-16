@@ -31,8 +31,18 @@ on:
   #      x86_64 re-validated under the strengthened async assertion (runs 1-2
   #      predate it and only checked that dataprof.asyncio imports, which
   #      passes even on a wheel with no async support). aarch64 reproducible.
-  #   5. (current) scope=all -> adds Windows x64 and both macOS legs, the last
-  #      targets never built with the full feature set. macOS bills at 10x.
+  #   5. scope=all -> Windows x64 GREEN. macOS x86_64 built fine but died in
+  #      the Compare step (BSD wc pads its count, so `bytes=   N` reached the
+  #      consumer as `new_bytes= N` and the shell tried to run the number).
+  #      macOS aarch64 FAILED: our own `-C target-cpu=generic` strips
+  #      neon/aes/sha2/pmull, which ring asserts statically on
+  #      aarch64-apple-darwin (src/cpu/arm/darwin.rs).
+  #   6. (current) scope=fixes -> verifies both remedies at once:
+  #      - Linux aarch64 on manylinux_2_28 (GCC 7.5) with NO -D__ARM_ARCH hack.
+  #        ring#1728 is closed WONTFIX, so a newer image is the real fix and
+  #        forcing the macro on GCC 4.8.5 crypto code is not.
+  #      - macOS aarch64 with no -C target-cpu at all.
+  #      Compare step fixed for BSD wc.
   push:
     branches: [feature/586-wheel-feature-spike]
   workflow_dispatch:
@@ -53,7 +63,7 @@ on:
         required: true
         default: linux
         type: choice
-        options: [linux, aarch64, all]
+        options: [linux, aarch64, fixes, all]
       arm_cflags:
         description: >-
           CFLAGS injected into the aarch64 build container for ring's assembly
@@ -98,20 +108,30 @@ jobs:
           # and this stays checkable by eye.
           X='-C target-cpu=x86-64 -C target-feature=-avx,-avx2,-avx512f -C opt-level=2'
           A='-C target-cpu=generic -C opt-level=2'
+          # Apple Silicon: no -C target-cpu. `generic` strips neon/aes/sha2/pmull,
+          # which ring asserts are statically present on aarch64-apple-darwin
+          # (src/cpu/arm/darwin.rs), and every arm64 Mac has them anyway.
+          M='-C opt-level=2'
 
           linux='
             {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"manylinux2014_x86_64"},
-            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false,"pip_platform":"manylinux2014_aarch64"}'
+            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false,"pip_platform":"manylinux2014_aarch64","manylinux":"2_28"}'
           arm_only='
-            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false,"pip_platform":"manylinux2014_aarch64"}'
+            {"os":"ubuntu-latest","target":"aarch64","rustflags":"'"$A"'","native":false,"pip_platform":"manylinux2014_aarch64","manylinux":"2_28"}'
           extended='
             {"os":"windows-latest","target":"x64","rustflags":"'"$X"'","native":true,"pip_platform":"win_amd64"},
             {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"macosx_10_12_x86_64"},
-            {"os":"macos-latest","target":"aarch64","rustflags":"'"$A"'","native":true,"pip_platform":"macosx_11_0_arm64"}'
+            {"os":"macos-latest","target":"aarch64","rustflags":"'"$M"'","native":true,"pip_platform":"macosx_11_0_arm64"}'
 
-          case "${{ inputs.scope || 'all' }}" in
+          # `fixes` = only the two legs that were broken, to verify both
+          # remedies without paying for the three that already pass.
+          fixes="$arm_only,
+            {\"os\":\"macos-latest\",\"target\":\"aarch64\",\"rustflags\":\"$M\",\"native\":true,\"pip_platform\":\"macosx_11_0_arm64\"}"
+
+          case "${{ inputs.scope || 'fixes' }}" in
             all)     include="[$linux,$extended]" ;;
             aarch64) include="[$arm_only]" ;;
+            fixes)   include="[$fixes]" ;;
             *)       include="[$linux]" ;;
           esac
           include=$(echo "$include" | tr -d '\n' | tr -s ' ')
@@ -183,12 +203,12 @@ jobs:
           # release.yml:409, so the build time measured here is the real one.
           args: --release --out dist --find-interpreter --features "${{ env.FEATURES }}"
           sccache: ${{ inputs.sccache || 'true' }}
-          manylinux: auto
+          manylinux: ${{ matrix.manylinux || 'auto' }}
           rust-toolchain: stable
           # maturin-action builds Linux wheels inside a container, so a plain
           # `env:` on this step does not reach the compiler. docker-options is
           # the only way to get a variable to the cc crate in there.
-          docker-options: -e CFLAGS_aarch64_unknown_linux_gnu=${{ inputs.arm_cflags || '-D__ARM_ARCH=8' }}
+          docker-options: -e CFLAGS_aarch64_unknown_linux_gnu=${{ inputs.arm_cflags || '' }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
 
@@ -225,7 +245,11 @@ jobs:
           # interpreter rather than whichever happened to sort first.
           rep=$(find dist -name '*cp310*.whl' | head -n1)
           [ -n "$rep" ] || rep=$(find dist -name '*.whl' | head -n1)
-          echo "bytes=$(wc -c < "$rep")" >> "$GITHUB_OUTPUT"
+          # tr is load-bearing: BSD wc (macOS) pads its count with leading
+          # spaces, so `bytes=   7006536` lands in GITHUB_OUTPUT and the
+          # consumer below expands to `new_bytes= 7006536`, which the shell
+          # tries to execute. GNU wc does not pad, so Linux never saw it.
+          echo "bytes=$(wc -c < "$rep" | tr -d "[:space:]")" >> "$GITHUB_OUTPUT"
           echo "wheel=$(basename "$rep")" >> "$GITHUB_OUTPUT"
 
       - name: Compare against the published wheel
