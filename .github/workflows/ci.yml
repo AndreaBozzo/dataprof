@@ -125,7 +125,14 @@ jobs:
   feature-checks:
     name: Feature Checks (${{ matrix.scope }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Same cold-cache trap as python-wheel-smoke below. A dependency bump
+    # changes Cargo.lock and so the rust-cache key, and the all-features-crates
+    # scope builds four feature graphs back to back: warm it is ~3m, cold it
+    # needed ~21m on the #566 parquet bump. At 20 the tests all passed and the
+    # job was killed 87s later during the post-job cache save, so nothing was
+    # written — leaving the next run on that same lockfile cold too. The
+    # timeout has to clear the build *and* the save, or the job cannot recover.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
