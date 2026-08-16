@@ -88,6 +88,50 @@ fn test_header_only_csv_columns_match_across_engines_and_serialization() {
     }
 }
 
+#[test]
+fn test_empty_csv_quality_presence_matches_across_engines_and_serialization() {
+    let csv = NamedTempFile::new().unwrap();
+    let path = csv.path();
+
+    let reports = [
+        (
+            "standard",
+            analyze_csv_file(path, &CsvParserConfig::default())
+                .expect("standard CSV analysis should succeed"),
+        ),
+        (
+            "auto",
+            Profiler::new()
+                .engine(EngineType::Auto)
+                .analyze_file(path)
+                .expect("auto analysis should succeed"),
+        ),
+        (
+            "incremental",
+            Profiler::new()
+                .engine(EngineType::Incremental)
+                .analyze_file(path)
+                .expect("incremental analysis should succeed"),
+        ),
+        (
+            "columnar",
+            Profiler::new()
+                .engine(EngineType::Columnar)
+                .analyze_file(path)
+                .expect("columnar analysis should succeed"),
+        ),
+    ];
+
+    for (engine, report) in reports {
+        assert!(report.column_profiles.is_empty(), "{engine}");
+        assert_eq!(report.execution.rows_processed, 0, "{engine}");
+        assert!(report.quality.is_none(), "{engine} must not assess no data");
+
+        let serialized = serde_json::to_value(&report).expect("report should serialize");
+        assert!(serialized["quality"].is_null(), "{engine}");
+    }
+}
+
 /// Base numeric statistics must be exact — computed over every value, not the
 /// bounded sample — and identical across engines, even when the data is
 /// sorted and larger than the sample capacity (#424).
