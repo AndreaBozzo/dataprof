@@ -365,6 +365,11 @@ jobs:
             target: aarch64
             cpu_profile: baseline
             rustflags: "-C target-cpu=generic -C opt-level=2"
+            # manylinux2014's aarch64 cross image ships GCC 4.8.5, which does
+            # not define __ARM_ARCH; ring's assembly refuses to build without
+            # it and upstream closed that WONTFIX (briansmith/ring#1728).
+            # 2_28 ships GCC 7.5. Raises this arch's glibc floor 2.17 -> 2.28.
+            manylinux: '2_28'
           - os: windows-latest
             target: x64
             cpu_profile: baseline
@@ -376,7 +381,11 @@ jobs:
           - os: macos-latest
             target: aarch64
             cpu_profile: baseline
-            rustflags: "-C target-cpu=generic -C opt-level=2"
+            # No -C target-cpu: `generic` strips neon/aes/sha2/pmull, which
+            # ring asserts are statically present on aarch64-apple-darwin
+            # (src/cpu/arm/darwin.rs). Every arm64 Mac has them, so `generic`
+            # bought no compatibility and cost performance.
+            rustflags: "-C opt-level=2"
 
           # Optimized builds (performance optimized)
           - os: ubuntu-latest
@@ -406,9 +415,9 @@ jobs:
       uses: PyO3/maturin-action@v1
       with:
         target: ${{ matrix.target }}
-        args: --release --out dist --find-interpreter --features python
+        args: --release --out dist --find-interpreter --features python,python-async,async-streaming,parquet-async
         sccache: 'true'
-        manylinux: auto
+        manylinux: ${{ matrix.manylinux || 'auto' }}
         # Ensure compatibility flags are properly set
         rust-toolchain: stable
       env:
