@@ -576,6 +576,7 @@ impl AsyncStreamingProfiler {
             .map_err(|e| Self::csv_error(&e, flexible))?;
 
         let header_fields: Vec<String> = headers.iter().map(|f| f.to_string()).collect();
+        dataprof_core::validate_unique_column_names(&header_fields, "CSV header")?;
         let header_len = header_fields.len();
         // Byte counts come from the parser's own position rather than from the
         // parsed fields: a record's fields exclude delimiters, quotes and line
