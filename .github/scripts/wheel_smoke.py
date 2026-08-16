@@ -2,8 +2,12 @@
 
 This runs against an *installed wheel*, not an editable build, and asserts the
 base-wheel contract: everything here must work with zero Python dependencies
-and no source build. Anything that needs pandas, a compiled async extension, or
-a database connector belongs in the regular pytest suite, not here.
+and no source build. Anything that needs pandas or a database connector belongs
+in the regular pytest suite, not here.
+
+The async/HTTP surface IS part of that contract as of the feature set shipped by
+`[tool.maturin] features` in pyproject.toml, so it is asserted here rather than
+left to a build that enables it explicitly.
 
 Run it from a directory outside the repository, so that `import dataprof`
 resolves to the installed package rather than the `python/dataprof` sources::
@@ -168,6 +172,46 @@ def acceptance_agent_output_is_redacted(workdir: Path) -> None:
     )
 
 
+def acceptance_async_is_in_the_base_wheel(workdir: Path) -> None:
+    """Async, URL and remote-Parquet support ship in the wheel; database does not.
+
+    Asserted against the installed artifact because `capabilities()` reads
+    compile-time cfg flags: a feature-list drift between pyproject.toml and the
+    release workflow, or a cfg-gating mistake, would otherwise ship a wheel
+    missing these exports with nothing failing.
+    """
+    print("acceptance: async is in the base wheel")
+    caps = dp.capabilities()
+    check(caps.async_streaming, "capabilities() reports async_streaming")
+    check(caps.url_profiling, "capabilities() reports url_profiling")
+    check(caps.remote_parquet, "capabilities() reports remote_parquet")
+
+    # The deliberate other half of the contract (#588): database connectors are
+    # NOT shipped while their decode path still records DECIMAL/temporal/UUID/
+    # BLOB columns as null (#365) and returns no quality block (#554).
+    check(not caps.database, "capabilities() reports database is absent")
+    check(caps.database_connectors == (), "no database connectors are compiled in")
+
+    # The compiled export, not just the flag: profile_url_async is what
+    # parquet-async/async-streaming actually add to the extension module.
+    from dataprof._dataprof import profile_url_async  # noqa: F401
+
+    check(True, "profile_url_async is exported by the extension")
+
+    # Importing dataprof.asyncio proves nothing: the module and its function
+    # objects import fine on a wheel with no async support, and the ImportError
+    # is deferred to call time. So call it.
+    import asyncio
+
+    from dataprof.asyncio import profile_file
+
+    src = workdir / "async.csv"
+    src.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+    report = asyncio.run(profile_file(str(src)))
+    check(report.rows == 2, "async profile_file() reads 2 rows")
+    check(report.columns == 2, "async profile_file() reads 2 columns")
+
+
 def main() -> int:
     print(f"dataprof {dp.__version__} from {Path(dp.__file__).parent}")
     if Path(dp.__file__).resolve().parents[1].name == "python":
@@ -182,6 +226,7 @@ def main() -> int:
         acceptance_parquet_needs_no_dependencies(workdir)
         acceptance_export_reload_compare(workdir)
         acceptance_agent_output_is_redacted(workdir)
+        acceptance_async_is_in_the_base_wheel(workdir)
 
     print("\nwheel smoke passed")
     return 0
