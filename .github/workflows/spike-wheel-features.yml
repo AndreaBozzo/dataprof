@@ -41,7 +41,15 @@ on:
   #      manylinux_2_28 with an empty CFLAGS arg (so the pass can only come
   #      from the newer image), macOS aarch64 built with no -C target-cpu and
   #      ran the capability assertion for the first time on Apple Silicon.
-  #   7. (current) scope=all -> final confirmation across all five targets with
+  #   7. scope=all -> ALL FIVE TARGETS GREEN with both fixes and no
+  #      -D__ARM_ARCH=8. Capability assertion passed on all four native legs.
+  #   8. (current) scope=sizes -> decomposes the wheel growth on one target
+  #      into async-only, database-only and full, so #587 and #588 rest on
+  #      measured increments rather than the full-set figure alone. The
+  #      capability assertion is now derived from each leg's feature set, and
+  #      asserts the async call RAISES on a build without async.
+  #
+  #   Detail of run 7: final confirmation across all five targets with
   #      every fix in place, and closes the one gap left: macOS x86_64 has
   #      never had its capability assertion run, because the BSD wc bug killed
   #      the step before it.
@@ -72,7 +80,7 @@ on:
         required: true
         default: linux
         type: choice
-        options: [linux, aarch64, fixes, all]
+        options: [linux, aarch64, fixes, sizes, all]
       arm_cflags:
         description: >-
           CFLAGS injected into the aarch64 build container for ring's assembly
@@ -132,15 +140,28 @@ jobs:
             {"os":"macos-15-intel","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"macosx_10_12_x86_64"},
             {"os":"macos-latest","target":"aarch64","rustflags":"'"$M"'","native":true,"pip_platform":"macosx_11_0_arm64"}'
 
+          # `sizes` = one target, three feature sets, to decompose the wheel
+          # growth. The full-set number alone cannot tell #587 how much of the
+          # cost is async and how much is database, and the two share rustls
+          # and tokio so the increments will NOT be additive.
+          ASYNC='python,python-async,async-streaming,parquet-async'
+          DB='python,python-async,database,postgres,mysql,sqlite'
+          ALL='python,python-async,async-streaming,parquet-async,database,postgres,mysql,sqlite'
+          sizes='
+            {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"manylinux2014_x86_64","label":"size-async-only","features":"'"$ASYNC"'"},
+            {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"manylinux2014_x86_64","label":"size-database-only","features":"'"$DB"'"},
+            {"os":"ubuntu-latest","target":"x86_64","rustflags":"'"$X"'","native":true,"pip_platform":"manylinux2014_x86_64","label":"size-full","features":"'"$ALL"'"}'
+
           # `fixes` = only the two legs that were broken, to verify both
           # remedies without paying for the three that already pass.
           fixes="$arm_only,
             {\"os\":\"macos-latest\",\"target\":\"aarch64\",\"rustflags\":\"$M\",\"native\":true,\"pip_platform\":\"macosx_11_0_arm64\"}"
 
-          case "${{ inputs.scope || 'all' }}" in
+          case "${{ inputs.scope || 'sizes' }}" in
             all)     include="[$linux,$extended]" ;;
             aarch64) include="[$arm_only]" ;;
             fixes)   include="[$fixes]" ;;
+            sizes)   include="[$sizes]" ;;
             *)       include="[$linux]" ;;
           esac
           include=$(echo "$include" | tr -d '\n' | tr -s ' ')
@@ -181,7 +202,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: ${{ matrix.os }}-${{ matrix.target }}
+    name: ${{ matrix.label || format('{0}-{1}', matrix.os, matrix.target) }}
     needs: plan
     runs-on: ${{ matrix.os }}
     strategy:
@@ -210,7 +231,7 @@ jobs:
           # container maturin has no interpreter on PATH to bind to and fails
           # with "Couldn't find any python interpreters". It also matches
           # release.yml:409, so the build time measured here is the real one.
-          args: --release --out dist --find-interpreter --features "${{ env.FEATURES }}"
+          args: --release --out dist --find-interpreter --features "${{ matrix.features || env.FEATURES }}"
           sccache: ${{ inputs.sccache || 'true' }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
           rust-toolchain: stable
@@ -237,7 +258,7 @@ jobs:
           elapsed=$(( $(date +%s) - ${{ steps.start.outputs.epoch }} ))
 
           {
-            echo "### ${{ matrix.os }}-${{ matrix.target }}"
+            echo "### ${{ matrix.label || format('{0}-{1}', matrix.os, matrix.target) }}"
             echo ""
             echo "$count wheel(s), ${elapsed}s for the whole step"
             echo ""
@@ -302,7 +323,7 @@ jobs:
           # failure here means the local wheel is genuinely unusable.
           "$py" -m pip install --quiet --no-index --find-links dist dataprof
           "$py" -c "import dataprof, sys; print('installed', dataprof.__version__, 'on', sys.version)"
-          "$py" - <<'PY'
+          BUILT_FEATURES="${{ matrix.features || env.FEATURES }}" "$py" - <<'PY'
           import dataprof
 
           caps = dataprof.capabilities()
@@ -312,15 +333,30 @@ jobs:
           # installs _database_unavailable stubs under the real function names
           # (python/dataprof/__init__.py), so hasattr passes either way and
           # would prove nothing.
+          # Expectations derive from the feature set this leg was built with,
+          # so the assertion stays honest when the set is not the full one.
+          # Hardcoding "everything True" would fail the async-only and
+          # database-only legs for entirely the wrong reason.
+          import os
+
+          feats = {f.strip() for f in os.environ["BUILT_FEATURES"].split(",") if f.strip()}
+          # parquet-async implies async-streaming implies python-async in
+          # crates/dataprof-python/Cargo.toml, so the outer feature is enough.
+          want_async = bool(feats & {"async-streaming", "parquet-async"})
+          want_rparq = "parquet-async" in feats
+          connectors = tuple(c for c in ("postgres", "mysql", "sqlite") if c in feats)
+          want_db = bool(connectors) or "database" in feats
+
           expected = {
-              "async_streaming": True,
-              "url_profiling": True,
-              "remote_parquet": True,
-              "database": True,
+              "async_streaming": want_async,
+              "url_profiling": want_async,
+              "remote_parquet": want_rparq,
+              "database": want_db,
           }
-          bad = {k: getattr(caps, k) for k, v in expected.items() if getattr(caps, k) != v}
-          assert not bad, f"missing capabilities: {bad}"
-          assert caps.database_connectors == ("postgres", "mysql", "sqlite"), caps.database_connectors
+          bad = {k: (getattr(caps, k), v) for k, v in expected.items() if getattr(caps, k) != v}
+          assert not bad, f"capability mismatch (got, want): {bad}"
+          assert caps.database_connectors == connectors, (caps.database_connectors, connectors)
+          print("capabilities match built features:", sorted(feats))
 
           # capabilities() reads compile-time cfg flags, so exercise the real
           # path too. Importing from dataprof.asyncio proves nothing: the module
@@ -337,15 +373,25 @@ jobs:
           with tempfile.TemporaryDirectory() as d:
               csv = pathlib.Path(d) / "tiny.csv"
               csv.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
-              report = asyncio.run(profile_file(str(csv)))
-              assert report.rows == 2, report.rows
-              assert report.columns == 2, report.columns
-              print("async profile OK:", report.rows, "rows,", report.columns, "columns")
+              if want_async:
+                  report = asyncio.run(profile_file(str(csv)))
+                  assert report.rows == 2, report.rows
+                  assert report.columns == 2, report.columns
+                  print("async profile OK:", report.rows, "rows,", report.columns, "columns")
+              else:
+                  # Mirror image: on a build without async the call must raise.
+                  # Worth asserting rather than skipping.
+                  try:
+                      asyncio.run(profile_file(str(csv)))
+                  except ImportError as exc:
+                      print("async correctly unavailable:", str(exc)[:70])
+                  else:
+                      raise AssertionError("async succeeded on a build without it")
 
           print("OK")
           PY
 
       - uses: actions/upload-artifact@v7
         with:
-          name: spike-wheel-${{ matrix.os }}-${{ matrix.target }}
+          name: spike-wheel-${{ matrix.label || format('{0}-{1}', matrix.os, matrix.target) }}
           path: dist/*.whl
