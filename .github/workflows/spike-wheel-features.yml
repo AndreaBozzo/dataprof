@@ -37,7 +37,16 @@ on:
   #      macOS aarch64 FAILED: our own `-C target-cpu=generic` strips
   #      neon/aes/sha2/pmull, which ring asserts statically on
   #      aarch64-apple-darwin (src/cpu/arm/darwin.rs).
-  #   6. (current) scope=fixes -> verifies both remedies at once:
+  #   6. scope=fixes -> BOTH REMEDIES GREEN. Linux aarch64 built on
+  #      manylinux_2_28 with an empty CFLAGS arg (so the pass can only come
+  #      from the newer image), macOS aarch64 built with no -C target-cpu and
+  #      ran the capability assertion for the first time on Apple Silicon.
+  #   7. (current) scope=all -> final confirmation across all five targets with
+  #      every fix in place, and closes the one gap left: macOS x86_64 has
+  #      never had its capability assertion run, because the BSD wc bug killed
+  #      the step before it.
+  #
+  #   Detail of run 6:
   #      - Linux aarch64 on manylinux_2_28 (GCC 7.5) with NO -D__ARM_ARCH hack.
   #        ring#1728 is closed WONTFIX, so a newer image is the real fix and
   #        forcing the macro on GCC 4.8.5 crypto code is not.
@@ -128,7 +137,7 @@ jobs:
           fixes="$arm_only,
             {\"os\":\"macos-latest\",\"target\":\"aarch64\",\"rustflags\":\"$M\",\"native\":true,\"pip_platform\":\"macosx_11_0_arm64\"}"
 
-          case "${{ inputs.scope || 'fixes' }}" in
+          case "${{ inputs.scope || 'all' }}" in
             all)     include="[$linux,$extended]" ;;
             aarch64) include="[$arm_only]" ;;
             fixes)   include="[$fixes]" ;;
