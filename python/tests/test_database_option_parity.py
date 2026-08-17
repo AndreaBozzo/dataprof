@@ -6,8 +6,8 @@ pattern detection with no locale, so a query and a CSV holding the same rows
 disagreed about what had been analyzed. The Python database entry point could
 not express the selection at all.
 
-These tests profile the same five records out of SQLite and off disk, and
-require the two to agree.
+These tests profile the same records out of SQLite and off disk, and require the
+two to agree — on what was analyzed, and on the quality numbers themselves.
 
 Requires building with database feature flags::
 
@@ -43,6 +43,40 @@ RECORDS = [
 
 QUERY = "SELECT * FROM parity"
 
+# A second fixture, for quality parity rather than option plumbing. ``RECORDS``
+# is five complete, unique, one-decimal rows with no date column, so it scores a
+# flat 100 on four dimensions and leaves timeliness and validity unassessed —
+# comparing two of those proves nothing. These records are deliberately
+# imperfect in a different way per dimension: nulls for completeness, a repeated
+# row for uniqueness, one malformed address for validity, mixed decimal places
+# for precision, and dates so timeliness has something to read.
+RICH_COLUMNS = ["id", "email", "signup_date", "amount", "notes"]
+RICH_RECORDS = [
+    (1, "anna@example.com", "2024-01-15", 10.5, "alpha"),
+    (2, "bruno@example.com", "2024-02-20", 21.25, None),
+    (3, "not-an-email", "2024-03-05", 33.0, "gamma"),
+    (4, "dario@example.com", "2024-04-11", 42.125, None),
+    (5, "elena@example.com", "2024-05-30", 55.5, "epsilon"),
+    (6, "fabio@example.com", "2024-06-18", 60.0, "zeta"),
+    (7, None, "2024-07-22", 71.75, "eta"),
+    (8, "hugo@example.com", "2024-08-09", 80.5, "theta"),
+    (9, "irene@example.com", "2024-09-14", 91.25, "iota"),
+    (10, "jacopo@example.com", "2024-10-01", 100.0, "kappa"),
+    (10, "jacopo@example.com", "2024-10-01", 100.0, "kappa"),
+]
+
+RICH_QUERY = "SELECT * FROM rich"
+
+QUALITY_DIMENSIONS = {
+    "completeness",
+    "consistency",
+    "uniqueness",
+    "accuracy",
+    "timeliness",
+    "validity",
+    "precision",
+}
+
 
 def _run(async_fn, *args, **kwargs):
     """Call a pyo3-async-runtimes function and block until completion.
@@ -57,14 +91,14 @@ def _run(async_fn, *args, **kwargs):
     return asyncio.run(_inner())
 
 
-def _profile_query(db_path, **config_kwargs):
+def _profile_query(db_path, query: str = QUERY, **config_kwargs):
     """Profile the fixture query, leaving the quality toggle unset by default."""
     calculate_quality = config_kwargs.pop("calculate_quality", None)
     config = ProfilerConfig(**config_kwargs) if config_kwargs else None
     report = _run(
         analyze_database_async,
         str(db_path),
-        QUERY,
+        query,
         10000,
         calculate_quality,
         config,
@@ -89,6 +123,31 @@ def csv_file(tmp_path):
     path = tmp_path / "parity.csv"
     lines = ["id,cap,amount"]
     lines += [f"{id_},{cap},{amount}" for id_, cap, amount in RECORDS]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture()
+def rich_sqlite_db(tmp_path):
+    db_path = tmp_path / "rich.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE rich (id INTEGER, email TEXT, signup_date TEXT, amount REAL, notes TEXT)"
+    )
+    conn.executemany("INSERT INTO rich VALUES (?, ?, ?, ?, ?)", RICH_RECORDS)
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+@pytest.fixture()
+def rich_csv_file(tmp_path):
+    """``RICH_RECORDS`` on disk. A SQL NULL is an empty CSV field."""
+    path = tmp_path / "rich.csv"
+    lines = [",".join(RICH_COLUMNS)]
+    lines += [
+        ",".join("" if value is None else str(value) for value in record) for record in RICH_RECORDS
+    ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -163,10 +222,25 @@ def test_quality_is_assessed_by_default(sqlite_db) -> None:
     assert report.quality.assessed_dimensions(), "an assessment names what it assessed"
 
 
-def test_default_quality_matches_the_same_rows_on_disk(sqlite_db, csv_file) -> None:
+def test_default_quality_matches_the_same_rows_on_disk(rich_sqlite_db, rich_csv_file) -> None:
     # The output contract: the numbers do not depend on which path produced
     # them. Compares every dimension score plus the overall, not just presence.
-    assert _quality_row(_profile_query(sqlite_db)) == _quality_row(dp.profile(csv_file))
+    db_report = _profile_query(rich_sqlite_db, query=RICH_QUERY)
+    csv_report = dp.profile(rich_csv_file)
+
+    assert set(db_report.quality.assessed_dimensions()) == QUALITY_DIMENSIONS
+    assert set(csv_report.quality.assessed_dimensions()) == QUALITY_DIMENSIONS
+
+    db_row = _quality_row(db_report)
+    # Guard the fixture, not the code: an equality over flat 100s holds however
+    # far the two paths drift, so fail loudly if the records stop exercising a
+    # dimension. Consistency and accuracy are clean by construction here.
+    for dimension in ("completeness", "uniqueness", "validity", "precision"):
+        assert db_row[dimension] < 100.0, (
+            f"{dimension} is a vacuous 100; the fixture stopped biting"
+        )
+
+    assert db_row == _quality_row(csv_report)
 
 
 def test_explicit_quality_selection_survives_the_unset_flag(sqlite_db) -> None:
