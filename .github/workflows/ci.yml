@@ -125,7 +125,14 @@ jobs:
   feature-checks:
     name: Feature Checks (${{ matrix.scope }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Same cold-cache trap as python-wheel-smoke below. A dependency bump
+    # changes Cargo.lock and so the rust-cache key, and the all-features-crates
+    # scope builds four feature graphs back to back: warm it is ~3m, cold it
+    # needed ~21m on the #566 parquet bump. At 20 the tests all passed and the
+    # job was killed 87s later during the post-job cache save, so nothing was
+    # written — leaving the next run on that same lockfile cold too. The
+    # timeout has to clear the build *and* the save, or the job cannot recover.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -179,16 +186,26 @@ jobs:
             pyproject.toml
             uv.lock
 
+      # Plain `uv run` syncs the project first, which compiles the Rust
+      # extension through the PEP 517 backend. Nothing here needs it: ruff
+      # reads source, and ty resolves the native module from the checked-in
+      # .pyi stubs. It is not free either — when #595 added async-streaming
+      # and parquet-async to [tool.maturin] features, rustls/tokio/reqwest
+      # entered the graph and the build alone took 5m06s, overrunning this
+      # job's 5-minute timeout (which GitHub reports as "cancelled").
+      - name: Install dev tools
+        run: uv sync --no-install-project
+
       - name: Check formatting
-        run: uv run ruff format --check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+        run: uv run --no-sync ruff format --check python/ .github/scripts/ .claude/skills/dataprof/scripts/
 
       - name: Lint
-        run: uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+        run: uv run --no-sync ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
 
       # ty is pre-1.0 (Astral's type checker) but the codebase passes it, so
       # keep it blocking to prevent regressions.
       - name: Type check (ty)
-        run: uv run ty check python/
+        run: uv run --no-sync ty check python/
 
   python-tests:
     name: Python Tests

@@ -257,14 +257,21 @@ fn infer_schema_from_csv_reader<R: Read>(
     reader: R,
     has_header: bool,
 ) -> Result<SchemaResult, DataProfilerError> {
+    // Probe one record past the cap: a source with exactly SCHEMA_SAMPLE_ROWS
+    // records reads `cap` (not truncated), anything larger reads `cap + 1`
+    // (truncated). rows_sampled is clamped back to the cap so the public
+    // number never exceeds it.
     let config = CsvParserConfig::default()
         .has_header(has_header)
-        .max_rows(Some(SCHEMA_SAMPLE_ROWS));
+        .max_rows(Some(SCHEMA_SAMPLE_ROWS + 1));
     let (profiles, _column_stats, rows_read, _headers) =
         dataprof_csv::analyze_csv_from_reader(reader, &config)?;
 
+    let rows_sampled = rows_read.min(SCHEMA_SAMPLE_ROWS);
+    let truncated = rows_read > SCHEMA_SAMPLE_ROWS;
+
     // Zero elapsed: the caller patches the timing.
-    Ok(schema_from_profiles(&profiles, rows_read, 0))
+    Ok(schema_from_profiles(&profiles, rows_sampled, truncated, 0))
 }
 
 /// Infer schema from any JSON/JSONL reader. Reads up to `SCHEMA_SAMPLE_ROWS` rows.
@@ -272,16 +279,22 @@ fn infer_schema_from_json_reader<R: BufRead>(
     reader: R,
     format: &FileFormat,
 ) -> Result<SchemaResult, DataProfilerError> {
+    // Same one-past-the-cap probe as the CSV path: the scan keeps going to
+    // `cap + 1`, so `rows_read > cap` is the truncation signal while a source
+    // with exactly `cap` records reports itself as fully consumed.
     let config = match format {
-        FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(SCHEMA_SAMPLE_ROWS),
-        FileFormat::Json => JsonParserConfig::json_document().with_max_rows(SCHEMA_SAMPLE_ROWS),
-        _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS),
+        FileFormat::Jsonl => JsonParserConfig::jsonl().with_max_rows(SCHEMA_SAMPLE_ROWS + 1),
+        FileFormat::Json => JsonParserConfig::json_document().with_max_rows(SCHEMA_SAMPLE_ROWS + 1),
+        _ => JsonParserConfig::default().with_max_rows(SCHEMA_SAMPLE_ROWS + 1),
     };
     let (profiles, _column_stats, rows_read, _malformed_lines, _detected_format) =
         dataprof_json::analyze_json_from_reader(reader, &config)?;
 
+    let rows_sampled = rows_read.min(SCHEMA_SAMPLE_ROWS);
+    let truncated = rows_read > SCHEMA_SAMPLE_ROWS;
+
     // Zero elapsed: the caller patches the timing.
-    Ok(schema_from_profiles(&profiles, rows_read, 0))
+    Ok(schema_from_profiles(&profiles, rows_sampled, truncated, 0))
 }
 
 /// Infer schema from a generic reader, dispatching by format.
@@ -298,7 +311,8 @@ fn infer_schema_from_reader<R: Read>(
             infer_schema_from_json_reader(BufReader::new(reader), format)
         }
         FileFormat::Parquet => Err(DataProfilerError::StreamingError {
-            message: "Parquet schema inference requires random access; use infer_schema() with a file path instead".into(),
+            message: "Parquet schema inference requires random access".into(),
+            suggestion: "Use infer_schema() with a file path instead".into(),
         }),
         FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
@@ -386,7 +400,8 @@ fn count_from_reader<R: Read>(
             })
         }
         FileFormat::Parquet => Err(DataProfilerError::StreamingError {
-            message: "Parquet row counting requires random access; use quick_row_count() with a file path instead".into(),
+            message: "Parquet row counting requires random access".into(),
+            suggestion: "Use quick_row_count() with a file path instead".into(),
         }),
         FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
@@ -1006,6 +1021,7 @@ fn delimiter_to_string(delimiter: u8) -> String {
 fn schema_from_profiles(
     profiles: &[ColumnProfile],
     rows_sampled: usize,
+    truncated: bool,
     elapsed_ms: u128,
 ) -> SchemaResult {
     let columns = profiles
@@ -1016,11 +1032,11 @@ fn schema_from_profiles(
         })
         .collect();
 
-    // schema_stable is true when we read fewer rows than the sample cap
-    // (meaning we hit EOF — the entire file was consumed), or for Parquet
-    // (metadata-only). When we hit the SCHEMA_SAMPLE_ROWS cap, the schema
-    // may not have stabilized.
-    let schema_stable = rows_sampled < SCHEMA_SAMPLE_ROWS;
+    // schema_stable is true when the sample scan reached EOF — the whole
+    // source was consumed — or for Parquet (metadata-only). The parsers probe
+    // one record past SCHEMA_SAMPLE_ROWS so a file with exactly `cap` rows is
+    // not mistaken for a truncated one (gh #553).
+    let schema_stable = !truncated;
 
     SchemaResult {
         columns,
@@ -1071,6 +1087,7 @@ pub async fn infer_schema_async<P: AsRef<Path> + Send + 'static>(
         .await
         .map_err(|e| DataProfilerError::StreamingError {
             message: format!("Schema inference task failed: {}", e),
+            suggestion: String::new(),
         })?
 }
 
@@ -1082,6 +1099,7 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
         .await
         .map_err(|e| DataProfilerError::StreamingError {
             message: format!("Row count task failed: {}", e),
+            suggestion: String::new(),
         })?
 }
 
@@ -1127,6 +1145,7 @@ pub async fn infer_schema_stream(
     .await
     .map_err(|e| DataProfilerError::StreamingError {
         message: format!("Schema inference task failed: {}", e),
+        suggestion: String::new(),
     })??;
 
     result.inference_time_ms = start.elapsed().as_millis();
@@ -1168,6 +1187,7 @@ pub async fn quick_row_count_stream(
         .await
         .map_err(|e| DataProfilerError::StreamingError {
             message: format!("Row count task failed: {}", e),
+            suggestion: String::new(),
         })??;
 
     result.count_time_ms = start.elapsed().as_millis();
@@ -1285,6 +1305,30 @@ mod tests {
         assert_eq!(result.columns.len(), 2);
         assert_eq!(result.columns[0].data_type, DataType::Integer);
         assert_eq!(result.columns[1].data_type, DataType::Date);
+    }
+
+    #[test]
+    fn test_infer_schema_schema_stable_boundary_at_sample_cap() {
+        // gh #553: a file with exactly SCHEMA_SAMPLE_ROWS rows is read in full
+        // and must report schema_stable; cap + 1 rows is truncated and must not.
+        let cap = SCHEMA_SAMPLE_ROWS;
+        let mut rows = String::from("a,b\n");
+        for i in 0..cap {
+            rows.push_str(&format!("{i},x{i}\n"));
+        }
+        let exact = write_temp_csv(&rows);
+        let schema = infer_schema(exact.path()).unwrap();
+        assert_eq!(schema.rows_sampled, cap);
+        assert!(schema.schema_stable);
+
+        let mut rows = String::from("a,b\n");
+        for i in 0..=cap {
+            rows.push_str(&format!("{i},x{i}\n"));
+        }
+        let over = write_temp_csv(&rows);
+        let schema = infer_schema(over.path()).unwrap();
+        assert_eq!(schema.rows_sampled, cap);
+        assert!(!schema.schema_stable);
     }
 
     #[test]

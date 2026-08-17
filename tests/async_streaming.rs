@@ -213,6 +213,23 @@ async fn test_profiler_profile_stream_header_only_csv_preserves_schema() {
     assert_eq!(report.execution.rows_processed, 0);
 }
 
+#[tokio::test]
+async fn test_profiler_profile_stream_rejects_duplicate_csv_headers() {
+    let csv = b"x,x\n1,2\n";
+    let source = BytesSource::new(
+        bytes::Bytes::from_static(csv),
+        AsyncSourceInfo::new("duplicate-header-csv", FileFormat::Csv),
+    );
+
+    let error = Profiler::new()
+        .profile_stream(source)
+        .await
+        .expect_err("async CSV profiling must reject duplicate headers");
+
+    assert_eq!(error.category(), "duplicate_column_name");
+    assert!(error.to_string().contains("'x'"));
+}
+
 /// Verify `Profiler::profile_stream()` works with JSON format.
 #[tokio::test]
 async fn test_profiler_profile_stream_json() {

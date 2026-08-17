@@ -344,7 +344,6 @@ Build the Python extension from source with `python-async,database` and the conn
 report = await dp.analyze_database_async(
     "postgres://user:pass@localhost/mydb",
     "SELECT * FROM users",
-    calculate_quality=True,
 )
 ```
 
