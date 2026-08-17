@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -2963,24 +2964,30 @@ class TestSemanticHintValidation:
 
 
 def test_to_json_is_byte_stable_for_unchanged_input(tmp_path):
-    """Two profiles of the same file serialize identically once execution
-    timings are masked — mapping fields must not reorder between runs (gh #546)."""
-    import json
-    import re
+    """Profiling one unchanged file twice must produce identical JSON bytes
+    once the three timing-dependent execution fields are masked (gh #546).
 
+    The comparison is deliberately on the raw strings. Parsing to dicts first,
+    or sorting keys while comparing, erases the very thing at issue: mapping
+    fields backed by a Rust ``HashMap`` came out in a different order on every
+    run, and a dict comparison cannot see that.
+    """
     p = tmp_path / "stable.csv"
     p.write_text("name,age,salary\nAlice,30,50000\nBob,25,60000\nCarol,35,70000\n")
 
-    a = json.loads(dataprof.profile(str(p)).to_json())
-    b = json.loads(dataprof.profile(str(p)).to_json())
+    # Only the measured-duration fields may differ between two runs of the same
+    # input. Everything else, values included, is expected to be reproducible.
+    volatile = re.compile(r'"(scan_time_ms|throughput_rows_sec|memory_peak_mb)": [^,\n}]+')
 
-    def mask(obj):
-        if isinstance(obj, dict):
-            return {k: mask(v) for k, v in sorted(obj.items())}
-        if isinstance(obj, list):
-            return [mask(v) for v in obj]
-        if isinstance(obj, (int, float)):
-            return "<num>"
-        return obj
+    assert volatile.search(dataprof.profile(str(p)).to_json()), (
+        "the mask matched nothing; the execution field names changed and this "
+        "test would compare unmasked timings"
+    )
 
-    assert mask(a) == mask(b)
+    # Five runs, not two: HashMap ordering is randomized per instance, so a
+    # single pair can coincide by luck.
+    rendered = {
+        volatile.sub(r'"\1": <masked>', dataprof.profile(str(p)).to_json()) for _ in range(5)
+    }
+
+    assert len(rendered) == 1, f"to_json() rendered {len(rendered)} different documents"
