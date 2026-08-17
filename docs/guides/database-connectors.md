@@ -57,7 +57,6 @@ async def main():
         "postgres://user:pass@localhost/mydb",
         "SELECT * FROM users",
         batch_size=10000,
-        calculate_quality=True,
     )
     print(f"{report.rows} rows, quality: {report.quality_score}")
 

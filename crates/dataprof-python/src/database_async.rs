@@ -23,7 +23,8 @@ use dataprof::{
 /// * `connection_string` - Database connection string (postgres://, mysql://, sqlite://)
 /// * `query` - SQL query to analyze
 /// * `batch_size` - Optional batch size for streaming (default: 10000)
-/// * `calculate_quality` - Whether to calculate quality metrics (default: false)
+/// * `calculate_quality` - Legacy coarse toggle. Left unset, quality is computed,
+///   which is what every file path does; `False` drops the quality pack
 /// * `config` - Optional profiler config carrying `metrics`, `quality_dimensions`,
 ///   and `locale`, honoured the same way every file path honours them
 ///
@@ -41,7 +42,6 @@ use dataprof::{
 ///         "postgresql://user:pass@localhost/db",
 ///         "SELECT * FROM users LIMIT 1000",
 ///         batch_size=1000,
-///         calculate_quality=True,
 ///         config=ProfilerConfig(locale="IT"),
 ///     )
 ///     print(result)
@@ -49,13 +49,13 @@ use dataprof::{
 /// asyncio.run(analyze_db())
 /// ```
 #[pyfunction]
-#[pyo3(signature = (connection_string, query, batch_size=10000, calculate_quality=false, config=None))]
+#[pyo3(signature = (connection_string, query, batch_size=10000, calculate_quality=None, config=None))]
 pub fn analyze_database_async<'py>(
     py: Python<'py>,
     connection_string: String,
     query: String,
     batch_size: usize,
-    calculate_quality: bool,
+    calculate_quality: Option<bool>,
     config: Option<&PyProfilerConfig>,
 ) -> PyResult<Bound<'py, PyAny>> {
     if batch_size == 0 {
@@ -70,12 +70,13 @@ pub fn analyze_database_async<'py>(
         let selected = config
             .map(PyProfilerConfig::analysis_options)
             .unwrap_or_default();
-        if calculate_quality {
-            selected
-        } else {
-            // `calculate_quality=False` is the older, coarser way to say "no
-            // quality pack"; express it as a pack so one value carries the
-            // whole selection from here on.
+        // Unset means "whatever the selection says", and an unnarrowed selection
+        // includes quality — the same default every file path applies. Only an
+        // explicit `False` drops the pack, and it is the older, coarser way to
+        // say so; express it as a pack so one value carries the whole selection
+        // from here on. `True` adds nothing back: `metrics=["schema"]` stays a
+        // schema-only profile.
+        if calculate_quality == Some(false) {
             let packs = selected
                 .effective_metric_packs()
                 .unwrap_or_else(MetricPack::all)
@@ -83,6 +84,8 @@ pub fn analyze_database_async<'py>(
                 .filter(|pack| *pack != MetricPack::Quality)
                 .collect();
             selected.with_metric_packs(Some(packs))
+        } else {
+            selected
         }
     };
     #[cfg(not(all(feature = "database", feature = "python-async")))]
