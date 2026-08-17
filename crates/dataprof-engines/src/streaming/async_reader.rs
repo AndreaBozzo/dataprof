@@ -373,7 +373,8 @@ impl AsyncStreamingProfiler {
                         format
                     ),
                     suggestion: format!(
-                        "Stream {} input instead, or call the synchronous profiler",
+                        "This profiler streams CSV, JSON and JSONL; \
+                         profile {:?} with the synchronous profiler instead",
                         format
                     ),
                 });
@@ -1336,6 +1337,30 @@ mod tests {
         assert_eq!(age_col.data_type, DataType::Integer);
         assert_eq!(age_col.total_count, 3);
         assert_eq!(age_col.null_count, 0);
+    }
+
+    #[tokio::test]
+    async fn unsupported_format_points_away_from_the_async_path() {
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(b"PAR1"),
+            AsyncSourceInfo::new("test", FileFormat::Parquet),
+        );
+        let profiler = AsyncStreamingProfiler::new();
+        let message = profiler
+            .analyze_stream(source)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("does not support"), "{message}");
+        // The remedy must not be "stream the format that cannot be streamed".
+        assert!(!message.contains("Stream Parquet"), "{message}");
+        assert!(message.contains("CSV, JSON and JSONL"), "{message}");
+        assert!(message.contains("synchronous profiler"), "{message}");
+        // One newline, between the message and its remedy: a `contains` check
+        // alone passes happily on a literal `\n` left inside the suggestion.
+        assert_eq!(message.matches('\n').count(), 1, "{message:?}");
+        assert!(!message.contains("  "), "run-on indentation: {message:?}");
     }
 
     #[tokio::test]

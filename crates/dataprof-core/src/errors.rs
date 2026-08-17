@@ -16,6 +16,20 @@ fn supported_formats_hint() -> &'static str {
     }
 }
 
+/// Render a remedy as its own line, or nothing at all when there is none.
+///
+/// Streaming failures are the one family where "no advice" is a real answer: a
+/// panicked task has no remedy the caller can act on, and #550 removed the
+/// hardcoded chunk-size line that used to fill the gap. Formatting the
+/// suggestion unconditionally would end those messages in a bare newline.
+fn suggestion_line(suggestion: &str) -> String {
+    if suggestion.is_empty() {
+        String::new()
+    } else {
+        format!("\n{suggestion}")
+    }
+}
+
 /// Redact credentials from a string before it enters an error message.
 ///
 /// Connection strings and driver errors can carry `scheme://user:password@host`.
@@ -121,7 +135,7 @@ pub enum DataProfilerError {
         recommendation: String,
     },
 
-    #[error("Streaming processing failed: {message}\n{suggestion}")]
+    #[error("Streaming processing failed: {message}{}", suggestion_line(.suggestion))]
     StreamingError { message: String, suggestion: String },
 
     #[error("SIMD acceleration not available: {reason}\nFalling back to standard processing")]
@@ -859,6 +873,17 @@ mod tests {
         assert!(msg.contains("Reader task panicked"));
         assert!(!msg.contains("chunk size"), "stale remedy leaked: {msg}");
         assert!(err.suggestion().is_none());
+        // No remedy means no line for one: an unconditional "\n{suggestion}"
+        // leaves the message ending in a bare newline, which surfaces in Python
+        // as a blank line under the error.
+        assert!(
+            !msg.ends_with('\n'),
+            "message ends in a bare newline: {msg:?}"
+        );
+        assert!(
+            !msg.contains('\n'),
+            "empty remedy still opened a line: {msg:?}"
+        );
     }
 
     #[test]
@@ -876,6 +901,16 @@ mod tests {
             "remedy must appear exactly once: {msg}"
         );
         assert!(!msg.contains("chunk size"), "stale remedy leaked: {msg}");
+        // A remedy still gets its own line, and only one.
+        assert_eq!(
+            msg.matches('\n').count(),
+            1,
+            "remedy is not on its own line: {msg:?}"
+        );
+        assert!(
+            !msg.ends_with('\n'),
+            "trailing newline after the remedy: {msg:?}"
+        );
         assert_eq!(
             err.suggestion(),
             Some("Use infer_schema() with a file path instead".to_string())

@@ -1030,9 +1030,12 @@ impl Profiler {
                     })
                     .await
                     .map_err(|e| DataProfilerError::StreamingError {
+                        // A JoinError means the blocking task panicked or was
+                        // cancelled; there is nothing the caller can change
+                        // about the call to avoid it, so offer no remedy —
+                        // the same answer the other JoinError sites give.
                         message: format!("Blocking task failed: {e}"),
-                        suggestion: "Retry the request; if the task panicked, report the issue"
-                            .to_string(),
+                        suggestion: String::new(),
                     })??;
                     self.validate_semantic_hints(&report)?;
                     Ok(report)
