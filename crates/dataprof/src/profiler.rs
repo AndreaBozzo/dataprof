@@ -960,42 +960,21 @@ impl Profiler {
         use dataprof_engines::streaming::AsyncStreamingProfiler;
 
         let source_info = source.source_info();
-        if source_info.format == FileFormat::Parquet {
-            // A fully materialized byte buffer supports random access: route it
-            // to the same blocking Parquet reader the sync path uses, so
-            // `profile_bytes(..., format="parquet")` stops being refused (gh #551).
-            if let Some(data) = source.take_bytes() {
-                #[cfg(feature = "parquet")]
-                {
-                    self.ensure_row_limit_only("the async Parquet reader")?;
-                    self.ensure_no_sampling("the async Parquet reader")?;
-                    let name = source_info.label.clone();
-                    let options = self.analysis_options();
-                    let parquet_config = self.parquet_config_for_stop();
-                    let report = tokio::task::spawn_blocking(move || {
-                        dataprof_parquet::analyze_parquet_bytes_with_options(
-                            data,
-                            &name,
-                            &parquet_config,
-                            &options,
-                        )
-                    })
-                    .await
-                    .map_err(|e| DataProfilerError::StreamingError {
-                        message: format!("Blocking task failed: {e}"),
-                        suggestion: String::new(),
-                    })??;
-                    self.validate_semantic_hints(&report)?;
-                    return Ok(report);
+        // A fully materialized byte buffer supports random access: route it to
+        // the same blocking Parquet reader the sync path uses, so
+        // `profile_bytes(..., format="parquet")` stops being refused (gh #551).
+        // A Parquet source that is a true stream is handed back unconsumed and
+        // reaches the streaming profiler below, which refuses it by name.
+        let source = if source_info.format == FileFormat::Parquet {
+            match source.take_bytes() {
+                Ok(data) => {
+                    return self.profile_parquet_buffer(data, &source_info.label).await;
                 }
-                #[cfg(not(feature = "parquet"))]
-                {
-                    return Err(DataProfilerError::UnsupportedFormat {
-                        format: "parquet (enable the `parquet` feature)".to_string(),
-                    });
-                }
+                Err(unconsumed) => unconsumed,
             }
-        }
+        } else {
+            source
+        };
 
         let mut profiler = AsyncStreamingProfiler::new()
             .chunk_size(self.config.chunk_size.clone())
@@ -1018,6 +997,50 @@ impl Profiler {
         let report = profiler.analyze_stream(source).await?;
         self.validate_semantic_hints(&report)?;
         Ok(report)
+    }
+
+    /// Profile a materialized Parquet buffer on the blocking reader.
+    ///
+    /// Split out of [`profile_stream`](Self::profile_stream) so the feature gate
+    /// lives in one place instead of inside a match arm that must still yield a
+    /// source on the other branch.
+    async fn profile_parquet_buffer(
+        &self,
+        data: bytes::Bytes,
+        label: &str,
+    ) -> Result<ProfileReport, DataProfilerError> {
+        #[cfg(feature = "parquet")]
+        {
+            self.ensure_row_limit_only("the async Parquet reader")?;
+            self.ensure_no_sampling("the async Parquet reader")?;
+            let name = label.to_string();
+            let options = self.analysis_options();
+            let parquet_config = self.parquet_config_for_stop();
+            let report = tokio::task::spawn_blocking(move || {
+                dataprof_parquet::analyze_parquet_bytes_with_options(
+                    data,
+                    &name,
+                    &parquet_config,
+                    &options,
+                )
+            })
+            .await
+            // A JoinError means the blocking task panicked or was cancelled;
+            // nothing the caller can change about the call avoids it.
+            .map_err(|e| DataProfilerError::StreamingError {
+                message: format!("Blocking task failed: {e}"),
+                suggestion: String::new(),
+            })??;
+            self.validate_semantic_hints(&report)?;
+            Ok(report)
+        }
+        #[cfg(not(feature = "parquet"))]
+        {
+            let _ = (data, label);
+            Err(DataProfilerError::UnsupportedFormat {
+                format: "parquet (enable the `parquet` feature)".to_string(),
+            })
+        }
     }
 
     /// Profile a local file asynchronously.

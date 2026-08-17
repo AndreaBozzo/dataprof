@@ -448,3 +448,23 @@ async fn test_profiler_profile_url_rejects_parquet_without_feature() {
 
     assert!(error.contains("parquet-async"), "unexpected error: {error}");
 }
+
+/// A Parquet source that is *not* a materialized buffer must keep its source and
+/// reach the streaming profiler, which refuses it by name. This is what
+/// `take_bytes` handing the source back buys: answering "not materialized" by
+/// consuming the source would leave nothing to stream (gh #551).
+#[tokio::test]
+async fn test_profile_stream_refuses_parquet_that_is_not_a_buffer() {
+    let tmp = tempfile::NamedTempFile::with_suffix(".parquet").unwrap();
+    let file = tokio::fs::File::open(tmp.path()).await.unwrap();
+    let info = AsyncSourceInfo::new("streamed.parquet", FileFormat::Parquet);
+
+    let error = Profiler::new()
+        .profile_stream((file, info))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("does not support"), "{error}");
+    assert!(error.contains("synchronous profiler"), "{error}");
+}
