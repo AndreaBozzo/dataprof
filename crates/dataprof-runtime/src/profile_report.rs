@@ -102,6 +102,7 @@ enum PythonSourceType {
     Query,
     Dataframe,
     Stream,
+    Bytes,
 }
 
 #[allow(dead_code)]

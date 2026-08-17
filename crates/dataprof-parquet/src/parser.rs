@@ -7,8 +7,8 @@ use std::path::Path;
 
 use crate::record_batch_analyzer::RecordBatchAnalyzer;
 use dataprof_core::{
-    AnalysisOptions, DataFrameLibrary, DataProfilerError, DataSource, ExecutionMetadata,
-    FileFormat, ParquetMetadata, QualityDimension, SemanticHints, TruncationReason,
+    AnalysisOptions, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, ParquetMetadata,
+    QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 
@@ -325,14 +325,12 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
             parquet_metadata,
         },
         // A buffer has no path, and `DataSource::File` is where Parquet metadata
-        // lives, so the in-memory case reports the same shape every other
-        // byte-buffer input reports and drops the file-level metadata.
-        ParquetOrigin::Memory { name, byte_len } => DataSource::DataFrame {
+        // lives, so the in-memory case reports the byte-buffer shape and drops
+        // the file-level metadata.
+        ParquetOrigin::Memory { name, byte_len } => DataSource::Bytes {
             name,
-            source_library: DataFrameLibrary::Custom("dataprof".to_string()),
-            row_count: total_rows,
-            column_count: num_columns,
-            memory_bytes: Some(byte_len),
+            format: FileFormat::Parquet,
+            size_bytes: byte_len,
         },
     };
 
@@ -451,6 +449,32 @@ mod tests {
 
         assert_eq!(report.execution.rows_processed, 2);
         assert!(report.execution.truncation_reason.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parquet_bytes_report_the_buffer_length_they_were_given() -> Result<()> {
+        let encoded = to_parquet_bytes(&mixed_batch()?)?;
+        let byte_len = encoded.len() as u64;
+        let report = analyze_parquet_bytes(
+            Bytes::from(encoded),
+            "buffer",
+            &ParquetConfig::default(),
+            None,
+            &SemanticHints::default(),
+        )?;
+
+        // `size_bytes` describes the buffer handed over. Decoded values are a
+        // different size entirely -- for Parquet, off by the compression ratio.
+        match &report.data_source {
+            DataSource::Bytes {
+                format, size_bytes, ..
+            } => {
+                assert_eq!(*size_bytes, byte_len);
+                assert_eq!(*format, FileFormat::Parquet);
+            }
+            other => panic!("expected a byte-buffer source, got {other:?}"),
+        }
         Ok(())
     }
 

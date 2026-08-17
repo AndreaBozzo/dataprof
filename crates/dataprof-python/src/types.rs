@@ -832,7 +832,7 @@ impl PyProfileReport {
         self.inner.data_source.identifier()
     }
 
-    /// Source type: "file", "dataframe", "stream", "query"
+    /// Source type: "file", "dataframe", "stream", "query", "bytes"
     #[getter]
     fn source_type(&self) -> &str {
         match &self.inner.data_source {
@@ -840,6 +840,7 @@ impl PyProfileReport {
             DataSource::DataFrame { .. } => "dataframe",
             DataSource::Stream { .. } => "stream",
             DataSource::Query { .. } => "query",
+            DataSource::Bytes { .. } => "bytes",
         }
     }
 

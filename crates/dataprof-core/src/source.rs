@@ -192,6 +192,18 @@ pub enum DataSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         memory_bytes: Option<u64>,
     },
+    /// In-memory byte buffer profiled without a path behind it. The buffer may
+    /// be text (CSV/JSON/JSONL) or binary (Parquet); `format` says which.
+    /// Distinguished from [`DataSource::DataFrame`]: the caller handed over
+    /// bytes, not a schema-bearing dataframe, so provenance must say so.
+    Bytes {
+        /// Human-readable name for identification
+        name: String,
+        /// Format the buffer was parsed as
+        format: FileFormat,
+        /// Length of the buffer handed over, not of the values decoded from it
+        size_bytes: u64,
+    },
     /// Streaming data source
     Stream {
         /// Stream identifier (e.g., Kafka topic, Kinesis stream name)
@@ -240,6 +252,7 @@ impl DataSource {
                 source_library,
                 ..
             } => format!("{}[{}]", source_library, name),
+            Self::Bytes { name, .. } => format!("bytes[{name}]"),
             Self::Stream {
                 source_system,
                 topic,
@@ -254,6 +267,7 @@ impl DataSource {
         match self {
             Self::File { size_bytes, .. } => Some(*size_bytes as f64 / 1_048_576.0),
             Self::DataFrame { memory_bytes, .. } => memory_bytes.map(|b| b as f64 / 1_048_576.0),
+            Self::Bytes { size_bytes, .. } => Some(*size_bytes as f64 / 1_048_576.0),
             Self::Query { .. } | Self::Stream { .. } => None,
         }
     }
@@ -276,6 +290,11 @@ impl DataSource {
     /// Check if this is a Stream-based source.
     pub fn is_stream(&self) -> bool {
         matches!(self, Self::Stream { .. })
+    }
+
+    /// Check if this is an in-memory byte-buffer source.
+    pub fn is_bytes(&self) -> bool {
+        matches!(self, Self::Bytes { .. })
     }
 
     /// Get the file path if this is a file-based source.
@@ -322,6 +341,22 @@ mod tests {
         assert!(!ds.is_query());
         assert!(!ds.is_dataframe());
         assert!(!ds.is_stream());
+    }
+
+    #[test]
+    fn test_data_source_bytes_identifier_and_helpers() {
+        let ds = DataSource::Bytes {
+            name: "csv_bytes".to_string(),
+            format: FileFormat::Csv,
+            size_bytes: 42,
+        };
+
+        assert_eq!(ds.identifier(), "bytes[csv_bytes]");
+        assert!(ds.is_bytes());
+        assert!(!ds.is_file());
+        assert!(!ds.is_dataframe());
+        assert!(!ds.is_stream());
+        assert_eq!(ds.size_mb(), Some(42.0 / 1_048_576.0));
     }
 
     #[test]
