@@ -372,6 +372,11 @@ impl AsyncStreamingProfiler {
                         "AsyncStreamingProfiler does not support {:?} format",
                         format
                     ),
+                    suggestion: format!(
+                        "This profiler streams CSV, JSON and JSONL; \
+                         profile {:?} with the synchronous profiler instead",
+                        format
+                    ),
                 });
             }
         }
@@ -443,6 +448,7 @@ impl AsyncStreamingProfiler {
             Err(join_err) => {
                 return Err(DataProfilerError::StreamingError {
                     message: format!("Reader task panicked: {}", join_err),
+                    suggestion: String::new(),
                 });
             }
         };
@@ -1113,6 +1119,7 @@ impl AsyncStreamingProfiler {
             .await
             .ok_or_else(|| DataProfilerError::StreamingError {
                 message: "Stream ended before any data was received".to_string(),
+                suggestion: "Check that the source is reachable and not empty".to_string(),
             })?;
 
         total_bytes += header_chunk.bytes_read;
@@ -1120,6 +1127,7 @@ impl AsyncStreamingProfiler {
         if header_chunk.records.is_empty() {
             return Err(DataProfilerError::StreamingError {
                 message: "Stream header chunk was empty".to_string(),
+                suggestion: "Check that the source is reachable and not empty".to_string(),
             });
         }
 
@@ -1137,6 +1145,7 @@ impl AsyncStreamingProfiler {
         if headers.is_empty() && !allow_empty_schema {
             return Err(DataProfilerError::StreamingError {
                 message: "No column headers found in stream".to_string(),
+                suggestion: "Provide a header row in the first chunk of the stream".to_string(),
             });
         }
 
@@ -1329,6 +1338,30 @@ mod tests {
         assert_eq!(age_col.data_type, DataType::Integer);
         assert_eq!(age_col.total_count, 3);
         assert_eq!(age_col.null_count, 0);
+    }
+
+    #[tokio::test]
+    async fn unsupported_format_points_away_from_the_async_path() {
+        let source = BytesSource::new(
+            bytes::Bytes::from_static(b"PAR1"),
+            AsyncSourceInfo::new("test", FileFormat::Parquet),
+        );
+        let profiler = AsyncStreamingProfiler::new();
+        let message = profiler
+            .analyze_stream(source)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("does not support"), "{message}");
+        // The remedy must not be "stream the format that cannot be streamed".
+        assert!(!message.contains("Stream Parquet"), "{message}");
+        assert!(message.contains("CSV, JSON and JSONL"), "{message}");
+        assert!(message.contains("synchronous profiler"), "{message}");
+        // One newline, between the message and its remedy: a `contains` check
+        // alone passes happily on a literal `\n` left inside the suggestion.
+        assert_eq!(message.matches('\n').count(), 1, "{message:?}");
+        assert!(!message.contains("  "), "run-on indentation: {message:?}");
     }
 
     #[tokio::test]

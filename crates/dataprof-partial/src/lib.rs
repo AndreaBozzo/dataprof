@@ -311,7 +311,8 @@ fn infer_schema_from_reader<R: Read>(
             infer_schema_from_json_reader(BufReader::new(reader), format)
         }
         FileFormat::Parquet => Err(DataProfilerError::StreamingError {
-            message: "Parquet schema inference requires random access; use infer_schema() with a file path instead".into(),
+            message: "Parquet schema inference requires random access".into(),
+            suggestion: "Use infer_schema() with a file path instead".into(),
         }),
         FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
@@ -399,7 +400,8 @@ fn count_from_reader<R: Read>(
             })
         }
         FileFormat::Parquet => Err(DataProfilerError::StreamingError {
-            message: "Parquet row counting requires random access; use quick_row_count() with a file path instead".into(),
+            message: "Parquet row counting requires random access".into(),
+            suggestion: "Use quick_row_count() with a file path instead".into(),
         }),
         FileFormat::Unknown(ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
@@ -1085,6 +1087,7 @@ pub async fn infer_schema_async<P: AsRef<Path> + Send + 'static>(
         .await
         .map_err(|e| DataProfilerError::StreamingError {
             message: format!("Schema inference task failed: {}", e),
+            suggestion: String::new(),
         })?
 }
 
@@ -1096,6 +1099,7 @@ pub async fn quick_row_count_async<P: AsRef<Path> + Send + 'static>(
         .await
         .map_err(|e| DataProfilerError::StreamingError {
             message: format!("Row count task failed: {}", e),
+            suggestion: String::new(),
         })?
 }
 
@@ -1141,6 +1145,7 @@ pub async fn infer_schema_stream(
     .await
     .map_err(|e| DataProfilerError::StreamingError {
         message: format!("Schema inference task failed: {}", e),
+        suggestion: String::new(),
     })??;
 
     result.inference_time_ms = start.elapsed().as_millis();
@@ -1182,6 +1187,7 @@ pub async fn quick_row_count_stream(
         .await
         .map_err(|e| DataProfilerError::StreamingError {
             message: format!("Row count task failed: {}", e),
+            suggestion: String::new(),
         })??;
 
     result.count_time_ms = start.elapsed().as_millis();
