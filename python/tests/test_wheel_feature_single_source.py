@@ -9,11 +9,11 @@ single declaration, and neither the wheel nor the sdist step in the release
 workflow passes `--features` (maturin falls back to the pyproject config when
 the CLI flag is absent).
 """
+
 from __future__ import annotations
 
+import re
 from pathlib import Path
-
-import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,10 +23,17 @@ def _release_workflow() -> str:
 
 
 def _tool_maturin_features() -> list[str]:
-    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    features = pyproject["tool"]["maturin"]["features"]
-    assert isinstance(features, list), "expected a list of feature names"
-    return features
+    """The `features` list from `[tool.maturin]`, read without a TOML parser.
+
+    `tomllib` is 3.11+ and this project supports 3.10, where every CI leg runs;
+    scanning the one section beats adding a backport dependency for one list.
+    """
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    section = re.search(r"^\[tool\.maturin\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    assert section, "pyproject.toml has no [tool.maturin] section"
+    declaration = re.search(r"^features\s*=\s*\[(.*?)\]", section.group(1), re.M | re.S)
+    assert declaration, "[tool.maturin] declares no features list"
+    return re.findall(r'"([^"]+)"', declaration.group(1))
 
 
 def test_pyproject_declares_a_nonempty_wheel_feature_set():
@@ -34,11 +41,23 @@ def test_pyproject_declares_a_nonempty_wheel_feature_set():
 
 
 def _maturin_args_lines(workflow: str) -> list[str]:
-    """The `args:` values of every maturin-action step (wheels + sdist)."""
+    """The `args:` values of every maturin-action step (wheels + sdist).
+
+    Scoped by step rather than by "has the word maturin appeared yet": the
+    workflow also runs git-cliff with an ``args:`` of its own, and any action
+    added later would be swept in by a file-position test.
+    """
     args = []
+    in_maturin_step = False
     for line in workflow.splitlines():
         stripped = line.strip()
-        if stripped.startswith("args: --") and "maturin" in workflow[: workflow.find(line)]:
+        if stripped.startswith("- "):
+            # A new step begins; its first key may sit on the dash line.
+            in_maturin_step = False
+            stripped = stripped[2:]
+        if stripped.startswith("uses:"):
+            in_maturin_step = "maturin-action" in stripped
+        elif in_maturin_step and stripped.startswith("args:"):
             args.append(stripped)
     return args
 
