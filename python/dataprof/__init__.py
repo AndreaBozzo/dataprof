@@ -1455,6 +1455,7 @@ def profile(
         row_count: int | None = None,
         source_type: str = "dataframe",
         source_format: str | None = None,
+        source_bytes: int | None = None,
     ) -> ProfileReport:
         rust_report = _profile_columns(
             columns,
@@ -1465,6 +1466,7 @@ def profile(
             row_count,
             source_type,
             source_format,
+            source_bytes,
         )
         return ProfileReport(rust_report)
 
@@ -1578,8 +1580,16 @@ def profile(
         else:
             raise ValueError("Unsupported bytes format. Use 'csv', 'json', 'jsonl', or 'parquet'.")
 
+        # The buffer's own length, not the decoded cells: `size_bytes` on the
+        # report is a statement about the input the caller handed over.
         return _profile_python_columns(
-            columns, f"{fmt}_bytes", skipped, row_count, "bytes", fmt
+            columns,
+            f"{fmt}_bytes",
+            skipped,
+            row_count,
+            "bytes",
+            fmt,
+            len(buffer.getvalue()),
         )
 
     # DataFrame detection via module name

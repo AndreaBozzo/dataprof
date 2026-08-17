@@ -192,7 +192,8 @@ pub enum DataSource {
         #[serde(skip_serializing_if = "Option::is_none")]
         memory_bytes: Option<u64>,
     },
-    /// In-memory byte buffer that was parsed as text (CSV/JSON/JSONL/Parquet).
+    /// In-memory byte buffer profiled without a path behind it. The buffer may
+    /// be text (CSV/JSON/JSONL) or binary (Parquet); `format` says which.
     /// Distinguished from [`DataSource::DataFrame`]: the caller handed over
     /// bytes, not a schema-bearing dataframe, so provenance must say so.
     Bytes {
@@ -200,7 +201,7 @@ pub enum DataSource {
         name: String,
         /// Format the buffer was parsed as
         format: FileFormat,
-        /// Size of the buffer in bytes
+        /// Length of the buffer handed over, not of the values decoded from it
         size_bytes: u64,
     },
     /// Streaming data source
@@ -251,7 +252,7 @@ impl DataSource {
                 source_library,
                 ..
             } => format!("{}[{}]", source_library, name),
-            Self::Bytes { name, .. } => format!("python[{name}]"),
+            Self::Bytes { name, .. } => format!("bytes[{name}]"),
             Self::Stream {
                 source_system,
                 topic,
@@ -350,7 +351,7 @@ mod tests {
             size_bytes: 42,
         };
 
-        assert_eq!(ds.identifier(), "python[csv_bytes]");
+        assert_eq!(ds.identifier(), "bytes[csv_bytes]");
         assert!(ds.is_bytes());
         assert!(!ds.is_file());
         assert!(!ds.is_dataframe());

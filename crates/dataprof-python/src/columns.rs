@@ -39,9 +39,17 @@ pub type PyColumn = (String, Vec<Option<String>>);
 /// columns are present their cell count already carries the row count, and a
 /// `row_count` that disagrees with it is rejected rather than silently ignored.
 ///
+/// `source_bytes` is the length of the original buffer, required when
+/// `source_type` is `"bytes"`: the decoded cells are a different size from the
+/// bytes they came out of, so the caller is the only one who knows it.
+///
 /// Raises `ValueError` when the columns do not all have the same length.
+// One flat parameter per Python keyword argument: the pyo3 signature is the
+// call surface, so grouping them into a struct would only move the list into
+// `#[derive(FromPyObject)]`. Same reasoning as `PyProfilerConfig::new`.
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
-#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None, source_type = "dataframe".to_string(), source_format = None))]
+#[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None, source_type = "dataframe".to_string(), source_format = None, source_bytes = None))]
 pub fn profile_columns(
     py: Python<'_>,
     columns: Vec<PyColumn>,
@@ -52,6 +60,7 @@ pub fn profile_columns(
     row_count: Option<usize>,
     source_type: String,
     source_format: Option<String>,
+    source_bytes: Option<u64>,
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
@@ -197,10 +206,19 @@ pub fn profile_columns(
             Some("parquet") => FileFormat::Parquet,
             other => FileFormat::Unknown(other.unwrap_or_default().to_string()),
         };
+        // `memory_bytes` is the decoded cells added up, which is not the size of
+        // the buffer they were parsed from -- delimiters, quoting and encoding
+        // all move it, and for Parquet it is off by the compression ratio.
+        // Reporting it as the buffer size would be a plausible wrong number.
+        let size_bytes = source_bytes.ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(
+                "source_type='bytes' requires source_bytes, the length of the original buffer",
+            )
+        })?;
         DataSource::Bytes {
             name,
             format,
-            size_bytes: memory_bytes,
+            size_bytes,
         }
     } else {
         DataSource::DataFrame {

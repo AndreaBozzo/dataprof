@@ -186,6 +186,54 @@ def test_bytes_report_is_labelled_as_an_in_memory_source(tmp_path):
     assert "pandas" not in report.source
 
 
+@pytest.mark.parametrize(
+    ("payload", "fmt"),
+    [
+        (b"id,name\n1,alice\n2,bob\n", "csv"),
+        (b'{"id": [1, 2], "name": ["alice", "bob"]}', "json"),
+        (b'{"id": 1}\n{"id": 2}\n', "jsonl"),
+    ],
+)
+def test_every_bytes_format_reports_the_bytes_source_type(payload, fmt):
+    """`source_type` changed for all four byte inputs, not just Parquet, and
+    each takes a different route into the report — the text formats decode in
+    Python and go through `profile_columns`, Parquet goes through the Rust
+    reader. Cover the three that share the first route."""
+    report = dp.profile(payload, format=fmt)
+
+    assert report.source_type == "bytes"
+    assert f"{fmt}_bytes" in report.source
+
+
+def test_a_real_dataframe_still_reports_dataframe():
+    """The control for the case above: `bytes` must not have swallowed the
+    dataframe label on the path that shares the same entry point."""
+    report = dp.profile({"id": ["1", "2"], "name": ["alice", "bob"]})
+
+    assert report.source_type == "dataframe"
+
+
+def test_a_bytes_source_cannot_be_built_without_the_buffer_length():
+    """`size_bytes` is a statement about the input handed over, and the decoded
+    cells are not it — quoting, delimiters and encoding all move the number, and
+    Parquet is off by the compression ratio. The entry point refuses to guess
+    rather than record a plausible wrong size."""
+    from dataprof._dataprof import profile_columns
+
+    with pytest.raises(ValueError, match="source_bytes"):
+        profile_columns(
+            [("id", ["1", "2"])],
+            "csv_bytes",
+            None,
+            None,
+            0,
+            None,
+            "bytes",
+            "csv",
+            None,
+        )
+
+
 def test_name_overrides_the_default_label(tmp_path):
     data = _write(tmp_path, pa.table({"id": [1, 2]})).read_bytes()
     assert "orders" in dp.profile(data, format="parquet", name="orders").source
