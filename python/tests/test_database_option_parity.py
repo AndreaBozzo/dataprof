@@ -58,8 +58,8 @@ def _run(async_fn, *args, **kwargs):
 
 
 def _profile_query(db_path, **config_kwargs):
-    """Profile the fixture query, with quality on unless a test says otherwise."""
-    calculate_quality = config_kwargs.pop("calculate_quality", True)
+    """Profile the fixture query, leaving the quality toggle unset by default."""
+    calculate_quality = config_kwargs.pop("calculate_quality", None)
     config = ProfilerConfig(**config_kwargs) if config_kwargs else None
     report = _run(
         analyze_database_async,
@@ -141,6 +141,51 @@ def test_locale_reaches_pattern_detection_and_matches_csv(sqlite_db, csv_file) -
     assert localized == _pattern_names(dp.profile(csv_file, locale="IT"), "cap"), (
         "a query and a CSV holding the same rows disagree on locale-ranked patterns"
     )
+
+
+def _quality_row(report) -> dict:
+    """The quality half of ``quality_summary``, without the source-specific keys."""
+    row = report.quality_summary()
+    for key in ("source", "execution_time_ms"):
+        row.pop(key, None)
+    return row
+
+
+def test_quality_is_assessed_by_default(sqlite_db) -> None:
+    # #554: the entry point defaulted `calculate_quality` to False, so a query
+    # profile came back with quality = None while a CSV of the same rows scored.
+    # The toggle now defaults to unset, which means "whatever the selection
+    # says", and an unnarrowed selection includes quality.
+    report = _profile_query(sqlite_db)
+
+    assert report.quality is not None, "a query must assess quality by default"
+    assert report.quality_score is not None
+    assert report.quality.assessed_dimensions(), "an assessment names what it assessed"
+
+
+def test_default_quality_matches_the_same_rows_on_disk(sqlite_db, csv_file) -> None:
+    # The output contract: the numbers do not depend on which path produced
+    # them. Compares every dimension score plus the overall, not just presence.
+    assert _quality_row(_profile_query(sqlite_db)) == _quality_row(dp.profile(csv_file))
+
+
+def test_explicit_quality_selection_survives_the_unset_flag(sqlite_db) -> None:
+    # The legacy flag defaulted to False and filtered the quality pack out of
+    # whatever the config had selected, so asking for quality and not mentioning
+    # the flag silently got no quality (#554).
+    for config_kwargs in ({"metrics": ["quality"]}, {"quality_dimensions": ["completeness"]}):
+        report = _profile_query(sqlite_db, **config_kwargs)
+        assert report.quality is not None, (
+            f"an explicit {config_kwargs} selection must not be overridden by the unset flag"
+        )
+
+
+def test_calculate_quality_true_does_not_widen_a_narrowed_selection(sqlite_db) -> None:
+    # The flag drops the pack; it never adds it back. `metrics=["schema"]` is a
+    # schema-only profile no matter what the coarse toggle says.
+    report = _profile_query(sqlite_db, metrics=["schema"], calculate_quality=True)
+
+    assert report.quality is None, "calculate_quality=True must not override metrics=['schema']"
 
 
 def test_calculate_quality_false_still_honours_the_rest(sqlite_db) -> None:

@@ -69,15 +69,16 @@ try:
         connection_string: str,
         query: str,
         batch_size: int = 10000,
-        calculate_quality: bool = False,
+        calculate_quality: bool | None = None,
         config: _Any | None = None,
     ) -> ProfileReport:
         """Profile the rows returned by ``query``.
 
         ``config`` takes a :class:`ProfilerConfig` carrying ``metrics``,
         ``quality_dimensions``, and ``locale``; they apply here exactly as they
-        do on every file path. ``calculate_quality=False`` remains the coarse
-        way to drop the quality pack.
+        do on every file path. Quality is assessed by default, as it is on
+        every file path; ``calculate_quality=False`` remains the coarse way to
+        drop the quality pack.
 
         The native call yields a raw core report; wrap it so the result carries
         the same surface as every other ``ProfileReport`` in this package.
