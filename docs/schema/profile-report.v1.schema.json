@@ -409,6 +409,36 @@
           "type": "object"
         },
         {
+          "description": "In-memory byte buffer profiled without a path behind it. The buffer may\nbe text (CSV/JSON/JSONL) or binary (Parquet); `format` says which.\nDistinguished from [`DataSource::DataFrame`]: the caller handed over\nbytes, not a schema-bearing dataframe, so provenance must say so.",
+          "properties": {
+            "format": {
+              "$ref": "#/$defs/FileFormat",
+              "description": "Format the buffer was parsed as"
+            },
+            "name": {
+              "description": "Human-readable name for identification",
+              "type": "string"
+            },
+            "size_bytes": {
+              "description": "Length of the buffer handed over, not of the values decoded from it",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "bytes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "format",
+            "size_bytes"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Streaming data source",
           "properties": {
             "batch_id": {
@@ -1700,7 +1730,8 @@
         "file",
         "query",
         "dataframe",
-        "stream"
+        "stream",
+        "bytes"
       ],
       "type": "string"
     },

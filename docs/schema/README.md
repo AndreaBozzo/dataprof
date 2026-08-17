@@ -179,3 +179,10 @@ jobs:
           print(f"validated {len(report_paths)} report(s)")
           PY
 ```
+
+## v1 additive change: `bytes` source type
+
+Version 1.1 (additive) introduced the `"bytes"` value in `PythonSourceType` for
+byte-buffer inputs (CSV/JSON/JSONL/Parquet bytes). Previously they were labeled
+`"dataframe"`. Consumers matching on `"dataframe"` must also accept `"bytes"`
+for byte inputs; stored v1 reports are unchanged.

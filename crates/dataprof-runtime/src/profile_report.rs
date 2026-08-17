@@ -102,6 +102,7 @@ enum PythonSourceType {
     Query,
     Dataframe,
     Stream,
+    Bytes,
 }
 
 #[allow(dead_code)]
@@ -219,7 +220,7 @@ struct PythonPatternDocument {
 struct PythonQualityDocument {
     overall_score: f64,
     assessed_dimensions: Vec<PythonQualityDimension>,
-    dimension_scores: std::collections::HashMap<PythonQualityDimension, Option<f64>>,
+    dimension_scores: std::collections::BTreeMap<PythonQualityDimension, Option<f64>>,
     low_sample_warning: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     completeness: Option<CompletenessMetrics>,
@@ -238,7 +239,9 @@ struct PythonQualityDocument {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 enum PythonQualityDimension {
     Completeness,
