@@ -92,6 +92,13 @@ class TestDatabaseAnalysis:
         assert len(report.column_profiles) == 5  # id, name, email, age, salary
         assert report.source_type == "query"
 
+    def test_analyze_assesses_quality_by_default(self, sqlite_db):
+        # #554: a query used to come back with quality = None unless the caller
+        # knew about the flag, while every file path assessed quality by default.
+        report = _run(analyze_database_async, sqlite_db, "SELECT * FROM test_users")
+        assert report.quality is not None, "a database profile must assess quality by default"
+        assert report.quality_score is not None
+
     def test_analyze_with_quality(self, sqlite_db):
         report = _run(
             analyze_database_async,

@@ -57,7 +57,11 @@ dev = [
 ]
 
 [tool.maturin]
-features = ["python"]
+# Kept in sync with the --features list in .github/workflows/release.yml.
+# The duplication is tracked by #589; until it is removed, changing one
+# without the other makes `pip install dataprof` and
+# `pip install --no-binary dataprof` differ in capability, silently.
+features = ["python", "python-async", "async-streaming", "parquet-async"]
 manifest-path = "crates/dataprof-python/Cargo.toml"
 module-name = "dataprof._dataprof"
 python-source = "python"

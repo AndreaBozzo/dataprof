@@ -304,7 +304,6 @@ async def main():
         "postgres://user:pass@localhost/mydb",
         "SELECT * FROM users WHERE active = true",
         batch_size=5000,
-        calculate_quality=True,
     )
     print(f"{report.rows} rows, quality: {report.quality_score}")
 
@@ -543,7 +542,6 @@ async def main():
     db_report = await dp.analyze_database_async(
         "postgres://ro:pass@prod/app",
         "SELECT * FROM users",
-        calculate_quality=True,
     )
 
     print(f"File: {file_report.rows} rows, quality={file_report.quality_score:.2f}")
