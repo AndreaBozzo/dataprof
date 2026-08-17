@@ -91,19 +91,26 @@ def _run(async_fn, *args, **kwargs):
     return asyncio.run(_inner())
 
 
-def _profile_query(db_path, query: str = QUERY, **config_kwargs):
+def _profile_query(db_path, **config_kwargs):
     """Profile the fixture query, leaving the quality toggle unset by default."""
     calculate_quality = config_kwargs.pop("calculate_quality", None)
     config = ProfilerConfig(**config_kwargs) if config_kwargs else None
     report = _run(
         analyze_database_async,
         str(db_path),
-        query,
+        QUERY,
         10000,
         calculate_quality,
         config,
     )
     return dp.ProfileReport(report)
+
+
+def _profile_rich_query(db_path):
+    """Profile the quality-parity fixture, with every option left at its default."""
+    return dp.ProfileReport(
+        _run(analyze_database_async, str(db_path), RICH_QUERY, 10000, None, None)
+    )
 
 
 @pytest.fixture()
@@ -225,9 +232,11 @@ def test_quality_is_assessed_by_default(sqlite_db) -> None:
 def test_default_quality_matches_the_same_rows_on_disk(rich_sqlite_db, rich_csv_file) -> None:
     # The output contract: the numbers do not depend on which path produced
     # them. Compares every dimension score plus the overall, not just presence.
-    db_report = _profile_query(rich_sqlite_db, query=RICH_QUERY)
+    db_report = _profile_rich_query(rich_sqlite_db)
     csv_report = dp.profile(rich_csv_file)
 
+    assert db_report.quality is not None, "a query must assess quality by default"
+    assert csv_report.quality is not None
     assert set(db_report.quality.assessed_dimensions()) == QUALITY_DIMENSIONS
     assert set(csv_report.quality.assessed_dimensions()) == QUALITY_DIMENSIONS
 
