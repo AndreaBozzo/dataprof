@@ -40,6 +40,36 @@ def test_pyproject_declares_a_nonempty_wheel_feature_set():
     assert _tool_maturin_features(), "the shipped feature set must be declared in pyproject.toml"
 
 
+def _optional_dependency_extras() -> dict[str, str]:
+    """Every `name = [...]` entry under `[project.optional-dependencies]`."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    section = re.search(
+        r"^\[project\.optional-dependencies\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S
+    )
+    assert section, "pyproject.toml has no [project.optional-dependencies] section"
+    return {
+        name: body
+        for name, body in re.findall(r"^(\S+)\s*=\s*\[(.*?)\]", section.group(1), re.M | re.S)
+    }
+
+
+def test_no_extra_resolves_to_nothing():
+    """An extra may only exist if installing it installs something.
+
+    `database = []` shipped for several releases as a placeholder for a
+    compile-time feature (#588). `pip install dataprof[database]` succeeded and
+    produced a package with no database support, which is a worse answer than
+    no extra at all. Compile-time features belong in build instructions.
+    """
+    extras = _optional_dependency_extras()
+    assert extras, "expected at least one optional-dependency extra"
+    empty = sorted(name for name, body in extras.items() if not body.strip())
+    assert not empty, (
+        f"extras resolve to no requirements: {empty}. An extra that installs nothing "
+        "promises an install path that does not exist; document the build instead."
+    )
+
+
 def _maturin_args_lines(workflow: str) -> list[str]:
     """The `args:` values of every maturin-action step (wheels + sdist).
 
