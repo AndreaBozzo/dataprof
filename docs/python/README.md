@@ -18,15 +18,14 @@ pip install dataprof
 
 Requires Python 3.10+. The package ships pre-built wheels for Linux, macOS, and Windows, and declares **no Python dependencies**. The base API needs nothing else: local file profiling, DataFrame and Arrow inputs, ad-hoc dict/bytes inputs, and report exports. Install the `pandas` extra only for pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame).
 
-Async URL profiling and database helpers are not part of the default wheel contract for this release. Use a source build when you need those optional features:
+The wheel also carries the async API: `dataprof.asyncio`, HTTP URL profiling,
+and remote Parquet all work on a bare `pip install dataprof`.
+
+Database profiling is the one documented feature the wheel does not contain.
+Connectors are a compile-time feature rather than a Python dependency, so no
+extra can install them; they need a build from a checkout of this repository:
 
 ```bash
-uv run maturin develop --features "python,python-async,async-streaming"
-
-# Add parquet-async for remote Parquet support
-uv run maturin develop --features "python,python-async,async-streaming,parquet-async"
-
-# Add database plus a connector when needed
 uv run maturin develop --features "python,python-async,database,sqlite"
 ```
 
@@ -645,9 +644,9 @@ print(f"{result.count} rows ({'exact' if result.exact else 'estimated'})")
 print(f"Method: {result.method}, took {result.count_time_ms}ms")
 ```
 
-## Optional Async API (Source Build)
+## Async API
 
-The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts. These helpers require a source build with `python-async` and `async-streaming` enabled.
+The `dataprof.asyncio` module provides async variants for use in web frameworks, stream processors, and other async contexts. These helpers ship in the published wheels.
 
 ```python
 from dataprof.asyncio import profile_file, profile_bytes, profile_url
@@ -676,9 +675,13 @@ schema = await infer_schema_stream(csv_bytes, format="csv")
 count = await quick_row_count_stream(csv_bytes, format="csv")
 ```
 
-## Optional Database Profiling (Source Build)
+## Database Profiling (Source Build Only)
 
-Async database functions for PostgreSQL, MySQL, and SQLite require a source build with `python-async`, `database`, and the relevant connector features enabled:
+Async database functions for PostgreSQL, MySQL, and SQLite are **not** in the
+published wheels, and there is no extra that installs them. On a wheel install
+they exist as stubs that raise `ImportError` when called, and
+`dp.capabilities().database` is `False`. Build the extension from a checkout
+with `python-async`, `database`, and the connector features you need:
 
 ```bash
 uv run maturin develop --features "python,python-async,database,sqlite"

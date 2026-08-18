@@ -42,7 +42,10 @@ Issues = "https://github.com/AndreaBozzo/dataprof/issues"
 pandas = ["pandas>=2.0.0"]
 jupyter = ["pandas>=2.0.0", "ipython>=8.0.0"]
 all = ["pandas>=2.0.0", "ipython>=8.0.0", "numpy>=1.23.0"]
-database = []  # No Python deps; compile the extension with python-async,database,<connector>
+# There is deliberately no `database` extra: database support is a compile-time
+# feature of the extension, not a Python dependency, and the published wheels do
+# not carry it (#588). An extra cannot install it, so offering one only promises
+# an install path that does not exist.
 
 [dependency-groups]
 dev = [
@@ -57,10 +60,9 @@ dev = [
 ]
 
 [tool.maturin]
-# Kept in sync with the --features list in .github/workflows/release.yml.
-# The duplication is tracked by #589; until it is removed, changing one
-# without the other makes `pip install dataprof` and
-# `pip install --no-binary dataprof` differ in capability, silently.
+# The single declaration of the shipped feature set: the release workflow
+# passes no --features, so this list drives both the wheel and the sdist.
+# python/tests/test_wheel_feature_single_source.py fails if that changes.
 features = ["python", "python-async", "async-streaming", "parquet-async"]
 manifest-path = "crates/dataprof-python/Cargo.toml"
 module-name = "dataprof._dataprof"

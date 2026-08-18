@@ -306,7 +306,7 @@ When embedding dataprof in a web service or processing live streams, use the asy
 
 ### Python
 
-Build the Python extension from source with `python-async,async-streaming` before using these helpers.
+These helpers ship in the published wheels; `pip install dataprof` is enough.
 
 ```python
 from dataprof.asyncio import profile_file, profile_url
@@ -338,7 +338,9 @@ Profile data directly from PostgreSQL, MySQL, or SQLite without exporting to fil
 
 ### Python
 
-Build the Python extension from source with `python-async,database` and the connector feature you need before using this API.
+Database support is not in the published wheels. Build the Python extension from
+a checkout with `python-async,database` and the connector feature you need
+before using this API.
 
 ```python
 report = await dp.analyze_database_async(

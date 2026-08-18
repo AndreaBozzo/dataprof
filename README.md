@@ -51,7 +51,7 @@ uv pip install dataprof
 
 Requires Python 3.10 or newer.
 
-The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, bytes buffers, and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet *byte buffers*. Async URL profiling and database helpers are opt-in source builds.
+The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, bytes buffers, and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet *byte buffers*. Async profiling, including HTTP URLs and remote Parquet, is in the wheel too; database connectors are the one documented feature that still needs a source build.
 
 #### 1. Profile
 
@@ -153,7 +153,7 @@ for col in &report.column_profiles {
 - **True streaming** -- bounded-memory profiling with online algorithms for files bigger than RAM
 - **Multi-format by default** -- move from CSV and JSON to Parquet, live databases, DataFrames, and Arrow batches without changing tools
 - **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
-- **Async-ready** -- Rust async APIs and opt-in Python extension builds cover stream pipelines, services, and remote Parquet sources
+- **Async-ready** -- Rust async APIs and a Python async module that ships in the wheel cover stream pipelines, services, and remote Parquet sources
 - **Explainable quality assessment** -- seven selectively requestable dimensions, including validity and decimal-scale precision, with inspectable facts behind every score
 
 ## Feature Flags
