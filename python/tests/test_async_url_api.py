@@ -1,10 +1,8 @@
 """Async URL profiling regression tests.
 
-These tests require building with async URL features:
-    uv run maturin develop --features "python,python-async,async-streaming"
-
-For remote Parquet coverage:
-    uv run maturin develop --features "python,python-async,parquet-async"
+The async URL and remote Parquet features these cover ship in the wheel, so the
+default development build is enough:
+    uv run maturin develop
 """
 
 from __future__ import annotations

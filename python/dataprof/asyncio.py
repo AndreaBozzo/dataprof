@@ -1,7 +1,8 @@
 """Async API for dataprof.
 
-Provides async/await versions of profiling operations. Requires the
-``python-async`` and ``async-streaming`` features to be compiled.
+Provides async/await versions of profiling operations. The features behind it
+(``python-async``, ``async-streaming``, ``parquet-async``) are compiled into the
+published wheels.
 
 Example::
 
