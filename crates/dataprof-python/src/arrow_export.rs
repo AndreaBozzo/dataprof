@@ -914,9 +914,8 @@ fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Recor
             return Ok(imported.remove(0));
         }
         let schema = imported[0].schema();
-        concat_batches(&schema, &imported).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to combine Table batches: {}", e))
-        })
+        concat_batches(&schema, &imported)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to combine Table batches: {}", e)))
     } else if type_name == "RecordBatch" {
         import_via_pycapsule(py, obj)
     } else if obj.hasattr("__arrow_c_array__")? {
