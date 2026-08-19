@@ -10,6 +10,10 @@ use crate::core::errors::DataProfilerError;
 pub struct CompletenessMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub missing_values_ratio: f64,
+    /// Percentage of records in which every field is present, counted over
+    /// every row the engine read. Strict by design: a record missing one
+    /// optional field is not complete, so read it beside `null_columns`,
+    /// which names the columns responsible.
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub complete_records_ratio: f64,
     pub null_columns: Vec<String>,
@@ -67,6 +71,20 @@ pub struct RowDuplicateSummary {
     pub duplicate_rows: usize,
     pub rows_checked: usize,
     pub approximate: bool,
+}
+
+/// Full-stream complete-record counts produced by an engine's row tracker.
+///
+/// A "complete" record is one whose every field is present. That is a
+/// property of a row, so it can only be counted while whole rows are in
+/// hand; per-column null totals cannot recover it, because they do not say
+/// whether two nulls landed in the same record. Engines that see whole
+/// records accumulate this exactly over the full stream with one counter,
+/// independent of sampling.
+#[derive(Debug, Clone, Copy)]
+pub struct RowCompletenessSummary {
+    pub complete_rows: usize,
+    pub rows_checked: usize,
 }
 
 /// Accuracy metrics (ISO 25012).

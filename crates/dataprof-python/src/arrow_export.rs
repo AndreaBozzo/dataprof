@@ -430,7 +430,8 @@ pub fn profile_dataframe(
         exec,
     )
     .columns(column_profiles)
-    .with_row_duplicates(analyzer.row_duplicate_summary());
+    .with_row_duplicates(analyzer.row_duplicate_summary())
+    .with_row_completeness(analyzer.row_completeness_summary());
 
     if include_quality {
         assembler = assembler
@@ -538,7 +539,8 @@ pub fn profile_arrow(
         exec,
     )
     .columns(column_profiles)
-    .with_row_duplicates(analyzer.row_duplicate_summary());
+    .with_row_duplicates(analyzer.row_duplicate_summary())
+    .with_row_completeness(analyzer.row_completeness_summary());
 
     if include_quality {
         assembler = assembler

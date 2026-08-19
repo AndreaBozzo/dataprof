@@ -6,7 +6,7 @@
 
 use super::completeness::CompletenessMetrics;
 use crate::core::config::IsoQualityConfig;
-use crate::types::{ColumnProfile, ColumnStats, DataType, TextStats};
+use crate::types::{ColumnProfile, ColumnStats, DataType, RowCompletenessSummary, TextStats};
 use std::collections::HashMap;
 
 pub(super) fn column_data(columns: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
@@ -59,6 +59,8 @@ pub(super) struct CompletenessScenario {
     pub name: &'static str,
     pub input: CompletenessInput,
     pub config: IsoQualityConfig,
+    /// The engine's exact complete-record count, when it tracked one.
+    pub row_completeness: Option<RowCompletenessSummary>,
     pub expected: CompletenessMetrics,
 }
 

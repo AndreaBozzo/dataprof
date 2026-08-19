@@ -42,7 +42,7 @@ around that with `to_dict()` or a raw read.
 
 `fixtures/inventory_before.csv` / `inventory_after.csv` — a cleaning step that
 genuinely improves quality (duplicate rows 1 to 0, missing values 22.2% to 0%,
-score 80.9 to 97.9) while dropping half the rows. An agent that reports only the
+score 83.5 to 97.9) while dropping half the rows. An agent that reports only the
 score improvement has missed the row loss.
 
 `fixtures/payments_mixed_amount.csv` — 10 payment rows where 4 of the

@@ -76,8 +76,8 @@ use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
 use crate::types::{
     AccuracyMetrics, ColumnProfile, CompletenessMetrics, ConsistencyMetrics, DataType,
-    PrecisionMetrics, QualityDimension, QualityMetrics, RowDuplicateSummary, TimelinessMetrics,
-    UniquenessMetrics, ValidityMetrics,
+    PrecisionMetrics, QualityDimension, QualityMetrics, RowCompletenessSummary,
+    RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
 use dataprof_core::SemanticHints;
 use std::collections::HashMap;
@@ -86,6 +86,8 @@ use std::collections::HashMap;
 pub struct MetricsCalculator {
     /// Configurable quality thresholds and score weights.
     pub thresholds: IsoQualityConfig,
+    /// Exact full-stream complete-record count, when the engine tracked one.
+    row_completeness: Option<RowCompletenessSummary>,
 }
 
 impl Default for MetricsCalculator {
@@ -97,28 +99,35 @@ impl Default for MetricsCalculator {
 impl MetricsCalculator {
     /// Create a new calculator with default quality settings.
     pub fn new() -> Self {
-        Self {
-            thresholds: IsoQualityConfig::default(),
-        }
+        Self::with_thresholds(IsoQualityConfig::default())
     }
 
     /// Create a calculator with custom thresholds
     pub fn with_thresholds(thresholds: IsoQualityConfig) -> Self {
-        Self { thresholds }
+        Self {
+            thresholds,
+            row_completeness: None,
+        }
     }
 
     /// Create a calculator with strict thresholds (finance, healthcare)
     pub fn strict() -> Self {
-        Self {
-            thresholds: IsoQualityConfig::strict(),
-        }
+        Self::with_thresholds(IsoQualityConfig::strict())
     }
 
     /// Create a calculator with lenient thresholds (exploratory, marketing)
     pub fn lenient() -> Self {
-        Self {
-            thresholds: IsoQualityConfig::lenient(),
-        }
+        Self::with_thresholds(IsoQualityConfig::lenient())
+    }
+
+    /// Supply the engine's exact complete-record count over the full stream.
+    ///
+    /// Without it the completeness dimension can only report a lower bound
+    /// for `complete_records_ratio`, because per-column null totals do not
+    /// say whether two nulls shared a record.
+    pub fn with_row_completeness(mut self, summary: Option<RowCompletenessSummary>) -> Self {
+        self.row_completeness = summary;
+        self
     }
 
     /// Validate statistical requirements for metric calculation
@@ -245,11 +254,9 @@ impl MetricsCalculator {
 
         // Completeness dimension
         let completeness = if Self::is_requested(requested, QualityDimension::Completeness) {
-            let c = CompletenessCalculator::new(&self.thresholds).calculate(
-                data,
-                column_profiles,
-                sample_size,
-            )?;
+            let c = CompletenessCalculator::new(&self.thresholds)
+                .with_row_completeness(self.row_completeness)
+                .calculate(data, column_profiles, sample_size)?;
             Some(CompletenessMetrics {
                 missing_values_ratio: c.missing_values_ratio,
                 complete_records_ratio: c.complete_records_ratio,
@@ -560,6 +567,7 @@ impl MetricsCalculator {
         // Phase A: Completeness from exact global counters
         let completeness = if Self::is_requested(requested, QualityDimension::Completeness) {
             let c = CompletenessCalculator::new(&self.thresholds)
+                .with_row_completeness(self.row_completeness)
                 .calculate_from_profiles(column_profiles)?;
             exact_dimensions.push("completeness".to_string());
             Some(CompletenessMetrics {

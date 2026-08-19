@@ -414,6 +414,7 @@ impl IncrementalProfiler {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_row_duplicates(column_stats.row_duplicate_summary())
+                .with_row_completeness(column_stats.row_completeness_summary())
                 .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
                 .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {

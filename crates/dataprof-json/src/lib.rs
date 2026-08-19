@@ -923,6 +923,7 @@ pub fn analyze_json_file_with_options(
         .columns(column_profiles)
         .with_quality_data(sample_columns)
         .with_row_duplicates(column_stats.row_duplicate_summary())
+        .with_row_completeness(column_stats.row_completeness_summary())
         .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
         .with_analysis_options(options)
         .build())

@@ -12,8 +12,8 @@ use dataprof_core::{
     SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
-    MetricConfidence, MetricsCalculator, QualityAssessment, RowDuplicateSummary,
-    analysis::metrics::BifurcatedResult, compute_value_hint_bindings,
+    MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
+    RowDuplicateSummary, analysis::metrics::BifurcatedResult, compute_value_hint_bindings,
 };
 
 use crate::ProfileReport;
@@ -30,6 +30,7 @@ pub struct ReportAssembler {
     semantic_hints: SemanticHints,
     exact_value_hint_bindings: Option<Vec<SemanticHintBinding>>,
     row_duplicates: Option<RowDuplicateSummary>,
+    row_completeness: Option<RowCompletenessSummary>,
 }
 
 impl ReportAssembler {
@@ -46,6 +47,7 @@ impl ReportAssembler {
             semantic_hints: SemanticHints::default(),
             exact_value_hint_bindings: None,
             row_duplicates: None,
+            row_completeness: None,
         }
     }
 
@@ -113,6 +115,15 @@ impl ReportAssembler {
     /// tracker; they supersede the sample-based duplicate scan.
     pub fn with_row_duplicates(mut self, summary: Option<RowDuplicateSummary>) -> Self {
         self.row_duplicates = summary;
+        self
+    }
+
+    /// Provide full-stream complete-record counts from an engine's row
+    /// tracker. Without them `complete_records_ratio` can only be bounded
+    /// from below, since per-column null totals cannot tell whether two
+    /// nulls fell in the same record.
+    pub fn with_row_completeness(mut self, summary: Option<RowCompletenessSummary>) -> Self {
+        self.row_completeness = summary;
         self
     }
 
@@ -205,7 +216,7 @@ impl ReportAssembler {
         &self,
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
-        let calculator = MetricsCalculator::new();
+        let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
         match calculator.calculate_bifurcated_metrics_with_all_semantic_hints(
             data,
             &self.columns,
@@ -234,7 +245,7 @@ impl ReportAssembler {
         &self,
         data: &HashMap<String, Vec<String>>,
     ) -> Option<QualityAssessment> {
-        let calculator = MetricsCalculator::new();
+        let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
         match calculator.calculate_comprehensive_metrics_with_all_semantic_hints(
             data,
             &self.columns,

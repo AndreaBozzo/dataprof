@@ -41,7 +41,7 @@
     "tests": "Step 6 of the skill: compare() is reached for rather than two hand-read profiles.",
     "expected_behavior": [
       "Profiles both files and calls before.compare(after) instead of describing each profile separately",
-      "Cites the specific improvements: duplicate rows 1 to 0, missing values 22.2% to 0%, quality score 80.9 to 97.9",
+      "Cites the specific improvements: duplicate rows 1 to 0, missing values 22.2% to 0%, quality score 83.5 to 97.9",
       "Notes that 3 of 6 rows were removed, so the comparison reflects both cleaning and row loss",
       "Does not recommend further transformations as though dataprof had suggested them"
     ],
