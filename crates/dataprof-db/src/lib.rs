@@ -9,7 +9,7 @@ use dataprof_core::{
     AnalysisOptions, DataSource, ExecutionMetadata, MetricPack, QualityDimension, QueryEngine,
 };
 use dataprof_metrics::analyze_column_with_analysis_options;
-use dataprof_runtime::{ProfileReport, ReportAssembler};
+use dataprof_runtime::{ProfileReport, ReportAssembler, RowCompletenessTracker};
 
 pub mod connection;
 pub mod connectors;
@@ -300,6 +300,13 @@ pub async fn analyze_database_with_options(
         .map(|(name, data)| analyze_column_with_analysis_options(name, data, options))
         .collect();
 
+    // The query result is row-aligned and holds every value, so complete
+    // records can be counted directly rather than bounded from null totals.
+    let mut completeness = RowCompletenessTracker::default();
+    let aligned: Vec<&[String]> = columns.values().map(|data| data.as_slice()).collect();
+    completeness.observe_aligned_columns(&aligned, actual_rows_processed);
+    let row_completeness = completeness.summary();
+
     let scan_time_ms = start.elapsed().as_millis();
     let sampling_ratio = sample_info.map(|s| s.sampling_ratio).unwrap_or(1.0);
     let num_columns = column_profiles.len();
@@ -325,6 +332,7 @@ pub async fn analyze_database_with_options(
     // Quality metrics look every column up by name and never iterate for
     // presentation, so dropping the order here costs nothing.
     .with_quality_data(columns.into_map())
+    .with_row_completeness(row_completeness)
     .with_analysis_options(options)
     .build())
 }

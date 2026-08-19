@@ -5,7 +5,7 @@
 
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use crate::types::ColumnProfile;
+use crate::types::{ColumnProfile, RowCompletenessSummary};
 use std::collections::HashMap;
 
 /// Completeness metrics container
@@ -20,11 +20,45 @@ pub(crate) struct CompletenessMetrics {
 /// Calculator for completeness dimension metrics
 pub(crate) struct CompletenessCalculator<'a> {
     thresholds: &'a IsoQualityConfig,
+    row_completeness: Option<RowCompletenessSummary>,
 }
 
 impl<'a> CompletenessCalculator<'a> {
     pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
-        Self { thresholds }
+        Self {
+            thresholds,
+            row_completeness: None,
+        }
+    }
+
+    /// Supply an engine's exact full-stream complete-record count.
+    pub fn with_row_completeness(mut self, summary: Option<RowCompletenessSummary>) -> Self {
+        self.row_completeness = summary;
+        self
+    }
+
+    /// Percentage of records in which every field is present.
+    ///
+    /// Prefers the engine's row-level count, which is exact. Without one,
+    /// falls back to a lower bound derived from per-column null totals: it
+    /// assumes no two nulls share a record, so it understates completeness
+    /// whenever they do, and collapses to 0 once the null cells outnumber
+    /// the rows. See [`RowCompletenessSummary`] for why the bound is all the
+    /// column counters can support.
+    fn complete_records_ratio(&self, column_profiles: &[ColumnProfile]) -> f64 {
+        if let Some(summary) = self.row_completeness {
+            if summary.rows_checked > 0 {
+                return summary.complete_rows as f64 / summary.rows_checked as f64 * 100.0;
+            }
+            return 100.0;
+        }
+
+        let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
+        if total_rows == 0 {
+            return 100.0;
+        }
+        let null_cells: usize = column_profiles.iter().map(|p| p.null_count).sum();
+        (total_rows.saturating_sub(null_cells) as f64 / total_rows as f64 * 100.0).max(0.0)
     }
 
     /// Calculate completeness dimension metrics
@@ -52,14 +86,7 @@ impl<'a> CompletenessCalculator<'a> {
             Self::calculate_missing_values_ratio(data)?
         };
         let complete_records_ratio = if !column_profiles.is_empty() {
-            // Use profile-based lower bound (same as calculate_from_profiles)
-            let total = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
-            let null_cells: usize = column_profiles.iter().map(|p| p.null_count).sum();
-            if total == 0 {
-                100.0
-            } else {
-                (total.saturating_sub(null_cells) as f64 / total as f64 * 100.0).max(0.0)
-            }
+            self.complete_records_ratio(column_profiles)
         } else {
             Self::calculate_complete_records_ratio(data, total_rows)?
         };
@@ -114,10 +141,10 @@ impl<'a> CompletenessCalculator<'a> {
 
     /// Compute completeness from global [`ColumnProfile`] counters (exact for streaming).
     ///
-    /// `missing_values_ratio` and `null_columns` are exact.
-    /// `complete_records_ratio` uses a pessimistic lower bound: it assumes nulls
-    /// are maximally spread across different rows. The bound is tight when nulls
-    /// are sparse and exact when no column has nulls.
+    /// `missing_values_ratio` and `null_columns` are exact. So is
+    /// `complete_records_ratio` when the engine supplied a row-level count
+    /// via [`Self::with_row_completeness`]; otherwise it degrades to the
+    /// lower bound documented on [`Self::complete_records_ratio`].
     pub fn calculate_from_profiles(
         &self,
         column_profiles: &[ColumnProfile],
@@ -131,12 +158,7 @@ impl<'a> CompletenessCalculator<'a> {
             (null_cells as f64 / total_cells as f64) * 100.0
         };
 
-        let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
-        let complete_records_ratio = if total_rows == 0 {
-            100.0
-        } else {
-            (total_rows.saturating_sub(null_cells) as f64 / total_rows as f64 * 100.0).max(0.0)
-        };
+        let complete_records_ratio = self.complete_records_ratio(column_profiles);
 
         let null_columns = self.identify_null_columns(column_profiles);
 
@@ -174,6 +196,7 @@ mod tests {
         expected_completeness, null_threshold, string_profile,
     };
     use super::*;
+    use crate::types::RowCompletenessSummary;
 
     #[test]
     fn completeness_scenarios_cover_boundaries() {
@@ -182,6 +205,7 @@ mod tests {
                 name: "empty input is computed but neutral",
                 input: CompletenessInput::Profiles(vec![]),
                 config: IsoQualityConfig::default(),
+                row_completeness: None,
                 expected: expected_completeness(0.0, 100.0, &[], 0),
             },
             CompletenessScenario {
@@ -191,27 +215,56 @@ mod tests {
                     total_rows: 2,
                 },
                 config: IsoQualityConfig::default(),
+                row_completeness: None,
                 expected: expected_completeness(0.0, 100.0, &[], 4),
             },
             CompletenessScenario {
                 name: "exact null threshold is not a null column",
                 input: CompletenessInput::Profiles(vec![string_profile("boundary", 100, 25)]),
                 config: null_threshold(25.0),
+                row_completeness: None,
                 expected: expected_completeness(25.0, 75.0, &[], 100),
             },
             CompletenessScenario {
-                name: "degraded profiles expose exact counters",
+                name: "row count wins over the null-cell bound",
                 input: CompletenessInput::Profiles(vec![
                     string_profile("partial", 100, 10),
                     string_profile("mostly_null", 100, 60),
                 ]),
                 config: IsoQualityConfig::default(),
+                // Every `partial` null shares a row with a `mostly_null` one,
+                // so 40 rows are complete where the bound would say 30.
+                row_completeness: Some(RowCompletenessSummary {
+                    complete_rows: 40,
+                    rows_checked: 100,
+                }),
+                expected: expected_completeness(35.0, 40.0, &["mostly_null"], 200),
+            },
+            CompletenessScenario {
+                name: "without a row count the bound is all that is available",
+                input: CompletenessInput::Profiles(vec![
+                    string_profile("partial", 100, 10),
+                    string_profile("mostly_null", 100, 60),
+                ]),
+                config: IsoQualityConfig::default(),
+                row_completeness: None,
                 expected: expected_completeness(35.0, 30.0, &["mostly_null"], 200),
+            },
+            CompletenessScenario {
+                name: "more null cells than rows bottoms the bound out at zero",
+                input: CompletenessInput::Profiles(vec![
+                    string_profile("a", 10, 7),
+                    string_profile("b", 10, 7),
+                ]),
+                config: IsoQualityConfig::default(),
+                row_completeness: None,
+                expected: expected_completeness(70.0, 0.0, &["a", "b"], 20),
             },
         ];
 
         for scenario in scenarios {
-            let calculator = CompletenessCalculator::new(&scenario.config);
+            let calculator = CompletenessCalculator::new(&scenario.config)
+                .with_row_completeness(scenario.row_completeness);
             let actual = match &scenario.input {
                 CompletenessInput::Rows { data, total_rows } => {
                     calculator.calculate(data, &[], *total_rows)

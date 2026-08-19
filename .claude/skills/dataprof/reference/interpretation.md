@@ -35,8 +35,9 @@ Each dimension is a dict of its own evidence — `report.quality.completeness`,
 `report.quality.uniqueness`, and so on. The keys named below live inside it.
 
 **Completeness** — presence of values. `missing_values_ratio` is per-value;
-`complete_records_ratio` is per-row and drops sharply when any single optional
-column is sparse. Check both before describing a dataset as incomplete.
+`complete_records_ratio` is per-row and treats every column as required, so it
+drops sharply when any single optional column is sparse. Check both, and name
+the columns in `null_columns`, before describing a dataset as incomplete.
 
 **Consistency** — whether values in a column agree on type and format.
 `data_type_consistency` and `format_violations` are the evidence.

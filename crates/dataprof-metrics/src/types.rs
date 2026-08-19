@@ -6,6 +6,6 @@ pub use dataprof_core::{
 
 pub use crate::quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
-    QualityAssessment, QualityMetrics, RowDuplicateSummary, TimelinessMetrics, UniquenessMetrics,
-    ValidityMetrics,
+    QualityAssessment, QualityMetrics, RowCompletenessSummary, RowDuplicateSummary,
+    TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };

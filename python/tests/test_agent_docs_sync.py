@@ -413,7 +413,7 @@ def test_eval_rubrics_cite_current_fixture_values() -> None:
 
     # Scores are quoted to one decimal; compare at that precision.
     for label, actual, expected in (
-        ("before quality score", before.quality_score, 80.9),
+        ("before quality score", before.quality_score, 83.5),
         ("after quality score", after.quality_score, 97.9),
         # The high-score-is-not-clean rubric grades against this one. It went
         # stale unnoticed when #544 changed string-column consistency, because

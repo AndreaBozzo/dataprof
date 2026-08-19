@@ -9,10 +9,10 @@ use dataprof_core::{
 };
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::{RowDuplicateSummary, infer_type};
+use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
-    ColumnProfileInput, ExactNumericAggregates, RowUniquenessTracker, StreamReservoirSampler,
-    TextLengths, build_column_profile,
+    ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowUniquenessTracker,
+    StreamReservoirSampler, TextLengths, build_column_profile,
 };
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -37,6 +37,7 @@ const NUMERIC_SAMPLE_CAP: usize = 10_000;
 #[derive(Default)]
 pub(crate) struct BatchRowTracker {
     tracker: RowUniquenessTracker,
+    completeness: RowCompletenessTracker,
     disabled: bool,
 }
 
@@ -45,7 +46,7 @@ impl BatchRowTracker {
         if self.disabled {
             return;
         }
-        if observe_batch_rows(&mut self.tracker, batch).is_err() {
+        if observe_batch_rows(&mut self.tracker, &mut self.completeness, batch).is_err() {
             self.disabled = true;
         }
     }
@@ -58,11 +59,25 @@ impl BatchRowTracker {
         }
         self.tracker.summary()
     }
+
+    /// Full-stream complete-record counts; `None` under the same conditions
+    /// as [`Self::summary`] — a batch that could not be rendered leaves the
+    /// count short, and a short count is worse than an absent one.
+    pub(crate) fn completeness_summary(&self) -> Option<RowCompletenessSummary> {
+        if self.disabled {
+            return None;
+        }
+        self.completeness.summary()
+    }
 }
 
 /// Fold every row of a batch into the tracker as a canonical signature.
 /// See [`BatchRowTracker`] for the encoding and failure contract.
-fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -> Result<()> {
+fn observe_batch_rows(
+    tracker: &mut RowUniquenessTracker,
+    completeness: &mut RowCompletenessTracker,
+    batch: &RecordBatch,
+) -> Result<()> {
     use arrow::datatypes::DataType as ArrowDataType;
     use arrow::util::display::{ArrayFormatter, FormatOptions};
 
@@ -83,6 +98,7 @@ fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -
     let mut value_buffer = String::new();
     for row_index in 0..batch.num_rows() {
         let mut row_signature = String::new();
+        let mut row_has_null = false;
         for (column, formatter) in batch.columns().iter().zip(&formatters) {
             value_buffer.clear();
             if let Some(formatter) = formatter
@@ -93,8 +109,13 @@ fn observe_batch_rows(tracker: &mut RowUniquenessTracker, batch: &RecordBatch) -
             }
             let _ = write!(row_signature, "{}:", value_buffer.len());
             row_signature.push_str(&value_buffer);
+            // Arrow nulls already render empty here, and the null-like tokens
+            // are the same ones the column analyzers count, so the record
+            // count and the cell counts describe one definition of null.
+            row_has_null |= is_null_like_token(&value_buffer);
         }
         tracker.observe(row_signature);
+        completeness.observe(row_has_null);
     }
 
     Ok(())
@@ -184,6 +205,11 @@ impl RecordBatchAnalyzer {
     /// the batches could not be signed (see the internal `BatchRowTracker`).
     pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
         self.row_tracker.summary()
+    }
+
+    /// Full-stream complete-record counts across every observed batch.
+    pub fn row_completeness_summary(&self) -> Option<RowCompletenessSummary> {
+        self.row_tracker.completeness_summary()
     }
 
     pub fn to_profiles(

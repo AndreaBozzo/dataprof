@@ -96,16 +96,17 @@ a configurable weighted average of the dimensions that were actually assessed.
 Measures how much data is present vs. missing.
 
 - `missing_values_ratio` -- fraction of null/empty values across all columns
-- `complete_records_ratio` -- fraction of rows with zero nulls
+- `complete_records_ratio` -- percentage of rows with zero nulls, counted over
+  every row read
 - `null_columns` -- columns past the configured null threshold (50% by default)
 
 The completeness score is on the same 0–100 scale as the other dimensions. It
 combines cell completeness (`100 - missing_values_ratio`) and row completeness
 (`complete_records_ratio`), so inspect both underlying values when setting a
 quality gate. `complete_records_ratio` is deliberately strict: every column is
-treated as required, so one sparse optional field can drive it to zero. Inspect
-`missing_values_ratio` and `null_columns` beside it; a richer optional-column
-policy is tracked in [#436](https://github.com/AndreaBozzo/dataprof/issues/436).
+treated as required, so a dataset with one sparse optional field reports a low
+figure by design. `null_columns` names the columns responsible — read it beside
+the ratio rather than reading the ratio alone.
 
 ### Consistency
 

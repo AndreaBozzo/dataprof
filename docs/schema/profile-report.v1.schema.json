@@ -196,6 +196,7 @@
       "description": "Completeness metrics (ISO 8000-8).",
       "properties": {
         "complete_records_ratio": {
+          "description": "Percentage of records in which every field is present, counted over\nevery row the engine read. Strict by design: a record missing one\noptional field is not complete, so read it beside `null_columns`,\nwhich names the columns responsible.",
           "format": "double",
           "type": "number"
         },

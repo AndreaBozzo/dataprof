@@ -7,7 +7,8 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, HyperLogLog, RowDuplicateSummary, value_matches_hint,
+    CardinalityEstimator, HyperLogLog, RowCompletenessSummary, RowDuplicateSummary,
+    value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
@@ -481,11 +482,76 @@ impl RowUniquenessTracker {
     }
 }
 
+/// Full-stream count of records in which every field is present.
+///
+/// Completeness of a *record* is not recoverable from per-column null
+/// totals: those say how many nulls exist, not whether two of them shared a
+/// row. One counter fed whole rows answers it exactly, at any scale and
+/// regardless of sampling.
+#[derive(Debug, Clone, Default)]
+pub struct RowCompletenessTracker {
+    rows_seen: usize,
+    complete_rows: usize,
+}
+
+impl RowCompletenessTracker {
+    /// Record one row. `had_null` is true when any of its fields was absent.
+    pub fn observe(&mut self, had_null: bool) {
+        self.rows_seen += 1;
+        if !had_null {
+            self.complete_rows += 1;
+        }
+    }
+
+    /// A column appeared after rows had already been counted, so every row
+    /// counted so far is missing it and none of them was complete after all.
+    pub fn invalidate_completed_rows(&mut self) {
+        self.complete_rows = 0;
+    }
+
+    /// Count complete records across columns that are already row-aligned
+    /// and hold every value, as the database and ad-hoc input paths do.
+    ///
+    /// A row shorter than `total_rows` in some column is missing that field,
+    /// which is the same as holding a null there — the reading
+    /// [`StreamingColumnCollection::process_record`] gives ragged records.
+    pub fn observe_aligned_columns(&mut self, columns: &[&[String]], total_rows: usize) {
+        if columns.is_empty() {
+            return;
+        }
+        for row_index in 0..total_rows {
+            let had_null = columns.iter().any(|cells| {
+                cells
+                    .get(row_index)
+                    .is_none_or(|value| is_null_like_token(value))
+            });
+            self.observe(had_null);
+        }
+    }
+
+    pub fn merge(&mut self, other: &RowCompletenessTracker) {
+        self.rows_seen += other.rows_seen;
+        self.complete_rows += other.complete_rows;
+    }
+
+    /// Exact complete-record counts, or `None` when no rows were observed.
+    pub fn summary(&self) -> Option<RowCompletenessSummary> {
+        if self.rows_seen == 0 {
+            return None;
+        }
+        Some(RowCompletenessSummary {
+            complete_rows: self.complete_rows,
+            rows_checked: self.rows_seen,
+        })
+    }
+}
+
 pub struct StreamingColumnCollection {
     columns: HashMap<String, StreamingStatistics>,
     ordered_names: Vec<String>,
     memory_limit_bytes: usize,
     row_tracker: RowUniquenessTracker,
+    completeness_tracker: RowCompletenessTracker,
     hint_bindings: ValueHintBindingAccumulator,
 }
 
@@ -496,6 +562,7 @@ impl StreamingColumnCollection {
             ordered_names: Vec::new(),
             memory_limit_bytes: 100 * 1024 * 1024,
             row_tracker: RowUniquenessTracker::default(),
+            completeness_tracker: RowCompletenessTracker::default(),
             hint_bindings: ValueHintBindingAccumulator::default(),
         }
     }
@@ -506,6 +573,7 @@ impl StreamingColumnCollection {
             ordered_names: Vec::new(),
             memory_limit_bytes: limit_mb * 1024 * 1024,
             row_tracker: RowUniquenessTracker::default(),
+            completeness_tracker: RowCompletenessTracker::default(),
             hint_bindings: ValueHintBindingAccumulator::default(),
         }
     }
@@ -544,6 +612,9 @@ impl StreamingColumnCollection {
         };
         self.columns.insert(header.to_string(), stats);
         self.ordered_names.push(header.to_string());
+        if prior_rows > 0 {
+            self.completeness_tracker.invalidate_completed_rows();
+        }
     }
 
     pub fn process_record<I>(&mut self, headers: &[String], values: I)
@@ -553,6 +624,7 @@ impl StreamingColumnCollection {
         // Length-prefixed so field boundaries are unambiguous:
         // ["ab", "c"] and ["a", "bc"] must produce different signatures.
         let mut row_signature = String::new();
+        let mut row_has_null = false;
         let mut values = values.into_iter();
 
         // Headers define the row schema. Normalize a missing trailing field to
@@ -568,17 +640,26 @@ impl StreamingColumnCollection {
             }
             let stats = self.columns.entry(header.to_string()).or_default();
             stats.update(&value);
+            // Same null definition the column counters use, so the record
+            // count and the cell counts always describe the same nulls.
+            row_has_null |= is_null_like_token(&value);
             self.hint_bindings.observe(header, &value);
         }
 
         if !headers.is_empty() {
             self.row_tracker.observe(row_signature);
+            self.completeness_tracker.observe(row_has_null);
         }
     }
 
     /// Full-stream row-duplicate counts, or `None` when no rows were seen.
     pub fn row_duplicate_summary(&self) -> Option<RowDuplicateSummary> {
         self.row_tracker.summary()
+    }
+
+    /// Full-stream complete-record counts, or `None` when no rows were seen.
+    pub fn row_completeness_summary(&self) -> Option<RowCompletenessSummary> {
+        self.completeness_tracker.summary()
     }
 
     /// Exact value-driven semantic-hint evidence over every processed record.
@@ -659,6 +740,97 @@ mod row_tracker_tests {
 
     fn record(collection: &mut StreamingColumnCollection, headers: &[String], values: &[&str]) {
         collection.process_record(headers, values.iter().map(|v| v.to_string()));
+    }
+
+    fn completeness(collection: &StreamingColumnCollection) -> (usize, usize) {
+        let summary = collection
+            .row_completeness_summary()
+            .expect("rows were observed");
+        (summary.complete_rows, summary.rows_checked)
+    }
+
+    #[test]
+    fn test_complete_rows_count_rows_not_null_cells() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        // Both nulls land in the same row, so 3 of 4 rows are complete. Per
+        // column the nulls total 2, which the cell-based lower bound would
+        // read as only 2 complete rows.
+        record(&mut collection, &headers, &["", ""]);
+        record(&mut collection, &headers, &["x", "1"]);
+        record(&mut collection, &headers, &["y", "2"]);
+        record(&mut collection, &headers, &["z", "3"]);
+
+        assert_eq!(completeness(&collection), (3, 4));
+    }
+
+    #[test]
+    fn test_null_like_tokens_make_a_row_incomplete() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        // The column counters treat these as nulls, so the record count must
+        // too, or the two halves of the dimension describe different data.
+        record(&mut collection, &headers, &["x", "NULL"]);
+        record(&mut collection, &headers, &["y", "NaN"]);
+        record(&mut collection, &headers, &["z", "  "]);
+        record(&mut collection, &headers, &["w", "3"]);
+
+        assert_eq!(completeness(&collection), (1, 4));
+    }
+
+    #[test]
+    fn test_ragged_rows_are_incomplete() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        record(&mut collection, &headers, &["x"]);
+        record(&mut collection, &headers, &["y", "1"]);
+
+        assert_eq!(completeness(&collection), (1, 2));
+    }
+
+    #[test]
+    fn test_a_late_column_makes_earlier_rows_incomplete() {
+        let mut collection = StreamingColumnCollection::new();
+        let first = vec!["a".to_string()];
+        record(&mut collection, &first, &["x"]);
+        record(&mut collection, &first, &["y"]);
+        assert_eq!(completeness(&collection), (2, 2));
+
+        // A JSON object introduces `b` on the third record. The first two
+        // records never carried it, so neither of them was complete.
+        collection.init_column_with_missing("b", 2);
+        let both = vec!["a".to_string(), "b".to_string()];
+        record(&mut collection, &both, &["z", "1"]);
+
+        assert_eq!(completeness(&collection), (1, 3));
+    }
+
+    #[test]
+    fn test_no_rows_means_no_completeness_summary() {
+        let collection = StreamingColumnCollection::new();
+        assert!(collection.row_completeness_summary().is_none());
+    }
+
+    #[test]
+    fn test_aligned_columns_count_the_same_complete_rows() {
+        let a: Vec<String> = ["", "x", "y"].iter().map(|v| v.to_string()).collect();
+        let b: Vec<String> = ["", "1", "2"].iter().map(|v| v.to_string()).collect();
+        let mut tracker = RowCompletenessTracker::default();
+        tracker.observe_aligned_columns(&[a.as_slice(), b.as_slice()], 3);
+
+        let summary = tracker.summary().expect("rows were observed");
+        assert_eq!((summary.complete_rows, summary.rows_checked), (2, 3));
+    }
+
+    #[test]
+    fn test_aligned_columns_treat_a_short_column_as_missing() {
+        let a: Vec<String> = ["x", "y"].iter().map(|v| v.to_string()).collect();
+        let b: Vec<String> = ["1"].iter().map(|v| v.to_string()).collect();
+        let mut tracker = RowCompletenessTracker::default();
+        tracker.observe_aligned_columns(&[a.as_slice(), b.as_slice()], 2);
+
+        let summary = tracker.summary().expect("rows were observed");
+        assert_eq!((summary.complete_rows, summary.rows_checked), (1, 2));
     }
 
     #[test]

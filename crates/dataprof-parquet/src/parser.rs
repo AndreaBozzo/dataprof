@@ -337,6 +337,7 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
     Ok(ReportAssembler::new(data_source, execution)
         .columns(column_profiles)
         .with_row_duplicates(analyzer.row_duplicate_summary())
+        .with_row_completeness(analyzer.row_completeness_summary())
         .with_quality_data(sample_columns)
         .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
         .with_analysis_options(options)

@@ -15,7 +15,8 @@ use dataprof::{
     infer_type, is_null_like_token,
 };
 use dataprof_runtime::{
-    ColumnProfileInput, ReportAssembler, RowUniquenessTracker, build_column_profile,
+    ColumnProfileInput, ReportAssembler, RowCompletenessTracker, RowUniquenessTracker,
+    build_column_profile,
 };
 
 use super::config::PyProfilerConfig;
@@ -113,7 +114,7 @@ pub fn profile_columns(
     let num_cols = columns.len();
 
     // Analysis is pure Rust over owned data, so the GIL buys us nothing here.
-    let (column_profiles, sample_columns, row_duplicates) = py.detach(|| {
+    let (column_profiles, sample_columns, row_duplicates, row_completeness) = py.detach(|| {
         let mut profiles = Vec::with_capacity(num_cols);
         let mut samples = std::collections::HashMap::new();
 
@@ -122,16 +123,23 @@ pub fn profile_columns(
         // engines. Null cells contribute an empty value, so files and
         // ad-hoc inputs holding the same data agree on duplicate counts.
         let mut row_tracker = RowUniquenessTracker::default();
+        let mut completeness_tracker = RowCompletenessTracker::default();
         if num_cols > 0 {
             use std::fmt::Write as _;
             for row_index in 0..num_rows {
                 let mut row_signature = String::new();
+                let mut row_has_null = false;
                 for (_, cells) in &columns {
                     let value = cells[row_index].as_deref().unwrap_or("");
                     let _ = write!(row_signature, "{}:", value.len());
                     row_signature.push_str(value);
+                    // A missing cell renders empty, which `is_null_like_token`
+                    // already treats as null — the same rule that produces
+                    // `null_count` below.
+                    row_has_null |= is_null_like_token(value);
                 }
                 row_tracker.observe(row_signature);
+                completeness_tracker.observe(row_has_null);
             }
         }
 
@@ -176,7 +184,12 @@ pub fn profile_columns(
             }
         }
 
-        (profiles, samples, row_tracker.summary())
+        (
+            profiles,
+            samples,
+            row_tracker.summary(),
+            completeness_tracker.summary(),
+        )
     });
 
     let mut exec = ExecutionMetadata::new(num_rows, num_cols, start.elapsed().as_millis())
@@ -232,7 +245,8 @@ pub fn profile_columns(
 
     let mut assembler = ReportAssembler::new(data_source, exec)
         .columns(column_profiles)
-        .with_row_duplicates(row_duplicates);
+        .with_row_duplicates(row_duplicates)
+        .with_row_completeness(row_completeness);
 
     if include_quality {
         assembler = assembler

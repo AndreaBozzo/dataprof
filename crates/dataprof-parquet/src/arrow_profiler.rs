@@ -334,7 +334,8 @@ impl ArrowProfiler {
             execution,
         )
         .columns(column_profiles)
-        .with_row_duplicates(row_tracker.summary());
+        .with_row_duplicates(row_tracker.summary())
+        .with_row_completeness(row_tracker.completeness_summary());
 
         if MetricPack::include_quality(packs) && !empty_source {
             assembler = assembler
