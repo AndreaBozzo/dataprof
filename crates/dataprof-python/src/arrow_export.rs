@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array};
+use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema, to_ffi};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -894,7 +895,6 @@ fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Recor
     let type_name = obj.get_type().name()?.to_string();
 
     if type_name == "Table" {
-        // Convert Table to batches
         let batches = obj.call_method0("to_batches")?;
         let batch_list: Vec<Py<PyAny>> = batches.extract()?;
 
@@ -902,7 +902,21 @@ fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Recor
             return Err(PyValueError::new_err("Table is empty"));
         }
 
-        import_via_pycapsule(py, batch_list[0].bind(py))
+        // Every batch, not just the first. A chunked Table profiled as
+        // batch_list[0] reports on a prefix of the data without saying it did
+        // so, which is worse than refusing outright.
+        let mut imported = Vec::with_capacity(batch_list.len());
+        for batch in &batch_list {
+            imported.push(import_via_pycapsule(py, batch.bind(py))?);
+        }
+        if imported.len() == 1 {
+            // The common single-chunk case stays copy-free.
+            return Ok(imported.remove(0));
+        }
+        let schema = imported[0].schema();
+        concat_batches(&schema, &imported).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to combine Table batches: {}", e))
+        })
     } else if type_name == "RecordBatch" {
         import_via_pycapsule(py, obj)
     } else {
