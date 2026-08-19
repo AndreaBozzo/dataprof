@@ -890,7 +890,7 @@ fn convert_polars_to_batch(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<Re
     }
 }
 
-/// Import from pyarrow Table or RecordBatch.
+/// Import from a pyarrow Table or RecordBatch, or any Arrow PyCapsule producer.
 fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RecordBatch> {
     let type_name = obj.get_type().name()?.to_string();
 
@@ -919,9 +919,14 @@ fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Recor
         })
     } else if type_name == "RecordBatch" {
         import_via_pycapsule(py, obj)
+    } else if obj.hasattr("__arrow_c_array__")? {
+        // Any Arrow PyCapsule producer, which is what profile() documents
+        // accepting. pyarrow's own types are matched above only so that Table
+        // reaches its multi-batch handling; everything else imports the same way.
+        import_via_pycapsule(py, obj)
     } else {
         Err(PyTypeError::new_err(format!(
-            "Expected pyarrow Table or RecordBatch, got {}",
+            "Expected a pyarrow Table or RecordBatch, or an object implementing the Arrow PyCapsule interface (__arrow_c_array__), got {}",
             type_name
         )))
     }
@@ -990,6 +995,17 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
         arrow::ffi::from_ffi(ffi_array, &ffi_schema)
             .map_err(|e| PyRuntimeError::new_err(format!("FFI import failed: {}", e)))?
     };
+
+    // A record batch is a struct array. StructArray::from panics on anything
+    // else, so reject it here: any object implementing __arrow_c_array__ can
+    // reach this point, and a bare Int64Array must produce an error rather than
+    // an "entered unreachable code" panic across the FFI boundary.
+    if !matches!(array_data.data_type(), ArrowDataType::Struct(_)) {
+        return Err(PyTypeError::new_err(format!(
+            "Arrow PyCapsule import expects a struct-typed array (a record batch), got {}",
+            array_data.data_type()
+        )));
+    }
 
     // Convert StructArray to RecordBatch
     let struct_array = arrow::array::StructArray::from(array_data);
