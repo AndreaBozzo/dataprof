@@ -488,14 +488,19 @@ pub fn profile_arrow(
 
     let bound = table.bind(py);
 
-    // Import directly as PyArrow data (no library detection needed)
-    let batch = import_from_pyarrow(py, bound)?;
+    // Import as a batch sequence and keep it that way: concatenating a chunked
+    // Table before the row limit is applied would allocate for rows that are
+    // about to be discarded, and concat_batches peaks at roughly twice its
+    // input.
+    let batches = import_batches_from_pyarrow(py, bound)?;
 
     // Optionally limit rows before analysis
-    let (batch, truncated) = limit_batch_rows(batch, effective_max_rows);
+    let (batches, truncated) = limit_batches(batches, effective_max_rows);
 
-    let num_rows = batch.num_rows();
-    let num_cols = batch.num_columns();
+    let num_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    // import_batches_from_pyarrow never yields an empty sequence, and
+    // limit_batches always keeps one batch for its schema.
+    let num_cols = batches[0].num_columns();
     // decode-audit: no-data — absent config simply means no semantic hints.
     let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
 
@@ -509,9 +514,11 @@ pub fn profile_arrow(
 
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
-    analyzer
-        .process_batch(&batch)
-        .map_err(crate::errors::analyzer_error_to_py)?;
+    for batch in &batches {
+        analyzer
+            .process_batch(batch)
+            .map_err(crate::errors::analyzer_error_to_py)?;
+    }
 
     let locale = config.and_then(|c| c.locale);
     let column_profiles =
@@ -817,6 +824,41 @@ fn limit_batch_rows(batch: RecordBatch, max_rows: Option<usize>) -> (RecordBatch
     }
 }
 
+/// Apply a row limit across a batch sequence, reporting whether anything was cut.
+///
+/// Stops before importing rows it would only discard, so a bounded profile of a
+/// large chunked Table stays bounded. The truncation flag has to be decided here
+/// rather than by comparing a final row count against the limit: stopping at
+/// exactly `limit` rows with batches still unread is truncation, and a row count
+/// alone cannot see that.
+fn limit_batches(batches: Vec<RecordBatch>, max_rows: Option<usize>) -> (Vec<RecordBatch>, bool) {
+    let limit = match max_rows {
+        Some(limit) => limit,
+        None => return (batches, false),
+    };
+
+    let mut kept: Vec<RecordBatch> = Vec::with_capacity(batches.len());
+    let mut taken = 0usize;
+    for batch in batches {
+        if taken >= limit {
+            // Keep an empty slice when the limit is zero, so the schema, and
+            // therefore the column count, still reaches the report.
+            if kept.is_empty() {
+                kept.push(batch.slice(0, 0));
+            }
+            return (kept, true);
+        }
+        let remaining = limit - taken;
+        if batch.num_rows() > remaining {
+            kept.push(batch.slice(0, remaining));
+            return (kept, true);
+        }
+        taken += batch.num_rows();
+        kept.push(batch);
+    }
+    (kept, false)
+}
+
 /// Convert DataFrame to Arrow RecordBatch via appropriate method.
 fn convert_dataframe_to_batch(
     py: Python<'_>,
@@ -890,11 +932,22 @@ fn convert_polars_to_batch(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<Re
     }
 }
 
-/// Import from a pyarrow Table or RecordBatch, or any Arrow PyCapsule producer.
-fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RecordBatch> {
+/// Import a pyarrow Table, RecordBatch, or any Arrow PyCapsule producer as a
+/// sequence of batches.
+///
+/// A Table keeps its chunking rather than being flattened here: the caller
+/// analyzes batch by batch, so a large chunked Table never has to exist as one
+/// contiguous RecordBatch.
+fn import_batches_from_pyarrow(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<Vec<RecordBatch>> {
     let type_name = obj.get_type().name()?.to_string();
 
-    if type_name == "Table" {
+    // Match the Table API rather than the type name alone. A PyCapsule producer
+    // whose class happens to be called "Table" is not a pyarrow Table, and would
+    // otherwise fail on the missing to_batches() instead of importing.
+    if type_name == "Table" && obj.hasattr("to_batches")? {
         let batches = obj.call_method0("to_batches")?;
         let batch_list: Vec<Py<PyAny>> = batches.extract()?;
 
@@ -909,26 +962,28 @@ fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Recor
         for batch in &batch_list {
             imported.push(import_via_pycapsule(py, batch.bind(py))?);
         }
-        if imported.len() == 1 {
-            // The common single-chunk case stays copy-free.
-            return Ok(imported.remove(0));
-        }
-        let schema = imported[0].schema();
-        concat_batches(&schema, &imported)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to combine Table batches: {}", e)))
-    } else if type_name == "RecordBatch" {
-        import_via_pycapsule(py, obj)
-    } else if obj.hasattr("__arrow_c_array__")? {
+        Ok(imported)
+    } else if type_name == "RecordBatch" || obj.hasattr("__arrow_c_array__")? {
         // Any Arrow PyCapsule producer, which is what profile() documents
-        // accepting. pyarrow's own types are matched above only so that Table
-        // reaches its multi-batch handling; everything else imports the same way.
-        import_via_pycapsule(py, obj)
+        // accepting. RecordBatch is named only so the error below can list it.
+        Ok(vec![import_via_pycapsule(py, obj)?])
     } else {
         Err(PyTypeError::new_err(format!(
             "Expected a pyarrow Table or RecordBatch, or an object implementing the Arrow PyCapsule interface (__arrow_c_array__), got {}",
             type_name
         )))
     }
+}
+
+/// Single-RecordBatch form, for callers that cannot consume a sequence.
+fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RecordBatch> {
+    let mut batches = import_batches_from_pyarrow(py, obj)?;
+    if batches.len() == 1 {
+        return Ok(batches.remove(0));
+    }
+    let schema = batches[0].schema();
+    concat_batches(&schema, &batches)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to combine Table batches: {}", e)))
 }
 
 /// Import RecordBatch via PyCapsule protocol.

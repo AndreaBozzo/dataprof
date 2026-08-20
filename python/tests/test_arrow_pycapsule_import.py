@@ -63,18 +63,58 @@ def test_single_batch_table_is_unchanged():
 
 
 def test_chunking_does_not_change_the_report():
-    """Same rows, different chunking, same answer.
+    """Same rows, different chunking, same column statistics.
 
-    Stronger than the row count alone: it pins the property rather than one
-    number, so a future change that drops chunks in a different way still trips.
+    Comparing row counts alone would miss a regression that reads only some
+    chunks yet still reports the right total, and using identical values in
+    every batch would hide one that reads only the first. Distinct values per
+    batch make the statistics depend on every chunk, and the comparison is over
+    the serialized column sections rather than a single number.
     """
-    batch = _batch([1, 2, 3, 4])
-    chunked = pa.Table.from_batches([batch, batch, batch])
+    batches = [
+        _batch([1, 2, 3, 4]),
+        _batch([10, 20, 30, 40]),
+        _batch([100, 200, 300, 400]),
+    ]
+    chunked = pa.Table.from_batches(batches)
     combined = chunked.combine_chunks()
 
-    assert dataprof.profile(chunked, name="chunked").rows == (
-        dataprof.profile(combined, name="combined").rows
-    )
+    chunked_columns = dataprof.profile(chunked, name="chunked").to_dict()["columns"]
+    combined_columns = dataprof.profile(combined, name="combined").to_dict()["columns"]
+    assert chunked_columns == combined_columns
+
+    # The result has to actually depend on the later chunks, or the equality
+    # above would hold just as well for code that reads only the first one.
+    first_only = pa.Table.from_batches(batches[:1])
+    first_only_columns = dataprof.profile(first_only, name="first").to_dict()["columns"]
+    assert chunked_columns != first_only_columns
+
+
+@pytest.mark.parametrize(
+    ("max_rows", "expected_rows", "expect_truncated"),
+    [
+        (2, 2, True),  # inside the first batch
+        (4, 4, True),  # exactly a batch boundary, with batches still unread
+        (6, 6, True),  # spans two batches
+        (12, 12, False),  # the whole table
+        (20, 12, False),  # limit above the total
+    ],
+)
+def test_max_rows_across_chunks(max_rows, expected_rows, expect_truncated):
+    """A row limit applies across the batch sequence, and reports truncation.
+
+    The boundary case is ``max_rows=4`` on 4-row batches: the limit is reached
+    exactly, with two batches still unread. Deciding truncation by comparing a
+    final row count against the limit cannot see that, so the flag is decided
+    while walking the sequence.
+    """
+    batch = _batch([1, 2, 3, 4])
+    table = pa.Table.from_batches([batch, batch, batch])
+    assert table.num_rows == 12
+
+    report = dataprof.profile(table, name="limited", max_rows=max_rows)
+    assert report.rows == expected_rows
+    assert (report.truncation_reason is not None) is expect_truncated
 
 
 def test_arrow_pycapsule_producer_is_accepted():
