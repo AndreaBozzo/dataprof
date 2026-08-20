@@ -392,9 +392,7 @@ pub fn profile_dataframe(
 
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
-    analyzer
-        .process_batch(&batch)
-        .map_err(crate::errors::analyzer_error_to_py)?;
+    analyze_imported_batch(&mut analyzer, &batch)?;
 
     let locale = config.and_then(|c| c.locale);
     let column_profiles =
@@ -515,9 +513,7 @@ pub fn profile_arrow(
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     for batch in &batches {
-        analyzer
-            .process_batch(batch)
-            .map_err(crate::errors::analyzer_error_to_py)?;
+        analyze_imported_batch(&mut analyzer, batch)?;
     }
 
     let locale = config.and_then(|c| c.locale);
@@ -1073,4 +1069,55 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
 
     RecordBatch::try_new(schema, struct_array.columns().to_vec())
         .map_err(|e| PyRuntimeError::new_err(format!("RecordBatch creation failed: {}", e)))
+}
+
+/// Validate an FFI-imported batch, then fold it into the analyzer.
+///
+/// `arrow::ffi::from_ffi` builds its `ArrayData` with `ArrayData::new_unchecked`
+/// and only realigns buffers, so nothing on the import path checks buffer
+/// lengths, offsets, UTF-8 or dictionary keys. Invalid data therefore reaches
+/// the analyzers, where the first accessor to touch it panics: a
+/// `dictionary<int8, utf8>` carrying key 99 against a two-element dictionary
+/// aborts inside arrow's `ArrayFormatter::value()`. pyo3 derives
+/// `PanicException` from `BaseException` precisely so it is *not* caught by
+/// accident, so `except Exception` around `profile()` does not catch it.
+///
+/// `validate_full()` is the check arrow-rs already implements: recursive, and
+/// covering the dictionary-key bounds the FFI import skips. It runs on every
+/// analyzed batch rather than behind a flag, because it is cheap next to the
+/// work it guards. On a 200k-row batch with two wide string columns it costs
+/// about 0.6% of the profiling pass that follows (1.8ms against 317ms), which
+/// is not a price worth a configuration knob.
+///
+/// Validating here, rather than at import, is what keeps `max_rows` bounded.
+/// Import is zero-copy and O(1) per batch, but validation is O(n): running it
+/// on import would scan every value of every batch of a chunked Table even
+/// when a two-row profile was asked for. Sitting immediately before
+/// `process_batch` means exactly the rows that get analyzed get validated, and
+/// no analyzer can be fed unvalidated data. `check_bounds` and the offset
+/// checks honour `ArrayData::offset`, so a batch sliced by the row limit
+/// validates only its slice.
+///
+/// The corollary is deliberate: corruption in rows beyond `max_rows` is not
+/// reported, because those rows are never read.
+fn analyze_imported_batch(analyzer: &mut RecordBatchAnalyzer, batch: &RecordBatch) -> PyResult<()> {
+    for column in batch.columns() {
+        validate_imported_array(&column.to_data())?;
+    }
+    analyzer
+        .process_batch(batch)
+        .map_err(crate::errors::analyzer_error_to_py)
+}
+
+/// Reject data that does not satisfy the Arrow columnar spec.
+///
+/// The input is invalid, so this is a `ValueError`, the same class the CSV and
+/// JSON paths raise for malformed data.
+fn validate_imported_array(array_data: &arrow::array::ArrayData) -> PyResult<()> {
+    array_data.validate_full().map_err(|e| {
+        PyValueError::new_err(format!(
+            "Arrow data received over the C Data Interface violates the Arrow \
+             columnar spec and cannot be profiled: {e}"
+        ))
+    })
 }

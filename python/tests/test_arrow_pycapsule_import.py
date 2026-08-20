@@ -1,6 +1,6 @@
-"""Arrow import contract: every batch, and every PyCapsule producer.
+"""Arrow import contract: every batch, every PyCapsule producer, valid data only.
 
-Two guards on ``import_from_pyarrow``, both invisible to value-based tests:
+Guards on ``import_from_pyarrow`` that value-based tests cannot see:
 
 ``profile()`` documents accepting "Arrow PyCapsule-compatible objects", but the
 import path matched on the Python type name being ``Table`` or ``RecordBatch``
@@ -13,6 +13,9 @@ multi-batch table silently reported on its first chunk only — the report looke
 entirely normal, just computed over a prefix of the data. Silent divergence is
 the failure mode worth the most guarding, because nothing about the output
 suggests anything went wrong.
+
+Finally, the C Data Interface import is unchecked in arrow-rs, so malformed
+Arrow data reached the analyzers and panicked there rather than erroring.
 """
 
 from __future__ import annotations
@@ -151,3 +154,94 @@ def test_object_without_arrow_support_is_refused():
     """A plain object is not an Arrow source."""
     with pytest.raises(TypeError):
         dataprof.profile(object(), name="not_arrow")
+
+
+def _dictionary_column(indices, safe=True):
+    """An int8-keyed dictionary column over the two-element dictionary [a, b].
+
+    Every caller uses the same key width and dictionary, so batches built from
+    this compose into one Table.
+    """
+    return pa.DictionaryArray.from_arrays(
+        pa.array(indices, type=pa.int8()),
+        pa.array(["a", "b"]),
+        safe=safe,
+    )
+
+
+def _out_of_range_dictionary_column():
+    """A dictionary column whose index 99 addresses a two-element dictionary.
+
+    ``safe=False`` is what makes this constructible: the checked constructor
+    refuses the array outright, which is why the input is only reachable from a
+    producer that skips validation -- pyarrow's own escape hatch, or any other
+    C Data Interface producer.
+    """
+    return _dictionary_column([0, 99], safe=False)
+
+
+def test_out_of_range_dictionary_index_raises_valueerror():
+    """Invalid Arrow data must error, not panic across the FFI boundary.
+
+    ``arrow::ffi::from_ffi`` builds its ArrayData unchecked, so an out-of-range
+    dictionary key survives import and detonates later inside arrow's
+    ArrayFormatter, where the accessor asserts. That panic crosses into Python
+    as ``pyo3_runtime.PanicException``, which derives from ``BaseException`` --
+    ``except Exception`` does not catch it, so a caller cannot handle a bad
+    input at all.
+
+    Asserting ``ValueError`` pins both halves: that the input is refused, and
+    that the refusal is an ordinary catchable exception. ``pytest.raises`` would
+    accept the panic if this asserted ``BaseException``.
+    """
+    table = pa.table({"c": _out_of_range_dictionary_column()})
+
+    with pytest.raises(ValueError, match="Arrow columnar spec"):
+        dataprof.profile(table, name="bad_dictionary")
+
+
+def test_out_of_range_dictionary_index_is_refused_on_every_entry_point():
+    """The check sits at the shared import, so no Arrow entry point skips it."""
+    column = _out_of_range_dictionary_column()
+    batch = pa.record_batch({"c": column})
+
+    for source in (batch, pa.Table.from_batches([batch]), ArrowPyCapsuleProducer(batch)):
+        with pytest.raises(ValueError, match="Arrow columnar spec"):
+            dataprof.profile(source, name="bad_dictionary")
+
+
+def test_valid_dictionary_column_still_profiles():
+    """Validation must not reject the dictionary-encoded data that is fine.
+
+    Without this, a fix that refused every dictionary column would pass the
+    guard above.
+    """
+    table = pa.table({"c": _dictionary_column([0, 1, 1, 0])})
+
+    report = dataprof.profile(table, name="good_dictionary")
+    assert report.rows == 4
+
+
+def test_max_rows_does_not_validate_rows_it_discards():
+    """Validation is bounded by the row limit, like the rest of the work.
+
+    Validation is O(n) where the import it follows is O(1) per batch, so running
+    it at import time would scan every value of every batch of a chunked Table
+    to answer a two-row request. Sitting immediately before ``process_batch``
+    instead means only analyzed rows are validated.
+
+    The corollary, pinned here, is that corruption past ``max_rows`` goes
+    unreported: those rows are never read, and reading them to complain about
+    them is the cost the limit exists to avoid.
+    """
+    good = pa.record_batch({"c": _dictionary_column([0, 1])})
+    bad = pa.record_batch({"c": _out_of_range_dictionary_column()})
+    table = pa.Table.from_batches([good, bad])
+
+    report = dataprof.profile(table, name="bounded", max_rows=2)
+    assert report.rows == 2
+
+    # Without the limit the same table is refused, so the pass above is the
+    # limit doing its job, not the corrupt batch having gone missing.
+    with pytest.raises(ValueError, match="Arrow columnar spec"):
+        dataprof.profile(table, name="unbounded")
