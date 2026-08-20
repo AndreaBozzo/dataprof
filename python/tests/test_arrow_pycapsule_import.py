@@ -1,6 +1,6 @@
-"""Arrow import contract: every batch, and every PyCapsule producer.
+"""Arrow import contract: every batch, every PyCapsule producer, valid data only.
 
-Two guards on ``import_from_pyarrow``, both invisible to value-based tests:
+Guards on ``import_from_pyarrow`` that value-based tests cannot see:
 
 ``profile()`` documents accepting "Arrow PyCapsule-compatible objects", but the
 import path matched on the Python type name being ``Table`` or ``RecordBatch``
@@ -13,6 +13,9 @@ multi-batch table silently reported on its first chunk only — the report looke
 entirely normal, just computed over a prefix of the data. Silent divergence is
 the failure mode worth the most guarding, because nothing about the output
 suggests anything went wrong.
+
+Finally, the C Data Interface import is unchecked in arrow-rs, so malformed
+Arrow data reached the analyzers and panicked there rather than erroring.
 """
 
 from __future__ import annotations
@@ -151,3 +154,66 @@ def test_object_without_arrow_support_is_refused():
     """A plain object is not an Arrow source."""
     with pytest.raises(TypeError):
         dataprof.profile(object(), name="not_arrow")
+
+
+def _out_of_range_dictionary_column():
+    """A dictionary array whose index 99 addresses a two-element dictionary.
+
+    ``safe=False`` is what makes this constructible: the checked constructor
+    refuses the array outright, which is why the input is only reachable from a
+    producer that skips validation -- pyarrow's own escape hatch, or any other
+    C Data Interface producer.
+    """
+    return pa.DictionaryArray.from_arrays(
+        pa.array([0, 99], type=pa.int8()),
+        pa.array(["a", "b"]),
+        safe=False,
+    )
+
+
+def test_out_of_range_dictionary_index_raises_valueerror():
+    """Invalid Arrow data must error, not panic across the FFI boundary.
+
+    ``arrow::ffi::from_ffi`` builds its ArrayData unchecked, so an out-of-range
+    dictionary key survives import and detonates later inside arrow's
+    ArrayFormatter, where the accessor asserts. That panic crosses into Python
+    as ``pyo3_runtime.PanicException``, which derives from ``BaseException`` --
+    ``except Exception`` does not catch it, so a caller cannot handle a bad
+    input at all.
+
+    Asserting ``ValueError`` pins both halves: that the input is refused, and
+    that the refusal is an ordinary catchable exception. ``pytest.raises`` would
+    accept the panic if this asserted ``BaseException``.
+    """
+    table = pa.table({"c": _out_of_range_dictionary_column()})
+
+    with pytest.raises(ValueError, match="Arrow columnar spec"):
+        dataprof.profile(table, name="bad_dictionary")
+
+
+def test_out_of_range_dictionary_index_is_refused_on_every_entry_point():
+    """The check sits at the shared import, so no Arrow entry point skips it."""
+    column = _out_of_range_dictionary_column()
+    batch = pa.record_batch({"c": column})
+
+    for source in (batch, pa.Table.from_batches([batch]), ArrowPyCapsuleProducer(batch)):
+        with pytest.raises(ValueError, match="Arrow columnar spec"):
+            dataprof.profile(source, name="bad_dictionary")
+
+
+def test_valid_dictionary_column_still_profiles():
+    """Validation must not reject the dictionary-encoded data that is fine.
+
+    Without this, a fix that refused every dictionary column would pass the
+    guard above.
+    """
+    table = pa.table(
+        {
+            "c": pa.DictionaryArray.from_arrays(
+                pa.array([0, 1, 1, 0], type=pa.int8()), pa.array(["a", "b"])
+            )
+        }
+    )
+
+    report = dataprof.profile(table, name="good_dictionary")
+    assert report.rows == 4

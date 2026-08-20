@@ -1061,6 +1061,8 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
         )));
     }
 
+    validate_imported_array(&array_data)?;
+
     // Convert StructArray to RecordBatch
     let struct_array = arrow::array::StructArray::from(array_data);
     let schema = Arc::new(Schema::new(
@@ -1073,4 +1075,32 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
 
     RecordBatch::try_new(schema, struct_array.columns().to_vec())
         .map_err(|e| PyRuntimeError::new_err(format!("RecordBatch creation failed: {}", e)))
+}
+
+/// Check that FFI-imported data actually satisfies the Arrow columnar spec.
+///
+/// `arrow::ffi::from_ffi` builds its `ArrayData` with `ArrayData::new_unchecked`
+/// and only realigns buffers — nothing on the import path checks buffer
+/// lengths, offsets, UTF-8, or dictionary keys. Invalid data therefore reaches
+/// the analyzers, where the first accessor to touch it panics: a
+/// `dictionary<int8, utf8>` carrying key 99 against a two-element dictionary
+/// aborts inside arrow's `ArrayFormatter::value()`. pyo3 derives
+/// `PanicException` from `BaseException` precisely so it is *not* caught by
+/// accident, so `except Exception` around `profile()` does not catch it.
+///
+/// `validate_full()` is the check arrow-rs already implements — recursive, and
+/// covering the dictionary-key bounds that the FFI import skips. It is run on
+/// every import rather than behind a flag: on a 200k-row batch with two wide
+/// string columns it costs about 0.6% of the profiling pass that follows
+/// (1.8ms against 317ms), which is not a price worth a configuration knob.
+///
+/// The input is invalid, so this is a `ValueError` — the same class the CSV and
+/// JSON paths raise for malformed data.
+fn validate_imported_array(array_data: &arrow::array::ArrayData) -> PyResult<()> {
+    array_data.validate_full().map_err(|e| {
+        PyValueError::new_err(format!(
+            "Arrow data received over the C Data Interface violates the Arrow \
+             columnar spec and cannot be profiled: {e}"
+        ))
+    })
 }
