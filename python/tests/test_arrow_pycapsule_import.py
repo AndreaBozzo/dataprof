@@ -156,19 +156,28 @@ def test_object_without_arrow_support_is_refused():
         dataprof.profile(object(), name="not_arrow")
 
 
+def _dictionary_column(indices, safe=True):
+    """An int8-keyed dictionary column over the two-element dictionary [a, b].
+
+    Every caller uses the same key width and dictionary, so batches built from
+    this compose into one Table.
+    """
+    return pa.DictionaryArray.from_arrays(
+        pa.array(indices, type=pa.int8()),
+        pa.array(["a", "b"]),
+        safe=safe,
+    )
+
+
 def _out_of_range_dictionary_column():
-    """A dictionary array whose index 99 addresses a two-element dictionary.
+    """A dictionary column whose index 99 addresses a two-element dictionary.
 
     ``safe=False`` is what makes this constructible: the checked constructor
     refuses the array outright, which is why the input is only reachable from a
     producer that skips validation -- pyarrow's own escape hatch, or any other
     C Data Interface producer.
     """
-    return pa.DictionaryArray.from_arrays(
-        pa.array([0, 99], type=pa.int8()),
-        pa.array(["a", "b"]),
-        safe=False,
-    )
+    return _dictionary_column([0, 99], safe=False)
 
 
 def test_out_of_range_dictionary_index_raises_valueerror():
@@ -207,13 +216,32 @@ def test_valid_dictionary_column_still_profiles():
     Without this, a fix that refused every dictionary column would pass the
     guard above.
     """
-    table = pa.table(
-        {
-            "c": pa.DictionaryArray.from_arrays(
-                pa.array([0, 1, 1, 0], type=pa.int8()), pa.array(["a", "b"])
-            )
-        }
-    )
+    table = pa.table({"c": _dictionary_column([0, 1, 1, 0])})
 
     report = dataprof.profile(table, name="good_dictionary")
     assert report.rows == 4
+
+
+def test_max_rows_does_not_validate_rows_it_discards():
+    """Validation is bounded by the row limit, like the rest of the work.
+
+    Validation is O(n) where the import it follows is O(1) per batch, so running
+    it at import time would scan every value of every batch of a chunked Table
+    to answer a two-row request. Sitting immediately before ``process_batch``
+    instead means only analyzed rows are validated.
+
+    The corollary, pinned here, is that corruption past ``max_rows`` goes
+    unreported: those rows are never read, and reading them to complain about
+    them is the cost the limit exists to avoid.
+    """
+    good = pa.record_batch({"c": _dictionary_column([0, 1])})
+    bad = pa.record_batch({"c": _out_of_range_dictionary_column()})
+    table = pa.Table.from_batches([good, bad])
+
+    report = dataprof.profile(table, name="bounded", max_rows=2)
+    assert report.rows == 2
+
+    # Without the limit the same table is refused, so the pass above is the
+    # limit doing its job, not the corrupt batch having gone missing.
+    with pytest.raises(ValueError, match="Arrow columnar spec"):
+        dataprof.profile(table, name="unbounded")
