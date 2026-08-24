@@ -25,7 +25,53 @@ use dataprof::{DataProfilerError, ProfileReport, SemanticHints};
 ///
 /// The `DataProfilerError` `Display` already carries the actionable suggestion,
 /// so the message is passed through verbatim rather than re-wrapped.
+///
+/// Any retained cause chain (see `DataProfilerError`'s `ErrorSource`) is
+/// attached as the exception's `__cause__`, so `raise ... from ...` context
+/// shows the originating decoder or OS error in the traceback instead of it
+/// being visible only from Rust.
 pub(crate) fn analysis_error_to_py(err: &DataProfilerError) -> PyErr {
+    let py_err = analysis_error_to_py_uncaused(err);
+    match rust_cause_chain(err) {
+        Some(cause) => Python::attach(|py| {
+            py_err.set_cause(py, Some(cause));
+            py_err
+        }),
+        None => py_err,
+    }
+}
+
+/// Build the `__cause__` for a profiling error from its retained source chain.
+///
+/// Each link becomes its own exception so a multi-level chain stays visible in
+/// the traceback rather than being flattened into one message. Returns `None`
+/// when nothing was retained, which keeps "no cause recorded" distinct from
+/// "cause recorded but empty".
+fn rust_cause_chain(err: &DataProfilerError) -> Option<PyErr> {
+    let mut messages = Vec::new();
+    let mut current = std::error::Error::source(err);
+    while let Some(source) = current {
+        messages.push(source.to_string());
+        current = std::error::Error::source(source);
+    }
+    if messages.is_empty() {
+        return None;
+    }
+
+    // Built innermost-first so the outermost cause is the error directly
+    // beneath the profiling error, matching how Python renders chained causes.
+    let mut cause: Option<PyErr> = None;
+    for message in messages.into_iter().rev() {
+        let link = PyRuntimeError::new_err(message);
+        if let Some(inner) = cause.take() {
+            Python::attach(|py| link.set_cause(py, Some(inner)));
+        }
+        cause = Some(link);
+    }
+    cause
+}
+
+fn analysis_error_to_py_uncaused(err: &DataProfilerError) -> PyErr {
     let message = err.to_string();
     match err {
         DataProfilerError::InvalidSemanticHint { .. }

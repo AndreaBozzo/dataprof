@@ -542,15 +542,13 @@ impl Profiler {
         if self.config.stop_condition.is_row_limit_only() {
             return Ok(());
         }
-        Err(DataProfilerError::InvalidConfiguration {
-            message: format!(
+        Err(DataProfilerError::invalid_config(
+            &format!(
                 "{what} supports only row-limit stop conditions (max_rows), not the one supplied"
             ),
-            suggestion:
-                "Use StopCondition::MaxRows, profile a CSV source with the auto or incremental \
-                 engine, or remove the stop condition."
-                    .to_string(),
-        })
+            "Use StopCondition::MaxRows, profile a CSV source with the auto or incremental \
+             engine, or remove the stop condition.",
+        ))
     }
 
     /// Whether a sampling strategy was configured.
@@ -568,12 +566,11 @@ impl Profiler {
         if !self.has_sampling() {
             return Ok(());
         }
-        Err(DataProfilerError::InvalidConfiguration {
-            message: format!("{what} cannot apply a sampling strategy"),
-            suggestion: "Profile a CSV source with the auto or incremental engine, which sample \
-                         row by row, or remove the sampling strategy."
-                .to_string(),
-        })
+        Err(DataProfilerError::invalid_config(
+            &format!("{what} cannot apply a sampling strategy"),
+            "Profile a CSV source with the auto or incremental engine, which sample \
+             row by row, or remove the sampling strategy.",
+        ))
     }
 
     /// The row cap implied by the configured stop condition, if any.
@@ -1109,18 +1106,12 @@ impl Profiler {
                 }
             }
             FileFormat::Csv | FileFormat::Json | FileFormat::Jsonl => {
-                let metadata =
-                    tokio::fs::metadata(path)
-                        .await
-                        .map_err(|e| DataProfilerError::IoError {
-                            message: format!("{}: {e}", path.display()),
-                        })?;
-                let file =
-                    tokio::fs::File::open(path)
-                        .await
-                        .map_err(|e| DataProfilerError::IoError {
-                            message: format!("{}: {e}", path.display()),
-                        })?;
+                let metadata = tokio::fs::metadata(path).await.map_err(|e| {
+                    DataProfilerError::io_with_source(format!("{}: {e}", path.display()), e)
+                })?;
+                let file = tokio::fs::File::open(path).await.map_err(|e| {
+                    DataProfilerError::io_with_source(format!("{}: {e}", path.display()), e)
+                })?;
                 let info = AsyncSourceInfo::new(path.display().to_string(), format)
                     .size_hint(Some(metadata.len()))
                     .source_system(dataprof_core::StreamSourceSystem::Custom("file".into()));

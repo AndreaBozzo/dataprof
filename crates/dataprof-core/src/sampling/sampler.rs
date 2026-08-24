@@ -248,6 +248,7 @@ impl RowSampler {
                         suggestion: "Keep a single fixed-size stage and express the rest as \
                                      filters, e.g. multi_stage([systematic(10), reservoir(1000)])."
                             .to_string(),
+                        source: None,
                     });
                 }
                 *buffer = Some(SampleBuffer::new(*size));
@@ -266,6 +267,7 @@ impl RowSampler {
                                          stratified come first, e.g. \
                                          multi_stage([systematic(10), reservoir(1000)])."
                                 .to_string(),
+                            source: None,
                         });
                     }
                     Self::flatten(stage, filters, buffer)?;

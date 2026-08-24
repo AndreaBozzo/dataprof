@@ -203,10 +203,10 @@ pub async fn analyze_database_with_options(
         });
     }
     if config.batch_size == 0 {
-        return Err(DataProfilerError::InvalidConfiguration {
-            message: "database batch_size must be greater than zero".to_string(),
-            suggestion: "Set batch_size to a positive number of rows.".to_string(),
-        });
+        return Err(DataProfilerError::invalid_config(
+            "database batch_size must be greater than zero",
+            "Set batch_size to a positive number of rows.",
+        ));
     }
     let mut connector = create_connector(config.clone())?;
 

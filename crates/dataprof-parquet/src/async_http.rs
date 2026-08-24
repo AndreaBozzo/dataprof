@@ -29,8 +29,11 @@ impl HttpParquetReader {
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .map_err(|e| DataProfilerError::ParquetError {
-                message: format!("Reqwest client builder failed: {}", e),
+            .map_err(|e| {
+                DataProfilerError::parquet_with_source(
+                    format!("Reqwest client builder failed: {}", e),
+                    e,
+                )
             })?;
 
         let content_length = Self::discover_content_length(&client, url).await?;
@@ -69,7 +72,7 @@ impl HttpParquetReader {
                 message.push_str("; range probe fallback failed: ");
                 message.push_str(&probe_error);
 
-                DataProfilerError::ParquetError { message }
+                DataProfilerError::parquet_error(&message)
             })
     }
 
@@ -254,8 +257,11 @@ pub async fn analyze_parquet_async_http_with_options(
 
     let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
-        .map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to create Parquet stream builder: {}", e),
+        .map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to create Parquet stream builder: {}", e),
+                e,
+            )
         })?;
 
     let parquet_meta = builder.metadata().clone();
@@ -280,16 +286,22 @@ pub async fn analyze_parquet_async_http_with_options(
     let mut stream = builder
         .with_batch_size(config.batch_size)
         .build()
-        .map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to build Parquet stream: {}", e),
+        .map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to build Parquet stream: {}", e),
+                e,
+            )
         })?;
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
     analyzer.initialize_schema(arrow_schema.as_ref())?;
 
     while let Some(batch_result) = stream.next().await {
-        let batch = batch_result.map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to read Parquet async batch: {}", e),
+        let batch = batch_result.map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to read Parquet async batch: {}", e),
+                e,
+            )
         })?;
         analyzer.process_batch(&batch)?;
     }

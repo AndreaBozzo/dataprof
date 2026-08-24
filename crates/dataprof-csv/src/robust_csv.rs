@@ -229,7 +229,7 @@ impl RobustCsvParser {
                 }
 
                 recovery_manager
-                    .attempt_recovery(&dp_error, |strategy| {
+                    .attempt_recovery(dp_error, |strategy| {
                         self.try_recovery_strategy(file_path, strategy)
                     })
                     .map_err(|error| error.into())

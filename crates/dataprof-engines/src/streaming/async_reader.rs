@@ -65,19 +65,17 @@ fn peek_non_whitespace<R: std::io::BufRead>(
 
 /// Build a strict-mode error for a standard JSON document that is not exactly
 /// one value. Mirrors `dataprof_json::json_document_error`.
-fn json_document_error(err: &serde_json::Error) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!(
-            // One source line on purpose: see dataprof_json::json_document_error.
-            "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
-        ),
-    }
+fn json_document_error(err: serde_json::Error) -> DataProfilerError {
+    let message = format!(
+        // One source line on purpose: see dataprof_json::json_document_error.
+        "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
+    );
+    DataProfilerError::json_parsing_with_source(message, err)
 }
 
 fn malformed_json_array_error(message: &str) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!("malformed JSON array: {message}"),
-    }
+    // Callers hold a message, not the decoder error: nothing to retain.
+    DataProfilerError::json_parsing_error(&format!("malformed JSON array: {message}"))
 }
 
 /// One record read from a JSON or JSONL stream.
@@ -191,12 +189,11 @@ fn json_value_kind(value: &serde_json::Value) -> &'static str {
 /// distinct category from a syntax failure: the document parsed, it just does
 /// not hold records. `position` is 1-based over the records scanned so far.
 fn non_object_record_error(kind: &str, position: usize) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!(
-            "non-object JSON record at position {position}: \
-             expected an object with fields to profile, found {kind}"
-        ),
-    }
+    // No source: the document parsed, it simply does not hold records.
+    DataProfilerError::json_parsing_error(&format!(
+        "non-object JSON record at position {position}: \
+         expected an object with fields to profile, found {kind}"
+    ))
 }
 
 fn drain_to_end<R: std::io::BufRead>(reader: &mut R) -> Result<usize, DataProfilerError> {
@@ -520,7 +517,7 @@ impl AsyncStreamingProfiler {
 
     /// Map a `csv` crate error, pointing a strict-mode field-count failure at
     /// the option that would have recovered it instead.
-    fn csv_error(err: &csv::Error, flexible: bool) -> DataProfilerError {
+    fn csv_error(err: csv::Error, flexible: bool) -> DataProfilerError {
         let suggestion = if !flexible && matches!(err.kind(), csv::ErrorKind::UnequalLengths { .. })
         {
             "Set csv_flexible=true to recover ragged rows; every recovered row is \
@@ -528,10 +525,7 @@ impl AsyncStreamingProfiler {
         } else {
             "Check CSV formatting in the stream data"
         };
-        DataProfilerError::CsvParsingError {
-            message: err.to_string(),
-            suggestion: suggestion.to_string(),
-        }
+        DataProfilerError::csv_parsing_with_source(err.to_string(), suggestion, err)
     }
 
     /// Blocking reader task: uses the `csv` crate's RFC 4180-compliant parser
@@ -580,7 +574,7 @@ impl AsyncStreamingProfiler {
         // Send headers as the first chunk
         let headers = csv_reader
             .headers()
-            .map_err(|e| Self::csv_error(&e, flexible))?;
+            .map_err(|e| Self::csv_error(e, flexible))?;
 
         let header_fields: Vec<String> = headers.iter().map(|f| f.to_string()).collect();
         dataprof_core::validate_unique_column_names(&header_fields, "CSV header")?;
@@ -608,7 +602,7 @@ impl AsyncStreamingProfiler {
 
         while csv_reader
             .read_record(&mut record)
-            .map_err(|e| Self::csv_error(&e, flexible))?
+            .map_err(|e| Self::csv_error(e, flexible))?
         {
             // A field count differing from the header is a structural violation.
             // Counted here, before the row is queued, so the signal covers every
@@ -835,12 +829,13 @@ impl AsyncStreamingProfiler {
                                 // decoder's own line number is always 1 and
                                 // would mislead; its column is within the line
                                 // and so is also the column in the source.
-                                return Err(DataProfilerError::JsonParsingError {
-                                    message: format!(
-                                        "malformed JSON record on line {line_number}, column {}: a JSONL record must be one complete JSON value on one line",
-                                        e.column()
-                                    ),
-                                });
+                                let message = format!(
+                                    "malformed JSON record on line {line_number}, column {}: a JSONL record must be one complete JSON value on one line",
+                                    e.column()
+                                );
+                                return Err(DataProfilerError::json_parsing_with_source(
+                                    message, e,
+                                ));
                             }
                             // The offending line has already been consumed in
                             // full, so the next read starts at the next record.
@@ -887,7 +882,7 @@ impl AsyncStreamingProfiler {
                             }
                             Err(e) => {
                                 if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(json_document_error(&e));
+                                    return Err(json_document_error(e));
                                 }
                                 malformed_records += 1;
                             }
@@ -994,9 +989,10 @@ impl AsyncStreamingProfiler {
                                 // to resync, so we stop here either way; strict mode
                                 // surfaces the failure instead of a partial profile.
                                 if error_policy == JsonErrorPolicy::Strict {
-                                    return Err(DataProfilerError::JsonParsingError {
-                                        message: format!("malformed JSON record: {e}"),
-                                    });
+                                    let message = format!("malformed JSON record: {e}");
+                                    return Err(DataProfilerError::json_parsing_with_source(
+                                        message, e,
+                                    ));
                                 }
                                 malformed_records += 1;
                                 drain_remainder = true;
@@ -1053,11 +1049,12 @@ impl AsyncStreamingProfiler {
         // Input made up entirely of malformed records must fail, matching the
         // file/bytes paths, rather than surfacing a generic "empty stream" error.
         if emitted_records == 0 && malformed_records > 0 {
-            return Err(DataProfilerError::JsonParsingError {
-                message: "No valid JSON records found \
-                          (every record was malformed or not a JSON object)"
-                    .to_string(),
-            });
+            // Aggregate over many discarded records: no single decoder error
+            // is the cause, so none is retained.
+            return Err(DataProfilerError::json_parsing_error(
+                "No valid JSON records found \
+                 (every record was malformed or not a JSON object)",
+            ));
         }
 
         // Flush remaining
