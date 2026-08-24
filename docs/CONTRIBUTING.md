@@ -6,7 +6,9 @@ Thank you for considering contributing to dataprof! We welcome contributions fro
 
 ### Prerequisites
 
-- **Rust 1.96** or later ([install](https://rustup.rs/))
+- **Rust 1.96** or later ([install](https://rustup.rs/)). This is the MSRV; CI
+  lints and tests on a pinned 1.98, so reproduce clippy failures with
+  `cargo +1.98 clippy` instead of your default toolchain
 - **Cargo** (comes with Rust)
 - **Python 3.10** or later
 - **uv** for Python dependency and test commands ([install](https://docs.astral.sh/uv/))

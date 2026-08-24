@@ -35,8 +35,14 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Tag: $TAG, Version: $VERSION"
 
+    # 1.96 is the workspace MSRV (`rust-version` in Cargo.toml); validating
+    # release metadata on it also smoke-tests that the manifests still parse on
+    # the oldest supported toolchain. Dependabot bumped this to 1.100 (#521),
+    # a Rust that does not exist yet: dtolnay/rust-toolchain pre-creates version
+    # branches, so a resolvable ref is no proof of a released toolchain. That
+    # action is now on dependabot's ignore list.
     - name: Install Rust 1.96 for release metadata validation
-      uses: dtolnay/rust-toolchain@1.100
+      uses: dtolnay/rust-toolchain@1.96
 
     - name: Validate tag and release metadata
       env:
@@ -422,7 +428,7 @@ jobs:
         sccache: 'true'
         manylinux: ${{ matrix.manylinux || 'auto' }}
         # Ensure compatibility flags are properly set
-        rust-toolchain: stable
+        rust-toolchain: '1.98'
       env:
         RUSTFLAGS: ${{ matrix.rustflags }}
         # Additional environment variables to ensure compatibility for all targets
@@ -525,7 +531,7 @@ jobs:
         command: sdist
         args: --out dist
         manylinux: auto
-        rust-toolchain: stable
+        rust-toolchain: '1.98'
 
     - name: Upload sdist as artifact
       uses: actions/upload-artifact@v7

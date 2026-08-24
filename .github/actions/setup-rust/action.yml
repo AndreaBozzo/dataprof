@@ -17,9 +17,13 @@ inputs:
 runs:
   using: composite
   steps:
+    # This ref pins a Rust version. Under `@stable`, every open PR went red the
+    # day a Rust release landed, because a new clippy lint fires on code that
+    # was already merged (1.98 did this with `clippy::drain_collect`). Bump it
+    # deliberately, in step with the versions in `release.yml` and AGENTS.md.
     - name: Install Rust toolchain
       id: rust-install
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@1.98
       with:
         components: ${{ inputs.components }}
         targets: ${{ inputs.targets }}
@@ -32,7 +36,8 @@ runs:
       shell: bash
       run: |
         echo "Primary Rust installation failed, trying manual installation..."
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+          sh -s -- -y --default-toolchain 1.98
         source ~/.cargo/env
         if [ -n "${{ inputs.components }}" ]; then
           rustup component add $(echo "${{ inputs.components }}" | tr ',' ' ')

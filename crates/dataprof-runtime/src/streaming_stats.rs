@@ -181,7 +181,7 @@ impl StreamReservoirSampler {
             return;
         }
 
-        let mut combined: Vec<String> = self.reservoir.drain(..).collect();
+        let mut combined: Vec<String> = std::mem::take(&mut self.reservoir);
         combined.extend(other.reservoir.iter().cloned());
 
         let total = combined.len();

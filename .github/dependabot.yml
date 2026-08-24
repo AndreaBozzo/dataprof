@@ -32,3 +32,10 @@ updates:
     schedule:
       interval: "monthly"
     open-pull-requests-limit: 3
+    ignore:
+      # The ref on dtolnay/rust-toolchain names a Rust version rather than an
+      # action release. That repo pre-creates a branch for every upcoming
+      # version, so dependabot reads unreleased ones as available upgrades: it
+      # bumped the pin to 1.100 (#521), which rustup cannot install. Rust
+      # version bumps here are deliberate; make them by hand.
+      - dependency-name: "dtolnay/rust-toolchain"

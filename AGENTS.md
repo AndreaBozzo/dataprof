@@ -28,6 +28,13 @@ Keep changes within that identity.
 
 Prerequisites: Rust 1.96+, Python 3.10+, [uv](https://docs.astral.sh/uv/).
 
+1.96 is the MSRV (`rust-version` in `Cargo.toml`). CI lints and tests on a
+**pinned Rust 1.98**; see `.github/actions/setup-rust`. Clippy gates the build
+with `-D warnings` and every Rust release adds lints, so a local toolchain that
+differs from 1.98 can pass here and still fail CI, or the reverse. When clippy
+disagrees with CI, check `rustc --version` first and reproduce with
+`cargo +1.98 clippy`.
+
 ```bash
 uv sync                     # install the Python dev environment
 uv run maturin develop      # build + install the local Python extension
