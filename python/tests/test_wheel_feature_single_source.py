@@ -242,7 +242,7 @@ def _documented_feature_lists(text: str) -> list[tuple[str, list[str]]]:
     one string. A bare `--features` fragment with no command name on the line is
     ignored: the README shows one on purpose, as the example of what not to do.
     """
-    joined = re.sub(r"\\s*\n\s*", " ", text)
+    joined = re.sub(r"\\\s*\n\s*", " ", text)
     joined = re.sub(r'"\s*\n\s*"', "", joined)
     found = []
     for line in joined.splitlines():
@@ -284,3 +284,33 @@ def test_documented_source_builds_keep_everything_the_wheel_ships():
             )
             checked += 1
     assert checked, "no documented source-build commands found; has the wording changed?"
+
+
+def test_feature_lists_survive_shell_continuations():
+    r"""The parser must join a `\`-continued command however it is spaced.
+
+    `--features` often sits on the continuation line, so a join that misses
+    leaves the command invisible to the guards below: the flag line carries no
+    command name and is filtered out, and the check silently passes on a
+    command it never read. Trailing whitespace after the backslash is the case
+    that matters, because nothing renders it.
+    """
+    backslash = chr(92)
+    command = (
+        "pip install dataprof --no-binary dataprof {bs}{pad}\n"
+        '  --config-settings="build-args=--features python,parquet-async"'
+    )
+
+    for pad in ("", " ", "   "):
+        text = command.format(bs=backslash, pad=pad)
+        found = _documented_feature_lists(text)
+        assert found, f"continuation with {len(pad)} trailing space(s) was not joined"
+        assert found[0][1] == ["python", "parquet-async"]
+
+
+def test_bare_feature_fragments_are_not_treated_as_commands():
+    """The README shows an incomplete `--features` line on purpose, as the
+    example of what not to do. Counting it as a documented command would make
+    the docs guard fail on its own warning."""
+    text = '# Wrong: drops async support\n--features "python,python-async,database,sqlite"'
+    assert _documented_feature_lists(text) == []
