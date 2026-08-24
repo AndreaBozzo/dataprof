@@ -98,7 +98,6 @@ pub enum RecoveryStrategy {
     MemoryOptimization,
 }
 
-/// Enhanced error types with more descriptive messages for DataProfiler
 /// Boxed originating error retained by the variants that can carry a cause.
 ///
 /// `Box` rather than `Arc` is deliberate. `thiserror` renders a boxed source
@@ -1327,6 +1326,44 @@ mod tests {
             .and_then(|s| s.downcast_ref())
             .expect("source must downcast to csv::Error");
         assert!(matches!(csv.kind(), csv::ErrorKind::UnequalLengths { .. }));
+    }
+
+    // Gated exactly like the conversion it covers: without the feature there is
+    // no `From<ArrowError>` impl to test.
+    #[cfg(feature = "arrow")]
+    #[test]
+    fn from_arrow_error_retains_the_arrow_error() {
+        let original = arrow::error::ArrowError::ComputeError("overflow in sum".to_string());
+        let expected = original.to_string();
+        let err: DataProfilerError = original.into();
+
+        assert!(matches!(err, DataProfilerError::ArrowError { .. }));
+        let arrow_err: &arrow::error::ArrowError = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("source must downcast to arrow::error::ArrowError");
+        assert_eq!(arrow_err.to_string(), expected);
+        assert!(matches!(
+            arrow_err,
+            arrow::error::ArrowError::ComputeError(_)
+        ));
+    }
+
+    // Parquet failures reach the user through `parquet_with_source`, which the
+    // reader paths use; this covers that constructor's retention contract with
+    // a stand-in error so the test needs no parquet dependency here.
+    #[test]
+    fn parquet_with_source_retains_the_reader_error() {
+        let original = std::io::Error::new(std::io::ErrorKind::InvalidData, "Corrupt footer");
+        let err =
+            DataProfilerError::parquet_with_source("Failed to create Parquet reader", original);
+
+        assert!(err.to_string().contains("Failed to create Parquet reader"));
+        let io: &std::io::Error = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("parquet errors must retain the reader failure");
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

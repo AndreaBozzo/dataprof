@@ -61,8 +61,9 @@ the chain yields the `Arc` instead, every message still reads correctly, and
 every downcast silently returns `None`.
 
 **The cause-carrying variants are `#[non_exhaustive]`.** `CsvParsingError`,
-`IoError`, `JsonParsingError`, `ParquetError`, and `ArrowError` cannot be built
-with a struct expression from outside `dataprof-core`; use the constructors
+`IoError`, `JsonParsingError`, `ParquetError`, `ArrowError`, and
+`InvalidConfiguration` cannot be built with a struct expression from outside
+`dataprof-core`; use the constructors
 (`DataProfilerError::io_error`, `::json_parsing_with_source`,
 `::parquet_with_source`, and so on). Matching on them still works and must use
 `..`. This keeps adding a field to those variants a non-breaking change.
@@ -72,7 +73,7 @@ Downstream effects to expect when upgrading:
 | If you… | What to do |
 | --- | --- |
 | clone a `DataProfilerError` | Propagate it by value, or clone `to_string()` if only the text is needed. |
-| construct one of the five variants directly | Call the matching constructor instead. |
+| construct one of the six cause-carrying variants directly | Call the matching constructor instead (`invalid_config` and `invalid_config_with_source` for `InvalidConfiguration`). |
 | call `AutoRecoveryManager::attempt_recovery` | It takes the error by value now rather than by reference. |
 | call `DataProfilerError::io_error(&err)` | Pass the error by value: `map_err(DataProfilerError::io_error)`. |
 
