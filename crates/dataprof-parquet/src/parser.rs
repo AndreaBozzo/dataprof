@@ -239,9 +239,10 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
     let start = std::time::Instant::now();
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(chunks).map_err(|error| {
-        DataProfilerError::ParquetError {
-            message: format!("Failed to create Parquet reader: {}", error),
-        }
+        DataProfilerError::parquet_with_source(
+            format!("Failed to create Parquet reader: {}", error),
+            error,
+        )
     })?;
 
     let parquet_meta = builder.metadata();
@@ -270,17 +271,21 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
     if let Some(max) = config.max_rows {
         reader_builder = reader_builder.with_limit(max);
     }
-    let reader = reader_builder
-        .build()
-        .map_err(|error| DataProfilerError::ParquetError {
-            message: format!("Failed to build Parquet reader: {}", error),
-        })?;
+    let reader = reader_builder.build().map_err(|error| {
+        DataProfilerError::parquet_with_source(
+            format!("Failed to build Parquet reader: {}", error),
+            error,
+        )
+    })?;
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
     analyzer.initialize_schema(arrow_schema.as_ref())?;
     for batch_result in reader {
-        let batch = batch_result.map_err(|error| DataProfilerError::ParquetError {
-            message: format!("Failed to read Parquet batch: {}", error),
+        let batch = batch_result.map_err(|error| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to read Parquet batch: {}", error),
+                error,
+            )
         })?;
         analyzer.process_batch(&batch)?;
     }

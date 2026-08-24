@@ -98,11 +98,32 @@ pub enum RecoveryStrategy {
     MemoryOptimization,
 }
 
+/// Boxed originating error retained by the variants that can carry a cause.
+///
+/// `Box` rather than `Arc` is deliberate. `thiserror` renders a boxed source
+/// through `&**b`, so [`std::error::Error::source`] hands back the *concrete*
+/// error and `downcast_ref::<std::io::Error>()` succeeds. Behind an `Arc` the
+/// chain instead yields the `Arc`: the message still reads correctly while
+/// every downcast returns `None`, which is the exact capability this type
+/// exists to provide.
+pub type ErrorSource = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 /// Enhanced error types with more descriptive messages for DataProfiler
-#[derive(Error, Debug, Clone)]
+///
+/// Not `Clone`: a retained [`ErrorSource`] is a boxed trait object, and the
+/// originating errors (`std::io::Error`, `csv::Error`, ...) are not cloneable
+/// themselves. Cloning an error was only ever used by the recovery manager,
+/// which now takes ownership instead.
+#[derive(Error, Debug)]
 pub enum DataProfilerError {
     #[error("CSV parsing failed: {message}\nSuggestion: {suggestion}")]
-    CsvParsingError { message: String, suggestion: String },
+    #[non_exhaustive]
+    CsvParsingError {
+        message: String,
+        suggestion: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
     #[error(
         "File not found: {path}\nPlease check that the file exists and you have permission to read it"
@@ -121,7 +142,13 @@ pub enum DataProfilerError {
     MemoryLimitExceeded,
 
     #[error("Invalid configuration: {message}\n{suggestion}")]
-    InvalidConfiguration { message: String, suggestion: String },
+    #[non_exhaustive]
+    InvalidConfiguration {
+        message: String,
+        suggestion: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
     #[error("Invalid semantic hint: {message}\n{suggestion}")]
     InvalidSemanticHint { message: String, suggestion: String },
@@ -145,7 +172,12 @@ pub enum DataProfilerError {
     SamplingError { message: String, suggestion: String },
 
     #[error("I/O error: {message}\nCheck file permissions and disk space")]
-    IoError { message: String },
+    #[non_exhaustive]
+    IoError {
+        message: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
     #[error(
         "Non-UTF-8 input in {path}: {detail}\nRe-encode the file as UTF-8 (e.g. `iconv -f {guess} -t UTF-8 '{path}'`) and profile the result"
@@ -157,7 +189,12 @@ pub enum DataProfilerError {
     },
 
     #[error("JSON parsing failed: {message}\nVerify JSON format and encoding")]
-    JsonParsingError { message: String },
+    #[non_exhaustive]
+    JsonParsingError {
+        message: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
     #[error("Column analysis failed for '{column}': {reason}\n{suggestion}")]
     ColumnAnalysisError {
@@ -188,10 +225,20 @@ pub enum DataProfilerError {
     },
 
     #[error("Parquet processing failed: {message}")]
-    ParquetError { message: String },
+    #[non_exhaustive]
+    ParquetError {
+        message: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
     #[error("Arrow processing failed: {message}")]
-    ArrowError { message: String },
+    #[non_exhaustive]
+    ArrowError {
+        message: String,
+        #[source]
+        source: Option<ErrorSource>,
+    },
 
     #[error("Unsupported data source: {message}")]
     UnsupportedDataSource { message: String },
@@ -351,7 +398,24 @@ impl DataProfilerError {
         DataProfilerError::CsvParsingError {
             message: original_error.to_string(),
             suggestion,
+            source: None,
         }
+    }
+
+    /// Create a CSV parsing error that retains `original` as its source.
+    ///
+    /// The suggestion is derived from the same message text as
+    /// [`DataProfilerError::csv_parsing`], so the two forms render identically;
+    /// only the cause chain differs.
+    pub fn csv_parsing_from<E>(original: E, file_path: Option<&str>) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let mut err = Self::csv_parsing(&original.to_string(), file_path);
+        if let DataProfilerError::CsvParsingError { source, .. } = &mut err {
+            *source = Some(Box::new(original));
+        }
+        err
     }
 
     /// Create a file not found error with path context
@@ -373,6 +437,26 @@ impl DataProfilerError {
         DataProfilerError::InvalidConfiguration {
             message: message.to_string(),
             suggestion: suggestion.to_string(),
+            source: None,
+        }
+    }
+
+    /// Create a configuration error that retains `original` as its source.
+    ///
+    /// Used by the TOML and glob conversions, where the underlying parser
+    /// reports a position worth reaching programmatically.
+    pub fn invalid_config_with_source<E>(
+        message: impl Into<String>,
+        suggestion: impl Into<String>,
+        original: E,
+    ) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::InvalidConfiguration {
+            message: message.into(),
+            suggestion: suggestion.into(),
+            source: Some(Box::new(original)),
         }
     }
 
@@ -416,17 +500,155 @@ impl DataProfilerError {
         }
     }
 
-    /// Create I/O error with context
-    pub fn io_error(original: &std::io::Error) -> Self {
+    /// Create an I/O error that retains `original` as its source.
+    ///
+    /// Takes the error by value: `std::io::Error` is not cloneable, so a
+    /// borrowed one could only ever be stringified, which is what this issue
+    /// set out to stop. Use `map_err(DataProfilerError::io_error)` at call
+    /// sites.
+    pub fn io_error(original: std::io::Error) -> Self {
         DataProfilerError::IoError {
             message: original.to_string(),
+            source: Some(Box::new(original)),
         }
     }
 
-    /// Create JSON parsing error
+    /// Create an I/O error from a message, for callers with no originating
+    /// error to retain (a condition detected by dataprof itself rather than
+    /// reported by the OS).
+    pub fn io_message(message: &str) -> Self {
+        DataProfilerError::IoError {
+            message: message.to_string(),
+            source: None,
+        }
+    }
+
+    /// Create a JSON parsing error with no retained source.
     pub fn json_parsing_error(original: &str) -> Self {
         DataProfilerError::JsonParsingError {
             message: original.to_string(),
+            source: None,
+        }
+    }
+
+    /// Create a JSON parsing error that retains `original` as its source.
+    pub fn json_parsing_from<E>(original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::JsonParsingError {
+            message: original.to_string(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create a CSV parsing error with a caller-supplied message and
+    /// suggestion that still retains `original` as its source.
+    ///
+    /// For callers whose suggestion is specific to their own context and so
+    /// cannot come from [`DataProfilerError::csv_parsing`]'s message analysis.
+    pub fn csv_parsing_with_source<E>(
+        message: impl Into<String>,
+        suggestion: impl Into<String>,
+        original: E,
+    ) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::CsvParsingError {
+            message: message.into(),
+            suggestion: suggestion.into(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create a JSON parsing error with a caller-supplied message that still
+    /// retains `original` as its source.
+    ///
+    /// Used where the message adds context the decoder does not have (a record
+    /// position, a physical line number) and the decoder error is still worth
+    /// keeping underneath it.
+    pub fn json_parsing_with_source<E>(message: impl Into<String>, original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::JsonParsingError {
+            message: message.into(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create an Arrow error with a caller-supplied message that still retains
+    /// `original` as its source.
+    pub fn arrow_with_source<E>(message: impl Into<String>, original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::ArrowError {
+            message: message.into(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create a Parquet error with a caller-supplied message that still retains
+    /// `original` as its source.
+    pub fn parquet_with_source<E>(message: impl Into<String>, original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::ParquetError {
+            message: message.into(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create an I/O error with a caller-supplied message that still retains
+    /// `original` as its source.
+    pub fn io_with_source<E>(message: impl Into<String>, original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::IoError {
+            message: message.into(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create an Arrow error with no retained source.
+    pub fn arrow_error(message: &str) -> Self {
+        DataProfilerError::ArrowError {
+            message: message.to_string(),
+            source: None,
+        }
+    }
+
+    /// Create an Arrow error that retains `original` as its source.
+    pub fn arrow_error_from<E>(original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::ArrowError {
+            message: original.to_string(),
+            source: Some(Box::new(original)),
+        }
+    }
+
+    /// Create a Parquet error with no retained source.
+    pub fn parquet_error(message: &str) -> Self {
+        DataProfilerError::ParquetError {
+            message: message.to_string(),
+            source: None,
+        }
+    }
+
+    /// Create a Parquet error that retains `original` as its source.
+    pub fn parquet_error_from<E>(original: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        DataProfilerError::ParquetError {
+            message: original.to_string(),
+            source: Some(Box::new(original)),
         }
     }
 
@@ -624,18 +846,30 @@ impl From<anyhow::Error> for DataProfilerError {
     fn from(err: anyhow::Error) -> Self {
         let error_str = err.to_string();
 
+        // The anyhow error is retained as the source in every branch, so a
+        // caller can still reach the concrete error underneath it via
+        // `source()` even though categorisation here is message-based.
+        let source: Option<ErrorSource> = Some(err.into());
+
         // Categorize by message only; do not invent a path we do not have.
         if error_str.contains("CSV") {
             DataProfilerError::CsvParsingError {
                 message: error_str,
                 suggestion: "Try using robust CSV parsing mode".to_string(),
+                source,
             }
         } else if error_str.contains("JSON") {
-            DataProfilerError::JsonParsingError { message: error_str }
+            DataProfilerError::JsonParsingError {
+                message: error_str,
+                source,
+            }
         } else {
             // Generic I/O error — the original message carries the detail
             // (including "file not found" wording) without a fabricated path.
-            DataProfilerError::IoError { message: error_str }
+            DataProfilerError::IoError {
+                message: error_str,
+                source,
+            }
         }
     }
 }
@@ -647,13 +881,19 @@ impl From<anyhow::Error> for DataProfilerError {
 /// message (which already names the condition) rather than guessing a path.
 impl From<std::io::Error> for DataProfilerError {
     fn from(err: std::io::Error) -> Self {
-        match err.kind() {
-            std::io::ErrorKind::PermissionDenied => DataProfilerError::IoError {
-                message: "Permission denied - check file access rights".to_string(),
-            },
-            _ => DataProfilerError::IoError {
-                message: err.to_string(),
-            },
+        // The message is still rewritten for PermissionDenied, but the original
+        // error is retained either way: `err.source()` now yields the
+        // `std::io::Error`, so a caller can match on `kind()` instead of
+        // pattern-matching the human-readable text.
+        let message = match err.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                "Permission denied - check file access rights".to_string()
+            }
+            _ => err.to_string(),
+        };
+        DataProfilerError::IoError {
+            message,
+            source: Some(Box::new(err)),
         }
     }
 }
@@ -664,7 +904,7 @@ impl From<std::io::Error> for DataProfilerError {
 /// without a filename rather than the misleading `'unknown'` placeholder.
 impl From<csv::Error> for DataProfilerError {
     fn from(err: csv::Error) -> Self {
-        DataProfilerError::csv_parsing(&err.to_string(), None)
+        DataProfilerError::csv_parsing_from(err, None)
     }
 }
 
@@ -672,48 +912,46 @@ impl From<csv::Error> for DataProfilerError {
 #[cfg(feature = "arrow")]
 impl From<arrow::error::ArrowError> for DataProfilerError {
     fn from(err: arrow::error::ArrowError) -> Self {
-        DataProfilerError::ArrowError {
-            message: err.to_string(),
-        }
+        DataProfilerError::arrow_error_from(err)
     }
 }
 
 /// Convert from serde_json::Error to DataProfilerError
 impl From<serde_json::Error> for DataProfilerError {
     fn from(err: serde_json::Error) -> Self {
-        DataProfilerError::JsonParsingError {
-            message: err.to_string(),
-        }
+        DataProfilerError::json_parsing_from(err)
     }
 }
 
 /// Convert from glob::PatternError to DataProfilerError
 impl From<glob::PatternError> for DataProfilerError {
     fn from(err: glob::PatternError) -> Self {
-        DataProfilerError::InvalidConfiguration {
-            message: format!("Invalid glob pattern: {}", err),
-            suggestion: "Check the glob pattern syntax".to_string(),
-        }
+        let message = format!("Invalid glob pattern: {}", err);
+        DataProfilerError::invalid_config_with_source(message, "Check the glob pattern syntax", err)
     }
 }
 
 /// Convert from toml::de::Error to DataProfilerError
 impl From<toml::de::Error> for DataProfilerError {
     fn from(err: toml::de::Error) -> Self {
-        DataProfilerError::InvalidConfiguration {
-            message: format!("Failed to parse TOML configuration: {}", err),
-            suggestion: "Check your configuration file syntax".to_string(),
-        }
+        let message = format!("Failed to parse TOML configuration: {}", err);
+        DataProfilerError::invalid_config_with_source(
+            message,
+            "Check your configuration file syntax",
+            err,
+        )
     }
 }
 
 /// Convert from toml::ser::Error to DataProfilerError
 impl From<toml::ser::Error> for DataProfilerError {
     fn from(err: toml::ser::Error) -> Self {
-        DataProfilerError::InvalidConfiguration {
-            message: format!("Failed to serialize configuration: {}", err),
-            suggestion: "Check configuration values for serialization issues".to_string(),
-        }
+        let message = format!("Failed to serialize configuration: {}", err);
+        DataProfilerError::invalid_config_with_source(
+            message,
+            "Check configuration values for serialization issues",
+            err,
+        )
     }
 }
 
@@ -734,18 +972,18 @@ impl AutoRecoveryManager {
     /// Attempt auto-recovery for a given error
     pub fn attempt_recovery<F, T>(
         &mut self,
-        error: &DataProfilerError,
+        error: DataProfilerError,
         retry_fn: F,
     ) -> Result<T, DataProfilerError>
     where
         F: Fn(RecoveryStrategy) -> Result<T, DataProfilerError>,
     {
         if !error.supports_auto_recovery() {
-            return Err(error.clone());
+            return Err(error);
         }
 
         let strategies = error.suggested_recovery_strategies();
-        let mut last_error: DataProfilerError = error.clone();
+        let mut last_error: DataProfilerError = error;
 
         for (attempt, strategy) in strategies.iter().enumerate() {
             if attempt >= self.config.max_attempts {
@@ -1020,5 +1258,191 @@ mod tests {
             "pool timed out connecting to postgres://user:topsecret@host/db",
         );
         assert!(!err.to_string().contains("topsecret"));
+    }
+
+    // --- source chain (#447) ---------------------------------------------
+    //
+    // The point of retaining a source is that a caller can recover the
+    // *concrete* originating error, not just a string that reads like it. Each
+    // test below therefore downcasts, rather than comparing rendered text.
+
+    use std::error::Error as _;
+
+    #[test]
+    fn io_error_retains_the_os_error_and_its_kind() {
+        let original = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied by acl");
+        let err = DataProfilerError::io_error(original);
+
+        let source = err.source().expect("io error must retain a source");
+        let io: &std::io::Error = source
+            .downcast_ref()
+            .expect("source must downcast to the original std::io::Error");
+        assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn from_io_error_retains_the_kind_even_when_the_message_is_rewritten() {
+        // PermissionDenied is the one branch that replaces the OS text, so it is
+        // the case where a flattened source would lose the most.
+        let original = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied by acl");
+        let err: DataProfilerError = original.into();
+
+        assert!(err.to_string().contains("Permission denied"));
+        let io: &std::io::Error = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("rewritten message must still retain the io::Error");
+        assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(io.to_string().contains("denied by acl"));
+    }
+
+    #[test]
+    fn from_json_error_retains_line_and_column() {
+        let original = serde_json::from_str::<serde_json::Value>("{oops}").unwrap_err();
+        let (line, column) = (original.line(), original.column());
+        let err: DataProfilerError = original.into();
+
+        let json: &serde_json::Error = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("source must downcast to serde_json::Error");
+        assert_eq!((json.line(), json.column()), (line, column));
+    }
+
+    #[test]
+    fn from_csv_error_retains_the_csv_error_kind() {
+        let mut reader = csv::ReaderBuilder::new()
+            .flexible(false)
+            .from_reader("a,b\n1,2,3\n".as_bytes());
+        let original = reader
+            .records()
+            .next()
+            .expect("one record")
+            .expect_err("ragged row must fail with flexible(false)");
+        let err: DataProfilerError = original.into();
+
+        let csv: &csv::Error = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("source must downcast to csv::Error");
+        assert!(matches!(csv.kind(), csv::ErrorKind::UnequalLengths { .. }));
+    }
+
+    // Gated exactly like the conversion it covers: without the feature there is
+    // no `From<ArrowError>` impl to test.
+    #[cfg(feature = "arrow")]
+    #[test]
+    fn from_arrow_error_retains_the_arrow_error() {
+        let original = arrow::error::ArrowError::ComputeError("overflow in sum".to_string());
+        let expected = original.to_string();
+        let err: DataProfilerError = original.into();
+
+        assert!(matches!(err, DataProfilerError::ArrowError { .. }));
+        let arrow_err: &arrow::error::ArrowError = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("source must downcast to arrow::error::ArrowError");
+        assert_eq!(arrow_err.to_string(), expected);
+        assert!(matches!(
+            arrow_err,
+            arrow::error::ArrowError::ComputeError(_)
+        ));
+    }
+
+    // Parquet failures reach the user through `parquet_with_source`, which the
+    // reader paths use; this covers that constructor's retention contract with
+    // a stand-in error so the test needs no parquet dependency here.
+    #[test]
+    fn parquet_with_source_retains_the_reader_error() {
+        let original = std::io::Error::new(std::io::ErrorKind::InvalidData, "Corrupt footer");
+        let err =
+            DataProfilerError::parquet_with_source("Failed to create Parquet reader", original);
+
+        assert!(err.to_string().contains("Failed to create Parquet reader"));
+        let io: &std::io::Error = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("parquet errors must retain the reader failure");
+        assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn from_toml_error_retains_the_parse_error() {
+        let original = toml::from_str::<toml::Value>("key = [unclosed").unwrap_err();
+        let expected = original.to_string();
+        let err: DataProfilerError = original.into();
+
+        let toml_err: &toml::de::Error = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("source must downcast to toml::de::Error");
+        assert_eq!(toml_err.to_string(), expected);
+    }
+
+    #[test]
+    fn from_glob_error_retains_the_pattern_error() {
+        let original = glob::Pattern::new("[").unwrap_err();
+        let expected = original.to_string();
+        let err: DataProfilerError = original.into();
+
+        let glob_err: &glob::PatternError = err
+            .source()
+            .and_then(|s| s.downcast_ref())
+            .expect("source must downcast to glob::PatternError");
+        assert_eq!(glob_err.to_string(), expected);
+    }
+
+    #[test]
+    fn errors_built_without_a_cause_report_no_source() {
+        // "No source" must stay distinguishable from "source not retained":
+        // these variants genuinely have no originating error underneath.
+        assert!(
+            DataProfilerError::io_message("disk budget exceeded")
+                .source()
+                .is_none()
+        );
+        assert!(
+            DataProfilerError::json_parsing_error("not an object")
+                .source()
+                .is_none()
+        );
+        assert!(
+            DataProfilerError::arrow_error("downcast failed")
+                .source()
+                .is_none()
+        );
+        assert!(
+            DataProfilerError::file_not_found("/nope")
+                .source()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn retaining_a_source_does_not_change_the_rendered_message() {
+        // The #373 message contract is independent of the cause chain: the two
+        // constructions must be indistinguishable in output.
+        let original = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
+        let text = original.to_string();
+
+        let with_source = DataProfilerError::io_error(original).to_string();
+        let without_source = DataProfilerError::io_message(&text).to_string();
+        assert_eq!(with_source, without_source);
+    }
+
+    #[test]
+    fn the_whole_chain_is_walkable_to_the_root() {
+        let original = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "truncated");
+        let err = DataProfilerError::io_with_source("reading chunk 4", original);
+
+        let mut depth = 0;
+        let mut current: Option<&(dyn std::error::Error + 'static)> = Some(&err);
+        while let Some(e) = current {
+            current = e.source();
+            depth += 1;
+        }
+        // Exactly two links: the DataProfilerError and the io::Error beneath it.
+        // A wrapper type in between would make this 3 and break downcasting.
+        assert_eq!(depth, 2);
     }
 }

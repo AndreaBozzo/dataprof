@@ -191,7 +191,7 @@ where
                     }
                     JsonRecord::Malformed(err) => {
                         if config.error_policy == JsonErrorPolicy::Strict {
-                            return Err(malformed_jsonl_record_error(line_number, &err));
+                            return Err(malformed_jsonl_record_error(line_number, err));
                         }
                         malformed_lines += 1;
                     }
@@ -290,7 +290,7 @@ where
                             }
                             JsonRecord::Malformed(err) => {
                                 if config.error_policy == JsonErrorPolicy::Strict {
-                                    return Err(malformed_record_error(&err));
+                                    return Err(malformed_record_error(err));
                                 }
                                 malformed_lines += 1;
                                 drain_remainder = true;
@@ -431,7 +431,7 @@ where
         }
         Err(err) => {
             if config.error_policy == JsonErrorPolicy::Strict {
-                return Err(json_document_error(&err));
+                return Err(json_document_error(err));
             }
             Ok((0, 1, false))
         }
@@ -565,21 +565,20 @@ fn json_value_kind(value: &Value) -> &'static str {
 /// distinct category from a syntax failure: the document parsed, it just does
 /// not hold records. `position` is 1-based over the records scanned so far.
 fn non_object_record_error(kind: &str, position: usize) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!(
-            "non-object JSON record at position {position}: \
-             expected an object with fields to profile, found {kind}"
-        ),
-    }
+    // No source: the document parsed cleanly, it simply does not hold records,
+    // so there is no decoder error underneath to retain.
+    DataProfilerError::json_parsing_error(&format!(
+        "non-object JSON record at position {position}: \
+         expected an object with fields to profile, found {kind}"
+    ))
 }
 
 /// Build a strict-mode parse error from a serde failure. The serde message
 /// carries line/column context but never the record contents, so it is safe to
 /// surface directly.
-fn malformed_record_error(err: &serde_json::Error) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!("malformed JSON record: {err}"),
-    }
+fn malformed_record_error(err: serde_json::Error) -> DataProfilerError {
+    let message = format!("malformed JSON record: {err}");
+    DataProfilerError::json_parsing_with_source(message, err)
 }
 
 /// Build a strict-mode parse error for a JSONL record, located by its physical
@@ -589,19 +588,18 @@ fn malformed_record_error(err: &serde_json::Error) -> DataProfilerError {
 /// and would be misleading; the column it reports is within the line and so is
 /// also the column in the file. The record's text is never included. Matches the
 /// phrasing the Python bytes reader uses for the same failure.
-fn malformed_jsonl_record_error(line: usize, err: &serde_json::Error) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!(
-            "malformed JSON record on line {line}, column {}: a JSONL record must be one complete JSON value on one line",
-            err.column()
-        ),
-    }
+fn malformed_jsonl_record_error(line: usize, err: serde_json::Error) -> DataProfilerError {
+    let message = format!(
+        "malformed JSON record on line {line}, column {}: a JSONL record must be one complete JSON value on one line",
+        err.column()
+    );
+    DataProfilerError::json_parsing_with_source(message, err)
 }
 
 fn malformed_array_error(message: &str) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!("malformed JSON array: {message}"),
-    }
+    // Callers here hold only a message, not the decoder error, so there is
+    // nothing to retain.
+    DataProfilerError::json_parsing_error(&format!("malformed JSON array: {message}"))
 }
 
 /// Build a strict-mode error for a standard JSON document that is not exactly
@@ -610,15 +608,14 @@ fn malformed_array_error(message: &str) -> DataProfilerError {
 /// The most common cause is JSONL read with the JSON grammar — several objects
 /// back to back parse as one value plus trailing characters — so the message
 /// names the option that would read it correctly.
-fn json_document_error(err: &serde_json::Error) -> DataProfilerError {
-    DataProfilerError::JsonParsingError {
-        message: format!(
-            // One source line on purpose: rustfmt may join a `\`-continued
-            // literal and leave its indentation inside the string, which silently
-            // corrupted this very message once.
-            "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
-        ),
-    }
+fn json_document_error(err: serde_json::Error) -> DataProfilerError {
+    let message = format!(
+        // One source line on purpose: rustfmt may join a `\`-continued
+        // literal and leave its indentation inside the string, which silently
+        // corrupted this very message once.
+        "malformed JSON document: {err}. A JSON source must hold exactly one array or object; for one record per line use format=\"jsonl\""
+    );
+    DataProfilerError::json_parsing_with_source(message, err)
 }
 
 fn drain_to_end<R: BufRead>(reader: &mut R) -> Result<(), DataProfilerError> {
@@ -881,12 +878,12 @@ pub fn analyze_json_file_with_options(
             } else {
                 ""
             };
-            return Err(DataProfilerError::JsonParsingError {
-                message: format!(
-                    "No valid JSON records found in file \
-                     (every record was malformed or not a JSON object){hint}"
-                ),
-            });
+            // Aggregate over many discarded records: no single decoder error
+            // is the cause, so none is retained.
+            return Err(DataProfilerError::json_parsing_error(&format!(
+                "No valid JSON records found in file \
+                 (every record was malformed or not a JSON object){hint}"
+            )));
         }
         // A row cap that stopped the scan before the first record still has to
         // be disclosed. Without this the report reads exactly like a complete

@@ -203,9 +203,7 @@ fn infer_schema_parquet(path: &Path, start: Instant) -> Result<SchemaResult, Dat
     })?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
-        DataProfilerError::ParquetError {
-            message: format!("Failed to read Parquet metadata: {}", e),
-        }
+        DataProfilerError::parquet_with_source(format!("Failed to read Parquet metadata: {}", e), e)
     })?;
 
     let arrow_schema = builder.schema();
@@ -353,7 +351,7 @@ fn count_from_reader<R: Read>(
         FileFormat::Jsonl => {
             let mut count: u64 = 0;
             for line in buf_reader.lines() {
-                let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+                let line = line.map_err(DataProfilerError::io_error)?;
                 if !line.trim().is_empty() {
                     count += 1;
                 }
@@ -387,9 +385,10 @@ fn count_from_reader<R: Read>(
             }
             let mut de = serde_json::Deserializer::from_reader(buf_reader);
             let count = de.deserialize_seq(ArrayCountVisitor).map_err(|e| {
-                DataProfilerError::JsonParsingError {
-                    message: format!("Failed to parse JSON array: {}", e),
-                }
+                DataProfilerError::json_parsing_with_source(
+                    format!("Failed to parse JSON array: {}", e),
+                    e,
+                )
             })?;
             Ok(RowCountEstimate {
                 count,
@@ -420,9 +419,7 @@ fn count_parquet(path: &Path, start: Instant) -> Result<RowCountEstimate, DataPr
     })?;
 
     let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|e| {
-        DataProfilerError::ParquetError {
-            message: format!("Failed to read Parquet metadata: {}", e),
-        }
+        DataProfilerError::parquet_with_source(format!("Failed to read Parquet metadata: {}", e), e)
     })?;
 
     let count = builder.metadata().file_metadata().num_rows() as u64;
@@ -519,7 +516,7 @@ fn full_scan_jsonl<R: BufRead>(
 ) -> Result<RowCountEstimate, DataProfilerError> {
     let mut count: u64 = 0;
     for line in reader.lines() {
-        let line = line.map_err(|e| DataProfilerError::io_error(&e))?;
+        let line = line.map_err(DataProfilerError::io_error)?;
         if !line.trim().is_empty() {
             count += 1;
         }
@@ -585,7 +582,7 @@ fn sample_row_density_multi_offset(
     for w in 0..ROW_SAMPLE_WINDOWS {
         let offset = window_span * w as u64 + window_span / 2;
         file.seek(SeekFrom::Start(offset))
-            .map_err(|e| DataProfilerError::io_error(&e))?;
+            .map_err(DataProfilerError::io_error)?;
         let mut reader = BufReader::new(&mut file);
 
         // Each window seeks into the middle of the file and most likely lands
@@ -595,7 +592,7 @@ fn sample_row_density_multi_offset(
             let mut partial = String::new();
             reader
                 .read_line(&mut partial)
-                .map_err(|e| DataProfilerError::io_error(&e))?;
+                .map_err(DataProfilerError::io_error)?;
         }
 
         let mut win_bytes: u64 = 0;
@@ -606,7 +603,7 @@ fn sample_row_density_multi_offset(
             // the on-disk length (including `\r\n`) without a manual +1.
             let n = reader
                 .read_line(&mut line)
-                .map_err(|e| DataProfilerError::io_error(&e))?;
+                .map_err(DataProfilerError::io_error)?;
             if n == 0 {
                 break; // EOF
             }
@@ -724,9 +721,10 @@ fn count_json(
             // memory usage constant regardless of array size.
             let reader = BufReader::new(file);
             let arr: Vec<serde::de::IgnoredAny> = serde_json::from_reader(reader).map_err(|e| {
-                DataProfilerError::JsonParsingError {
-                    message: format!("Failed to parse JSON array: {}", e),
-                }
+                DataProfilerError::json_parsing_with_source(
+                    format!("Failed to parse JSON array: {}", e),
+                    e,
+                )
             })?;
 
             Ok(RowCountEstimate {
@@ -763,9 +761,7 @@ fn consume_leading_whitespace<R: BufRead>(reader: &mut R) -> Result<Option<u8>, 
     loop {
         let mut bytes_to_consume = 0;
         let first_non_whitespace = {
-            let buf = reader
-                .fill_buf()
-                .map_err(|e| DataProfilerError::io_error(&e))?;
+            let buf = reader.fill_buf().map_err(DataProfilerError::io_error)?;
 
             if buf.is_empty() {
                 return Ok(None);

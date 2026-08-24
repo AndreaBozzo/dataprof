@@ -47,6 +47,36 @@ available through their owning workspace crates when needed.
 | Low-level acceleration and serialization helpers | Implementation details owned by `dataprof-metrics` and `dataprof-core`. |
 | Database row-processing helpers | Internal database pipeline details owned by `dataprof-db`. |
 
+## Error Type Compatibility
+
+`DataProfilerError` is a public enum, and two of its properties are
+compatibility-sensitive.
+
+**It is not `Clone`.** The variants that can carry a cause hold an
+`ErrorSource` (a boxed `dyn Error`), and neither that nor the errors it wraps
+(`std::io::Error`, `csv::Error`, ...) are cloneable. `Box` is used rather than
+`Arc` deliberately: only a boxed source lets `Error::source()` hand back the
+concrete error, so `downcast_ref::<std::io::Error>()` resolves. Behind an `Arc`
+the chain yields the `Arc` instead, every message still reads correctly, and
+every downcast silently returns `None`.
+
+**The cause-carrying variants are `#[non_exhaustive]`.** `CsvParsingError`,
+`IoError`, `JsonParsingError`, `ParquetError`, `ArrowError`, and
+`InvalidConfiguration` cannot be built with a struct expression from outside
+`dataprof-core`; use the constructors
+(`DataProfilerError::io_error`, `::json_parsing_with_source`,
+`::parquet_with_source`, and so on). Matching on them still works and must use
+`..`. This keeps adding a field to those variants a non-breaking change.
+
+Downstream effects to expect when upgrading:
+
+| If you… | What to do |
+| --- | --- |
+| clone a `DataProfilerError` | Propagate it by value, or clone `to_string()` if only the text is needed. |
+| construct one of the six cause-carrying variants directly | Call the matching constructor instead (`invalid_config` and `invalid_config_with_source` for `InvalidConfiguration`). |
+| call `AutoRecoveryManager::attempt_recovery` | It takes the error by value now rather than by reference. |
+| call `DataProfilerError::io_error(&err)` | Pass the error by value: `map_err(DataProfilerError::io_error)`. |
+
 ## Coverage Expectations
 
 Public API compile coverage should exercise:

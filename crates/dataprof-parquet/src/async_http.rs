@@ -29,8 +29,11 @@ impl HttpParquetReader {
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .map_err(|e| DataProfilerError::ParquetError {
-                message: format!("Reqwest client builder failed: {}", e),
+            .map_err(|e| {
+                DataProfilerError::parquet_with_source(
+                    format!("Reqwest client builder failed: {}", e),
+                    e,
+                )
             })?;
 
         let content_length = Self::discover_content_length(&client, url).await?;
@@ -46,30 +49,41 @@ impl HttpParquetReader {
         client: &Client,
         url: &str,
     ) -> Result<usize, DataProfilerError> {
-        let head_failure = match client.head(url).send().await {
+        let (head_failure, head_transport_error) = match client.head(url).send().await {
             Ok(head_res) if head_res.status().is_success() => {
                 if let Some(content_length) = Self::content_length_from_headers(head_res.headers())
                 {
                     return Ok(content_length);
                 }
-                "Server did not provide Content-Length header on HEAD".to_string()
+                (
+                    "Server did not provide Content-Length header on HEAD".to_string(),
+                    None,
+                )
             }
-            Ok(head_res) => {
-                format!("HTTP HEAD request returned status {}", head_res.status())
-            }
-            Err(error) => {
-                format!("Failed to HEAD url: {}", error)
-            }
+            Ok(head_res) => (
+                format!("HTTP HEAD request returned status {}", head_res.status()),
+                None,
+            ),
+            Err(error) => (format!("Failed to HEAD url: {}", error), Some(error)),
         };
 
         Self::probe_content_length_with_range(client, url)
             .await
-            .map_err(|probe_error| {
+            .map_err(|probe_failure| {
                 let mut message = head_failure;
                 message.push_str("; range probe fallback failed: ");
-                message.push_str(&probe_error);
+                message.push_str(&probe_failure.message);
 
-                DataProfilerError::ParquetError { message }
+                // The probe is the more proximate failure, so its transport
+                // error is the cause when there is one; the HEAD error is the
+                // fallback for a probe that failed on a protocol condition
+                // (a 200 where 206 was required) rather than on transport.
+                // Neither exists when both failed on protocol alone, and then
+                // the error correctly reports no cause at all.
+                match probe_failure.transport_error.or(head_transport_error) {
+                    Some(error) => DataProfilerError::parquet_with_source(message, error),
+                    None => DataProfilerError::parquet_error(&message),
+                }
             })
     }
 
@@ -94,16 +108,24 @@ impl HttpParquetReader {
         total_size.parse::<usize>().ok()
     }
 
-    async fn probe_content_length_with_range(client: &Client, url: &str) -> Result<usize, String> {
+    async fn probe_content_length_with_range(
+        client: &Client,
+        url: &str,
+    ) -> Result<usize, ProbeFailure> {
         let response = client
             .get(url)
             .header(reqwest::header::RANGE, "bytes=0-0")
             .send()
             .await
-            .map_err(|error| format!("failed to fetch byte-range probe: {}", error))?;
+            .map_err(|error| {
+                ProbeFailure::transport(
+                    format!("failed to fetch byte-range probe: {}", error),
+                    error,
+                )
+            })?;
 
         if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-            return Err(match response.status() {
+            return Err(ProbeFailure::protocol(match response.status() {
                 reqwest::StatusCode::OK => {
                     "server ignored Range header during size probe and returned 200 OK".to_string()
                 }
@@ -111,12 +133,43 @@ impl HttpParquetReader {
                     "expected 206 Partial Content from size probe, got {}",
                     status
                 ),
-            });
+            }));
         }
 
         Self::content_length_from_content_range(response.headers()).ok_or_else(|| {
-            "server did not provide a parseable Content-Range total during size probe".to_string()
+            ProbeFailure::protocol(
+                "server did not provide a parseable Content-Range total during size probe"
+                    .to_string(),
+            )
         })
+    }
+}
+
+/// Why a byte-range size probe could not determine the object's size.
+///
+/// Carries the transport error when there was one, so a network failure
+/// survives into the profiling error's cause chain instead of being flattened
+/// into the message. A probe that failed on a protocol condition — a 200 where
+/// 206 was required, an unparseable `Content-Range` — genuinely has no
+/// underlying error, and reports none.
+struct ProbeFailure {
+    message: String,
+    transport_error: Option<reqwest::Error>,
+}
+
+impl ProbeFailure {
+    fn transport(message: String, error: reqwest::Error) -> Self {
+        Self {
+            message,
+            transport_error: Some(error),
+        }
+    }
+
+    fn protocol(message: String) -> Self {
+        Self {
+            message,
+            transport_error: None,
+        }
     }
 }
 
@@ -254,8 +307,11 @@ pub async fn analyze_parquet_async_http_with_options(
 
     let builder = ParquetRecordBatchStreamBuilder::new(reader)
         .await
-        .map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to create Parquet stream builder: {}", e),
+        .map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to create Parquet stream builder: {}", e),
+                e,
+            )
         })?;
 
     let parquet_meta = builder.metadata().clone();
@@ -280,16 +336,22 @@ pub async fn analyze_parquet_async_http_with_options(
     let mut stream = builder
         .with_batch_size(config.batch_size)
         .build()
-        .map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to build Parquet stream: {}", e),
+        .map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to build Parquet stream: {}", e),
+                e,
+            )
         })?;
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
     analyzer.initialize_schema(arrow_schema.as_ref())?;
 
     while let Some(batch_result) = stream.next().await {
-        let batch = batch_result.map_err(|e| DataProfilerError::ParquetError {
-            message: format!("Failed to read Parquet async batch: {}", e),
+        let batch = batch_result.map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to read Parquet async batch: {}", e),
+                e,
+            )
         })?;
         analyzer.process_batch(&batch)?;
     }
@@ -348,6 +410,15 @@ mod tests {
     use std::sync::Arc;
     use std::thread::JoinHandle;
     use std::time::Duration;
+
+    /// How the mock server answers a ranged GET. `IgnoreRange` models the real
+    /// servers that answer 200 with the whole body regardless of `Range`, which
+    /// is the size probe's protocol-failure branch.
+    #[derive(Clone, Copy)]
+    enum RangeBehavior {
+        PartialContent,
+        IgnoreRange,
+    }
 
     #[derive(Clone, Copy)]
     enum HeadBehavior {
@@ -414,6 +485,14 @@ mod tests {
     }
 
     fn spawn_mock_server(data: Vec<u8>, head_behavior: HeadBehavior) -> MockServer {
+        spawn_mock_server_with(data, head_behavior, RangeBehavior::PartialContent)
+    }
+
+    fn spawn_mock_server_with(
+        data: Vec<u8>,
+        head_behavior: HeadBehavior,
+        range_behavior: RangeBehavior,
+    ) -> MockServer {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -452,6 +531,19 @@ mod tests {
                                 .write_all(response.as_bytes())
                                 .expect("mock server HEAD response failed");
                         } else if request.starts_with("GET") {
+                            if matches!(range_behavior, RangeBehavior::IgnoreRange) {
+                                let response = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                    data.len()
+                                );
+                                stream
+                                    .write_all(response.as_bytes())
+                                    .expect("mock server GET response headers failed");
+                                stream
+                                    .write_all(&data)
+                                    .expect("mock server GET response body failed");
+                                continue;
+                            }
                             let (start, end) = parse_range_header(&request)
                                 .expect("mock server missing or invalid Range header");
                             let chunk = data
@@ -513,6 +605,62 @@ mod tests {
         writer.close().unwrap();
 
         buffer
+    }
+
+    #[tokio::test]
+    async fn transport_failure_retains_the_reqwest_error_as_source() {
+        use std::error::Error as _;
+
+        // Bind then drop, so the port is real but nothing is listening: both the
+        // HEAD and the range probe fail on transport rather than on protocol.
+        // This is the state the fix is meant to improve, not merely one it must
+        // preserve.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let url = format!("http://127.0.0.1:{}/missing.parquet", port);
+
+        // `.err()` rather than `expect_err`: the reader is not `Debug`.
+        let err = HttpParquetReader::try_new(&url)
+            .await
+            .err()
+            .expect("connecting to a closed port must fail");
+
+        assert!(matches!(err, DataProfilerError::ParquetError { .. }));
+        let source = err
+            .source()
+            .expect("a transport failure must be retained as the cause");
+        source
+            .downcast_ref::<reqwest::Error>()
+            .expect("source must downcast to the original reqwest::Error");
+    }
+
+    #[tokio::test]
+    async fn protocol_only_failure_reports_no_source() {
+        use std::error::Error as _;
+
+        // The server answers both requests, so nothing fails at the transport
+        // layer: HEAD returns 405 and the ranged GET returns 200 with the whole
+        // body. "No cause" has to stay distinct from "cause dropped".
+        let data: Vec<u8> = (0..64).collect();
+        let server = spawn_mock_server_with(
+            data,
+            HeadBehavior::MethodNotAllowed,
+            RangeBehavior::IgnoreRange,
+        );
+        let err = HttpParquetReader::try_new(server.url())
+            .await
+            .err()
+            .expect("a server that ignores Range cannot yield a size");
+
+        assert!(matches!(err, DataProfilerError::ParquetError { .. }));
+        assert!(
+            err.source().is_none(),
+            "a protocol-only failure must not invent a cause: {:?}",
+            err.source().map(|s| s.to_string())
+        );
+
+        server.join();
     }
 
     #[tokio::test]

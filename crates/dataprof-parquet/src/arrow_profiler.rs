@@ -201,7 +201,7 @@ impl ArrowProfiler {
         }
         let csv_reader = arrow_builder
             .build(file)
-            .map_err(|error| map_arrow_csv_error(file_path, &error))?;
+            .map_err(|error| map_arrow_csv_error(file_path, error))?;
 
         // Process data in columnar batches
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
@@ -232,18 +232,15 @@ impl ArrowProfiler {
         let projection: Vec<usize> = (0..header_width).collect();
 
         for batch_result in csv_reader {
-            let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, &error))?;
+            let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, error))?;
 
             // Drop the overflow columns before anything observes the batch, so
             // duplicate tracking, hint bindings and the profiles themselves all
             // see exactly the columns the header declared.
             if batch.num_columns() > header_width {
-                batch =
-                    batch
-                        .project(&projection)
-                        .map_err(|error| DataProfilerError::ArrowError {
-                            message: error.to_string(),
-                        })?;
+                batch = batch
+                    .project(&projection)
+                    .map_err(DataProfilerError::arrow_error_from)?;
             }
 
             if let Some(max) = max_rows {
@@ -353,20 +350,18 @@ impl ArrowProfiler {
     }
 }
 
-fn map_arrow_csv_error(file_path: &Path, error: &arrow::error::ArrowError) -> DataProfilerError {
+fn map_arrow_csv_error(file_path: &Path, error: arrow::error::ArrowError) -> DataProfilerError {
     let message = error.to_string();
 
     if message.contains("incorrect number of fields") {
-        return DataProfilerError::CsvParsingError {
-            message,
-            suggestion: format!(
-                "The columnar engine sizes its schema from a pre-scan of '{}', so a row Arrow still finds ragged means the two parsers disagree on where records end — most often unbalanced quotes or an embedded newline. Use engine='auto' or engine='incremental', which parse the file only once.",
-                file_path.display()
-            ),
-        };
+        let suggestion = format!(
+            "The columnar engine sizes its schema from a pre-scan of '{}', so a row Arrow still finds ragged means the two parsers disagree on where records end — most often unbalanced quotes or an embedded newline. Use engine='auto' or engine='incremental', which parse the file only once.",
+            file_path.display()
+        );
+        return DataProfilerError::csv_parsing_with_source(message, suggestion, error);
     }
 
-    DataProfilerError::ArrowError { message }
+    DataProfilerError::arrow_with_source(message, error)
 }
 
 impl Default for ArrowProfiler {
@@ -460,81 +455,81 @@ impl ColumnAnalyzer {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
                     self.process_float64_array(float_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to Float64Array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to Float64Array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Float32 => {
                 if let Some(float_array) = array.as_any().downcast_ref::<Float32Array>() {
                     self.process_float32_array(float_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to Float32Array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to Float32Array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Int64 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
                     self.process_int64_array(int_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to Int64Array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to Int64Array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Int32 => {
                 if let Some(int_array) = array.as_any().downcast_ref::<Int32Array>() {
                     self.process_int32_array(int_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to Int32Array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to Int32Array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Utf8 => {
                 if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
                     self.process_string_array(string_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to StringArray".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to StringArray",
+                    ));
                 }
             }
             arrow::datatypes::DataType::LargeUtf8 => {
                 if let Some(string_array) = array.as_any().downcast_ref::<LargeStringArray>() {
                     self.process_large_string_array(string_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to LargeStringArray".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to LargeStringArray",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Boolean => {
                 if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
                     self.process_boolean_array(bool_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to BooleanArray".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to BooleanArray",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Date32 => {
                 if let Some(date_array) = array.as_any().downcast_ref::<Date32Array>() {
                     self.process_date32_array(date_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to Date32Array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to Date32Array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Date64 => {
                 if let Some(date_array) = array.as_any().downcast_ref::<Date64Array>() {
                     self.process_date64_array(date_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast to Date64Array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast to Date64Array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Timestamp(_, _) => {
@@ -552,9 +547,9 @@ impl ColumnAnalyzer {
                 {
                     self.process_timestamp_second_array(ts_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast Timestamp array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast Timestamp array",
+                    ));
                 }
             }
             arrow::datatypes::DataType::Binary | arrow::datatypes::DataType::LargeBinary => {
@@ -563,9 +558,9 @@ impl ColumnAnalyzer {
                 } else if let Some(bin_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
                     self.process_large_binary_array(bin_array)?;
                 } else {
-                    return Err(DataProfilerError::ArrowError {
-                        message: "Failed to downcast Binary array".to_string(),
-                    });
+                    return Err(DataProfilerError::arrow_error(
+                        "Failed to downcast Binary array",
+                    ));
                 }
             }
             _ => {
