@@ -1,0 +1,27 @@
+# Line endings
+#
+# Every text file is stored and checked out as LF, whatever a contributor's
+# `core.autocrlf` happens to be. Git on Windows defaults that setting to
+# `true`, which stores LF but checks CRLF out; the working tree then disagrees
+# with the repository and the damage is quiet rather than loud:
+#
+#   * `cargo fmt --check` and `ruff format --check` flag files nobody touched
+#   * scripts that split on "\n" stop matching, for no visible reason
+#   * generated files (docs/schema/) show as modified with an empty diff
+#
+# Every text file here is already stored as LF, so this governs how files are
+# checked out, not what is committed. Adding it produces no content change.
+* text=auto eol=lf
+
+# Binary files. `text=auto` detects these on content alone, but naming them
+# keeps a misdetection from corrupting an asset or a test fixture — a Parquet
+# file with its bytes "converted" would still open and profile wrongly.
+*.png binary
+*.jpg binary
+*.parquet binary
+
+# Build artefacts, should any ever be committed as a fixture.
+*.whl binary
+*.so binary
+*.pyd binary
+*.dll binary
