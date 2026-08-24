@@ -1,7 +1,8 @@
-"""Database API integration tests.
+r"""Database API integration tests.
 
 These tests require building with database feature flags:
-    uv run maturin develop --features "python,python-async,database,sqlite"
+    uv run maturin develop \
+        --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 
 Or use the Makefile shortcut:
     make dev-db

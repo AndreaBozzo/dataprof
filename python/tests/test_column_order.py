@@ -113,8 +113,8 @@ def test_to_dict_export_keeps_report_column_order(tmp_path):
 _HAS_DATABASE = dataprof.capabilities().database
 requires_database = pytest.mark.skipif(
     not _HAS_DATABASE,
-    reason="Database support not compiled. Build with --features "
-    "'python,python-async,database,sqlite'.",
+    reason="Database support not compiled. Build with: uv run maturin develop "
+    "--features 'python,python-async,async-streaming,parquet-async,database,sqlite'.",
 )
 
 

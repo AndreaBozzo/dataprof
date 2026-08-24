@@ -95,8 +95,11 @@ except ImportError:
         def _stub(*_args, **_kwargs):
             raise ImportError(
                 f"{name}() requires database support, which is not compiled into "
-                "the published wheels. Rebuild from source with e.g. "
-                "maturin develop --features 'python,python-async,database,sqlite'"
+                "the published wheels. Rebuild from source with the shipped feature "
+                "set plus the connectors you need, e.g. maturin develop --features "
+                "'python,python-async,async-streaming,parquet-async,database,sqlite'. "
+                "--features replaces the default list rather than extending it, so a "
+                "shorter list silently drops async and remote Parquet support."
             )
 
         _stub.__name__ = name
