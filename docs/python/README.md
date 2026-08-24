@@ -23,11 +23,16 @@ and remote Parquet all work on a bare `pip install dataprof`.
 
 Database profiling is the one documented feature the wheel does not contain.
 Connectors are a compile-time feature rather than a Python dependency, so no
-extra can install them; they need a build from a checkout of this repository:
+extra can install them; they need a build from source, either with pip from the
+published sdist or from a checkout:
 
 ```bash
-uv run maturin develop --features "python,python-async,database,sqlite"
+pip install dataprof --no-binary dataprof   --config-settings="build-args=--features python,python-async,async-streaming,parquet-async,database,sqlite"
 ```
+
+The feature list has to be complete, not just the extra parts. See
+[Database Profiling](#database-profiling-source-build-only) for why, and for
+the checkout equivalent.
 
 Inspect the current installation without importing optional packages or trying
 a network/database operation:
@@ -680,11 +685,55 @@ count = await quick_row_count_stream(csv_bytes, format="csv")
 Async database functions for PostgreSQL, MySQL, and SQLite are **not** in the
 published wheels, and there is no extra that installs them. On a wheel install
 they exist as stubs that raise `ImportError` when called, and
-`dp.capabilities().database` is `False`. Build the extension from a checkout
-with `python-async`, `database`, and the connector features you need:
+`dp.capabilities().database` is `False`. They need a source build with
+`python-async`, `database`, and the connector features you want.
+
+### From the published sdist, with pip
+
+No checkout required:
 
 ```bash
-uv run maturin develop --features "python,python-async,database,sqlite"
+pip install dataprof --no-binary dataprof   --config-settings="build-args=--features python,python-async,async-streaming,parquet-async,database,sqlite"
+```
+
+### From a checkout
+
+```bash
+uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
+```
+
+### List every feature you want, not only the extra ones
+
+`--features` **replaces** the `[tool.maturin] features` list in
+`pyproject.toml`; it does not add to it. This is the part that bites, because
+the result looks like it worked:
+
+```bash
+# Wrong: builds database support and silently drops async, URL profiling,
+# and remote Parquet — surface that a plain `pip install dataprof` includes.
+--features "python,python-async,database,sqlite"
+```
+
+That command yields `capabilities().database == True` alongside
+`async_streaming == False`, `url_profiling == False`, and
+`remote_parquet == False`. Nothing errors; the package is simply smaller than
+the published wheel. The lists above are the shipped set plus the database
+features, which is why they are long.
+
+`database` on its own is also not enough: the connectors are reported only when
+`python-async` is compiled in as well.
+
+A source build needs a Rust toolchain (1.96 or later). `postgres` and `mysql`
+are pure Rust; `sqlite` compiles `libsqlite3-sys`, which is C.
+
+Check what you actually got before relying on it:
+
+```python
+import dataprof as dp
+
+caps = dp.capabilities()
+assert caps.database and "sqlite" in caps.database_connectors
+assert caps.async_streaming  # still present, because the list above kept it
 ```
 
 Then the following APIs become available:

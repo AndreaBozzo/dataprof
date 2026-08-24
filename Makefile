@@ -12,11 +12,14 @@ build:  ## Build the Python extension (release)
 dev:  ## Build the Python extension (debug, fast)
 	uv run maturin develop
 
+# The database targets repeat the shipped feature set on purpose: --features
+# replaces [tool.maturin] features rather than extending it, so a shorter list
+# builds database support while dropping async and remote Parquet.
 build-db:  ## Build the Python extension with database support (release)
-	uv run maturin develop --release --features "python,python-async,database,sqlite"
+	uv run maturin develop --release --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 
 dev-db:  ## Build the Python extension with database support (debug, fast)
-	uv run maturin develop --features "python,python-async,database,sqlite"
+	uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 
 # ── Test ─────────────────────────────────────────
 

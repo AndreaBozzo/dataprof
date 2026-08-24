@@ -24,8 +24,15 @@ dataprof = { version = "0.10", features = ["postgres"] }
 For local Python extension development:
 
 ```bash
-uv run maturin develop --features "python,python-async,database,sqlite"
+uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 ```
+
+The list is long because `--features` **replaces** `[tool.maturin] features`
+rather than adding to it: building with only `"python,python-async,database,
+sqlite"` produces a package with database support and no async, URL, or remote
+Parquet support, which the published wheel does include. See
+[the Python README](../python/README.md#database-profiling-source-build-only)
+for the pip-from-sdist form.
 
 ## Supported Databases
 
@@ -46,7 +53,7 @@ on. Build the extension from a checkout with `python-async`, `database`, and the
 connector feature you need first:
 
 ```bash
-uv run maturin develop --features "python,python-async,database,sqlite"
+uv run maturin develop --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 ```
 
 Then the following APIs become available:

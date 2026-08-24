@@ -1,4 +1,4 @@
-"""``metrics``, ``quality_dimensions`` and ``locale`` apply to queries too (#536).
+r"""``metrics``, ``quality_dimensions`` and ``locale`` apply to queries too (#536).
 
 #494 made these options take effect on every file format and transport. The
 database path was left out of that pass: it hardcoded quality on and called
@@ -11,7 +11,8 @@ two to agree — on what was analyzed, and on the quality numbers themselves.
 
 Requires building with database feature flags::
 
-    uv run maturin develop --features "python,python-async,database,sqlite"
+    uv run maturin develop \
+        --features "python,python-async,async-streaming,parquet-async,database,sqlite"
 """
 
 from __future__ import annotations
