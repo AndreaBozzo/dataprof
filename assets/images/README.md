@@ -5,7 +5,7 @@ its hero image has two constraints a repository-only asset does not:
 
 - **It must be an absolute URL.** A relative path resolves against the package
   page, where it points at nothing. The README references the hero through
-  `https://raw.githubusercontent.com/AndreaBozzo/dataprof/master/assets/images/logo.webp`.
+  `https://raw.githubusercontent.com/AndreaBozzo/dataprof/HEAD/assets/images/logo.webp`.
 - **It must be small.** Every visitor to either index downloads it.
 
 ## Files

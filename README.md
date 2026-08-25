@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/AndreaBozzo/dataprof/master/assets/images/logo.webp" alt="dataprof logo" width="800" />
+  <img src="https://raw.githubusercontent.com/AndreaBozzo/dataprof/HEAD/assets/images/logo.webp" alt="dataprof logo" width="800" />
   <h1>dataprof</h1>
   <p>
     <strong>High-performance data profiling and quality assessment</strong>
@@ -8,9 +8,9 @@
   [![Crates.io](https://img.shields.io/crates/v/dataprof.svg)](https://crates.io/crates/dataprof)
   [![docs.rs](https://docs.rs/dataprof/badge.svg)](https://docs.rs/dataprof)
   [![PyPI](https://img.shields.io/pypi/v/dataprof.svg)](https://pypi.org/project/dataprof/)
-  [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+  [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE)
 
-  [Website](https://andreabozzo.github.io/dataprof/) · [Live benchmarks](https://andreabozzo.github.io/dataprof/benchmarks/) · [Getting started](https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/getting-started.md) · [Release notes](https://github.com/AndreaBozzo/dataprof/blob/master/docs/release-notes.md)
+  [Website](https://andreabozzo.github.io/dataprof/) · [Live benchmarks](https://andreabozzo.github.io/dataprof/benchmarks/) · [Getting started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md) · [Release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md)
 
 </div>
 
@@ -118,11 +118,11 @@ they print is real profiler output, and CI runs all six on every push.
 
 | Scenario | What it shows | Run it |
 |---|---|---|
-| [Messy CSV inspection](https://github.com/AndreaBozzo/dataprof/blob/master/examples/messy_csv_inspection.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/master/python/examples/messy_csv_inspection.py) | A duplicated key, null-heavy columns, a negative price, and PII flagged but never printed | `cargo run --example messy_csv_inspection` |
-| [ETL quality gate](https://github.com/AndreaBozzo/dataprof/blob/master/examples/etl_quality_gate.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/master/python/examples/etl_quality_gate.py) | Accept or reject a daily drop on thresholds, with the rejection reason in the log | `cargo run --example etl_quality_gate` |
-| [Before/after cleaning](https://github.com/AndreaBozzo/dataprof/blob/master/examples/before_after_cleaning.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/master/python/examples/before_after_cleaning.py) | Save a baseline report, diff it against the cleaned data, and check the defects really went away | `cargo run --example before_after_cleaning` |
+| [Messy CSV inspection](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/messy_csv_inspection.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/messy_csv_inspection.py) | A duplicated key, null-heavy columns, a negative price, and PII flagged but never printed | `cargo run --example messy_csv_inspection` |
+| [ETL quality gate](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/etl_quality_gate.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/etl_quality_gate.py) | Accept or reject a daily drop on thresholds, with the rejection reason in the log | `cargo run --example etl_quality_gate` |
+| [Before/after cleaning](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/before_after_cleaning.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/before_after_cleaning.py) | Save a baseline report, diff it against the cleaned data, and check the defects really went away | `cargo run --example before_after_cleaning` |
 
-See [examples/README.md](https://github.com/AndreaBozzo/dataprof/blob/master/examples/README.md) for the Python commands and a note on
+See [examples/README.md](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md) for the Python commands and a note on
 two quality metrics that surprise people.
 
 ### Rust
@@ -216,31 +216,31 @@ certified by ISO. Rust callers can customize the relative weights through
 
 ### Start here
 
-- [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/why-dataprof.md) -- an honest comparison with Polars/pandas `describe()` and ydata-profiling, including when to prefer them
-- [Getting Started](https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/getting-started.md) -- the shortest path from mystery dataset to useful signal
-- [Examples Cookbook](https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/examples.md) -- focused Rust and Python recipes you can adapt quickly
-- [Agent Workflows](https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/agent-workflows.md) -- copy-paste guidance for AGENTS.md, Cursor rules, and Claude Code skills
+- [Why dataprof?](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/why-dataprof.md) -- an honest comparison with Polars/pandas `describe()` and ydata-profiling, including when to prefer them
+- [Getting Started](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/getting-started.md) -- the shortest path from mystery dataset to useful signal
+- [Examples Cookbook](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/examples.md) -- focused Rust and Python recipes you can adapt quickly
+- [Agent Workflows](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/agent-workflows.md) -- copy-paste guidance for AGENTS.md, Cursor rules, and Claude Code skills
 
 ### Integrate it
 
-- [Python API Guide](https://github.com/AndreaBozzo/dataprof/blob/master/docs/python/README.md) -- files, DataFrames, Arrow interop, exports, and optional source-built async/database features
-- [Database Connectors](https://github.com/AndreaBozzo/dataprof/blob/master/docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup and connection patterns
+- [Python API Guide](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md) -- files, DataFrames, Arrow interop, exports, and optional source-built async/database features
+- [Database Connectors](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/guides/database-connectors.md) -- PostgreSQL, MySQL, SQLite setup and connection patterns
 
 ### Understand it
 
-- [Crate Redesign Notes](https://github.com/AndreaBozzo/dataprof/blob/master/docs/architecture/crate-redesign.md) -- what the facade owns and why the workspace is split this way
-- [Release notes](https://github.com/AndreaBozzo/dataprof/blob/master/docs/release-notes.md) -- upgrade checklist, migration details, and known limitations
-- [Contributing](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md)
-- [Changelog](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CHANGELOG.md)
+- [Crate Redesign Notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/architecture/crate-redesign.md) -- what the facade owns and why the workspace is split this way
+- [Release notes](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/release-notes.md) -- upgrade checklist, migration details, and known limitations
+- [Contributing](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md)
+- [Changelog](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CHANGELOG.md)
 
 ### Historical
 
-- [Archived CLI Guide](https://github.com/AndreaBozzo/dataprof/blob/master/docs/archive/CLI_USAGE_GUIDE.md) -- pre-0.8 reference only
+- [Archived CLI Guide](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/archive/CLI_USAGE_GUIDE.md) -- pre-0.8 reference only
 
 ## Citing dataprof
 
 Use the **Cite this repository** button in the GitHub sidebar, which generates
-APA and BibTeX from [`CITATION.cff`](https://github.com/AndreaBozzo/dataprof/blob/master/CITATION.cff), or read that file directly.
+APA and BibTeX from [`CITATION.cff`](https://github.com/AndreaBozzo/dataprof/blob/HEAD/CITATION.cff), or read that file directly.
 
 The citation is for the software. dataprof has no associated publication or DOI,
 so `CITATION.cff` carries no `preferred-citation` entry and the generated BibTeX
@@ -250,4 +250,4 @@ is a `@misc` software record. Reproducible benchmark material lives in
 
 ## License
 
-Dual-licensed under either the [MIT License](https://github.com/AndreaBozzo/dataprof/blob/master/LICENSE) or the [Apache License, Version 2.0](https://github.com/AndreaBozzo/dataprof/blob/master/LICENSE-APACHE), at your option.
+Dual-licensed under either the [MIT License](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE) or the [Apache License, Version 2.0](https://github.com/AndreaBozzo/dataprof/blob/HEAD/LICENSE-APACHE), at your option.

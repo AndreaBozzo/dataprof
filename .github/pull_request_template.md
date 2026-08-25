@@ -45,7 +45,7 @@ cargo run --example <example-you-changed>
 
 **Serialized report schema** — only if you changed a `ProfileReport` field or its
 Serde attributes. See the
-[report schema release checklist](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md#report-schema-release-checklist):
+[report schema release checklist](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md#report-schema-release-checklist):
 
 ```bash
 cargo run --example generate_profile_schema
@@ -68,7 +68,7 @@ cargo test --test profile_report_schema
      issue lists several scenarios, implementing one and leaving follow-ups is
      welcome. -->
 
-New here? [docs/CONTRIBUTING.md](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md)
+New here? [docs/CONTRIBUTING.md](https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/CONTRIBUTING.md)
 covers setup and the review process, and
-[AGENTS.md](https://github.com/AndreaBozzo/dataprof/blob/master/AGENTS.md)
+[AGENTS.md](https://github.com/AndreaBozzo/dataprof/blob/HEAD/AGENTS.md)
 is the condensed version of the same conventions.
