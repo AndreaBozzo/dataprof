@@ -3,12 +3,12 @@
 //! Measures the currentness and temporal validity of data.
 //! Key metrics: future dates, stale data ratio, temporal violations.
 
-use super::utils::extract_year;
+use super::utils::extract_date;
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
-use chrono::Datelike;
-use std::collections::HashMap;
+use chrono::{Datelike, NaiveDate, Utc};
+use std::collections::{HashMap, HashSet};
 
 /// Timeliness metrics container
 #[derive(Debug)]
@@ -24,11 +24,29 @@ pub(crate) struct TimelinessMetrics {
 /// Calculator for timeliness dimension metrics
 pub(crate) struct TimelinessCalculator<'a> {
     thresholds: &'a IsoQualityConfig,
+    /// "Now" for every comparison this calculator makes.
+    ///
+    /// Captured once at construction so a single report cannot straddle a
+    /// midnight boundary and classify two equal values differently, and so
+    /// tests can pin it. Internal only: the public API still reads the clock.
+    reference_date: NaiveDate,
 }
 
 impl<'a> TimelinessCalculator<'a> {
     pub fn new(thresholds: &'a IsoQualityConfig) -> Self {
-        Self { thresholds }
+        Self::with_reference_date(thresholds, Utc::now().date_naive())
+    }
+
+    /// Construct with an explicit "now", so assertions do not rot as the
+    /// calendar advances.
+    pub(crate) fn with_reference_date(
+        thresholds: &'a IsoQualityConfig,
+        reference_date: NaiveDate,
+    ) -> Self {
+        Self {
+            thresholds,
+            reference_date,
+        }
     }
 
     /// Calculate timeliness dimension metrics
@@ -68,8 +86,7 @@ impl<'a> TimelinessCalculator<'a> {
         let mut checked = 0;
         let mut invalid_dates = 0;
 
-        let current_year = chrono::Utc::now().year();
-        let threshold_year = current_year - self.thresholds.max_data_age_years as i32;
+        let threshold_year = self.reference_date.year() - self.thresholds.max_data_age_years as i32;
 
         for column_name in temporal_columns {
             let Some(column_data) = data.get(column_name) else {
@@ -81,12 +98,17 @@ impl<'a> TimelinessCalculator<'a> {
                 }
                 checked += 1;
 
-                if let Some(year) = extract_year(value) {
+                if let Some(date) = extract_date(value) {
                     valid_dates += 1;
-                    if year > current_year {
+                    // Compare the whole date, not its year. A year-only test
+                    // cannot see any future date inside the current calendar
+                    // year, which on 1 January hides an entire year of them.
+                    if date > self.reference_date {
                         future_count += 1;
                     }
-                    if year < threshold_year {
+                    // Staleness stays at year granularity because its threshold
+                    // is expressed in whole years.
+                    if date.year() < threshold_year {
                         stale_dates += 1;
                     }
                 } else {
@@ -124,39 +146,61 @@ impl<'a> TimelinessCalculator<'a> {
             ("from_date", "to_date"),
         ];
 
+        // The role patterns overlap: `start_date`/`end_date` is matched by both
+        // ("start_date", "end_date") and ("start", "end"). Without this the same
+        // two columns are compared once per matching pattern, and every pair and
+        // every violation is counted as many times as patterns happened to hit.
+        let mut evaluated: HashSet<(&str, &str)> = HashSet::new();
+
         for (start_col, end_col) in &temporal_pairs {
             // Resolve ambiguous role matches in the order supplied by the user.
             // Iterating `data` here would make the selected pair depend on the
             // randomized iteration order of its HashMap.
-            let start_data = temporal_columns.iter().find_map(|name| {
-                name.to_lowercase()
-                    .contains(start_col)
-                    .then(|| data.get(name))
-                    .flatten()
-            });
-            let end_data = temporal_columns.iter().find_map(|name| {
-                name.to_lowercase()
-                    .contains(end_col)
-                    .then(|| data.get(name))
-                    .flatten()
-            });
+            // `find_map`, not `find(..).and_then(..)`: a name the caller listed
+            // but the data does not carry must not end the search, or it hides
+            // a later name that fills the same role and does have values.
+            let resolve = |role: &str| {
+                temporal_columns.iter().find_map(|name| {
+                    name.to_lowercase()
+                        .contains(role)
+                        .then(|| data.get(name).map(|values| (name.as_str(), values)))
+                        .flatten()
+                })
+            };
+            let start_match = resolve(start_col);
+            let end_match = resolve(end_col);
 
-            if let (Some(start_values), Some(end_values)) = (start_data, end_data) {
-                for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
-                    if is_null_like_token(start_val.trim()) || is_null_like_token(end_val.trim()) {
-                        continue;
-                    }
+            let (Some((start_name, start_values)), Some((end_name, end_values))) =
+                (start_match, end_match)
+            else {
+                continue;
+            };
 
-                    // Invalid calendar values are already reported by
-                    // `invalid_date_values` and cannot form a meaningful pair.
-                    if extract_year(start_val).is_none() || extract_year(end_val).is_none() {
-                        continue;
-                    }
-                    pairs_checked += 1;
-                    // Compare as sortable strings (works for ISO dates YYYY-MM-DD)
-                    if start_val > end_val {
-                        violations += 1;
-                    }
+            // A column cannot be both ends of the same comparison: "start" and
+            // "end" both match a lone `start_end_date`, which would compare it
+            // with itself and report a clean pair that was never checked.
+            if start_name == end_name || !evaluated.insert((start_name, end_name)) {
+                continue;
+            }
+
+            for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
+                if is_null_like_token(start_val.trim()) || is_null_like_token(end_val.trim()) {
+                    continue;
+                }
+
+                // Invalid calendar values are already reported by
+                // `invalid_date_values` and cannot form a meaningful pair.
+                let (Some(start_date), Some(end_date)) =
+                    (extract_date(start_val), extract_date(end_val))
+                else {
+                    continue;
+                };
+                pairs_checked += 1;
+                // Compare parsed dates. The previous string comparison only held
+                // for ISO values: `DD/MM/YYYY` and `MM/DD/YYYY` sort by day and
+                // month first, which both hid real inversions and invented ones.
+                if start_date > end_date {
+                    violations += 1;
                 }
             }
         }
@@ -282,5 +326,288 @@ mod tests {
             )
             .expect("secondary-first timeliness metrics");
         assert_eq!(secondary_first.temporal_violations, 1);
+    }
+
+    // ---------------------------------------------------------------- #378
+    // Deterministic coverage for the timeliness calculator. Every case pins
+    // "now" through `with_reference_date`, so no assertion here changes result
+    // as the calendar advances.
+
+    /// A fixed "today" for every case below.
+    fn reference() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 6, 15).expect("valid reference date")
+    }
+
+    /// Default freshness policy is 5 years, so the stale cutoff is 2021.
+    fn config() -> IsoQualityConfig {
+        IsoQualityConfig::default()
+    }
+
+    fn column(name: &str, values: &[&str]) -> HashMap<String, Vec<String>> {
+        HashMap::from([(
+            name.to_string(),
+            values.iter().map(|value| value.to_string()).collect(),
+        )])
+    }
+
+    fn metrics_for(
+        thresholds: &IsoQualityConfig,
+        data: &HashMap<String, Vec<String>>,
+        temporal_columns: &[&str],
+    ) -> TimelinessMetrics {
+        let named: Vec<String> = temporal_columns
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        TimelinessCalculator::with_reference_date(thresholds, reference())
+            .calculate(data, &named)
+            .expect("timeliness metrics")
+    }
+
+    #[test]
+    fn no_date_columns_assesses_nothing() {
+        let data = column("label", &["alpha", "beta"]);
+        let metrics = metrics_for(&config(), &data, &[]);
+
+        assert_eq!(metrics.date_values_checked, 0);
+        assert_eq!(metrics.invalid_date_values, 0);
+        assert_eq!(metrics.future_dates_count, 0);
+        assert_eq!(metrics.stale_data_ratio, 0.0);
+        assert_eq!(metrics.temporal_pairs_checked, 0);
+        assert_eq!(metrics.temporal_violations, 0);
+    }
+
+    #[test]
+    fn empty_column_assesses_nothing() {
+        let data = column("event_date", &[]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(metrics.date_values_checked, 0);
+        assert_eq!(metrics.future_dates_count, 0);
+        assert_eq!(metrics.stale_data_ratio, 0.0);
+    }
+
+    #[test]
+    fn single_recent_value_is_neither_future_nor_stale() {
+        let data = column("event_date", &["2026-06-14"]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(metrics.date_values_checked, 1);
+        assert_eq!(metrics.future_dates_count, 0);
+        assert_eq!(metrics.stale_data_ratio, 0.0);
+    }
+
+    #[test]
+    fn past_dates_within_the_freshness_window_are_clean() {
+        let data = column("event_date", &["2022-01-01", "2024-06-01", "2026-06-14"]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(metrics.date_values_checked, 3);
+        assert_eq!(metrics.future_dates_count, 0);
+        assert_eq!(metrics.stale_data_ratio, 0.0);
+    }
+
+    #[test]
+    fn future_dates_inside_the_current_year_are_counted() {
+        // Regression: comparing years alone reported 0 future dates for every
+        // value between today and 31 December.
+        let data = column(
+            "event_date",
+            &[
+                "2026-06-16", // tomorrow
+                "2026-07-01", // later the same year
+                "2026-12-31", // last day of the same year
+                "2027-01-01", // next year, caught even by the year-only check
+            ],
+        );
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(
+            metrics.future_dates_count, 4,
+            "every value after the reference date is in the future"
+        );
+        assert_eq!(metrics.date_values_checked, 4);
+    }
+
+    #[test]
+    fn one_future_date_among_past_ones_is_counted_once() {
+        let data = column("event_date", &["2026-06-14", "2026-06-16", "2025-01-01"]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(metrics.future_dates_count, 1);
+    }
+
+    #[test]
+    fn the_reference_date_itself_is_not_future() {
+        let data = column("event_date", &["2026-06-15"]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(metrics.future_dates_count, 0, "today is not in the future");
+    }
+
+    #[test]
+    fn values_beyond_the_stale_threshold_are_reported_as_a_percentage() {
+        // Reference year 2026 and a 5-year policy put the cutoff at 2021.
+        let data = column(
+            "event_date",
+            &["2019-01-01", "2020-12-31", "2021-01-01", "2026-01-01"],
+        );
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(
+            metrics.stale_data_ratio, 50.0,
+            "two of four values fall before the cutoff, on the 0-100 scale"
+        );
+    }
+
+    #[test]
+    fn a_shorter_freshness_policy_makes_more_values_stale() {
+        let mut thresholds = config();
+        thresholds.max_data_age_years = 2.0; // cutoff 2024
+        let data = column("event_date", &["2022-01-01", "2023-01-01", "2025-01-01"]);
+        let metrics = metrics_for(&thresholds, &data, &["event_date"]);
+
+        assert!(
+            (metrics.stale_data_ratio - (2.0 / 3.0 * 100.0)).abs() < 1e-9,
+            "expected two of three stale, got {}",
+            metrics.stale_data_ratio
+        );
+    }
+
+    #[test]
+    fn ordered_temporal_values_report_no_violation() {
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["2023-01-01".to_string()]),
+            ("end_date".to_string(), vec!["2023-06-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(metrics.temporal_violations, 0);
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+    }
+
+    #[test]
+    fn out_of_order_temporal_values_report_a_violation() {
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["2023-06-01".to_string()]),
+            ("end_date".to_string(), vec!["2023-01-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(metrics.temporal_violations, 1);
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+    }
+
+    #[test]
+    fn day_first_dates_are_ordered_by_calendar_not_by_text() {
+        // Regression: `start_val > end_val` compared raw strings. `DD/MM/YYYY`
+        // sorts by day first, so a real inversion read as clean.
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["15/01/2023".to_string()]),
+            ("end_date".to_string(), vec!["20/03/2022".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(
+            metrics.temporal_violations, 1,
+            "January 2023 starts after March 2022 ends"
+        );
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+    }
+
+    #[test]
+    fn day_first_dates_in_valid_order_report_no_violation() {
+        // The same bug in the other direction: text ordering invented a
+        // violation for a correctly ordered pair.
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["20/03/2022".to_string()]),
+            ("end_date".to_string(), vec!["15/01/2023".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(
+            metrics.temporal_violations, 0,
+            "March 2022 to January 2023 runs forwards"
+        );
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+    }
+
+    #[test]
+    fn overlapping_role_patterns_evaluate_a_column_pair_once() {
+        // Regression: `start_date`/`end_date` matched both the
+        // ("start_date", "end_date") and ("start", "end") patterns, so every
+        // row of the pair was compared and counted twice.
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["2023-05-01".to_string()]),
+            ("end_date".to_string(), vec!["2023-04-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(
+            metrics.temporal_pairs_checked, 1,
+            "one row of one column pair is one comparison"
+        );
+        assert_eq!(metrics.temporal_violations, 1);
+    }
+
+    #[test]
+    fn null_tokens_in_a_pair_are_skipped_rather_than_compared() {
+        let data = HashMap::from([
+            (
+                "start_date".to_string(),
+                vec!["2023-06-01".to_string(), "".to_string()],
+            ),
+            (
+                "end_date".to_string(),
+                vec!["2023-01-01".to_string(), "2023-01-01".to_string()],
+            ),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(metrics.temporal_pairs_checked, 1, "only one complete pair");
+        assert_eq!(metrics.temporal_violations, 1);
+    }
+
+    #[test]
+    fn unparseable_values_are_invalid_rather_than_future_or_stale() {
+        // Absence rule: a value that is not a date must not be silently read as
+        // a valid timestamp in either direction.
+        let data = column("event_date", &["2024-13-45", "not a date", "2026-06-14"]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(
+            metrics.date_values_checked, 3,
+            "the denominator is complete"
+        );
+        assert_eq!(metrics.invalid_date_values, 2);
+        assert_eq!(metrics.future_dates_count, 0);
+        assert_eq!(metrics.stale_data_ratio, 0.0);
+    }
+
+    #[test]
+    fn invalid_values_do_not_form_temporal_pairs() {
+        let data = HashMap::from([
+            ("start_date".to_string(), vec!["2024-13-45".to_string()]),
+            ("end_date".to_string(), vec!["2023-01-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(metrics.temporal_pairs_checked, 0);
+        assert_eq!(metrics.temporal_violations, 0);
+    }
+
+    #[test]
+    fn a_named_column_absent_from_the_data_does_not_hide_a_later_pair() {
+        // A temporal column the caller named but the data does not carry must
+        // not stop the search: the next name matching the same role, and
+        // present, is still a valid pair.
+        let data = HashMap::from([
+            ("primary_start".to_string(), vec!["2023-06-01".to_string()]),
+            ("end".to_string(), vec!["2023-01-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["missing_start", "primary_start", "end"]);
+
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+        assert_eq!(metrics.temporal_violations, 1);
     }
 }
