@@ -133,17 +133,30 @@ fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     None
 }
 
-/// Parse a raw quality-metric value and return its calendar year.
+/// Parse a raw quality-metric value and return its calendar date.
 ///
 /// Unlike the descriptive datetime statistics path, quality predicates do not
 /// normalize surrounding whitespace: a value must be directly parseable as it
 /// appeared in the source. The calendar parser validates month/day ranges, so
 /// shape-only strings such as `2024-13-45` are rejected.
-pub(crate) fn parse_raw_datetime_year(s: &str) -> Option<i32> {
+///
+/// Prefer this over [`parse_raw_datetime_year`] whenever the caller compares
+/// values against each other or against a reference point. The supported
+/// formats include `DD/MM/YYYY` and `MM/DD/YYYY`, which do not sort
+/// lexicographically and cannot be ordered by year alone.
+pub(crate) fn parse_raw_datetime_date(s: &str) -> Option<NaiveDate> {
     if !looks_like_raw_datetime_candidate(s) {
         return None;
     }
-    parse_flexible_full(s).map(|parsed| parsed.date.year())
+    parse_flexible_full(s).map(|parsed| parsed.date)
+}
+
+/// Parse a raw quality-metric value and return its calendar year.
+///
+/// A year is the right granularity only for thresholds expressed in whole
+/// years. Anything finer must use [`parse_raw_datetime_date`].
+pub(crate) fn parse_raw_datetime_year(s: &str) -> Option<i32> {
+    parse_raw_datetime_date(s).map(|date| date.year())
 }
 
 /// Cheap shape check before attempting the multi-format chrono parser.

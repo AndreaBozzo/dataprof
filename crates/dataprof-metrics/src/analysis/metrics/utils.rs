@@ -3,10 +3,11 @@
 //! Contains regex patterns, validation helpers, and common functions
 //! used across all metric dimensions.
 
+use chrono::NaiveDate;
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::stats::datetime::parse_raw_datetime_year;
+use crate::stats::datetime::{parse_raw_datetime_date, parse_raw_datetime_year};
 
 // Pre-compile date validation regex patterns for better performance
 pub(crate) static DATE_VALIDATION_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -173,6 +174,15 @@ fn identifier_words(column_name: &str) -> Vec<&str> {
 /// Supports: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD
 pub(crate) fn extract_year(date_str: &str) -> Option<i32> {
     parse_raw_datetime_year(date_str)
+}
+
+/// Extract the full calendar date from the same formats [`extract_year`] accepts.
+///
+/// Required wherever dates are ordered or compared against a reference point:
+/// two of the supported formats put the day first, so neither the year alone
+/// nor the raw string orders them correctly.
+pub(crate) fn extract_date(date_str: &str) -> Option<NaiveDate> {
+    parse_raw_datetime_date(date_str)
 }
 
 /// Calculate percentile using linear interpolation (Type 7 - R/Excel default)
