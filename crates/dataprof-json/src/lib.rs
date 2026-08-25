@@ -293,16 +293,20 @@ pub struct JsonScanSummary {
 ///     {"city": "Milan", "pop": 1400000}
 /// ]"#;
 ///
-/// let mut total = 0u64;
+/// let mut populations = Vec::new();
 /// let summary = scan_json_from_reader(
 ///     Cursor::new(document),
 ///     &JsonParserConfig::json_document(),
 ///     |object| {
-///         total += object.get("pop").and_then(|value| value.as_u64()).unwrap_or(0);
+///         // A field that is absent, or present but not a number, stays
+///         // `None`. Reading it as 0 instead would turn a missing value into
+///         // a real measurement, which is the one thing a profile must never
+///         // do.
+///         populations.push(object.get("pop").and_then(|value| value.as_u64()));
 ///     },
 /// )?;
 ///
-/// assert_eq!(total, 4_200_000);
+/// assert_eq!(populations, [Some(2_800_000), Some(1_400_000)]);
 /// assert_eq!(summary.rows_read, 2);
 /// assert_eq!(summary.malformed_lines, 0);
 /// # Ok(())
