@@ -18,6 +18,7 @@
 # file with its bytes "converted" would still open and profile wrongly.
 *.png binary
 *.jpg binary
+*.webp binary
 *.parquet binary
 
 # Build artefacts, should any ever be committed as a fixture.
