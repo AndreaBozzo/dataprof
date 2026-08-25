@@ -132,7 +132,10 @@ jobs:
     # job was killed 87s later during the post-job cache save, so nothing was
     # written — leaving the next run on that same lockfile cold too. The
     # timeout has to clear the build *and* the save, or the job cannot recover.
-    timeout-minutes: 35
+    #
+    # Raised 35 -> 45 when the scope went from four member crates to eight: the
+    # cold figure above was measured against the smaller list.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -149,14 +152,21 @@ jobs:
           - scope: all-features-crates
             commands: |
               cargo test --test public_api_facade --all-features
-              cargo test -p dataprof-engines --all-features
               # `cargo test --lib`/`--doc` at the root only covers the root
               # `dataprof` package, so a member crate runs only if it is named
-              # here. dataprof-json carries doctests that would otherwise never
-              # be compiled by CI.
+              # here. Every library member is listed: leaving one out silently
+              # ungates its whole suite, which is how 517 tests in core,
+              # metrics, csv and runtime went unrun. dataprof-db and
+              # dataprof-python are deliberately absent, covered by the
+              # database and Python jobs respectively.
+              cargo test -p dataprof-core --all-features
+              cargo test -p dataprof-csv --all-features
+              cargo test -p dataprof-engines --all-features
               cargo test -p dataprof-json --all-features
+              cargo test -p dataprof-metrics --all-features
               cargo test -p dataprof-parquet --all-features
               cargo test -p dataprof-partial --all-features
+              cargo test -p dataprof-runtime --all-features
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
