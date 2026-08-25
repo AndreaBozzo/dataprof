@@ -1,100 +1,74 @@
-# Pull Request
+## What changed
 
-**👋 Thank you for contributing to dataprof!** 
+<!-- The behaviour or problem, in a sentence or two. What does a user get that
+     they did not have before, or what stops going wrong? -->
 
-Please fill out this template to help us understand your changes.
+**Related issue:** Closes #
 
-## 📝 Summary
+## How it was verified
 
-Brief description of the changes in this PR. What problem does it solve or what feature does it add?
+<!-- Replace the example below with the commands you actually ran and what they
+     reported. Run the checks that match what you touched; a docs change does
+     not need the workspace. -->
 
-## 🔧 Type of Change
-
-Select the type(s) of change:
-
-- [ ] 🐛 Bug fix (non-breaking change that fixes an issue)
-- [ ] ✨ New feature (non-breaking change that adds functionality)
-- [ ] 🚨 Breaking change (would cause existing functionality to not work as expected)
-- [ ] 📚 Documentation update
-- [ ] ⚡ Performance improvement
-- [ ] 🎨 Code refactoring (no functional changes)
-
-## 📋 Changes Made
-
-Describe the specific changes:
-
-- Change 1
-- Change 2
-- Change 3
-
-**Related Issue:** Closes #(issue number)
-
-## 🧪 Testing
-
-### How did you test this?
-
-Describe your testing approach:
-
-- [ ] Tested locally with `cargo test`
-- [ ] Added new tests for this feature
-- [ ] All existing tests pass
-- [ ] Tested with sample data files
-- [ ] Tested edge cases (empty files, large files, etc.)
-
-### Test Commands Run
-
-```bash
-cargo test --all
-cargo clippy --all --all-targets
-cargo fmt --all -- --check
-cargo build --release
+```console
+$ cargo test -p dataprof-core
+test result: ok. 156 passed; 0 failed
 ```
 
-Include any specific test scenarios or data used.
+<details>
+<summary>Commands by area (expand for the usual ones)</summary>
 
-## 📖 Documentation
+**Rust** — CI pins Rust 1.98, so prefer `cargo +1.98` when your local toolchain differs:
 
-- [ ] Updated README.md if user-facing changes
-- [ ] Added/updated inline code comments
-- [ ] Updated docs/ folder if architectural changes
-- [ ] No documentation changes needed
+```bash
+cargo test -p <crate-you-changed>
+cargo fmt --all
+cargo clippy --all --all-targets -- -D warnings
+```
 
-## ⚡ Performance Impact
+**Python:**
 
-- [ ] No performance impact
-- [ ] Performance improved
-- [ ] Performance may be affected (explain below)
+```bash
+uv run maturin develop
+uv run pytest python/tests/<file-you-changed>.py -q
+uv run ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run ty check python/
+```
 
-**Details (if applicable):**
+**Docs or examples** — build the examples you touched; CI runs them:
 
-## 🚨 Breaking Changes
+```bash
+cargo run --example <example-you-changed>
+```
 
-If this is a breaking change, describe:
+**Serialized report schema** — only if you changed a `ProfileReport` field or its
+Serde attributes. See the
+[report schema release checklist](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md#report-schema-release-checklist):
 
-- What breaks
-- Migration path for users
+```bash
+cargo run --example generate_profile_schema
+cargo test --test profile_report_schema
+```
 
-**If no breaking changes, just check:** [ ] No breaking changes
+</details>
 
-## 📌 Additional Notes
+## Anything reviewers should know
 
-Any additional context for reviewers:
+<!-- Delete the lines that do not apply. -->
 
-- Screenshots/examples (if applicable)
-- Related PRs or discussions
-- Implementation notes
+- **Breaking change:** what breaks, and what a user does instead.
+- **Feature flags:** which flags gate this, and what happens without them.
+- **Generated schema:** the regenerated artifact is included in this PR.
 
 ---
 
-## ✅ Checklist
+<!-- One behaviour change, or one documentation/example slice, per PR. If an
+     issue lists several scenarios, implementing one and leaving follow-ups is
+     welcome. -->
 
-- [ ] Code builds without warnings
-- [ ] No linting errors (`cargo clippy`)
-- [ ] Code is formatted (`cargo fmt`)
-- [ ] All tests pass
-- [ ] Self-reviewed my code
-- [ ] Comments added for complex logic
-- [ ] No hardcoded secrets or sensitive data
-
-**Need help?** See [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines and [docs/](../../docs/) for architecture details.
-
+New here? [docs/CONTRIBUTING.md](https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md)
+covers setup and the review process, and
+[AGENTS.md](https://github.com/AndreaBozzo/dataprof/blob/master/AGENTS.md)
+is the condensed version of the same conventions.

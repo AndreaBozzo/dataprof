@@ -38,7 +38,7 @@ Run the complete contributor setup smoke path from the repository root:
 python .github/scripts/contributor_smoke.py
 ```
 
-The runner stops at the first failure and executes this focused sequence:
+The runner stops at the first failure and executes exactly these five steps:
 
 ```bash
 # Install Python dev dependencies
@@ -53,11 +53,23 @@ uv run pytest python/tests/test_python_api.py -q
 # Run focused Rust tests
 cargo test -p dataprof-core
 cargo test -p dataprof-python
+```
 
-# Run formatting and lint checks before submitting PR
+It does not lint or format. Those are separate, and CI runs them over the same
+paths, so run the ones covering what you changed before you open a PR. CI checks
+formatting with `ruff format --check`; locally you want the rewriting form
+below:
+
+```bash
+# Rust. CI pins 1.98; use `cargo +1.98` if your default toolchain differs.
 cargo fmt --all
-uv run ruff check python/dataprof python/tests
 cargo clippy --all --all-targets -- -D warnings
+
+# Python. The paths matter: CI checks the scripts directories too, so a
+# narrower path can pass locally and still fail there.
+uv run ruff format python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run ruff check python/ .github/scripts/ .claude/skills/dataprof/scripts/
+uv run ty check python/
 ```
 
 You do not need to run every expensive workspace check for a small docs or
@@ -193,24 +205,14 @@ nearby, open a follow-up issue or separate PR.
 
 ### PR Description Template
 
-```markdown
-## Description
-Brief summary of changes
+Opening a pull request fills the body in from
+[`.github/pull_request_template.md`](../.github/pull_request_template.md), so
+there is nothing to copy by hand. It asks for what changed, the related issue,
+and the commands you ran to verify it.
 
-## Related Issues
-Closes #123
-
-## Changes Made
-- Change 1
-- Change 2
-- Change 3
-
-## Testing
-How did you test this?
-
-## Breaking Changes
-Any breaking changes? Document them here.
-```
+Run the checks that match what you touched rather than the whole workspace. The
+template collapses the usual ones per area into a `<details>` block, drawn from
+the lint and format commands in [Build & Test](#build--test) above.
 
 ### Review Process
 

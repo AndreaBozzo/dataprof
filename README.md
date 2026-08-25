@@ -237,26 +237,15 @@ certified by ISO. Rust callers can customize the relative weights through
 
 - [Archived CLI Guide](docs/archive/CLI_USAGE_GUIDE.md) -- pre-0.8 reference only
 
-## Academic Work
+## Citing dataprof
 
-dataprof is the subject of a research paper submitted to **IEEE ScalCom 2026**:
+Use the **Cite this repository** button in the GitHub sidebar, which generates
+APA and BibTeX from [`CITATION.cff`](CITATION.cff), or read that file directly.
 
-> A. Bozzo, "A Compiled Paradigm for Scalable and Sustainable Edge AI: Out-of-Core Execution and SIMD Acceleration in Telemetry Profiling," *IEEE ScalCom 2026* (under review).
-> [[Repository & reproducible benchmarks]](https://github.com/AndreaBozzo/scalcom2026-dataprof)
-
-The paper benchmarks dataprof against YData Profiling, Polars, and pandas across execution efficiency, memory scalability, energy consumption, and zero-copy interoperability in constrained Edge AI environments.
-
-### BibTeX
-
-```bibtex
-@inproceedings{bozzo2026compiled,
-  author={Bozzo, Andrea},
-  title={A Compiled Paradigm for Scalable and Sustainable Edge AI: Out-of-Core Execution and SIMD Acceleration in Telemetry Profiling},
-  booktitle={2026 IEEE International Conference on Scalable Computing and Communications (ScalCom)},
-  year={2026},
-  note={Under review}
-}
-```
+The citation is for the software. dataprof has no associated publication or DOI,
+so `CITATION.cff` carries no `preferred-citation` entry and the generated BibTeX
+is a `@misc` software record. Reproducible benchmark material lives in
+[scalcom2026-dataprof](https://github.com/AndreaBozzo/scalcom2026-dataprof).
 
 
 ## License
