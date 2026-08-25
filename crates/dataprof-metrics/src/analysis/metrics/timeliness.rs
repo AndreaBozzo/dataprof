@@ -156,14 +156,19 @@ impl<'a> TimelinessCalculator<'a> {
             // Resolve ambiguous role matches in the order supplied by the user.
             // Iterating `data` here would make the selected pair depend on the
             // randomized iteration order of its HashMap.
-            let start_match = temporal_columns
-                .iter()
-                .find(|name| name.to_lowercase().contains(start_col))
-                .and_then(|name| data.get(name).map(|values| (name.as_str(), values)));
-            let end_match = temporal_columns
-                .iter()
-                .find(|name| name.to_lowercase().contains(end_col))
-                .and_then(|name| data.get(name).map(|values| (name.as_str(), values)));
+            // `find_map`, not `find(..).and_then(..)`: a name the caller listed
+            // but the data does not carry must not end the search, or it hides
+            // a later name that fills the same role and does have values.
+            let resolve = |role: &str| {
+                temporal_columns.iter().find_map(|name| {
+                    name.to_lowercase()
+                        .contains(role)
+                        .then(|| data.get(name).map(|values| (name.as_str(), values)))
+                        .flatten()
+                })
+            };
+            let start_match = resolve(start_col);
+            let end_match = resolve(end_col);
 
             let (Some((start_name, start_values)), Some((end_name, end_values))) =
                 (start_match, end_match)
@@ -589,5 +594,20 @@ mod tests {
 
         assert_eq!(metrics.temporal_pairs_checked, 0);
         assert_eq!(metrics.temporal_violations, 0);
+    }
+
+    #[test]
+    fn a_named_column_absent_from_the_data_does_not_hide_a_later_pair() {
+        // A temporal column the caller named but the data does not carry must
+        // not stop the search: the next name matching the same role, and
+        // present, is still a valid pair.
+        let data = HashMap::from([
+            ("primary_start".to_string(), vec!["2023-06-01".to_string()]),
+            ("end".to_string(), vec!["2023-01-01".to_string()]),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["missing_start", "primary_start", "end"]);
+
+        assert_eq!(metrics.temporal_pairs_checked, 1);
+        assert_eq!(metrics.temporal_violations, 1);
     }
 }
