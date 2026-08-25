@@ -12,9 +12,12 @@
 //! names here are written as code rather than as links: a link to a gated item
 //! does not resolve when the docs are built without its feature.
 //!
-//! - `arrow` — `RecordBatchAnalyzer` and `ArrowProfiler`, which profile Arrow
-//!   record batches and CSV read through Arrow. Neither is re-exported by the
-//!   facade; they are the entry points for callers who already hold Arrow data.
+//! - `arrow` — two profilers that differ in what they consume.
+//!   `RecordBatchAnalyzer` takes Arrow record batches, and is the entry point
+//!   for a caller who already holds Arrow data and has no file to point at.
+//!   `ArrowProfiler` reads a CSV file, using Arrow as its engine rather than as
+//!   its input; its only analysis method is `analyze_csv_file`. Neither is
+//!   re-exported by the facade.
 //! - `parquet` — the file and byte-buffer entry points in this crate's root.
 //!   Implies `arrow`.
 //! - `parquet-async` — `analyze_parquet_async_http` and `HttpParquetReader`,
