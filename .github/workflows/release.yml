@@ -183,6 +183,7 @@ jobs:
         cargo test --locked --test public_api_facade --no-default-features --features async-streaming
         cargo test --locked --test public_api_facade --all-features
         cargo test --locked -p dataprof-engines --all-features
+        cargo test --locked -p dataprof-json --all-features
         cargo test --locked -p dataprof-parquet --all-features
         cargo test --locked -p dataprof-partial --all-features
         cargo check --locked -p dataprof-python --all-features
