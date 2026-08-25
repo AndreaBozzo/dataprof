@@ -800,7 +800,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 
 [[package]]
 name = "dataprof"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-csv"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "csv",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-db"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "dataprof-core",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-engines"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-json"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "dataprof-core",
  "dataprof-runtime",
@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-metrics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "dataprof-core",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-parquet"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-partial"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "arrow",
  "bytes",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-python"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "dataprof-runtime"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bytes",

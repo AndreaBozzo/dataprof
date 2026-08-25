@@ -6,7 +6,169 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 For the user-oriented overview, upgrade checklist, and migration details, read
-the [0.10.0 release notes](release-notes.md).
+the [0.11.0 release notes](release-notes.md).
+
+## [0.11.0] - 2026-08-25
+
+### Added
+
+- **Errors**: Retain originating errors as a walkable source chain (#617) by @AndreaBozzo
+
+- **Parquet**: Profile materialized Parquet bytes through the async path (#582) by @aryansk
+
+- **Schema**: Add bytes source_type for byte-buffer inputs (#583) by @aryansk
+
+- **Python**: Ship async and HTTP profiling in the default wheel (#595) by @AndreaBozzo
+
+- **Profile**: Flag a column that has no dominant type (#578) by @AndreaBozzo
+
+- **Python**: Pin the public surface to what __all__ declares (#529) by @AndreaBozzo
+
+- **Agents**: Make the dataprof skill accurate, self-checking, and able to grow (#510) by @AndreaBozzo
+
+- **Report**: Publish versioned JSON schema (#493) by @AndreaBozzo
+
+### Changed
+
+- Normalize line endings with .gitattributes (#618) by @AndreaBozzo
+
+- Pin the Rust toolchain and fix the clippy lint 1.98 added (#615) by @AndreaBozzo
+
+- **Release**: Single-source the shipped wheel feature list (#594) by @aryansk
+
+- Give feature-checks room to survive a cold cache (#597) by @AndreaBozzo
+
+- Stop building the Rust extension in the Python lint job (#596) by @AndreaBozzo
+
+- Stop the wheel smoke build compiling the tree twice (#533) by @AndreaBozzo
+
+- Label pull requests by changed path (#508) by @AndreaBozzo
+
+### Dependencies
+
+- **Deps-dev**: Bump ruff from 0.16.1 to 0.16.3 (#603) by @dependabot[bot]
+
+- **Deps-dev**: Bump pyarrow from 25.0.0 to 25.0.1 (#602) by @dependabot[bot]
+
+- **Deps**: Bump thiserror from 2.0.19 to 2.0.20 (#601) by @dependabot[bot]
+
+- **Deps**: Bump async-trait from 0.1.91 to 0.1.92 (#600) by @dependabot[bot]
+
+- **Deps**: Bump futures from 0.3.33 to 0.3.34 (#599) by @dependabot[bot]
+
+- **Deps**: Bump wide from 1.6.0 to 1.6.1 (#598) by @dependabot[bot]
+
+- **Deps**: Bump pyo3 from 0.29.0 to 0.29.2 (#567) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.16.0 to 0.16.1 (#524) by @dependabot[bot]
+
+- **Deps**: Bump parquet from 59.1.0 to 59.2.0 (#566) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.65 to 0.0.71 (#570) by @dependabot[bot]
+
+- **Deps-dev**: Bump polars from 1.39.0 to 1.43.2 (#569) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.49.2 to 0.49.6 (#568) by @dependabot[bot]
+
+- **Deps**: Bump arrow from 59.1.0 to 59.2.0 (#565) by @dependabot[bot]
+
+- **Deps**: Bump toml from 1.1.3+spec-1.1.0 to 1.1.4+spec-1.1.0 (#522) by @dependabot[bot]
+
+- **Deps**: Bump wide from 1.5.0 to 1.6.0 (#523) by @dependabot[bot]
+
+- **Deps**: Bump dtolnay/rust-toolchain from 1.96 to 1.100 (#521) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.56 to 0.0.65 (#490) by @dependabot[bot]
+
+- **Deps**: Bump ipython from 8.38.0 to 8.39.0 (#492) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.15.6 to 0.16.0 (#491) by @dependabot[bot]
+
+- **Deps**: Bump serial_test from 3.5.0 to 4.0.1 (#489) by @dependabot[bot]
+
+### Documentation
+
+- Make the README portable and add a website contributor callout (#625) by @AndreaBozzo
+
+- Add software citation metadata and rewrite the PR template (#624) by @AndreaBozzo
+
+- Add compiling Rust examples to the JSON and Parquet entry points (#620) by @AndreaBozzo
+
+- Record the database decision and describe what the wheel ships (#606) by @AndreaBozzo
+
+- Add a code-review agent skill for Copilot reviews (#563) by @AndreaBozzo
+
+- Add recipes for validating saved ProfileReport JSON (#535) by @aryansk
+
+- Update reference format for AGENTS.md in CLAUDE.md by @AndreaBozzo
+
+### Fixed
+
+- **Metrics**: Compare real dates in timeliness, not years or raw strings (#621) by @AndreaBozzo
+
+- **Python**: Document the source-build recipe and guard the shipped feature set (#619) by @AndreaBozzo
+
+- **Python**: Validate Arrow data imported over the C Data Interface (#610) by @AndreaBozzo
+
+- **Python**: Profile every batch of a chunked Table, and accept any Arrow PyCapsule producer (#608) by @AndreaBozzo
+
+- **Metrics**: Count complete records on rows, not null cells (#607) by @AndreaBozzo
+
+- **Schema**: Serialize report mapping fields in deterministic order (#584) by @aryansk
+
+- **Core**: Make StreamingError suggestions per-site instead of a hardcoded chunk-size remedy (#581) by @aryansk
+
+- **Python**: Assess quality by default on database queries (#604) by @AndreaBozzo
+
+- **Async**: Reject duplicate CSV headers (#575) by @aryansk
+
+- **Metrics**: Align empty CSV quality parity (#576) by @aryansk
+
+- **Partial**: Report schema_stable from scan exhaustion, not the raw cap (#580) by @aryansk
+
+- **Csv**: Ignore blank records when scoring delimiter candidates (#579) by @aryansk
+
+- **Patterns**: Make locale a closed set instead of a silent filter (#577) by @AndreaBozzo
+
+- **Csv**: Align header-only analysis across engines (#572) by @floze-the-genius
+
+- **Partial**: Preserve header-only CSV schema (#557) by @floze-the-genius
+
+- **Python**: Keep llm null flags stable across round-trips (#556) by @aryansk
+
+- **Metrics**: Validate date columns against the forms that typed them (#564) by @AndreaBozzo
+
+- **Metrics**: Score string columns against their dominant lexical class (#560) by @AndreaBozzo
+
+- **Agents**: Disclose sample scope, and teach the skill that a perfect score is not evidence (#555) by @AndreaBozzo
+
+- **Engines**: Count ragged rows on the columnar CSV engine (#543) by @AndreaBozzo
+
+- **Engines**: Honour and disclose a row cap of zero (#542) by @AndreaBozzo
+
+- **Json**: Define JSONL as one record per physical line on every transport (#540) by @AndreaBozzo
+
+- **Database**: Preserve query column order in profile reports (#539) by @AndreaBozzo
+
+- **Database**: Apply metric packs and locale on database queries (#538) by @AndreaBozzo
+
+- **Core**: Apply metric packs and locale on JSON, Parquet, and async paths (#537) by @AndreaBozzo
+
+- **Json**: Report a record with no fields as a row on every transport (#534) by @AndreaBozzo
+
+- **Python**: Read Parquet byte buffers natively, without pandas (#532) by @AndreaBozzo
+
+- **Json**: Never discard a non-object JSON record (#531) by @AndreaBozzo
+
+- One rounding convention across the Rust and Python layers (#528) by @AndreaBozzo
+
+- **Python**: Restore hint bindings and ratio precision on report round-trip (#527) by @AndreaBozzo
+
+- **Json**: Preserve source field order for JSON and JSONL columns (#507) by @AndreaBozzo
+
+- Accept leading UTF-8 BOM in JSON inputs (#506) by @AndreaBozzo
+
+- Harden profiling edge-case behavior (#498) by @AndreaBozzo
 
 ## [0.10.0] - 2026-07-24
 

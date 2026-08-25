@@ -6,9 +6,9 @@ We actively support the following versions of dataprof:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.10.x  | :white_check_mark: |
-| 0.9.x   | Security fixes     |
-| < 0.9   | :x:                |
+| 0.11.x  | :white_check_mark: |
+| 0.10.x  | Security fixes     |
+| < 0.10  | :x:                |
 
 ## Reporting a Vulnerability
 

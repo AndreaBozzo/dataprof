@@ -129,8 +129,8 @@ two quality metrics that surprise people.
 
 ```toml
 [dependencies]
-dataprof = "0.10"
-# or: dataprof = { version = "0.10", default-features = false }
+dataprof = "0.11"
+# or: dataprof = { version = "0.11", default-features = false }
 ```
 
 Minimum supported Rust version: 1.96.
