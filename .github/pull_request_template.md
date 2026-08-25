@@ -7,10 +7,13 @@
 
 ## How it was verified
 
-<!-- Paste the commands you actually ran and what they reported. Run the checks
-     that match what you touched; a docs change does not need the workspace. -->
+<!-- Replace the example below with the commands you actually ran and what they
+     reported. Run the checks that match what you touched; a docs change does
+     not need the workspace. -->
 
-```
+```console
+$ cargo test -p dataprof-core
+test result: ok. 156 passed; 0 failed
 ```
 
 <details>
