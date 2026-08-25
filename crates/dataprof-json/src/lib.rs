@@ -1,3 +1,31 @@
+//! JSON and JSONL scanning and profiling for `dataprof`.
+//!
+//! This crate is an implementation detail of the `dataprof` facade, which
+//! re-exports [`JsonParserConfig`], [`analyze_json_from_reader`], and
+//! [`analyze_json_file`]. Depend on `dataprof` unless you need JSON support
+//! without the rest of the workspace.
+//!
+//! Two entry shapes are offered. [`scan_json_from_reader`] hands each record to
+//! a callback and reports what it read; [`analyze_json_from_reader`] and
+//! [`analyze_json_file`] build column profiles and a full report on top of it.
+//!
+//! ```
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use std::io::Cursor;
+//!
+//! use dataprof_json::{JsonParserConfig, analyze_json_from_reader};
+//!
+//! let jsonl = "{\"id\": 1, \"city\": \"Rome\"}\n{\"id\": 2, \"city\": \"Milan\"}\n";
+//! let (profiles, _stats, rows_read, malformed_lines, _format) =
+//!     analyze_json_from_reader(Cursor::new(jsonl), &JsonParserConfig::jsonl())?;
+//!
+//! assert_eq!(rows_read, 2);
+//! assert_eq!(malformed_lines, 0);
+//! assert_eq!(profiles[0].name, "id");
+//! # Ok(())
+//! # }
+//! ```
+
 use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
@@ -32,6 +60,38 @@ pub enum JsonFormat {
 }
 
 /// Configuration for JSON/JSONL parsing and scanning.
+///
+/// The default detects the grammar from the input and reads every record,
+/// skipping malformed ones. The two format constructors say which grammar to
+/// read with, which is what a caller who knows should do: detection cannot tell
+/// a JSON object document from a JSONL file, since both open with `{`.
+///
+/// # Examples
+///
+/// The same two records under each grammar:
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Cursor;
+///
+/// use dataprof_json::{JsonParserConfig, scan_json_from_reader};
+///
+/// let document = r#"[{"id": 1}, {"id": 2}]"#;
+/// let lines = "{\"id\": 1}\n{\"id\": 2}\n";
+///
+/// let from_document = scan_json_from_reader(
+///     Cursor::new(document),
+///     &JsonParserConfig::json_document(),
+///     |_| {},
+/// )?;
+/// let from_lines =
+///     scan_json_from_reader(Cursor::new(lines), &JsonParserConfig::jsonl(), |_| {})?;
+///
+/// assert_eq!(from_document.rows_read, 2);
+/// assert_eq!(from_lines.rows_read, 2);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct JsonParserConfig {
     /// The grammar to read with. `None` detects it from the first byte, which
@@ -49,12 +109,73 @@ pub struct JsonParserConfig {
 
 impl JsonParserConfig {
     /// Set the maximum number of rows to process.
+    ///
+    /// The cap counts profileable records, not lines: blank lines and records
+    /// skipped as malformed do not consume it.
+    ///
+    /// A cap is only *truncation* when a record still remained once it was
+    /// reached, so a source holding exactly `max_rows` records reads as
+    /// complete. [`JsonScanSummary::truncated`] carries that distinction, and
+    /// [`analyze_json_file`] turns it into a [`TruncationReason::MaxRows`] on
+    /// the report.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use std::io::Cursor;
+    ///
+    /// use dataprof_json::{JsonParserConfig, scan_json_from_reader};
+    ///
+    /// let lines = "{\"id\": 1}\n{\"id\": 2}\n{\"id\": 3}\n";
+    ///
+    /// // Two of three records: a third remained, so the scan was cut short.
+    /// let capped = JsonParserConfig::jsonl().with_max_rows(2);
+    /// let summary = scan_json_from_reader(Cursor::new(lines), &capped, |_| {})?;
+    /// assert_eq!(summary.rows_read, 2);
+    /// assert!(summary.truncated);
+    ///
+    /// // A cap the source never reaches past is a complete read, not a
+    /// // truncated one.
+    /// let exact = JsonParserConfig::jsonl().with_max_rows(3);
+    /// let summary = scan_json_from_reader(Cursor::new(lines), &exact, |_| {})?;
+    /// assert_eq!(summary.rows_read, 3);
+    /// assert!(!summary.truncated);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_rows(mut self, max_rows: usize) -> Self {
         self.max_rows = Some(max_rows);
         self
     }
 
     /// Set how malformed records are handled.
+    ///
+    /// Under the default [`JsonErrorPolicy::Skip`] a malformed record is
+    /// counted in [`JsonScanSummary::malformed_lines`] and scanning continues,
+    /// so a partial profile never looks like a clean one. Under
+    /// [`JsonErrorPolicy::Strict`] the first one fails the scan.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use std::io::Cursor;
+    ///
+    /// use dataprof_json::{JsonErrorPolicy, JsonParserConfig, scan_json_from_reader};
+    ///
+    /// let lines = "{\"id\": 1}\nnot json\n{\"id\": 2}\n";
+    ///
+    /// let skipping = JsonParserConfig::jsonl();
+    /// let summary = scan_json_from_reader(Cursor::new(lines), &skipping, |_| {})?;
+    /// assert_eq!(summary.rows_read, 2);
+    /// assert_eq!(summary.malformed_lines, 1);
+    ///
+    /// let strict = JsonParserConfig::jsonl().with_error_policy(JsonErrorPolicy::Strict);
+    /// assert!(scan_json_from_reader(Cursor::new(lines), &strict, |_| {}).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_error_policy(mut self, policy: JsonErrorPolicy) -> Self {
         self.error_policy = policy;
         self
@@ -125,6 +246,68 @@ pub struct JsonScanSummary {
 /// [`JsonErrorPolicy::Skip`] it is counted in
 /// [`JsonScanSummary::malformed_lines`] and scanning continues with the next
 /// record, and under [`JsonErrorPolicy::Strict`] the first one fails the scan.
+///
+/// # Examples
+///
+/// Reading JSONL, keeping one field per record:
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Cursor;
+///
+/// use dataprof_json::{JsonParserConfig, scan_json_from_reader};
+///
+/// let lines = "{\"city\": \"Rome\", \"pop\": 2800000}\n\
+///              {\"city\": \"Milan\", \"pop\": 1400000}\n";
+///
+/// let mut cities = Vec::new();
+/// let summary = scan_json_from_reader(
+///     Cursor::new(lines),
+///     &JsonParserConfig::jsonl(),
+///     |object| {
+///         if let Some(city) = object.get("city").and_then(|value| value.as_str()) {
+///             cities.push(city.to_string());
+///         }
+///     },
+/// )?;
+///
+/// assert_eq!(cities, ["Rome", "Milan"]);
+/// assert_eq!(summary.rows_read, 2);
+/// assert!(!summary.truncated);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The same records as a JSON array. The array streams element by element, and
+/// a record may be pretty-printed across lines because whitespace carries no
+/// meaning under this grammar:
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Cursor;
+///
+/// use dataprof_json::{JsonParserConfig, scan_json_from_reader};
+///
+/// let document = r#"[
+///     {"city": "Rome", "pop": 2800000},
+///     {"city": "Milan", "pop": 1400000}
+/// ]"#;
+///
+/// let mut total = 0u64;
+/// let summary = scan_json_from_reader(
+///     Cursor::new(document),
+///     &JsonParserConfig::json_document(),
+///     |object| {
+///         total += object.get("pop").and_then(|value| value.as_u64()).unwrap_or(0);
+///     },
+/// )?;
+///
+/// assert_eq!(total, 4_200_000);
+/// assert_eq!(summary.rows_read, 2);
+/// assert_eq!(summary.malformed_lines, 0);
+/// # Ok(())
+/// # }
+/// ```
 pub fn scan_json_from_reader<R, F>(
     reader: R,
     config: &JsonParserConfig,
@@ -710,6 +893,37 @@ fn feed_json_object(
 /// fields that only appear in later records appended in first-seen order. This
 /// matches CSV (header order) and Parquet (schema order), so the same logical
 /// dataset profiles to the same column order in every format.
+///
+/// # Examples
+///
+/// The second record lists its fields in a different order and adds one. The
+/// first record still decides the order, and the new field is appended:
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Cursor;
+///
+/// use dataprof_json::{JsonParserConfig, analyze_json_from_reader};
+///
+/// let lines = "{\"id\": 1, \"city\": \"Rome\"}\n\
+///              {\"city\": \"Milan\", \"id\": 2, \"region\": \"Lombardy\"}\n";
+///
+/// let (profiles, _stats, rows_read, malformed_lines, format) =
+///     analyze_json_from_reader(Cursor::new(lines), &JsonParserConfig::jsonl())?;
+///
+/// let names: Vec<&str> = profiles.iter().map(|profile| profile.name.as_str()).collect();
+/// assert_eq!(names, ["id", "city", "region"]);
+/// assert_eq!(rows_read, 2);
+/// assert_eq!(malformed_lines, 0);
+/// assert_eq!(format, dataprof_core::FileFormat::Jsonl);
+///
+/// // The first record has no `region`, which counts as a missing value.
+/// let region = &profiles[2];
+/// assert_eq!(region.total_count, 2);
+/// assert_eq!(region.null_count, 1);
+/// # Ok(())
+/// # }
+/// ```
 pub fn analyze_json_from_reader<R: BufRead>(
     reader: R,
     config: &JsonParserConfig,
@@ -800,6 +1014,32 @@ fn analyze_json_from_reader_full<R: BufRead>(
 }
 
 /// Analyze a JSON or JSONL file, returning a full [`ProfileReport`].
+///
+/// With no explicit [`JsonParserConfig::format`] the file extension decides:
+/// `.json` reads as a standard document, `.jsonl` and `.ndjson` as JSON Lines,
+/// and any other name falls back to sniffing the first byte.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Write;
+///
+/// use dataprof_json::{JsonParserConfig, analyze_json_file};
+///
+/// let mut file = tempfile::NamedTempFile::with_suffix(".jsonl")?;
+/// writeln!(file, "{{\"id\": 1, \"score\": 9.5}}")?;
+/// writeln!(file, "{{\"id\": 2, \"score\": 7.0}}")?;
+/// file.flush()?;
+///
+/// let report = analyze_json_file(file.path(), &JsonParserConfig::default())?;
+///
+/// assert_eq!(report.execution.rows_processed, 2);
+/// assert_eq!(report.execution.columns_detected, 2);
+/// assert!(report.execution.truncation_reason.is_none());
+/// # Ok(())
+/// # }
+/// ```
 pub fn analyze_json_file(
     file_path: &Path,
     config: &JsonParserConfig,
