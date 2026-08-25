@@ -1,0 +1,42 @@
+# Citation metadata for the dataprof software.
+#
+# This file describes the software only. dataprof has no associated
+# publication, DOI, or archival record, so there is deliberately no
+# `preferred-citation`, `doi`, or `identifiers` entry here. Do not add one
+# unless a publication actually exists: GitHub renders whatever this file
+# claims, and an invented citation is worse than none.
+#
+# At each release, update `version` and `date-released` to match the tag.
+# Nothing else here changes from one release to the next.
+cff-version: 1.2.0
+title: dataprof
+message: >-
+  If you use dataprof in your work, please cite it using the metadata in this
+  file. GitHub's "Cite this repository" button generates APA and BibTeX from it.
+type: software
+authors:
+  - family-names: Bozzo
+    given-names: Andrea
+    email: andreabozzo92@gmail.com
+repository-code: https://github.com/AndreaBozzo/dataprof
+url: https://andreabozzo.github.io/dataprof/
+abstract: >-
+  dataprof is a local, deterministic data profiling and quality assessment
+  library for CSV, JSON, JSONL, and Parquet sources. It is a Rust workspace with
+  a PyO3-based Python package on top, and reports ISO 8000/25012 quality
+  dimensions alongside column statistics, type inference, and pattern
+  detection. It profiles data and reports on it; it does not transform, clean,
+  or move it.
+keywords:
+  - data profiling
+  - data quality
+  - data engineering
+  - rust
+  - python
+  - csv
+  - parquet
+license:
+  - MIT
+  - Apache-2.0
+version: 0.10.0
+date-released: '2026-07-24'
