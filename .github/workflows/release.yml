@@ -410,7 +410,14 @@ jobs:
           - os: macos-latest
             target: aarch64
             cpu_profile: optimized
-            rustflags: "-C target-cpu=native"
+            # The same ring constraint as the baseline leg above, from the
+            # other side. ring asserts `CAPS_STATIC == MIN_STATIC_FEATURES`
+            # exactly on aarch64-apple-darwin (src/cpu/arm/darwin.rs), so
+            # `native` fails on a current Apple Silicon runner by enabling
+            # more than that baseline, just as `generic` failed by enabling
+            # less. rustc already defaults this target to apple-m1, which is
+            # what `native` was reaching for, so dropping it costs nothing.
+            rustflags: "-C opt-level=3"
 
     steps:
     - uses: actions/checkout@v7.0.1

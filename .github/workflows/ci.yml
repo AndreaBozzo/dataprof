@@ -77,7 +77,10 @@ jobs:
   quality-checks:
     name: Code Quality
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Usually about a minute, but it hit the 10-minute ceiling and was
+    # cancelled on a cold cache. A timeout here is worse than a slow run: the
+    # cache is only written on success, so the next run starts cold too.
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
