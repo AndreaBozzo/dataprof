@@ -13,6 +13,58 @@ use dataprof_core::{
 use dataprof_runtime::{ProfileReport, ReportAssembler};
 
 /// Check if a file is a valid Parquet file by examining its magic number.
+///
+/// Checks the `PAR1` marker at both ends of the file, which is enough to route
+/// an input to the right reader but says nothing about whether the footer and
+/// row groups are intact. Anything unreadable answers `false` rather than
+/// erroring: a missing path, a directory, a permissions error. The question is
+/// only which reader an input should go to.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Write;
+///
+/// use dataprof_parquet::is_parquet_file;
+///
+/// let mut parquet = tempfile::NamedTempFile::new()?;
+/// parquet.write_all(&sample_parquet()?)?;
+/// parquet.flush()?;
+/// assert!(is_parquet_file(parquet.path()));
+///
+/// let mut csv = tempfile::NamedTempFile::new()?;
+/// csv.write_all(b"id,city\n1,Rome\n")?;
+/// csv.flush()?;
+/// assert!(!is_parquet_file(csv.path()));
+///
+/// // A path that does not exist is simply not a Parquet file.
+/// assert!(!is_parquet_file(std::path::Path::new("no/such/file.parquet")));
+/// # Ok(())
+/// # }
+/// # fn sample_parquet() -> Result<bytes::Bytes, Box<dyn std::error::Error>> {
+/// #     use std::sync::Arc;
+/// #     use arrow::array::{Int32Array, StringArray};
+/// #     use arrow::datatypes::{DataType, Field, Schema};
+/// #     use arrow::record_batch::RecordBatch;
+/// #     let schema = Arc::new(Schema::new(vec![
+/// #         Field::new("id", DataType::Int32, false),
+/// #         Field::new("city", DataType::Utf8, true),
+/// #     ]));
+/// #     let batch = RecordBatch::try_new(
+/// #         schema.clone(),
+/// #         vec![
+/// #             Arc::new(Int32Array::from(vec![1, 2, 3])),
+/// #             Arc::new(StringArray::from(vec![Some("Rome"), None, Some("Milan")])),
+/// #         ],
+/// #     )?;
+/// #     let mut buffer = Vec::new();
+/// #     let mut writer = parquet::arrow::ArrowWriter::try_new(&mut buffer, schema, None)?;
+/// #     writer.write(&batch)?;
+/// #     writer.close()?;
+/// #     Ok(bytes::Bytes::from(buffer))
+/// # }
+/// ```
 pub fn is_parquet_file(file_path: &Path) -> bool {
     let mut file = match File::open(file_path) {
         Ok(file) => file,
@@ -50,6 +102,28 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
 }
 
 /// Configuration options for Parquet analysis.
+///
+/// `batch_size` is how many rows the Arrow reader materialises at a time. It
+/// trades memory for fewer reader round trips and does not change any profiled
+/// number; [`ParquetConfig::adaptive_batch_size`] picks a reasonable value from
+/// a file size. `max_rows` caps how much of the file is read; see
+/// [`ParquetConfig::with_max_rows`].
+///
+/// # Examples
+///
+/// ```
+/// use dataprof_parquet::ParquetConfig;
+///
+/// let config = ParquetConfig::default();
+/// assert_eq!(config.batch_size, 8192);
+/// assert_eq!(config.max_rows, None);
+///
+/// // Size the batches for a ~500 MB file, and read the first 1,000 rows only.
+/// let config = ParquetConfig::batch_size(ParquetConfig::adaptive_batch_size(500 * 1024 * 1024))
+///     .with_max_rows(1_000);
+/// assert_eq!(config.batch_size, 16384);
+/// assert_eq!(config.max_rows, Some(1_000));
+/// ```
 #[derive(Debug, Clone)]
 pub struct ParquetConfig {
     pub batch_size: usize,
@@ -75,6 +149,61 @@ impl ParquetConfig {
     }
 
     /// Cap the number of rows read from the file.
+    ///
+    /// A cap is only *truncation* when the file holds more rows than the cap,
+    /// so a file with exactly `max_rows` rows is reported as read in full.
+    /// Parquet records its row count in the footer, so this is decided from
+    /// what the file holds rather than inferred from how much was read.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use dataprof_core::TruncationReason;
+    /// use dataprof_parquet::{ParquetConfig, analyze_parquet_bytes};
+    ///
+    /// let data = sample_parquet()?; // three rows
+    ///
+    /// let capped = ParquetConfig::default().with_max_rows(2);
+    /// let report =
+    ///     analyze_parquet_bytes(data.clone(), "sample", &capped, None, &Default::default())?;
+    /// assert_eq!(report.execution.rows_processed, 2);
+    /// assert!(matches!(
+    ///     report.execution.truncation_reason,
+    ///     Some(TruncationReason::MaxRows(2))
+    /// ));
+    ///
+    /// // A cap the file never exceeds is a complete read, not a truncated one.
+    /// let exact = ParquetConfig::default().with_max_rows(3);
+    /// let report =
+    ///     analyze_parquet_bytes(data, "sample", &exact, None, &Default::default())?;
+    /// assert_eq!(report.execution.rows_processed, 3);
+    /// assert!(report.execution.truncation_reason.is_none());
+    /// # Ok(())
+    /// # }
+    /// # fn sample_parquet() -> Result<bytes::Bytes, Box<dyn std::error::Error>> {
+    /// #     use std::sync::Arc;
+    /// #     use arrow::array::{Int32Array, StringArray};
+    /// #     use arrow::datatypes::{DataType, Field, Schema};
+    /// #     use arrow::record_batch::RecordBatch;
+    /// #     let schema = Arc::new(Schema::new(vec![
+    /// #         Field::new("id", DataType::Int32, false),
+    /// #         Field::new("city", DataType::Utf8, true),
+    /// #     ]));
+    /// #     let batch = RecordBatch::try_new(
+    /// #         schema.clone(),
+    /// #         vec![
+    /// #             Arc::new(Int32Array::from(vec![1, 2, 3])),
+    /// #             Arc::new(StringArray::from(vec![Some("Rome"), None, Some("Milan")])),
+    /// #         ],
+    /// #     )?;
+    /// #     let mut buffer = Vec::new();
+    /// #     let mut writer = parquet::arrow::ArrowWriter::try_new(&mut buffer, schema, None)?;
+    /// #     writer.write(&batch)?;
+    /// #     writer.close()?;
+    /// #     Ok(bytes::Bytes::from(buffer))
+    /// # }
+    /// ```
     pub fn with_max_rows(mut self, max_rows: usize) -> Self {
         self.max_rows = Some(max_rows);
         self
@@ -91,6 +220,11 @@ impl ParquetConfig {
     }
 }
 
+/// Analyze a Parquet file with default settings and every quality dimension.
+///
+/// The shortest entry point: [`analyze_parquet_with_config`] takes a
+/// [`ParquetConfig`], and [`analyze_parquet_with_options`] takes the full
+/// analysis selection.
 pub fn analyze_parquet_with_quality(file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
     analyze_parquet_with_quality_dims(file_path, None)
 }
@@ -115,6 +249,63 @@ pub fn analyze_parquet_with_quality_dims_and_hints(
     )
 }
 
+/// Analyze a Parquet file with an explicit [`ParquetConfig`].
+///
+/// Columns come back in schema order, which is the same ordering contract the
+/// CSV and JSON readers hold to, so one logical dataset profiles to the same
+/// column order in every format.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::io::Write;
+///
+/// use dataprof_parquet::{ParquetConfig, analyze_parquet_with_config};
+///
+/// let mut file = tempfile::NamedTempFile::new()?;
+/// file.write_all(&sample_parquet()?)?;
+/// file.flush()?;
+///
+/// let report = analyze_parquet_with_config(file.path(), &ParquetConfig::default())?;
+///
+/// assert_eq!(report.execution.rows_processed, 3);
+/// let names: Vec<&str> = report
+///     .column_profiles
+///     .iter()
+///     .map(|profile| profile.name.as_str())
+///     .collect();
+/// assert_eq!(names, ["id", "city"]);
+///
+/// // Arrow nulls are counted as missing values, not as empty strings.
+/// let city = &report.column_profiles[1];
+/// assert_eq!(city.total_count, 3);
+/// assert_eq!(city.null_count, 1);
+/// # Ok(())
+/// # }
+/// # fn sample_parquet() -> Result<bytes::Bytes, Box<dyn std::error::Error>> {
+/// #     use std::sync::Arc;
+/// #     use arrow::array::{Int32Array, StringArray};
+/// #     use arrow::datatypes::{DataType, Field, Schema};
+/// #     use arrow::record_batch::RecordBatch;
+/// #     let schema = Arc::new(Schema::new(vec![
+/// #         Field::new("id", DataType::Int32, false),
+/// #         Field::new("city", DataType::Utf8, true),
+/// #     ]));
+/// #     let batch = RecordBatch::try_new(
+/// #         schema.clone(),
+/// #         vec![
+/// #             Arc::new(Int32Array::from(vec![1, 2, 3])),
+/// #             Arc::new(StringArray::from(vec![Some("Rome"), None, Some("Milan")])),
+/// #         ],
+/// #     )?;
+/// #     let mut buffer = Vec::new();
+/// #     let mut writer = parquet::arrow::ArrowWriter::try_new(&mut buffer, schema, None)?;
+/// #     writer.write(&batch)?;
+/// #     writer.close()?;
+/// #     Ok(bytes::Bytes::from(buffer))
+/// # }
+/// ```
 pub fn analyze_parquet_with_config(
     file_path: &Path,
     config: &ParquetConfig,
@@ -140,6 +331,53 @@ pub fn analyze_parquet_with_config_dims(
 /// Reads through the same Arrow reader as [`analyze_parquet_with_config_dims_and_hints`],
 /// so a buffer and the file holding those same bytes profile identically. `name`
 /// labels the source in the report, since an in-memory buffer has no path.
+///
+/// # Examples
+///
+/// Encoding a batch and profiling it without a temporary file. This is the
+/// helper the other examples in this crate hide:
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::sync::Arc;
+///
+/// use arrow::array::{Int32Array, StringArray};
+/// use arrow::datatypes::{DataType, Field, Schema};
+/// use arrow::record_batch::RecordBatch;
+/// use bytes::Bytes;
+/// use dataprof_parquet::{ParquetConfig, analyze_parquet_bytes};
+/// use parquet::arrow::ArrowWriter;
+///
+/// let schema = Arc::new(Schema::new(vec![
+///     Field::new("id", DataType::Int32, false),
+///     Field::new("city", DataType::Utf8, true),
+/// ]));
+/// let batch = RecordBatch::try_new(
+///     schema.clone(),
+///     vec![
+///         Arc::new(Int32Array::from(vec![1, 2, 3])),
+///         Arc::new(StringArray::from(vec![Some("Rome"), None, Some("Milan")])),
+///     ],
+/// )?;
+///
+/// let mut buffer = Vec::new();
+/// let mut writer = ArrowWriter::try_new(&mut buffer, schema, None)?;
+/// writer.write(&batch)?;
+/// writer.close()?;
+///
+/// let report = analyze_parquet_bytes(
+///     Bytes::from(buffer),
+///     "cities",
+///     &ParquetConfig::default(),
+///     None,
+///     &Default::default(),
+/// )?;
+///
+/// assert_eq!(report.execution.rows_processed, 3);
+/// assert_eq!(report.column_profiles[1].null_count, 1);
+/// # Ok(())
+/// # }
+/// ```
 pub fn analyze_parquet_bytes(
     data: Bytes,
     name: &str,

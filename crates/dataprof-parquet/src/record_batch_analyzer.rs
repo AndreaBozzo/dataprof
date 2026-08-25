@@ -122,6 +122,58 @@ fn observe_batch_rows(
 }
 
 /// Analyzer for processing multiple RecordBatches and building column profiles.
+///
+/// The entry point for callers who already hold Arrow data and have no file to
+/// point at. Feed every batch through [`RecordBatchAnalyzer::process_batch`],
+/// then call [`RecordBatchAnalyzer::to_profiles`] once; the statistics are
+/// accumulated across batches, so profiling one batch of 300 rows and three
+/// batches of 100 gives the same answer.
+///
+/// Column order follows the schema, and
+/// [`RecordBatchAnalyzer::initialize_schema`] seeds it up front. Call it
+/// explicitly when a source may yield no batches at all, so a schema-bearing
+/// but empty dataset still profiles to its columns with zero counts instead of
+/// to no columns.
+///
+/// This type is not re-exported by the `dataprof` facade; it needs this crate's
+/// `arrow` feature.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use std::sync::Arc;
+///
+/// use arrow::array::{Int32Array, StringArray};
+/// use arrow::datatypes::{DataType, Field, Schema};
+/// use arrow::record_batch::RecordBatch;
+/// use dataprof_parquet::RecordBatchAnalyzer;
+///
+/// let schema = Arc::new(Schema::new(vec![
+///     Field::new("id", DataType::Int32, false),
+///     Field::new("city", DataType::Utf8, true),
+/// ]));
+/// let batch = RecordBatch::try_new(
+///     schema.clone(),
+///     vec![
+///         Arc::new(Int32Array::from(vec![1, 2, 3])),
+///         Arc::new(StringArray::from(vec![Some("Rome"), None, Some("Milan")])),
+///     ],
+/// )?;
+///
+/// let mut analyzer = RecordBatchAnalyzer::new();
+/// analyzer.initialize_schema(schema.as_ref())?;
+/// analyzer.process_batch(&batch)?;
+///
+/// assert_eq!(analyzer.total_rows(), 3);
+///
+/// let profiles = analyzer.to_profiles(false, false, None);
+/// let names: Vec<&str> = profiles.iter().map(|profile| profile.name.as_str()).collect();
+/// assert_eq!(names, ["id", "city"]);
+/// assert_eq!(profiles[1].null_count, 1);
+/// # Ok(())
+/// # }
+/// ```
 pub struct RecordBatchAnalyzer {
     column_analyzers: HashMap<String, ColumnAnalyzer>,
     column_order: Vec<String>,

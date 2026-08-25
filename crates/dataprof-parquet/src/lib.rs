@@ -1,3 +1,33 @@
+//! Parquet and Arrow profiling for `dataprof`.
+//!
+//! This crate is an implementation detail of the `dataprof` facade, which
+//! re-exports `ParquetConfig`, `is_parquet_file`, `analyze_parquet_with_config`,
+//! and `analyze_parquet_bytes` under its own `parquet` feature. Depend on
+//! `dataprof` unless you need Parquet support without the rest of the
+//! workspace.
+//!
+//! # Features
+//!
+//! Nothing is enabled by default, and every entry point below is gated, so the
+//! names here are written as code rather than as links: a link to a gated item
+//! does not resolve when the docs are built without its feature.
+//!
+//! - `arrow` — two profilers that differ in what they consume.
+//!   `RecordBatchAnalyzer` takes Arrow record batches, and is the entry point
+//!   for a caller who already holds Arrow data and has no file to point at.
+//!   `ArrowProfiler` reads a CSV file, using Arrow as its engine rather than as
+//!   its input; its only analysis method is `analyze_csv_file`. Neither is
+//!   re-exported by the facade.
+//! - `parquet` — the file and byte-buffer entry points in this crate's root.
+//!   Implies `arrow`.
+//! - `parquet-async` — `analyze_parquet_async_http` and `HttpParquetReader`,
+//!   for reading a remote file over HTTP range requests. Implies `parquet`.
+//!
+//! Where an example names a shared type — `TruncationReason`, say — it reaches
+//! for `dataprof_core`, since that is the crate a doctest here can link against.
+//! The facade re-exports the same items as `dataprof::TruncationReason`, and a
+//! caller depending on `dataprof` should use those.
+
 #[cfg(feature = "arrow")]
 mod arrow_profiler;
 

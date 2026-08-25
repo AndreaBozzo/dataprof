@@ -150,6 +150,11 @@ jobs:
             commands: |
               cargo test --test public_api_facade --all-features
               cargo test -p dataprof-engines --all-features
+              # `cargo test --lib`/`--doc` at the root only covers the root
+              # `dataprof` package, so a member crate runs only if it is named
+              # here. dataprof-json carries doctests that would otherwise never
+              # be compiled by CI.
+              cargo test -p dataprof-json --all-features
               cargo test -p dataprof-parquet --all-features
               cargo test -p dataprof-partial --all-features
     steps:
