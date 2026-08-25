@@ -193,24 +193,14 @@ nearby, open a follow-up issue or separate PR.
 
 ### PR Description Template
 
-```markdown
-## Description
-Brief summary of changes
+Opening a pull request fills the body in from
+[`.github/pull_request_template.md`](../.github/pull_request_template.md), so
+there is nothing to copy by hand. It asks for what changed, the related issue,
+and the commands you ran to verify it.
 
-## Related Issues
-Closes #123
-
-## Changes Made
-- Change 1
-- Change 2
-- Change 3
-
-## Testing
-How did you test this?
-
-## Breaking Changes
-Any breaking changes? Document them here.
-```
+Run the checks that match what you touched rather than the whole workspace: the
+template lists the usual ones per area, and they are the same commands as
+[Build & Test](#build--test) above.
 
 ### Review Process
 
