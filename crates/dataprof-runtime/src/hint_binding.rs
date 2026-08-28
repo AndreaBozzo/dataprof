@@ -97,7 +97,7 @@ mod tests {
         let hints = SemanticHints::new(vec!["amount".to_string()], vec![])
             .with_temporal_columns(vec!["event".to_string()]);
         let mut accumulator = ValueHintBindingAccumulator::new(&hints);
-        for value in ["1", " 2", "NULL"] {
+        for value in ["1", " 2", " -inf ", "NULL"] {
             accumulator.observe("amount", value);
         }
         for value in ["2020-01-01", "not-a-date", " 2021-01-01"] {
@@ -105,8 +105,8 @@ mod tests {
         }
 
         let bindings = accumulator.bindings(["amount", "event"]);
-        assert_eq!(bindings[0].checked_values, 2);
-        assert_eq!(bindings[0].matched_values, 1);
+        assert_eq!(bindings[0].checked_values, 3);
+        assert_eq!(bindings[0].matched_values, 2);
         assert!(bindings[0].exact);
         assert_eq!(bindings[1].checked_values, 3);
         assert_eq!(bindings[1].matched_values, 1);
