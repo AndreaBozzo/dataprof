@@ -106,7 +106,7 @@ impl IncrementalProfiler {
         let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
         // Estimate total rows for progress tracking
-        let estimated_total_rows = reader.estimate_row_count()?;
+        let estimated_total_rows = reader.estimate_csv_record_count(self.csv_config.as_ref())?;
         let source_has_header = self
             .csv_config
             .as_ref()
@@ -599,6 +599,59 @@ mod tests {
                 .map(|column| (column.name.as_str(), column.total_count))
                 .collect::<Vec<_>>(),
             [("column_0", 2), ("column_1", 2)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn logical_csv_records_drive_the_progress_estimate() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "id,bio\r1,\"hello\nworld\"\r2,plain")?;
+        temp_file.flush()?;
+
+        let estimated_rows = Arc::new(Mutex::new(None));
+        let captured_estimate = Arc::clone(&estimated_rows);
+        let progress = ProgressSink::Callback(Arc::new(move |event| {
+            if let ProgressEvent::Started {
+                estimated_total_rows,
+                ..
+            } = event
+            {
+                *captured_estimate.lock().expect("progress estimate lock") = estimated_total_rows;
+            }
+        }));
+
+        let report = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1))
+            .progress(progress, Duration::ZERO)
+            .analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(
+            *estimated_rows.lock().expect("progress estimate lock"),
+            Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn leading_blank_lines_do_not_replace_the_csv_header() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "\nalpha,beta\n1,2")?;
+        temp_file.flush()?;
+
+        let report = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1))
+            .analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.total_count))
+                .collect::<Vec<_>>(),
+            [("alpha", 1), ("beta", 1)]
         );
         Ok(())
     }

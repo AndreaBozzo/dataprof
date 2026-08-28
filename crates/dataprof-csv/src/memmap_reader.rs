@@ -95,7 +95,23 @@ impl MemoryMappedCsvReader {
         let delimiter = csv_config
             .and_then(|config| config.delimiter)
             .unwrap_or(b',');
-        let end = self.csv_record_boundary(start, chunk_size.max(1), quote, delimiter);
+        let mut end = self.csv_record_boundary(start, chunk_size.max(1), quote, delimiter);
+
+        // A chunk containing only leading record terminators makes the csv
+        // crate synthesize an empty header at EOF. The following chunk would
+        // then treat the real header as data. When the first target lands in a
+        // run of blank lines, include the first non-blank logical record too so
+        // header discovery has the same view as a full-file reader.
+        if has_headers && offset == 0 {
+            let header_start = self
+                .mmap
+                .iter()
+                .take_while(|&&byte| matches!(byte, b'\r' | b'\n'))
+                .count();
+            if end <= header_start && header_start < self.mmap.len() {
+                end = self.csv_record_boundary(header_start, 1, quote, delimiter);
+            }
+        }
         let chunk_data = &self.mmap[start..end];
         let actual_bytes = chunk_data.len();
 
@@ -180,6 +196,14 @@ impl MemoryMappedCsvReader {
             index += 1;
         }
 
+        // A target at EOF owns the final unterminated record as well as every
+        // earlier terminated one. Returning the last separator here would
+        // unnecessarily defer that final record to a second chunk and would
+        // make a whole-file logical-record sample incomplete.
+        if target == self.mmap.len() {
+            return target;
+        }
+
         if let Some(boundary) = last_boundary {
             return boundary;
         }
@@ -262,27 +286,38 @@ impl MemoryMappedCsvReader {
         (&chunk[start_pos..end_pos], end_pos)
     }
 
-    /// Estimate the number of rows in the file by sampling.
+    /// Estimate the number of logical CSV records using the default parser
+    /// configuration.
+    ///
+    /// Retained as the backwards-compatible form of
+    /// [`Self::estimate_csv_record_count`].
     pub fn estimate_row_count(&self) -> Result<usize> {
+        self.estimate_csv_record_count(None)
+    }
+
+    /// Estimate the number of logical CSV records in the file by sampling.
+    ///
+    /// The sample uses [`Self::read_csv_chunk`], so quoted multiline fields,
+    /// CR/LF/CRLF terminators, delimiters, and blank-record handling match the
+    /// records that incremental profiling will actually consume.
+    pub fn estimate_csv_record_count(&self, csv_config: Option<&CsvParserConfig>) -> Result<usize> {
         const SAMPLE_SIZE: usize = 64 * 1024;
 
-        if self.file_size < SAMPLE_SIZE as u64 {
-            let cursor = Cursor::new(&*self.mmap);
-            let reader = BufReader::new(cursor);
-            return Ok(reader.lines().count());
-        }
-
-        let sample_data = &self.mmap[0..SAMPLE_SIZE];
-        let cursor = Cursor::new(sample_data);
-        let reader = BufReader::new(cursor);
-
-        let sample_lines = reader.lines().count();
-        if sample_lines == 0 {
+        if self.mmap.is_empty() {
             return Ok(0);
         }
 
-        let estimated_rows = (self.file_size * sample_lines as u64) / SAMPLE_SIZE as u64;
-        Ok(estimated_rows as usize)
+        let (_, records, sampled_bytes) = self.read_csv_chunk(0, SAMPLE_SIZE, false, csv_config)?;
+        if sampled_bytes == 0 || records.is_empty() {
+            return Ok(0);
+        }
+        if sampled_bytes == self.mmap.len() {
+            return Ok(records.len());
+        }
+
+        let estimated_records =
+            (self.file_size as u128 * records.len() as u128) / sampled_bytes as u128;
+        Ok(estimated_records.min(usize::MAX as u128) as usize)
     }
 
     /// Check for memory leaks in the memory tracker.
@@ -351,6 +386,37 @@ mod tests {
 
         assert!(estimated > 90 && estimated < 120);
 
+        Ok(())
+    }
+
+    #[test]
+    fn row_estimation_counts_logical_csv_records() -> Result<()> {
+        let cases: [(&str, &[u8], Option<CsvParserConfig>); 3] = [
+            (
+                "quoted multiline",
+                b"id,bio\n1,\"hello\nworld\"\n2,plain",
+                None,
+            ),
+            ("lone CR", b"id,value\r1,x\r2,y", None),
+            (
+                "custom delimiter",
+                b"id;bio\r1;\"hello\nworld\"\r2;plain",
+                Some(CsvParserConfig::default().with_delimiter(b';')),
+            ),
+        ];
+
+        for (case, payload, config) in cases {
+            let mut temp_file = NamedTempFile::new()?;
+            temp_file.write_all(payload)?;
+            temp_file.flush()?;
+
+            let reader = MemoryMappedCsvReader::new(temp_file.path())?;
+            assert_eq!(
+                reader.estimate_csv_record_count(config.as_ref())?,
+                3,
+                "case={case}"
+            );
+        }
         Ok(())
     }
 
@@ -424,6 +490,40 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].iter().collect::<Vec<_>>(), ["1", "2"]);
         assert_eq!(records[1].iter().collect::<Vec<_>>(), ["3", "4"]);
+        Ok(())
+    }
+
+    #[test]
+    fn csv_chunk_skips_leading_blank_lines_before_header() -> Result<()> {
+        let payload = b"\n\r\n\ralpha,beta\n1,2";
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(payload)?;
+        temp_file.flush()?;
+
+        let reader = MemoryMappedCsvReader::new(temp_file.path())?;
+        let mut offset = 0u64;
+        let mut headers = None;
+        let mut records = Vec::new();
+
+        loop {
+            let (chunk_headers, chunk_records, bytes) =
+                reader.read_csv_chunk(offset, 1, headers.is_none(), None)?;
+            if bytes == 0 {
+                break;
+            }
+            if headers.is_none() {
+                headers = chunk_headers;
+            }
+            records.extend(chunk_records);
+            offset += bytes as u64;
+        }
+
+        assert_eq!(
+            headers.expect("header").iter().collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].iter().collect::<Vec<_>>(), ["1", "2"]);
         Ok(())
     }
 
