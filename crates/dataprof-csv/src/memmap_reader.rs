@@ -163,10 +163,18 @@ impl MemoryMappedCsvReader {
                 at_field_start = false;
             } else if !in_quotes && byte == delimiter {
                 at_field_start = true;
-            } else if !in_quotes && byte == b'\n' {
-                last_boundary = Some(index + 1);
+            } else if !in_quotes && let Some(boundary) = self.csv_record_terminator_end(index) {
+                // A CRLF whose CR is the target's last byte crosses the target
+                // by one. Prefer an earlier complete record when one exists;
+                // otherwise include the LF so the pair is never split.
+                if boundary > target && last_boundary.is_some() {
+                    break;
+                }
+                last_boundary = Some(boundary);
                 at_field_start = true;
-            } else if !in_quotes && byte != b'\r' {
+                index = boundary;
+                continue;
+            } else if !in_quotes {
                 at_field_start = false;
             }
             index += 1;
@@ -192,15 +200,24 @@ impl MemoryMappedCsvReader {
                 at_field_start = false;
             } else if !in_quotes && byte == delimiter {
                 at_field_start = true;
-            } else if !in_quotes && byte == b'\n' {
-                return index + 1;
-            } else if !in_quotes && byte != b'\r' {
+            } else if !in_quotes && let Some(boundary) = self.csv_record_terminator_end(index) {
+                return boundary;
+            } else if !in_quotes {
                 at_field_start = false;
             }
             index += 1;
         }
 
         self.mmap.len()
+    }
+
+    /// End offset for the CSV crate's default CR, LF, or CRLF terminator.
+    fn csv_record_terminator_end(&self, index: usize) -> Option<usize> {
+        match self.mmap[index] {
+            b'\r' if self.mmap.get(index + 1) == Some(&b'\n') => Some(index + 2),
+            b'\r' | b'\n' => Some(index + 1),
+            _ => None,
+        }
     }
 
     /// Find the next line boundary to avoid cutting CSV records in half.
@@ -411,48 +428,70 @@ mod tests {
     }
 
     #[test]
-    fn csv_chunk_preserves_multiline_quoted_records() -> Result<()> {
-        let mut temp_file = NamedTempFile::new()?;
-        let payload = b"id,bio\r\n1,\"hello \"\"quoted\"\"\nworld\"\r\n2,plain";
-        temp_file.write_all(payload)?;
-        temp_file.flush()?;
+    fn csv_chunk_preserves_multiline_records_for_every_terminator() -> Result<()> {
+        let cases: [(&str, &[u8], &str); 2] = [
+            (
+                "crlf",
+                b"id,bio\r\n1,\"hello \"\"quoted\"\"\nworld\"\r\n2,plain",
+                "hello \"quoted\"\nworld",
+            ),
+            (
+                "lone-cr",
+                b"id,bio\r1,\"hello\nworld\"\r2,plain",
+                "hello\nworld",
+            ),
+        ];
 
-        let reader = MemoryMappedCsvReader::new(temp_file.path())?;
-        for chunk_size in 1..=payload.len() + 1 {
-            let mut offset = 0u64;
-            let mut headers = None;
-            let mut records = Vec::new();
+        for (terminator, payload, expected_bio) in cases {
+            let mut temp_file = NamedTempFile::new()?;
+            temp_file.write_all(payload)?;
+            temp_file.flush()?;
 
-            loop {
-                let (chunk_headers, chunk_records, bytes) =
-                    reader.read_csv_chunk(offset, chunk_size, headers.is_none(), None)?;
-                if bytes == 0 {
-                    break;
+            let reader = MemoryMappedCsvReader::new(temp_file.path())?;
+            for chunk_size in 1..=payload.len() + 1 {
+                let mut offset = 0u64;
+                let mut headers = None;
+                let mut records = Vec::new();
+
+                loop {
+                    let (chunk_headers, chunk_records, bytes) =
+                        reader.read_csv_chunk(offset, chunk_size, headers.is_none(), None)?;
+                    if bytes == 0 {
+                        break;
+                    }
+                    if headers.is_none() {
+                        headers = chunk_headers;
+                    }
+                    records.extend(chunk_records);
+                    offset += bytes as u64;
                 }
-                if headers.is_none() {
-                    headers = chunk_headers;
-                }
-                records.extend(chunk_records);
-                offset += bytes as u64;
+
+                assert_eq!(
+                    headers.expect("header").iter().collect::<Vec<_>>(),
+                    ["id", "bio"],
+                    "terminator={terminator}, chunk_size={chunk_size}"
+                );
+                assert_eq!(
+                    records.len(),
+                    2,
+                    "terminator={terminator}, chunk_size={chunk_size}"
+                );
+                assert_eq!(
+                    records[0].get(0),
+                    Some("1"),
+                    "terminator={terminator}, chunk_size={chunk_size}"
+                );
+                assert_eq!(
+                    records[0].get(1),
+                    Some(expected_bio),
+                    "terminator={terminator}, chunk_size={chunk_size}"
+                );
+                assert_eq!(
+                    records[1].iter().collect::<Vec<_>>(),
+                    ["2", "plain"],
+                    "terminator={terminator}, chunk_size={chunk_size}"
+                );
             }
-
-            assert_eq!(
-                headers.expect("header").iter().collect::<Vec<_>>(),
-                ["id", "bio"],
-                "chunk_size={chunk_size}"
-            );
-            assert_eq!(records.len(), 2, "chunk_size={chunk_size}");
-            assert_eq!(records[0].get(0), Some("1"), "chunk_size={chunk_size}");
-            assert_eq!(
-                records[0].get(1),
-                Some("hello \"quoted\"\nworld"),
-                "chunk_size={chunk_size}"
-            );
-            assert_eq!(
-                records[1].iter().collect::<Vec<_>>(),
-                ["2", "plain"],
-                "chunk_size={chunk_size}"
-            );
         }
         Ok(())
     }
