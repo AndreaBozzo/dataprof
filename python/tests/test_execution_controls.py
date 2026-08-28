@@ -9,9 +9,10 @@ Two promises, checked across the sync and async entry points:
    agree with each other. These four fields are how an agent or quality gate
    tells a complete profile from a bounded one, so they must never contradict.
 
-Units: ``chunk_size`` is **bytes**, everywhere. Row caps are hard caps. Byte
-caps are evaluated at chunk boundaries, so ``bytes_consumed`` may exceed the cap
-by at most one chunk — a bound the caller sets via ``chunk_size``.
+Units: ``chunk_size`` is a **byte target**, everywhere. Row caps are hard caps.
+Byte caps are evaluated at chunk boundaries, so ``bytes_consumed`` may exceed
+the cap by one chunk, and a parser may extend that chunk to keep one logical
+record intact.
 
 Run after building the extension:
     maturin develop --features python,python-async,async-streaming
@@ -109,6 +110,32 @@ def test_chunk_size_never_changes_a_complete_profile(tmp_path, chunk_size):
     assert report.rows == 2_000
     assert report.columns == 5
     _assert_consistent(report, size, f"chunk_size={chunk_size}")
+
+
+def test_chunk_smaller_than_csv_header_keeps_the_schema_and_rows(tmp_path):
+    path = tmp_path / "small_chunks.csv"
+    path.write_bytes(b"alpha,beta\n1,2\n3,4\n")
+
+    report = dp.profile(str(path), engine="incremental", chunk_size=5)
+
+    assert report.rows == 2
+    assert list(report) == ["alpha", "beta"]
+    assert report.ragged_row_count == 0
+    _assert_consistent(report, path.stat().st_size, "header exceeds chunk target")
+
+
+@pytest.mark.parametrize("engine", ["auto", "incremental"])
+def test_multiline_record_crossing_chunk_boundary_stays_one_row(tmp_path, engine):
+    path = tmp_path / "multiline.csv"
+    long_value = "x" * 65_490
+    path.write_text(f'id,bio\n1,"{long_value}\ncontinued"\n2,plain\n', encoding="utf-8")
+
+    report = dp.profile(str(path), engine=engine)
+
+    assert report.rows == 2
+    assert list(report) == ["id", "bio"]
+    assert report.ragged_row_count == 0
+    _assert_consistent(report, path.stat().st_size, f"{engine} multiline record")
 
 
 @pytest.mark.parametrize("engine", ["auto", "incremental"])

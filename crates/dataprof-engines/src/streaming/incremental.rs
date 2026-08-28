@@ -145,10 +145,15 @@ impl IncrementalProfiler {
 
         // Process file in chunks using true streaming
         loop {
+            let source_has_header = self
+                .csv_config
+                .as_ref()
+                .is_none_or(|config| config.has_header);
+            let first_chunk = headers.is_none();
             let (chunk_headers, records, actual_bytes) = reader.read_csv_chunk(
                 offset,
                 chunk_size_bytes,
-                headers.is_none(),
+                first_chunk && source_has_header,
                 self.csv_config.as_ref(),
             )?;
 
@@ -168,6 +173,21 @@ impl IncrementalProfiler {
                     column_stats.init_columns(&names);
                     progress_tracker.emit_schema(names);
                 }
+            }
+            if headers.is_none()
+                && first_chunk
+                && !source_has_header
+                && let Some(first_record) = records.first()
+            {
+                let generated = csv::StringRecord::from(
+                    (0..first_record.len())
+                        .map(|index| format!("column_{index}"))
+                        .collect::<Vec<_>>(),
+                );
+                let names: Vec<String> = generated.iter().map(str::to_string).collect();
+                column_stats.init_columns(&names);
+                progress_tracker.emit_schema(names);
+                headers = Some(generated);
             }
 
             // Process this chunk incrementally
@@ -537,6 +557,30 @@ mod tests {
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn headerless_csv_keeps_the_first_record_and_generates_column_names() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "1,Alice\n2,Bob")?;
+        temp_file.flush()?;
+
+        let report = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1))
+            .csv_config(CsvParserConfig::default().has_header(false))
+            .analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.total_count))
+                .collect::<Vec<_>>(),
+            [("column_0", 2), ("column_1", 2)]
+        );
         Ok(())
     }
 

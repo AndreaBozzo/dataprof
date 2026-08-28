@@ -766,7 +766,7 @@ impl ColumnAnalyzer {
                 // fed so numeric stats never fall back to the sample.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
                     self.update_numeric_stats(number);
                 }
                 self.cardinality.insert(value);
@@ -787,7 +787,7 @@ impl ColumnAnalyzer {
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
                     self.update_numeric_stats(number);
                 }
                 self.cardinality.insert(value);

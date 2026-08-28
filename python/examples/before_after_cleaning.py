@@ -74,14 +74,14 @@ def main() -> None:
         print(f"| before | {before.rows} | {before_score:.1f} |")
         print(f"| after | {after.rows} | {after_score:.1f} |")
 
-        dropped = before.rows - after.rows
-        gained = after_score - before_score
-        print(f"\n{dropped} row(s) dropped, {gained:+.1f} quality points\n")
-
         # `compare()` does the diffing for you: quality, schema, and per-column
         # deltas. `a` is this report, `b` is the other one, and `abs` is `b - a`
         # (signed, despite the name).
         delta = before.compare(after)
+        dropped = before.rows - after.rows
+        gained = delta["quality_score"]["abs"]
+        print(f"\n{dropped} row(s) dropped, {gained:+.1f} quality points\n")
+
         print("## What changed\n")
         print(f"quality_score: {delta['quality_score']['abs']:+.1f}")
         for dimension, change in sorted(delta["dimensions"].items()):

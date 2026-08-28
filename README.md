@@ -51,7 +51,7 @@ uv pip install dataprof
 
 Requires Python 3.10 or newer.
 
-The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, bytes buffers, and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame) and for Parquet *byte buffers*. Async profiling, including HTTP URLs and remote Parquet, is in the wheel too; database connectors are the one documented feature that still needs a source build.
+The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, byte buffers (including Parquet), and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame). Async profiling, including HTTP URLs and remote Parquet, is in the wheel too; database connectors are the one documented feature that still needs a source build.
 
 #### 1. Profile
 
@@ -184,7 +184,7 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 | pandas / polars DataFrame | Columnar | Python API only |
 | Arrow RecordBatch | Columnar | Via PyCapsule (zero-copy) or Rust API |
 | dict / list of dicts | Columnar | Python API only; no dependencies |
-| bytes / BytesIO | Columnar | Python API only; requires `format=`. CSV, JSON and JSONL need no dependencies; Parquet bytes need the `pandas` extra |
+| bytes / BytesIO | Columnar | Python API only; requires `format=`. CSV, JSON, JSONL, and Parquet need no Python dependencies |
 | Async byte stream | Incremental | Any `AsyncRead` source (HTTP, WebSocket, etc.) |
 
 Reported columns follow source order in every format and on every transport: the

@@ -191,6 +191,18 @@ def test_engine_column_order_follows_source(engine, tmp_path):
     assert list(report) == list(COLUMNS)
 
 
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+def test_whitespace_padded_numeric_stats_match_inference(engine, tmp_path):
+    path = tmp_path / "padded_numeric.csv"
+    path.write_bytes(b"name,amount\nAlice, 1 \nBob, 2 \n")
+
+    amount = dataprof.profile(str(path), engine=engine)["amount"]
+
+    assert amount.data_type == "integer", engine
+    assert amount.invalid_count == 0, engine
+    assert (amount.min, amount.max, amount.mean) == pytest.approx((1.0, 2.0, 1.5)), engine
+
+
 # ── High-cardinality regression (issue #386) ──
 #
 # The columnar (Arrow) engine used to stop counting distinct values at an

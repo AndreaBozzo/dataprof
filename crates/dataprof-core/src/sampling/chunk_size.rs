@@ -2,19 +2,19 @@ use sysinfo::System;
 
 /// How much data a streaming engine reads per chunk.
 ///
-/// **The unit is bytes, everywhere.** Chunk size bounds how much of the source
-/// is resident at once, so it is expressed in the unit that actually bounds
-/// memory rather than in rows, whose width varies per dataset. Every engine and
-/// binding agrees: `ChunkSize::Fixed(65_536)` and Python's `chunk_size=65536`
-/// both mean 64 KiB per chunk, whether the source is a file, a byte stream, or
-/// a URL.
+/// **The unit is bytes, everywhere.** Chunk size targets how much of the source
+/// is read at once, so it is expressed in bytes rather than rows, whose width
+/// varies per dataset. Every engine and binding agrees:
+/// `ChunkSize::Fixed(65_536)` and Python's `chunk_size=65536` both mean a
+/// 64 KiB target, whether the source is a file, a byte stream, or a URL. A
+/// parser may exceed that target to keep one logical record intact.
 ///
 /// Chunk size never changes *what* a profile contains — only the granularity at
 /// which the source is read, progress is emitted, and chunk-level stop
 /// conditions are evaluated.
 #[derive(Debug, Clone, Default)]
 pub enum ChunkSize {
-    /// Fixed chunk size in **bytes**.
+    /// Fixed chunk-size target in **bytes**.
     Fixed(usize),
 
     /// Let the engine choose the chunk size (default).

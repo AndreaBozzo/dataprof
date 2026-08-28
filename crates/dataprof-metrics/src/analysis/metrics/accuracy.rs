@@ -81,7 +81,7 @@ impl<'a> AccuracyCalculator<'a> {
                         if is_null_like_token(v.trim()) {
                             None
                         } else {
-                            v.parse::<f64>().ok().filter(|n| n.is_finite())
+                            v.trim().parse::<f64>().ok().filter(|n| n.is_finite())
                         }
                     })
                     .collect();
@@ -163,7 +163,7 @@ impl<'a> AccuracyCalculator<'a> {
                 continue;
             }
 
-            if let Ok(num_value) = value.parse::<f64>() {
+            if let Ok(num_value) = value.trim().parse::<f64>() {
                 if !num_value.is_finite() {
                     continue;
                 }
@@ -214,7 +214,7 @@ impl<'a> AccuracyCalculator<'a> {
                         if is_null_like_token(v.trim()) {
                             None
                         } else {
-                            v.parse::<f64>().ok()
+                            v.trim().parse::<f64>().ok()
                         }
                     })
                     .filter(|&num| num < 0.0)
@@ -283,9 +283,9 @@ mod tests {
         let data = HashMap::from([(
             "pressure".to_string(),
             vec![
-                "101325".to_string(),
-                "-500".to_string(),
-                "100900".to_string(),
+                " 101325".to_string(),
+                " -500 ".to_string(),
+                "100900 ".to_string(),
             ],
         )]);
         let profiles = vec![numeric_profile("pressure")];
@@ -299,5 +299,6 @@ mod tests {
             .calculate_with_positive_columns(&data, &profiles, &["pressure".to_string()])
             .expect("accuracy metrics should compute");
         assert_eq!(with_hint.negative_values_in_positive, 1);
+        assert_eq!(with_hint.numeric_values_checked, 3);
     }
 }

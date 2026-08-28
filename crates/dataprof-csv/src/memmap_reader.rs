@@ -86,13 +86,19 @@ impl MemoryMappedCsvReader {
         has_headers: bool,
         csv_config: Option<&CsvParserConfig>,
     ) -> Result<(Option<csv::StringRecord>, Vec<csv::StringRecord>, usize)> {
-        let (lines, actual_bytes) = self.read_chunk(offset, chunk_size)?;
-
-        if lines.is_empty() {
+        let start = offset as usize;
+        if start >= self.mmap.len() {
             return Ok((None, Vec::new(), 0));
         }
 
-        let chunk_data = lines.join("\n");
+        let quote = csv_config.map_or(b'"', |config| config.quote_char);
+        let delimiter = csv_config
+            .and_then(|config| config.delimiter)
+            .unwrap_or(b',');
+        let end = self.csv_record_boundary(start, chunk_size.max(1), quote, delimiter);
+        let chunk_data = &self.mmap[start..end];
+        let actual_bytes = chunk_data.len();
+
         let mut builder = csv::ReaderBuilder::new();
         builder.has_headers(has_headers && offset == 0);
         if let Some(config) = csv_config {
@@ -105,7 +111,7 @@ impl MemoryMappedCsvReader {
                 builder.trim(csv::Trim::All);
             }
         }
-        let mut reader = builder.from_reader(Cursor::new(chunk_data.as_bytes()));
+        let mut reader = builder.from_reader(chunk_data);
 
         let headers = if has_headers && offset == 0 {
             Some(reader.headers()?.clone())
@@ -119,6 +125,82 @@ impl MemoryMappedCsvReader {
         }
 
         Ok((headers, records, actual_bytes))
+    }
+
+    /// Return a byte boundary that never splits an RFC 4180 record.
+    ///
+    /// `chunk_size` is a working-set target, not permission to hand a partial
+    /// header or record to the CSV decoder. Prefer the last complete record at
+    /// or before the target. If the first record itself is larger, extend just
+    /// far enough to include it. The latter is unavoidable for any parser that
+    /// returns a complete cell, and prevents a long header/record from being
+    /// silently discarded.
+    fn csv_record_boundary(
+        &self,
+        start: usize,
+        chunk_size: usize,
+        quote: u8,
+        delimiter: u8,
+    ) -> usize {
+        let target = start.saturating_add(chunk_size).min(self.mmap.len());
+        let mut index = start;
+        let mut in_quotes = false;
+        let mut at_field_start = true;
+        let mut last_boundary = None;
+
+        while index < target {
+            let byte = self.mmap[index];
+            if in_quotes && byte == quote {
+                // Two quotes inside a quoted field encode one literal quote;
+                // neither ends the field.
+                if self.mmap.get(index + 1) == Some(&quote) {
+                    index += 2;
+                    continue;
+                }
+                in_quotes = false;
+            } else if !in_quotes && at_field_start && byte == quote {
+                in_quotes = true;
+                at_field_start = false;
+            } else if !in_quotes && byte == delimiter {
+                at_field_start = true;
+            } else if !in_quotes && byte == b'\n' {
+                last_boundary = Some(index + 1);
+                at_field_start = true;
+            } else if !in_quotes && byte != b'\r' {
+                at_field_start = false;
+            }
+            index += 1;
+        }
+
+        if let Some(boundary) = last_boundary {
+            return boundary;
+        }
+
+        // No complete record fit. Continue from the quote state at `target`
+        // until the current logical record ends, or include the final
+        // unterminated record so the CSV crate can validate it honestly.
+        while index < self.mmap.len() {
+            let byte = self.mmap[index];
+            if in_quotes && byte == quote {
+                if self.mmap.get(index + 1) == Some(&quote) {
+                    index += 2;
+                    continue;
+                }
+                in_quotes = false;
+            } else if !in_quotes && at_field_start && byte == quote {
+                in_quotes = true;
+                at_field_start = false;
+            } else if !in_quotes && byte == delimiter {
+                at_field_start = true;
+            } else if !in_quotes && byte == b'\n' {
+                return index + 1;
+            } else if !in_quotes && byte != b'\r' {
+                at_field_start = false;
+            }
+            index += 1;
+        }
+
+        self.mmap.len()
     }
 
     /// Find the next line boundary to avoid cutting CSV records in half.
@@ -291,6 +373,87 @@ mod tests {
             "Expected {expected_rows} rows but got {total_records} — rows lost at chunk boundaries"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn csv_chunk_smaller_than_header_preserves_schema_and_rows() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "alpha,beta\n1,2\n3,4\n")?;
+        temp_file.flush()?;
+
+        let reader = MemoryMappedCsvReader::new(temp_file.path())?;
+        let mut offset = 0u64;
+        let mut headers = None;
+        let mut records = Vec::new();
+
+        loop {
+            let (chunk_headers, chunk_records, bytes) =
+                reader.read_csv_chunk(offset, 5, headers.is_none(), None)?;
+            if bytes == 0 {
+                break;
+            }
+            if headers.is_none() {
+                headers = chunk_headers;
+            }
+            records.extend(chunk_records);
+            offset += bytes as u64;
+        }
+
+        assert_eq!(
+            headers.expect("header").iter().collect::<Vec<_>>(),
+            ["alpha", "beta"]
+        );
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].iter().collect::<Vec<_>>(), ["1", "2"]);
+        assert_eq!(records[1].iter().collect::<Vec<_>>(), ["3", "4"]);
+        Ok(())
+    }
+
+    #[test]
+    fn csv_chunk_preserves_multiline_quoted_records() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        let payload = b"id,bio\r\n1,\"hello \"\"quoted\"\"\nworld\"\r\n2,plain";
+        temp_file.write_all(payload)?;
+        temp_file.flush()?;
+
+        let reader = MemoryMappedCsvReader::new(temp_file.path())?;
+        for chunk_size in 1..=payload.len() + 1 {
+            let mut offset = 0u64;
+            let mut headers = None;
+            let mut records = Vec::new();
+
+            loop {
+                let (chunk_headers, chunk_records, bytes) =
+                    reader.read_csv_chunk(offset, chunk_size, headers.is_none(), None)?;
+                if bytes == 0 {
+                    break;
+                }
+                if headers.is_none() {
+                    headers = chunk_headers;
+                }
+                records.extend(chunk_records);
+                offset += bytes as u64;
+            }
+
+            assert_eq!(
+                headers.expect("header").iter().collect::<Vec<_>>(),
+                ["id", "bio"],
+                "chunk_size={chunk_size}"
+            );
+            assert_eq!(records.len(), 2, "chunk_size={chunk_size}");
+            assert_eq!(records[0].get(0), Some("1"), "chunk_size={chunk_size}");
+            assert_eq!(
+                records[0].get(1),
+                Some("hello \"quoted\"\nworld"),
+                "chunk_size={chunk_size}"
+            );
+            assert_eq!(
+                records[1].iter().collect::<Vec<_>>(),
+                ["2", "plain"],
+                "chunk_size={chunk_size}"
+            );
+        }
         Ok(())
     }
 }
