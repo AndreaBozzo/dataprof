@@ -214,7 +214,7 @@ impl<'a> AccuracyCalculator<'a> {
                         if is_null_like_token(v.trim()) {
                             None
                         } else {
-                            v.trim().parse::<f64>().ok()
+                            v.trim().parse::<f64>().ok().filter(|n| n.is_finite())
                         }
                     })
                     .filter(|&num| num < 0.0)
@@ -286,6 +286,9 @@ mod tests {
                 " 101325".to_string(),
                 " -500 ".to_string(),
                 "100900 ".to_string(),
+                " -inf ".to_string(),
+                "NaN".to_string(),
+                "inf".to_string(),
             ],
         )]);
         let profiles = vec![numeric_profile("pressure")];

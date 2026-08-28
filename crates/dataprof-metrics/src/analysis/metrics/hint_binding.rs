@@ -107,7 +107,10 @@ fn count_matches(values: &[String], kind: SemanticHintKind) -> (usize, usize) {
 pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
     match kind {
         // Mirror accuracy.rs: numeric cells accept surrounding whitespace.
-        SemanticHintKind::Positive => value.trim().parse::<f64>().is_ok(),
+        SemanticHintKind::Positive => value
+            .trim()
+            .parse::<f64>()
+            .is_ok_and(|number| number.is_finite()),
         // Mirror timeliness.rs: it extracts a year from the original cell.
         SemanticHintKind::Temporal => extract_year(value).is_some(),
         // Identifier binding is structural and is not value-driven.
@@ -187,7 +190,7 @@ mod tests {
         // quality predicates require the raw date to be directly parseable.
         // Binding evidence must make the same distinction.
         let d = data(&[
-            ("pressure", &[" 101325", "100900"]),
+            ("pressure", &[" 101325", "100900", " -inf "]),
             ("event", &[" 2020-01-01", "2022-06-15"]),
         ]);
         let hints = SemanticHints::new(vec!["pressure".to_string()], vec![])
@@ -198,7 +201,7 @@ mod tests {
             .iter()
             .find(|b| b.column == "pressure")
             .expect("positive binding");
-        assert_eq!(positive.checked_values, 2);
+        assert_eq!(positive.checked_values, 3);
         assert_eq!(positive.matched_values, 2);
 
         let temporal = bindings
