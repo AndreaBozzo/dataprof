@@ -6,10 +6,10 @@
 use std::io::Write;
 use std::path::Path;
 
+use dataprof::{ChunkSize, EngineType, Profiler};
 use dataprof::{
     ColumnStats, CsvParserConfig, DataType, MetricConfidence, QualityDimension, analyze_csv_file,
 };
-use dataprof::{EngineType, Profiler};
 use serde_json::json;
 use tempfile::NamedTempFile;
 
@@ -129,6 +129,136 @@ fn test_empty_csv_quality_presence_matches_across_engines_and_serialization() {
 
         let serialized = serde_json::to_value(&report).expect("report should serialize");
         assert!(serialized["quality"].is_null(), "{engine}");
+    }
+}
+
+/// Numeric inference normalizes surrounding whitespace, so the statistics
+/// parser must consume the same lexical value. Previously every engine typed
+/// these cells as integers but excluded both from its numeric accumulator,
+/// publishing plausible zeroes with `invalid_count == 2`.
+#[test]
+fn whitespace_padded_numeric_stats_match_across_csv_engines() {
+    let mut csv = NamedTempFile::new().unwrap();
+    writeln!(csv, "name,amount").unwrap();
+    writeln!(csv, "Alice, 1 ").unwrap();
+    writeln!(csv, "Bob, 2 ").unwrap();
+    csv.flush().unwrap();
+
+    let reports = [
+        (
+            "standard",
+            analyze_csv_file(csv.path(), &CsvParserConfig::default())
+                .expect("standard CSV analysis should succeed"),
+        ),
+        (
+            "auto",
+            Profiler::new()
+                .engine(EngineType::Auto)
+                .analyze_file(csv.path())
+                .expect("auto analysis should succeed"),
+        ),
+        (
+            "incremental",
+            Profiler::new()
+                .engine(EngineType::Incremental)
+                .analyze_file(csv.path())
+                .expect("incremental analysis should succeed"),
+        ),
+        (
+            "columnar",
+            Profiler::new()
+                .engine(EngineType::Columnar)
+                .analyze_file(csv.path())
+                .expect("columnar analysis should succeed"),
+        ),
+    ];
+
+    for (engine, report) in reports {
+        let amount = report
+            .column_profiles
+            .iter()
+            .find(|column| column.name == "amount")
+            .expect("amount profile");
+        assert_eq!(amount.data_type, DataType::Integer, "{engine}");
+        assert_eq!(amount.invalid_count, Some(0), "{engine}");
+        let ColumnStats::Numeric(stats) = &amount.stats else {
+            panic!("{engine} should produce numeric statistics");
+        };
+        assert_eq!(stats.min, 1.0, "{engine}");
+        assert_eq!(stats.max, 2.0, "{engine}");
+        assert_eq!(stats.mean, 1.5, "{engine}");
+    }
+}
+
+/// A configured chunk is allowed to be smaller than a header or record. It is
+/// a read target, not a license to profile a fragment as the whole schema.
+#[test]
+fn incremental_chunk_smaller_than_header_preserves_the_file() {
+    let mut csv = NamedTempFile::new().unwrap();
+    write!(csv, "alpha,beta\n1,2\n3,4\n").unwrap();
+    csv.flush().unwrap();
+
+    let report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .chunk_size(ChunkSize::Fixed(5))
+        .analyze_file(csv.path())
+        .expect("incremental analysis should succeed");
+
+    assert_eq!(report.execution.rows_processed, 2);
+    assert_eq!(report.execution.ragged_row_count, 0);
+    assert!(report.execution.source_exhausted);
+    assert_eq!(
+        report
+            .column_profiles
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "beta"]
+    );
+}
+
+/// The default 64 KiB incremental boundary may land inside a quoted multiline
+/// field. Physical newlines inside that field are data, not row boundaries.
+#[test]
+fn multiline_csv_crossing_default_chunk_boundary_matches_columnar() {
+    let mut csv = NamedTempFile::new().unwrap();
+    writeln!(csv, "id,bio").unwrap();
+    writeln!(csv, "0,{}", "x".repeat(65_490)).unwrap();
+    writeln!(csv, "1,\"hello\n{}\"", "w".repeat(100)).unwrap();
+    writeln!(csv, "2,end").unwrap();
+    csv.flush().unwrap();
+
+    let columnar = Profiler::new()
+        .engine(EngineType::Columnar)
+        .analyze_file(csv.path())
+        .expect("columnar analysis should succeed");
+
+    for engine in [EngineType::Auto, EngineType::Incremental] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(csv.path())
+            .expect("incremental analysis should succeed");
+
+        assert_eq!(
+            report.execution.engine.as_deref(),
+            Some("incremental"),
+            "{engine:?}"
+        );
+        assert_eq!(report.execution.rows_processed, 3, "{engine:?}");
+        assert_eq!(report.execution.ragged_row_count, 0, "{engine:?}");
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (&column.name, &column.data_type, column.total_count))
+                .collect::<Vec<_>>(),
+            columnar
+                .column_profiles
+                .iter()
+                .map(|column| (&column.name, &column.data_type, column.total_count))
+                .collect::<Vec<_>>(),
+            "{engine:?}"
+        );
     }
 }
 

@@ -106,7 +106,16 @@ impl IncrementalProfiler {
         let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
         // Estimate total rows for progress tracking
-        let estimated_total_rows = reader.estimate_row_count()?;
+        let estimated_total_rows = reader.estimate_csv_record_count(self.csv_config.as_ref())?;
+        let source_has_header = self
+            .csv_config
+            .as_ref()
+            .is_none_or(|config| config.has_header);
+        let estimated_data_rows = if source_has_header {
+            estimated_total_rows.saturating_sub(1)
+        } else {
+            estimated_total_rows
+        };
 
         // Calculate optimal chunk size based on memory limit and file size
         let chunk_size_bytes = self.calculate_optimal_chunk_size(file_size_bytes);
@@ -120,11 +129,8 @@ impl IncrementalProfiler {
 
         // Initialize stop condition evaluator
         let mut stop_eval = StopEvaluator::new(self.stop_condition.clone())
-            .with_estimated_total(estimated_total_rows as u64);
+            .with_estimated_total(estimated_data_rows as u64);
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
-
-        // estimate_row_count includes the header line; subtract 1 for data-only count
-        let estimated_data_rows = estimated_total_rows.saturating_sub(1);
 
         progress_tracker.emit_started(Some(estimated_data_rows), Some(file_size_bytes));
 
@@ -145,10 +151,11 @@ impl IncrementalProfiler {
 
         // Process file in chunks using true streaming
         loop {
+            let first_chunk = headers.is_none();
             let (chunk_headers, records, actual_bytes) = reader.read_csv_chunk(
                 offset,
                 chunk_size_bytes,
-                headers.is_none(),
+                first_chunk && source_has_header,
                 self.csv_config.as_ref(),
             )?;
 
@@ -168,6 +175,21 @@ impl IncrementalProfiler {
                     column_stats.init_columns(&names);
                     progress_tracker.emit_schema(names);
                 }
+            }
+            if headers.is_none()
+                && first_chunk
+                && !source_has_header
+                && let Some(first_record) = records.first()
+            {
+                let generated = csv::StringRecord::from(
+                    (0..first_record.len())
+                        .map(|index| format!("column_{index}"))
+                        .collect::<Vec<_>>(),
+                );
+                let names: Vec<String> = generated.iter().map(str::to_string).collect();
+                column_stats.init_columns(&names);
+                progress_tracker.emit_schema(names);
+                headers = Some(generated);
             }
 
             // Process this chunk incrementally
@@ -472,8 +494,9 @@ impl Default for IncrementalProfiler {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use dataprof_core::{ColumnStats, DataType, TruncationReason};
+    use dataprof_core::{ColumnStats, DataType, ProgressEvent, TruncationReason};
     use std::io::Write;
+    use std::sync::{Arc, Mutex};
     use tempfile::NamedTempFile;
 
     #[test]
@@ -537,6 +560,99 @@ mod tests {
         let report = profiler.analyze_file(temp_file.path())?;
         assert_eq!(report.column_profiles.len(), 2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn headerless_csv_keeps_the_first_record_and_generates_column_names() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "1,Alice\n2,Bob")?;
+        temp_file.flush()?;
+
+        let estimated_rows = Arc::new(Mutex::new(None));
+        let captured_estimate = Arc::clone(&estimated_rows);
+        let progress = ProgressSink::Callback(Arc::new(move |event| {
+            if let ProgressEvent::Started {
+                estimated_total_rows,
+                ..
+            } = event
+            {
+                *captured_estimate.lock().expect("progress estimate lock") = estimated_total_rows;
+            }
+        }));
+        let report = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1))
+            .csv_config(CsvParserConfig::default().has_header(false))
+            .progress(progress, Duration::ZERO)
+            .analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(
+            *estimated_rows.lock().expect("progress estimate lock"),
+            Some(2)
+        );
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.total_count))
+                .collect::<Vec<_>>(),
+            [("column_0", 2), ("column_1", 2)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn logical_csv_records_drive_the_progress_estimate() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "id,bio\r1,\"hello\nworld\"\r2,plain")?;
+        temp_file.flush()?;
+
+        let estimated_rows = Arc::new(Mutex::new(None));
+        let captured_estimate = Arc::clone(&estimated_rows);
+        let progress = ProgressSink::Callback(Arc::new(move |event| {
+            if let ProgressEvent::Started {
+                estimated_total_rows,
+                ..
+            } = event
+            {
+                *captured_estimate.lock().expect("progress estimate lock") = estimated_total_rows;
+            }
+        }));
+
+        let report = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1))
+            .progress(progress, Duration::ZERO)
+            .analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(
+            *estimated_rows.lock().expect("progress estimate lock"),
+            Some(2)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn leading_blank_lines_do_not_replace_the_csv_header() -> Result<()> {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "\nalpha,beta\n1,2")?;
+        temp_file.flush()?;
+
+        let report = IncrementalProfiler::new()
+            .chunk_size(ChunkSize::Fixed(1))
+            .analyze_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.total_count))
+                .collect::<Vec<_>>(),
+            [("alpha", 1), ("beta", 1)]
+        );
         Ok(())
     }
 

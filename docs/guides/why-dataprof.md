@@ -33,12 +33,11 @@ follows from that job.
   CI quality gates fall out of this naturally.
 - **One tool across sources.** CSV, JSON/JSONL, Parquet, Arrow batches,
   pandas/polars DataFrames, dicts, byte buffers, and (opt-in) live database
-  queries — same report shape from all of them. CSV, JSON, and JSONL byte
-  buffers are dependency-free; Parquet byte buffers currently require the
-  pandas extra.
+  queries — same report shape from all of them. CSV, JSON, JSONL, and Parquet
+  byte buffers are dependency-free.
 - **A dependency-free Python wheel.** `pip install dataprof` pulls in no
-  Python dependencies. Profiling local files, dicts, and CSV/JSON/JSONL byte
-  buffers needs neither pandas nor numpy.
+  Python dependencies. Profiling local files, dicts, and byte buffers needs
+  neither pandas nor numpy.
 - **Agent-ready output.** `to_llm_context()` produces a token-bounded summary
   with fail-closed redaction of sensitive values — built for handing a
   dataset's shape to an LLM without handing it the data.

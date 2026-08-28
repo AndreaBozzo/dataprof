@@ -104,8 +104,7 @@ impl ArrowProfiler {
     /// its time on; the per-value analysis is.
     fn pre_scan(&self, file_path: &Path) -> Result<CsvPreScan, DataProfilerError> {
         let mut builder = csv::ReaderBuilder::new();
-        builder.has_headers(true);
-        let (flexible, max_rows) = match self.csv_config {
+        let (has_header, flexible, max_rows) = match self.csv_config {
             Some(ref config) => {
                 if let Some(delim) = config.delimiter {
                     builder.delimiter(delim);
@@ -114,10 +113,11 @@ impl ArrowProfiler {
                 if config.trim_whitespace {
                     builder.trim(csv::Trim::All);
                 }
-                (config.flexible, config.max_rows)
+                (config.has_header, config.flexible, config.max_rows)
             }
-            None => (false, None),
+            None => (true, false, None),
         };
+        builder.has_headers(has_header);
         // Strict parsing rejects here, one reader earlier than Arrow would, so
         // the caller gets the same field-count diagnostic as every other path
         // instead of Arrow's "incorrect number of fields".
@@ -160,15 +160,26 @@ impl ArrowProfiler {
         // `pre_scan` for why Arrow cannot supply either.
         let scan = self.pre_scan(file_path)?;
         let headers = scan.headers;
+        let has_header = self
+            .csv_config
+            .as_ref()
+            .is_none_or(|config| config.has_header);
 
         // Reject duplicate headers before building the name-keyed analyzer map,
         // which would otherwise merge two columns into one profile.
-        let header_names: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
-        dataprof_core::validate_unique_column_names(&header_names, "CSV header")?;
+        let header_names: Vec<String> = if has_header {
+            let names = headers.iter().map(str::to_string).collect::<Vec<_>>();
+            dataprof_core::validate_unique_column_names(&names, "CSV header")?;
+            names
+        } else {
+            (0..headers.len())
+                .map(|index| format!("column_{index}"))
+                .collect()
+        };
         let header_width = header_names.len();
 
         let mut fields = Vec::new();
-        for header in headers.iter() {
+        for header in &header_names {
             // Start with string type, Arrow will convert during processing
             fields.push(Field::new(header, arrow::datatypes::DataType::Utf8, true));
         }
@@ -189,7 +200,7 @@ impl ArrowProfiler {
         // Now create Arrow reader with proper schema
         let file = File::open(file_path)?;
         let mut arrow_builder = ReaderBuilder::new(schema.clone())
-            .with_header(true)
+            .with_header(has_header)
             .with_batch_size(self.batch_size);
         if let Some(ref config) = self.csv_config {
             if let Some(delim) = config.delimiter {
@@ -290,9 +301,8 @@ impl ArrowProfiler {
         let mut column_profiles = Vec::new();
         let mut sample_columns = std::collections::HashMap::new();
 
-        for header in headers.iter() {
-            let name = header.to_string();
-            if let Some(analyzer) = column_analyzers.get(&name) {
+        for name in &header_names {
+            if let Some(analyzer) = column_analyzers.get(name) {
                 let profile = analyzer.to_column_profile(
                     name.clone(),
                     skip_stats,
@@ -301,7 +311,7 @@ impl ArrowProfiler {
                     &self.semantic_hints,
                 );
                 column_profiles.push(profile);
-                sample_columns.insert(name, analyzer.get_sample_values());
+                sample_columns.insert(name.clone(), analyzer.get_sample_values());
             }
         }
 
@@ -337,7 +347,9 @@ impl ArrowProfiler {
         if MetricPack::include_quality(packs) && !empty_source {
             assembler = assembler
                 .with_quality_data(sample_columns)
-                .with_exact_value_hint_bindings(hint_bindings.bindings(headers.iter()))
+                .with_exact_value_hint_bindings(
+                    hint_bindings.bindings(header_names.iter().map(String::as_str)),
+                )
                 .with_semantic_hints(self.semantic_hints.clone());
             if let Some(ref dims) = self.quality_dimensions {
                 assembler = assembler.with_requested_dimensions(dims.clone());
@@ -643,7 +655,7 @@ impl ColumnAnalyzer {
                 // fed so numeric stats never fall back to the sample.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
                     self.update_numeric_stats(number);
                 }
 
@@ -669,7 +681,7 @@ impl ColumnAnalyzer {
                 self.update_text_stats(value);
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.parse::<f64>().ok().filter(|n| n.is_finite()) {
+                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
                     self.update_numeric_stats(number);
                 }
 
@@ -1169,6 +1181,30 @@ mod tests {
         // Padding the row is the recovery; reporting it is the contract (#470).
         assert_eq!(report.execution.ragged_row_count, 1);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_headerless_csv_keeps_the_first_record() -> Result<(), DataProfilerError>
+    {
+        let mut temp_file = NamedTempFile::new()?;
+        write!(temp_file, "1,Alice\n2,Bob")?;
+        temp_file.flush()?;
+
+        let report = ArrowProfiler::new()
+            .csv_config(CsvParserConfig::default().has_header(false))
+            .analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|column| (column.name.as_str(), column.total_count))
+                .collect::<Vec<_>>(),
+            [("column_0", 2), ("column_1", 2)]
+        );
         Ok(())
     }
 

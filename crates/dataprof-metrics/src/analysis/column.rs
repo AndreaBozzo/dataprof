@@ -253,6 +253,13 @@ mod tests {
 
         assert_eq!(profile.null_count, 0); // Trimmed values are not null
         assert!(matches!(profile.data_type, DataType::Integer));
+        assert_eq!(profile.invalid_count, Some(0));
+        let ColumnStats::Numeric(stats) = profile.stats else {
+            panic!("whitespace-padded integers should have numeric statistics");
+        };
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 3.0);
+        assert_eq!(stats.mean, 2.0);
     }
 
     #[test]

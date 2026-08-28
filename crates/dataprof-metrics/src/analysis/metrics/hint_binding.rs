@@ -80,11 +80,10 @@ fn binding(
 /// Count `(non-null values, values satisfying `pred`)`.
 ///
 /// Mirrors the quality calculators exactly: the null-like check runs on the
-/// trimmed token, but `pred` sees the *original* value. `accuracy.rs` and
-/// `timeliness.rs` parse the raw string (`v.parse::<f64>()`,
-/// `extract_year(value)`), and neither `parse::<f64>()` nor `extract_year`
-/// tolerates surrounding whitespace, so trimming here would let this evidence
-/// accept values the calculators reject (e.g. `" 1"`, `" 2020-01-01"`).
+/// trimmed token, while `pred` receives the original value and applies the
+/// normalization appropriate to its metric. Numeric quality calculations
+/// accept surrounding whitespace; temporal quality predicates deliberately do
+/// not.
 fn count_matches(values: &[String], kind: SemanticHintKind) -> (usize, usize) {
     let mut checked = 0;
     let mut matched = 0;
@@ -107,8 +106,11 @@ fn count_matches(values: &[String], kind: SemanticHintKind) -> (usize, usize) {
 /// binding evidence from drifting away from the sampled quality calculation.
 pub fn value_matches_hint(value: &str, kind: SemanticHintKind) -> bool {
     match kind {
-        // Mirror accuracy.rs: it parses the original, untrimmed cell.
-        SemanticHintKind::Positive => value.parse::<f64>().is_ok(),
+        // Mirror accuracy.rs: numeric cells accept surrounding whitespace.
+        SemanticHintKind::Positive => value
+            .trim()
+            .parse::<f64>()
+            .is_ok_and(|number| number.is_finite()),
         // Mirror timeliness.rs: it extracts a year from the original cell.
         SemanticHintKind::Temporal => extract_year(value).is_some(),
         // Identifier binding is structural and is not value-driven.
@@ -183,12 +185,12 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_padded_values_match_the_calculators_not_a_trimmed_view() {
-        // The calculators parse the raw string, and neither `parse::<f64>()` nor
-        // `extract_year` accepts surrounding whitespace. Binding evidence must
-        // agree, so a padded value is counted as considered but not matched.
+    fn whitespace_padded_values_match_each_calculators_normalization() {
+        // Numeric calculators accept surrounding whitespace while temporal
+        // quality predicates require the raw date to be directly parseable.
+        // Binding evidence must make the same distinction.
         let d = data(&[
-            ("pressure", &[" 101325", "100900"]),
+            ("pressure", &[" 101325", "100900", " -inf "]),
             ("event", &[" 2020-01-01", "2022-06-15"]),
         ]);
         let hints = SemanticHints::new(vec!["pressure".to_string()], vec![])
@@ -199,8 +201,8 @@ mod tests {
             .iter()
             .find(|b| b.column == "pressure")
             .expect("positive binding");
-        assert_eq!(positive.checked_values, 2);
-        assert_eq!(positive.matched_values, 1);
+        assert_eq!(positive.checked_values, 3);
+        assert_eq!(positive.matched_values, 2);
 
         let temporal = bindings
             .iter()

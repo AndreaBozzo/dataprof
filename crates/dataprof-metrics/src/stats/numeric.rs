@@ -21,7 +21,7 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     // (nulls, tokens like "N/A"), excluded from numeric stats by design.
     let numbers: Vec<f64> = data
         .iter()
-        .filter_map(|s| s.parse::<f64>().ok())
+        .filter_map(|s| s.trim().parse::<f64>().ok())
         .filter(|x| x.is_finite())
         .collect();
     let parsed_count = numbers.len();

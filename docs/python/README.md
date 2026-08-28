@@ -189,7 +189,7 @@ Returned by `profile()` and all analysis functions.
 | Property | Type | Description |
 |---|---|---|
 | `source` | `str` | Source identifier (file path, table name, etc.) |
-| `source_type` | `str` | `"file"`, `"query"`, `"dataframe"`, `"stream"` |
+| `source_type` | `str` | `"file"`, `"bytes"`, `"query"`, `"dataframe"`, `"stream"` |
 | `engine` | `str \| None` | Engine or parser that produced the report |
 | `rows` | `int` | Number of rows processed |
 | `columns` | `int` | Number of columns detected |

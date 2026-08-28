@@ -320,7 +320,12 @@ impl StreamingStatistics {
             self.date_match_count += 1;
         }
 
-        if let Some(number) = value.parse::<f64>().ok().filter(|num| num.is_finite()) {
+        if let Some(number) = value
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|num| num.is_finite())
+        {
             self.welford.update(number);
             self.min = self.min.min(number);
             self.max = self.max.max(number);
