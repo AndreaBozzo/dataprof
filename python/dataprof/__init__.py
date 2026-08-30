@@ -2013,6 +2013,7 @@ class _DictQuality:
         return self._DEFAULT_SCORE_WEIGHTS
 
     def overall_quality_score(self) -> float | None:
+        """Overall score (0-100), None when no dimension was assessable."""
         return self._d.get("overall_score")
 
     def assessed_dimensions(self) -> list[str]:

@@ -823,6 +823,11 @@
             "Mixed"
           ],
           "type": "object"
+        },
+        {
+          "const": "NotAssessed",
+          "description": "No dimension had anything to assess, so there is no score for the\nother variants to describe. Reporting `Exact` here would claim\ncertainty about a number that was never computed.",
+          "type": "string"
         }
       ]
     },
@@ -1674,8 +1679,12 @@
           "type": "boolean"
         },
         "overall_score": {
+          "description": "Null when no dimension was assessable; `assessed_dimensions` is then\nempty and every entry in `dimension_scores` is null.",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "precision": {
           "anyOf": [

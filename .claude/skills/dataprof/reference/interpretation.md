@@ -96,8 +96,10 @@ Reporting "0% valid" for an unpatterned column is wrong.
 not know how many decimals your business requires, and a low score is not
 evidence of rounding errors.
 
-The overall score is a weighted combination (`score_weights()`). Report what
-drove it, not just the number.
+The overall score is a weighted combination (`score_weights()`) of the assessed
+dimensions only, renormalized over them. Report what drove it, not just the
+number. When `assessed_dimensions()` is empty the overall score is `None`, and
+so is `report.quality_score`: nothing was assessed, which is not a zero.
 
 ## Type homogeneity
 

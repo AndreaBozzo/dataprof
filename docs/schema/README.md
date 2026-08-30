@@ -186,3 +186,23 @@ Version 1.1 (additive) introduced the `"bytes"` value in `PythonSourceType` for
 byte-buffer inputs (CSV/JSON/JSONL/Parquet bytes). Previously they were labeled
 `"dataframe"`. Consumers matching on `"dataframe"` must also accept `"bytes"`
 for byte inputs; stored v1 reports are unchanged.
+
+## v1 additive change: nullable `overall_score`, `NotAssessed` confidence
+
+Version 1.2 (additive) widened two value domains for reports where no quality
+dimension had anything to assess — a header-only file, or one whose every
+dimension has a zero denominator:
+
+- `overall_score` in the Python dialect accepts `null` as well as a number.
+  Previously the empty set of dimension scores was averaged to `0.0`, which
+  reads as "this data is terrible" rather than "there was nothing to assess",
+  and contradicted `report.quality_score`, which already returned `None`.
+- `MetricConfidence` accepts a `"NotAssessed"` value in the Rust dialect's
+  `quality.confidence`. `"Exact"` claimed certainty about a score that was
+  never computed.
+
+Both are widenings, so stored v1 reports remain valid. Consumers that read
+`overall_score` as a number must now handle `null`, and consumers matching on
+`MetricConfidence` must accept `"NotAssessed"`; in both cases the signal is
+"not assessed", never zero. `assessed_dimensions` is empty for exactly these
+reports and is the authority to branch on.

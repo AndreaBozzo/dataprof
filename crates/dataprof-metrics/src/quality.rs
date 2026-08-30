@@ -407,10 +407,11 @@ impl QualityMetrics {
     /// dimensions. A dimension with nothing to assess (no numeric values,
     /// no date columns, ...) is excluded instead of counting as perfect.
     ///
-    /// Returns 0.0 when no dimension was assessable; callers that can
-    /// distinguish "no score" should check
-    /// [`assessed_dimensions`](Self::assessed_dimensions) first.
-    pub fn overall_score(&self) -> f64 {
+    /// `None` when no dimension was assessable — the renormalization has no
+    /// remainder to average, and an empty set of evidence is "not analyzed",
+    /// not a score of zero. Equivalent to
+    /// [`assessed_dimensions`](Self::assessed_dimensions) being empty.
+    pub fn overall_score(&self) -> Option<f64> {
         let mut total_weight = 0.0;
         let mut score = 0.0;
 
@@ -421,11 +422,7 @@ impl QualityMetrics {
             }
         }
 
-        if total_weight > 0.0 {
-            (score / total_weight).min(100.0)
-        } else {
-            0.0
-        }
+        (total_weight > 0.0).then(|| (score / total_weight).min(100.0))
     }
 
     pub fn missing_values_ratio(&self) -> f64 {
@@ -554,6 +551,10 @@ pub enum MetricConfidence {
         sampled_dimensions: Vec<String>,
         sample_size: usize,
     },
+    /// No dimension had anything to assess, so there is no score for the
+    /// other variants to describe. Reporting `Exact` here would claim
+    /// certainty about a number that was never computed.
+    NotAssessed,
 }
 
 /// Wraps quality metrics with confidence information.
@@ -564,11 +565,25 @@ pub struct QualityAssessment {
 }
 
 impl QualityAssessment {
-    pub fn exact(metrics: QualityMetrics) -> Self {
+    /// Pair metrics with the confidence of the run that produced them.
+    ///
+    /// `confidence` is downgraded to [`MetricConfidence::NotAssessed`] when
+    /// no dimension was assessable: how the numbers were obtained is only
+    /// meaningful when there are numbers.
+    pub fn new(metrics: QualityMetrics, confidence: MetricConfidence) -> Self {
+        let confidence = if metrics.assessed_dimensions().is_empty() {
+            MetricConfidence::NotAssessed
+        } else {
+            confidence
+        };
         Self {
             metrics,
-            confidence: MetricConfidence::Exact,
+            confidence,
         }
+    }
+
+    pub fn exact(metrics: QualityMetrics) -> Self {
+        Self::new(metrics, MetricConfidence::Exact)
     }
 
     pub fn approximate(
@@ -576,16 +591,18 @@ impl QualityAssessment {
         sample_size: usize,
         population_size: Option<usize>,
     ) -> Self {
-        Self {
+        Self::new(
             metrics,
-            confidence: MetricConfidence::Approximate {
+            MetricConfidence::Approximate {
                 sample_size,
                 population_size,
             },
-        }
+        )
     }
 
-    pub fn score(&self) -> f64 {
+    /// Overall quality score, or `None` when no dimension was assessable.
+    /// See [`QualityMetrics::overall_score`].
+    pub fn score(&self) -> Option<f64> {
         self.metrics.overall_score()
     }
 }
@@ -669,14 +686,14 @@ mod tests {
             precision: 0.0,
         };
 
-        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+        assert_eq!(metrics.overall_score(), Some(0.0));
 
         let json = serde_json::to_string(&metrics).expect("serialize custom weights");
         assert!(json.contains("score_weights"));
         let restored: QualityMetrics =
             serde_json::from_str(&json).expect("deserialize custom weights");
         assert_eq!(restored.score_weights, metrics.score_weights);
-        assert!((restored.overall_score() - metrics.overall_score()).abs() < 0.01);
+        assert_eq!(restored.overall_score(), metrics.overall_score());
         assert_eq!(
             restored.assessed_dimensions(),
             vec![QualityDimension::Completeness]
@@ -687,14 +704,37 @@ mod tests {
     fn test_empty_metrics_nothing_assessed() {
         let metrics = QualityMetrics::empty();
         assert!(metrics.assessed_dimensions().is_empty());
-        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+        // Every denominator is zero, so there is nothing to average. A 0.0
+        // here would read as "this data is terrible" (#571).
+        assert_eq!(metrics.overall_score(), None);
+    }
+
+    #[test]
+    fn test_unassessable_assessment_reports_no_score_and_no_confidence() {
+        let assessment = QualityAssessment::exact(QualityMetrics::empty());
+        assert_eq!(assessment.score(), None);
+        assert!(
+            matches!(assessment.confidence, MetricConfidence::NotAssessed),
+            "confidence must not claim exactness about a score that was never computed, got {:?}",
+            assessment.confidence
+        );
+
+        let sampled = QualityAssessment::approximate(QualityMetrics::empty(), 0, Some(0));
+        assert!(matches!(sampled.confidence, MetricConfidence::NotAssessed));
+    }
+
+    #[test]
+    fn test_assessed_assessment_keeps_its_confidence() {
+        let assessment = QualityAssessment::exact(perfect_assessed());
+        assert_eq!(assessment.score(), Some(100.0));
+        assert!(matches!(assessment.confidence, MetricConfidence::Exact));
     }
 
     #[test]
     fn test_perfect_assessed_scores_100() {
         let metrics = perfect_assessed();
         assert_eq!(metrics.assessed_dimensions().len(), 7);
-        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+        assert_eq!(metrics.overall_score(), Some(100.0));
     }
 
     #[test]
@@ -704,7 +744,7 @@ mod tests {
             c.missing_values_ratio = 100.0;
             c.complete_records_ratio = 0.0;
         }
-        assert!((metrics.overall_score() - 75.0).abs() < 0.01);
+        assert_eq!(metrics.overall_score(), Some(75.0));
     }
 
     #[test]
@@ -733,7 +773,8 @@ mod tests {
             p.decimal_places_consistency = 0.0;
         }
 
-        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+        // Assessed and genuinely bad: 0.0, not None.
+        assert_eq!(metrics.overall_score(), Some(0.0));
     }
 
     #[test]
@@ -771,7 +812,7 @@ mod tests {
             ]
         );
         // (0.25 * 50 + 0.20 * 100) / 0.45 = 72.22..
-        assert!((metrics.overall_score() - 72.2222).abs() < 0.01);
+        assert!((metrics.overall_score().expect("assessed") - 72.2222).abs() < 0.01);
     }
 
     #[test]
@@ -893,7 +934,7 @@ mod tests {
         assert!(metrics.uniqueness.is_none());
         assert!(metrics.accuracy.is_none());
         assert!(metrics.timeliness.is_none());
-        assert!((metrics.overall_score() - 100.0).abs() < 0.01);
+        assert_eq!(metrics.overall_score(), Some(100.0));
     }
 
     #[test]
@@ -917,14 +958,14 @@ mod tests {
         };
 
         // (0.25 * 50 + 0.15 * 80) / 0.40 = 61.25
-        assert!((metrics.overall_score() - 61.25).abs() < 0.01);
+        assert!((metrics.overall_score().expect("assessed") - 61.25).abs() < 0.01);
     }
 
     #[test]
-    fn test_all_dimensions_none_score_zero() {
+    fn test_all_dimensions_none_score_is_none() {
         let metrics = QualityMetrics::default();
 
-        assert!((metrics.overall_score() - 0.0).abs() < 0.01);
+        assert_eq!(metrics.overall_score(), None);
         assert!(metrics.assessed_dimensions().is_empty());
     }
 

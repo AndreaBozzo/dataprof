@@ -229,10 +229,7 @@ impl ReportAssembler {
                     .confidence
                     .clone()
                     .unwrap_or_else(|| self.mixed_confidence(&result));
-                Some(QualityAssessment {
-                    metrics: result.metrics,
-                    confidence,
-                })
+                Some(QualityAssessment::new(result.metrics, confidence))
             }
             Err(error) => {
                 log::warn!("Bifurcated quality metrics calculation failed: {error}");
@@ -255,10 +252,7 @@ impl ReportAssembler {
         ) {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
-                Some(QualityAssessment {
-                    metrics,
-                    confidence,
-                })
+                Some(QualityAssessment::new(metrics, confidence))
             }
             Err(error) => {
                 log::warn!("Quality metrics calculation failed: {error}");
