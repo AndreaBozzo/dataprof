@@ -610,7 +610,9 @@ class TestProfileReport:
         r = repr(report.quality)
         assert "DataQualityMetrics" in r
         assert "score=" in r
-        assert "dimensions=" in r
+        # `assessed=` names the dimensions the score is made of. It used to list
+        # the metric structs that exist, which is all seven whenever quality ran.
+        assert f"assessed=[{', '.join(report.quality.assessed_dimensions())}]" in r
 
     def test_csv_duplicate_rows_cover_full_stream_and_expose_provenance(self, tmp_path):
         path = tmp_path / "duplicates.csv"

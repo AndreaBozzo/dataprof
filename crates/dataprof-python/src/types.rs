@@ -779,37 +779,25 @@ impl PyDataQualityMetrics {
     }
 
     fn __repr__(&self) -> String {
-        let mut dimensions = Vec::new();
-        if self.inner.completeness.is_some() {
-            dimensions.push("completeness");
-        }
-        if self.inner.consistency.is_some() {
-            dimensions.push("consistency");
-        }
-        if self.inner.uniqueness.is_some() {
-            dimensions.push("uniqueness");
-        }
-        if self.inner.accuracy.is_some() {
-            dimensions.push("accuracy");
-        }
-        if self.inner.timeliness.is_some() {
-            dimensions.push("timeliness");
-        }
-        if self.inner.validity.is_some() {
-            dimensions.push("validity");
-        }
-        if self.inner.precision.is_some() {
-            dimensions.push("precision");
-        }
-
+        // Name the dimensions the score is made of, not the metric structs
+        // that happen to exist. A struct is present whenever its dimension was
+        // requested, denominators or not, so listing those put seven names
+        // next to a score built from four -- and next to `score=n/a`, seven
+        // names beside no score at all.
+        let assessed = self
+            .inner
+            .assessed_dimensions()
+            .iter()
+            .map(|dimension| dimension.to_string())
+            .collect::<Vec<_>>();
         let score = match self.inner.overall_score() {
             Some(score) => format!("{score:.1}%"),
             None => "n/a".to_string(),
         };
         format!(
-            "DataQualityMetrics(score={}, dimensions=[{}], low_sample_warning={})",
+            "DataQualityMetrics(score={}, assessed=[{}], low_sample_warning={})",
             score,
-            dimensions.join(", "),
+            assessed.join(", "),
             self.inner.low_sample_warning,
         )
     }

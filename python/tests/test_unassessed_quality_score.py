@@ -78,8 +78,27 @@ def test_a_reloaded_report_reads_back_the_same_absence(unassessable) -> None:
 def test_agent_facing_exports_say_not_assessed(unassessable) -> None:
     assert unassessable.quality_summary()["quality_score"] is None
     assert "quality: n/a" in unassessable.to_llm_context()
-    assert repr(unassessable.quality).startswith("DataQualityMetrics(score=n/a,")
+    # The repr must not list dimensions beside a score that does not exist: the
+    # metric structs are all present (with zero denominators) on this input, so
+    # deriving the list from them claimed seven assessed dimensions and no
+    # score in the same breath.
+    assert repr(unassessable.quality) == (
+        "DataQualityMetrics(score=n/a, assessed=[], low_sample_warning=true)"
+    )
     assert str(unassessable.quality) == "DataQualityMetrics(not assessed)"
+
+
+def test_repr_lists_only_the_dimensions_behind_the_score(tmp_path) -> None:
+    # Not confined to the unassessable case: an ordinary two-column file assesses
+    # four of seven dimensions, and the repr used to name all seven regardless
+    # because a metric struct exists whenever its dimension was requested.
+    report = dataprof.profile(write(tmp_path, "rows.csv", ONE_ROW))
+    quality = report.quality
+    assert quality is not None
+
+    assessed = quality.assessed_dimensions()
+    assert 0 < len(assessed) < 7, "fixture must assess some but not all dimensions"
+    assert f"assessed=[{', '.join(assessed)}]" in repr(quality)
 
 
 def test_one_assessable_row_still_scores(tmp_path) -> None:
