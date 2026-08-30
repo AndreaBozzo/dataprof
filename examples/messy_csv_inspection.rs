@@ -122,7 +122,10 @@ fn main() -> Result<()> {
     }
 
     if let Some(quality) = &report.quality {
-        println!("\noverall quality: {:.1}/100", quality.score());
+        match quality.score() {
+            Some(score) => println!("\noverall quality: {score:.1}/100"),
+            None => println!("\noverall quality: not assessed"),
+        }
         if let Some(accuracy) = &quality.metrics.accuracy
             && accuracy.negative_values_in_positive > 0
         {

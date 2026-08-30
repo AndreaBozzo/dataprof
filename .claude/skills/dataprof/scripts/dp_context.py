@@ -87,7 +87,10 @@ def _quality_block(report: Any) -> list[str]:
         return ["quality: not analyzed"]
 
     scores = quality.dimension_scores()
-    lines = [f"quality score: {quality.overall_quality_score()}"]
+    overall = quality.overall_quality_score()
+    # None means no dimension was assessable. Printing it as "None" invites the
+    # reader to treat it as a zero; name the state instead.
+    lines = [f"quality score: {overall if overall is not None else 'not assessed'}"]
     for dimension in DIMENSIONS:
         score = scores.get(dimension)
         if score is None:

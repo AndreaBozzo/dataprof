@@ -88,6 +88,71 @@ fn test_header_only_csv_columns_match_across_engines_and_serialization() {
     }
 }
 
+/// A header-only CSV assesses no dimension on any path. The aggregate must
+/// say so rather than averaging the empty set to 0.0, which reads as "this
+/// data is terrible" (#571). All four paths carried the same 0.0 before this,
+/// so they are pinned together.
+#[test]
+fn test_unassessable_csv_reports_no_overall_score_across_engines() {
+    let mut csv = NamedTempFile::new().unwrap();
+    writeln!(csv, "name,age").unwrap();
+    csv.flush().unwrap();
+
+    let reports = [
+        (
+            "standard",
+            analyze_csv_file(csv.path(), &CsvParserConfig::default())
+                .expect("standard CSV analysis should succeed"),
+        ),
+        (
+            "auto",
+            Profiler::new()
+                .engine(EngineType::Auto)
+                .analyze_file(csv.path())
+                .expect("auto analysis should succeed"),
+        ),
+        (
+            "incremental",
+            Profiler::new()
+                .engine(EngineType::Incremental)
+                .analyze_file(csv.path())
+                .expect("incremental analysis should succeed"),
+        ),
+        (
+            "columnar",
+            Profiler::new()
+                .engine(EngineType::Columnar)
+                .analyze_file(csv.path())
+                .expect("columnar analysis should succeed"),
+        ),
+    ];
+
+    for (engine, report) in reports {
+        // The two report-level aggregates must agree with each other and with
+        // the dimension layer, on every path.
+        assert_eq!(report.quality_score(), None, "{engine}");
+        let quality = report.quality.as_ref().expect("quality present");
+        assert!(quality.metrics.assessed_dimensions().is_empty(), "{engine}");
+        assert_eq!(quality.score(), None, "{engine}");
+        assert_eq!(quality.metrics.overall_score(), None, "{engine}");
+        assert!(
+            matches!(quality.confidence, MetricConfidence::NotAssessed),
+            "{engine}: confidence must not claim exactness about a score that \
+             was never computed, got {:?}",
+            quality.confidence
+        );
+
+        // The serialized form is what saved reports and agent-facing output
+        // actually read, so it carries the same answer.
+        let serialized = serde_json::to_value(&report).expect("report should serialize");
+        assert_eq!(
+            serialized["quality"]["confidence"],
+            json!("NotAssessed"),
+            "{engine}"
+        );
+    }
+}
+
 #[test]
 fn test_empty_csv_quality_presence_matches_across_engines_and_serialization() {
     let csv = NamedTempFile::new().unwrap();
@@ -936,7 +1001,7 @@ fn test_profiler_selective_dimensions_only_completeness() {
     assert!(m.precision.is_none(), "precision should be skipped");
 
     // Score should re-normalize to completeness alone
-    let score = m.overall_score();
+    let score = m.overall_score().expect("completeness was assessed");
     let completeness_score = m.completeness.as_ref().unwrap().complete_records_ratio;
     assert!(
         (score - completeness_score).abs() < 0.01,

@@ -218,7 +218,9 @@ struct PythonPatternDocument {
 #[allow(dead_code)]
 #[derive(serde::Serialize, schemars::JsonSchema)]
 struct PythonQualityDocument {
-    overall_score: f64,
+    /// Null when no dimension was assessable; `assessed_dimensions` is then
+    /// empty and every entry in `dimension_scores` is null.
+    overall_score: Option<f64>,
     assessed_dimensions: Vec<PythonQualityDimension>,
     dimension_scores: std::collections::BTreeMap<PythonQualityDimension, Option<f64>>,
     low_sample_warning: bool,
@@ -390,12 +392,9 @@ impl ProfileReport {
     /// Calculate the overall quality score (weighted across the assessed
     /// dimensions). Returns `None` if quality metrics were not computed, or
     /// if no dimension had anything to assess (e.g. an empty dataset) —
-    /// absence of evidence is not a perfect score.
+    /// absence of evidence is neither a perfect score nor a zero.
     pub fn quality_score(&self) -> Option<f64> {
-        self.quality
-            .as_ref()
-            .filter(|q| !q.metrics.assessed_dimensions().is_empty())
-            .map(|q| q.score())
+        self.quality.as_ref().and_then(|q| q.score())
     }
 
     /// Get the data source identifier (for backwards compatibility)
@@ -627,7 +626,9 @@ mod tests {
         let quality = report
             .quality
             .expect("expected legacy quality to deserialize");
-        assert!(matches!(quality.confidence, MetricConfidence::Exact));
+        // Nothing was assessable, so the assessment says so rather than
+        // claiming exactness about a score it never produced (#571).
+        assert!(matches!(quality.confidence, MetricConfidence::NotAssessed));
         let completeness = quality
             .metrics
             .completeness

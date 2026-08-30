@@ -42,9 +42,13 @@ class TestDogfoodingSession:
         assert "ColumnProfile" in column_repr
         assert "response_minutes" in column_repr
 
-        quality_repr = repr(report.quality)
+        quality = report.quality
+        assert quality is not None
+        quality_repr = repr(quality)
         assert "DataQualityMetrics" in quality_repr
-        assert "dimensions=" in quality_repr
+        # The repr names the dimensions the score is made of, so it must match
+        # the authority on that rather than the metric structs that exist.
+        assert f"assessed=[{', '.join(quality.assessed_dimensions())}]" in quality_repr
 
     def test_ragged_csv_is_not_reported_clean(self, tmp_path):
         # Regression for #418: ragged rows were silently normalized, leaving

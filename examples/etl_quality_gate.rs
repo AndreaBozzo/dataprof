@@ -74,12 +74,16 @@ fn violations(report: &ProfileReport, gate: &Gate) -> Vec<String> {
         return reasons;
     };
 
-    let score = quality.score();
-    if score < gate.min_quality_score {
-        reasons.push(format!(
+    // `None` means no dimension had anything to assess (an empty extract, say).
+    // A gate must not read that as a passing score, and must not read it as a
+    // zero either: say which of the two it is.
+    match quality.score() {
+        Some(score) if score < gate.min_quality_score => reasons.push(format!(
             "quality score {score:.1} is below the {:.1} threshold",
             gate.min_quality_score
-        ));
+        )),
+        Some(_) => {}
+        None => reasons.push("no quality dimension had anything to assess".to_string()),
     }
 
     if let Some(completeness) = &quality.metrics.completeness {

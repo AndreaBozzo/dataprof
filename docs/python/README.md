@@ -407,8 +407,11 @@ or certified score:
 ```python
 q = report.quality
 
-# Overall score
+# Overall score. None when no dimension was assessable — a header-only file, or
+# one whose every dimension had a zero denominator. `assessed_dimensions()` is
+# empty for exactly those reports, and `report.quality_score` agrees.
 print(q.overall_quality_score())
+print(q.assessed_dimensions())
 print(q.score_weights)  # relative weights used by dataprof's aggregate formula
 
 # Nested dimension accessors (None when not computed)

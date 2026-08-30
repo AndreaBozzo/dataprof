@@ -116,7 +116,7 @@ q = report.quality
 
 q.assessed_dimensions()   # -> list of dimensions actually computed
 q.dimension_scores()      # -> {dimension: score or None}
-q.overall_quality_score() # -> weighted total
+q.overall_quality_score() # -> weighted total, or None when nothing was assessed
 q.score_weights()         # -> the weights behind that total
 q.low_sample_warning      # -> too few rows to trust distributions
 
@@ -125,7 +125,9 @@ q.uniqueness["duplicate_rows"]
 ```
 
 A dimension missing from `assessed_dimensions()` was not assessed; its entry in
-`dimension_scores()` is `None`, never zero.
+`dimension_scores()` is `None`, never zero. When `assessed_dimensions()` is
+empty, `overall_quality_score()` is `None` too — report "not assessed", never a
+zero.
 
 | Dimension | Keys |
 | --- | --- |

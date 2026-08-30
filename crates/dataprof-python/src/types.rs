@@ -724,9 +724,10 @@ impl PyDataQualityMetrics {
 
     /// Overall quality score (0-100): weighted average of the assessed
     /// dimension scores, renormalized over the assessed dimensions.
-    /// Returns 0.0 when no dimension was assessable — check
-    /// `assessed_dimensions()` to distinguish that case.
-    fn overall_quality_score(&self) -> f64 {
+    /// Returns None when no dimension was assessable — nothing was analyzed,
+    /// which is not the same as scoring zero. `assessed_dimensions()` is
+    /// empty for exactly those reports.
+    fn overall_quality_score(&self) -> Option<f64> {
         self.inner.overall_score()
     }
 
@@ -759,11 +760,12 @@ impl PyDataQualityMetrics {
         // perfect 100.0 for an absent dimension (kept for the deprecated
         // getters), so reading them here would print "consistency=100.0%" for a
         // dimension that never ran — a reassuring number with nothing behind it.
-        let assessed = self.inner.assessed_dimensions();
-        if assessed.is_empty() {
+        // No overall score means no dimension was assessed, so there is
+        // nothing below to render either.
+        let Some(score) = self.inner.overall_score() else {
             return "DataQualityMetrics(not assessed)".to_string();
-        }
-        let mut parts = vec![format!("score={:.1}%", self.inner.overall_score())];
+        };
+        let mut parts = vec![format!("score={score:.1}%")];
         for (label, value) in [
             ("completeness", self.inner.completeness_score()),
             ("consistency", self.inner.consistency_score()),
@@ -777,33 +779,25 @@ impl PyDataQualityMetrics {
     }
 
     fn __repr__(&self) -> String {
-        let mut dimensions = Vec::new();
-        if self.inner.completeness.is_some() {
-            dimensions.push("completeness");
-        }
-        if self.inner.consistency.is_some() {
-            dimensions.push("consistency");
-        }
-        if self.inner.uniqueness.is_some() {
-            dimensions.push("uniqueness");
-        }
-        if self.inner.accuracy.is_some() {
-            dimensions.push("accuracy");
-        }
-        if self.inner.timeliness.is_some() {
-            dimensions.push("timeliness");
-        }
-        if self.inner.validity.is_some() {
-            dimensions.push("validity");
-        }
-        if self.inner.precision.is_some() {
-            dimensions.push("precision");
-        }
-
+        // Name the dimensions the score is made of, not the metric structs
+        // that happen to exist. A struct is present whenever its dimension was
+        // requested, denominators or not, so listing those put seven names
+        // next to a score built from four -- and next to `score=n/a`, seven
+        // names beside no score at all.
+        let assessed = self
+            .inner
+            .assessed_dimensions()
+            .iter()
+            .map(|dimension| dimension.to_string())
+            .collect::<Vec<_>>();
+        let score = match self.inner.overall_score() {
+            Some(score) => format!("{score:.1}%"),
+            None => "n/a".to_string(),
+        };
         format!(
-            "DataQualityMetrics(score={:.1}%, dimensions=[{}], low_sample_warning={})",
-            self.inner.overall_score(),
-            dimensions.join(", "),
+            "DataQualityMetrics(score={}, assessed=[{}], low_sample_warning={})",
+            score,
+            assessed.join(", "),
             self.inner.low_sample_warning,
         )
     }
