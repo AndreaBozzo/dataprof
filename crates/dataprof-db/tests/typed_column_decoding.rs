@@ -251,13 +251,14 @@ mod mysql {
             ts TIMESTAMP NULL,
             d DATE,
             amount DECIMAL(12,4),
-            big BIGINT UNSIGNED
+            big BIGINT UNSIGNED,
+            t TIME(3)
         )";
 
     const ROWS: &str = "INSERT INTO typed_decoding_my VALUES
             (1, '2024-01-15 10:30:00', '2024-01-15 10:30:00', '2024-01-15',
-             1234.5678, 18446744073709551615),
-            (2, NULL, NULL, NULL, NULL, NULL)";
+             1234.5678, 18446744073709551615, '-837:59:59.123'),
+            (2, NULL, NULL, NULL, NULL, NULL, NULL)";
 
     static FIXTURE: tokio::sync::OnceCell<Option<dataprof_db::QueryColumns>> =
         tokio::sync::OnceCell::const_new();
@@ -318,6 +319,15 @@ mod mysql {
     }
 
     #[tokio::test]
+    async fn time_of_day_decodes_even_though_it_is_not_a_date() {
+        let Some(columns) = decoded().await else {
+            return;
+        };
+
+        assert_eq!(column(columns, "t"), ["-837:59:59.123", ""]);
+    }
+
+    #[tokio::test]
     async fn the_streaming_path_decodes_the_same_types() {
         // MySQL passes its arms at two call sites like PostgreSQL does, and
         // only the batch one is reached by `decoded()`. Dropping the list from
@@ -344,6 +354,7 @@ mod mysql {
         assert_eq!(column(&columns, "big"), ["18446744073709551615", ""]);
         assert_eq!(column(&columns, "amount"), ["1234.5678", ""]);
         assert_eq!(column(&columns, "dt"), ["2024-01-15T10:30:00", ""]);
+        assert_eq!(column(&columns, "t"), ["-837:59:59.123", ""]);
     }
 
     #[tokio::test]
@@ -355,5 +366,16 @@ mod mysql {
         // `u64` has no `Type<Postgres>` impl, so it cannot join the shared
         // chain; MySQL needs its own arm or the value truncates or nulls.
         assert_eq!(column(columns, "big"), ["18446744073709551615", ""]);
+    }
+
+    #[tokio::test]
+    async fn a_null_row_is_still_null() {
+        let Some(columns) = decoded().await else {
+            return;
+        };
+
+        for name in ["dt", "ts", "d", "amount", "big", "t"] {
+            assert_eq!(column(columns, name)[1], "", "{name} lost its NULL");
+        }
     }
 }

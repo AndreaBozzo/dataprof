@@ -110,7 +110,15 @@ impl DatabaseConnector for MySqlConnector {
             // integer, and without an arm a BIGINT UNSIGNED falls past every
             // signed arm into `bool` and renders as "true" (#365). DECIMAL
             // follows for the same reason PostgreSQL needs it.
-            process_rows_to_columns!(rows, [u64, ::sqlx::types::BigDecimal])
+            // MySQL TIME is a signed interval, decoded natively as MySqlTime.
+            process_rows_to_columns!(
+                rows,
+                [
+                    u64,
+                    ::sqlx::types::BigDecimal,
+                    ::sqlx::mysql::types::MySqlTime
+                ]
+            )
         }
 
         #[cfg(not(feature = "mysql"))]
@@ -141,7 +149,11 @@ impl DatabaseConnector for MySqlConnector {
                 batch_size,
                 total_rows,
                 "MySQL",
-                [u64, ::sqlx::types::BigDecimal]
+                [
+                    u64,
+                    ::sqlx::types::BigDecimal,
+                    ::sqlx::mysql::types::MySqlTime
+                ]
             )
         }
 
