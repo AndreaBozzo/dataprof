@@ -497,6 +497,16 @@ impl Default for StreamingStatistics {
 pub struct RowUniquenessTracker {
     rows_seen: usize,
     distinct: CardinalityEstimator,
+    /// Set once signatures made under different schemas have been folded in.
+    ///
+    /// A signature encodes length-prefixed values and nothing else, so a row
+    /// `{a: "x"}` and a row `{b: "x"}` both sign as `1:x` while the union
+    /// schema makes them different rows; a differing field *order* collides
+    /// the same way. The signatures are already folded into the estimator and
+    /// cannot be rebuilt against the union schema, so the count is withheld
+    /// rather than reported as a plausible number. Defaults to false, which is
+    /// what a tracker fed from a single schema is.
+    incomparable_signatures: bool,
 }
 
 impl RowUniquenessTracker {
@@ -518,9 +528,16 @@ impl RowUniquenessTracker {
         self.distinct.is_approximate()
     }
 
+    /// Record that the signatures folded in so far were not all made against
+    /// the same schema, so they cannot be compared with each other.
+    pub fn mark_incomparable(&mut self) {
+        self.incomparable_signatures = true;
+    }
+
     pub fn merge(&mut self, other: &RowUniquenessTracker) {
         self.rows_seen += other.rows_seen;
         self.distinct.merge(&other.distinct);
+        self.incomparable_signatures |= other.incomparable_signatures;
     }
 
     pub fn memory_usage_bytes(&self) -> usize {
@@ -528,9 +545,10 @@ impl RowUniquenessTracker {
     }
 
     /// Summary for quality metrics, or `None` when no rows were observed
-    /// (e.g. an engine that never fed whole records through this tracker).
+    /// (e.g. an engine that never fed whole records through this tracker) or
+    /// when the signatures seen are not comparable with one another.
     pub fn summary(&self) -> Option<RowDuplicateSummary> {
-        if self.rows_seen == 0 {
+        if self.rows_seen == 0 || self.incomparable_signatures {
             return None;
         }
         Some(RowDuplicateSummary {
@@ -791,8 +809,12 @@ impl StreamingColumnCollection {
     ///   against the union, so that side's complete-row count is invalidated
     ///   for the same reason.
     ///
-    /// Row signatures are built per record from that record's own headers, so
-    /// duplicate counts compose only across sides that read the same schema.
+    /// Row signatures are built per record from that record's own headers, and
+    /// encode values only. Two sides that read different columns, or the same
+    /// columns in a different order, therefore sign different rows identically.
+    /// Those signatures cannot be rebuilt against the union schema once folded
+    /// into the estimator, so the merged duplicate count is withheld rather
+    /// than reported wrong.
     pub fn merge(&mut self, other: StreamingColumnCollection) {
         let self_rows = self.row_tracker.rows_seen();
         let other_rows = other.row_tracker.rows_seen();
@@ -805,6 +827,11 @@ impl StreamingColumnCollection {
             mut completeness_tracker,
             hint_bindings,
         } = other;
+
+        // Signatures are positional over the record's own headers, so they
+        // only mean the same thing on both sides when both read the same
+        // columns in the same order. Captured before the orders are joined.
+        let schemas_match = self.ordered_names == ordered_names;
 
         // A column this side saw and the other did not is absent from every
         // record the other side read.
@@ -851,6 +878,11 @@ impl StreamingColumnCollection {
 
         self.completeness_tracker.merge(&completeness_tracker);
         self.row_tracker.merge(&row_tracker);
+        // Only a side that signed rows can make them incomparable, so folding
+        // a partition into a fresh accumulator stays a plain accumulation.
+        if self_rows > 0 && other_rows > 0 && !schemas_match {
+            self.row_tracker.mark_incomparable();
+        }
         self.hint_bindings.merge(&hint_bindings);
     }
 }
@@ -1127,6 +1159,70 @@ mod row_tracker_tests {
 
         // The left record has no `b`, so it is not complete against the union.
         assert_eq!(completeness(&left), (1, 2));
+    }
+
+    #[test]
+    fn test_merge_withholds_duplicates_when_schemas_differ() {
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &["a".to_string()], &["x"]);
+        record(&mut right, &["b".to_string()], &["x"]);
+
+        left.merge(right);
+
+        // Both rows sign as "1:x", so the count would claim one duplicate,
+        // while under the union schema the rows differ in every field.
+        assert!(left.row_duplicate_summary().is_none());
+    }
+
+    #[test]
+    fn test_merge_withholds_duplicates_when_column_order_differs() {
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &["a".to_string(), "b".to_string()], &["x", "y"]);
+        record(&mut right, &["b".to_string(), "a".to_string()], &["x", "y"]);
+
+        left.merge(right);
+
+        // Same columns, opposite order: the two signatures collide on rows
+        // that hold the values the other way round.
+        assert!(left.row_duplicate_summary().is_none());
+    }
+
+    #[test]
+    fn test_merge_keeps_duplicates_when_schemas_match() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &headers, &["x", "y"]);
+        record(&mut right, &headers, &["x", "y"]);
+
+        left.merge(right);
+
+        let summary = left
+            .row_duplicate_summary()
+            .expect("one schema on both sides");
+        assert_eq!(summary.rows_checked, 2);
+        assert_eq!(summary.duplicate_rows, 1);
+    }
+
+    #[test]
+    fn test_merge_into_an_empty_accumulator_keeps_duplicates() {
+        let headers = vec!["a".to_string()];
+        let mut accumulator = StreamingColumnCollection::new();
+        let mut partition = StreamingColumnCollection::new();
+        record(&mut partition, &headers, &["x"]);
+        record(&mut partition, &headers, &["x"]);
+
+        // A reduce starts from an empty accumulator. That is not a schema
+        // mismatch: the empty side signed nothing to be confused with.
+        accumulator.merge(partition);
+
+        let summary = accumulator
+            .row_duplicate_summary()
+            .expect("the empty side contributed no signatures");
+        assert_eq!(summary.rows_checked, 2);
+        assert_eq!(summary.duplicate_rows, 1);
     }
 
     /// Merging partitions must produce the profile a single pass would.
