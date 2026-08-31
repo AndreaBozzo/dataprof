@@ -14,7 +14,7 @@ default = []
 # `sqlx/bigdecimal` rides with the two backends that have a decimal type.
 # SQLite has none, so a sqlite-only build does not pay for it.
 postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/bigdecimal"]
-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/bigdecimal"]
+mysql = ["dep:sqlx", "dep:chrono", "sqlx/mysql", "sqlx/bigdecimal"]
 sqlite = ["dep:sqlx", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 
@@ -28,7 +28,7 @@ rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 sqlx = { workspace = true, optional = true }
-chrono = { workspace = true }
+chrono = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 

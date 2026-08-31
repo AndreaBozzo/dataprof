@@ -56,8 +56,8 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// dropped; the instant survives, the "this is UTC" marker does not.
 ///
 /// Still unsupported and still recorded as null: `BLOB`/`BYTEA`, which needs a
-/// binary column type rather than a decode arm, and MySQL `TIME`, which sqlx
-/// decodes as a duration rather than a time of day.
+/// binary column type rather than a decode arm. MySQL `TIME` is decoded as a
+/// duration via a backend-specific closure.
 #[macro_export]
 macro_rules! db_column_to_string {
     ($row:expr, $index:expr) => {
