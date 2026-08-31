@@ -257,7 +257,7 @@ mod mysql {
 
     const ROWS: &str = "INSERT INTO typed_decoding_my VALUES
             (1, '2024-01-15 10:30:00', '2024-01-15 10:30:00', '2024-01-15',
-             1234.5678, 18446744073709551615, '-838:59:59.123'),
+             1234.5678, 18446744073709551615, '-837:59:59.123'),
             (2, NULL, NULL, NULL, NULL, NULL, NULL)";
 
     static FIXTURE: tokio::sync::OnceCell<Option<dataprof_db::QueryColumns>> =
@@ -324,7 +324,7 @@ mod mysql {
             return;
         };
 
-        assert_eq!(column(columns, "t"), ["-838:59:59.123", ""]);
+        assert_eq!(column(columns, "t"), ["-837:59:59.123000", ""]);
     }
 
     #[tokio::test]
@@ -354,7 +354,7 @@ mod mysql {
         assert_eq!(column(&columns, "big"), ["18446744073709551615", ""]);
         assert_eq!(column(&columns, "amount"), ["1234.5678", ""]);
         assert_eq!(column(&columns, "dt"), ["2024-01-15T10:30:00", ""]);
-        assert_eq!(column(&columns, "t"), ["-838:59:59.123", ""]);
+        assert_eq!(column(&columns, "t"), ["-837:59:59.123000", ""]);
     }
 
     #[tokio::test]

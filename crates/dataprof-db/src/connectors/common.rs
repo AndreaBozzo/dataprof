@@ -56,17 +56,13 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// dropped; the instant survives, the "this is UTC" marker does not.
 ///
 /// Still unsupported and still recorded as null: `BLOB`/`BYTEA`, which needs a
-/// binary column type rather than a decode arm. MySQL `TIME` is decoded as a
-/// duration via a backend-specific closure.
+/// binary column type rather than a decode arm.
 #[macro_export]
 macro_rules! db_column_to_string {
     ($row:expr, $index:expr) => {
-        $crate::db_column_to_string!($row, $index, [], [])
+        $crate::db_column_to_string!($row, $index, [])
     };
-    ($row:expr, $index:expr, [$($backend_ty:ty),* $(,)?]) => {
-        $crate::db_column_to_string!($row, $index, [$($backend_ty),*], [])
-    };
-    ($row:expr, $index:expr, [$($backend_ty:ty),* $(,)?], [$( ($custom_ty:ty, $mapper:expr) ),* $(,)?]) => {{
+    ($row:expr, $index:expr, [$($backend_ty:ty),* $(,)?]) => {{
         let row = $row;
         let index = $index;
 
@@ -85,9 +81,6 @@ macro_rules! db_column_to_string {
         // the database stored rather than rounding through f64.
         $(else if let Ok(v) = row.try_get::<Option<$backend_ty>, _>(index) {
             v.map(|x| x.to_string())
-        })*
-        $(else if let Ok(v) = row.try_get::<Option<$custom_ty>, _>(index) {
-            v.map($mapper)
         })*
         else if let Ok(v) = row.try_get::<Option<f64>, _>(index) {
             // `{:?}` keeps the decimal point on integral floats ("100.0", not
@@ -138,14 +131,10 @@ pub fn render_naive_datetime(value: ::sqlx::types::chrono::NaiveDateTime) -> Str
 #[macro_export]
 macro_rules! streaming_profile_loop {
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal) => {
-        $crate::streaming_profile_loop!($pool, $query, $batch_size, $total_rows, $db_name, [], [])
+        $crate::streaming_profile_loop!($pool, $query, $batch_size, $total_rows, $db_name, [])
     };
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal,
-     [$($backend_ty:ty),* $(,)?]) => {
-        $crate::streaming_profile_loop!($pool, $query, $batch_size, $total_rows, $db_name, [$($backend_ty),*], [])
-    };
-    ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal,
-     [$($backend_ty:ty),* $(,)?], [$( ($custom_ty:ty, $mapper:expr) ),* $(,)?]) => {{
+     [$($backend_ty:ty),* $(,)?]) => {{
         use sqlx::{Column, Row};
         use $crate::connectors::common::build_batch_query;
         use $crate::streaming::{StreamingProgress, merge_column_batches};
@@ -184,7 +173,7 @@ macro_rules! streaming_profile_loop {
             for row in &rows {
                 for i in 0..columns.len() {
                     let value: Option<String> =
-                        $crate::db_column_to_string!(row, i, [$($backend_ty),*], [$( ($custom_ty, $mapper) ),*]);
+                        $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
                     // decode-audit: no-data — None is SQL NULL (or a type
                     // db_column_to_string documents as unsupported); "" is
                     // the profiler's textual null.
@@ -220,12 +209,9 @@ macro_rules! streaming_profile_loop {
 #[macro_export]
 macro_rules! process_rows_to_columns {
     ($rows:expr) => {
-        $crate::process_rows_to_columns!($rows, [], [])
+        $crate::process_rows_to_columns!($rows, [])
     };
-    ($rows:expr, [$($backend_ty:ty),* $(,)?]) => {
-        $crate::process_rows_to_columns!($rows, [$($backend_ty),*], [])
-    };
-    ($rows:expr, [$($backend_ty:ty),* $(,)?], [$( ($custom_ty:ty, $mapper:expr) ),* $(,)?]) => {{
+    ($rows:expr, [$($backend_ty:ty),* $(,)?]) => {{
         use sqlx::{Column, Row};
 
         if $rows.is_empty() {
@@ -249,7 +235,7 @@ macro_rules! process_rows_to_columns {
                     for row in &$rows {
                         for i in 0..columns.len() {
                             let value: Option<String> =
-                                $crate::db_column_to_string!(row, i, [$($backend_ty),*], [$( ($custom_ty, $mapper) ),*]);
+                                $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
                             // decode-audit: no-data — None is SQL NULL (or a type
                             // db_column_to_string documents as unsupported); "" is
                             // the profiler's textual null.

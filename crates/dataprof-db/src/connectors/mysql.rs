@@ -110,27 +110,8 @@ impl DatabaseConnector for MySqlConnector {
             // integer, and without an arm a BIGINT UNSIGNED falls past every
             // signed arm into `bool` and renders as "true" (#365). DECIMAL
             // follows for the same reason PostgreSQL needs it.
-            // MySQL TIME is a signed interval, decoded as a chrono duration (Duration).
-            process_rows_to_columns!(
-                rows,
-                [u64, ::sqlx::types::BigDecimal],
-                [(::chrono::Duration, |d: ::chrono::Duration| {
-                    let nanos = d.num_nanoseconds().unwrap_or(0);
-                    let sign = if nanos < 0 { "-" } else { "" };
-                    let abs_nanos = nanos.unsigned_abs();
-                    let total_secs = abs_nanos / 1_000_000_000;
-                    let frac = abs_nanos % 1_000_000_000;
-                    let hours = total_secs / 3600;
-                    let minutes = (total_secs % 3600) / 60;
-                    let seconds = total_secs % 60;
-                    if frac == 0 {
-                        format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
-                    } else {
-                        let frac_str = format!("{:09}", frac);
-                        format!("{}{:02}:{:02}:{:02}.{}", sign, hours, minutes, seconds, frac_str.trim_end_matches('0'))
-                    }
-                })]
-            )
+            // MySQL TIME is a signed interval, decoded natively as MySqlTime.
+            process_rows_to_columns!(rows, [u64, ::sqlx::types::BigDecimal, ::sqlx::mysql::types::MySqlTime])
         }
 
         #[cfg(not(feature = "mysql"))]
@@ -161,23 +142,7 @@ impl DatabaseConnector for MySqlConnector {
                 batch_size,
                 total_rows,
                 "MySQL",
-                [u64, ::sqlx::types::BigDecimal],
-                [(::chrono::Duration, |d: ::chrono::Duration| {
-                    let nanos = d.num_nanoseconds().unwrap_or(0);
-                    let sign = if nanos < 0 { "-" } else { "" };
-                    let abs_nanos = nanos.unsigned_abs();
-                    let total_secs = abs_nanos / 1_000_000_000;
-                    let frac = abs_nanos % 1_000_000_000;
-                    let hours = total_secs / 3600;
-                    let minutes = (total_secs % 3600) / 60;
-                    let seconds = total_secs % 60;
-                    if frac == 0 {
-                        format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
-                    } else {
-                        let frac_str = format!("{:09}", frac);
-                        format!("{}{:02}:{:02}:{:02}.{}", sign, hours, minutes, seconds, frac_str.trim_end_matches('0'))
-                    }
-                })]
+                [u64, ::sqlx::types::BigDecimal, ::sqlx::mysql::types::MySqlTime]
             )
         }
 
