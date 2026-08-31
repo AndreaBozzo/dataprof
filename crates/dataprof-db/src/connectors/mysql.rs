@@ -106,7 +106,11 @@ impl DatabaseConnector for MySqlConnector {
                 DataProfilerError::database_query(&format!("Query execution failed: {}", e))
             })?;
 
-            process_rows_to_columns!(rows)
+            // `u64` first: MySQL is the only backend with an unsigned 64-bit
+            // integer, and without an arm a BIGINT UNSIGNED falls past every
+            // signed arm into `bool` and renders as "true" (#365). DECIMAL
+            // follows for the same reason PostgreSQL needs it.
+            process_rows_to_columns!(rows, [u64, ::sqlx::types::BigDecimal])
         }
 
         #[cfg(not(feature = "mysql"))]
@@ -131,7 +135,14 @@ impl DatabaseConnector for MySqlConnector {
                     DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
                 })?;
 
-            streaming_profile_loop!(pool, query, batch_size, total_rows, "MySQL")
+            streaming_profile_loop!(
+                pool,
+                query,
+                batch_size,
+                total_rows,
+                "MySQL",
+                [u64, ::sqlx::types::BigDecimal]
+            )
         }
 
         #[cfg(not(feature = "mysql"))]

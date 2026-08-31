@@ -107,7 +107,10 @@ impl DatabaseConnector for PostgresConnector {
                 DataProfilerError::database_query(&format!("Query execution failed: {}", e))
             })?;
 
-            process_rows_to_columns!(rows)
+            // NUMERIC has no `Type<Sqlite>` impl, so it cannot sit in the
+            // shared chain. Without this arm it falls past every arm and
+            // records as null (#365).
+            process_rows_to_columns!(rows, [::sqlx::types::BigDecimal])
         }
 
         #[cfg(not(feature = "postgres"))]
@@ -132,7 +135,14 @@ impl DatabaseConnector for PostgresConnector {
                     DataProfilerError::database_query(&format!("Failed to count rows: {}", e))
                 })?;
 
-            streaming_profile_loop!(pool, query, batch_size, total_rows, "PostgreSQL")
+            streaming_profile_loop!(
+                pool,
+                query,
+                batch_size,
+                total_rows,
+                "PostgreSQL",
+                [::sqlx::types::BigDecimal]
+            )
         }
 
         #[cfg(not(feature = "postgres"))]
