@@ -110,7 +110,23 @@ impl DatabaseConnector for MySqlConnector {
             // integer, and without an arm a BIGINT UNSIGNED falls past every
             // signed arm into `bool` and renders as "true" (#365). DECIMAL
             // follows for the same reason PostgreSQL needs it.
-            process_rows_to_columns!(rows, [u64, ::sqlx::types::BigDecimal])
+            // MySQL TIME is a signed interval, decoded as TimeDelta.
+            process_rows_to_columns!(
+                rows,
+                [u64, ::sqlx::types::BigDecimal],
+                [(
+                    ::sqlx::types::chrono::TimeDelta,
+                    |d: ::sqlx::types::chrono::TimeDelta| {
+                        let secs = d.num_seconds();
+                        let sign = if secs < 0 { "-" } else { "" };
+                        let abs_secs = secs.abs();
+                        let hours = abs_secs / 3600;
+                        let minutes = (abs_secs % 3600) / 60;
+                        let seconds = abs_secs % 60;
+                        format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
+                    }
+                )]
+            )
         }
 
         #[cfg(not(feature = "mysql"))]
@@ -141,7 +157,19 @@ impl DatabaseConnector for MySqlConnector {
                 batch_size,
                 total_rows,
                 "MySQL",
-                [u64, ::sqlx::types::BigDecimal]
+                [u64, ::sqlx::types::BigDecimal],
+                [(
+                    ::sqlx::types::chrono::TimeDelta,
+                    |d: ::sqlx::types::chrono::TimeDelta| {
+                        let secs = d.num_seconds();
+                        let sign = if secs < 0 { "-" } else { "" };
+                        let abs_secs = secs.abs();
+                        let hours = abs_secs / 3600;
+                        let minutes = (abs_secs % 3600) / 60;
+                        let seconds = abs_secs % 60;
+                        format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
+                    }
+                )]
             )
         }
 
