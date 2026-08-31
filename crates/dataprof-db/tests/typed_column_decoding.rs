@@ -1,18 +1,24 @@
-//! Types that fall past every arm of `db_column_to_string!` profile as null.
+//! Types that once fell past every arm of `db_column_to_string!` now decode.
 //!
-//! The decode chain tries `String`, the integers, the floats and `bool`, then
-//! gives up and records `None`, which the profiler cannot tell from SQL NULL.
-//! Temporal columns, `NUMERIC`/`DECIMAL` and `UUID` all land there, so a
-//! database source reports them as entirely null (#365).
+//! Until 0.12 the chain tried `String`, the integers, the floats and `bool`,
+//! then gave up and recorded `None`, which the profiler cannot tell from SQL
+//! NULL. Temporal columns, `NUMERIC`/`DECIMAL` and `UUID` all landed there, so
+//! a database source reported them as entirely null. MySQL's `BIGINT UNSIGNED`
+//! was worse: it reached the `bool` arm and reported `true` (#365).
 //!
-//! Temporal columns are the costly case: the Timeliness ISO dimension is
-//! computed from date values, so it assesses nothing at all on any database
-//! source. A dimension that silently measures nothing is exactly the failure
-//! `None`-means-not-analyzed exists to make visible.
+//! Temporal columns were the costly case. The Timeliness ISO dimension is
+//! computed from date values, so it assessed nothing at all on any database
+//! source. A dimension that measures nothing is exactly what
+//! `None`-means-not-analyzed exists to make visible, and it stayed that way
+//! until the values arrived.
+//!
+//! These tests pin the decoded forms: the rendering each type produces, that
+//! SQL NULL still reads as NULL underneath the new arms, and that the batch and
+//! streaming paths of both connectors agree.
 //!
 //! SQLite is absent by design. It has no native temporal, decimal or UUID
-//! types, so those columns arrive as TEXT and the existing `String` arm already
-//! decodes them; the gap is a PostgreSQL and MySQL one.
+//! types, so those columns arrive as TEXT and the `String` arm already decoded
+//! them; the gap was a PostgreSQL and MySQL one.
 
 #![cfg(any(feature = "postgres", feature = "mysql"))]
 
@@ -309,6 +315,35 @@ mod mysql {
         };
 
         assert_eq!(column(columns, "amount"), ["1234.5678", ""]);
+    }
+
+    #[tokio::test]
+    async fn the_streaming_path_decodes_the_same_types() {
+        // MySQL passes its arms at two call sites like PostgreSQL does, and
+        // only the batch one is reached by `decoded()`. Dropping the list from
+        // the streaming site would otherwise leave this suite green while the
+        // two public paths disagree about the same column.
+        let Some(url) = std::env::var("MYSQL_TEST_URL").ok() else {
+            return;
+        };
+        let _ = decoded().await;
+
+        let mut connector = dataprof_db::create_connector(dataprof_db::DatabaseConfig {
+            connection_string: url,
+            load_credentials_from_env: false,
+            ..Default::default()
+        })
+        .expect("connector");
+        connector.connect().await.expect("connect");
+        let columns = connector
+            .profile_query_streaming("SELECT * FROM typed_decoding_my ORDER BY id", 1)
+            .await
+            .expect("streaming profile");
+        connector.disconnect().await.expect("disconnect");
+
+        assert_eq!(column(&columns, "big"), ["18446744073709551615", ""]);
+        assert_eq!(column(&columns, "amount"), ["1234.5678", ""]);
+        assert_eq!(column(&columns, "dt"), ["2024-01-15T10:30:00", ""]);
     }
 
     #[tokio::test]

@@ -493,6 +493,12 @@ jobs:
       - name: Run Rust database tests (all DBs)
         run: cargo test --test database_integration --features "all-db"
 
+      # A separate target in a separate package: the command above selects the
+      # root crate's test binary and never builds this one, so the typed-column
+      # regressions would return early and gate nothing (#365).
+      - name: Run dataprof-db typed column decoding tests
+        run: cargo test -p dataprof-db --test typed_column_decoding --features "all-db"
+
   # The Python extension uses a different Cargo profile and feature graph.
   # Build it in parallel so neither cold build blocks the other's cache save.
   python-db-tests:
