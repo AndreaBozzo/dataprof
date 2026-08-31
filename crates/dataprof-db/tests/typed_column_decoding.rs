@@ -324,7 +324,7 @@ mod mysql {
             return;
         };
 
-        assert_eq!(column(columns, "t"), ["-837:59:59.123000", ""]);
+        assert_eq!(column(columns, "t"), ["-837:59:59.123", ""]);
     }
 
     #[tokio::test]
@@ -354,7 +354,7 @@ mod mysql {
         assert_eq!(column(&columns, "big"), ["18446744073709551615", ""]);
         assert_eq!(column(&columns, "amount"), ["1234.5678", ""]);
         assert_eq!(column(&columns, "dt"), ["2024-01-15T10:30:00", ""]);
-        assert_eq!(column(&columns, "t"), ["-837:59:59.123000", ""]);
+        assert_eq!(column(&columns, "t"), ["-837:59:59.123", ""]);
     }
 
     #[tokio::test]
