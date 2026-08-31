@@ -190,10 +190,16 @@ struct PythonColumnStatsDocument {
     is_approximate: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     outlier_count: Option<usize>,
+    /// Shortest value, in Unicode scalar values. Not UTF-8 bytes and not
+    /// grapheme clusters: ASCII text is unaffected by that distinction, while a
+    /// combining sequence counts each scalar, so the decomposed and precomposed
+    /// spellings of the same word report different lengths.
     #[serde(skip_serializing_if = "Option::is_none")]
     min_length: Option<usize>,
+    /// Longest value, in Unicode scalar values. See `min_length`.
     #[serde(skip_serializing_if = "Option::is_none")]
     max_length: Option<usize>,
+    /// Mean length, in Unicode scalar values. See `min_length`.
     #[serde(skip_serializing_if = "Option::is_none")]
     avg_length: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]

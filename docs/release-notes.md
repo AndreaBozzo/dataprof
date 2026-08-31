@@ -80,6 +80,14 @@ Shipping with these, tracked for 0.12:
   `values_checked: 0` when validity was never assessed. `assessed_dimensions()`,
   `dimension_scores()`, `quality_summary()` and `to_llm_context()` are all
   correct; only the raw evidence dicts fabricate.
+- **Text lengths are UTF-8 byte counts under names that say nothing about
+  encoding** (`#627`). `min_length`, `max_length` and `avg_length` measure
+  encoded bytes on every engine, so `"東京"` reports 6 and `"🙂"` reports 4.
+  0.12 changes the unit to Unicode scalar values, which reports 2 and 1 for the
+  same values. **ASCII is unaffected; a non-ASCII text column profiled under
+  0.11 and under 0.12 is not comparable**, and the report schema version does
+  not move because nothing about validation changes. Re-profile rather than
+  comparing across the boundary.
 - **`std_dev` differs in the last ULP between engines** (`#547`). The
   incremental accumulator and the Arrow path compute it differently. Serialized
   reports round to 4dp and agree; the raw attribute does not.

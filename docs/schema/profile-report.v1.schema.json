@@ -1242,6 +1242,7 @@
     "PythonColumnStatsDocument": {
       "properties": {
         "avg_length": {
+          "description": "Mean length, in Unicode scalar values. See `min_length`.",
           "format": "double",
           "type": [
             "number",
@@ -1284,6 +1285,7 @@
           ]
         },
         "max_length": {
+          "description": "Longest value, in Unicode scalar values. See `min_length`.",
           "format": "uint",
           "minimum": 0,
           "type": [
@@ -1313,6 +1315,7 @@
           ]
         },
         "min_length": {
+          "description": "Shortest value, in Unicode scalar values. Not UTF-8 bytes and not\ngrapheme clusters: ASCII text is unaffected by that distinction, while a\ncombining sequence counts each scalar, so the decomposed and precomposed\nspellings of the same word report different lengths.",
           "format": "uint",
           "minimum": 0,
           "type": [

@@ -215,10 +215,13 @@ scalar values, so a column of CJK or emoji values reports smaller numbers than a
 stored 0.11 report does for the same data.
 
 No property was added, removed or retyped, and ASCII values are unchanged, so
-the schema document is unchanged and stored reports remain valid. A consumer
-comparing a report across the 0.11/0.12 boundary is comparing two units for
-non-ASCII text, which `schema_version` cannot signal because the schema did not
-change. Compare within a release, or re-profile.
+the schema's validation shape and version are unchanged and stored reports
+remain valid. The document itself does change: both dialects' `min_length`,
+`max_length` and `avg_length` gain `description` annotations naming the unit.
+
+A consumer comparing a report across the 0.11/0.12 boundary is comparing two
+units for non-ASCII text, which `schema_version` cannot signal because nothing
+about validation changed. Compare within a release, or re-profile.
 
 ## v1 behaviour change: unassessed dimensions are omitted
 
