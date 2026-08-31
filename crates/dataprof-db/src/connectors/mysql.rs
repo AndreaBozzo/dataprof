@@ -114,18 +114,15 @@ impl DatabaseConnector for MySqlConnector {
             process_rows_to_columns!(
                 rows,
                 [u64, ::sqlx::types::BigDecimal],
-                [(
-                    ::chrono::Duration,
-                    |d: ::chrono::Duration| {
-                        let secs = d.num_seconds();
-                        let sign = if secs < 0 { "-" } else { "" };
-                        let abs_secs = secs.abs();
-                        let hours = abs_secs / 3600;
-                        let minutes = (abs_secs % 3600) / 60;
-                        let seconds = abs_secs % 60;
-                        format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
-                    }
-                )]
+                [(::chrono::Duration, |d: ::chrono::Duration| {
+                    let secs = d.num_seconds();
+                    let sign = if secs < 0 { "-" } else { "" };
+                    let abs_secs = secs.abs();
+                    let hours = abs_secs / 3600;
+                    let minutes = (abs_secs % 3600) / 60;
+                    let seconds = abs_secs % 60;
+                    format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
+                })]
             )
         }
 
@@ -158,18 +155,15 @@ impl DatabaseConnector for MySqlConnector {
                 total_rows,
                 "MySQL",
                 [u64, ::sqlx::types::BigDecimal],
-                [(
-                    ::chrono::Duration,
-                    |d: ::chrono::Duration| {
-                        let secs = d.num_seconds();
-                        let sign = if secs < 0 { "-" } else { "" };
-                        let abs_secs = secs.abs();
-                        let hours = abs_secs / 3600;
-                        let minutes = (abs_secs % 3600) / 60;
-                        let seconds = abs_secs % 60;
-                        format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
-                    }
-                )]
+                [(::chrono::Duration, |d: ::chrono::Duration| {
+                    let secs = d.num_seconds();
+                    let sign = if secs < 0 { "-" } else { "" };
+                    let abs_secs = secs.abs();
+                    let hours = abs_secs / 3600;
+                    let minutes = (abs_secs % 3600) / 60;
+                    let seconds = abs_secs % 60;
+                    format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
+                })]
             )
         }
 
