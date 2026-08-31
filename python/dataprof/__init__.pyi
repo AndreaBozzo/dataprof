@@ -73,6 +73,7 @@ def profile(
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
+    columns: list[str] | None = None,
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
@@ -98,6 +99,7 @@ def profile_file(
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
+    columns: list[str] | None = None,
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
@@ -150,6 +152,7 @@ class Profiler:
     def on_progress(self, cb: Callable[[ProgressEvent], None]) -> Profiler: ...
     def progress_interval_ms(self, ms: int) -> Profiler: ...
     def quality_dimensions(self, dims: list[str]) -> Profiler: ...
+    def columns(self, columns: list[str]) -> Profiler: ...
     def stop_when(self, condition: StopCondition | str) -> Profiler: ...
     def metrics(self, packs: list[str]) -> Profiler: ...
     def locale(self, locale: str) -> Profiler: ...

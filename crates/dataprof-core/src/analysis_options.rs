@@ -8,6 +8,9 @@
 //! [`AnalysisOptions`] bundles them so a path either carries the whole selection
 //! or does not compile.
 
+use std::collections::HashSet;
+
+use crate::errors::DataProfilerError;
 use crate::locale::Locale;
 use crate::quality::{MetricPack, QualityDimension};
 use crate::semantic::SemanticHints;
@@ -18,6 +21,7 @@ use crate::semantic::SemanticHints;
 /// with the builder methods.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AnalysisOptions {
+    columns: Option<Vec<String>>,
     metric_packs: Option<Vec<MetricPack>>,
     quality_dimensions: Option<Vec<QualityDimension>>,
     locale: Option<Locale>,
@@ -25,6 +29,15 @@ pub struct AnalysisOptions {
 }
 
 impl AnalysisOptions {
+    /// Select top-level columns to profile. `None` (the default) means every column.
+    ///
+    /// Selection is by name and reports remain in source-schema order. An empty
+    /// vector requests a schema with no profiled columns.
+    pub fn with_columns(mut self, columns: Option<Vec<String>>) -> Self {
+        self.columns = columns;
+        self
+    }
+
     /// Select the metric packs to compute. `None` (the default) means all.
     pub fn with_metric_packs(mut self, packs: Option<Vec<MetricPack>>) -> Self {
         self.metric_packs = packs;
@@ -100,6 +113,70 @@ impl AnalysisOptions {
     pub fn semantic_hints(&self) -> &SemanticHints {
         &self.semantic_hints
     }
+
+    /// The requested top-level column names, or `None` when every column is selected.
+    pub fn columns(&self) -> Option<&[String]> {
+        self.columns.as_deref()
+    }
+
+    /// Whether the caller selected a subset of the source columns.
+    pub fn has_column_projection(&self) -> bool {
+        self.columns.is_some()
+    }
+
+    /// Resolve the selected columns against a source schema.
+    ///
+    /// Returned indices follow source order, not request order, so every input
+    /// path preserves the same stable report ordering. Unknown and duplicate
+    /// requests fail rather than producing a plausible partial profile.
+    pub fn column_indices(
+        &self,
+        available: &[String],
+    ) -> Result<Option<Vec<usize>>, DataProfilerError> {
+        let Some(requested) = &self.columns else {
+            return Ok(None);
+        };
+
+        let mut seen = HashSet::with_capacity(requested.len());
+        let duplicates = requested
+            .iter()
+            .filter(|name| !seen.insert(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !duplicates.is_empty() {
+            return Err(DataProfilerError::invalid_config(
+                &format!(
+                    "column projection contains duplicate name(s): {}",
+                    duplicates.join(", ")
+                ),
+                "List each projected column once.",
+            ));
+        }
+
+        let available_set = available.iter().map(String::as_str).collect::<HashSet<_>>();
+        let missing = requested
+            .iter()
+            .filter(|name| !available_set.contains(name.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Err(DataProfilerError::invalid_config(
+                &format!(
+                    "column projection names column(s) absent from the source: {}",
+                    missing.join(", ")
+                ),
+                "Choose column names from the source schema.",
+            ));
+        }
+
+        Ok(Some(
+            available
+                .iter()
+                .enumerate()
+                .filter_map(|(index, name)| seen.contains(name.as_str()).then_some(index))
+                .collect(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -114,6 +191,8 @@ mod tests {
         assert!(options.include_quality());
         assert_eq!(options.locale(), None);
         assert_eq!(options.quality_dimensions(), None);
+        assert_eq!(options.columns(), None);
+        assert!(!options.has_column_projection());
     }
 
     #[test]
@@ -156,5 +235,29 @@ mod tests {
             .with_metric_packs(Some(vec![MetricPack::Schema]));
         assert_eq!(options.locale(), Some(Locale::It));
         assert!(!options.include_patterns());
+    }
+
+    #[test]
+    fn column_projection_resolves_in_source_order() {
+        let options = AnalysisOptions::default()
+            .with_columns(Some(vec!["city".to_string(), "id".to_string()]));
+        let available = vec!["id".to_string(), "name".to_string(), "city".to_string()];
+
+        assert_eq!(
+            options.column_indices(&available).unwrap(),
+            Some(vec![0, 2])
+        );
+        assert!(options.has_column_projection());
+    }
+
+    #[test]
+    fn column_projection_rejects_unknown_and_duplicate_names() {
+        let available = vec!["id".to_string(), "city".to_string()];
+        let unknown = AnalysisOptions::default().with_columns(Some(vec!["name".to_string()]));
+        assert!(unknown.column_indices(&available).is_err());
+
+        let duplicate =
+            AnalysisOptions::default().with_columns(Some(vec!["id".to_string(), "id".to_string()]));
+        assert!(duplicate.column_indices(&available).is_err());
     }
 }

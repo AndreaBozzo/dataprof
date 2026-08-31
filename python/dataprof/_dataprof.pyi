@@ -34,6 +34,7 @@ class ProfilerConfig:
         progress_interval_ms: int | None = None,
         quality_dimensions: list[str] | None = None,
         metrics: list[str] | None = None,
+        columns: list[str] | None = None,
         locale: str | None = None,
         positive_columns: list[str] | None = None,
         identifier_columns: list[str] | None = None,
@@ -51,6 +52,8 @@ class ProfilerConfig:
     def max_rows(self) -> int | None: ...
     @property
     def locale(self) -> str | None: ...
+    @property
+    def columns(self) -> list[str] | None: ...
     @property
     def positive_columns(self) -> list[str]: ...
     @property

@@ -1,6 +1,9 @@
+use arrow::record_batch::RecordBatchReader;
 use bytes::Bytes;
+use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::ChunkReader;
+use parquet::schema::types::SchemaDescriptor;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -11,6 +14,21 @@ use dataprof_core::{
     QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
+
+/// Expand selected top-level roots to their physical Parquet leaves.
+///
+/// The public report model names top-level Arrow fields, while Parquet performs
+/// projection at leaf granularity. Expanding here keeps every leaf below a
+/// selected nested field and still drives the reader through the leaf-level
+/// projection path that avoids touching unselected column chunks.
+pub(crate) fn projection_mask_for_roots(
+    schema: &SchemaDescriptor,
+    root_indices: &[usize],
+) -> ProjectionMask {
+    let leaves = (0..schema.num_columns())
+        .filter(|leaf_index| root_indices.contains(&schema.get_column_root_idx(*leaf_index)));
+    ProjectionMask::leaves(schema, leaves)
+}
 
 /// Check if a file is a valid Parquet file by examining its magic number.
 ///
@@ -502,10 +520,21 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
         .map(|index| parquet_meta.row_group(index).compressed_size() as u64)
         .sum();
 
-    let arrow_schema = builder.schema().clone();
-    let schema_summary = format!("{arrow_schema}");
+    let source_arrow_schema = builder.schema().clone();
+    let schema_summary = format!("{source_arrow_schema}");
+
+    let available_columns = source_arrow_schema
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .collect::<Vec<_>>();
+    let projection = options.column_indices(&available_columns)?;
 
     let mut reader_builder = builder.with_batch_size(config.batch_size);
+    if let Some(indices) = projection {
+        let mask = projection_mask_for_roots(reader_builder.parquet_schema(), &indices);
+        reader_builder = reader_builder.with_projection(mask);
+    }
     if let Some(max) = config.max_rows {
         reader_builder = reader_builder.with_limit(max);
     }
@@ -515,6 +544,7 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
             error,
         )
     })?;
+    let arrow_schema = reader.schema();
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
     analyzer.initialize_schema(arrow_schema.as_ref())?;
@@ -591,12 +621,19 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
 mod tests {
     use super::*;
     use anyhow::Result;
-    use arrow::array::{BooleanArray, Date32Array, Float64Array, Int32Array, StringArray};
+    use arrow::array::{
+        Array, ArrayRef, BooleanArray, Date32Array, Float64Array, Int32Array, StringArray,
+        StructArray,
+    };
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use parquet::arrow::ArrowWriter;
+    use parquet::errors::Result as ParquetResult;
     use parquet::file::properties::WriterProperties;
-    use std::sync::Arc;
+    use parquet::file::reader::Length;
+    use std::io::{Cursor, Read};
+    use std::ops::Range;
+    use std::sync::{Arc, Mutex};
     use tempfile::NamedTempFile;
 
     /// Write `batch` to Parquet and return the encoded bytes.
@@ -634,6 +671,167 @@ mod tests {
                 Arc::new(StringArray::from(vec![Some("a"), None, Some("c")])),
             ],
         )?)
+    }
+
+    struct CountingRead {
+        cursor: Cursor<Bytes>,
+        base: u64,
+        ranges: Arc<Mutex<Vec<Range<u64>>>>,
+    }
+
+    impl Read for CountingRead {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let start = self.base + self.cursor.position();
+            let read = self.cursor.read(buffer)?;
+            if read > 0 {
+                self.ranges
+                    .lock()
+                    .expect("read log lock")
+                    .push(start..start + read as u64);
+            }
+            Ok(read)
+        }
+    }
+
+    #[derive(Clone)]
+    struct CountingChunkReader {
+        data: Bytes,
+        ranges: Arc<Mutex<Vec<Range<u64>>>>,
+    }
+
+    impl CountingChunkReader {
+        fn new(data: Bytes) -> Self {
+            Self {
+                data,
+                ranges: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn ranges(&self) -> Vec<Range<u64>> {
+            self.ranges.lock().expect("read log lock").clone()
+        }
+    }
+
+    impl Length for CountingChunkReader {
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+    }
+
+    impl ChunkReader for CountingChunkReader {
+        type T = CountingRead;
+
+        fn get_read(&self, start: u64) -> ParquetResult<Self::T> {
+            Ok(CountingRead {
+                cursor: Cursor::new(self.data.slice(start as usize..)),
+                base: start,
+                ranges: Arc::clone(&self.ranges),
+            })
+        }
+
+        fn get_bytes(&self, start: u64, length: usize) -> ParquetResult<Bytes> {
+            let end = start + length as u64;
+            self.ranges.lock().expect("read log lock").push(start..end);
+            Ok(self.data.slice(start as usize..end as usize))
+        }
+    }
+
+    #[test]
+    fn projected_reader_never_reads_unselected_column_chunks() -> Result<()> {
+        let encoded = Bytes::from(to_parquet_bytes(&mixed_batch()?)?);
+        let metadata_reader = ParquetRecordBatchReaderBuilder::try_new(encoded.clone())?;
+        let unselected = metadata_reader.metadata().row_group(0).column(4);
+        let (unselected_start, unselected_length) = unselected.byte_range();
+        let unselected_range = unselected_start..unselected_start + unselected_length;
+
+        let counting = CountingChunkReader::new(encoded.clone());
+        let report = analyze_parquet_chunks(
+            counting.clone(),
+            ParquetOrigin::Memory {
+                name: "counted".to_string(),
+                byte_len: encoded.len() as u64,
+            },
+            &ParquetConfig::default(),
+            &AnalysisOptions::default().with_columns(Some(vec!["id".to_string()])),
+        )?;
+
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>(),
+            ["id"]
+        );
+        assert!(
+            counting.ranges().iter().all(|read| {
+                read.end <= unselected_range.start || read.start >= unselected_range.end
+            }),
+            "read log overlapped unselected column chunk {unselected_range:?}: {:?}",
+            counting.ranges()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_projection_keeps_every_leaf_of_a_nested_column() -> Result<()> {
+        let nested = StructArray::from(vec![
+            (
+                Arc::new(Field::new("city", DataType::Utf8, false)),
+                Arc::new(StringArray::from(vec!["Rome", "Milan"])) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("postcode", DataType::Int32, false)),
+                Arc::new(Int32Array::from(vec![20121, 20122])) as ArrayRef,
+            ),
+        ]);
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("address", nested.data_type().clone(), false),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2])) as ArrayRef,
+                Arc::new(nested) as ArrayRef,
+            ],
+        )?;
+        let encoded = Bytes::from(to_parquet_bytes(&batch)?);
+
+        let builder = ParquetRecordBatchReaderBuilder::try_new(encoded.clone())?;
+        let mask = projection_mask_for_roots(builder.parquet_schema(), &[1]);
+        assert!(!mask.leaf_included(0), "unselected id leaf must be pruned");
+        assert!(mask.leaf_included(1), "address.city leaf must be kept");
+        assert!(mask.leaf_included(2), "address.postcode leaf must be kept");
+        let reader = builder.with_projection(mask).build()?;
+        let projected_schema = reader.schema();
+        let projected_field = projected_schema.field(0);
+        let DataType::Struct(children) = projected_field.data_type() else {
+            panic!("address should remain a struct")
+        };
+        assert_eq!(
+            children
+                .iter()
+                .map(|field| field.name().as_str())
+                .collect::<Vec<_>>(),
+            ["city", "postcode"]
+        );
+
+        let report = analyze_parquet_bytes_with_options(
+            encoded,
+            "nested",
+            &ParquetConfig::default(),
+            &AnalysisOptions::default().with_columns(Some(vec!["address".to_string()])),
+        )?;
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>(),
+            ["address"]
+        );
+        Ok(())
     }
 
     #[test]

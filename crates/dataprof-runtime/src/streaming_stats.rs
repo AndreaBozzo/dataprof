@@ -682,6 +682,20 @@ impl StreamingColumnCollection {
         self.ordered_names.clone()
     }
 
+    /// Retain only the selected columns, preserving their source order.
+    ///
+    /// Parsers call this after validating the selection against the complete
+    /// source schema. Row-level trackers intentionally remain unchanged; a
+    /// projected report withholds the row-level quality dimensions because
+    /// their meaning changes when columns are removed.
+    pub fn retain_columns(&mut self, names: &[String]) {
+        let selected = names.iter().map(String::as_str).collect::<HashSet<_>>();
+        self.columns
+            .retain(|name, _| selected.contains(name.as_str()));
+        self.ordered_names
+            .retain(|name| selected.contains(name.as_str()));
+    }
+
     pub fn memory_usage_bytes(&self) -> usize {
         self.columns
             .values()

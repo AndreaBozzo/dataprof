@@ -11,7 +11,9 @@
 
 use std::io::Write;
 
-use dataprof::{ColumnStats, Locale, MetricPack, ProfileReport, Profiler, QualityDimension};
+use dataprof::{
+    ColumnStats, EngineType, Locale, MetricPack, ProfileReport, Profiler, QualityDimension,
+};
 use tempfile::NamedTempFile;
 
 /// Five records with an Italian postal code column. `cap` is what makes locale
@@ -116,6 +118,110 @@ fn pattern_names(report: &ProfileReport, column: &str) -> Option<Vec<String>> {
         .patterns
         .as_ref()
         .map(|patterns| patterns.iter().map(|p| p.name.clone()).collect())
+}
+
+#[test]
+fn column_projection_matches_full_profiles_on_every_format() {
+    for (label, file) in fixtures() {
+        let full = Profiler::new()
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{label}] full profiling failed: {e}"));
+        let projected = Profiler::new()
+            // Deliberately reverse request order: report order is source order.
+            .columns(vec!["amount".to_string(), "id".to_string()])
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{label}] projected profiling failed: {e}"));
+
+        let names = projected
+            .column_profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["id", "amount"], "[{label}] projection/order");
+
+        for profile in &projected.column_profiles {
+            let full_profile = full
+                .column_profiles
+                .iter()
+                .find(|candidate| candidate.name == profile.name)
+                .expect("selected column exists in full profile");
+            assert_eq!(
+                serde_json::to_value(profile).unwrap(),
+                serde_json::to_value(full_profile).unwrap(),
+                "[{label}] selected column changed under projection: {}",
+                profile.name
+            );
+        }
+
+        let quality = projected
+            .quality
+            .expect("non-row quality remains available");
+        assert!(
+            quality.metrics.completeness.is_none(),
+            "[{label}] full-row completeness must be withheld under projection"
+        );
+        assert!(
+            quality.metrics.uniqueness.is_none(),
+            "[{label}] full-row duplicates must be withheld under projection"
+        );
+    }
+}
+
+#[test]
+fn both_csv_engines_apply_the_same_projection() {
+    for engine in [EngineType::Incremental, EngineType::Columnar] {
+        let file = csv_fixture();
+        let report = Profiler::new()
+            .engine(engine)
+            .columns(vec!["cap".to_string()])
+            .analyze_file(file.path())
+            .unwrap_or_else(|error| panic!("[{engine:?}] profiling failed: {error}"));
+        assert_eq!(
+            report
+                .column_profiles
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>(),
+            ["cap"],
+            "{engine:?} ignored the projection"
+        );
+    }
+}
+
+#[test]
+fn empty_projection_returns_no_columns_on_every_format() {
+    for (label, file) in fixtures() {
+        let report = Profiler::new()
+            .columns(vec![])
+            .analyze_file(file.path())
+            .unwrap_or_else(|error| panic!("[{label}] empty projection failed: {error}"));
+
+        assert!(
+            report.column_profiles.is_empty(),
+            "[{label}] an empty projection must return no profiled columns"
+        );
+    }
+}
+
+#[test]
+fn unknown_projected_columns_fail_on_every_format() {
+    for (label, file) in fixtures() {
+        let error = Profiler::new()
+            .columns(vec!["missing".to_string()])
+            .analyze_file(file.path())
+            .expect_err("unknown selected column must fail");
+        assert!(
+            matches!(
+                error,
+                dataprof::DataProfilerError::InvalidConfiguration { .. }
+            ),
+            "[{label}] unknown projection should remain a typed configuration error: {error}"
+        );
+        assert!(
+            error.to_string().contains("missing"),
+            "[{label}] error should name the unknown column: {error}"
+        );
+    }
 }
 
 #[test]

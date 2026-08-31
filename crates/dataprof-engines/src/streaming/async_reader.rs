@@ -423,7 +423,7 @@ impl AsyncStreamingProfiler {
         // a strict-mode malformed record aborts the reader before any data
         // reaches the processor, which would otherwise surface only as a generic
         // "empty input" error and mask the real cause.
-        let (_headers, column_stats, total_rows, sampled_rows, total_bytes, truncation_reason) =
+        let (_headers, mut column_stats, total_rows, sampled_rows, total_bytes, truncation_reason) =
             match process_result {
                 Ok(result) => result,
                 Err(process_err) => {
@@ -433,6 +433,15 @@ impl AsyncStreamingProfiler {
                     };
                 }
             };
+
+        if let Some(indices) = self.options.column_indices(&column_stats.column_names())? {
+            let available = column_stats.column_names();
+            let selected = indices
+                .into_iter()
+                .map(|index| available[index].clone())
+                .collect::<Vec<_>>();
+            column_stats.retain_columns(&selected);
+        }
 
         // Wait for the reader task to finish and propagate any errors
         let reader_outcome = match reader_handle.await {

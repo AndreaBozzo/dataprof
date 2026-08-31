@@ -1917,6 +1917,7 @@ class TestNamespace:
             "progress_interval_ms",
             "quality_dimensions",
             "metrics",
+            "columns",
             "locale",
             "positive_columns",
             "identifier_columns",
@@ -2586,6 +2587,7 @@ class TestProfilerBuilder:
         assert p.max_rows(10) is p
         assert p.csv_delimiter(",") is p
         assert p.quality_dimensions(["completeness"]) is p
+        assert p.columns(["id"]) is p
         assert p.positive_columns(["pressure"]) is p
         assert p.identifier_columns(["order_id"]) is p
         assert p.temporal_columns(["observed_on"]) is p

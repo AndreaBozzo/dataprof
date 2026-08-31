@@ -1170,6 +1170,7 @@ def profile_file(
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
+    columns: list[str] | None = None,
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
@@ -1230,6 +1231,9 @@ def profile_file(
         metrics: List of metric packs to compute. Valid values: "schema"
             (always included), "statistics", "patterns", "quality".
             None = all packs (default).
+        columns: Top-level columns to profile. None selects every column;
+            an empty list returns a report with no profiled columns. Reports
+            preserve source order rather than the order supplied here.
         locale: Locale for pattern detection. Supported: "CA", "DE", "FR",
             "GB", "IT", "US"; "it", "ITA" and "it-IT" all mean "IT", and an
             unsupported tag raises ValueError rather than silently suppressing
@@ -1262,6 +1266,7 @@ def profile_file(
         progress_interval_ms=progress_interval_ms,
         quality_dimensions=quality_dimensions,
         metrics=metrics,
+        columns=columns,
         locale=locale,
         positive_columns=positive_columns,
         identifier_columns=identifier_columns,
@@ -1289,6 +1294,7 @@ def profile(
     progress_interval_ms: int | None = None,
     quality_dimensions: list[str] | None = None,
     metrics: list[str] | None = None,
+    columns: list[str] | None = None,
     locale: str | None = None,
     positive_columns: list[str] | None = None,
     identifier_columns: list[str] | None = None,
@@ -1356,6 +1362,9 @@ def profile(
             (always included), "statistics", "patterns", "quality".
             None = all packs (default). Omitting a pack skips that
             category of computation entirely.
+        columns: Top-level columns to profile. None selects every column;
+            an empty list returns a report with no profiled columns. Reports
+            preserve source order rather than the order supplied here.
         locale: Locale for pattern detection. Boosts confidence for
             locale-matching patterns and suppresses non-matching locale
             patterns. None = no preference. Supported: "CA", "DE", "FR", "GB",
@@ -1393,6 +1402,7 @@ def profile(
             progress_interval_ms=progress_interval_ms,
             quality_dimensions=quality_dimensions,
             metrics=metrics,
+            columns=columns,
             locale=locale,
             positive_columns=positive_columns,
             identifier_columns=identifier_columns,
@@ -1408,6 +1418,7 @@ def profile(
                 max_rows,
                 quality_dimensions,
                 metrics,
+                columns,
                 locale,
                 positive_columns,
                 identifier_columns,
@@ -1418,6 +1429,7 @@ def profile(
                 max_rows=max_rows,
                 quality_dimensions=quality_dimensions,
                 metrics=metrics,
+                columns=columns,
                 locale=locale,
                 positive_columns=positive_columns,
                 identifier_columns=identifier_columns,
@@ -1530,11 +1542,11 @@ def profile(
         skipped = 0
         row_count: int | None = None
         if fmt == "csv":
-            columns = _columns_from_csv_bytes(buffer, csv_delimiter)
+            decoded_columns = _columns_from_csv_bytes(buffer, csv_delimiter)
         elif fmt == "jsonl":
             text = buffer.getvalue().decode("utf-8-sig")
             rows, skipped = _scan_jsonl_records(text, jsonl_on_error)
-            columns, row_count = _columns_from_records(rows, max_rows)
+            decoded_columns, row_count = _columns_from_records(rows, max_rows)
         elif fmt == "json":
             text = buffer.getvalue().decode("utf-8-sig")
             try:
@@ -1554,15 +1566,15 @@ def profile(
                 # The file scanner reads a root `{}` as one record instead, so
                 # require at least one column before taking that branch.
                 if rows and all(isinstance(values, (list, tuple)) for values in rows.values()):
-                    columns = _columns_from_dict(rows)
+                    decoded_columns = _columns_from_dict(rows)
                 else:
-                    columns, row_count = _columns_from_records([rows], max_rows)
+                    decoded_columns, row_count = _columns_from_records([rows], max_rows)
             elif isinstance(rows, list):
                 # An array is a document of records: elements that are not
                 # objects follow the same policy the file and async scanners
                 # apply, instead of rejecting the whole array.
                 records, skipped = _scan_json_array_records(rows, jsonl_on_error)
-                columns, row_count = _columns_from_records(records, max_rows)
+                decoded_columns, row_count = _columns_from_records(records, max_rows)
             else:
                 raise ValueError(
                     f"{fmt} bytes must decode to an object of columns or an array of "
@@ -1587,7 +1599,7 @@ def profile(
         # The buffer's own length, not the decoded cells: `size_bytes` on the
         # report is a statement about the input the caller handed over.
         return _profile_python_columns(
-            columns,
+            decoded_columns,
             f"{fmt}_bytes",
             skipped,
             row_count,
@@ -1714,6 +1726,11 @@ class Profiler:
     def quality_dimensions(self, dims: list[str]) -> Profiler:
         """Select quality dimensions to evaluate."""
         self._kwargs["quality_dimensions"] = dims
+        return self
+
+    def columns(self, columns: list[str]) -> Profiler:
+        """Select top-level columns to profile."""
+        self._kwargs["columns"] = columns
         return self
 
     def stop_when(self, condition: StopCondition | str) -> Profiler:

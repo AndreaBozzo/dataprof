@@ -95,6 +95,39 @@ def _pattern_names(report: dp.ProfileReport, name: str) -> list[str] | None:
 
 
 @pytest.mark.parametrize("fmt", ["csv", "json", "jsonl", "parquet"])
+def test_column_projection_applies_to_every_file_format(fixtures, fmt: str) -> None:
+    report = dp.profile(fixtures[fmt], columns=["amount", "id"])
+
+    assert [column.name for column in report.profiles] == ["id", "amount"]
+    assert report.quality is not None
+    assert report.quality.completeness is None
+    assert report.quality.uniqueness is None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {name: [record[name] for record in RECORDS] for name in ("id", "cap", "amount")},
+        pa.table({name: [record[name] for record in RECORDS] for name in ("id", "cap", "amount")}),
+    ],
+)
+def test_column_projection_applies_to_in_memory_sources(source) -> None:
+    report = dp.profile(source, columns=["amount", "id"])
+
+    assert [column.name for column in report.profiles] == ["id", "amount"]
+    assert report.quality is not None
+    assert report.quality.completeness is None
+    assert report.quality.uniqueness is None
+
+
+def test_unknown_and_empty_column_projection_are_explicit(fixtures) -> None:
+    with pytest.raises(ValueError, match="missing"):
+        dp.profile(fixtures["csv"], columns=["missing"])
+
+    assert dp.profile(fixtures["json"], columns=[]).profiles == []
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json", "jsonl", "parquet"])
 def test_schema_pack_omits_statistics_patterns_and_quality(fixtures, fmt: str) -> None:
     report = dp.profile(fixtures[fmt], metrics=["schema"])
 
@@ -166,6 +199,9 @@ def test_async_paths_apply_the_same_selection(fixtures, fmt: str) -> None:
         _pattern_names(dp.profile(path, locale="IT"), "cap")
     ), f"{fmt}: sync and async disagree on locale-ranked patterns"
 
+    projected = asyncio.run(profile_file_async(path, columns=["amount", "id"]))
+    assert [column.name for column in projected.profiles] == ["id", "amount"]
+
 
 def test_parquet_byte_buffers_apply_the_same_selection(fixtures) -> None:
     # ``profile(bytes, format="parquet")`` reaches the native reader without
@@ -178,6 +214,9 @@ def test_parquet_byte_buffers_apply_the_same_selection(fixtures) -> None:
         assert column.patterns is None, f"parquet bytes: {column.name} kept patterns"
 
     assert dp.profile(data, format="parquet", quality_dimensions=[]).quality is None
+
+    projected = dp.profile(data, format="parquet", columns=["amount", "id"])
+    assert [column.name for column in projected.profiles] == ["id", "amount"]
 
     assert _pattern_names(dp.profile(data, format="parquet", locale="IT"), "cap") == (
         _pattern_names(dp.profile(fixtures["parquet"], locale="IT"), "cap")

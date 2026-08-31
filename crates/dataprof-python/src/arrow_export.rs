@@ -365,8 +365,10 @@ pub fn profile_dataframe(
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
-    // Extract metric packs and quality dimensions from config
-    let resolved_packs = config.and_then(PyProfilerConfig::effective_metric_packs);
+    let options = config
+        .map(PyProfilerConfig::analysis_options)
+        .unwrap_or_default();
+    let resolved_packs = options.effective_metric_packs();
     let packs = resolved_packs.as_deref();
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
@@ -384,17 +386,32 @@ pub fn profile_dataframe(
 
     // Optionally limit rows before analysis
     let (batch, truncated) = limit_batch_rows(batch, effective_max_rows);
+    let available_columns = batch
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .collect::<Vec<_>>();
+    let batch = match options
+        .column_indices(&available_columns)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?
+    {
+        Some(indices) => batch.project(&indices).map_err(|error| {
+            PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
+        })?,
+        None => batch,
+    };
 
     let num_rows = batch.num_rows();
     let num_cols = batch.num_columns();
     // decode-audit: no-data — absent config simply means no semantic hints.
-    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
+    let semantic_hints = options.semantic_hints().clone();
 
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
     analyze_imported_batch(&mut analyzer, &batch)?;
 
-    let locale = config.and_then(|c| c.locale);
+    let locale = options.locale();
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = if include_quality {
@@ -430,18 +447,13 @@ pub fn profile_dataframe(
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
-    .with_row_completeness(analyzer.row_completeness_summary());
+    .with_row_completeness(analyzer.row_completeness_summary())
+    .with_analysis_options(&options);
 
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
-            .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
-            .with_semantic_hints(semantic_hints.clone());
-        if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
-            assembler = assembler.with_requested_dimensions(dims);
-        }
-    } else {
-        assembler = assembler.skip_quality();
+            .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings());
     }
 
     let report = assembler.build();
@@ -473,8 +485,10 @@ pub fn profile_arrow(
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
-    // Extract metric packs and quality dimensions from config
-    let resolved_packs = config.and_then(PyProfilerConfig::effective_metric_packs);
+    let options = config
+        .map(PyProfilerConfig::analysis_options)
+        .unwrap_or_default();
+    let resolved_packs = options.effective_metric_packs();
     let packs = resolved_packs.as_deref();
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
@@ -494,13 +508,33 @@ pub fn profile_arrow(
 
     // Optionally limit rows before analysis
     let (batches, truncated) = limit_batches(batches, effective_max_rows);
+    let available_columns = batches[0]
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .collect::<Vec<_>>();
+    let batches = match options
+        .column_indices(&available_columns)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?
+    {
+        Some(indices) => batches
+            .into_iter()
+            .map(|batch| {
+                batch.project(&indices).map_err(|error| {
+                    PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?,
+        None => batches,
+    };
 
     let num_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
     // import_batches_from_pyarrow never yields an empty sequence, and
     // limit_batches always keeps one batch for its schema.
     let num_cols = batches[0].num_columns();
     // decode-audit: no-data — absent config simply means no semantic hints.
-    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
+    let semantic_hints = options.semantic_hints().clone();
 
     // Estimate memory from pyarrow's nbytes
     // decode-audit: no-data — memory estimate is best-effort metadata; failure
@@ -516,7 +550,7 @@ pub fn profile_arrow(
         analyze_imported_batch(&mut analyzer, batch)?;
     }
 
-    let locale = config.and_then(|c| c.locale);
+    let locale = options.locale();
     let column_profiles =
         analyzer.to_profiles_with_hints(skip_statistics, skip_patterns, locale, &semantic_hints);
     let sample_columns = analyzer.create_sample_columns();
@@ -544,18 +578,13 @@ pub fn profile_arrow(
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
-    .with_row_completeness(analyzer.row_completeness_summary());
+    .with_row_completeness(analyzer.row_completeness_summary())
+    .with_analysis_options(&options);
 
     if include_quality {
         assembler = assembler
             .with_quality_data(sample_columns)
-            .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings())
-            .with_semantic_hints(semantic_hints.clone());
-        if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
-            assembler = assembler.with_requested_dimensions(dims);
-        }
-    } else {
-        assembler = assembler.skip_quality();
+            .with_exact_value_hint_bindings(analyzer.semantic_hint_bindings());
     }
 
     let report = assembler.build();

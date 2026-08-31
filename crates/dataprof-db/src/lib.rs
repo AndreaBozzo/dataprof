@@ -257,7 +257,7 @@ pub async fn analyze_database_with_options(
         (actual_query, None)
     };
 
-    let columns = connector
+    let mut columns = connector
         .profile_query_streaming(&final_query, config.batch_size)
         .await?;
 
@@ -291,6 +291,15 @@ pub async fn analyze_database_with_options(
     // decode-audit: no-data — the empty-columns case returned early above, so
     // this default is only a guard; every column vec has the same length.
     let actual_rows_processed = columns.row_count();
+
+    let available_columns = columns.names().map(str::to_string).collect::<Vec<_>>();
+    if let Some(indices) = options.column_indices(&available_columns)? {
+        let selected = indices
+            .into_iter()
+            .map(|index| available_columns[index].clone())
+            .collect::<Vec<_>>();
+        columns.retain_names(&selected);
+    }
 
     // `columns` keeps the query's column order, so the report reports columns in
     // the order they were selected — the same source-order contract CSV, Parquet

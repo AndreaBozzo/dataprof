@@ -999,6 +999,15 @@ fn analyze_json_from_reader_full<R: BufRead>(
         rows_seen += 1;
     })?;
 
+    if let Some(indices) = options.column_indices(&column_stats.column_names())? {
+        let available = column_stats.column_names();
+        let selected = indices
+            .into_iter()
+            .map(|index| available[index].clone())
+            .collect::<Vec<_>>();
+        column_stats.retain_columns(&selected);
+    }
+
     let profiles = profile_builder::profiles_from_streaming_with_hints(
         &column_stats,
         !options.include_statistics(),

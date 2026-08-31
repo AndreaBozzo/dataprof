@@ -10,7 +10,7 @@ use parquet::arrow::async_reader::AsyncFileReader;
 use reqwest::{Client, header};
 use std::ops::Range;
 
-use crate::{ParquetConfig, RecordBatchAnalyzer};
+use crate::{ParquetConfig, RecordBatchAnalyzer, parser::projection_mask_for_roots};
 
 /// An asynchronous reader that fetches byte ranges from an HTTP server
 /// using HTTP Range requests. Designed specifically for remote Parquet parsing.
@@ -330,18 +330,24 @@ pub async fn analyze_parquet_async_http_with_options(
         .map(|i| parquet_meta.row_group(i).compressed_size() as u64)
         .sum();
 
-    let arrow_schema = builder.schema().clone();
-    let schema_summary = format!("{arrow_schema}");
+    let source_arrow_schema = builder.schema().clone();
+    let schema_summary = format!("{source_arrow_schema}");
+    let available_columns = source_arrow_schema
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .collect::<Vec<_>>();
+    let projection = options.column_indices(&available_columns)?;
 
-    let mut stream = builder
-        .with_batch_size(config.batch_size)
-        .build()
-        .map_err(|e| {
-            DataProfilerError::parquet_with_source(
-                format!("Failed to build Parquet stream: {}", e),
-                e,
-            )
-        })?;
+    let mut stream_builder = builder.with_batch_size(config.batch_size);
+    if let Some(indices) = projection {
+        let mask = projection_mask_for_roots(stream_builder.parquet_schema(), &indices);
+        stream_builder = stream_builder.with_projection(mask);
+    }
+    let mut stream = stream_builder.build().map_err(|e| {
+        DataProfilerError::parquet_with_source(format!("Failed to build Parquet stream: {}", e), e)
+    })?;
+    let arrow_schema = stream.schema().clone();
 
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(semantic_hints);
     analyzer.initialize_schema(arrow_schema.as_ref())?;
