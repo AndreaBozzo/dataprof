@@ -11,8 +11,10 @@ readme = "README.md"
 
 [features]
 default = []
-postgres = ["dep:sqlx", "sqlx/postgres"]
-mysql = ["dep:sqlx", "sqlx/mysql"]
+# `sqlx/bigdecimal` rides with the two backends that have a decimal type.
+# SQLite has none, so a sqlite-only build does not pay for it.
+postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/bigdecimal"]
+mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/bigdecimal"]
 sqlite = ["dep:sqlx", "sqlx/sqlite"]
 all-db = ["postgres", "mysql", "sqlite"]
 

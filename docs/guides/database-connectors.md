@@ -4,11 +4,21 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality 
 
 > [!NOTE]
 > Before 0.9.0, every column was read as text and non-text columns profiled as
-> all-null strings. Integer, float, and boolean columns now decode correctly.
-> Types outside that set — `NUMERIC`/`DECIMAL`, dates and times, and `BLOB` —
-> still profile as nulls, because decoding them needs sqlx features this crate
-> does not enable. Profile an exported CSV or Parquet file if you need
-> statistics for those.
+> all-null strings. Integers, floats and booleans decode from 0.9.0; temporal
+> columns, `NUMERIC`/`DECIMAL`, `UUID` and MySQL's `BIGINT UNSIGNED` decode from
+> 0.12.
+>
+> Two types are still unsupported and still profile as null: `BLOB`/`BYTEA`,
+> which needs a binary column type rather than a decode arm, and MySQL `TIME`,
+> which sqlx decodes as a duration rather than a time of day. Profile an
+> exported CSV or Parquet file if you need statistics for those.
+>
+> Timestamps render in dataprof's naive ISO form (`YYYY-MM-DDTHH:MM:SS`) rather
+> than RFC 3339, because the date grammar that decides whether a column is
+> temporal rejects a trailing offset or `Z`. A `TIMESTAMPTZ` is converted to UTC
+> and its offset dropped: the instant survives, the marker saying it is UTC does
+> not. `NUMERIC`/`DECIMAL` keeps the exact digits the database stored rather
+> than routing through `f64`.
 
 ## Feature Requirements
 
