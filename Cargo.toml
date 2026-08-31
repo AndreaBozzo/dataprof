@@ -73,7 +73,7 @@ wide = "1.2.0"
 # Dev dependencies
 criterion = { version = "0.8", features = ["html_reports"] }
 env_logger = "0.11"
-jsonschema = { version = "0.49.1", default-features = false }
+jsonschema = { version = "0.52.0", default-features = false }
 predicates = "3.1"
 proptest = "1.9"
 serial_test = "4.0.1"
