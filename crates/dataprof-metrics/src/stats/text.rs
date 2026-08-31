@@ -1,4 +1,5 @@
 use crate::types::{ColumnStats, FrequencyItem, TextStats};
+use dataprof_core::char_len;
 use std::collections::HashMap;
 
 const TOP_N_DEFAULT: usize = 10;
@@ -16,8 +17,8 @@ pub fn compute_text_stats(data: &[String]) -> TextStats {
         return TextStats::empty();
     }
 
-    // Existing length calculations
-    let lengths: Vec<usize> = non_empty.iter().map(|s| s.len()).collect();
+    // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
+    let lengths: Vec<usize> = non_empty.iter().map(|s| char_len(s)).collect();
     // decode-audit: impossible — non_empty was checked non-empty above, so
     // lengths always has a min and max.
     let min_length = lengths

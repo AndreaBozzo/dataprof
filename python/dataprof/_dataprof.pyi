@@ -179,8 +179,13 @@ class ColumnProfile:
     quartiles: dict[str, float] | None
     is_approximate: bool | None
     outlier_count: int | None
+    #: Shortest value in Unicode scalar values, not UTF-8 bytes and not
+    #: grapheme clusters. ASCII text is unaffected by that distinction; a
+    #: combining sequence counts each scalar.
     min_length: int | None
+    #: Longest value, in Unicode scalar values. See ``min_length``.
     max_length: int | None
+    #: Mean length, in Unicode scalar values. See ``min_length``.
     avg_length: float | None
     true_count: int | None
     false_count: int | None

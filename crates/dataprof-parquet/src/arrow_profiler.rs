@@ -5,7 +5,7 @@ use arrow::datatypes::*;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
     ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat, Locale,
-    MetricPack, PeakMemorySampler, QualityDimension, SemanticHints, TruncationReason,
+    MetricPack, PeakMemorySampler, QualityDimension, SemanticHints, TruncationReason, char_len,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::CardinalityEstimator;
@@ -875,7 +875,8 @@ impl ColumnAnalyzer {
     }
 
     fn update_text_stats(&mut self, value: &str) {
-        let len = value.len();
+        // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
+        let len = char_len(value);
         self.min_length = self.min_length.min(len);
         self.max_length = self.max_length.max(len);
         self.total_length += len;

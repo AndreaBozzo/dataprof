@@ -207,6 +207,22 @@ Both are widenings, so stored v1 reports remain valid. Consumers that read
 "not assessed", never zero. `assessed_dimensions` is empty for exactly these
 reports and is the authority to branch on.
 
+## v1 behaviour change: text lengths count Unicode scalar values
+
+`min_length`, `max_length` and `avg_length` on a text column counted UTF-8 bytes
+through 0.11, under names that disclose no encoding. They now count Unicode
+scalar values, so a column of CJK or emoji values reports smaller numbers than a
+stored 0.11 report does for the same data.
+
+No property was added, removed or retyped, and ASCII values are unchanged, so
+the schema's validation shape and version are unchanged and stored reports
+remain valid. The document itself does change: both dialects' `min_length`,
+`max_length` and `avg_length` gain `description` annotations naming the unit.
+
+A consumer comparing a report across the 0.11/0.12 boundary is comparing two
+units for non-ASCII text, which `schema_version` cannot signal because nothing
+about validation changed. Compare within a release, or re-profile.
+
 ## v1 behaviour change: unassessed dimensions are omitted
 
 The seven quality dimension objects (`completeness`, `consistency`,
