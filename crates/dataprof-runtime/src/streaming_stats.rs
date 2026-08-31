@@ -176,26 +176,79 @@ impl StreamReservoirSampler {
             .sum()
     }
 
+    /// Fold another sampler in, leaving every value of the combined population
+    /// equally likely to have survived.
+    ///
+    /// The two reservoirs stand for populations of very different sizes: a
+    /// partition of a million rows and one of a hundred each hand over at most
+    /// `capacity` values. Pooling the reservoirs and subsampling uniformly
+    /// would let the small partition supply half the merged sample, so sample
+    /// values, and the patterns inferred from them, would depend on how the
+    /// input happened to be split. The number of survivors drawn from each
+    /// side follows the hypergeometric distribution over the two population
+    /// counts instead, which is the split a single pass would have produced.
+    ///
+    /// A sampler shrunk under memory pressure holds fewer values than its
+    /// population earns it. Nothing can be conjured in their place, so the
+    /// shortfall is filled from the other side rather than returning a sample
+    /// shorter than the capacity allows.
     pub fn merge(&mut self, other: &StreamReservoirSampler) {
         if other.count == 0 {
             return;
         }
 
-        let mut combined: Vec<String> = std::mem::take(&mut self.reservoir);
-        combined.extend(other.reservoir.iter().cloned());
+        let available_self = self.reservoir.len();
+        let available_other = other.reservoir.len();
+        let target = self.capacity.min(available_self + available_other);
 
-        let total = combined.len();
-        if total <= self.capacity {
-            self.reservoir = combined;
-        } else {
-            for index in 0..self.capacity {
-                let swap_with = self.rng.random_range(index..total);
-                combined.swap(index, swap_with);
+        let mut take_self = 0usize;
+        let mut take_other = 0usize;
+        let mut population_self = self.count;
+        let mut population_other = other.count;
+
+        for _ in 0..target {
+            // Fewer draws remain than the two sides hold, so at most one of
+            // them is exhausted here. Each side also keeps at least one
+            // unconsumed population row per unconsumed sample slot, so the
+            // range below is never empty.
+            let from_self = if take_self == available_self {
+                false
+            } else if take_other == available_other {
+                true
+            } else {
+                self.rng.random_range(0..population_self + population_other) < population_self
+            };
+
+            if from_self {
+                take_self += 1;
+                population_self -= 1;
+            } else {
+                take_other += 1;
+                population_other -= 1;
             }
-            combined.truncate(self.capacity);
-            self.reservoir = combined;
         }
 
+        // Partial Fisher-Yates over each side: the first `take_*` slots become
+        // a uniform draw without replacement from that side's sample.
+        let mut merged: Vec<String> = std::mem::take(&mut self.reservoir);
+        for index in 0..take_self {
+            let swap_with = self.rng.random_range(index..available_self);
+            merged.swap(index, swap_with);
+        }
+        merged.truncate(take_self);
+
+        let mut indices: Vec<usize> = (0..available_other).collect();
+        for index in 0..take_other {
+            let swap_with = self.rng.random_range(index..available_other);
+            indices.swap(index, swap_with);
+        }
+        merged.extend(
+            indices[..take_other]
+                .iter()
+                .map(|&index| other.reservoir[index].clone()),
+        );
+
+        self.reservoir = merged;
         self.count += other.count;
     }
 }
@@ -444,6 +497,16 @@ impl Default for StreamingStatistics {
 pub struct RowUniquenessTracker {
     rows_seen: usize,
     distinct: CardinalityEstimator,
+    /// Set once signatures made under different schemas have been folded in.
+    ///
+    /// A signature encodes length-prefixed values and nothing else, so a row
+    /// `{a: "x"}` and a row `{b: "x"}` both sign as `1:x` while the union
+    /// schema makes them different rows; a differing field *order* collides
+    /// the same way. The signatures are already folded into the estimator and
+    /// cannot be rebuilt against the union schema, so the count is withheld
+    /// rather than reported as a plausible number. Defaults to false, which is
+    /// what a tracker fed from a single schema is.
+    incomparable_signatures: bool,
 }
 
 impl RowUniquenessTracker {
@@ -465,9 +528,16 @@ impl RowUniquenessTracker {
         self.distinct.is_approximate()
     }
 
+    /// Record that the signatures folded in so far were not all made against
+    /// the same schema, so they cannot be compared with each other.
+    pub fn mark_incomparable(&mut self) {
+        self.incomparable_signatures = true;
+    }
+
     pub fn merge(&mut self, other: &RowUniquenessTracker) {
         self.rows_seen += other.rows_seen;
         self.distinct.merge(&other.distinct);
+        self.incomparable_signatures |= other.incomparable_signatures;
     }
 
     pub fn memory_usage_bytes(&self) -> usize {
@@ -475,9 +545,10 @@ impl RowUniquenessTracker {
     }
 
     /// Summary for quality metrics, or `None` when no rows were observed
-    /// (e.g. an engine that never fed whole records through this tracker).
+    /// (e.g. an engine that never fed whole records through this tracker) or
+    /// when the signatures seen are not comparable with one another.
     pub fn summary(&self) -> Option<RowDuplicateSummary> {
-        if self.rows_seen == 0 {
+        if self.rows_seen == 0 || self.incomparable_signatures {
             return None;
         }
         Some(RowDuplicateSummary {
@@ -720,17 +791,99 @@ impl StreamingColumnCollection {
         hasher.finish()
     }
 
+    /// Fold another collection into this one, as if a single pass had read
+    /// both sides.
+    ///
+    /// The merged profile describes the union of the two schemas, and three
+    /// consequences of that are each a silently wrong number when skipped:
+    ///
+    /// - A column only one side saw has to join `ordered_names`, or
+    ///   [`Self::column_names`] omits it and the column vanishes from the
+    ///   report while its statistics sit unreachable in the map.
+    /// - That column is absent from every record the *other* side read, so it
+    ///   is padded with those rows as missing values, the way
+    ///   [`Self::init_column_with_missing`] pads a key that appears mid-stream.
+    ///   Skipping the padding leaves the column looking shorter and more
+    ///   complete than the dataset.
+    /// - Rows counted complete against the narrower schema are not complete
+    ///   against the union, so that side's complete-row count is invalidated
+    ///   for the same reason.
+    ///
+    /// Row signatures are built per record from that record's own headers, and
+    /// encode values only. Two sides that read different columns, or the same
+    /// columns in a different order, therefore sign different rows identically.
+    /// Those signatures cannot be rebuilt against the union schema once folded
+    /// into the estimator, so the merged duplicate count is withheld rather
+    /// than reported wrong.
     pub fn merge(&mut self, other: StreamingColumnCollection) {
-        for (column_name, other_stats) in other.columns {
+        let self_rows = self.row_tracker.rows_seen();
+        let other_rows = other.row_tracker.rows_seen();
+
+        let StreamingColumnCollection {
+            columns,
+            ordered_names,
+            memory_limit_bytes: _,
+            row_tracker,
+            mut completeness_tracker,
+            hint_bindings,
+        } = other;
+
+        // Signatures are positional over the record's own headers, so they
+        // only mean the same thing on both sides when both read the same
+        // columns in the same order. Captured before the orders are joined.
+        let schemas_match = self.ordered_names == ordered_names;
+
+        // A column this side saw and the other did not is absent from every
+        // record the other side read.
+        let mut other_lacks_columns = false;
+        for (column_name, stats) in self.columns.iter_mut() {
+            if columns.contains_key(column_name) {
+                continue;
+            }
+            other_lacks_columns = true;
+            stats.count += other_rows;
+            stats.null_count += other_rows;
+        }
+
+        // Columns the other side introduces keep its discovery order, appended
+        // after the ones already known here. Names carry the order; the map
+        // carries the statistics, and the two always hold the same keys.
+        let mut self_lacks_columns = false;
+        for column_name in &ordered_names {
+            if !self.columns.contains_key(column_name) {
+                self.ordered_names.push(column_name.clone());
+                self_lacks_columns = true;
+            }
+        }
+
+        for (column_name, other_stats) in columns {
             match self.columns.get_mut(&column_name) {
                 Some(existing_stats) => existing_stats.merge(&other_stats),
                 None => {
-                    self.columns.insert(column_name, other_stats);
+                    let mut stats = other_stats;
+                    // Records this side already read had no such field.
+                    stats.count += self_rows;
+                    stats.null_count += self_rows;
+                    self.columns.insert(column_name, stats);
                 }
             }
         }
-        self.row_tracker.merge(&other.row_tracker);
-        self.hint_bindings.merge(&other.hint_bindings);
+
+        if self_lacks_columns && self_rows > 0 {
+            self.completeness_tracker.invalidate_completed_rows();
+        }
+        if other_lacks_columns && other_rows > 0 {
+            completeness_tracker.invalidate_completed_rows();
+        }
+
+        self.completeness_tracker.merge(&completeness_tracker);
+        self.row_tracker.merge(&row_tracker);
+        // Only a side that signed rows can make them incomparable, so folding
+        // a partition into a fresh accumulator stays a plain accumulation.
+        if self_rows > 0 && other_rows > 0 && !schemas_match {
+            self.row_tracker.mark_incomparable();
+        }
+        self.hint_bindings.merge(&hint_bindings);
     }
 }
 
@@ -941,6 +1094,203 @@ mod row_tracker_tests {
         assert_eq!(summary.rows_checked, 3);
         assert_eq!(summary.duplicate_rows, 1);
     }
+
+    #[test]
+    fn test_merge_keeps_columns_only_the_other_side_saw() {
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &["a".to_string()], &["1"]);
+        record(&mut right, &["b".to_string()], &["2"]);
+
+        left.merge(right);
+
+        // A column reachable in the map but missing from the order is a column
+        // the report never renders.
+        assert_eq!(left.column_names(), vec!["a".to_string(), "b".to_string()]);
+        assert!(left.get_column_stats("b").is_some());
+    }
+
+    #[test]
+    fn test_merge_pads_columns_the_other_side_never_saw() {
+        let left_headers = vec!["a".to_string()];
+        let right_headers = vec!["a".to_string(), "b".to_string()];
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &left_headers, &["1"]);
+        record(&mut left, &left_headers, &["2"]);
+        record(&mut right, &right_headers, &["3", "x"]);
+
+        left.merge(right);
+
+        let b = left.get_column_stats("b").expect("column b survived");
+        // Three records in the merged dataset, two of which had no `b` at all.
+        assert_eq!(b.count, 3);
+        assert_eq!(b.null_count, 2);
+
+        let a = left.get_column_stats("a").expect("column a");
+        assert_eq!(a.count, 3);
+        assert_eq!(a.null_count, 0);
+    }
+
+    #[test]
+    fn test_merge_combines_completeness() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &headers, &["1", "2"]);
+        record(&mut left, &headers, &["3", ""]);
+        record(&mut right, &headers, &["4", "5"]);
+
+        left.merge(right);
+
+        assert_eq!(completeness(&left), (2, 3));
+    }
+
+    #[test]
+    fn test_merge_invalidates_completeness_for_the_narrower_side() {
+        let left_headers = vec!["a".to_string()];
+        let right_headers = vec!["a".to_string(), "b".to_string()];
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &left_headers, &["1"]);
+        record(&mut right, &right_headers, &["2", "y"]);
+
+        left.merge(right);
+
+        // The left record has no `b`, so it is not complete against the union.
+        assert_eq!(completeness(&left), (1, 2));
+    }
+
+    #[test]
+    fn test_merge_withholds_duplicates_when_schemas_differ() {
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &["a".to_string()], &["x"]);
+        record(&mut right, &["b".to_string()], &["x"]);
+
+        left.merge(right);
+
+        // Both rows sign as "1:x", so the count would claim one duplicate,
+        // while under the union schema the rows differ in every field.
+        assert!(left.row_duplicate_summary().is_none());
+    }
+
+    #[test]
+    fn test_merge_withholds_duplicates_when_column_order_differs() {
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &["a".to_string(), "b".to_string()], &["x", "y"]);
+        record(&mut right, &["b".to_string(), "a".to_string()], &["x", "y"]);
+
+        left.merge(right);
+
+        // Same columns, opposite order: the two signatures collide on rows
+        // that hold the values the other way round.
+        assert!(left.row_duplicate_summary().is_none());
+    }
+
+    #[test]
+    fn test_merge_keeps_duplicates_when_schemas_match() {
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut left = StreamingColumnCollection::new();
+        let mut right = StreamingColumnCollection::new();
+        record(&mut left, &headers, &["x", "y"]);
+        record(&mut right, &headers, &["x", "y"]);
+
+        left.merge(right);
+
+        let summary = left
+            .row_duplicate_summary()
+            .expect("one schema on both sides");
+        assert_eq!(summary.rows_checked, 2);
+        assert_eq!(summary.duplicate_rows, 1);
+    }
+
+    #[test]
+    fn test_merge_into_an_empty_accumulator_keeps_duplicates() {
+        let headers = vec!["a".to_string()];
+        let mut accumulator = StreamingColumnCollection::new();
+        let mut partition = StreamingColumnCollection::new();
+        record(&mut partition, &headers, &["x"]);
+        record(&mut partition, &headers, &["x"]);
+
+        // A reduce starts from an empty accumulator. That is not a schema
+        // mismatch: the empty side signed nothing to be confused with.
+        accumulator.merge(partition);
+
+        let summary = accumulator
+            .row_duplicate_summary()
+            .expect("the empty side contributed no signatures");
+        assert_eq!(summary.rows_checked, 2);
+        assert_eq!(summary.duplicate_rows, 1);
+    }
+
+    /// Merging partitions must produce the profile a single pass would.
+    ///
+    /// This is the acceptance criterion for any distributed profiling path:
+    /// without it, the numbers silently depend on how the input was split.
+    #[test]
+    fn test_merged_partitions_match_a_single_pass() {
+        let headers = vec!["id".to_string(), "city".to_string(), "score".to_string()];
+        let rows: Vec<[String; 3]> = (0..300)
+            .map(|index| {
+                [
+                    format!("{}", index % 10),
+                    ["Rome", "Milan", "Turin", ""][index % 4].to_string(),
+                    format!("{}.5", index % 5),
+                ]
+            })
+            .collect();
+
+        let mut single = StreamingColumnCollection::new();
+        for row in &rows {
+            single.process_record(&headers, row.iter().cloned());
+        }
+
+        // Seven partitions over 300 rows, so the split is uneven.
+        let mut partitions: Vec<StreamingColumnCollection> =
+            (0..7).map(|_| StreamingColumnCollection::new()).collect();
+        for (index, row) in rows.iter().enumerate() {
+            partitions[index % 7].process_record(&headers, row.iter().cloned());
+        }
+        let mut merged = partitions.remove(0);
+        for partition in partitions {
+            merged.merge(partition);
+        }
+
+        assert_eq!(merged.column_names(), single.column_names());
+        for name in single.column_names() {
+            let expected = single.get_column_stats(&name).expect("single-pass column");
+            let actual = merged.get_column_stats(&name).expect("merged column");
+            assert_eq!(actual.count, expected.count, "count for {name}");
+            assert_eq!(actual.null_count, expected.null_count, "nulls for {name}");
+            assert_eq!(
+                actual.unique_count(),
+                expected.unique_count(),
+                "distinct for {name}"
+            );
+            assert_eq!(actual.min, expected.min, "min for {name}");
+            assert_eq!(actual.max, expected.max, "max for {name}");
+            assert!(
+                (actual.mean() - expected.mean()).abs() < 1e-9,
+                "mean for {name}"
+            );
+            assert!(
+                (actual.variance() - expected.variance()).abs() < 1e-9,
+                "variance for {name}"
+            );
+        }
+
+        let merged_rows = merged.row_completeness_summary().expect("rows observed");
+        let single_rows = single.row_completeness_summary().expect("rows observed");
+        assert_eq!(merged_rows.rows_checked, single_rows.rows_checked);
+        assert_eq!(merged_rows.complete_rows, single_rows.complete_rows);
+
+        let merged_dupes = merged.row_duplicate_summary().expect("rows observed");
+        let single_dupes = single.row_duplicate_summary().expect("rows observed");
+        assert_eq!(merged_dupes.rows_checked, single_dupes.rows_checked);
+        assert_eq!(merged_dupes.duplicate_rows, single_dupes.duplicate_rows);
+    }
 }
 
 #[cfg(test)]
@@ -983,6 +1333,50 @@ mod tests {
         assert!((stats1.mean() - 25.0).abs() < 1e-10);
         assert_eq!(stats1.min, 10.0);
         assert_eq!(stats1.max, 40.0);
+    }
+
+    #[test]
+    fn test_reservoir_merge_weights_sides_by_population() {
+        let mut large = StreamReservoirSampler::new(100);
+        for index in 0..10_000 {
+            large.offer(format!("large-{index}"));
+        }
+        let mut small = StreamReservoirSampler::new(100);
+        for index in 0..100 {
+            small.offer(format!("small-{index}"));
+        }
+
+        large.merge(&small);
+
+        assert_eq!(large.samples().len(), 100);
+        let from_small = large
+            .samples()
+            .iter()
+            .filter(|value| value.starts_with("small-"))
+            .count();
+        // The small side is 100 rows of 10,100, so it earns about one slot.
+        // Pooling both reservoirs and subsampling uniformly would hand it
+        // roughly half of them, making the sample depend on the partitioning.
+        assert!(
+            from_small <= 10,
+            "small partition took {from_small} of 100 slots"
+        );
+    }
+
+    #[test]
+    fn test_reservoir_merge_keeps_every_value_when_capacity_allows() {
+        let mut left = StreamReservoirSampler::new(100);
+        left.offer("a".to_string());
+        left.offer("b".to_string());
+        let mut right = StreamReservoirSampler::new(100);
+        right.offer("c".to_string());
+
+        left.merge(&right);
+
+        let mut samples: Vec<String> = left.samples().to_vec();
+        samples.sort();
+        assert_eq!(samples, vec!["a", "b", "c"]);
+        assert_eq!(left.count, 3);
     }
 
     #[test]
