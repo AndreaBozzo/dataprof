@@ -115,8 +115,8 @@ impl DatabaseConnector for MySqlConnector {
                 rows,
                 [u64, ::sqlx::types::BigDecimal],
                 [(
-                    ::sqlx::types::chrono::TimeDelta,
-                    |d: ::sqlx::types::chrono::TimeDelta| {
+                    ::chrono::Duration,
+                    |d: ::chrono::Duration| {
                         let secs = d.num_seconds();
                         let sign = if secs < 0 { "-" } else { "" };
                         let abs_secs = secs.abs();
@@ -159,8 +159,8 @@ impl DatabaseConnector for MySqlConnector {
                 "MySQL",
                 [u64, ::sqlx::types::BigDecimal],
                 [(
-                    ::sqlx::types::chrono::TimeDelta,
-                    |d: ::sqlx::types::chrono::TimeDelta| {
+                    ::chrono::Duration,
+                    |d: ::chrono::Duration| {
                         let secs = d.num_seconds();
                         let sign = if secs < 0 { "-" } else { "" };
                         let abs_secs = secs.abs();

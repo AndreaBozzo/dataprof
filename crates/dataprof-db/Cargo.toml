@@ -28,6 +28,7 @@ rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 sqlx = { workspace = true, optional = true }
+chrono = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
