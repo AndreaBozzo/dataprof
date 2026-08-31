@@ -5,7 +5,7 @@ use arrow::array::*;
 use arrow::record_batch::RecordBatch;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints,
+    ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
@@ -1085,7 +1085,8 @@ impl ColumnAnalyzer {
     }
 
     fn update_text_stats(&mut self, value: &str) {
-        let len = value.len();
+        // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
+        let len = char_len(value);
         self.min_length = self.min_length.min(len);
         self.max_length = self.max_length.max(len);
         self.total_length += len;

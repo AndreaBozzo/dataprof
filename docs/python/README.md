@@ -296,13 +296,25 @@ Per-column profiling statistics.
 | `coefficient_of_variation` | `float \| None` | CV |
 | `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}` |
 | `is_approximate` | `bool \| None` | Whether stats were estimated from a sample |
-| `min_length` | `int \| None` | Minimum character length |
-| `max_length` | `int \| None` | Maximum character length |
-| `avg_length` | `float \| None` | Average character length |
+| `min_length` | `int \| None` | Shortest value, in Unicode scalar values |
+| `max_length` | `int \| None` | Longest value, in Unicode scalar values |
+| `avg_length` | `float \| None` | Mean length, in Unicode scalar values |
 | `true_count` | `int \| None` | Number of `True` values (boolean columns) |
 | `false_count` | `int \| None` | Number of `False` values (boolean columns) |
 | `true_ratio` | `float \| None` | Ratio of `True` values (0.0--1.0) |
 | `patterns` | `list[Pattern] \| None` | List of detected value patterns |
+
+Text lengths count Unicode scalar values, not UTF-8 bytes and not grapheme
+clusters. `"東京"` has a length of 2 and `"🙂"` a length of 1; through 0.11 those
+reported 6 and 4, because every accumulator used Rust's byte-valued `str::len()`
+under a field named `length` (#627). ASCII text is unaffected.
+
+A combining sequence counts each scalar, so the decomposed spelling of e-acute
+(`e` followed by U+0301) has a length of 2 while the precomposed spelling
+(U+00E9) has a length of 1. The two render identically and profile differently.
+Segmenting grapheme clusters instead would need a Unicode segmentation table and
+a policy for which version of it; encoded size is a property of the encoding
+rather than of the value, and is reported at the source level instead.
 
 ## `Pattern`
 

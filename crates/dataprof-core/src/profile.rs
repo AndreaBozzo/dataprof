@@ -163,12 +163,20 @@ impl NumericStats {
 }
 
 /// Statistics for text/string columns.
+///
+/// Every length here is a count of Unicode scalar values, not UTF-8 bytes and
+/// not grapheme clusters. ASCII text is unaffected by that distinction; a
+/// combining sequence counts each scalar, so the decomposed and precomposed
+/// spellings of the same word report different lengths. The `text_units` module
+/// carries the reasoning.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TextStats {
+    /// Shortest value, in Unicode scalar values.
     pub min_length: usize,
+    /// Longest value, in Unicode scalar values.
     pub max_length: usize,
-    // A mean, so it rounds at the statistics precision rather than the
-    // percentage one.
+    /// Mean length in Unicode scalar values. A mean, so it rounds at the
+    /// statistics precision rather than the percentage one.
     #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub avg_length: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
