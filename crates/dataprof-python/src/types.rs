@@ -447,7 +447,17 @@ impl PyDataQualityMetrics {
 
     // -- Nested dimension accessors (composable API) --
 
-    /// Completeness dimension dict, or None if not computed.
+    /// Completeness evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn completeness(
         &self,
@@ -456,6 +466,7 @@ impl PyDataQualityMetrics {
         self.inner
             .completeness
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|c| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -489,7 +500,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Consistency dimension dict, or None if not computed.
+    /// Consistency evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn consistency(
         &self,
@@ -498,6 +519,7 @@ impl PyDataQualityMetrics {
         self.inner
             .consistency
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|c| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -524,7 +546,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Uniqueness dimension dict, or None if not computed.
+    /// Uniqueness evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn uniqueness(
         &self,
@@ -533,6 +565,7 @@ impl PyDataQualityMetrics {
         self.inner
             .uniqueness
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|u| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -576,7 +609,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Accuracy dimension dict, or None if not computed.
+    /// Accuracy evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn accuracy(
         &self,
@@ -585,6 +628,7 @@ impl PyDataQualityMetrics {
         self.inner
             .accuracy
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|a| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -614,7 +658,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Timeliness dimension dict, or None if not computed.
+    /// Timeliness evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn timeliness(
         &self,
@@ -623,6 +677,7 @@ impl PyDataQualityMetrics {
         self.inner
             .timeliness
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|t| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -657,7 +712,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Validity dimension dict, or None if not computed.
+    /// Validity evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn validity(
         &self,
@@ -666,6 +731,7 @@ impl PyDataQualityMetrics {
         self.inner
             .validity
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|v| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -685,7 +751,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Precision dimension dict, or None if not computed.
+    /// Precision evidence, or None when the dimension assessed nothing.
+    ///
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn precision(
         &self,
@@ -694,6 +770,7 @@ impl PyDataQualityMetrics {
         self.inner
             .precision
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|p| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(

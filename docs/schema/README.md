@@ -206,3 +206,26 @@ Both are widenings, so stored v1 reports remain valid. Consumers that read
 `MetricConfidence` must accept `"NotAssessed"`; in both cases the signal is
 "not assessed", never zero. `assessed_dimensions` is empty for exactly these
 reports and is the authority to branch on.
+
+## v1 behaviour change: unassessed dimensions are omitted
+
+The seven quality dimension objects (`completeness`, `consistency`,
+`uniqueness`, `accuracy`, `timeliness`, `validity`, `precision`) were already
+optional in both dialects, and are now genuinely absent when the dimension
+assessed nothing. Previously a dimension was emitted whenever its metric struct
+existed, which is whenever it was requested, so a file with no pattern-bearing
+column published `validity.valid_values_ratio: 100.0` beside
+`values_checked: 0`.
+
+No property was added, removed or retyped, so the schema document is unchanged
+and stored reports remain valid. What changed is which optional properties
+appear: a consumer that assumed every dimension key was present must read it as
+optional. A dimension key is present exactly when that dimension had a positive
+denominator, which is exactly when its `dimension_scores` entry is a number.
+
+That is a slightly wider set than `assessed_dimensions`, which additionally
+filters on a positive score weight. Under the default weights the two agree; a
+dimension configured with a weight of `0.0` is assessed and serialized while
+contributing nothing to `overall_score`, so it is absent from
+`assessed_dimensions`. Read a dimension's presence as "this was measured", not
+as "this is behind the overall score".
