@@ -148,22 +148,112 @@ pub struct PrecisionMetrics {
     pub numeric_values_checked: usize,
 }
 
+/// Whether a dimension's metrics were computed against anything.
+///
+/// Every dimension carries the counter it divides by, and a zero there means
+/// the dimension had nothing to assess: no cells, no non-null values, no
+/// numeric values, no dates, no confidently detected pattern. Its ratios are
+/// then defaults rather than measurements, so they are withheld instead of
+/// reported. `None` means "not analyzed"; it is not a score of 100.
+///
+/// This is the single definition of "assessed" behind the dimension scores,
+/// [`QualityMetrics::assessed_dimensions`], the serialized report and the
+/// Python evidence accessors.
+pub(crate) trait Assessed {
+    fn assessed(&self) -> bool;
+}
+
+/// Serde predicate: skip a dimension that assessed nothing.
+fn is_unassessed<T: Assessed>(metrics: &Option<T>) -> bool {
+    metrics.as_ref().is_none_or(|metrics| !metrics.assessed())
+}
+
+impl CompletenessMetrics {
+    /// True when at least one cell was examined.
+    pub fn is_assessed(&self) -> bool {
+        self.total_cells > 0
+    }
+}
+
+impl ConsistencyMetrics {
+    /// True when at least one non-null value was examined.
+    pub fn is_assessed(&self) -> bool {
+        self.values_checked > 0
+    }
+}
+
+impl UniquenessMetrics {
+    /// True when either component had data: rows scanned for duplicates, or an
+    /// identified key column whose uniqueness `key_uniqueness` describes.
+    pub fn is_assessed(&self) -> bool {
+        self.rows_checked > 0 || self.key_column.is_some()
+    }
+}
+
+impl AccuracyMetrics {
+    /// True when at least one finite numeric value was examined.
+    pub fn is_assessed(&self) -> bool {
+        self.numeric_values_checked > 0
+    }
+}
+
+impl TimelinessMetrics {
+    /// True when at least one value in a temporal column was examined.
+    pub fn is_assessed(&self) -> bool {
+        self.date_values_checked > 0
+    }
+}
+
+impl ValidityMetrics {
+    /// True when at least one value was checked against a dominant pattern.
+    pub fn is_assessed(&self) -> bool {
+        self.values_checked > 0
+    }
+}
+
+impl PrecisionMetrics {
+    /// True when at least one parseable float was examined.
+    pub fn is_assessed(&self) -> bool {
+        self.numeric_values_checked > 0
+    }
+}
+
+macro_rules! impl_assessed {
+    ($($metrics:ty),+ $(,)?) => {
+        $(impl Assessed for $metrics {
+            fn assessed(&self) -> bool {
+                self.is_assessed()
+            }
+        })+
+    };
+}
+
+impl_assessed!(
+    CompletenessMetrics,
+    ConsistencyMetrics,
+    UniquenessMetrics,
+    AccuracyMetrics,
+    TimelinessMetrics,
+    ValidityMetrics,
+    PrecisionMetrics,
+);
+
 /// Comprehensive data quality metrics following industry standards.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QualityMetrics {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub completeness: Option<CompletenessMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub consistency: Option<ConsistencyMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub uniqueness: Option<UniquenessMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub accuracy: Option<AccuracyMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub timeliness: Option<TimelinessMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub validity: Option<ValidityMetrics>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_unassessed")]
     pub precision: Option<PrecisionMetrics>,
     /// True when the sample used to compute these metrics was below the
     /// minimum recommended size (10 rows). When set, the quality scores and
@@ -248,10 +338,7 @@ impl QualityMetrics {
     /// Mean of cell-level completeness (`100 - missing_values_ratio`) and
     /// row-level completeness (`complete_records_ratio`).
     pub fn completeness_score(&self) -> Option<f64> {
-        let c = self.completeness.as_ref()?;
-        if c.total_cells == 0 {
-            return None;
-        }
+        let c = self.completeness.as_ref().filter(|c| c.is_assessed())?;
         let cell_level = 100.0 - c.missing_values_ratio;
         Some(((cell_level + c.complete_records_ratio) / 2.0).clamp(0.0, 100.0))
     }
@@ -262,10 +349,7 @@ impl QualityMetrics {
     /// Type consistency, penalized by format violations and encoding issues
     /// as a share of the values checked.
     pub fn consistency_score(&self) -> Option<f64> {
-        let c = self.consistency.as_ref()?;
-        if c.values_checked == 0 {
-            return None;
-        }
+        let c = self.consistency.as_ref().filter(|c| c.is_assessed())?;
         let violation_ratio =
             (c.format_violations + c.encoding_issues) as f64 / c.values_checked as f64;
         Some((c.data_type_consistency - violation_ratio * 100.0).clamp(0.0, 100.0))
@@ -280,7 +364,7 @@ impl QualityMetrics {
     /// a row tracker whose samples cannot be proven row-aligned contribute
     /// only the key component.
     pub fn uniqueness_score(&self) -> Option<f64> {
-        let u = self.uniqueness.as_ref()?;
+        let u = self.uniqueness.as_ref().filter(|u| u.is_assessed())?;
         let duplicate_score = (u.rows_checked > 0)
             .then(|| (1.0 - u.duplicate_rows as f64 / u.rows_checked as f64) * 100.0);
         let key_score = u.key_column.is_some().then_some(u.key_uniqueness);
@@ -302,10 +386,7 @@ impl QualityMetrics {
     /// values in positive-only columns as a share of the numeric values
     /// checked.
     pub fn accuracy_score(&self) -> Option<f64> {
-        let a = self.accuracy.as_ref()?;
-        if a.numeric_values_checked == 0 {
-            return None;
-        }
+        let a = self.accuracy.as_ref().filter(|a| a.is_assessed())?;
         let violation_ratio = (a.range_violations + a.negative_values_in_positive) as f64
             / a.numeric_values_checked as f64;
         Some((100.0 - a.outlier_ratio - violation_ratio * 100.0).clamp(0.0, 100.0))
@@ -319,10 +400,7 @@ impl QualityMetrics {
     /// the date values checked and by temporal ordering violations as a
     /// share of the pairs actually compared.
     pub fn timeliness_score(&self) -> Option<f64> {
-        let t = self.timeliness.as_ref()?;
-        if t.date_values_checked == 0 {
-            return None;
-        }
+        let t = self.timeliness.as_ref().filter(|t| t.is_assessed())?;
         let value_violation_ratio =
             (t.future_dates_count + t.invalid_date_values) as f64 / t.date_values_checked as f64;
         let temporal_ratio = if t.temporal_pairs_checked > 0 {
@@ -339,16 +417,15 @@ impl QualityMetrics {
     /// Score for semantic-pattern validity (0-100), or `None` when no column
     /// had a confidently detected pattern to validate.
     pub fn validity_score(&self) -> Option<f64> {
-        let validity = self.validity.as_ref()?;
-        (validity.values_checked > 0).then_some(validity.valid_values_ratio.clamp(0.0, 100.0))
+        let validity = self.validity.as_ref().filter(|v| v.is_assessed())?;
+        Some(validity.valid_values_ratio.clamp(0.0, 100.0))
     }
 
     /// Score for decimal-scale precision consistency (0-100), or `None` when
     /// no floating-point values were available to assess.
     pub fn precision_score(&self) -> Option<f64> {
-        let precision = self.precision.as_ref()?;
-        (precision.numeric_values_checked > 0)
-            .then_some(precision.decimal_places_consistency.clamp(0.0, 100.0))
+        let precision = self.precision.as_ref().filter(|p| p.is_assessed())?;
+        Some(precision.decimal_places_consistency.clamp(0.0, 100.0))
     }
 
     /// Weighted components of the overall score: `(dimension, weight, score)`.
@@ -972,7 +1049,10 @@ mod tests {
     #[test]
     fn test_partial_dimensions_json_skips_none() {
         let metrics = QualityMetrics {
-            completeness: Some(CompletenessMetrics::default()),
+            completeness: Some(CompletenessMetrics {
+                total_cells: 10,
+                ..CompletenessMetrics::default()
+            }),
             ..QualityMetrics::default()
         };
 
@@ -982,6 +1062,94 @@ mod tests {
         assert!(!json.contains("uniqueness"));
         assert!(!json.contains("accuracy"));
         assert!(!json.contains("timeliness"));
+    }
+
+    #[test]
+    fn a_dimension_with_no_denominator_is_not_serialized() {
+        // `empty()` builds every dimension with zero counters, which is what an
+        // engine produces for a header-only file. Serializing those defaults
+        // published `valid_values_ratio: 100.0` from `values_checked: 0` (#622).
+        let metrics = QualityMetrics::empty();
+        assert!(metrics.assessed_dimensions().is_empty());
+
+        let json = serde_json::to_string(&metrics).unwrap();
+        for dimension in [
+            "completeness",
+            "consistency",
+            "uniqueness",
+            "accuracy",
+            "timeliness",
+            "validity",
+            "precision",
+        ] {
+            assert!(
+                !json.contains(dimension),
+                "{dimension} was serialized without having assessed anything: {json}"
+            );
+        }
+    }
+
+    #[test]
+    fn serialized_dimensions_are_exactly_the_assessed_ones() {
+        let mut metrics = QualityMetrics::empty();
+        metrics.completeness = Some(CompletenessMetrics {
+            missing_values_ratio: 10.0,
+            complete_records_ratio: 90.0,
+            null_columns: vec!["a".to_string()],
+            total_cells: 100,
+        });
+        metrics.validity = Some(ValidityMetrics {
+            valid_values_ratio: 80.0,
+            invalid_values: 2,
+            values_checked: 10,
+        });
+
+        let assessed = metrics.assessed_dimensions();
+        assert_eq!(
+            assessed,
+            vec![QualityDimension::Completeness, QualityDimension::Validity]
+        );
+
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("completeness"));
+        assert!(json.contains("validity"));
+        assert!(!json.contains("consistency"));
+        assert!(!json.contains("precision"));
+    }
+
+    #[test]
+    fn is_assessed_agrees_with_the_dimension_score() {
+        // One definition of "assessed" behind both, so a score can never be
+        // None while its evidence claims to have measured something.
+        let assessed = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 0,
+                key_uniqueness: 100.0,
+                high_cardinality_warning: false,
+                rows_checked: 0,
+                // No rows scanned, but a key column was identified, so the key
+                // component alone still carries a measurement.
+                key_column: Some("id".to_string()),
+                duplicate_rows_approximate: false,
+            }),
+            ..QualityMetrics::default()
+        };
+        let uniqueness = assessed.uniqueness.as_ref().expect("present");
+        assert!(uniqueness.is_assessed());
+        assert!(assessed.uniqueness_score().is_some());
+
+        let unassessed = QualityMetrics::empty();
+        for metrics in [
+            unassessed.completeness.as_ref().map(|m| m.is_assessed()),
+            unassessed.consistency.as_ref().map(|m| m.is_assessed()),
+            unassessed.uniqueness.as_ref().map(|m| m.is_assessed()),
+            unassessed.accuracy.as_ref().map(|m| m.is_assessed()),
+            unassessed.timeliness.as_ref().map(|m| m.is_assessed()),
+            unassessed.validity.as_ref().map(|m| m.is_assessed()),
+            unassessed.precision.as_ref().map(|m| m.is_assessed()),
+        ] {
+            assert_eq!(metrics, Some(false));
+        }
     }
 
     #[test]

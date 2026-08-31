@@ -447,7 +447,13 @@ impl PyDataQualityMetrics {
 
     // -- Nested dimension accessors (composable API) --
 
-    /// Completeness dimension dict, or None if not computed.
+    /// Completeness evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn completeness(
         &self,
@@ -456,6 +462,7 @@ impl PyDataQualityMetrics {
         self.inner
             .completeness
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|c| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -489,7 +496,13 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Consistency dimension dict, or None if not computed.
+    /// Consistency evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn consistency(
         &self,
@@ -498,6 +511,7 @@ impl PyDataQualityMetrics {
         self.inner
             .consistency
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|c| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -524,7 +538,13 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Uniqueness dimension dict, or None if not computed.
+    /// Uniqueness evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn uniqueness(
         &self,
@@ -533,6 +553,7 @@ impl PyDataQualityMetrics {
         self.inner
             .uniqueness
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|u| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -576,7 +597,13 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Accuracy dimension dict, or None if not computed.
+    /// Accuracy evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn accuracy(
         &self,
@@ -585,6 +612,7 @@ impl PyDataQualityMetrics {
         self.inner
             .accuracy
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|a| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -614,7 +642,13 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Timeliness dimension dict, or None if not computed.
+    /// Timeliness evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn timeliness(
         &self,
@@ -623,6 +657,7 @@ impl PyDataQualityMetrics {
         self.inner
             .timeliness
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|t| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -657,7 +692,13 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Validity dimension dict, or None if not computed.
+    /// Validity evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn validity(
         &self,
@@ -666,6 +707,7 @@ impl PyDataQualityMetrics {
         self.inner
             .validity
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|v| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(
@@ -685,7 +727,13 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Precision dimension dict, or None if not computed.
+    /// Precision evidence, or None when the dimension was not assessed.
+    ///
+    /// Absent whenever the dimension is missing from
+    /// `assessed_dimensions()`: either it was not computed, or it had no
+    /// denominator to divide by. Its ratios would be defaults rather than
+    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
+    /// health for something nobody looked at (#622).
     #[getter]
     fn precision(
         &self,
@@ -694,6 +742,7 @@ impl PyDataQualityMetrics {
         self.inner
             .precision
             .as_ref()
+            .filter(|metrics| metrics.is_assessed())
             .map(|p| -> PyResult<_> {
                 let mut m = std::collections::BTreeMap::new();
                 m.insert(

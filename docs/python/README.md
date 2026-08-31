@@ -414,7 +414,7 @@ print(q.overall_quality_score())
 print(q.assessed_dimensions())
 print(q.score_weights)  # relative weights used by dataprof's aggregate formula
 
-# Nested dimension accessors (None when not computed)
+# Nested dimension evidence (None when the dimension was not assessed)
 print(q.completeness)    # {"missing_values_ratio": ..., "complete_records_ratio": ..., "null_columns": [...]}
 print(q.consistency)     # {"data_type_consistency": ..., "format_violations": ..., "encoding_issues": ...}
 print(q.uniqueness)      # {"duplicate_rows": ..., "key_uniqueness": ..., "high_cardinality_warning": ...}
@@ -423,6 +423,19 @@ print(q.timeliness)      # {"future_dates_count": ..., "stale_data_ratio": ..., 
 print(q.validity)        # {"valid_values_ratio": ..., "invalid_values": ..., "values_checked": ...}
 print(q.precision)       # {"decimal_places_consistency": ..., "inconsistent_precision_values": ..., "numeric_values_checked": ...}
 ```
+
+A dimension's evidence is present only when it assessed something. `None` covers
+both "not computed" and "computed with nothing to divide by": no cells, no
+non-null values, no numeric values, no dates, no confidently detected pattern.
+The dimensions holding evidence are exactly `assessed_dimensions()`, and exactly
+the ones whose `dimension_scores()` entry is a number.
+
+That distinction is the point rather than a technicality. `validity` reporting
+`valid_values_ratio: 100.0` from `values_checked: 0` reads as a clean bill of
+health for something nobody looked at, and any file without a pattern-bearing
+column used to report exactly that. Serialized reports follow the same rule: an
+unassessed dimension has no key, so a stored report cannot be read as a perfect
+score either.
 
 Flat `DataQualityMetrics` accessors are deprecated in 0.9. Use nested
 dimensions so skipped dimensions are explicit:

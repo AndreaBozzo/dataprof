@@ -42,7 +42,7 @@
       "variance": 6.4484
     }
   },
-  "description": "Rounded floats both layers must emit for tests/fixtures/rounding_parity.csv (#513). tests/report_rounding_parity.rs asserts the Rust report against this file and python/tests/test_rounding_parity.py asserts ProfileReport.to_dict() against it, so a precision or tie-breaking change on either side fails.",
+  "description": "Rounded floats both layers must emit for tests/fixtures/rounding_parity.csv (#513). No column in the fixture carries a confident semantic pattern, so validity assesses nothing and is absent from both layers rather than reporting 100% of zero checks (#622). tests/report_rounding_parity.rs asserts the Rust report against this file and python/tests/test_rounding_parity.py asserts ProfileReport.to_dict() against it, so a precision or tie-breaking change on either side fails.",
   "quality": {
     "accuracy": {
       "outlier_ratio": 0.0
@@ -59,9 +59,6 @@
     },
     "uniqueness": {
       "key_uniqueness": 100.0
-    },
-    "validity": {
-      "valid_values_ratio": 100.0
     }
   }
 }

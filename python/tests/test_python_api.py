@@ -717,12 +717,18 @@ class TestProfileReport:
         q = report.quality
         assert q is not None
         nested = getattr(q, dimension)
-        assert nested is not None
 
         with pytest.warns(DeprecationWarning, match=f"DataQualityMetrics\\.{attr}"):
             value = getattr(q, attr)
 
-        assert value == nested.get(key, default)
+        if nested is None:
+            # The dimension assessed nothing, so there is no evidence to agree
+            # with (#622). The deprecated flat accessor keeps substituting its
+            # documented default until #509 settles its end state, which is the
+            # divergence that made the evidence dicts worth withholding.
+            assert value == default
+        else:
+            assert value == nested.get(key, default)
 
     @pytest.mark.parametrize(
         ("dims", "present", "absent"),
