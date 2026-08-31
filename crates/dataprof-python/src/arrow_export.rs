@@ -365,6 +365,8 @@ pub fn profile_dataframe(
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
+    // decode-audit: no-data — an omitted optional config intentionally uses
+    // the default analysis selection; no decode error is being discarded.
     let options = config
         .map(PyProfilerConfig::analysis_options)
         .unwrap_or_default();
@@ -485,6 +487,8 @@ pub fn profile_arrow(
 ) -> PyResult<super::types::PyProfileReport> {
     let start = std::time::Instant::now();
 
+    // decode-audit: no-data — an omitted optional config intentionally uses
+    // the default analysis selection; no decode error is being discarded.
     let options = config
         .map(PyProfilerConfig::analysis_options)
         .unwrap_or_default();
