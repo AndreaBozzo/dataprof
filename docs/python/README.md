@@ -427,8 +427,15 @@ print(q.precision)       # {"decimal_places_consistency": ..., "inconsistent_pre
 A dimension's evidence is present only when it assessed something. `None` covers
 both "not computed" and "computed with nothing to divide by": no cells, no
 non-null values, no numeric values, no dates, no confidently detected pattern.
-The dimensions holding evidence are exactly `assessed_dimensions()`, and exactly
-the ones whose `dimension_scores()` entry is a number.
+The dimensions holding evidence are exactly the ones whose `dimension_scores()`
+entry is a number.
+
+`assessed_dimensions()` is that set narrowed once more, to the dimensions
+carrying weight in the overall score. The two coincide under the default
+weights; a dimension given a weight of `0.0` still holds evidence and a score
+while sitting outside `assessed_dimensions()`, because it contributes nothing to
+the aggregate. Branch on `dimension_scores()` to ask "was this measured", and on
+`assessed_dimensions()` to ask "is this behind the overall score".
 
 That distinction is the point rather than a technicality. `validity` reporting
 `valid_values_ratio: 100.0` from `values_checked: 0` reads as a clean bill of

@@ -220,5 +220,12 @@ column published `validity.valid_values_ratio: 100.0` beside
 No property was added, removed or retyped, so the schema document is unchanged
 and stored reports remain valid. What changed is which optional properties
 appear: a consumer that assumed every dimension key was present must read it as
-optional, and the presence of a dimension key now means the same thing as its
-name appearing in `assessed_dimensions`.
+optional. A dimension key is present exactly when that dimension had a positive
+denominator, which is exactly when its `dimension_scores` entry is a number.
+
+That is a slightly wider set than `assessed_dimensions`, which additionally
+filters on a positive score weight. Under the default weights the two agree; a
+dimension configured with a weight of `0.0` is assessed and serialized while
+contributing nothing to `overall_score`, so it is absent from
+`assessed_dimensions`. Read a dimension's presence as "this was measured", not
+as "this is behind the overall score".

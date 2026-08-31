@@ -157,8 +157,13 @@ pub struct PrecisionMetrics {
 /// reported. `None` means "not analyzed"; it is not a score of 100.
 ///
 /// This is the single definition of "assessed" behind the dimension scores,
-/// [`QualityMetrics::assessed_dimensions`], the serialized report and the
-/// Python evidence accessors.
+/// the serialized report and the Python evidence accessors.
+///
+/// [`QualityMetrics::assessed_dimensions`] applies it and then narrows further,
+/// to the dimensions carrying a positive score weight, because it answers what
+/// is behind [`QualityMetrics::overall_score`] rather than what was measured. A
+/// dimension weighted `0.0` is assessed and reported while contributing nothing
+/// to the aggregate.
 pub(crate) trait Assessed {
     fn assessed(&self) -> bool;
 }
@@ -1090,7 +1095,40 @@ mod tests {
     }
 
     #[test]
-    fn serialized_dimensions_are_exactly_the_assessed_ones() {
+    fn a_zero_weighted_dimension_keeps_its_evidence() {
+        // Serialization asks "did this measure anything", which is a wider
+        // question than "is this behind the overall score". A weight of 0.0
+        // removes a dimension from `assessed_dimensions` and from the
+        // aggregate, and removes nothing from what it actually observed.
+        let mut metrics = QualityMetrics::empty();
+        metrics.validity = Some(ValidityMetrics {
+            valid_values_ratio: 80.0,
+            invalid_values: 2,
+            values_checked: 10,
+        });
+        metrics.score_weights = QualityScoreWeights {
+            validity: 0.0,
+            ..QualityScoreWeights::default()
+        };
+
+        assert!(metrics.validity.as_ref().expect("present").is_assessed());
+        assert!(metrics.validity_score().is_some());
+        assert!(
+            !metrics
+                .assessed_dimensions()
+                .contains(&QualityDimension::Validity)
+        );
+        assert_eq!(metrics.overall_score(), None);
+
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(
+            json.contains("valid_values_ratio"),
+            "a measured dimension was dropped for carrying no weight: {json}"
+        );
+    }
+
+    #[test]
+    fn serialized_dimensions_are_exactly_the_ones_with_a_denominator() {
         let mut metrics = QualityMetrics::empty();
         metrics.completeness = Some(CompletenessMetrics {
             missing_values_ratio: 10.0,

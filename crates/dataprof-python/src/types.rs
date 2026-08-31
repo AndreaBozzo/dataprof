@@ -447,13 +447,17 @@ impl PyDataQualityMetrics {
 
     // -- Nested dimension accessors (composable API) --
 
-    /// Completeness evidence, or None when the dimension was not assessed.
+    /// Completeness evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn completeness(
         &self,
@@ -496,13 +500,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Consistency evidence, or None when the dimension was not assessed.
+    /// Consistency evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn consistency(
         &self,
@@ -538,13 +546,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Uniqueness evidence, or None when the dimension was not assessed.
+    /// Uniqueness evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn uniqueness(
         &self,
@@ -597,13 +609,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Accuracy evidence, or None when the dimension was not assessed.
+    /// Accuracy evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn accuracy(
         &self,
@@ -642,13 +658,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Timeliness evidence, or None when the dimension was not assessed.
+    /// Timeliness evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn timeliness(
         &self,
@@ -692,13 +712,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Validity evidence, or None when the dimension was not assessed.
+    /// Validity evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn validity(
         &self,
@@ -727,13 +751,17 @@ impl PyDataQualityMetrics {
             .transpose()
     }
 
-    /// Precision evidence, or None when the dimension was not assessed.
+    /// Precision evidence, or None when the dimension assessed nothing.
     ///
-    /// Absent whenever the dimension is missing from
-    /// `assessed_dimensions()`: either it was not computed, or it had no
-    /// denominator to divide by. Its ratios would be defaults rather than
-    /// measurements, and a 100.0 out of zero checks reads as a clean bill of
-    /// health for something nobody looked at (#622).
+    /// Present exactly when the dimension had a denominator to divide by,
+    /// which is exactly when its `dimension_scores()` entry is a number.
+    /// Otherwise its ratios would be defaults rather than measurements, and
+    /// a 100.0 out of zero checks reads as a clean bill of health for
+    /// something nobody looked at (#622).
+    ///
+    /// `assessed_dimensions()` is that set narrowed to the dimensions
+    /// carrying weight in the overall score, so the two coincide under the
+    /// default weights but not under a custom zero weight.
     #[getter]
     fn precision(
         &self,
