@@ -485,6 +485,46 @@ impl Default for StreamingStatistics {
     }
 }
 
+/// Canonical encoding of one row, for duplicate detection.
+///
+/// Fields are length-prefixed so their boundaries are unambiguous:
+/// `["ab", "c"]` and `["a", "bc"]` must not sign alike. Trailing absent
+/// fields are then dropped, which makes the signature independent of how wide
+/// the schema had grown when the row was read. A JSON key discovered
+/// mid-stream appends a column, and without the trim every row that predates
+/// it signs one field shorter than an identical row read afterwards, so the
+/// two count as distinct and the duplicate total comes up silently short.
+///
+/// The trim is safe because an absent field and an explicitly empty one are
+/// the same null to this profiler: it collapses only rows that already hold
+/// equal values in every column they share. On a fixed schema it applies
+/// uniformly to every row, so it changes no count there.
+#[derive(Debug, Default)]
+pub struct RowSignature {
+    buffer: String,
+    /// Length of `buffer` through the last field that held a value.
+    len_through_last_present: usize,
+}
+
+impl RowSignature {
+    /// Append one field. An absent field is the empty string, the same
+    /// representation [`StreamingColumnCollection::process_record`] gives a
+    /// missing trailing value and an Arrow null.
+    pub fn push_field(&mut self, value: &str) {
+        let _ = write!(self.buffer, "{}:", value.len());
+        self.buffer.push_str(value);
+        if !value.is_empty() {
+            self.len_through_last_present = self.buffer.len();
+        }
+    }
+
+    /// The signature, with trailing absent fields dropped.
+    pub fn finish(mut self) -> String {
+        self.buffer.truncate(self.len_through_last_present);
+        self.buffer
+    }
+}
+
 /// Full-stream row-duplicate tracking with bounded memory.
 ///
 /// Every record's fields are folded into a canonical length-prefixed
@@ -698,9 +738,7 @@ impl StreamingColumnCollection {
     where
         I: IntoIterator<Item = String>,
     {
-        // Length-prefixed so field boundaries are unambiguous:
-        // ["ab", "c"] and ["a", "bc"] must produce different signatures.
-        let mut row_signature = String::new();
+        let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
         let mut values = values.into_iter();
 
@@ -709,8 +747,7 @@ impl StreamingColumnCollection {
         // update every column and hash identically to an explicit empty field.
         for header in headers {
             let value = values.next().unwrap_or_default();
-            let _ = write!(row_signature, "{}:", value.len());
-            row_signature.push_str(&value);
+            row_signature.push_field(&value);
 
             if !self.columns.contains_key(header) {
                 self.ordered_names.push(header.clone());
@@ -724,7 +761,7 @@ impl StreamingColumnCollection {
         }
 
         if !headers.is_empty() {
-            self.row_tracker.observe(row_signature);
+            self.row_tracker.observe(row_signature.finish());
             self.completeness_tracker.observe(row_has_null);
         }
     }
@@ -1060,6 +1097,54 @@ mod row_tracker_tests {
                 .null_count,
             2
         );
+    }
+
+    #[test]
+    fn test_late_column_does_not_split_identical_rows() {
+        // A JSON key discovered mid-stream appends a column. Rows read before
+        // and after that point are signed against header lists of different
+        // lengths, and two identical records must still count as duplicates.
+        let mut collection = StreamingColumnCollection::new();
+        let short = vec!["a".to_string()];
+        let wide = vec!["a".to_string(), "b".to_string()];
+
+        record(&mut collection, &short, &["x"]);
+        collection.init_column_with_missing("b", 1);
+        record(&mut collection, &wide, &["x", "y"]);
+        record(&mut collection, &wide, &["x", ""]);
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert_eq!(summary.rows_checked, 3);
+        assert_eq!(
+            summary.duplicate_rows, 1,
+            "rows 1 and 3 hold the same data; they differ only in how many \
+             columns had been discovered when each was read"
+        );
+    }
+
+    #[test]
+    fn test_late_column_in_the_middle_does_not_split_identical_rows() {
+        // A second late key pushes the first one away from the end, so the
+        // absent field sits in the middle of the later signatures.
+        let mut collection = StreamingColumnCollection::new();
+        let one = vec!["a".to_string()];
+        let two = vec!["a".to_string(), "b".to_string()];
+        let three = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+
+        record(&mut collection, &one, &["1"]);
+        collection.init_column_with_missing("b", 1);
+        record(&mut collection, &two, &["1", "2"]);
+        collection.init_column_with_missing("c", 2);
+        record(&mut collection, &three, &["1", "", "3"]);
+        record(&mut collection, &three, &["1", "", ""]);
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert_eq!(summary.rows_checked, 4);
+        assert_eq!(summary.duplicate_rows, 1, "row 4 repeats row 1");
     }
 
     #[test]

@@ -397,6 +397,30 @@ def test_duplicate_rows_tracked_for_dataframe_and_arrow_inputs(tmp_path):
     assert uniqueness["duplicate_rows"] == 1
 
 
+def test_jsonl_duplicates_survive_a_key_discovered_mid_stream(tmp_path):
+    # JSONL has no header, so a key can appear at any point and widen the
+    # schema. Two identical records must still count as one duplicate whether
+    # or not a new key was discovered between them, and the count must match
+    # the same data written with the key present everywhere.
+    late = tmp_path / "late.jsonl"
+    late.write_text(
+        '{"a": "x"}\n{"a": "x", "b": "y"}\n{"a": "x"}\n',
+        encoding="utf-8",
+    )
+    explicit = tmp_path / "explicit.jsonl"
+    explicit.write_text(
+        '{"a": "x", "b": null}\n{"a": "x", "b": "y"}\n{"a": "x", "b": null}\n',
+        encoding="utf-8",
+    )
+
+    late_uniqueness = dataprof.profile(str(late)).to_dict()["quality"]["uniqueness"]
+    explicit_uniqueness = dataprof.profile(str(explicit)).to_dict()["quality"]["uniqueness"]
+
+    assert late_uniqueness["rows_checked"] == 3
+    assert late_uniqueness["duplicate_rows"] == 1
+    assert late_uniqueness == explicit_uniqueness
+
+
 def test_duplicate_column_names_rejected_across_all_inputs(tmp_path):
     # The same duplicate-header source must be rejected identically regardless of
     # transport, so no path can silently merge or shadow a column (#381).

@@ -11,8 +11,8 @@ use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
-    ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowUniquenessTracker,
-    StreamReservoirSampler, TextLengths, build_column_profile,
+    ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowSignature,
+    RowUniquenessTracker, StreamReservoirSampler, TextLengths, build_column_profile,
 };
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -81,8 +81,8 @@ fn observe_batch_rows(
     use arrow::datatypes::DataType as ArrowDataType;
     use arrow::util::display::{ArrayFormatter, FormatOptions};
 
-    // Null must render as an empty field ("0:"), matching the incremental
-    // engine — the default formatter would render a visible placeholder.
+    // Null must render as an empty field, matching the incremental engine —
+    // the default formatter would render a visible placeholder.
     let options = FormatOptions::default().with_null("");
     let formatters: Vec<Option<ArrayFormatter>> = batch
         .columns()
@@ -97,7 +97,7 @@ fn observe_batch_rows(
 
     let mut value_buffer = String::new();
     for row_index in 0..batch.num_rows() {
-        let mut row_signature = String::new();
+        let mut row_signature = RowSignature::default();
         let mut row_has_null = false;
         for (column, formatter) in batch.columns().iter().zip(&formatters) {
             value_buffer.clear();
@@ -107,14 +107,13 @@ fn observe_batch_rows(
                 write!(value_buffer, "{}", formatter.value(row_index))
                     .map_err(|error| anyhow::anyhow!("row signature formatting failed: {error}"))?;
             }
-            let _ = write!(row_signature, "{}:", value_buffer.len());
-            row_signature.push_str(&value_buffer);
+            row_signature.push_field(&value_buffer);
             // Arrow nulls already render empty here, and the null-like tokens
             // are the same ones the column analyzers count, so the record
             // count and the cell counts describe one definition of null.
             row_has_null |= is_null_like_token(&value_buffer);
         }
-        tracker.observe(row_signature);
+        tracker.observe(row_signature.finish());
         completeness.observe(row_has_null);
     }
 
