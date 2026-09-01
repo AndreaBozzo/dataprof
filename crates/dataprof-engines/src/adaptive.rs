@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use dataprof_core::{
-    ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension, SemanticHints,
+    AnalysisOptions, ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension,
+    SemanticHints,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_runtime::ProfileReport;
@@ -25,6 +26,7 @@ pub(crate) enum InternalEngineType {
 pub struct AdaptiveProfiler {
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
+    columns: Option<Vec<String>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<Locale>,
     semantic_hints: SemanticHints,
@@ -37,6 +39,7 @@ impl AdaptiveProfiler {
         Self {
             quality_dimensions: None,
             metric_packs: None,
+            columns: None,
             csv_config: None,
             locale: None,
             semantic_hints: SemanticHints::default(),
@@ -67,6 +70,11 @@ impl AdaptiveProfiler {
         self
     }
 
+    pub fn columns(mut self, columns: Vec<String>) -> Self {
+        self.columns = Some(columns);
+        self
+    }
+
     pub fn csv_config(mut self, config: CsvParserConfig) -> Self {
         self.csv_config = Some(config);
         self
@@ -89,10 +97,16 @@ impl AdaptiveProfiler {
         // Parquet has its own parser — short-circuit
         #[cfg(feature = "parquet")]
         if is_parquet(file_path) {
-            return dataprof_parquet::analyze_parquet_with_quality_dims_and_hints(
+            let options = AnalysisOptions::default()
+                .with_columns(self.columns.clone())
+                .with_metric_packs(self.metric_packs.clone())
+                .with_quality_dimensions(self.quality_dimensions.clone())
+                .with_locale(self.locale)
+                .with_semantic_hints(self.semantic_hints.clone());
+            return dataprof_parquet::analyze_parquet_with_options(
                 file_path,
-                self.quality_dimensions.as_deref(),
-                &self.semantic_hints,
+                &dataprof_parquet::ParquetConfig::default(),
+                &options,
             );
         }
 
@@ -122,7 +136,11 @@ impl AdaptiveProfiler {
                 // Duplicate column names are a deterministic property of the file;
                 // no engine can resolve them, so surface the clear, categorized
                 // error instead of burying it under "All engines failed".
-                if matches!(primary_err, DataProfilerError::DuplicateColumnName { .. }) {
+                if matches!(
+                    primary_err,
+                    DataProfilerError::DuplicateColumnName { .. }
+                        | DataProfilerError::InvalidConfiguration { .. }
+                ) {
                     return Err(primary_err);
                 }
                 // Likewise when the caller asked for strict CSV parsing: they
@@ -244,6 +262,9 @@ impl AdaptiveProfiler {
                 if let Some(ref packs) = self.metric_packs {
                     profiler = profiler.metric_packs(packs.clone());
                 }
+                if let Some(ref columns) = self.columns {
+                    profiler = profiler.columns(columns.clone());
+                }
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());
                 }
@@ -269,6 +290,9 @@ impl AdaptiveProfiler {
                 }
                 if let Some(ref packs) = self.metric_packs {
                     profiler = profiler.metric_packs(packs.clone());
+                }
+                if let Some(ref columns) = self.columns {
+                    profiler = profiler.columns(columns.clone());
                 }
                 if let Some(ref config) = self.csv_config {
                     profiler = profiler.csv_config(config.clone());

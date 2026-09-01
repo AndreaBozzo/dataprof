@@ -100,6 +100,16 @@ impl QueryColumns {
             .map(|(_, data)| data)
     }
 
+    /// Retain selected columns while preserving query order.
+    pub fn retain_names(&mut self, names: &[String]) {
+        let names = names
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        self.columns
+            .retain(|(name, _)| names.contains(name.as_str()));
+    }
+
     /// Drop the order and hand back a plain map.
     ///
     /// For consumers keyed purely by name — quality metrics look every column up

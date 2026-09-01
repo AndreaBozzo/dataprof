@@ -33,6 +33,7 @@ pub struct PyProfilerConfig {
     pub(crate) progress_interval_ms: Option<u64>,
     pub(crate) quality_dimensions: Option<Vec<QualityDimension>>,
     pub(crate) metric_packs: Option<Vec<MetricPack>>,
+    pub(crate) columns: Option<Vec<String>>,
     pub(crate) locale: Option<Locale>,
     pub(crate) positive_columns: Vec<String>,
     pub(crate) identifier_columns: Vec<String>,
@@ -61,6 +62,7 @@ impl PyProfilerConfig {
         positive_columns = None,
         identifier_columns = None,
         temporal_columns = None,
+        columns = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -82,6 +84,7 @@ impl PyProfilerConfig {
         positive_columns: Option<Vec<String>>,
         identifier_columns: Option<Vec<String>>,
         temporal_columns: Option<Vec<String>>,
+        columns: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;
@@ -157,6 +160,7 @@ impl PyProfilerConfig {
             progress_interval_ms,
             quality_dimensions,
             metric_packs,
+            columns,
             locale,
             positive_columns: positive_columns.unwrap_or_default(),
             identifier_columns: identifier_columns.unwrap_or_default(),
@@ -223,6 +227,12 @@ impl PyProfilerConfig {
     #[getter]
     fn locale(&self) -> Option<&str> {
         self.locale.map(|locale| locale.as_str())
+    }
+
+    /// Columns selected for profiling, or `None` for every column.
+    #[getter]
+    fn columns(&self) -> Option<Vec<String>> {
+        self.columns.clone()
     }
 
     /// Columns expected to contain non-negative numeric values
@@ -305,6 +315,9 @@ impl PyProfilerConfig {
         if let Some(ref packs) = self.metric_packs {
             profiler = profiler.metric_packs(packs.clone());
         }
+        if let Some(ref columns) = self.columns {
+            profiler = profiler.columns(columns.clone());
+        }
         if let Some(l) = self.locale {
             profiler = profiler.locale(l);
         }
@@ -337,20 +350,11 @@ impl PyProfilerConfig {
     /// same `metrics=`, `quality_dimensions=`, and `locale=`.
     pub(crate) fn analysis_options(&self) -> AnalysisOptions {
         AnalysisOptions::default()
+            .with_columns(self.columns.clone())
             .with_metric_packs(self.metric_packs.clone())
             .with_quality_dimensions(self.quality_dimensions.clone())
             .with_locale(self.locale)
             .with_semantic_hints(self.semantic_hints())
-    }
-
-    /// Metric packs with an empty quality-dimension selection folded in.
-    ///
-    /// The in-memory entry points (`profile_columns`, the Arrow exporters) gate
-    /// on packs directly instead of going through `Profiler`, so they resolve
-    /// the same rule here — otherwise `quality_dimensions=[]` would mean one
-    /// thing for a file and another for a DataFrame.
-    pub(crate) fn effective_metric_packs(&self) -> Option<Vec<MetricPack>> {
-        self.analysis_options().effective_metric_packs()
     }
 }
 

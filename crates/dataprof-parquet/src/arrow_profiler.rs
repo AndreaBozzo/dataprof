@@ -4,8 +4,9 @@ use arrow::csv::ReaderBuilder;
 use arrow::datatypes::*;
 use arrow::util::display::ArrayFormatter;
 use dataprof_core::{
-    ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata, FileFormat, Locale,
-    MetricPack, PeakMemorySampler, QualityDimension, SemanticHints, TruncationReason, char_len,
+    AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata,
+    FileFormat, Locale, MetricPack, PeakMemorySampler, QualityDimension, SemanticHints,
+    TruncationReason, char_len,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_metrics::CardinalityEstimator;
@@ -37,6 +38,7 @@ pub struct ArrowProfiler {
     memory_limit_mb: usize,
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
+    columns: Option<Vec<String>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<Locale>,
     semantic_hints: SemanticHints,
@@ -49,6 +51,7 @@ impl ArrowProfiler {
             memory_limit_mb: 512,
             quality_dimensions: None,
             metric_packs: None,
+            columns: None,
             csv_config: None,
             locale: None,
             semantic_hints: SemanticHints::default(),
@@ -72,6 +75,11 @@ impl ArrowProfiler {
 
     pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
         self.metric_packs = Some(packs);
+        self
+    }
+
+    pub fn columns(mut self, columns: Vec<String>) -> Self {
+        self.columns = Some(columns);
         self
     }
 
@@ -177,6 +185,19 @@ impl ArrowProfiler {
                 .collect()
         };
         let header_width = header_names.len();
+        let options = AnalysisOptions::default()
+            .with_columns(self.columns.clone())
+            .with_metric_packs(self.metric_packs.clone())
+            .with_quality_dimensions(self.quality_dimensions.clone())
+            .with_locale(self.locale)
+            .with_semantic_hints(self.semantic_hints.clone());
+        let projection = options
+            .column_indices(&header_names)?
+            .unwrap_or_else(|| (0..header_width).collect());
+        let projected_header_names = projection
+            .iter()
+            .map(|index| header_names[*index].clone())
+            .collect::<Vec<_>>();
 
         let mut fields = Vec::new();
         for header in &header_names {
@@ -218,7 +239,7 @@ impl ArrowProfiler {
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
             std::collections::HashMap::new();
 
-        for name in &header_names {
+        for name in &projected_header_names {
             column_analyzers.insert(
                 name.clone(),
                 ColumnAnalyzer::new(&arrow::datatypes::DataType::Utf8),
@@ -240,19 +261,14 @@ impl ArrowProfiler {
         let mut truncated = false;
         let mut memory_sampler = PeakMemorySampler::new();
 
-        let projection: Vec<usize> = (0..header_width).collect();
-
         for batch_result in csv_reader {
             let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, error))?;
 
-            // Drop the overflow columns before anything observes the batch, so
-            // duplicate tracking, hint bindings and the profiles themselves all
-            // see exactly the columns the header declared.
-            if batch.num_columns() > header_width {
-                batch = batch
-                    .project(&projection)
-                    .map_err(DataProfilerError::arrow_error_from)?;
-            }
+            // Drop overflow and unselected columns before anything observes the
+            // batch, so every downstream calculation sees the same projection.
+            batch = batch
+                .project(&projection)
+                .map_err(DataProfilerError::arrow_error_from)?;
 
             if let Some(max) = max_rows {
                 if total_rows >= max {
@@ -294,21 +310,22 @@ impl ArrowProfiler {
 
         // Convert analyzers to column profiles and extract samples
         // Iterate in header order (from schema) to preserve source column ordering
-        let packs = self.metric_packs.as_deref();
+        let effective_packs = options.effective_metric_packs();
+        let packs = effective_packs.as_deref();
         let skip_stats = !MetricPack::include_statistics(packs);
         let skip_patterns = !MetricPack::include_patterns(packs);
 
         let mut column_profiles = Vec::new();
         let mut sample_columns = std::collections::HashMap::new();
 
-        for name in &header_names {
+        for name in &projected_header_names {
             if let Some(analyzer) = column_analyzers.get(name) {
                 let profile = analyzer.to_column_profile(
                     name.clone(),
                     skip_stats,
                     skip_patterns,
-                    self.locale,
-                    &self.semantic_hints,
+                    options.locale(),
+                    options.semantic_hints(),
                 );
                 column_profiles.push(profile);
                 sample_columns.insert(name.clone(), analyzer.get_sample_values());
@@ -348,12 +365,9 @@ impl ArrowProfiler {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_exact_value_hint_bindings(
-                    hint_bindings.bindings(header_names.iter().map(String::as_str)),
+                    hint_bindings.bindings(projected_header_names.iter().map(String::as_str)),
                 )
-                .with_semantic_hints(self.semantic_hints.clone());
-            if let Some(ref dims) = self.quality_dimensions {
-                assembler = assembler.with_requested_dimensions(dims.clone());
-            }
+                .with_analysis_options(&options);
         } else {
             assembler = assembler.skip_quality();
         }

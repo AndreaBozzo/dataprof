@@ -47,6 +47,10 @@ pub struct ProfilerConfig {
     /// Which metric packs to compute. `None` = all (default).
     /// Controls whether statistics, patterns, and quality are included.
     pub metric_packs: Option<Vec<MetricPack>>,
+    /// Columns to profile. `None` = all columns (default). Any explicit
+    /// selection withholds row-level completeness and uniqueness because those
+    /// dimensions cannot retain their whole-record meaning after projection.
+    pub columns: Option<Vec<String>>,
     /// Locale for pattern detection (e.g. [`Locale::It`]).
     /// When set, locale-matching patterns get a confidence boost and non-matching
     /// locale patterns are suppressed (unless they have a very high match rate).
@@ -83,6 +87,7 @@ impl Default for ProfilerConfig {
             json_error_policy: dataprof_json::JsonErrorPolicy::default(),
             quality_dimensions: None,
             metric_packs: None,
+            columns: None,
             locale: None,
             positive_columns: Vec::new(),
             identifier_columns: Vec::new(),
@@ -250,6 +255,19 @@ impl Profiler {
     /// `Statistics`, `Patterns`, `Quality`. `None` = all (default).
     pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
         self.config.metric_packs = Some(packs);
+        self
+    }
+
+    /// Select top-level columns to profile by name.
+    ///
+    /// Parquet applies the selection while decoding; CSV and JSON still read the
+    /// whole record but only analyze and report the selected columns. Reports
+    /// preserve source-schema order regardless of the order supplied here. A
+    /// nested Parquet field is selected as one top-level column, including all
+    /// of its leaves; dotted leaf paths are not report columns today. Any
+    /// explicit selection withholds row-level completeness and uniqueness.
+    pub fn columns(mut self, columns: Vec<String>) -> Self {
+        self.config.columns = Some(columns);
         self
     }
 
@@ -514,6 +532,7 @@ impl Profiler {
     /// to compute work the caller had deselected.
     fn analysis_options(&self) -> AnalysisOptions {
         AnalysisOptions::default()
+            .with_columns(self.config.columns.clone())
             .with_metric_packs(self.config.metric_packs.clone())
             .with_quality_dimensions(self.config.quality_dimensions.clone())
             .with_locale(self.config.locale)
@@ -690,6 +709,9 @@ impl Profiler {
                     if let Some(l) = self.config.locale {
                         profiler = profiler.locale(l);
                     }
+                    if let Some(columns) = &self.config.columns {
+                        profiler = profiler.columns(columns.clone());
+                    }
                     profiler = profiler.semantic_hints(options.semantic_hints().clone());
                     let csv_config = self.csv_config_for_file(file_path);
                     profiler = profiler.csv_config(csv_config);
@@ -757,6 +779,9 @@ impl Profiler {
         if let Some(l) = self.config.locale {
             profiler = profiler.locale(l);
         }
+        if let Some(columns) = &self.config.columns {
+            profiler = profiler.columns(columns.clone());
+        }
         profiler = profiler.semantic_hints(options.semantic_hints().clone());
         let csv_config = self.csv_config_for_file(file_path);
         profiler = profiler.csv_config(csv_config);
@@ -814,6 +839,9 @@ impl Profiler {
             }
             if let Some(l) = self.config.locale {
                 profiler = profiler.locale(l);
+            }
+            if let Some(columns) = &self.config.columns {
+                profiler = profiler.columns(columns.clone());
             }
             profiler = profiler.semantic_hints(options.semantic_hints().clone());
             // ArrowProfiler reads the row cap off the CSV config; the incremental

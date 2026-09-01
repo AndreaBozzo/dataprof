@@ -53,7 +53,7 @@ pub type PyColumn = (String, Vec<Option<String>>);
 #[pyo3(signature = (columns, name = "dataframe".to_string(), max_rows = None, config = None, error_count = 0, row_count = None, source_type = "dataframe".to_string(), source_format = None, source_bytes = None))]
 pub fn profile_columns(
     py: Python<'_>,
-    columns: Vec<PyColumn>,
+    mut columns: Vec<PyColumn>,
     name: String,
     max_rows: Option<usize>,
     config: Option<&PyProfilerConfig>,
@@ -65,13 +65,16 @@ pub fn profile_columns(
 ) -> PyResult<PyProfileReport> {
     let start = std::time::Instant::now();
 
-    let resolved_packs = config.and_then(PyProfilerConfig::effective_metric_packs);
+    let options = config
+        .map(PyProfilerConfig::analysis_options)
+        .unwrap_or_default();
+    let resolved_packs = options.effective_metric_packs();
     let packs = resolved_packs.as_deref();
     let skip_statistics = !MetricPack::include_statistics(packs);
     let skip_patterns = !MetricPack::include_patterns(packs);
     let include_quality = MetricPack::include_quality(packs);
-    let locale = config.and_then(|c| c.locale);
-    let semantic_hints = config.map(|c| c.semantic_hints()).unwrap_or_default();
+    let locale = options.locale();
+    let semantic_hints = options.semantic_hints().clone();
 
     let effective_max_rows =
         max_rows.or_else(|| config.and_then(|c| c.max_rows.map(|v| v as usize)));
@@ -106,6 +109,28 @@ pub fn profile_columns(
     let column_names: Vec<String> = columns.iter().map(|(n, _)| n.clone()).collect();
     dataprof::validate_unique_column_names(&column_names, "columns")
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+    // Source metadata describes the whole materialised input, not just the
+    // columns selected for analysis. Capture it before projection filters the
+    // owned transport vector.
+    let source_memory_bytes: u64 = columns
+        .iter()
+        .flat_map(|(_, cells)| cells.iter())
+        .flatten()
+        .map(|value| value.len() as u64)
+        .sum();
+
+    if let Some(indices) = options
+        .column_indices(&column_names)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?
+    {
+        let selected = indices.into_iter().collect::<HashSet<_>>();
+        columns = columns
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, column)| selected.contains(&index).then_some(column))
+            .collect();
+    }
 
     let num_rows = effective_max_rows
         .map(|cap| cap.min(source_rows))
@@ -203,14 +228,6 @@ pub fn profile_columns(
         ));
     }
 
-    // Rough, but honest: the strings we were handed are the whole materialised input.
-    let memory_bytes: u64 = columns
-        .iter()
-        .flat_map(|(_, cells)| cells.iter())
-        .flatten()
-        .map(|v| v.len() as u64)
-        .sum();
-
     let data_source = if source_type == "bytes" {
         let format = match source_format.as_deref() {
             Some("csv") => FileFormat::Csv,
@@ -239,24 +256,18 @@ pub fn profile_columns(
             source_library: DataFrameLibrary::Custom("python".to_string()),
             row_count: num_rows,
             column_count: num_cols,
-            memory_bytes: Some(memory_bytes),
+            memory_bytes: Some(source_memory_bytes),
         }
     };
 
     let mut assembler = ReportAssembler::new(data_source, exec)
         .columns(column_profiles)
         .with_row_duplicates(row_duplicates)
-        .with_row_completeness(row_completeness);
+        .with_row_completeness(row_completeness)
+        .with_analysis_options(&options);
 
     if include_quality {
-        assembler = assembler
-            .with_quality_data(sample_columns)
-            .with_semantic_hints(semantic_hints.clone());
-        if let Some(dims) = config.and_then(|c| c.quality_dimensions.clone()) {
-            assembler = assembler.with_requested_dimensions(dims);
-        }
-    } else {
-        assembler = assembler.skip_quality();
+        assembler = assembler.with_quality_data(sample_columns);
     }
 
     let report = assembler.build();

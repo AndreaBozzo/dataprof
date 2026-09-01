@@ -88,7 +88,7 @@ impl ReportAssembler {
     }
 
     /// Apply the caller's analysis selection: requested dimensions, semantic
-    /// hints, and whether quality is computed at all.
+    /// hints, column projection, and whether quality is computed at all.
     ///
     /// Callers still pass their quality sample with
     /// [`with_quality_data`](Self::with_quality_data); this decides whether it is
@@ -99,6 +99,25 @@ impl ReportAssembler {
         self.skip_quality = !options.include_quality();
         self.semantic_hints = options.semantic_hints().clone();
         self.requested_dimensions = options.quality_dimensions().map(<[_]>::to_vec);
+        if options.has_column_projection() && !self.skip_quality {
+            // Completeness and uniqueness both contain row-level measurements.
+            // Those measurements have a different meaning after projecting a
+            // row, and the current report schema cannot label only the row-level
+            // fields as projected. Withhold the two dimensions instead of
+            // publishing plausible numbers under full-row names.
+            let mut dimensions = self
+                .requested_dimensions
+                .take()
+                .unwrap_or_else(QualityDimension::all);
+            dimensions.retain(|dimension| {
+                !matches!(
+                    dimension,
+                    QualityDimension::Completeness | QualityDimension::Uniqueness
+                )
+            });
+            self.skip_quality = dimensions.is_empty();
+            self.requested_dimensions = Some(dimensions);
+        }
         self
     }
 

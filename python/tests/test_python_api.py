@@ -1677,6 +1677,37 @@ class TestProfilerConfig:
         assert cfg.identifier_columns == ["order_id", "customer_id"]
         assert cfg.temporal_columns == ["observed_on"]
 
+    def test_positional_order_remains_backward_compatible(self):
+        # `columns` was added after this positional surface already existed.
+        # Keep every established slot stable and append new options at the end.
+        cfg = dataprof.ProfilerConfig(
+            "auto",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "it-IT",
+            ["pressure"],
+            ["order_id"],
+            ["observed_on"],
+            ["amount"],
+        )
+
+        assert cfg.locale == "IT"
+        assert cfg.positive_columns == ["pressure"]
+        assert cfg.identifier_columns == ["order_id"]
+        assert cfg.temporal_columns == ["observed_on"]
+        assert cfg.columns == ["amount"]
+
     def test_max_rows(self):
         if not os.path.exists(CSV_LARGE_FILE):
             pytest.skip("fixture missing")
@@ -1917,6 +1948,7 @@ class TestNamespace:
             "progress_interval_ms",
             "quality_dimensions",
             "metrics",
+            "columns",
             "locale",
             "positive_columns",
             "identifier_columns",
@@ -2586,6 +2618,7 @@ class TestProfilerBuilder:
         assert p.max_rows(10) is p
         assert p.csv_delimiter(",") is p
         assert p.quality_dimensions(["completeness"]) is p
+        assert p.columns(["id"]) is p
         assert p.positive_columns(["pressure"]) is p
         assert p.identifier_columns(["order_id"]) is p
         assert p.temporal_columns(["observed_on"]) is p

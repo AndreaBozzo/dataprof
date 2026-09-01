@@ -2,9 +2,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use dataprof_core::{
-    ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat, Locale, MetricPack,
-    PeakMemorySampler, ProgressSink, QualityDimension, RowSampler, RowView, SamplingStrategy,
-    SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
+    AnalysisOptions, ChunkSize, DataProfilerError, DataSource, ExecutionMetadata, FileFormat,
+    Locale, MetricPack, PeakMemorySampler, ProgressSink, QualityDimension, RowSampler, RowView,
+    SamplingStrategy, SchemaStabilityTracker, SemanticHints, StopCondition, StopEvaluator,
 };
 use dataprof_csv::{CsvParserConfig, MemoryMappedCsvReader};
 use dataprof_runtime::{
@@ -25,6 +25,7 @@ pub struct IncrementalProfiler {
     stop_condition: StopCondition,
     quality_dimensions: Option<Vec<QualityDimension>>,
     metric_packs: Option<Vec<MetricPack>>,
+    columns: Option<Vec<String>>,
     csv_config: Option<CsvParserConfig>,
     locale: Option<Locale>,
     semantic_hints: SemanticHints,
@@ -41,6 +42,7 @@ impl IncrementalProfiler {
             stop_condition: StopCondition::Never,
             quality_dimensions: None,
             metric_packs: None,
+            columns: None,
             csv_config: None,
             locale: None,
             semantic_hints: SemanticHints::default(),
@@ -80,6 +82,11 @@ impl IncrementalProfiler {
 
     pub fn metric_packs(mut self, packs: Vec<MetricPack>) -> Self {
         self.metric_packs = Some(packs);
+        self
+    }
+
+    pub fn columns(mut self, columns: Vec<String>) -> Self {
+        self.columns = Some(columns);
         self
     }
 
@@ -363,16 +370,33 @@ impl IncrementalProfiler {
         memory_sampler.sample();
         progress_tracker.emit_finished(!source_exhausted);
 
+        let options = AnalysisOptions::default()
+            .with_columns(self.columns.clone())
+            .with_metric_packs(self.metric_packs.clone())
+            .with_quality_dimensions(self.quality_dimensions.clone())
+            .with_locale(self.locale)
+            .with_semantic_hints(self.semantic_hints.clone());
+
+        if let Some(indices) = options.column_indices(&column_stats.column_names())? {
+            let available = column_stats.column_names();
+            let selected = indices
+                .into_iter()
+                .map(|index| available[index].clone())
+                .collect::<Vec<_>>();
+            column_stats.retain_columns(&selected);
+        }
+
         // Convert streaming statistics to column profiles
-        let packs = self.metric_packs.as_deref();
+        let effective_packs = options.effective_metric_packs();
+        let packs = effective_packs.as_deref();
         let skip_stats = !MetricPack::include_statistics(packs);
         let skip_patterns = !MetricPack::include_patterns(packs);
         let column_profiles = profile_builder::profiles_from_streaming_with_hints(
             &column_stats,
             skip_stats,
             skip_patterns,
-            self.locale,
-            &self.semantic_hints,
+            options.locale(),
+            options.semantic_hints(),
         );
 
         // Calculate quality metrics from sample data
@@ -438,10 +462,7 @@ impl IncrementalProfiler {
                 .with_row_duplicates(column_stats.row_duplicate_summary())
                 .with_row_completeness(column_stats.row_completeness_summary())
                 .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
-                .with_semantic_hints(self.semantic_hints.clone());
-            if let Some(ref dims) = self.quality_dimensions {
-                assembler = assembler.with_requested_dimensions(dims.clone());
-            }
+                .with_analysis_options(&options);
         } else {
             assembler = assembler.skip_quality();
         }

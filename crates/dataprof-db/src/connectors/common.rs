@@ -135,12 +135,35 @@ macro_rules! streaming_profile_loop {
     };
     ($pool:expr, $query:expr, $batch_size:expr, $total_rows:expr, $db_name:literal,
      [$($backend_ty:ty),* $(,)?]) => {{
-        use sqlx::{Column, Row};
+        use sqlx::{Column, Executor, Row};
         use $crate::connectors::common::build_batch_query;
         use $crate::streaming::{StreamingProgress, merge_column_batches};
 
         let mut progress = StreamingProgress::new(Some($total_rows as u64));
-        let mut all_batches: Vec<$crate::QueryColumns> = Vec::new();
+        // Describe the query before fetching rows. Row metadata is unavailable
+        // when the first batch is empty, but projection still needs the source
+        // schema to validate duplicate and unknown requested names.
+        let first_batch_query = build_batch_query($query, $batch_size, 0)?;
+        let description = ($pool).describe(&first_batch_query).await.map_err(|e| {
+            $crate::DataProfilerError::DatabaseQueryError {
+                message: format!("Query description failed: {}", e),
+            }
+        })?;
+        let column_names: Vec<String> = description
+            .columns()
+            .iter()
+            .map(|column| column.name().to_string())
+            .collect();
+        dataprof_core::validate_unique_column_names(
+            &column_names,
+            concat!($db_name, " query result"),
+        )?;
+
+        // Seed the merge with the schema so a zero-row query still returns
+        // named empty columns in query order.
+        let mut all_batches: Vec<$crate::QueryColumns> = vec![
+            $crate::QueryColumns::with_names(column_names.clone(), 0),
+        ];
         let mut offset = 0usize;
 
         loop {
@@ -156,22 +179,13 @@ macro_rules! streaming_profile_loop {
                 break;
             }
 
-            let columns = rows[0].columns();
-            let column_names: Vec<String> = columns
-                .iter()
-                .map(|column| column.name().to_string())
-                .collect();
-            dataprof_core::validate_unique_column_names(
-                &column_names,
-                concat!($db_name, " query result"),
-            )?;
             // Built from the driver's column list, so the batch carries the
             // query's column order and values are filed by position.
             let mut batch_result =
                 $crate::QueryColumns::with_names(column_names.clone(), rows.len());
 
             for row in &rows {
-                for i in 0..columns.len() {
+                for i in 0..column_names.len() {
                     let value: Option<String> =
                         $crate::db_column_to_string!(row, i, [$($backend_ty),*]);
                     // decode-audit: no-data — None is SQL NULL (or a type
