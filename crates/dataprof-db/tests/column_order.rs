@@ -8,7 +8,11 @@
 
 #![cfg(feature = "sqlite")]
 
-use dataprof_db::{DatabaseConfig, DatabaseConnector, QueryColumns, create_connector};
+use dataprof_core::AnalysisOptions;
+use dataprof_db::{
+    DatabaseConfig, DatabaseConnector, QueryColumns, analyze_database_with_options,
+    create_connector,
+};
 use sqlx::sqlite::SqlitePoolOptions;
 
 /// Four columns whose declaration order differs from alphabetical order in
@@ -106,6 +110,53 @@ async fn streaming_batches_preserve_the_schema_order() {
     assert_eq!(columns["id"], ["0", "1", "2", "3"]);
 
     connector.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn streaming_empty_results_preserve_the_schema_order() {
+    let (_dir, db_path) = fixture(0).await;
+    let mut connector = connect(&db_path).await;
+
+    let columns = connector
+        .profile_query_streaming("SELECT date, id, active, amount FROM t", 2)
+        .await
+        .unwrap();
+
+    assert_eq!(names(&columns), ["date", "id", "active", "amount"]);
+    assert_eq!(columns.row_count(), 0);
+
+    connector.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_results_still_validate_column_projection() {
+    let (_dir, db_path) = fixture(0).await;
+    let database_config = || DatabaseConfig {
+        connection_string: db_path.clone(),
+        load_credentials_from_env: false,
+        ..Default::default()
+    };
+
+    let unknown = AnalysisOptions::default().with_columns(Some(vec!["missing".to_string()]));
+    let error = analyze_database_with_options(database_config(), "SELECT * FROM t", &unknown)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("absent from the source: missing"),
+        "unexpected unknown-column error: {error}"
+    );
+
+    let duplicate =
+        AnalysisOptions::default().with_columns(Some(vec!["id".to_string(), "id".to_string()]));
+    let error = analyze_database_with_options(database_config(), "SELECT * FROM t", &duplicate)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("duplicate name(s): id"),
+        "unexpected duplicate-column error: {error}"
+    );
 }
 
 #[tokio::test]

@@ -109,6 +109,17 @@ pub fn profile_columns(
     let column_names: Vec<String> = columns.iter().map(|(n, _)| n.clone()).collect();
     dataprof::validate_unique_column_names(&column_names, "columns")
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+    // Source metadata describes the whole materialised input, not just the
+    // columns selected for analysis. Capture it before projection filters the
+    // owned transport vector.
+    let source_memory_bytes: u64 = columns
+        .iter()
+        .flat_map(|(_, cells)| cells.iter())
+        .flatten()
+        .map(|value| value.len() as u64)
+        .sum();
+
     if let Some(indices) = options
         .column_indices(&column_names)
         .map_err(|error| PyValueError::new_err(error.to_string()))?
@@ -217,14 +228,6 @@ pub fn profile_columns(
         ));
     }
 
-    // Rough, but honest: the strings we were handed are the whole materialised input.
-    let memory_bytes: u64 = columns
-        .iter()
-        .flat_map(|(_, cells)| cells.iter())
-        .flatten()
-        .map(|v| v.len() as u64)
-        .sum();
-
     let data_source = if source_type == "bytes" {
         let format = match source_format.as_deref() {
             Some("csv") => FileFormat::Csv,
@@ -253,7 +256,7 @@ pub fn profile_columns(
             source_library: DataFrameLibrary::Custom("python".to_string()),
             row_count: num_rows,
             column_count: num_cols,
-            memory_bytes: Some(memory_bytes),
+            memory_bytes: Some(source_memory_bytes),
         }
     };
 

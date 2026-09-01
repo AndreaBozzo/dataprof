@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any, cast
 
 import dataprof as dp
 import pytest
@@ -118,6 +119,23 @@ def test_column_projection_applies_to_in_memory_sources(source) -> None:
     assert report.quality is not None
     assert report.quality.completeness is None
     assert report.quality.uniqueness is None
+
+
+def test_projection_preserves_python_source_memory_provenance() -> None:
+    source = {
+        "id": ["1", "2"],
+        "payload": ["a much larger value", "another much larger value"],
+    }
+
+    full = dp.profile(source)
+    projected = dp.profile(source, columns=["id"])
+
+    # The native report carries source-memory provenance; the high-level wrapper
+    # intentionally does not duplicate every native metadata accessor.
+    full_native = cast(Any, full)._report
+    projected_native = cast(Any, projected)._report
+    assert full_native.memory_bytes is not None
+    assert projected_native.memory_bytes == full_native.memory_bytes
 
 
 def test_unknown_and_empty_column_projection_are_explicit(fixtures) -> None:

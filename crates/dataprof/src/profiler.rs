@@ -47,7 +47,9 @@ pub struct ProfilerConfig {
     /// Which metric packs to compute. `None` = all (default).
     /// Controls whether statistics, patterns, and quality are included.
     pub metric_packs: Option<Vec<MetricPack>>,
-    /// Columns to profile. `None` = all columns (default).
+    /// Columns to profile. `None` = all columns (default). Any explicit
+    /// selection withholds row-level completeness and uniqueness because those
+    /// dimensions cannot retain their whole-record meaning after projection.
     pub columns: Option<Vec<String>>,
     /// Locale for pattern detection (e.g. [`Locale::It`]).
     /// When set, locale-matching patterns get a confidence boost and non-matching
@@ -262,7 +264,8 @@ impl Profiler {
     /// whole record but only analyze and report the selected columns. Reports
     /// preserve source-schema order regardless of the order supplied here. A
     /// nested Parquet field is selected as one top-level column, including all
-    /// of its leaves; dotted leaf paths are not report columns today.
+    /// of its leaves; dotted leaf paths are not report columns today. Any
+    /// explicit selection withholds row-level completeness and uniqueness.
     pub fn columns(mut self, columns: Vec<String>) -> Self {
         self.config.columns = Some(columns);
         self

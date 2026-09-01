@@ -1233,7 +1233,8 @@ def profile_file(
             None = all packs (default).
         columns: Top-level columns to profile. None selects every column;
             an empty list returns a report with no profiled columns. Reports
-            preserve source order rather than the order supplied here.
+            preserve source order rather than the order supplied here. Any
+            explicit selection withholds row-level completeness and uniqueness.
         locale: Locale for pattern detection. Supported: "CA", "DE", "FR",
             "GB", "IT", "US"; "it", "ITA" and "it-IT" all mean "IT", and an
             unsupported tag raises ValueError rather than silently suppressing
@@ -1364,7 +1365,8 @@ def profile(
             category of computation entirely.
         columns: Top-level columns to profile. None selects every column;
             an empty list returns a report with no profiled columns. Reports
-            preserve source order rather than the order supplied here.
+            preserve source order rather than the order supplied here. Any
+            explicit selection withholds row-level completeness and uniqueness.
         locale: Locale for pattern detection. Boosts confidence for
             locale-matching patterns and suppresses non-matching locale
             patterns. None = no preference. Supported: "CA", "DE", "FR", "GB",
@@ -1729,7 +1731,10 @@ class Profiler:
         return self
 
     def columns(self, columns: list[str]) -> Profiler:
-        """Select top-level columns to profile."""
+        """Select top-level columns to profile.
+
+        Any explicit selection withholds row-level completeness and uniqueness.
+        """
         self._kwargs["columns"] = columns
         return self
 

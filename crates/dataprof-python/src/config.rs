@@ -58,11 +58,11 @@ impl PyProfilerConfig {
         progress_interval_ms = None,
         quality_dimensions = None,
         metrics = None,
-        columns = None,
         locale = None,
         positive_columns = None,
         identifier_columns = None,
         temporal_columns = None,
+        columns = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -80,11 +80,11 @@ impl PyProfilerConfig {
         progress_interval_ms: Option<u64>,
         quality_dimensions: Option<Vec<String>>,
         metrics: Option<Vec<String>>,
-        columns: Option<Vec<String>>,
         locale: Option<String>,
         positive_columns: Option<Vec<String>>,
         identifier_columns: Option<Vec<String>>,
         temporal_columns: Option<Vec<String>>,
+        columns: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let engine = parse_engine(engine)?;
         let format_override = format.map(parse_format).transpose()?;

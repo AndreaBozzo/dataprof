@@ -34,11 +34,11 @@ class ProfilerConfig:
         progress_interval_ms: int | None = None,
         quality_dimensions: list[str] | None = None,
         metrics: list[str] | None = None,
-        columns: list[str] | None = None,
         locale: str | None = None,
         positive_columns: list[str] | None = None,
         identifier_columns: list[str] | None = None,
         temporal_columns: list[str] | None = None,
+        columns: list[str] | None = None,
     ) -> None: ...
     @property
     def engine(self) -> str: ...
