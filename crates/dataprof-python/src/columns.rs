@@ -15,8 +15,8 @@ use dataprof::{
     infer_type, is_null_like_token,
 };
 use dataprof_runtime::{
-    ColumnProfileInput, ReportAssembler, RowCompletenessTracker, RowUniquenessTracker,
-    build_column_profile,
+    ColumnProfileInput, ReportAssembler, RowCompletenessTracker, RowSignature,
+    RowUniquenessTracker, build_column_profile,
 };
 
 use super::config::PyProfilerConfig;
@@ -144,26 +144,24 @@ pub fn profile_columns(
         let mut samples = std::collections::HashMap::new();
 
         // Full-stream duplicate-row tracking over the row-aligned input,
-        // using the same length-prefixed signature encoding as the file
-        // engines. Null cells contribute an empty value, so files and
-        // ad-hoc inputs holding the same data agree on duplicate counts.
+        // through the same `RowSignature` encoding the file engines use, so
+        // files and ad-hoc inputs holding the same data agree on duplicate
+        // counts. Null cells contribute an empty value.
         let mut row_tracker = RowUniquenessTracker::default();
         let mut completeness_tracker = RowCompletenessTracker::default();
         if num_cols > 0 {
-            use std::fmt::Write as _;
             for row_index in 0..num_rows {
-                let mut row_signature = String::new();
+                let mut row_signature = RowSignature::default();
                 let mut row_has_null = false;
                 for (_, cells) in &columns {
                     let value = cells[row_index].as_deref().unwrap_or("");
-                    let _ = write!(row_signature, "{}:", value.len());
-                    row_signature.push_str(value);
+                    row_signature.push_field(value);
                     // A missing cell renders empty, which `is_null_like_token`
                     // already treats as null — the same rule that produces
                     // `null_count` below.
                     row_has_null |= is_null_like_token(value);
                 }
-                row_tracker.observe(row_signature);
+                row_tracker.observe(row_signature.finish());
                 completeness_tracker.observe(row_has_null);
             }
         }

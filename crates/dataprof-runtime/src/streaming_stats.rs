@@ -510,6 +510,12 @@ impl RowSignature {
     /// Append one field. An absent field is the empty string, the same
     /// representation [`StreamingColumnCollection::process_record`] gives a
     /// missing trailing value and an Arrow null.
+    ///
+    /// Only an exactly empty value counts as absent here, deliberately: the
+    /// broader `is_null_like_token` rule that decides `null_count` also matches
+    /// `null`, `nan` and whitespace, and trimming on it would collapse a row
+    /// ending in one of those against a row that ends in no field at all,
+    /// inventing a duplicate.
     pub fn push_field(&mut self, value: &str) {
         let _ = write!(self.buffer, "{}:", value.len());
         self.buffer.push_str(value);
@@ -527,12 +533,12 @@ impl RowSignature {
 
 /// Full-stream row-duplicate tracking with bounded memory.
 ///
-/// Every record's fields are folded into a canonical length-prefixed
-/// signature and fed to a [`CardinalityEstimator`]: duplicates are counted
-/// exactly while the distinct-row signatures fit the estimator's exact set,
-/// and estimated (flagged approximate) once it spills to its HLL sketch.
-/// Unlike the per-column reservoirs, this sees whole rows — including
-/// null-like values — so the count is row-aligned by construction.
+/// Every record's fields are folded into a [`RowSignature`] and fed to a
+/// [`CardinalityEstimator`]: duplicates are counted exactly while the
+/// distinct-row signatures fit the estimator's exact set, and estimated
+/// (flagged approximate) once it spills to its HLL sketch. Unlike the
+/// per-column reservoirs, this sees whole rows — including null-like values —
+/// so the count is row-aligned by construction.
 #[derive(Debug, Clone, Default)]
 pub struct RowUniquenessTracker {
     rows_seen: usize,
@@ -1097,6 +1103,24 @@ mod row_tracker_tests {
                 .null_count,
             2
         );
+    }
+
+    #[test]
+    fn test_trailing_null_like_token_is_not_trimmed() {
+        // Only an exactly empty field is absent. A trailing "null" or " " is
+        // a value the row holds, and `is_null_like_token` matches both;
+        // trimming on that broader rule would collapse these rows against the
+        // absent-field one and report duplicates that are not there.
+        let headers = vec!["a".to_string(), "b".to_string()];
+        let mut collection = StreamingColumnCollection::new();
+        record(&mut collection, &headers, &["x", "null"]);
+        record(&mut collection, &headers, &["x", " "]);
+        record(&mut collection, &headers, &["x", ""]);
+
+        let summary = collection
+            .row_duplicate_summary()
+            .expect("rows were observed");
+        assert_eq!(summary.duplicate_rows, 0);
     }
 
     #[test]
