@@ -24,6 +24,6 @@ pub use profile_report::profile_report_schema_document;
 pub use profile_report::{ProfileReport, REPORT_SCHEMA_VERSION};
 pub use report_assembler::ReportAssembler;
 pub use streaming_stats::{
-    RowCompletenessTracker, RowUniquenessTracker, StreamReservoirSampler,
+    RowCompletenessTracker, RowSignature, RowUniquenessTracker, StreamReservoirSampler,
     StreamingColumnCollection, StreamingStatistics, TextLengthStats, WelfordAccumulator,
 };

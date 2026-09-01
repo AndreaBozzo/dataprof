@@ -1663,6 +1663,44 @@ mod tests {
     }
 
     #[test]
+    fn test_identical_records_count_as_duplicates_across_a_late_key() {
+        // Records 1 and 3 are byte-identical; `b` is only discovered between
+        // them. Signing a row against whatever columns happened to be known at
+        // the time would make the two look different and report no duplicate.
+        let data = b"{\"a\": \"x\"}\n{\"a\": \"x\", \"b\": \"y\"}\n{\"a\": \"x\"}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::jsonl();
+
+        let (_profiles, stats, rows, _malformed, _format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
+        assert_eq!(rows, 3);
+
+        let summary = stats
+            .row_duplicate_summary()
+            .expect("three rows were observed");
+        assert_eq!(summary.rows_checked, 3);
+        assert_eq!(summary.duplicate_rows, 1);
+        assert!(!summary.approximate);
+    }
+
+    #[test]
+    fn test_a_late_key_does_not_invent_duplicates() {
+        // The counterpart guard: collapsing the trailing absent field must not
+        // merge rows that differ in the columns they do share.
+        let data = b"{\"a\": \"x\"}\n{\"a\": \"x\", \"b\": \"y\"}\n{\"a\": \"z\"}\n";
+        let cursor = Cursor::new(data.as_ref());
+        let config = JsonParserConfig::jsonl();
+
+        let (_profiles, stats, _rows, _malformed, _format) =
+            analyze_json_from_reader(cursor, &config).unwrap();
+
+        let summary = stats
+            .row_duplicate_summary()
+            .expect("three rows were observed");
+        assert_eq!(summary.duplicate_rows, 0);
+    }
+
+    #[test]
     fn test_analyze_json_file_quality_report() {
         let file = write_file(r#"[{"x":1},{"x":2}]"#);
         let config = JsonParserConfig::default();
