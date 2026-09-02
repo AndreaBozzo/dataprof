@@ -347,10 +347,15 @@ pub fn infer_data_type_streaming(stats: &StreamingStatistics) -> DataType {
             return DataType::Float;
         }
 
+        // `.trim()`, like every sibling predicate in this function and like
+        // `infer_type`. Without it a value that arrived padded — CSV parsing
+        // does not trim by default — was a date to the buffered engines and
+        // text to this one, which is the same cross-engine split the shared
+        // grammar exists to close.
         let date_like_count = non_empty
             .iter()
             .take(100)
-            .filter(|s| looks_like_date(s))
+            .filter(|s| looks_like_date(s.trim()))
             .count();
 
         if date_like_count as f64 / non_empty.len().min(100) as f64 > 0.7 {

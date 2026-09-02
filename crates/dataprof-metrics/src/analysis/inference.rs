@@ -27,11 +27,16 @@ static DATE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         // optional `Z`/`±HH:MM` offset. The offset alternatives are exactly the
         // ones `chrono::DateTime::parse_from_rfc3339` accepts, so a value this
         // pattern calls a date is a value the parser can turn into an instant.
-        // The ISO 8601 basic form (`+0200`) is deliberately absent: chrono
-        // rejects it, and accepting it here would type the column `Date` and
-        // then count every value as `invalid_date_values`.
-        Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?$")
-            .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
+        //
+        // The offset is range-bound, not `\d{2}:\d{2}`: chrono rejects `+24:00`
+        // and `+00:60` as out of range, so a looser pattern would type the
+        // column `Date` and then count every value as `invalid_date_values` —
+        // the exact mismatch this pattern exists to avoid. The ISO 8601 basic
+        // form (`+0200`) is absent for the same reason.
+        Regex::new(
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$",
+        )
+        .expect("BUG: Invalid hardcoded regex pattern for ISO datetime"),
         Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
             .expect("BUG: Invalid hardcoded regex pattern for spaced ISO datetime"),
         Regex::new(r"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$")
@@ -571,7 +576,7 @@ mod tests {
         (r"^\d{4}/\d{2}/\d{2}$", "2024/01/15"),
         (r"^\d{2}\.\d{2}\.\d{4}$", "15.01.2024"),
         (
-            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?$",
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$",
             "2024-01-15T10:30:00",
         ),
         (

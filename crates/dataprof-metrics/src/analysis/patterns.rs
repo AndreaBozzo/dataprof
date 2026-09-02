@@ -1413,6 +1413,11 @@ mod tests {
             "2024-01-15T10:30:00 (UTC)",
             // The ISO 8601 basic offset, which chrono's RFC 3339 parser rejects.
             "2024-01-15T10:30:00+0200",
+            // Offsets chrono rejects as out of range. A grammar that took these
+            // would type the column `Date` and then fail to parse a value of it.
+            "2024-01-15T10:30:00+24:00",
+            "2024-01-15T10:30:00+99:99",
+            "2024-01-15T10:30:00-00:60",
             "not a date",
         ] {
             assert!(

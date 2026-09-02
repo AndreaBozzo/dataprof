@@ -138,23 +138,61 @@ fn offsets_are_normalized_to_utc_before_the_statistics() {
 #[test]
 fn a_timestamp_shaped_value_no_parser_accepts_stays_text() {
     // `+0200` is ISO 8601 basic, which chrono's RFC 3339 parser rejects.
-    let csv = write_csv(
-        "moment\n\
-2024-01-15T10:30:00+0200\n\
-2024-01-15T11:30:00+0200\n\
-2024-01-15T12:30:00+0200\n",
-    );
+    // `+24:00` and `-00:60` are well-shaped but out of range, which it also
+    // rejects — so the grammar has to bound the offset, not merely match two
+    // digits on each side of the colon.
+    for value in [
+        "2024-01-15T10:30:00+0200",
+        "2024-01-15T10:30:00+24:00",
+        "2024-01-15T10:30:00+99:99",
+        "2024-01-15T10:30:00-00:60",
+    ] {
+        let csv = write_csv(&format!("moment\n{value}\n{value}\n{value}\n"));
 
-    for engine in EVERY_ENGINE {
-        let report = Profiler::new()
-            .engine(engine)
-            .analyze_file(csv.path())
-            .expect("profile should succeed");
+        for engine in EVERY_ENGINE {
+            let report = Profiler::new()
+                .engine(engine)
+                .analyze_file(csv.path())
+                .expect("profile should succeed");
 
+            assert_eq!(
+                report.column_profiles[0].data_type,
+                DataType::String,
+                "{engine:?} typed {value:?} as a date, but no parser can read it"
+            );
+        }
+    }
+}
+
+/// CSV parsing does not trim by default, so a padded value reaches inference as
+/// it was written. Every engine has to make the same call about it: the
+/// buffered paths trimmed before the date test and the streaming one did not,
+/// so a padded date column was `Date` on one engine and `String` on the other —
+/// the same cross-engine split the shared grammar exists to close.
+#[test]
+fn padding_does_not_change_which_engine_calls_a_column_temporal() {
+    for value in [" 2024-01-15T10:30:00Z ", "  2024-01-15"] {
+        let csv = write_csv(&format!("moment\n{value}\n{value}\n{value}\n"));
+
+        let types: Vec<DataType> = EVERY_ENGINE
+            .iter()
+            .map(|engine| {
+                let report = Profiler::new()
+                    .engine(*engine)
+                    .analyze_file(csv.path())
+                    .expect("profile should succeed");
+                report.column_profiles[0].data_type.clone()
+            })
+            .collect();
+
+        assert!(
+            types.iter().all(|found| *found == types[0]),
+            "engines disagreed on padded {value:?}: {types:?} for {EVERY_ENGINE:?}"
+        );
         assert_eq!(
-            report.column_profiles[0].data_type,
-            DataType::String,
-            "{engine:?} typed a column no parser can read as a date"
+            types[0],
+            DataType::Date,
+            "padding should not stop {value:?} from being temporal"
         );
     }
 }
