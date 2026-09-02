@@ -138,15 +138,82 @@ def test_chunked_frames_agree_with_the_arrow_path():
 
     The pyarrow path already walked every batch, so it is the reference the two
     library-specific paths are measured against rather than a third opinion.
+    The comparison is over the whole column section, not a chosen few fields:
+    ``AGENTS.md`` asks for identical numbers, and every field here does agree.
     """
     polars_chunked, _ = _polars_frames()
     pandas_chunked, _ = _pandas_frames()
     arrow_columns = _columns(_chunked_table(), "arrow")
 
-    for frame, label in ((polars_chunked, "polars"), (pandas_chunked, "pandas")):
-        columns = _columns(frame, label)
-        assert len(columns) == len(arrow_columns)
-        for column, expected in zip(columns, arrow_columns):
-            assert column["name"] == expected["name"]
-            assert column["total_count"] == expected["total_count"]
-            assert column["null_count"] == expected["null_count"]
+    assert _columns(polars_chunked, "polars") == arrow_columns
+    assert _columns(pandas_chunked, "pandas") == arrow_columns
+
+
+def test_empty_frames_are_refused_the_same_way_on_every_path():
+    """One error for an empty source, whichever library handed it over.
+
+    The two library paths used to raise "DataFrame is empty" while pyarrow
+    raised "Table is empty", because each had its own copy of the guard. Now
+    that they share an importer they share the message, and this pins that so a
+    later refactor cannot quietly fork it again.
+
+    It pins the refusal itself as much as the wording. A zero-row frame with a
+    schema is arguably analyzable, and the file paths do analyze it: a
+    header-only CSV profiles as 0 rows over its declared columns rather than
+    raising. That divergence is older than this test and is tracked separately;
+    changing it here would be a second behaviour change in one commit.
+    """
+    pd = pytest.importorskip("pandas", reason="pandas is required for pandas interop tests")
+    pl = pytest.importorskip("polars", reason="polars is required for polars interop tests")
+
+    sources = {
+        "pyarrow": pa.table({"a": pa.array([], type=pa.int64())}),
+        "pandas": pd.DataFrame({"a": pd.Series([], dtype="int64")}),
+        "polars": pl.DataFrame({"a": []}),
+    }
+
+    messages = set()
+    for label, source in sources.items():
+        with pytest.raises(ValueError) as raised:
+            dataprof.profile(source, name=label)
+        messages.add(str(raised.value))
+
+    assert len(messages) == 1, f"paths disagree on the empty-source error: {messages}"
+
+
+class Table:
+    """A non-pyarrow batch producer, named ``Table`` because the importer looks.
+
+    ``profile_dataframe`` classifies anything that is not pandas, polars or
+    pyarrow as a custom library, and that arm used to import the array capsule
+    alone. A producer holding several batches was read down to the first one
+    there for the same reason the two library paths were, on the one path with
+    no library to name.
+
+    Reachable through ``dataprof.interop.profile_dataframe``, which is public.
+    ``dataprof.profile()`` sends capsule producers to the Arrow path instead.
+    """
+
+    def __init__(self, batches):
+        self._batches = list(batches)
+
+    def to_batches(self):
+        return list(self._batches)
+
+    def __arrow_c_schema__(self):
+        return self._batches[0].__arrow_c_schema__()
+
+    def __arrow_c_array__(self, requested_schema=None):
+        return self._batches[0].__arrow_c_array__(requested_schema)
+
+
+def test_custom_batch_producer_is_profiled_whole():
+    """The custom arm walks the sequence like every other arm.
+
+    ``interop.profile_dataframe`` returns the unwrapped Rust report, where the
+    row count is ``rows_processed``.
+    """
+    from dataprof.interop import profile_dataframe
+
+    producer = Table(pa.record_batch(chunk) for chunk in CHUNKS)
+    assert profile_dataframe(producer, "custom").rows_processed == TOTAL_ROWS

@@ -908,9 +908,13 @@ fn convert_dataframe_to_batches(
         DataFrameLibrary::Polars => convert_polars_to_batches(py, bound),
         DataFrameLibrary::PyArrow => import_batches_from_pyarrow(py, bound),
         DataFrameLibrary::Custom(_) => {
-            // Try generic PyCapsule import
+            // The same importer as every other arm. A producer that carries its
+            // batches the way a pyarrow Table does is walked in full here too:
+            // reducing it to a single array capsule would leave the
+            // first-batch-only read alive on the one path that has no library
+            // to name in the error below.
             if bound.hasattr("__arrow_c_array__")? {
-                Ok(vec![import_via_pycapsule(py, bound)?])
+                import_batches_from_pyarrow(py, bound)
             } else {
                 Err(PyTypeError::new_err(format!(
                     "Unsupported DataFrame type: {}. Must implement Arrow PyCapsule protocol.",
