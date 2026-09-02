@@ -14,6 +14,24 @@
 //! - `15.01.2023` → January 15, 2023
 //!
 //! For unambiguous parsing, use ISO 8601 format (YYYY-MM-DD).
+//!
+//! ## UTC Offsets
+//!
+//! A value carrying an RFC 3339 offset (`Z`, `+HH:MM`, `-HH:MM`) designates an
+//! *instant*, and **dataprof normalizes it to UTC** before it reaches any
+//! statistic or quality predicate. `2024-01-15T23:00:00-05:00` therefore counts
+//! as 2024-01-16 at hour 04, not as 2024-01-15 at hour 23.
+//!
+//! The alternative — keeping each value's own wall clock — makes two values that
+//! name the same instant compare as different and two values that name different
+//! instants compare as equal, and it compares an offset-bearing value against a
+//! UTC "now" in the Timeliness dimension. Normalizing costs the local reading of
+//! an hour distribution; it buys min/max, duration, and every comparison being
+//! about one timeline.
+//!
+//! A value with no offset carries no timezone to normalize, so it is read as it
+//! was written. Mixing the two in one column mixes local wall clocks with UTC
+//! instants; that is a property of the data, not something this module can fix.
 
 use crate::types::{ColumnStats, DateTimeStats};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Weekday};
@@ -73,10 +91,15 @@ pub fn compute_datetime_stats(data: &[String]) -> DateTimeStats {
 fn parse_flexible_full(s: &str) -> Option<ParsedDateTime> {
     let trimmed = s.trim();
 
+    // An offset-bearing value is an instant, normalized to UTC before anything
+    // else sees it — see the "UTC Offsets" section in the module docs. `Z`
+    // values are unaffected (their offset is already zero); the rule only moves
+    // values written at a non-zero offset.
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        let utc = dt.naive_utc();
         return Some(ParsedDateTime {
-            date: dt.date_naive(),
-            datetime: Some(dt.naive_local()),
+            date: utc.date(),
+            datetime: Some(utc),
         });
     }
 
