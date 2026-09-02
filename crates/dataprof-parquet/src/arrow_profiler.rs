@@ -423,7 +423,7 @@ struct ColumnAnalyzer {
 impl ColumnAnalyzer {
     fn new(data_type: &arrow::datatypes::DataType) -> Self {
         Self {
-            data_type: data_type.clone(),
+            data_type: crate::record_batch_analyzer::logical_arrow_type(data_type),
             total_count: 0,
             null_count: 0,
             cardinality: CardinalityEstimator::new(),
@@ -454,18 +454,62 @@ impl ColumnAnalyzer {
         self.sample_values.offer(value);
     }
 
-    fn should_track_date_matches(&self) -> bool {
-        matches!(
+    /// Whether this column's sample values are its own values written as text.
+    ///
+    /// Kept identical to the parquet analyzer's predicate, which carries the
+    /// full rationale — including why the binary families are excluded.
+    fn samples_are_text_values(&self) -> bool {
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        !matches!(
             &self.data_type,
-            arrow::datatypes::DataType::Utf8
-                | arrow::datatypes::DataType::LargeUtf8
-                | arrow::datatypes::DataType::Date32
-                | arrow::datatypes::DataType::Date64
-                | arrow::datatypes::DataType::Timestamp(_, _)
+            ArrowDataType::Null
+                | ArrowDataType::Boolean
+                | ArrowDataType::Float64
+                | ArrowDataType::Float32
+                | ArrowDataType::Int64
+                | ArrowDataType::Int32
+                | ArrowDataType::Int16
+                | ArrowDataType::Int8
+                | ArrowDataType::UInt64
+                | ArrowDataType::UInt32
+                | ArrowDataType::UInt16
+                | ArrowDataType::UInt8
+                | ArrowDataType::Decimal128(_, _)
+                | ArrowDataType::Decimal256(_, _)
+                | ArrowDataType::Duration(_)
+                | ArrowDataType::Binary
+                | ArrowDataType::LargeBinary
+                | ArrowDataType::FixedSizeBinary(_)
         )
     }
 
+    fn should_track_date_matches(&self) -> bool {
+        self.samples_are_text_values()
+    }
+
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
+        // Decode the physical encoding first, so a dictionary-encoded or
+        // view-typed column takes the same arm as the plain array holding the
+        // same values. This engine only builds `Utf8` fields today, so the cast
+        // never fires; it is here because the drift this file shares with
+        // `record_batch_analyzer` is what let the two disagree in the first
+        // place (#647).
+        if array.data_type() != &self.data_type {
+            let decoded =
+                arrow::compute::kernels::cast::cast(array, &self.data_type).map_err(|error| {
+                    DataProfilerError::arrow_error(&format!(
+                        "failed to decode {} column as {}: {error}",
+                        array.data_type(),
+                        self.data_type
+                    ))
+                })?;
+            return self.process_decoded_array(decoded.as_ref());
+        }
+        self.process_decoded_array(array)
+    }
+
+    fn process_decoded_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
         self.total_count += array.len();
         // logical_null_count, not null_count: a NullArray has no validity
         // buffer, so the physical count reports 0 nulls for an all-null array.
@@ -834,8 +878,14 @@ impl ColumnAnalyzer {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 // Use Arrow's built-in conversion to string
-                let value = array_value_to_string(array, i)
-                    .unwrap_or_else(|_| format!("<type:{}>", array.data_type()));
+                // Never `unwrap_or_else` into a placeholder here: a decode
+                // failure that becomes a plausible string is measured as data.
+                let value = array_value_to_string(array, i).map_err(|error| {
+                    DataProfilerError::arrow_error(&format!(
+                        "no text rendering for {} column: {error}",
+                        array.data_type()
+                    ))
+                })?;
                 self.update_text_stats(&value);
 
                 self.offer_sample(value.clone());
@@ -954,11 +1004,14 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Date32
             | arrow::datatypes::DataType::Date64
             | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
-            arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                // Reuse the shared inference logic for consistent type detection
-                // across all engines (dates before numerics, 100% match threshold)
-                infer_type(self.sample_values.samples())
-            }
+            // Everything below reached the profile as text: `Utf8`/`LargeUtf8`
+            // natively, and every type without an arm through the string
+            // fallback. Where those samples are the values themselves, only
+            // they say what the column holds, so they are re-inferred with the
+            // same shared inference every other engine types its text columns
+            // with. Where the rendering is an encoding rather than the value,
+            // the column stays text.
+            _ if self.samples_are_text_values() => infer_type(self.sample_values.samples()),
             _ => DataType::String,
         }
     }

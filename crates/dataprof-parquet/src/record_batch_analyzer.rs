@@ -20,6 +20,43 @@ use std::fmt::Write as _;
 
 const NUMERIC_SAMPLE_CAP: usize = 10_000;
 
+/// Strip the physical encoding a writer chose and return the logical type the
+/// column actually holds.
+///
+/// A `pandas` categorical arrives as `Dictionary(Int8, Utf8)` and a pyarrow
+/// `string_view` as `Utf8View`, but both hold the same values as the plain
+/// `Utf8` a different writer would have produced. Profiling them by their
+/// physical type made the same sixty strings report `integer` with a numeric
+/// block through one writer and `string` with a length block through another —
+/// the output contract failing on a file dataprof reads today.
+///
+/// Every column is normalized through here once, so the dispatch in
+/// [`ColumnAnalyzer::process_array`], the type in
+/// [`ColumnAnalyzer::infer_data_type`] and the date tracking in
+/// [`ColumnAnalyzer::should_track_date_matches`] all see one type. They used to
+/// hold three lists that had drifted apart.
+///
+/// Only encodings are stripped. A type whose *values* need a decision of their
+/// own — nested types (#637), binary (#645) — keeps its identity and is decided
+/// there.
+pub(crate) fn logical_arrow_type(
+    data_type: &arrow::datatypes::DataType,
+) -> arrow::datatypes::DataType {
+    use arrow::datatypes::DataType as ArrowDataType;
+
+    match data_type {
+        // The dictionary is a compression of the value array, not a type.
+        ArrowDataType::Dictionary(_, values) => logical_arrow_type(values),
+        ArrowDataType::RunEndEncoded(_, values) => logical_arrow_type(values.data_type()),
+        // View layouts differ from their contiguous twins in buffer layout only.
+        ArrowDataType::Utf8View => ArrowDataType::Utf8,
+        ArrowDataType::BinaryView => ArrowDataType::Binary,
+        // Half precision has no arm of its own; f32 holds every f16 exactly.
+        ArrowDataType::Float16 => ArrowDataType::Float32,
+        other => other.clone(),
+    }
+}
+
 /// Full-stream duplicate-row tracking over Arrow batches.
 ///
 /// Row signatures use the same length-prefixed encoding as the incremental
@@ -374,7 +411,9 @@ impl ColumnAnalyzer {
         temporal_hint: bool,
     ) -> Self {
         Self {
-            data_type: data_type.clone(),
+            // The physical encoding is stripped once, here, so nothing
+            // downstream has to know about dictionaries or view layouts.
+            data_type: logical_arrow_type(data_type),
             total_count: 0,
             null_count: 0,
             cardinality: CardinalityEstimator::new(),
@@ -420,15 +459,52 @@ impl ColumnAnalyzer {
         self.sample_values.offer(value);
     }
 
-    fn should_track_date_matches(&self) -> bool {
-        matches!(
+    /// Whether this column's sample values are its own values written as text,
+    /// so what the column holds can be read back out of them.
+    ///
+    /// This is the one predicate behind both re-inference and date tracking; the
+    /// two used to carry separate lists of Arrow types and had drifted apart.
+    ///
+    /// Stated as what is *excluded*, so a type this build has never seen is
+    /// treated as text — which is what the generic formatter will in fact
+    /// render it as — instead of silently reporting `String` and a date count of
+    /// zero that was never taken.
+    ///
+    /// The exclusions are of two kinds. The numeric, boolean and temporal arms
+    /// have their profile type named by the Arrow type already, and their
+    /// renderings cannot be dates. The **binary** families are excluded for a
+    /// sharper reason: their formatter emits hex, not the value. Re-inferring
+    /// from that reads the three bytes `abc` as the integer 616263 and reports
+    /// a numeric column with that mean — a decode artifact turned into a
+    /// plausible number. What a binary column should report is #645.
+    fn samples_are_text_values(&self) -> bool {
+        use arrow::datatypes::DataType as ArrowDataType;
+
+        !matches!(
             &self.data_type,
-            arrow::datatypes::DataType::Utf8
-                | arrow::datatypes::DataType::LargeUtf8
-                | arrow::datatypes::DataType::Date32
-                | arrow::datatypes::DataType::Date64
-                | arrow::datatypes::DataType::Timestamp(_, _)
+            ArrowDataType::Null
+                | ArrowDataType::Boolean
+                | ArrowDataType::Float64
+                | ArrowDataType::Float32
+                | ArrowDataType::Int64
+                | ArrowDataType::Int32
+                | ArrowDataType::Int16
+                | ArrowDataType::Int8
+                | ArrowDataType::UInt64
+                | ArrowDataType::UInt32
+                | ArrowDataType::UInt16
+                | ArrowDataType::UInt8
+                | ArrowDataType::Decimal128(_, _)
+                | ArrowDataType::Decimal256(_, _)
+                | ArrowDataType::Duration(_)
+                | ArrowDataType::Binary
+                | ArrowDataType::LargeBinary
+                | ArrowDataType::FixedSizeBinary(_)
         )
+    }
+
+    fn should_track_date_matches(&self) -> bool {
+        self.samples_are_text_values()
     }
 
     fn hint_binding(&self, column: &str, kind: SemanticHintKind) -> SemanticHintBinding {
@@ -447,6 +523,26 @@ impl ColumnAnalyzer {
     }
 
     pub fn process_array(&mut self, array: &dyn Array) -> Result<()> {
+        // Decode the physical encoding before anything measures the values, so
+        // a dictionary-encoded or view-typed column takes the same arm as the
+        // plain array holding the same values. `self.data_type` is already the
+        // logical type; the cast is a no-op for every column that arrived
+        // unencoded.
+        if array.data_type() != &self.data_type {
+            let decoded =
+                arrow::compute::kernels::cast::cast(array, &self.data_type).map_err(|error| {
+                    anyhow::anyhow!(
+                        "failed to decode {} column as {}: {error}",
+                        array.data_type(),
+                        self.data_type
+                    )
+                })?;
+            return self.process_decoded_array(decoded.as_ref());
+        }
+        self.process_decoded_array(array)
+    }
+
+    fn process_decoded_array(&mut self, array: &dyn Array) -> Result<()> {
         self.total_count += array.len();
         // logical_null_count, not null_count: a NullArray has no validity
         // buffer, so the physical count reports 0 nulls for an all-null array.
@@ -1026,15 +1122,16 @@ impl ColumnAnalyzer {
                     }
                 }
             }
-            Err(_) => {
-                for index in 0..array.len() {
-                    if !array.is_null(index) {
-                        let value_str = format!("<{}:value_{}>", array.data_type(), index);
-                        self.update_text_stats(&value_str);
-                        self.offer_sample(value_str.clone());
-                        self.cardinality.insert_owned(value_str);
-                    }
-                }
+            // A fabricated `<type:value_N>` per row used to stand in here. It
+            // made every row distinct, so a column dataprof could not read at
+            // all reported full cardinality and a uniqueness ratio of 1.0 — a
+            // decode failure turned into a plausible number, which is the worst
+            // bug class for a profiler.
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "no text rendering for {} column: {error}",
+                    array.data_type()
+                ));
             }
         }
         Ok(())
@@ -1156,9 +1253,16 @@ impl ColumnAnalyzer {
             | arrow::datatypes::DataType::Decimal256(_, _) => DataType::Float,
             arrow::datatypes::DataType::Duration(_) => DataType::Integer,
             arrow::datatypes::DataType::Boolean => DataType::Boolean,
-            arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8 => {
-                infer_type(self.sample_values.samples())
-            }
+            // Everything below reached the profile as text: `Utf8`/`LargeUtf8`
+            // natively, and every type without an arm through the generic
+            // formatter. Where those samples are the values themselves, only
+            // they say what the column holds, so they are re-inferred rather
+            // than declared `String` — which is what made a dictionary of
+            // digits profile as text while the same digits written plain
+            // profiled as integers. Where the rendering is an encoding rather
+            // than the value (hex, for binary), re-inference would read the
+            // encoding as data, so the column stays text.
+            _ if self.samples_are_text_values() => infer_type(self.sample_values.samples()),
             _ => DataType::String,
         }
     }
