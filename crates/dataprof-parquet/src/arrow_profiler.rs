@@ -454,38 +454,25 @@ impl ColumnAnalyzer {
         self.sample_values.offer(value);
     }
 
-    /// Whether this column's sample values are its own values written as text.
+    /// Whether this column's text rendering is an *encoding* of its values
+    /// rather than the values themselves.
     ///
-    /// Kept identical to the parquet analyzer's predicate, which carries the
-    /// full rationale — including why the binary families are excluded.
-    fn samples_are_text_values(&self) -> bool {
+    /// The same predicate as the parquet analyzer's, which carries the full
+    /// rationale. It is deliberately not a list of which types reach the text
+    /// fallback: the match arms above already answer that, and this analyzer's
+    /// arms are not the parquet one's — `Int16`, `UInt*` and `Decimal*` fall
+    /// through to text here and do not there.
+    fn renders_values_as_encoded_bytes(&self) -> bool {
         use arrow::datatypes::DataType as ArrowDataType;
 
-        !matches!(
+        matches!(
             &self.data_type,
-            ArrowDataType::Null
-                | ArrowDataType::Boolean
-                | ArrowDataType::Float64
-                | ArrowDataType::Float32
-                | ArrowDataType::Int64
-                | ArrowDataType::Int32
-                | ArrowDataType::Int16
-                | ArrowDataType::Int8
-                | ArrowDataType::UInt64
-                | ArrowDataType::UInt32
-                | ArrowDataType::UInt16
-                | ArrowDataType::UInt8
-                | ArrowDataType::Decimal128(_, _)
-                | ArrowDataType::Decimal256(_, _)
-                | ArrowDataType::Duration(_)
-                | ArrowDataType::Binary
-                | ArrowDataType::LargeBinary
-                | ArrowDataType::FixedSizeBinary(_)
+            ArrowDataType::Binary | ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_)
         )
     }
 
     fn should_track_date_matches(&self) -> bool {
-        self.samples_are_text_values()
+        !self.renders_values_as_encoded_bytes()
     }
 
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
@@ -1011,7 +998,9 @@ impl ColumnAnalyzer {
             // same shared inference every other engine types its text columns
             // with. Where the rendering is an encoding rather than the value,
             // the column stays text.
-            _ if self.samples_are_text_values() => infer_type(self.sample_values.samples()),
+            _ if !self.renders_values_as_encoded_bytes() => {
+                infer_type(self.sample_values.samples())
+            }
             _ => DataType::String,
         }
     }

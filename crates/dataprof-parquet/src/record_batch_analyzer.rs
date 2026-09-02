@@ -459,52 +459,35 @@ impl ColumnAnalyzer {
         self.sample_values.offer(value);
     }
 
-    /// Whether this column's sample values are its own values written as text,
-    /// so what the column holds can be read back out of them.
+    /// Whether this column's text rendering is an *encoding* of its values
+    /// rather than the values themselves.
     ///
-    /// This is the one predicate behind both re-inference and date tracking; the
-    /// two used to carry separate lists of Arrow types and had drifted apart.
+    /// This is the only thing re-inference has to know. Which types reach the
+    /// text fallback at all is already answered by the arms above it, per
+    /// analyzer — enumerating them here a second time is exactly the drift this
+    /// change removes, and the two analyzers do not have the same native arms.
     ///
-    /// Stated as what is *excluded*, so a type this build has never seen is
-    /// treated as text — which is what the generic formatter will in fact
-    /// render it as — instead of silently reporting `String` and a date count of
-    /// zero that was never taken.
-    ///
-    /// The exclusions are of two kinds. The numeric, boolean and temporal arms
-    /// have their profile type named by the Arrow type already, and their
-    /// renderings cannot be dates. The **binary** families are excluded for a
-    /// sharper reason: their formatter emits hex, not the value. Re-inferring
-    /// from that reads the three bytes `abc` as the integer 616263 and reports
-    /// a numeric column with that mean — a decode artifact turned into a
-    /// plausible number. What a binary column should report is #645.
-    fn samples_are_text_values(&self) -> bool {
+    /// The binary families are the one case where the samples are not the
+    /// values: their formatter emits hex, so re-inferring reads the three bytes
+    /// `abc` as the integer 616263 and reports a numeric column with that mean.
+    /// What a binary column should report is #645.
+    fn renders_values_as_encoded_bytes(&self) -> bool {
         use arrow::datatypes::DataType as ArrowDataType;
 
-        !matches!(
+        matches!(
             &self.data_type,
-            ArrowDataType::Null
-                | ArrowDataType::Boolean
-                | ArrowDataType::Float64
-                | ArrowDataType::Float32
-                | ArrowDataType::Int64
-                | ArrowDataType::Int32
-                | ArrowDataType::Int16
-                | ArrowDataType::Int8
-                | ArrowDataType::UInt64
-                | ArrowDataType::UInt32
-                | ArrowDataType::UInt16
-                | ArrowDataType::UInt8
-                | ArrowDataType::Decimal128(_, _)
-                | ArrowDataType::Decimal256(_, _)
-                | ArrowDataType::Duration(_)
-                | ArrowDataType::Binary
-                | ArrowDataType::LargeBinary
-                | ArrowDataType::FixedSizeBinary(_)
+            ArrowDataType::Binary | ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_)
         )
     }
 
+    /// Whether this column's values can be date tokens at all.
+    ///
+    /// Deliberately not a list of Arrow types. A numeric, boolean or duration
+    /// rendering is never a date token, so counting it costs a cheap byte check
+    /// and yields the same zero a skip would have — while a type this build has
+    /// never seen gets an honest count instead of one that was never taken.
     fn should_track_date_matches(&self) -> bool {
-        self.samples_are_text_values()
+        !self.renders_values_as_encoded_bytes()
     }
 
     fn hint_binding(&self, column: &str, kind: SemanticHintKind) -> SemanticHintBinding {
@@ -1262,7 +1245,9 @@ impl ColumnAnalyzer {
             // profiled as integers. Where the rendering is an encoding rather
             // than the value (hex, for binary), re-inference would read the
             // encoding as data, so the column stays text.
-            _ if self.samples_are_text_values() => infer_type(self.sample_values.samples()),
+            _ if !self.renders_values_as_encoded_bytes() => {
+                infer_type(self.sample_values.samples())
+            }
             _ => DataType::String,
         }
     }
@@ -1539,5 +1524,70 @@ mod tests {
         assert_ne!(large, 1_000, "must not expose the old hard cap as exact");
         let error = (large as f64 - 100_000.0).abs() / 100_000.0;
         assert!(error < 0.05, "100k distinct estimated as {large}");
+    }
+
+    /// Profile one column through `RecordBatchAnalyzer` and return everything
+    /// the profile says about it.
+    fn observable(array: ArrayRef) -> String {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "c",
+            array.data_type().clone(),
+            true,
+        )]));
+        let batch = RecordBatch::try_new(schema, vec![array]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch).unwrap();
+        format!("{:?}", analyzer.to_profiles(false, false, None)[0])
+    }
+
+    /// Run-end encoding never survives a Parquet round trip, so the file-level
+    /// parity suite cannot reach it. It arrives through `RecordBatchAnalyzer`
+    /// directly instead — the entry point the Python Arrow import path feeds —
+    /// which is why the encoding is stripped and why that has to be tested
+    /// here rather than left as an unverified arm.
+    #[test]
+    fn run_end_encoding_profiles_as_the_plain_column_does() {
+        use arrow::array::builder::PrimitiveRunBuilder;
+        use arrow::datatypes::{Float64Type, Int32Type};
+
+        // A *numeric* value type on purpose. A run-end encoded string column
+        // reaches the same answer through the text fallback whether or not the
+        // encoding is stripped, so it would not discriminate this arm. A
+        // numeric one does: without the cast the values never reach
+        // `process_int64_array`, so the exact aggregates behind min, max and
+        // mean are never accumulated.
+        //
+        // Runs, not distinct values: run-end encoding compresses repetition, so
+        // a column with none of it would not exercise the cast either.
+        // A run of NaN on purpose. The native float arm counts NaN as null,
+        // matching every textual path; the generic formatter renders it as the
+        // string "NaN" and the null count never moves. That divergence is what
+        // makes this arm load-bearing — a run of ordinary integers reaches the
+        // same published profile through either path and would not
+        // discriminate it.
+        //
+        // Runs, not distinct values: run-end encoding compresses repetition, so
+        // a column with none of it would not exercise the cast either.
+        let values: Vec<f64> = (0..60)
+            .map(|i| if i < 30 { 7.0 } else { f64::NAN })
+            .collect();
+
+        let mut run_builder = PrimitiveRunBuilder::<Int32Type, Float64Type>::new();
+        for value in &values {
+            run_builder.append_value(*value);
+        }
+        let encoded: ArrayRef = Arc::new(run_builder.finish());
+        assert!(
+            matches!(encoded.data_type(), ArrowDataType::RunEndEncoded(_, _)),
+            "the builder stopped producing run-end encoding"
+        );
+
+        let plain: ArrayRef = Arc::new(Float64Array::from(values));
+        assert_eq!(
+            observable(encoded),
+            observable(plain),
+            "a run-end encoded column profiled differently from the plain one"
+        );
     }
 }

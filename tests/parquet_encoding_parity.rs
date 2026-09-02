@@ -47,18 +47,16 @@ fn profile(array: ArrayRef) -> ColumnProfile {
     report.column_profiles.into_iter().next().unwrap()
 }
 
-/// Everything a profile says about a column, so a divergence anywhere in it
-/// fails rather than only the fields a test remembered to name.
+/// Everything a profile says about a column.
+///
+/// The whole struct, not a hand-picked subset: this change alters the sampled
+/// and rendered values, which drive `patterns`, `type_homogeneity` and
+/// `unique_count_is_approximate` as well as the fields a test would think to
+/// name. A listed subset would let an encoding diverge in the unlisted ones and
+/// still pass. The column is named `c` in every file here, so the name is
+/// common rather than noise.
 fn observable(profile: &ColumnProfile) -> String {
-    format!(
-        "type={:?} total={} null={} invalid={:?} unique={:?} stats={:?}",
-        profile.data_type,
-        profile.total_count,
-        profile.null_count,
-        profile.invalid_count,
-        profile.unique_count,
-        profile.stats,
-    )
+    format!("{profile:?}")
 }
 
 #[track_caller]
