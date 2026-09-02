@@ -22,7 +22,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, BooleanArray, Float64Array, RecordBatch, StringArray, UInt64Array};
-use arrow::compute::concat_batches;
 use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema, to_ffi};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -383,35 +382,47 @@ pub fn profile_dataframe(
     // Detect source library
     let source_library = detect_dataframe_library(py, &df)?;
 
-    // Convert DataFrame to RecordBatch via PyCapsule
-    let batch = convert_dataframe_to_batch(py, &df, &source_library)?;
+    // Import as a batch sequence and keep it that way, exactly as the pyarrow
+    // path does: a chunked frame has more than one batch, and concatenating
+    // them here would both allocate for rows the row limit is about to discard
+    // and peak at roughly twice the input.
+    let batches = convert_dataframe_to_batches(py, &df, &source_library)?;
 
     // Optionally limit rows before analysis
-    let (batch, truncated) = limit_batch_rows(batch, effective_max_rows);
-    let available_columns = batch
+    let (batches, truncated) = limit_batches(batches, effective_max_rows);
+    let available_columns = batches[0]
         .schema()
         .fields()
         .iter()
         .map(|field| field.name().clone())
         .collect::<Vec<_>>();
-    let batch = match options
+    let batches = match options
         .column_indices(&available_columns)
         .map_err(|error| PyValueError::new_err(error.to_string()))?
     {
-        Some(indices) => batch.project(&indices).map_err(|error| {
-            PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
-        })?,
-        None => batch,
+        Some(indices) => batches
+            .into_iter()
+            .map(|batch| {
+                batch.project(&indices).map_err(|error| {
+                    PyRuntimeError::new_err(format!("Arrow projection failed: {error}"))
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?,
+        None => batches,
     };
 
-    let num_rows = batch.num_rows();
-    let num_cols = batch.num_columns();
+    let num_rows: usize = batches.iter().map(|batch| batch.num_rows()).sum();
+    // convert_dataframe_to_batches never yields an empty sequence, and
+    // limit_batches always keeps one batch for its schema.
+    let num_cols = batches[0].num_columns();
     // decode-audit: no-data — absent config simply means no semantic hints.
     let semantic_hints = options.semantic_hints().clone();
 
     // Process using existing RecordBatchAnalyzer
     let mut analyzer = RecordBatchAnalyzer::new().with_semantic_hints(&semantic_hints);
-    analyze_imported_batch(&mut analyzer, &batch)?;
+    for batch in &batches {
+        analyze_imported_batch(&mut analyzer, batch)?;
+    }
 
     let locale = options.locale();
     let column_profiles =
@@ -844,15 +855,6 @@ fn estimate_memory_bytes(
     }
 }
 
-/// Slice a RecordBatch to at most `max_rows` rows. Returns the (possibly
-/// sliced) batch and a boolean indicating whether truncation occurred.
-fn limit_batch_rows(batch: RecordBatch, max_rows: Option<usize>) -> (RecordBatch, bool) {
-    match max_rows {
-        Some(limit) if limit < batch.num_rows() => (batch.slice(0, limit), true),
-        _ => (batch, false),
-    }
-}
-
 /// Apply a row limit across a batch sequence, reporting whether anything was cut.
 ///
 /// Stops before importing rows it would only discard, so a bounded profile of a
@@ -888,22 +890,27 @@ fn limit_batches(batches: Vec<RecordBatch>, max_rows: Option<usize>) -> (Vec<Rec
     (kept, false)
 }
 
-/// Convert DataFrame to Arrow RecordBatch via appropriate method.
-fn convert_dataframe_to_batch(
+/// Convert a DataFrame to the sequence of Arrow batches backing it.
+///
+/// A frame carrying several Arrow chunks yields several batches. Both library
+/// paths below reach the same importer as a pyarrow Table does, because taking
+/// the first batch of a chunked frame reports on a prefix of the data without
+/// saying so.
+fn convert_dataframe_to_batches(
     py: Python<'_>,
     df: &Py<PyAny>,
     source_library: &DataFrameLibrary,
-) -> PyResult<RecordBatch> {
+) -> PyResult<Vec<RecordBatch>> {
     let bound = df.bind(py);
 
     match source_library {
-        DataFrameLibrary::Pandas => convert_pandas_to_batch(py, bound),
-        DataFrameLibrary::Polars => convert_polars_to_batch(py, bound),
-        DataFrameLibrary::PyArrow => import_from_pyarrow(py, bound),
+        DataFrameLibrary::Pandas => convert_pandas_to_batches(py, bound),
+        DataFrameLibrary::Polars => convert_polars_to_batches(py, bound),
+        DataFrameLibrary::PyArrow => import_batches_from_pyarrow(py, bound),
         DataFrameLibrary::Custom(_) => {
             // Try generic PyCapsule import
             if bound.hasattr("__arrow_c_array__")? {
-                import_via_pycapsule(py, bound)
+                Ok(vec![import_via_pycapsule(py, bound)?])
             } else {
                 Err(PyTypeError::new_err(format!(
                     "Unsupported DataFrame type: {}. Must implement Arrow PyCapsule protocol.",
@@ -914,8 +921,11 @@ fn convert_dataframe_to_batch(
     }
 }
 
-/// Convert pandas DataFrame to RecordBatch.
-fn convert_pandas_to_batch(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<RecordBatch> {
+/// Convert a pandas DataFrame to its Arrow batches.
+///
+/// An Arrow-backed frame whose columns are chunked exports as several batches,
+/// which is why this returns the whole sequence rather than `to_batches()[0]`.
+fn convert_pandas_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
     let pyarrow = py.import("pyarrow").map_err(|_| {
         PyRuntimeError::new_err(
             "pyarrow required for pandas DataFrames. Install with: pip install pyarrow",
@@ -927,33 +937,18 @@ fn convert_pandas_to_batch(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<Re
         .getattr("Table")?
         .call_method1("from_pandas", (df,))?;
 
-    // Get batches and import the first one
-    let batches = pa_table.call_method0("to_batches")?;
-    let batch_list: Vec<Py<PyAny>> = batches.extract()?;
-
-    if batch_list.is_empty() {
-        return Err(PyValueError::new_err("DataFrame is empty"));
-    }
-
-    // Import first batch via PyCapsule
-    import_via_pycapsule(py, batch_list[0].bind(py))
+    import_batches_from_pyarrow(py, &pa_table)
 }
 
-/// Convert polars DataFrame to RecordBatch.
-fn convert_polars_to_batch(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<RecordBatch> {
+/// Convert a polars DataFrame to its Arrow batches.
+///
+/// `pl.concat(..., rechunk=False)` and `vstack` both leave a frame multi-chunk,
+/// so the sequence here routinely has more than one entry.
+fn convert_polars_to_batches(py: Python<'_>, df: &Bound<'_, PyAny>) -> PyResult<Vec<RecordBatch>> {
     // polars DataFrame has to_arrow() method
     if df.hasattr("to_arrow")? {
         let arrow_data = df.call_method0("to_arrow")?;
-
-        // The result is a pyarrow Table, get first batch
-        let batches = arrow_data.call_method0("to_batches")?;
-        let batch_list: Vec<Py<PyAny>> = batches.extract()?;
-
-        if batch_list.is_empty() {
-            return Err(PyValueError::new_err("DataFrame is empty"));
-        }
-
-        import_via_pycapsule(py, batch_list[0].bind(py))
+        import_batches_from_pyarrow(py, &arrow_data)
     } else {
         Err(PyRuntimeError::new_err(
             "polars DataFrame doesn't support Arrow export",
@@ -981,7 +976,12 @@ fn import_batches_from_pyarrow(
         let batch_list: Vec<Py<PyAny>> = batches.extract()?;
 
         if batch_list.is_empty() {
-            return Err(PyValueError::new_err("Table is empty"));
+            // Worded for the source, not for pyarrow: pandas and polars frames
+            // reach this same guard after converting, and "Table is empty" is
+            // not what those callers passed in.
+            return Err(PyValueError::new_err(
+                "Arrow source is empty: it holds no record batches",
+            ));
         }
 
         // Every batch, not just the first. A chunked Table profiled as
@@ -1002,17 +1002,6 @@ fn import_batches_from_pyarrow(
             type_name
         )))
     }
-}
-
-/// Single-RecordBatch form, for callers that cannot consume a sequence.
-fn import_from_pyarrow(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<RecordBatch> {
-    let mut batches = import_batches_from_pyarrow(py, obj)?;
-    if batches.len() == 1 {
-        return Ok(batches.remove(0));
-    }
-    let schema = batches[0].schema();
-    concat_batches(&schema, &batches)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to combine Table batches: {}", e)))
 }
 
 /// Import RecordBatch via PyCapsule protocol.
