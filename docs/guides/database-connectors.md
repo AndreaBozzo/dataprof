@@ -14,11 +14,13 @@ Profile data directly from PostgreSQL, MySQL, and SQLite databases with quality 
 > exported CSV or Parquet file if you need statistics for those.
 >
 > Timestamps render in dataprof's naive ISO form (`YYYY-MM-DDTHH:MM:SS`) rather
-> than RFC 3339, because the date grammar that decides whether a column is
-> temporal rejects a trailing offset or `Z`. A `TIMESTAMPTZ` is converted to UTC
-> and its offset dropped: the instant survives, the marker saying it is UTC does
-> not. `NUMERIC`/`DECIMAL` keeps the exact digits the database stored rather
-> than routing through `f64`.
+> than RFC 3339. A `TIMESTAMPTZ` is converted to UTC and its offset dropped: the
+> instant survives, the marker saying it is UTC does not. Since 0.12 the date
+> grammar accepts a trailing offset too, but the two renderings profile
+> identically — dataprof normalizes an offset-bearing value to UTC before any
+> statistic reads it — so the connectors keep converting here.
+> `NUMERIC`/`DECIMAL` keeps the exact digits the database stored rather than
+> routing through `f64`.
 
 ## Feature Requirements
 

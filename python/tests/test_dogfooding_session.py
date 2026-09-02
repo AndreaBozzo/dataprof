@@ -36,7 +36,9 @@ class TestDogfoodingSession:
         assert report["sla_breached"].true_count == 12
         assert report["opened_at"].data_type == "date"
         assert report.quality_score is not None
-        assert report.quality_score < 95
+        # The fixture is imperfect by construction — 5 of its 30 records carry a
+        # null — so completeness has to keep the score off 100.
+        assert report.quality_score < 100
 
         column_repr = repr(report["response_minutes"])
         assert "ColumnProfile" in column_repr
@@ -44,6 +46,14 @@ class TestDogfoodingSession:
 
         quality = report.quality
         assert quality is not None
+
+        # `opened_at` is RFC 3339, and every one of its values is consistent
+        # with the `date` type it was inferred as. Before #643 the date grammar
+        # rejected the trailing `Z`, so all 30 counted against the column they
+        # had just been used to type, and consistency read 91.43% instead.
+        consistency = quality.consistency
+        assert consistency is not None
+        assert consistency["data_type_consistency"] == 100.0
         quality_repr = repr(quality)
         assert "DataQualityMetrics" in quality_repr
         # The repr names the dimensions the score is made of, so it must match

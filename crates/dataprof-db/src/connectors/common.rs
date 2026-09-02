@@ -48,12 +48,16 @@ pub fn feature_not_enabled_error(db_name: &str, feature: &str) -> DataProfilerEr
 /// `Type<Postgres>`) and `BigDecimal` (PostgreSQL and MySQL, no `Type<Sqlite>`
 /// because SQLite has no decimal type).
 ///
-/// Temporal values render in the naive ISO form dataprof's date grammar
-/// accepts (`YYYY-MM-DD` and `YYYY-MM-DDTHH:MM:SS`). That grammar rejects a
-/// trailing offset or `Z`, so rendering a timestamp as true RFC 3339 would
-/// profile the column as *text* and leave the Timeliness dimension exactly as
-/// inert as the nulls did. `TIMESTAMPTZ` is converted to UTC and its offset
+/// Temporal values render in the naive ISO form `YYYY-MM-DD` /
+/// `YYYY-MM-DDTHH:MM:SS`. `TIMESTAMPTZ` is converted to UTC and its offset
 /// dropped; the instant survives, the "this is UTC" marker does not.
+///
+/// The grammar now accepts a trailing `Z` or `±HH:MM` (#643), so this is no
+/// longer forced. It stays because it is numerically indistinguishable from the
+/// alternative: dataprof normalizes an offset-bearing value to UTC before any
+/// statistic reads it, so `...T10:30:00` and `...T10:30:00+00:00` produce the
+/// same profile. Rendering the offset would buy fidelity in the raw sample
+/// values and nothing in the numbers.
 ///
 /// Still unsupported and still recorded as null: `BLOB`/`BYTEA`, which needs a
 /// binary column type rather than a decode arm.

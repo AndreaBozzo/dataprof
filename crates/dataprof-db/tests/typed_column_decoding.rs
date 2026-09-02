@@ -102,10 +102,10 @@ mod postgres {
             return;
         };
 
-        // Naive ISO, not RFC 3339: dataprof's date grammar accepts
-        // `YYYY-MM-DDTHH:MM:SS` and rejects a trailing offset or `Z`, so a
-        // faithful RFC 3339 rendering would profile as text and leave
-        // Timeliness exactly as inert as the nulls do.
+        // Naive ISO, not RFC 3339. Since #643 the grammar would accept the
+        // offset too, and an offset-bearing value is normalized to UTC before
+        // any statistic reads it — so the two renderings profile identically
+        // and the connectors keep converting to UTC here instead.
         assert_eq!(column(columns, "ts"), ["2024-01-15T10:30:00", ""]);
         assert_eq!(column(columns, "tstz"), ["2024-01-15T10:30:00", ""]);
         assert_eq!(column(columns, "d"), ["2024-01-15", ""]);
