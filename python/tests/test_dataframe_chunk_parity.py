@@ -160,7 +160,7 @@ def test_empty_frames_are_refused_the_same_way_on_every_path():
     It pins the refusal itself as much as the wording. A zero-row frame with a
     schema is arguably analyzable, and the file paths do analyze it: a
     header-only CSV profiles as 0 rows over its declared columns rather than
-    raising. That divergence is older than this test and is tracked separately;
+    raising. That divergence is older than this test and is tracked in #664;
     changing it here would be a second behaviour change in one commit.
     """
     pd = pytest.importorskip("pandas", reason="pandas is required for pandas interop tests")
