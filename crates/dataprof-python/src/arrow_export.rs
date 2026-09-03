@@ -980,12 +980,25 @@ fn import_batches_from_pyarrow(
         let batch_list: Vec<Py<PyAny>> = batches.extract()?;
 
         if batch_list.is_empty() {
-            // Worded for the source, not for pyarrow: pandas and polars frames
-            // reach this same guard after converting, and "Table is empty" is
-            // not what those callers passed in.
-            return Err(PyValueError::new_err(
-                "Arrow source is empty: it holds no record batches",
-            ));
+            // A zero-row source is analyzable, not unusable. It carries a
+            // declared schema, and the file paths already profile that shape:
+            // a header-only CSV reports 0 rows over its declared columns rather
+            // than raising. Refusing it here made emptiness unrepresentable
+            // through the Arrow entry points, so a caller profiling a filtered
+            // frame had to special-case the filter matching nothing, which is
+            // the case they were profiling to detect.
+            //
+            // pyarrow returns no batches at all for a zero-row Table, so the
+            // columns have to come from the schema instead of from a batch.
+            let schema = import_schema_from_pycapsule(obj)?.ok_or_else(|| {
+                // Worded for the source, not for pyarrow: pandas and polars
+                // frames reach this same guard after converting, and "Table is
+                // empty" is not what those callers passed in.
+                PyValueError::new_err(
+                    "Arrow source is empty: it holds no record batches and exposes no schema, so its columns cannot be reported",
+                )
+            })?;
+            return Ok(vec![RecordBatch::new_empty(Arc::new(schema))]);
         }
 
         // Every batch, not just the first. A chunked Table profiled as
@@ -1006,6 +1019,63 @@ fn import_batches_from_pyarrow(
             type_name
         )))
     }
+}
+
+/// Import the declared schema of an Arrow producer through the C Data Interface.
+///
+/// A zero-row source has no batch to carry its schema, so it is read from the
+/// producer itself. Where that lives depends on the producer: pyarrow exposes
+/// the capsule on `Table.schema` and not on the Table, while an object written
+/// against the PyCapsule interface alone carries `__arrow_c_schema__` directly.
+/// Both are tried, most specific first, so neither kind of source loses its
+/// columns to an empty batch list.
+///
+/// `Ok(None)` means the producer exposes no schema at all, which is the one
+/// case where a zero-row source genuinely cannot be profiled: nothing names its
+/// columns. That is distinct from `Err`, which means a schema was offered and
+/// could not be imported.
+fn import_schema_from_pycapsule(obj: &Bound<'_, PyAny>) -> PyResult<Option<Schema>> {
+    let holder = if obj.hasattr("__arrow_c_schema__")? {
+        obj.clone()
+    } else if obj.hasattr("schema")? {
+        let schema = obj.getattr("schema")?;
+        if !schema.hasattr("__arrow_c_schema__")? {
+            return Ok(None);
+        }
+        schema
+    } else {
+        return Ok(None);
+    };
+
+    let capsule = holder.call_method0("__arrow_c_schema__")?;
+    let schema_cap: &Bound<'_, PyCapsule> = capsule
+        .cast()
+        .map_err(|_| PyTypeError::new_err("Expected PyCapsule for schema"))?;
+
+    // Validates the capsule name against the Arrow C Data Interface spec, so a
+    // capsule holding something other than the struct reinterpreted below is
+    // rejected here rather than transmuted. Returns `NonNull`, hence no null
+    // check.
+    let ffi_schema_ptr = schema_cap
+        .pointer_checked(Some(c"arrow_schema"))
+        .map_err(|_| PyTypeError::new_err("Expected PyCapsule named \"arrow_schema\""))?
+        .as_ptr() as *mut FFI_ArrowSchema;
+
+    // Safety invariants, matching `import_via_pycapsule`:
+    //  1. The pointer comes from a PyCapsule validated above as an Arrow C Data
+    //     Interface schema.
+    //  2. `from_raw()` takes ownership by nullifying the release callback at the
+    //     original pointer location, so the struct returned here is the sole
+    //     owner and releases on drop, including on the error path below.
+    //  3. `Schema::try_from` borrows the struct and copies out of it; it never
+    //     takes ownership, so the drop above is the only release.
+    let schema = unsafe {
+        let ffi_schema = FFI_ArrowSchema::from_raw(ffi_schema_ptr);
+        Schema::try_from(&ffi_schema)
+            .map_err(|e| PyRuntimeError::new_err(format!("FFI schema import failed: {}", e)))?
+    };
+
+    Ok(Some(schema))
 }
 
 /// Import RecordBatch via PyCapsule protocol.

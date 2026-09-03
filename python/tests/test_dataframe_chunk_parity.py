@@ -149,19 +149,22 @@ def test_chunked_frames_agree_with_the_arrow_path():
     assert _columns(pandas_chunked, "pandas") == arrow_columns
 
 
-def test_empty_frames_are_refused_the_same_way_on_every_path():
-    """One error for an empty source, whichever library handed it over.
+def test_empty_frames_are_profiled_the_same_way_on_every_path():
+    """One answer for an empty source, whichever library handed it over.
 
     The two library paths used to raise "DataFrame is empty" while pyarrow
-    raised "Table is empty", because each had its own copy of the guard. Now
-    that they share an importer they share the message, and this pins that so a
-    later refactor cannot quietly fork it again.
+    raised "Table is empty", because each had its own copy of the guard. Sharing
+    an importer collapsed that into one message, and #664 then turned the
+    message into a report: a zero-row frame with a schema is analyzed, the way a
+    header-only CSV is. What this pins is unchanged by that -- the three paths
+    give one answer -- so it is asserted on the report the shared importer now
+    produces rather than on the error it used to raise.
 
-    It pins the refusal itself as much as the wording. A zero-row frame with a
-    schema is arguably analyzable, and the file paths do analyze it: a
-    header-only CSV profiles as 0 rows over its declared columns rather than
-    raising. That divergence is older than this test and is tracked in #664;
-    changing it here would be a second behaviour change in one commit.
+    The columns are typed explicitly on all three sides. An untyped polars frame
+    exports as an Arrow ``null`` column, which is a different declared schema
+    rather than a different answer to the same input.
+
+    The zero-row contract itself lives in ``test_zero_row_sources.py``.
     """
     pd = pytest.importorskip("pandas", reason="pandas is required for pandas interop tests")
     pl = pytest.importorskip("polars", reason="polars is required for polars interop tests")
@@ -169,16 +172,18 @@ def test_empty_frames_are_refused_the_same_way_on_every_path():
     sources = {
         "pyarrow": pa.table({"a": pa.array([], type=pa.int64())}),
         "pandas": pd.DataFrame({"a": pd.Series([], dtype="int64")}),
-        "polars": pl.DataFrame({"a": []}),
+        "polars": pl.DataFrame({"a": []}, schema={"a": pl.Int64}),
     }
 
-    messages = set()
-    for label, source in sources.items():
-        with pytest.raises(ValueError) as raised:
-            dataprof.profile(source, name=label)
-        messages.add(str(raised.value))
+    reports = {label: dataprof.profile(source, name=label) for label, source in sources.items()}
 
-    assert len(messages) == 1, f"paths disagree on the empty-source error: {messages}"
+    for label, report in reports.items():
+        assert report.rows == 0, f"{label} did not profile the empty frame as zero rows"
+
+    columns = [_columns(source, label) for label, source in sources.items()]
+    assert all(section == columns[0] for section in columns), (
+        f"paths disagree on the empty-source profile: {columns}"
+    )
 
 
 class Table:
