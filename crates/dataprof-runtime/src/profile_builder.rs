@@ -198,6 +198,28 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         }
     };
 
+    // A column with no rows has counts, but no statistics: every aggregate over
+    // zero values is undefined, and the repo's convention for undefined is
+    // absent, not zero. Text and date columns already landed on
+    // `ColumnStats::None` here through their empty-sample arms; numeric and
+    // boolean did not, and reported a min, max, mean, std_dev and variance of
+    // 0.0, and a true_ratio of 0.0 -- plausible numbers describing rows that do
+    // not exist, which is the failure class AGENTS.md singles out. 0.0 is an
+    // ordinary value for a real numeric column, so nothing about that output
+    // looked wrong.
+    //
+    // Keyed on `total_count` rather than on the parsed count, so this covers
+    // exactly the empty case and leaves the all-null one alone: a column with
+    // rows but no parsed values is a wider question, tracked separately.
+    //
+    // The counts above are untouched. "0 of 0 values were invalid" is a fact
+    // about a column that was analyzed, not a statistic over nothing.
+    let stats = if input.total_count == 0 {
+        ColumnStats::None
+    } else {
+        stats
+    };
+
     let patterns = if input.skip_patterns {
         None
     } else {

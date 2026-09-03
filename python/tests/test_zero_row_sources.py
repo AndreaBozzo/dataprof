@@ -122,6 +122,52 @@ def test_zero_row_columns_report_absent_rather_than_zero_ratios():
         assert column["uniqueness_ratio"] is None
 
 
+def test_zero_row_columns_carry_no_statistics_at_all():
+    """Every aggregate over zero values is undefined, whatever the column's type.
+
+    Text and date columns already reported absent statistics at zero rows.
+    Numeric and boolean ones did not: an ``int64`` column came back with
+    ``min``, ``max``, ``mean``, ``std_dev`` and ``variance`` of 0.0, and a
+    boolean column with a ``true_ratio`` of 0.0. Those are plausible numbers
+    describing rows that do not exist, which is the failure mode ``AGENTS.md``
+    calls the worst for a profiler, and 0.0 is a perfectly ordinary value for a
+    real numeric column, so nothing about the output looked wrong.
+
+    The counts are deliberately not part of this. "0 of 0 values were invalid"
+    is a fact about an analyzed column, not a statistic over nothing.
+    """
+    table = pa.table(
+        {
+            "i": pa.array([], type=pa.int64()),
+            "f": pa.array([], type=pa.float64()),
+            "b": pa.array([], type=pa.bool_()),
+            "s": pa.array([], type=pa.string()),
+            "d": pa.array([], type=pa.date32()),
+        }
+    )
+
+    for column in _report(table, "arrow_typed_empty")["columns"]:
+        assert column.get("stats") is None, (
+            f"column {column['name']!r} reported statistics over zero values: {column['stats']}"
+        )
+
+
+def test_a_single_row_still_reports_its_statistics():
+    """The half a fix like the one above gets wrong.
+
+    Suppressing statistics when no values were analyzed must not suppress them
+    for a column that has exactly one, and a genuine min of 0.0 must survive
+    rather than be read back as the absent case.
+    """
+    table = pa.table({"i": pa.array([0], type=pa.int64()), "b": pa.array([False])})
+    columns = {column["name"]: column for column in _report(table, "one_row")["columns"]}
+
+    assert columns["i"]["stats"]["min"] == 0.0
+    assert columns["i"]["stats"]["max"] == 0.0
+    assert columns["b"]["stats"]["true_ratio"] == 0.0
+    assert columns["b"]["stats"]["false_count"] == 1
+
+
 def test_zero_row_table_with_no_columns_profiles_as_nothing_at_all():
     """The Arrow twin of an empty JSON array: 0 rows over 0 columns."""
     report = _report(pa.table({}), "arrow_no_columns")
@@ -130,6 +176,46 @@ def test_zero_row_table_with_no_columns_profiles_as_nothing_at_all():
 
 
 # ------------------------------------------------- what still refuses
+
+
+def test_a_producer_carrying_the_schema_itself_keeps_its_columns():
+    """The other half of the schema lookup, which pyarrow never exercises.
+
+    pyarrow puts ``__arrow_c_schema__`` on ``Table.schema`` and not on the
+    Table, so every test above takes the ``obj.schema`` branch. An object
+    written against the PyCapsule interface alone carries the capsule directly,
+    and that branch has no other coverage: the existing custom producer in
+    ``test_dataframe_chunk_parity.py`` always has batches and never reaches the
+    schema lookup at all.
+    """
+    from dataprof.interop import profile_dataframe
+
+    class Table:
+        """Named ``Table`` because the importer matches on the type name.
+
+        ``__arrow_c_array__`` is declared because the custom arm of
+        ``convert_dataframe_to_batches`` gates on it before importing. It is
+        never called: with no batches there is no array to hand over, and the
+        schema is what carries the columns.
+        """
+
+        def __init__(self, schema):
+            self._schema = schema
+
+        def to_batches(self):
+            return []
+
+        def __arrow_c_schema__(self):
+            return self._schema.__arrow_c_schema__()
+
+        def __arrow_c_array__(self, requested_schema=None):  # pragma: no cover - never called
+            raise AssertionError("an empty producer has no array to export")
+
+    producer = Table(pa.schema([("a", pa.int64()), ("b", pa.string())]))
+    report = profile_dataframe(producer, "direct_schema")
+
+    assert report.rows_processed == 0
+    assert [column.name for column in report.column_profiles] == ["a", "b"]
 
 
 def test_a_producer_with_no_batches_and_no_schema_is_still_refused():
