@@ -1256,11 +1256,73 @@ impl ColumnAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow::array::{Float64Array, Int64Array, StringArray};
+    use arrow::array::{Float64Array, Int64Array, StringArray, TimestampMicrosecondArray};
     use arrow::datatypes::{DataType as ArrowDataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use dataprof_core::ColumnStats;
     use std::sync::Arc;
+
+    #[test]
+    fn named_time_zones_are_resolved_with_their_dst_rules() {
+        // A timestamp column whose zone is a *name* rather than an offset used
+        // to fail the whole report: `ArrayFormatter::try_new` returned "Invalid
+        // timezone \"Europe/Rome\": only offset based timezones supported
+        // without chrono-tz feature", and the error propagated out of
+        // `process_batch`. `UTC` is the spelling pyarrow, pandas and polars all
+        // produce by default, so this hit ordinary inputs rather than exotic
+        // ones.
+        //
+        // The two instants straddle a DST boundary on purpose. Rome is +01:00
+        // in January and +02:00 in June, so the rendered wall-clock times are
+        // 13:00 and 14:00 for instants one hour apart in absolute terms. That
+        // is what makes this a test of the fix rather than of the symptom: a
+        // "fix" that resolved the zone to one fixed offset would stop raising
+        // and start reporting a wrong hour for half the year, and would fail
+        // here on exactly one of the two values.
+        let array = TimestampMicrosecondArray::from(vec![
+            // 2021-01-15T12:00:00Z -> 13:00 CET  (+01:00)
+            1_610_712_000_000_000,
+            // 2021-06-15T12:00:00Z -> 14:00 CEST (+02:00)
+            1_623_758_400_000_000,
+        ])
+        .with_timezone("Europe/Rome");
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "seen_at",
+            array.data_type().clone(),
+            false,
+        )]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(array)]).unwrap();
+
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer
+            .process_batch(&batch)
+            .expect("a named time zone must not fail the report");
+
+        let samples = analyzer.create_sample_columns();
+        let seen_at = samples.get("seen_at").expect("column must be sampled");
+
+        assert!(
+            seen_at
+                .iter()
+                .any(|value| value.contains("2021-01-15T13:00:00")),
+            "January value should render at +01:00 (CET), got {seen_at:?}"
+        );
+        assert!(
+            seen_at
+                .iter()
+                .any(|value| value.contains("2021-06-15T14:00:00")),
+            "June value should render at +02:00 (CEST), got {seen_at:?}"
+        );
+
+        let profile = analyzer
+            .to_profiles(false, false, None)
+            .into_iter()
+            .find(|p| p.name == "seen_at")
+            .unwrap();
+        assert_eq!(profile.total_count, 2);
+        assert_eq!(profile.null_count, 0);
+    }
 
     #[test]
     fn test_nulls_are_excluded_from_numeric_stats() {
