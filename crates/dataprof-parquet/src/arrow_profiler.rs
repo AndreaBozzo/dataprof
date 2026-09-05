@@ -9,8 +9,8 @@ use dataprof_core::{
     TruncationReason, char_len,
 };
 use dataprof_csv::CsvParserConfig;
-use dataprof_metrics::CardinalityEstimator;
 use dataprof_metrics::analysis::inference::{infer_type, is_null_like_token};
+use dataprof_metrics::{CardinalityEstimator, NumericAccumulator};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, ProfileReport, ReportAssembler,
     StreamReservoirSampler, TextLengths, ValueHintBindingAccumulator, build_column_profile,
@@ -403,11 +403,7 @@ struct ColumnAnalyzer {
     null_count: usize,
     cardinality: CardinalityEstimator,
     // Numeric statistics
-    min_value: Option<f64>,
-    max_value: Option<f64>,
-    sum: f64,
-    sum_squares: f64,
-    numeric_count: usize,
+    numeric: NumericAccumulator,
     // Text statistics
     min_length: usize,
     max_length: usize,
@@ -427,11 +423,7 @@ impl ColumnAnalyzer {
             total_count: 0,
             null_count: 0,
             cardinality: CardinalityEstimator::new(),
-            min_value: None,
-            max_value: None,
-            sum: 0.0,
-            sum_squares: 0.0,
-            numeric_count: 0,
+            numeric: NumericAccumulator::new(),
             min_length: usize::MAX,
             max_length: 0,
             total_length: 0,
@@ -884,44 +876,20 @@ impl ColumnAnalyzer {
     }
 
     fn update_numeric_stats(&mut self, value: f64) {
-        self.sum += value;
-        self.sum_squares += value * value;
-        self.numeric_count += 1;
-
-        self.min_value = Some(match self.min_value {
-            Some(min) => min.min(value),
-            None => value,
-        });
-
-        self.max_value = Some(match self.max_value {
-            Some(max) => max.max(value),
-            None => value,
-        });
+        self.numeric.update(value);
     }
 
     /// Exact aggregates over every numeric value processed, independent of the
     /// bounded reservoir sample. `None` when the column saw no numeric values.
     fn exact_numeric_aggregates(&self) -> Option<ExactNumericAggregates> {
-        let (min, max) = (self.min_value?, self.max_value?);
-        if self.numeric_count == 0 {
-            return None;
-        }
-        let mean = self.sum / self.numeric_count as f64;
-        // Clamp: sum-of-squares variance can go slightly negative from
-        // floating-point cancellation.
-        let variance = dataprof_metrics::stats::numeric::calculate_variance(
-            self.sum_squares,
-            self.sum,
-            self.numeric_count,
-        )
-        .max(0.0);
+        let (min, max) = (self.numeric.min()?, self.numeric.max()?);
         Some(ExactNumericAggregates {
             min,
             max,
-            mean,
-            std_dev: variance.sqrt(),
-            variance,
-            count: self.numeric_count,
+            mean: self.numeric.mean(),
+            std_dev: self.numeric.sample_std_dev(),
+            variance: self.numeric.sample_variance(),
+            count: self.numeric.count() as usize,
         })
     }
 
