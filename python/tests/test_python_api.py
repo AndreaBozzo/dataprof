@@ -1680,13 +1680,15 @@ class TestProfilerConfig:
 
     @pytest.mark.parametrize("entry_point", ["profile", "profile_file", "builder"])
     @pytest.mark.parametrize("engine", ["auto", "incremental", "streaming", "columnar", "arrow"])
-    def test_engine_spellings_profile_csv(self, tmp_path, entry_point, engine):
+    @pytest.mark.parametrize("uppercase", [False, True], ids=["lowercase", "uppercase"])
+    def test_engine_spellings_profile_csv(self, tmp_path, entry_point, engine, uppercase):
         path = tmp_path / "values.csv"
         path.write_text("value\n1\n2\n3\n", encoding="utf-8")
+        spelling = engine.upper() if uppercase else engine
         if entry_point == "builder":
-            report = dataprof.Profiler().engine(engine).profile(path)
+            report = dataprof.Profiler().engine(spelling).profile(path)
         else:
-            report = getattr(dataprof, entry_point)(path, engine=engine)
+            report = getattr(dataprof, entry_point)(path, engine=spelling)
 
         assert report.rows == 3
         canonical = {"streaming": "incremental", "arrow": "columnar"}.get(engine, engine)
