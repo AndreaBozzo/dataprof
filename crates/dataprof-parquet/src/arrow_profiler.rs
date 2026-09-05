@@ -1,8 +1,7 @@
 use crate::record_batch_analyzer::BatchRowTracker;
-use arrow::array::*;
+use arrow::array::{Array, StringArray};
 use arrow::csv::ReaderBuilder;
-use arrow::datatypes::*;
-use arrow::util::display::ArrayFormatter;
+use arrow::datatypes::{Field, Schema};
 use dataprof_core::{
     AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata,
     FileFormat, Locale, MetricPack, PeakMemorySampler, QualityDimension, SemanticHints,
@@ -201,7 +200,8 @@ impl ArrowProfiler {
 
         let mut fields = Vec::new();
         for header in &header_names {
-            // Start with string type, Arrow will convert during processing
+            // Always read raw UTF-8 cells so null-token handling, type inference,
+            // and reservoir samples use the original CSV text.
             fields.push(Field::new(header, arrow::datatypes::DataType::Utf8, true));
         }
         // `arrow-csv` has no counterpart to `with_truncated_rows` for a row that
@@ -240,10 +240,7 @@ impl ArrowProfiler {
             std::collections::HashMap::new();
 
         for name in &projected_header_names {
-            column_analyzers.insert(
-                name.clone(),
-                ColumnAnalyzer::new(&arrow::datatypes::DataType::Utf8),
-            );
+            column_analyzers.insert(name.clone(), ColumnAnalyzer::new());
         }
 
         let mut total_rows = 0;
@@ -396,9 +393,9 @@ impl Default for ArrowProfiler {
     }
 }
 
-/// Column analyzer for Arrow arrays
+/// Analyzer for the UTF-8 arrays produced by `ArrowProfiler::analyze_csv_file`.
+/// Typed Arrow inputs are handled separately by `record_batch_analyzer`.
 struct ColumnAnalyzer {
-    data_type: arrow::datatypes::DataType,
     total_count: usize,
     null_count: usize,
     cardinality: CardinalityEstimator,
@@ -408,18 +405,14 @@ struct ColumnAnalyzer {
     min_length: usize,
     max_length: usize,
     total_length: usize,
-    // Boolean statistics
-    true_count: usize,
-    false_count: usize,
     // Reservoir sample for pattern detection and order statistics
     sample_values: StreamReservoirSampler,
     date_matched_values: usize,
 }
 
 impl ColumnAnalyzer {
-    fn new(data_type: &arrow::datatypes::DataType) -> Self {
+    fn new() -> Self {
         Self {
-            data_type: crate::record_batch_analyzer::logical_arrow_type(data_type),
             total_count: 0,
             null_count: 0,
             cardinality: CardinalityEstimator::new(),
@@ -427,258 +420,37 @@ impl ColumnAnalyzer {
             min_length: usize::MAX,
             max_length: 0,
             total_length: 0,
-            true_count: 0,
-            false_count: 0,
             sample_values: StreamReservoirSampler::new(NUMERIC_SAMPLE_CAP),
             date_matched_values: 0,
         }
     }
 
     fn offer_sample(&mut self, value: String) {
-        if self.should_track_date_matches()
-            && dataprof_metrics::value_matches_hint(
-                &value,
-                dataprof_core::SemanticHintKind::Temporal,
-            )
-        {
+        if dataprof_metrics::value_matches_hint(&value, dataprof_core::SemanticHintKind::Temporal) {
             self.date_matched_values += 1;
         }
         self.sample_values.offer(value);
     }
 
-    /// Whether this column's text rendering is an *encoding* of its values
-    /// rather than the values themselves.
-    ///
-    /// The same predicate as the parquet analyzer's, which carries the full
-    /// rationale. It is deliberately not a list of which types reach the text
-    /// fallback: the match arms above already answer that, and this analyzer's
-    /// arms are not the parquet one's — `Int16`, `UInt*` and `Decimal*` fall
-    /// through to text here and do not there.
-    fn renders_values_as_encoded_bytes(&self) -> bool {
-        use arrow::datatypes::DataType as ArrowDataType;
-
-        matches!(
-            &self.data_type,
-            ArrowDataType::Binary | ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_)
-        )
-    }
-
-    fn should_track_date_matches(&self) -> bool {
-        !self.renders_values_as_encoded_bytes()
-    }
-
     fn process_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
-        // Decode the physical encoding first, so a dictionary-encoded or
-        // view-typed column takes the same arm as the plain array holding the
-        // same values. This engine only builds `Utf8` fields today, so the cast
-        // never fires; it is here because the drift this file shares with
-        // `record_batch_analyzer` is what let the two disagree in the first
-        // place (#647).
-        if array.data_type() != &self.data_type {
-            let decoded =
-                arrow::compute::kernels::cast::cast(array, &self.data_type).map_err(|error| {
-                    DataProfilerError::arrow_error(&format!(
-                        "failed to decode {} column as {}: {error}",
-                        array.data_type(),
-                        self.data_type
-                    ))
-                })?;
-            return self.process_decoded_array(decoded.as_ref());
-        }
-        self.process_decoded_array(array)
-    }
-
-    fn process_decoded_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
-        self.total_count += array.len();
-        // logical_null_count, not null_count: a NullArray has no validity
-        // buffer, so the physical count reports 0 nulls for an all-null array.
-        self.null_count += array.logical_null_count();
-
-        match array.data_type() {
-            arrow::datatypes::DataType::Null => {
-                // Every slot of a NullArray is null, but is_null() is false on
-                // all of them (no validity buffer), so the string fallback
-                // below would fabricate one value per null slot.
-            }
-            arrow::datatypes::DataType::Float64 => {
-                if let Some(float_array) = array.as_any().downcast_ref::<Float64Array>() {
-                    self.process_float64_array(float_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to Float64Array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Float32 => {
-                if let Some(float_array) = array.as_any().downcast_ref::<Float32Array>() {
-                    self.process_float32_array(float_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to Float32Array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Int64 => {
-                if let Some(int_array) = array.as_any().downcast_ref::<Int64Array>() {
-                    self.process_int64_array(int_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to Int64Array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Int32 => {
-                if let Some(int_array) = array.as_any().downcast_ref::<Int32Array>() {
-                    self.process_int32_array(int_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to Int32Array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Utf8 => {
-                if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
-                    self.process_string_array(string_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to StringArray",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::LargeUtf8 => {
-                if let Some(string_array) = array.as_any().downcast_ref::<LargeStringArray>() {
-                    self.process_large_string_array(string_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to LargeStringArray",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Boolean => {
-                if let Some(bool_array) = array.as_any().downcast_ref::<BooleanArray>() {
-                    self.process_boolean_array(bool_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to BooleanArray",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Date32 => {
-                if let Some(date_array) = array.as_any().downcast_ref::<Date32Array>() {
-                    self.process_date32_array(date_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to Date32Array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Date64 => {
-                if let Some(date_array) = array.as_any().downcast_ref::<Date64Array>() {
-                    self.process_date64_array(date_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast to Date64Array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Timestamp(_, _) => {
-                if let Some(ts_array) = array.as_any().downcast_ref::<TimestampNanosecondArray>() {
-                    self.process_timestamp_array(ts_array)?;
-                } else if let Some(ts_array) =
-                    array.as_any().downcast_ref::<TimestampMicrosecondArray>()
-                {
-                    self.process_timestamp_micro_array(ts_array)?;
-                } else if let Some(ts_array) =
-                    array.as_any().downcast_ref::<TimestampMillisecondArray>()
-                {
-                    self.process_timestamp_milli_array(ts_array)?;
-                } else if let Some(ts_array) = array.as_any().downcast_ref::<TimestampSecondArray>()
-                {
-                    self.process_timestamp_second_array(ts_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast Timestamp array",
-                    ));
-                }
-            }
-            arrow::datatypes::DataType::Binary | arrow::datatypes::DataType::LargeBinary => {
-                if let Some(bin_array) = array.as_any().downcast_ref::<BinaryArray>() {
-                    self.process_binary_array(bin_array)?;
-                } else if let Some(bin_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
-                    self.process_large_binary_array(bin_array)?;
-                } else {
-                    return Err(DataProfilerError::arrow_error(
-                        "Failed to downcast Binary array",
-                    ));
-                }
-            }
-            _ => {
-                // For other types, convert to string and process
-                self.process_as_string_array(array)?;
-            }
-        }
-
+        // The CSV reader has an explicit Utf8 schema; reject a violated
+        // invariant instead of casting values and losing their original text.
+        let strings = array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| {
+                DataProfilerError::arrow_error(&format!(
+                    "Arrow CSV profiler expected a Utf8 array, got {}",
+                    array.data_type()
+                ))
+            })?;
+        self.total_count += strings.len();
+        self.null_count += strings.null_count();
+        self.process_string_array(strings);
         Ok(())
     }
 
-    fn process_float64_array(&mut self, array: &Float64Array) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                self.update_numeric_stats(value);
-
-                // Add to unique values (with limit)
-                self.cardinality.insert_owned(value.to_string());
-
-                // Keep samples for pattern detection
-                self.offer_sample(value.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn process_float32_array(&mut self, array: &Float32Array) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
-
-                self.cardinality.insert_owned(value.to_string());
-
-                self.offer_sample(value.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn process_int64_array(&mut self, array: &Int64Array) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
-
-                self.cardinality.insert_owned(value.to_string());
-
-                self.offer_sample(value.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn process_int32_array(&mut self, array: &Int32Array) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if let Some(value) = array.value(i).into() {
-                let value_f64 = value as f64;
-                self.update_numeric_stats(value_f64);
-
-                self.cardinality.insert_owned(value.to_string());
-
-                self.offer_sample(value.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn process_string_array(&mut self, array: &StringArray) -> Result<(), DataProfilerError> {
+    fn process_string_array(&mut self, array: &StringArray) {
         for i in 0..array.len() {
             if !array.is_null(i) {
                 let value = array.value(i);
@@ -687,13 +459,14 @@ impl ColumnAnalyzer {
                     continue;
                 }
                 self.update_text_stats(value);
-                // Utf8 columns often carry numeric content (the Arrow CSV
-                // reader may deliver strings): keep the exact accumulators
-                // fed so numeric stats never fall back to the sample.
+                // CSV cells always arrive as strings. Keep exact aggregates
+                // over every finite number, independent of the sample.
+                // NumericAccumulator::update requires finite input, so NaN,
+                // infinities, and overflowing literals are excluded here.
                 // decode-audit: no-data — a cell that does not parse is a
                 // non-numeric value, excluded from numeric stats by design.
                 if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
+                    self.numeric.update(number);
                 }
 
                 self.cardinality.insert(value);
@@ -701,182 +474,6 @@ impl ColumnAnalyzer {
                 self.offer_sample(value.to_string());
             }
         }
-        Ok(())
-    }
-
-    fn process_large_string_array(
-        &mut self,
-        array: &LargeStringArray,
-    ) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
-                if is_null_like_token(value) {
-                    self.null_count += 1;
-                    continue;
-                }
-                self.update_text_stats(value);
-                // decode-audit: no-data — a cell that does not parse is a
-                // non-numeric value, excluded from numeric stats by design.
-                if let Some(number) = value.trim().parse::<f64>().ok().filter(|n| n.is_finite()) {
-                    self.update_numeric_stats(number);
-                }
-
-                self.cardinality.insert(value);
-
-                self.offer_sample(value.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn process_boolean_array(&mut self, array: &BooleanArray) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
-                if value {
-                    self.true_count += 1;
-                } else {
-                    self.false_count += 1;
-                }
-                let value_str = if value { "True" } else { "False" };
-
-                self.cardinality.insert(value_str);
-
-                self.offer_sample(value_str.to_string());
-            }
-        }
-        Ok(())
-    }
-
-    fn process_date32_array(&mut self, array: &Date32Array) -> Result<(), DataProfilerError> {
-        self.process_formatted_temporal_array(array)
-    }
-
-    fn process_date64_array(&mut self, array: &Date64Array) -> Result<(), DataProfilerError> {
-        self.process_formatted_temporal_array(array)
-    }
-
-    fn process_timestamp_array(
-        &mut self,
-        array: &TimestampNanosecondArray,
-    ) -> Result<(), DataProfilerError> {
-        self.process_formatted_temporal_array(array)
-    }
-
-    fn process_timestamp_micro_array(
-        &mut self,
-        array: &TimestampMicrosecondArray,
-    ) -> Result<(), DataProfilerError> {
-        self.process_formatted_temporal_array(array)
-    }
-
-    fn process_timestamp_milli_array(
-        &mut self,
-        array: &TimestampMillisecondArray,
-    ) -> Result<(), DataProfilerError> {
-        self.process_formatted_temporal_array(array)
-    }
-
-    fn process_timestamp_second_array(
-        &mut self,
-        array: &TimestampSecondArray,
-    ) -> Result<(), DataProfilerError> {
-        self.process_formatted_temporal_array(array)
-    }
-
-    fn process_formatted_temporal_array(
-        &mut self,
-        array: &dyn Array,
-    ) -> Result<(), DataProfilerError> {
-        let formatter = ArrayFormatter::try_new(array, &Default::default())?;
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = formatter.value(i).to_string();
-                self.update_text_stats(&value);
-                self.cardinality.insert(&value);
-                self.offer_sample(value);
-            }
-        }
-        Ok(())
-    }
-
-    fn process_binary_array(&mut self, array: &BinaryArray) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
-                // Convert to hex string manually (first 8 bytes)
-                let sample_bytes = &value[..value.len().min(8)];
-                let hex_str = format!(
-                    "0x{}",
-                    sample_bytes
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<String>()
-                );
-                self.update_text_stats(&hex_str);
-
-                self.cardinality.insert(&hex_str);
-
-                self.offer_sample(hex_str);
-            }
-        }
-        Ok(())
-    }
-
-    fn process_large_binary_array(
-        &mut self,
-        array: &LargeBinaryArray,
-    ) -> Result<(), DataProfilerError> {
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                let value = array.value(i);
-                // Convert to hex string manually (first 8 bytes)
-                let sample_bytes = &value[..value.len().min(8)];
-                let hex_str = format!(
-                    "0x{}",
-                    sample_bytes
-                        .iter()
-                        .map(|b| format!("{:02x}", b))
-                        .collect::<String>()
-                );
-                self.update_text_stats(&hex_str);
-
-                self.cardinality.insert(&hex_str);
-
-                self.offer_sample(hex_str);
-            }
-        }
-        Ok(())
-    }
-
-    fn process_as_string_array(&mut self, array: &dyn Array) -> Result<(), DataProfilerError> {
-        // Convert any array type to string for processing using Arrow's display functionality
-        use arrow::util::display::array_value_to_string;
-
-        for i in 0..array.len() {
-            if !array.is_null(i) {
-                // Use Arrow's built-in conversion to string
-                // Never `unwrap_or_else` into a placeholder here: a decode
-                // failure that becomes a plausible string is measured as data.
-                let value = array_value_to_string(array, i).map_err(|error| {
-                    DataProfilerError::arrow_error(&format!(
-                        "no text rendering for {} column: {error}",
-                        array.data_type()
-                    ))
-                })?;
-                self.update_text_stats(&value);
-
-                self.offer_sample(value.clone());
-
-                self.cardinality.insert_owned(value);
-            }
-        }
-        Ok(())
-    }
-
-    fn update_numeric_stats(&mut self, value: f64) {
-        self.numeric.update(value);
     }
 
     /// Exact aggregates over every numeric value processed, independent of the
@@ -912,7 +509,7 @@ impl ColumnAnalyzer {
         let data_type = if semantic_hints.is_identifier_column(&name) {
             DataType::Identifier
         } else {
-            self.infer_data_type()
+            infer_type(self.sample_values.samples())
         };
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64
@@ -933,44 +530,13 @@ impl ColumnAnalyzer {
                 max_length: self.max_length,
                 avg_length,
             }),
-            boolean_counts: if matches!(self.data_type, arrow::datatypes::DataType::Boolean) {
-                Some((self.true_count, self.false_count))
-            } else {
-                None
-            },
+            boolean_counts: None,
             skip_statistics,
             skip_patterns,
             locale,
             exact_numeric: self.exact_numeric_aggregates(),
             exact_date_matches: Some(self.date_matched_values),
         })
-    }
-
-    fn infer_data_type(&self) -> DataType {
-        match &self.data_type {
-            arrow::datatypes::DataType::Float64 | arrow::datatypes::DataType::Float32 => {
-                DataType::Float
-            }
-            arrow::datatypes::DataType::Int64
-            | arrow::datatypes::DataType::Int32
-            | arrow::datatypes::DataType::Int16
-            | arrow::datatypes::DataType::Int8 => DataType::Integer,
-            arrow::datatypes::DataType::Boolean => DataType::Boolean,
-            arrow::datatypes::DataType::Date32
-            | arrow::datatypes::DataType::Date64
-            | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
-            // Everything below reached the profile as text: `Utf8`/`LargeUtf8`
-            // natively, and every type without an arm through the string
-            // fallback. Where those samples are the values themselves, only
-            // they say what the column holds, so they are re-inferred with the
-            // same shared inference every other engine types its text columns
-            // with. Where the rendering is an encoding rather than the value,
-            // the column stays text.
-            _ if !self.renders_values_as_encoded_bytes() => {
-                infer_type(self.sample_values.samples())
-            }
-            _ => DataType::String,
-        }
     }
 
     /// Get collected sample values for quality metrics calculation
@@ -1340,72 +906,34 @@ mod tests {
     }
 
     #[test]
-    fn test_boolean_column_detection_and_stats() {
-        use arrow::array::BooleanArray;
-        use arrow::datatypes::DataType as ArrowDataType;
-
-        // Create a ColumnAnalyzer for a Boolean column
-        let mut analyzer = ColumnAnalyzer::new(&ArrowDataType::Boolean);
-
-        // Construct a BooleanArray with some nulls
-        let array = BooleanArray::from(vec![
-            Some(true),
-            Some(false),
-            Some(true),
-            None,
-            Some(true),
-            Some(false),
-        ]);
-
-        analyzer
-            .process_array(&array)
-            .expect("should process boolean array");
-
-        assert_eq!(analyzer.total_count, 6);
-        assert_eq!(analyzer.null_count, 1);
-        assert_eq!(analyzer.true_count, 3);
-        assert_eq!(analyzer.false_count, 2);
-
-        let profile = analyzer.to_column_profile(
-            "flag".to_string(),
-            false,
-            false,
-            None,
-            &SemanticHints::default(),
-        );
-        assert_eq!(profile.data_type, DataType::Boolean);
-        assert_eq!(profile.total_count, 6);
-        assert_eq!(profile.null_count, 1);
-
-        match &profile.stats {
-            ColumnStats::Boolean(b) => {
-                assert_eq!(b.true_count, 3);
-                assert_eq!(b.false_count, 2);
-                assert!((b.true_ratio - 0.6).abs() < 0.001);
-            }
-            other => panic!("expected Boolean stats, got {:?}", other),
+    fn test_boolean_and_all_null_csv_columns() -> Result<(), DataProfilerError> {
+        let mut csv = NamedTempFile::new()?;
+        writeln!(csv, "flag,all_null")?;
+        for flag in ["true", "false", "TRUE", "", "True", "False"] {
+            writeln!(csv, "{flag},")?;
         }
-    }
+        csv.flush()?;
 
-    #[test]
-    fn test_null_array_profiles_as_all_nulls() {
-        use arrow::array::NullArray;
-        use arrow::datatypes::DataType as ArrowDataType;
+        let report = ArrowProfiler::new()
+            .batch_size(2)
+            .analyze_csv_file(csv.path())?;
+        let flag = &report.column_profiles[0];
+        assert_eq!(flag.data_type, DataType::Boolean);
+        assert_eq!(flag.total_count, 6);
+        assert_eq!(flag.null_count, 1);
+        match &flag.stats {
+            ColumnStats::Boolean(stats) => {
+                assert_eq!(stats.true_count, 3);
+                assert_eq!(stats.false_count, 2);
+                assert!((stats.true_ratio - 0.6).abs() < 0.001);
+            }
+            other => panic!("expected Boolean stats, got {other:?}"),
+        }
 
-        let mut analyzer = ColumnAnalyzer::new(&ArrowDataType::Null);
-        analyzer
-            .process_array(&NullArray::new(5))
-            .expect("should process null array");
-
-        let profile = analyzer.to_column_profile(
-            "all_null".to_string(),
-            false,
-            false,
-            None,
-            &SemanticHints::default(),
-        );
-        assert_eq!(profile.total_count, 5);
-        assert_eq!(profile.null_count, 5);
-        assert_eq!(profile.unique_count, Some(0));
+        let all_null = &report.column_profiles[1];
+        assert_eq!(all_null.total_count, 6);
+        assert_eq!(all_null.null_count, 6);
+        assert_eq!(all_null.unique_count, Some(0));
+        Ok(())
     }
 }

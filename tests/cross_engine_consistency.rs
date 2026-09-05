@@ -26,6 +26,57 @@ fn create_sorted_30k_csv() -> NamedTempFile {
     f
 }
 
+/// The Arrow CSV reader must preserve raw cells and exclude non-finite
+/// numbers before updating its numeric accumulator (#678).
+#[test]
+fn null_and_non_finite_numeric_tokens_match_across_csv_engines() {
+    for (token, null_count) in [
+        ("", 1),
+        ("N/A", 0),
+        ("NaN", 1),
+        ("inf", 0),
+        ("-inf", 0),
+        ("1e400", 0),
+    ] {
+        let mut csv = NamedTempFile::new().unwrap();
+        writeln!(csv, "amount,label").unwrap();
+        for i in 0..10 {
+            writeln!(csv, "{i}.5,row{i}").unwrap();
+        }
+        writeln!(csv, "{token},special").unwrap();
+        csv.flush().unwrap();
+
+        let standard = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
+        let expected = &standard.column_profiles[0];
+        assert_eq!(expected.data_type, DataType::Float, "{token:?}");
+        assert_eq!(expected.total_count, 11, "{token:?}");
+        assert_eq!(expected.null_count, null_count, "{token:?}");
+        assert_eq!(expected.invalid_count, Some(1 - null_count), "{token:?}");
+        let ColumnStats::Numeric(stats) = &expected.stats else {
+            panic!("expected numeric statistics for {token:?}");
+        };
+        assert_eq!(stats.min, 0.5, "{token:?}");
+        assert_eq!(stats.max, 9.5, "{token:?}");
+        assert_eq!(stats.mean, 5.0, "{token:?}");
+
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let report = Profiler::new()
+                .engine(engine)
+                .analyze_file(csv.path())
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&report.column_profiles).unwrap(),
+                serde_json::to_value(&standard.column_profiles).unwrap(),
+                "{engine:?}, token {token:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn test_header_only_csv_columns_match_across_engines_and_serialization() {
     let mut csv = NamedTempFile::new().unwrap();
