@@ -64,6 +64,7 @@ below:
 # Rust. CI pins 1.98; use `cargo +1.98` if your default toolchain differs.
 cargo fmt --all
 cargo clippy --all --all-targets -- -D warnings
+python .github/scripts/check_decode_audit.py
 
 # Python. The paths matter: CI checks the scripts directories too, so a
 # narrower path can pass locally and still fail there.
@@ -108,6 +109,7 @@ Use descriptive branch names:
    ```bash
    uv run ruff check python/dataprof python/tests
    cargo clippy --all --all-targets -- -D warnings
+   python .github/scripts/check_decode_audit.py
    ```
 6. **Build release** (verify no warnings):
    ```bash
@@ -175,6 +177,7 @@ Good first issues in this repository usually mean:
 - [ ] Relevant tests pass
 - [ ] Code is formatted (`cargo fmt --all`)
 - [ ] No linting errors in the area you touched
+- [ ] Decode audit passes (`python .github/scripts/check_decode_audit.py`); see [Decode-path error handling](#decode-path-error-handling)
 - [ ] Added tests for new functionality
 - [ ] Updated documentation if needed
 - [ ] Commit messages are clear and descriptive
@@ -264,6 +267,60 @@ Describe:
 - **Performance**: Consider memory usage for large files and streaming
 - **Compatibility**: Maintain backward compatibility when possible
 
+### Decode-path error handling
+
+Run this check from the repository root before opening a PR:
+
+```bash
+python .github/scripts/check_decode_audit.py
+```
+
+A decode or parse error must not silently become a plausible value such as
+`0`, an empty string, or missing data. That would make the profile describe
+data that was never successfully read. Propagate the error with `?`, adding
+context when useful, so the caller can see what failed.
+
+The [decode-audit checker](../.github/scripts/check_decode_audit.py) guards
+`.ok()`, `.unwrap_or_default()`, and `.unwrap_or(0...)` in a deliberately limited
+set of Rust decode modules, listed in its `AUDITED_PATHS`. These patterns can
+hide failures, but some uses handle expected absence or proven invariants.
+For those uses, explain the case with this exact comment form on the same line
+or within the **10 preceding lines**:
+
+```rust
+// decode-audit: <classification> — <reason>
+```
+
+| Classification | When it applies |
+| --- | --- |
+| `impossible` | An established invariant proves the error cannot occur. State that invariant; prefer `expect("reason")` when an error would mean it was violated. |
+| `no-data` | Absence is an expected part of the operation, not a decode failure. Explain why the fallback represents that absence correctly. |
+| `unknown` | A failure is surfaced through an error or explicit diagnostic, and the unavailable result stays unknown. Explain where the failure is surfaced; logging it does not justify reporting a fabricated value. |
+
+For example, an empty delimiter-detection sample has no evidence for a
+candidate. A classified fallback over counts from already-read records is
+acceptable:
+
+```rust
+// decode-audit: no-data — no sampled records means zero delimiter evidence.
+let evidence = candidate_counts.into_iter().max().unwrap_or(0);
+```
+
+By contrast, `std::str::from_utf8(bytes).unwrap_or_default()` would turn corrupt
+text into an empty value. This decode must propagate its error:
+
+```rust
+let text = std::str::from_utf8(bytes)?;
+```
+
+A classification comment explains why the code is correct; it does not make
+swallowing a decode error acceptable. The checker is a textual guard, so code
+review must still verify the reason. On failure, it prints each offending
+`file:line` and the matched source line. Fix the error handling or document a
+justified classification, then rerun the check. See
+[#364](https://github.com/AndreaBozzo/dataprof/issues/364) for the original
+rationale.
+
 ### Testing Standards
 
 - **Unit tests**: Test individual functions and modules
@@ -318,6 +375,7 @@ cargo test -p dataprof-python
 # Run lint checks
 uv run ruff check python/dataprof python/tests
 cargo clippy --all --all-targets -- -D warnings
+python .github/scripts/check_decode_audit.py
 
 # Run benchmarks
 cargo bench

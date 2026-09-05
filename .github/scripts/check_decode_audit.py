@@ -8,8 +8,9 @@ line or within the preceding lines, naming the case it falls into:
 - ``no-data``    — the absent value genuinely means "no data", not an error
 - ``unknown``    — the failure is surfaced (logged/propagated), never a default
 
-A new unclassified instance in these modules fails CI. See AGENTS.md
-("Error handling") and issue #364 for the rationale.
+A new unclassified instance in these modules fails CI. See
+docs/CONTRIBUTING.md#decode-path-error-handling for examples and issue #364
+for the rationale.
 """
 
 from __future__ import annotations
@@ -76,8 +77,13 @@ def main() -> int:
         print(
             "Unclassified error-swallowing pattern(s) on audited decode paths.\n"
             "Each .ok() / .unwrap_or_default() / .unwrap_or(0...) here must have\n"
-            f"a `{AUDIT_TAG}` comment within the {TAG_WINDOW} lines above it\n"
-            "(cases: impossible | no-data | unknown — see issue #364).\n",
+            f"a `// {AUDIT_TAG} <classification> — <reason>` comment on the same\n"
+            f"line or within the {TAG_WINDOW} preceding lines.\n"
+            "Classifications: impossible | no-data | unknown.\n"
+            "Guidance and examples:\n"
+            "https://github.com/AndreaBozzo/dataprof/blob/master/docs/CONTRIBUTING.md"
+            "#decode-path-error-handling\n"
+            "Rationale: https://github.com/AndreaBozzo/dataprof/issues/364\n",
             file=sys.stderr,
         )
         for violation in violations:
