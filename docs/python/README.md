@@ -109,6 +109,14 @@ dp.profile(
 ) -> ProfileReport
 ```
 
+For file profiling, `engine` accepts the case-insensitive names `auto`,
+`incremental` (compatibility alias: `streaming`), and `columnar` (compatibility
+alias: `arrow`). This applies to `dp.profile(..., engine=...)`,
+`dp.profile_file(..., engine=...)`, and `dp.Profiler().engine(...).profile(...)`.
+CSV reports use the selected canonical name, `incremental` or `columnar`, in
+`report.engine` and `report.to_dict()["execution"]["engine"]`; aliases are never
+emitted, and `auto` reports the engine it selected.
+
 **Source types:**
 
 | Type | Description |

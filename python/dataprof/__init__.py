@@ -1187,7 +1187,10 @@ def profile_file(
 
     Args:
         path: File path to profile.
-        engine: Engine to use ("auto", "incremental", "columnar").
+        engine: File profiling engine ("auto", "incremental", "columnar").
+            "streaming" aliases "incremental"; "arrow" aliases "columnar".
+            Names are case-insensitive. CSV execution metadata reports the
+            selected canonical engine ("incremental" or "columnar").
         chunk_size: Bytes to read per streaming chunk (None = adaptive).
             Bounds the working set and the granularity at which progress
             and stop conditions are evaluated; it never changes the
@@ -1316,7 +1319,10 @@ def profile(
 
     Args:
         source: Data source to profile.
-        engine: Engine to use ("auto", "incremental", "columnar").
+        engine: File profiling engine ("auto", "incremental", "columnar").
+            "streaming" aliases "incremental"; "arrow" aliases "columnar".
+            Names are case-insensitive. CSV execution metadata reports the
+            selected canonical engine ("incremental" or "columnar").
         chunk_size: Bytes to read per streaming chunk (None = adaptive).
             Bounds the working set and the granularity at which progress
             and stop conditions are evaluated; it never changes the
@@ -1666,7 +1672,12 @@ class Profiler:
         self._kwargs: dict[str, _Any] = {}
 
     def engine(self, engine: str) -> Profiler:
-        """Set profiling engine ("auto", "incremental", "columnar")."""
+        """Set file profiling engine ("auto", "incremental", "columnar").
+
+        "streaming" aliases "incremental"; "arrow" aliases "columnar".
+        Names are case-insensitive. CSV execution metadata reports the selected
+        canonical engine ("incremental" or "columnar").
+        """
         self._kwargs["engine"] = engine
         return self
 

@@ -1663,9 +1663,40 @@ class TestProfilerConfig:
         assert cfg.chunk_size is None
         assert cfg.max_rows is None
 
-    def test_engine_override(self):
-        cfg = dataprof.ProfilerConfig(engine="incremental")
-        assert cfg.engine == "incremental"
+    @pytest.mark.parametrize(
+        ("engine", "canonical"),
+        [
+            ("auto", "auto"),
+            ("incremental", "incremental"),
+            ("streaming", "incremental"),
+            ("columnar", "columnar"),
+            ("arrow", "columnar"),
+        ],
+    )
+    def test_engine_override(self, engine, canonical):
+        for spelling in (engine, engine.upper()):
+            cfg = dataprof.ProfilerConfig(engine=spelling)
+            assert cfg.engine == canonical
+
+    @pytest.mark.parametrize("entry_point", ["profile", "profile_file", "builder"])
+    @pytest.mark.parametrize("engine", ["auto", "incremental", "streaming", "columnar", "arrow"])
+    @pytest.mark.parametrize("uppercase", [False, True], ids=["lowercase", "uppercase"])
+    def test_engine_spellings_profile_csv(self, tmp_path, entry_point, engine, uppercase):
+        path = tmp_path / "values.csv"
+        path.write_text("value\n1\n2\n3\n", encoding="utf-8")
+        spelling = engine.upper() if uppercase else engine
+        if entry_point == "builder":
+            report = dataprof.Profiler().engine(spelling).profile(path)
+        else:
+            report = getattr(dataprof, entry_point)(path, engine=spelling)
+
+        assert report.rows == 3
+        canonical = {"streaming": "incremental", "arrow": "columnar"}.get(engine, engine)
+        if canonical == "auto":
+            assert report.engine in {"incremental", "columnar"}
+        else:
+            assert report.engine == canonical
+        assert report.to_dict()["execution"]["engine"] == report.engine
 
     def test_semantic_hint_config(self):
         cfg = dataprof.ProfilerConfig(
@@ -1728,9 +1759,21 @@ class TestProfilerConfig:
         r = dataprof.profile(CSV_FILE, format="csv")
         assert r.rows > 0
 
-    def test_invalid_engine_raises(self):
-        with pytest.raises(ValueError):
-            dataprof.ProfilerConfig(engine="invalid")
+    @pytest.mark.parametrize("entry_point", ["config", "profile", "profile_file", "builder"])
+    def test_invalid_engine_raises(self, tmp_path, entry_point):
+        path = tmp_path / "values.csv"
+        path.write_text("value\n1\n", encoding="utf-8")
+        with pytest.raises(ValueError) as excinfo:
+            if entry_point == "config":
+                dataprof.ProfilerConfig(engine="invalid")
+            elif entry_point == "builder":
+                dataprof.Profiler().engine("invalid").profile(path)
+            else:
+                getattr(dataprof, entry_point)(path, engine="invalid")
+        assert str(excinfo.value) == (
+            "Unknown engine 'invalid'. Valid: auto, incremental (alias: streaming), "
+            "columnar (alias: arrow)"
+        )
 
     def test_max_rows_and_stop_condition_conflict(self):
         with pytest.raises(ValueError, match="Cannot specify both"):
