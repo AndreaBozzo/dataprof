@@ -34,6 +34,17 @@
 
 use serde::Serializer;
 
+fn round_finite(value: f64, scale: f64) -> f64 {
+    let scaled = value * scale;
+    if scaled.is_finite() {
+        scaled.round() / scale
+    } else {
+        // At this magnitude every representable value is already integral.
+        // Scaling must not turn a finite statistic into a serialized null.
+        value
+    }
+}
+
 /// Round f64 to 2 decimal places (for `0..100` percentages).
 /// Returns null for NaN or infinite values.
 pub fn round_2<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
@@ -43,7 +54,7 @@ where
     if !value.is_finite() {
         return serializer.serialize_none();
     }
-    serializer.serialize_f64((value * 100.0).round() / 100.0)
+    serializer.serialize_f64(round_finite(*value, 100.0))
 }
 
 /// Round f64 to 4 decimal places (statistics, data values, and `0..1` ratios).
@@ -55,7 +66,7 @@ where
     if !value.is_finite() {
         return serializer.serialize_none();
     }
-    serializer.serialize_f64((value * 10000.0).round() / 10000.0)
+    serializer.serialize_f64(round_finite(*value, 10000.0))
 }
 
 /// Round `Option<f64>` to 2 decimal places (for `0..100` percentages).
@@ -66,7 +77,7 @@ where
 {
     match value {
         Some(v) if v.is_finite() => {
-            let rounded = (v * 100.0).round() / 100.0;
+            let rounded = round_finite(*v, 100.0);
             serializer.serialize_some(&rounded)
         }
         _ => serializer.serialize_none(),
@@ -81,7 +92,7 @@ where
 {
     match value {
         Some(v) if v.is_finite() => {
-            let rounded = (v * 10000.0).round() / 10000.0;
+            let rounded = round_finite(*v, 10000.0);
             serializer.serialize_some(&rounded)
         }
         _ => serializer.serialize_none(),
@@ -188,6 +199,29 @@ mod tests {
 
         assert_eq!(round_2_json, json!({ "value": null }));
         assert_eq!(round_4_json, json!({ "value": null }));
+    }
+
+    #[test]
+    fn rounding_preserves_large_finite_values() {
+        for value in [f64::MAX, -f64::MAX, 1e308, -1e308] {
+            let expected = json!({ "value": value });
+            assert_eq!(
+                serde_json::to_value(Round2Value { value }).unwrap(),
+                expected
+            );
+            assert_eq!(
+                serde_json::to_value(Round4Value { value }).unwrap(),
+                expected
+            );
+            assert_eq!(
+                serde_json::to_value(Round2OptValue { value: Some(value) }).unwrap(),
+                expected
+            );
+            assert_eq!(
+                serde_json::to_value(Round4OptValue { value: Some(value) }).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -314,9 +314,10 @@ def test_async_json_row_cap_keeps_partial_byte_accounting(fmt, data):
 
 
 @requires_async
-def test_async_bytes_reject_columnar_engine():
+@pytest.mark.parametrize("engine", ["columnar", "COLUMNAR", "arrow", "ARROW"])
+def test_async_bytes_reject_columnar_engine(engine):
     with pytest.raises(ValueError, match="columnar"):
-        _async_bytes(_csv_bytes(3), engine="columnar")
+        _async_bytes(_csv_bytes(3), engine=engine)
 
 
 @requires_async

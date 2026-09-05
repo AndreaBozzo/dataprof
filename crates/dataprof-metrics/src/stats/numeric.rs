@@ -144,7 +144,7 @@ pub fn calculate_median(sorted_data: &[f64]) -> Option<f64> {
         // Even number of elements - average of two middle values
         let mid1 = sorted_data[len / 2 - 1];
         let mid2 = sorted_data[len / 2];
-        Some((mid1 + mid2) / 2.0)
+        Some(mid1.midpoint(mid2))
     } else {
         // Odd number of elements - middle value
         Some(sorted_data[len / 2])
@@ -198,11 +198,15 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
         return None;
     }
 
-    let mut freq_map: HashMap<String, usize> = HashMap::new();
+    let mut freq_map: HashMap<u64, usize> = HashMap::new();
 
-    // Use string representation to handle floating point comparison
+    // Count the actual values, without rounding distinct small numbers into
+    // the same bucket. Signed zeros compare equal numerically.
     for &value in data {
-        let key = format!("{:.10}", value); // 10 decimal precision
+        if !value.is_finite() {
+            continue;
+        }
+        let key = if value == 0.0 { 0 } else { value.to_bits() };
         *freq_map.entry(key).or_insert(0) += 1;
     }
 
@@ -215,15 +219,11 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
     }
 
     // Find all values with maximum frequency and return the smallest (deterministic)
-    // decode-audit: no-data — non-numeric tokens are excluded from the mode by
-    // design, same as the main numeric pass above.
-    let mut modes: Vec<f64> = freq_map
+    freq_map
         .iter()
         .filter(|(_, count)| **count == max_freq)
-        .filter_map(|(value, _)| value.parse::<f64>().ok())
-        .collect();
-    modes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    modes.first().copied()
+        .map(|(&bits, _)| f64::from_bits(bits))
+        .min_by(f64::total_cmp)
 }
 
 /// Calculate coefficient of variation (CV)
@@ -318,6 +318,14 @@ mod tests {
     }
 
     #[test]
+    fn median_preserves_finite_extremes_and_subnormals() {
+        assert_eq!(calculate_median(&[f64::MAX, f64::MAX]), Some(f64::MAX));
+        assert_eq!(calculate_median(&[-f64::MAX, f64::MAX]), Some(0.0));
+        let smallest = f64::from_bits(1);
+        assert_eq!(calculate_median(&[smallest, smallest]), Some(smallest));
+    }
+
+    #[test]
     fn test_quartiles() {
         let sorted = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let q = calculate_quartiles(&sorted).unwrap();
@@ -349,6 +357,15 @@ mod tests {
     fn test_mode_empty() {
         let data: Vec<f64> = vec![];
         assert_eq!(calculate_mode(&data), None);
+    }
+
+    #[test]
+    fn mode_counts_exact_values_and_breaks_ties_numerically() {
+        assert_eq!(calculate_mode(&[1e-12, 2e-12, 3e-12]), None);
+        assert_eq!(calculate_mode(&[1e-12, 1e-12, 2e-12]), Some(1e-12));
+        assert_eq!(calculate_mode(&[-0.0, 0.0, 1.0, 1.0]), Some(0.0));
+        assert_eq!(calculate_mode(&[2.0, -3.0, 2.0, -3.0]), Some(-3.0));
+        assert_eq!(calculate_mode(&[f64::NAN, f64::INFINITY]), None);
     }
 
     #[test]

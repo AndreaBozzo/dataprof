@@ -83,12 +83,12 @@ async def profile_bytes(
         ProfileReport with analysis results.
     """
     _check_async()
-    if kwargs.get("engine") == "columnar":
+    config = _ProfilerConfig(**kwargs) if kwargs else None
+    if config is not None and config.engine == "columnar":
         raise ValueError(
             "engine='columnar' is not available for async bytes input; "
             "use engine='auto' or 'incremental'."
         )
-    config = _ProfilerConfig(**kwargs) if kwargs else None
     rust_report = await _profile_bytes_async(data, format, config)
     return _ProfileReport(rust_report)
 

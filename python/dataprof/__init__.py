@@ -484,9 +484,11 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
             delimiter = _csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
         except _csv.Error:
             delimiter = ","
-    reader = _csv.reader(_io.StringIO(text), delimiter=delimiter)
+    reader = _csv.reader(_io.StringIO(text, newline=""), delimiter=delimiter)
     try:
-        header = next(reader)
+        # Rust's CSV readers ignore blank physical records, including those
+        # before the header. A quoted empty field is still a real record.
+        header = next(row for row in reader if row)
     except StopIteration:
         return []
 
@@ -508,10 +510,12 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
         )
 
     cells: list[list[str | None]] = [[] for _ in header]
-    for row_num, row in enumerate(reader, start=2):
+    for row in reader:
+        if not row:
+            continue
         if len(row) != len(header):
             raise ValueError(
-                f"csv bytes: row {row_num} has {len(row)} fields, "
+                f"csv bytes: row {reader.line_num} has {len(row)} fields, "
                 f"expected {len(header)}. Write the data to a file to use "
                 f"the flexible CSV engine (csv_flexible=True)."
             )
