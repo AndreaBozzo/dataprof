@@ -68,112 +68,6 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
     stats
 }
 
-/// Fast parallel sum using SIMD
-pub fn sum_simd(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-
-    let chunk_size = 4;
-    let chunks = values.chunks_exact(chunk_size);
-    let remainder = chunks.remainder();
-
-    let mut sum_vec = f64x4::splat(0.0);
-
-    for chunk in chunks {
-        let vec = f64x4::new([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        sum_vec += vec;
-    }
-
-    let sum_array: [f64; 4] = sum_vec.to_array();
-    let mut total = sum_array[0] + sum_array[1] + sum_array[2] + sum_array[3];
-
-    // Add remainder
-    for &value in remainder {
-        total += value;
-    }
-
-    total
-}
-
-/// Fast min/max finding using SIMD
-pub fn min_max_simd(values: &[f64]) -> (f64, f64) {
-    if values.is_empty() {
-        return (0.0, 0.0);
-    }
-
-    if values.len() == 1 {
-        return (values[0], values[0]);
-    }
-
-    let chunk_size = 4;
-    let chunks = values.chunks_exact(chunk_size);
-    let remainder = chunks.remainder();
-
-    let mut min_vec = f64x4::splat(f64::INFINITY);
-    let mut max_vec = f64x4::splat(f64::NEG_INFINITY);
-
-    for chunk in chunks {
-        let vec = f64x4::new([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        min_vec = min_vec.min(vec);
-        max_vec = max_vec.max(vec);
-    }
-
-    let min_array: [f64; 4] = min_vec.to_array();
-    let max_array: [f64; 4] = max_vec.to_array();
-
-    let mut min_val = min_array[0]
-        .min(min_array[1])
-        .min(min_array[2])
-        .min(min_array[3]);
-    let mut max_val = max_array[0]
-        .max(max_array[1])
-        .max(max_array[2])
-        .max(max_array[3]);
-
-    // Process remainder
-    for &value in remainder {
-        min_val = min_val.min(value);
-        max_val = max_val.max(value);
-    }
-
-    (min_val, max_val)
-}
-
-/// SIMD-accelerated dot product (useful for correlation computations)
-pub fn dot_product_simd(a: &[f64], b: &[f64]) -> f64 {
-    assert_eq!(a.len(), b.len());
-
-    if a.is_empty() {
-        return 0.0;
-    }
-
-    let chunk_size = 4;
-    let chunks_a = a.chunks_exact(chunk_size);
-    let chunks_b = b.chunks_exact(chunk_size);
-    let remainder_a = chunks_a.remainder();
-    let remainder_b = chunks_b.remainder();
-
-    let mut dot_vec = f64x4::splat(0.0);
-
-    for (chunk_a, chunk_b) in chunks_a.zip(chunks_b) {
-        let vec_a = f64x4::new([chunk_a[0], chunk_a[1], chunk_a[2], chunk_a[3]]);
-        let vec_b = f64x4::new([chunk_b[0], chunk_b[1], chunk_b[2], chunk_b[3]]);
-
-        dot_vec += vec_a * vec_b;
-    }
-
-    let dot_array: [f64; 4] = dot_vec.to_array();
-    let mut result = dot_array[0] + dot_array[1] + dot_array[2] + dot_array[3];
-
-    // Process remainder
-    for (&val_a, &val_b) in remainder_a.iter().zip(remainder_b.iter()) {
-        result += val_a * val_b;
-    }
-
-    result
-}
-
 /// Check if SIMD is beneficial for the given data size
 pub fn should_use_simd(data_size: usize) -> bool {
     // SIMD is beneficial for larger datasets due to setup overhead
@@ -249,25 +143,6 @@ mod tests {
         let stats = compute_stats_simd(&cancelling);
         assert_eq!(stats.count(), 101);
         assert!((stats.mean() - 1.0 / 101.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn test_min_max_simd() {
-        let values = vec![3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0];
-        let (min, max) = min_max_simd(&values);
-
-        assert_eq!(min, 1.0);
-        assert_eq!(max, 9.0);
-    }
-
-    #[test]
-    fn test_dot_product_simd() {
-        let a = vec![1.0, 2.0, 3.0, 4.0];
-        let b = vec![5.0, 6.0, 7.0, 8.0];
-        let dot = dot_product_simd(&a, &b);
-
-        // 1*5 + 2*6 + 3*7 + 4*8 = 5 + 12 + 21 + 32 = 70
-        assert!((dot - 70.0).abs() < 1e-10);
     }
 
     #[test]
