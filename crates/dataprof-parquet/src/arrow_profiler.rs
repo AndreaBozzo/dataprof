@@ -906,6 +906,42 @@ mod tests {
     }
 
     #[test]
+    fn test_typed_array_is_rejected_without_changing_column_state() -> Result<(), DataProfilerError>
+    {
+        let mut analyzer = ColumnAnalyzer::new();
+        let typed = arrow::array::Float64Array::from(vec![Some(42.0), None, Some(f64::NAN)]);
+        let error = analyzer
+            .process_array(&typed)
+            .expect_err("the CSV analyzer must reject typed input");
+        assert!(
+            error
+                .to_string()
+                .contains("Arrow CSV profiler expected a Utf8 array, got Float64"),
+            "{error}"
+        );
+
+        // Rejection must happen before any counters or accumulators change.
+        analyzer.process_array(&StringArray::from(vec!["1", "2"]))?;
+        let profile = analyzer.to_column_profile(
+            "value".to_string(),
+            false,
+            false,
+            None,
+            &SemanticHints::default(),
+        );
+        assert_eq!(profile.total_count, 2);
+        assert_eq!(profile.null_count, 0);
+        assert_eq!(profile.unique_count, Some(2));
+        let ColumnStats::Numeric(stats) = profile.stats else {
+            panic!("expected numeric statistics from the subsequent UTF-8 input");
+        };
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 2.0);
+        assert_eq!(stats.mean, 1.5);
+        Ok(())
+    }
+
+    #[test]
     fn test_boolean_and_all_null_csv_columns() -> Result<(), DataProfilerError> {
         let mut csv = NamedTempFile::new()?;
         writeln!(csv, "flag,all_null")?;
