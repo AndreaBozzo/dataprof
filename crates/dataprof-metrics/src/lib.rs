@@ -18,6 +18,6 @@ pub use quality::{
     TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
 pub use stats::{
-    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, calculate_datetime_stats,
-    calculate_numeric_stats, calculate_text_stats,
+    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, NumericAccumulator,
+    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats,
 };

@@ -7,109 +7,20 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, HyperLogLog, RowCompletenessSummary, RowDuplicateSummary,
-    value_matches_hint,
+    CardinalityEstimator, HyperLogLog, NumericAccumulator, RowCompletenessSummary,
+    RowDuplicateSummary, value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
 ///
 /// This module provides bounded-memory statistical computation using:
-/// - **Welford's algorithm** for numerically stable variance/stddev (O(1) memory)
+/// - **[`NumericAccumulator`]** for numerically stable mean/variance/stddev
+///   (O(1) memory), shared with the batch paths so every engine reports the
+///   same numbers
 /// - **HyperLogLog** for approximate distinct counts (~16 KB fixed registers)
 /// - **Reservoir sampling** for unbiased samples (fixed capacity; total memory
 ///   depends on the capacity and the length of sampled strings)
 /// - **Streaming text-length tracking** with min/max/mean/histogram (O(1) memory)
-
-#[derive(Debug, Clone)]
-pub struct WelfordAccumulator {
-    count: u64,
-    mean: f64,
-    m2: f64,
-}
-
-impl WelfordAccumulator {
-    pub fn new() -> Self {
-        Self {
-            count: 0,
-            mean: 0.0,
-            m2: 0.0,
-        }
-    }
-
-    #[inline]
-    pub fn update(&mut self, value: f64) {
-        self.count += 1;
-        let delta = value - self.mean;
-        self.mean += delta / self.count as f64;
-        let delta2 = value - self.mean;
-        self.m2 += delta * delta2;
-    }
-
-    #[inline]
-    pub fn mean(&self) -> f64 {
-        if self.count == 0 { 0.0 } else { self.mean }
-    }
-
-    /// Number of values folded into this accumulator.
-    #[inline]
-    pub fn count(&self) -> u64 {
-        self.count
-    }
-
-    pub fn variance(&self) -> f64 {
-        if self.count < 2 {
-            0.0
-        } else {
-            self.m2 / self.count as f64
-        }
-    }
-
-    pub fn std_dev(&self) -> f64 {
-        self.variance().sqrt()
-    }
-
-    /// Unbiased sample variance (n-1 denominator), matching the convention of
-    /// the batch numeric stats in `dataprof-metrics`.
-    pub fn sample_variance(&self) -> f64 {
-        if self.count < 2 {
-            0.0
-        } else {
-            (self.m2 / (self.count - 1) as f64).max(0.0)
-        }
-    }
-
-    /// Standard deviation derived from [`Self::sample_variance`].
-    pub fn sample_std_dev(&self) -> f64 {
-        self.sample_variance().sqrt()
-    }
-
-    pub fn merge(&mut self, other: &WelfordAccumulator) {
-        if other.count == 0 {
-            return;
-        }
-        if self.count == 0 {
-            *self = other.clone();
-            return;
-        }
-
-        let combined_count = self.count + other.count;
-        let delta = other.mean - self.mean;
-        let new_mean = self.mean + delta * (other.count as f64 / combined_count as f64);
-        let new_m2 = self.m2
-            + other.m2
-            + delta * delta * (self.count as f64 * other.count as f64 / combined_count as f64);
-
-        self.count = combined_count;
-        self.mean = new_mean;
-        self.m2 = new_m2;
-    }
-}
-
-impl Default for WelfordAccumulator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct StreamReservoirSampler {
@@ -258,7 +169,7 @@ pub struct TextLengthStats {
     pub min_length: usize,
     pub max_length: usize,
     pub avg_length: f64,
-    welford: WelfordAccumulator,
+    welford: NumericAccumulator,
     histogram: [u64; 32],
 }
 
@@ -268,7 +179,7 @@ impl TextLengthStats {
             min_length: usize::MAX,
             max_length: 0,
             avg_length: 0.0,
-            welford: WelfordAccumulator::new(),
+            welford: NumericAccumulator::new(),
             histogram: [0u64; 32],
         }
     }
@@ -288,10 +199,10 @@ impl TextLengthStats {
     }
 
     pub fn merge(&mut self, other: &TextLengthStats) {
-        if other.welford.count == 0 {
+        if other.welford.count() == 0 {
             return;
         }
-        if self.welford.count == 0 {
+        if self.welford.count() == 0 {
             *self = other.clone();
             return;
         }
@@ -311,7 +222,7 @@ impl TextLengthStats {
             min_length: 0,
             max_length: 0,
             avg_length: 0.0,
-            welford: WelfordAccumulator::new(),
+            welford: NumericAccumulator::new(),
             histogram: [0u64; 32],
         }
     }
@@ -329,7 +240,7 @@ pub struct StreamingStatistics {
     pub null_count: usize,
     pub min: f64,
     pub max: f64,
-    welford: WelfordAccumulator,
+    welford: NumericAccumulator,
     hll: HyperLogLog,
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
@@ -343,7 +254,7 @@ impl StreamingStatistics {
             null_count: 0,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
-            welford: WelfordAccumulator::new(),
+            welford: NumericAccumulator::new(),
             hll: HyperLogLog::new(),
             sampler: StreamReservoirSampler::new(10_000),
             text_length_tracker: TextLengthStats::new(),
@@ -409,11 +320,11 @@ impl StreamingStatistics {
     }
 
     pub fn variance(&self) -> f64 {
-        self.welford.variance()
+        self.welford.population_variance()
     }
 
     pub fn std_dev(&self) -> f64 {
-        self.welford.std_dev()
+        self.welford.population_std_dev()
     }
 
     pub fn unique_count(&self) -> usize {
@@ -460,7 +371,7 @@ impl StreamingStatistics {
     }
 
     pub fn text_length_stats(&self) -> TextLengthStats {
-        if self.text_length_tracker.welford.count == 0 {
+        if self.text_length_tracker.welford.count() == 0 {
             return TextLengthStats::empty();
         }
         self.text_length_tracker.clone()
@@ -1561,21 +1472,21 @@ mod tests {
 
     #[test]
     fn test_welford_accuracy() {
-        let mut accumulator = WelfordAccumulator::new();
+        let mut accumulator = NumericAccumulator::new();
         for value in 1..=1000 {
             accumulator.update(value as f64);
         }
         let expected_mean = 500.5;
         let expected_variance = (1000.0 * 1000.0 - 1.0) / 12.0;
         assert!((accumulator.mean() - expected_mean).abs() < 1e-6);
-        assert!((accumulator.variance() - expected_variance).abs() < 1.0);
+        assert!((accumulator.population_variance() - expected_variance).abs() < 1.0);
     }
 
     #[test]
     fn test_welford_merge() {
-        let mut left = WelfordAccumulator::new();
-        let mut right = WelfordAccumulator::new();
-        let mut full = WelfordAccumulator::new();
+        let mut left = NumericAccumulator::new();
+        let mut right = NumericAccumulator::new();
+        let mut full = NumericAccumulator::new();
 
         for value in 1..=500 {
             left.update(value as f64);
@@ -1588,7 +1499,7 @@ mod tests {
 
         left.merge(&right);
         assert!((left.mean() - full.mean()).abs() < 1e-10);
-        assert!((left.variance() - full.variance()).abs() < 1e-6);
+        assert!((left.population_variance() - full.population_variance()).abs() < 1e-6);
     }
 
     #[test]

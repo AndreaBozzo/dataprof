@@ -30,34 +30,16 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
         return (NumericStats::empty(), 0);
     }
 
-    // Single SIMD-accelerated pass for base statistics (min, max, sum, sum_squares)
-    // Automatically falls back to scalar for small datasets (<64 elements)
+    // Single stable pass for the base statistics. `NumericAccumulator` carries
+    // Welford's mean and M2 alongside a compensated sum, so the variance of a
+    // small spread on a large offset survives and the mean survives both
+    // cancellation and an overflowing sum.
     let base = compute_stats_auto(&numbers);
-    let min = base.min;
-    let max = base.max;
+    let min = base.min().expect("accumulator covers a non-empty column");
+    let max = base.max().expect("accumulator covers a non-empty column");
     let mean = base.mean();
-    let mut variance = calculate_variance(base.sum_squares, base.sum, numbers.len());
-
-    // Fallback if variance is invalid or sum_squares overflowed
-    // Tiny negative variances can happen due to floating point catastrophic cancellation
-    if (!variance.is_finite() || variance < 0.0 || base.sum_squares.is_infinite())
-        && numbers.len() > 1
-    {
-        let mut welford_mean = 0.0;
-        let mut welford_m2 = 0.0;
-        for (i, &x) in numbers.iter().enumerate() {
-            let n = (i + 1) as f64;
-            let delta = x - welford_mean;
-            welford_mean += delta / n;
-            let delta2 = x - welford_mean;
-            welford_m2 += delta * delta2;
-        }
-        variance = welford_m2 / (numbers.len() - 1) as f64;
-    }
-
-    // Ensure variance doesn't become slightly negative before taking sqrt
-    let safe_variance = variance.max(0.0);
-    let std_dev = safe_variance.sqrt();
+    let variance = base.sample_variance();
+    let std_dev = base.sample_std_dev();
 
     // Determine if we need sampling for large datasets
     let (sample_data, is_approximate) = if numbers.len() > SAMPLE_THRESHOLD {
@@ -118,18 +100,6 @@ fn count_outliers_iqr(
     let lower = q.q1 - 1.5 * q.iqr;
     let upper = q.q3 + 1.5 * q.iqr;
     Some(values.iter().filter(|&&v| v < lower || v > upper).count())
-}
-
-/// Calculate variance using sum of squares
-/// Uses sample variance (n-1) for unbiased estimation
-pub fn calculate_variance(sum_squares: f64, sum: f64, count: usize) -> f64 {
-    let n = count as f64;
-    if n <= 1.0 {
-        return 0.0;
-    }
-
-    let mean = sum / n;
-    (sum_squares - n * mean * mean) / (n - 1.0)
 }
 
 /// Calculate median from sorted data
@@ -398,14 +368,58 @@ mod tests {
         assert!(kurt.is_some());
     }
 
+    /// The batch path is what an in-memory source (a dict, a DataFrame) is
+    /// profiled with. No engine supplies exact stream aggregates to override
+    /// these numbers there, so this is the whole answer (#670, #671).
     #[test]
-    fn test_variance() {
-        let sum_squares = 55.0; // 1² + 2² + 3² + 4² + 5²
-        let sum = 15.0; // 1 + 2 + 3 + 4 + 5
-        let count = 5;
-        let var = calculate_variance(sum_squares, sum, count);
-        // Sample variance (n-1): 2.5
-        assert!((var - 2.5).abs() < 0.01);
+    fn batch_stats_are_numerically_stable() {
+        fn column(values: &[f64]) -> NumericStats {
+            let cells: Vec<String> = values.iter().map(|value| value.to_string()).collect();
+            compute_numeric_stats(&cells)
+        }
+
+        // A small spread on a large offset: `sum_squares - n * mean²` cancels
+        // it away entirely, reporting a varying column as constant.
+        for base in [1e6, 1e8, 1e9, 1e12] {
+            let stats = column(&[base, base + 1.0, base + 2.0, base + 3.0]);
+            // Equality, not a tolerance: four values accumulate to the
+            // correctly rounded answer at every offset here.
+            assert_eq!(stats.variance, 5.0 / 3.0, "offset {base}");
+            assert_eq!(stats.std_dev, (5.0f64 / 3.0).sqrt(), "offset {base}");
+            assert_eq!(stats.mean, base + 1.5, "offset {base}");
+        }
+
+        // Past the SIMD threshold, where the lanes accumulate independently.
+        let many: Vec<f64> = (0..500).map(|i| 1e9 + (i % 4) as f64).collect();
+        let expected_variance = (0..4)
+            .map(|i| 125.0 * (i as f64 - 1.5).powi(2))
+            .sum::<f64>()
+            / (many.len() as f64 - 1.0);
+        let stats = column(&many);
+        assert!(
+            (stats.variance - expected_variance).abs() < 1e-6,
+            "500 values reported variance {}",
+            stats.variance
+        );
+
+        // Large values that cancel: the unit contribution is the whole mean.
+        for values in [[1e16, 1.0, -1e16], [1e16, -1e16, 1.0]] {
+            let stats = column(&values);
+            assert!(
+                (stats.mean - 1.0 / 3.0).abs() < 1e-9,
+                "{values:?} reported mean {}",
+                stats.mean
+            );
+        }
+
+        // A representable mean whose naive sum is not representable.
+        assert_eq!(column(&[1e308, 1e308]).mean, 1e308);
+
+        // And a genuinely constant column still reports no spread at all.
+        let constant = column(&[1e9; 4]);
+        assert_eq!(constant.variance, 0.0);
+        assert_eq!(constant.std_dev, 0.0);
+        assert_eq!(constant.mean, 1e9);
     }
 
     #[test]
