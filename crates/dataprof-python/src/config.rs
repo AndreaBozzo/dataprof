@@ -364,7 +364,7 @@ fn parse_engine(s: &str) -> PyResult<EngineType> {
         "incremental" | "streaming" => Ok(EngineType::Incremental),
         "columnar" | "arrow" => Ok(EngineType::Columnar),
         _ => Err(PyValueError::new_err(format!(
-            "Unknown engine '{}'. Valid: auto, incremental, columnar",
+            "Unknown engine '{}'. Valid: auto, incremental (alias: streaming), columnar (alias: arrow)",
             s
         ))),
     }
