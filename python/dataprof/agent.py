@@ -23,6 +23,7 @@ is safe to hand back to a model verbatim.
 
 from __future__ import annotations as _annotations
 
+import math as _math
 import os as _os
 import pathlib as _pathlib
 import threading as _threading
@@ -169,8 +170,8 @@ class SandboxPolicy:
         ):
             if value <= 0:
                 raise ValueError(f"{name} must be positive, got {value}")
-        if timeout_seconds <= 0:
-            raise ValueError(f"timeout_seconds must be positive, got {timeout_seconds}")
+        if not _math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError(f"timeout_seconds must be positive and finite, got {timeout_seconds}")
 
         object.__setattr__(self, "roots", _coerce_roots(roots))
         object.__setattr__(self, "max_file_bytes", max_file_bytes)

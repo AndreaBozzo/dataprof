@@ -64,6 +64,12 @@ def test_policy_requires_a_root() -> None:
         SandboxPolicy(roots=[])
 
 
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf")])
+def test_policy_rejects_nonfinite_timeout(sandbox: Path, timeout: float) -> None:
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        SandboxPolicy(roots=sandbox, timeout_seconds=timeout)
+
+
 def test_policy_rejects_a_root_that_is_not_a_directory(sandbox: Path) -> None:
     with pytest.raises(ValueError, match="not an existing directory"):
         SandboxPolicy(roots=sandbox / "data.csv")
