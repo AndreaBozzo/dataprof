@@ -141,11 +141,6 @@ impl NumericAccumulator {
         self.count
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
     /// Smallest value seen, or `None` when nothing was accumulated.
     #[inline]
     pub fn min(&self) -> Option<f64> {
@@ -223,7 +218,6 @@ mod tests {
     fn empty_accumulator_reports_no_values() {
         let accumulator = NumericAccumulator::new();
         assert_eq!(accumulator.count(), 0);
-        assert!(accumulator.is_empty());
         assert_eq!(accumulator.min(), None);
         assert_eq!(accumulator.max(), None);
         assert_eq!(accumulator.mean(), 0.0);
