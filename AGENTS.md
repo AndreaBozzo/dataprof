@@ -35,6 +35,13 @@ differs from 1.98 can pass here and still fail CI, or the reverse. When clippy
 disagrees with CI, check `rustc --version` first and reproduce with
 `cargo +1.98 clippy`.
 
+The MSRV itself is enforced by compilation, not by the declaration: the `MSRV
+Compile Gate` job runs `cargo check --locked --lib` over every published feature
+graph on 1.96. Reproduce it with
+`RUSTUP_TOOLCHAIN=1.96 python .github/scripts/msrv_check.py`. If a change needs
+a newer standard-library API, raising the MSRV is a deliberate separate change —
+see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#rust-toolchains-msrv-vs-pinned).
+
 ```bash
 uv sync                     # install the Python dev environment
 uv run maturin develop      # build + install the local Python extension

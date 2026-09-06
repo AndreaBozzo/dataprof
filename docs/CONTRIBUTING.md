@@ -77,6 +77,50 @@ You do not need to run every expensive workspace check for a small docs or
 Python-only PR. Prefer a focused test command that matches your change, and
 list exactly what you ran in the PR body.
 
+### Rust toolchains: MSRV vs pinned
+
+Two Rust versions are in play and they do different jobs.
+
+- **1.96 is the MSRV**, declared once as `rust-version` in the root
+  `Cargo.toml` and inherited by every workspace package. It is a promise to
+  downstream crates: the published libraries compile on it.
+- **1.98 is the pinned development toolchain** (`.github/actions/setup-rust`,
+  and the release build). Formatting, clippy and the test suites run there.
+  Clippy gains lints with every release, so an older compiler must not decide
+  what the lint gate accepts.
+
+The MSRV is verified by compilation, not by declaration:
+
+```bash
+rustup toolchain install 1.96
+RUSTUP_TOOLCHAIN=1.96 python .github/scripts/msrv_check.py
+```
+
+That script is the `MSRV Compile Gate` job in CI and a release gate in
+`release.yml`. It asserts every workspace package declares the same
+`rust-version`, asserts the running toolchain *is* that version — a gate run on
+a newer compiler proves nothing — and then runs `cargo check --locked --lib`
+over each published feature graph: the facade with no default features, with
+defaults, with `async-streaming`, with `parquet-async`, with all features
+(which covers `database` and the three connectors), and the
+`dataprof-python` extension crate, since a source install builds that from an
+sdist on the user's own toolchain.
+
+Two scope choices worth knowing:
+
+- **`--lib`.** The promise covers the libraries a consumer depends on.
+  Dev-dependencies, examples and benches are development tooling and build on
+  the pinned toolchain instead.
+- **`--locked`.** The gate compiles the dependency set a release actually
+  ships. It is not a minimal-version check; a dependency raising its own MSRV
+  shows up when `Cargo.lock` changes, which is when a dependency-update PR runs
+  the job.
+
+Raising the MSRV is a deliberate, separate change: bump `rust-version` in
+`Cargo.toml`, the `dtolnay/rust-toolchain@` pins on the two MSRV jobs, and the
+version stated in `README.md`, `AGENTS.md` and this file. The script fails
+loudly if the toolchain pin and `rust-version` drift apart.
+
 ### Database regression tests
 
 CI runs both the facade integration target and every test target in the database

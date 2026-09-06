@@ -185,6 +185,46 @@ jobs:
       - name: Run feature checks
         run: ${{ matrix.commands }}
 
+  # The workspace advertises Rust 1.96 in Cargo.toml, README.md and AGENTS.md,
+  # and until this job nothing compiled against it: every other Rust job here
+  # runs the pinned 1.98, and the 1.96 job in release.yml only ran
+  # `cargo metadata`, which parses manifests without touching source. #674.
+  msrv:
+    name: MSRV Compile Gate
+    runs-on: ubuntu-latest
+    # Six feature graphs back to back, so the cold-cache reasoning under
+    # feature-checks applies here too.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          token: ${{ github.token }}
+
+      # Deliberately not ./.github/actions/setup-rust: that pins 1.98, the lint
+      # and test toolchain. This job's whole point is the *minimum* one, and a
+      # `uses:` ref cannot be templated, so the version is written out here.
+      # msrv_check.py fails if this pin and `rust-version` ever disagree.
+      - name: Install Rust 1.96 (workspace MSRV)
+        uses: dtolnay/rust-toolchain@1.96
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rust-msrv
+          shared-key: "v4"
+
+      # pyo3's build script needs an interpreter to configure the extension
+      # crate arm of the matrix.
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Compile MSRV feature graphs
+        run: python3 .github/scripts/msrv_check.py
+
   python-quality:
     name: Python Lint & Format
     runs-on: ubuntu-latest
