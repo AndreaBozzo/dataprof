@@ -312,6 +312,19 @@ Per-column profiling statistics.
 | `true_ratio` | `float \| None` | Ratio of `True` values (0.0--1.0) |
 | `patterns` | `list[Pattern] \| None` | List of detected value patterns |
 
+**Changed in 0.12 (#667).** Numeric columns with no finite parsed values and
+boolean columns with no parsed booleans have no statistics block. Their statistic
+accessors return `None`, including boolean counts and `true_ratio`. The declared
+column type, row/null counts, and numeric `invalid_count` remain available. A
+measured numeric zero or an all-false column still reports `0.0`. CSV columns
+containing only nulls infer as text because CSV carries no declared type.
+
+This uses the existing absent-statistics representation (`ColumnStats::None` in
+Rust); numeric fields do not become optional within `NumericStats`, and the report
+schema version is unchanged. Saved reports remain readable as written: loading an
+older report does not replace its recorded zeros. Re-profile the source to obtain
+the corrected absence semantics.
+
 **Changed in 0.12.** Text lengths count Unicode scalar values, not UTF-8 bytes
 and not grapheme clusters. `"東京"` has a length of 2 and `"🙂"` a length of 1.
 **In 0.11 and earlier the same values reported 6 and 4**, because every
