@@ -493,11 +493,10 @@ jobs:
       - name: Run Rust database tests (all DBs)
         run: cargo test --test database_integration --features "all-db"
 
-      # A separate target in a separate package: the command above selects the
-      # root crate's test binary and never builds this one, so the typed-column
-      # regressions would return early and gate nothing (#365).
-      - name: Run dataprof-db typed column decoding tests
-        run: cargo test -p dataprof-db --test typed_column_decoding --features "all-db"
+      # The facade command above does not select member-crate tests. Run the
+      # whole database package, including unit, decoding and column-order tests.
+      - name: Run all dataprof-db tests
+        run: cargo test -p dataprof-db --all-features
 
   # The Python extension uses a different Cargo profile and feature graph.
   # Build it in parallel so neither cold build blocks the other's cache save.
@@ -534,9 +533,27 @@ jobs:
       - name: Build Python bindings with database support
         run: uv run maturin develop --features "python,python-async,sqlite"
 
+      - name: Require SQLite database support
+        run: |
+          uv run --no-sync python - <<'PY'
+          import dataprof
+          from dataprof._dataprof import (
+              analyze_database_async,
+              count_table_rows_async,
+              get_table_schema_async,
+              test_connection_async,
+          )
+
+          caps = dataprof.capabilities()
+          assert caps.database and "sqlite" in caps.database_connectors, caps
+          print(caps)
+          PY
+
       - name: Run Python database tests
         run: >-
-          uv run pytest
+          uv run --no-sync pytest
           python/tests/test_database_api.py
+          python/tests/test_database_option_parity.py
+          python/tests/test_column_order.py
           python/tests/test_engine_parity.py::test_sqlite_parity
           -v -ra
