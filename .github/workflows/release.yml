@@ -189,13 +189,36 @@ jobs:
         cargo check --locked -p dataprof-python --all-features
       shell: bash
 
+  # Step 2b: the same published surfaces, compiled on the *minimum* supported
+  # compiler rather than the pinned one. The job above proves the release builds
+  # for us; this one proves it builds for a downstream crate that took the MSRV
+  # in Cargo.toml at its word. #674.
+  msrv:
+    name: Validate MSRV Compile Gate
+    runs-on: ubuntu-latest
+    needs: create-release
+    steps:
+    - uses: actions/checkout@v7.0.1
+
+    - name: Install Rust 1.96 (workspace MSRV)
+      uses: dtolnay/rust-toolchain@1.96
+
+    - name: Setup Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: Compile MSRV feature graphs
+      run: python3 .github/scripts/msrv_check.py
+      shell: bash
+
   # Step 3: Verify every crate's packaged contents before the first real publish.
   # Full `cargo publish --dry-run` is not viable for interdependent workspace crates
   # because crates.io cannot resolve unpublished internal versions yet.
   rust-package-checks:
     name: Check Rust Package Contents
     runs-on: ubuntu-latest
-    needs: rust-release-checks
+    needs: [rust-release-checks, msrv]
     steps:
     - uses: actions/checkout@v7.0.1
 

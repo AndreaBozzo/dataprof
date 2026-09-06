@@ -781,8 +781,10 @@ features, which is why they are long.
 `database` on its own is also not enough: the connectors are reported only when
 `python-async` is compiled in as well.
 
-A source build needs a Rust toolchain (1.96 or later). `postgres` and `mysql`
-are pure Rust; `sqlite` compiles `libsqlite3-sys`, which is C.
+A source build needs a Rust toolchain (1.96 or later; CI compiles the extension
+crate on exactly 1.96, so that floor is tested rather than assumed).
+`postgres` and `mysql` are pure Rust; `sqlite` compiles `libsqlite3-sys`, which
+is C.
 
 Check what you actually got before relying on it:
 

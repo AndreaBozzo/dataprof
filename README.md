@@ -133,7 +133,12 @@ dataprof = "0.11"
 # or: dataprof = { version = "0.11", default-features = false }
 ```
 
-Minimum supported Rust version: 1.96.
+Minimum supported Rust version: 1.96. Every published feature graph — the
+default build, `no-default-features`, the async and database features, and the
+Python extension crate — is compiled on 1.96 in CI and before each release, so
+this is a verified floor rather than a declared one. Development itself pins a
+newer toolchain for linting and testing; see
+[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#rust-toolchains-msrv-vs-pinned).
 
 ```rust
 use dataprof::Profiler;
