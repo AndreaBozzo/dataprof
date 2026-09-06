@@ -77,6 +77,53 @@ You do not need to run every expensive workspace check for a small docs or
 Python-only PR. Prefer a focused test command that matches your change, and
 list exactly what you ran in the PR body.
 
+### Database regression tests
+
+CI runs both the facade integration target and every test target in the database
+crate, including unit tests, column decoding, query column order, and typed
+PostgreSQL/MySQL decoding:
+
+```bash
+cargo test --test database_integration --features "all-db"
+cargo test -p dataprof-db --all-features
+```
+
+Set `POSTGRES_TEST_URL` and `MYSQL_TEST_URL` to disposable test databases to run
+the service-backed cases, as the CI database job does. Without these variables,
+those cases return early; SQLite cases need no external service.
+
+The separate Python database job builds SQLite support and runs the API, option
+parity, and column-order suites plus the SQLite engine-parity case. Check both
+the native exports and the compiled connector before pytest so a missing feature
+cannot turn these regressions into skipped tests:
+
+```bash
+uv run maturin develop --features "python,python-async,sqlite"
+uv run --no-sync python - <<'PY'
+import dataprof
+from dataprof._dataprof import (
+    analyze_database_async,
+    count_table_rows_async,
+    get_table_schema_async,
+    test_connection_async,
+)
+
+caps = dataprof.capabilities()
+assert caps.database and "sqlite" in caps.database_connectors, caps
+print(caps)
+PY
+uv run --no-sync pytest \
+    python/tests/test_database_api.py \
+    python/tests/test_database_option_parity.py \
+    python/tests/test_column_order.py \
+    python/tests/test_engine_parity.py::test_sqlite_parity -v -ra
+```
+
+`--no-sync` keeps the SQLite-enabled extension built by `maturin develop` in use.
+This feature set intentionally skips the three async file-transport cases in
+`test_column_order.py`; the ordinary Python job covers them. Every database case
+runs here. The ordinary wheel build omits database support.
+
 ## Development Workflow
 
 ### Create a Feature Branch
