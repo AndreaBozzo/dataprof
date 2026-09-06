@@ -125,7 +125,11 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                         numeric.is_approximate = Some(true);
                     }
                 }
-                ColumnStats::Numeric(numeric)
+                if parsed_total == 0 {
+                    ColumnStats::None
+                } else {
+                    ColumnStats::Numeric(numeric)
+                }
             }
             DataType::Date => {
                 let parsed_dates = input.exact_date_matches.unwrap_or_else(|| {
@@ -173,16 +177,15 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                     (tc, fc)
                 });
                 let total = true_count + false_count;
-                let true_ratio = if total > 0 {
-                    true_count as f64 / total as f64
+                if total > 0 {
+                    ColumnStats::Boolean(BooleanStats {
+                        true_count,
+                        false_count,
+                        true_ratio: true_count as f64 / total as f64,
+                    })
                 } else {
-                    0.0
-                };
-                ColumnStats::Boolean(BooleanStats {
-                    true_count,
-                    false_count,
-                    true_ratio,
-                })
+                    ColumnStats::None
+                }
             }
             DataType::String | DataType::Identifier => {
                 if let Some(tl) = &input.text_lengths {
@@ -208,9 +211,8 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
     // ordinary value for a real numeric column, so nothing about that output
     // looked wrong.
     //
-    // Keyed on `total_count` rather than on the parsed count, so this covers
-    // exactly the empty case and leaves the all-null one alone: a column with
-    // rows but no parsed values is a wider question, tracked separately.
+    // Numeric and boolean columns also suppress statistics above when rows
+    // exist but no values parsed. This guard covers zero rows for every type.
     //
     // The counts above are untouched. "0 of 0 values were invalid" is a fact
     // about a column that was analyzed, not a statistic over nothing.
@@ -452,7 +454,7 @@ mod tests {
 
         assert_eq!(value.data_type, DataType::Float);
         assert_eq!(value.invalid_count, Some(2));
-        assert!(matches!(value.stats, ColumnStats::Numeric(_)));
+        assert!(matches!(value.stats, ColumnStats::None));
     }
 
     #[test]
@@ -503,6 +505,87 @@ mod tests {
         let samples = quality_check_samples(&collection);
         assert!(samples.contains_key("col"));
         assert_eq!(samples["col"].len(), 2);
+    }
+
+    #[test]
+    fn typed_columns_without_parsed_values_have_no_statistics() {
+        for data_type in [DataType::Integer, DataType::Float, DataType::Boolean] {
+            for values in [["", ""], ["junk", "Infinity"]] {
+                let samples = values.map(String::from);
+                let null_count = if values[0].is_empty() { 2 } else { 0 };
+                let profile = build_column_profile(ColumnProfileInput {
+                    name: "v".to_string(),
+                    data_type: data_type.clone(),
+                    total_count: 2,
+                    null_count,
+                    unique_count: None,
+                    unique_count_is_approximate: None,
+                    sample_values: &samples,
+                    text_lengths: None,
+                    boolean_counts: None,
+                    skip_statistics: false,
+                    skip_patterns: false,
+                    locale: None,
+                    exact_numeric: None,
+                    exact_date_matches: None,
+                });
+
+                assert!(matches!(profile.stats, ColumnStats::None));
+                assert_eq!(profile.data_type, data_type);
+                assert_eq!(profile.total_count, 2);
+                assert_eq!(profile.null_count, null_count);
+                if matches!(data_type, DataType::Integer | DataType::Float) {
+                    assert_eq!(profile.invalid_count, Some(2 - null_count));
+                }
+                assert!(profile.patterns.is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn exact_zero_statistics_survive_a_sample_without_parsed_values() {
+        // A bounded sample can miss every usable value. The full-stream
+        // count, not the sample count or the aggregate's value, governs absence.
+        for data_type in [DataType::Integer, DataType::Boolean] {
+            let samples = [String::new()];
+            let profile = build_column_profile(ColumnProfileInput {
+                name: "v".to_string(),
+                data_type: data_type.clone(),
+                total_count: 3,
+                null_count: 1,
+                unique_count: None,
+                unique_count_is_approximate: None,
+                sample_values: &samples,
+                text_lengths: None,
+                boolean_counts: Some((0, 2)),
+                skip_statistics: false,
+                skip_patterns: true,
+                locale: None,
+                exact_numeric: Some(ExactNumericAggregates {
+                    min: 0.0,
+                    max: 0.0,
+                    mean: 0.0,
+                    std_dev: 0.0,
+                    variance: 0.0,
+                    count: 2,
+                }),
+                exact_date_matches: None,
+            });
+
+            match profile.stats {
+                ColumnStats::Numeric(stats) => {
+                    assert_eq!(stats.min, 0.0);
+                    assert_eq!(stats.mean, 0.0);
+                    assert_eq!(stats.is_approximate, Some(true));
+                    assert_eq!(profile.invalid_count, Some(0));
+                }
+                ColumnStats::Boolean(stats) => {
+                    assert_eq!(stats.true_ratio, 0.0);
+                    assert_eq!(stats.false_count, 2);
+                }
+                other => panic!("expected measured zero statistics, got {other:?}"),
+            }
+        }
     }
 
     #[test]

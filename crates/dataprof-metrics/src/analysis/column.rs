@@ -117,7 +117,11 @@ fn analyze_column_with_options(
                         .saturating_sub(null_count)
                         .saturating_sub(parsed),
                 );
-                ColumnStats::Numeric(numeric)
+                if parsed == 0 {
+                    ColumnStats::None
+                } else {
+                    ColumnStats::Numeric(numeric)
+                }
             }
             DataType::Date => {
                 let parsed = data
@@ -146,16 +150,15 @@ fn analyze_column_with_options(
                     .filter(|v| parse_strict_boolean_token(v.trim()) == Some(false))
                     .count();
                 let total = tc + fc;
-                let true_ratio = if total > 0 {
-                    tc as f64 / total as f64
+                if total > 0 {
+                    ColumnStats::Boolean(crate::types::BooleanStats {
+                        true_count: tc,
+                        false_count: fc,
+                        true_ratio: tc as f64 / total as f64,
+                    })
                 } else {
-                    0.0
-                };
-                ColumnStats::Boolean(crate::types::BooleanStats {
-                    true_count: tc,
-                    false_count: fc,
-                    true_ratio,
-                })
+                    ColumnStats::None
+                }
             }
             DataType::String | DataType::Identifier => calculate_text_stats(data),
         }
@@ -202,6 +205,36 @@ fn analyze_column_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_finite_numeric_column_has_no_statistics() {
+        let data = ["Infinity", "-inf"].map(String::from);
+        let profile = analyze_column("v", &data);
+        assert_eq!(profile.data_type, DataType::Float);
+        assert_eq!(profile.total_count, 2);
+        assert_eq!(profile.null_count, 0);
+        assert_eq!(profile.invalid_count, Some(2));
+        assert!(matches!(profile.stats, ColumnStats::None));
+    }
+
+    #[test]
+    fn measured_zeros_survive_in_memory_analysis() {
+        let numeric = ["", "0", "0"].map(String::from);
+        let profile = analyze_column("n", &numeric);
+        let ColumnStats::Numeric(stats) = profile.stats else {
+            panic!("expected numeric statistics over real zeros");
+        };
+        assert_eq!(stats.min, 0.0);
+        assert_eq!(stats.mean, 0.0);
+        assert_eq!(profile.invalid_count, Some(0));
+
+        let boolean = ["", "false", "false"].map(String::from);
+        let ColumnStats::Boolean(stats) = analyze_column("b", &boolean).stats else {
+            panic!("expected boolean statistics over real false values");
+        };
+        assert_eq!(stats.true_ratio, 0.0);
+        assert_eq!(stats.false_count, 2);
+    }
 
     #[test]
     fn test_analyze_column_basic() {
