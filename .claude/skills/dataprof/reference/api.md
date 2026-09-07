@@ -157,6 +157,15 @@ Each entry in `columns` is a `StructureColumnSummary`: `name`, `data_type`,
 `total_count`, `null_count`, `null_ratio`, `unique_count`, `uniqueness_ratio`,
 `distinct_count_approximate`, `provenance`.
 
+A counter is present only when it describes the whole file. For CSV/JSON/JSONL
+that is the structural sample, so check `truncated` before reporting one as a
+dataset value. For Parquet the counts come from the file footer and cover every
+row -- they hold even when `truncated` is true, which there refers to the rows
+read to infer types. Parquet reports no distinct counts (`unique_count` and
+`distinct_count_approximate` are `None`): the footer carries none, and a
+sampled one would not describe the file. `provenance` names the source of the
+column's **type**, not of its counters.
+
 ## Capabilities fields
 
 `version`, `local_csv`, `local_json`, `local_jsonl`, `local_parquet`,

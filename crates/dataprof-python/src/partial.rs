@@ -347,6 +347,13 @@ pub fn quick_row_count(path: &str) -> PyResult<PyRowCountEstimate> {
 }
 
 /// Analyze a file's structure with a bounded, lightweight pass.
+///
+/// `max_rows` bounds the rows read to infer types. For Parquet the per-column
+/// counts do not come from those rows: they come from the file footer and
+/// describe every row, so they stand even when the type sample was truncated.
+/// A count that could not be established for the whole file is absent rather
+/// than partial, and distinct counts are absent entirely — the footer carries
+/// none (#700).
 #[pyfunction(signature = (path, max_rows=None))]
 pub fn analyze_structure(path: &str, max_rows: Option<usize>) -> PyResult<PyStructureReport> {
     let result = dataprof::analyze_structure(Path::new(path), max_rows)

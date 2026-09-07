@@ -772,6 +772,20 @@ either because the scan reached the end of the file or because the Parquet
 metadata typed every column and no scan was needed. Once inference stops at the
 cap, a later row can still move it.
 
+### `analyze_structure()`
+
+```python
+structure = dp.analyze_structure("data.parquet")
+for column in structure.columns:
+    print(f"{column.name}: {column.data_type} nulls={column.null_count} ({column.provenance})")
+```
+
+Every counter it reports describes the whole file or is absent -- it never
+returns a partial count. For CSV and JSON that means checking `truncated`; for
+Parquet the counts come from the file footer, so they cover every row even when
+the type sample stopped at `max_rows`. Distinct counts are absent for Parquet,
+which has no whole-file source for one.
+
 ### `quick_row_count()`
 
 ```python

@@ -1699,10 +1699,46 @@ class TestPartialAnalysis:
         # every row of it was read.
         assert structure.rows_sampled == 3
         assert structure.source_exhausted is True
-        # The sampled rows type the column; they are not counted. #700 decides
-        # whether a Parquet structural report should carry counters at all.
-        assert all(column.null_count is None for column in structure.columns)
+        # The counts come from the footer, not from the rows read to type the
+        # text column: they describe every row of the file (#700).
+        assert [(c.name, c.total_count, c.null_count) for c in structure.columns] == [
+            ("id", 3, 0),
+            ("label", 3, 0),
+        ]
+        # No whole-file source for a distinct count, so none is claimed.
+        assert all(column.unique_count is None for column in structure.columns)
         assert dataprof.infer_schema(path).schema_stable is True
+
+    def test_parquet_structure_counts_describe_the_whole_file(self, tmp_path):
+        """Counts come from the footer, so a truncated type sample does not
+        narrow them -- and a float column, whose nulls the footer undercounts,
+        is counted from its values instead (#700)."""
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+
+        path = tmp_path / "counts.parquet"
+        pq.write_table(
+            pa.table(
+                {
+                    "id": [1, None, 3, 4],
+                    "label": ["a", "b", None, None],
+                    "score": [1.0, float("nan"), None, 4.0],
+                }
+            ),
+            path,
+        )
+
+        structure = dataprof.analyze_structure(path)
+        profile = dataprof.profile(path)
+
+        for column in structure.columns:
+            assert column.total_count == profile.rows, column.name
+            assert column.null_count == profile[column.name].null_count, column.name
+
+        # The float column's NaN counts as null, as it does in a full profile;
+        # the footer alone would have said 1.
+        counts = {column.name: column.null_count for column in structure.columns}
+        assert counts == {"id": 1, "label": 2, "score": 2}
 
     def test_fully_typed_parquet_still_reads_no_rows(self, tmp_path):
         """The metadata fast path survives where the metadata is the answer."""

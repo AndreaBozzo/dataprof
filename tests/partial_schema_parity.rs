@@ -12,7 +12,9 @@
 use std::io::Write;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, DictionaryArray, Int64Array, StringArray, Time32MillisecondArray};
+use arrow::array::{
+    ArrayRef, DictionaryArray, Float64Array, Int64Array, StringArray, Time32MillisecondArray,
+};
 use arrow::datatypes::{Field, Int8Type, Schema};
 use arrow::record_batch::RecordBatch;
 use dataprof::{DataType, Profiler, analyze_structure, infer_schema};
@@ -225,6 +227,116 @@ fn infer_schema_agrees_with_profile_on_a_time_column() {
     assert_eq!(schema_types(&file), expected);
     assert_eq!(structure_types(&file), expected);
     assert_eq!(infer_schema(file.path()).unwrap().rows_sampled, 0);
+}
+
+/// A Parquet structural report's counters describe the whole file, and agree
+/// with a full profile of it (#700).
+///
+/// The footer carries an exact per-column null count for every row group, so
+/// this costs no read for the columns whose definition of null it shares.
+#[test]
+fn structure_counters_match_a_full_profile() {
+    let ints: ArrayRef = Arc::new(Int64Array::from(vec![Some(1), None, Some(3), Some(4)]));
+    let text: ArrayRef = Arc::new(StringArray::from(vec![
+        Some("2026-01-02"),
+        Some("2026-01-03"),
+        None,
+        None,
+    ]));
+    let file = write_parquet(vec![("id", ints), ("when", text)]);
+
+    let report = analyze_structure(file.path(), None).unwrap();
+    let profile = Profiler::new().analyze_file(file.path()).unwrap();
+
+    for column in &report.columns {
+        let profiled = profile
+            .column_profiles
+            .iter()
+            .find(|candidate| candidate.name == column.name)
+            .expect("every structural column is profiled");
+        assert_eq!(
+            (column.total_count, column.null_count),
+            (Some(profiled.total_count), Some(profiled.null_count)),
+            "{} disagrees with its profile",
+            column.name
+        );
+    }
+
+    // Not a sampled approximation of them: these are the file's own numbers.
+    assert_eq!(report.columns[0].null_count, Some(1));
+    assert_eq!(report.columns[1].null_count, Some(2));
+}
+
+/// The float exception, which is why the footer is not simply trusted.
+///
+/// The footer counts absent values; the profiler counts NaN as null as well. A
+/// float column is therefore counted from its values, so the two surfaces agree
+/// on a column where the footer alone would have reported one null instead of
+/// two.
+#[test]
+fn float_null_counts_include_nan_like_the_profiler() {
+    let floats: ArrayRef = Arc::new(Float64Array::from(vec![
+        Some(1.0),
+        Some(f64::NAN),
+        None,
+        Some(4.0),
+    ]));
+    let file = write_parquet(vec![("v", floats)]);
+
+    let report = analyze_structure(file.path(), None).unwrap();
+    let profile = Profiler::new().analyze_file(file.path()).unwrap();
+
+    assert_eq!(report.columns[0].null_count, Some(2), "NaN counts as null");
+    assert_eq!(
+        report.columns[0].null_count,
+        Some(profile.column_profiles[0].null_count)
+    );
+}
+
+/// A count that cannot cover the file is not reported at all.
+///
+/// The float column needs a value read, and the row budget here cannot reach
+/// the end of the file. A prefix count would sit in the same report as its
+/// neighbours' whole-file counts with nothing to tell them apart, so the column
+/// reports no count — and no row is read for it either, since the number would
+/// have been discarded.
+#[test]
+fn a_count_that_cannot_cover_the_file_is_absent() {
+    let rows = 40;
+    let floats: ArrayRef = Arc::new(Float64Array::from(
+        (0..rows)
+            .map(|row| if row % 4 == 0 { None } else { Some(row as f64) })
+            .collect::<Vec<Option<f64>>>(),
+    ));
+    let ints: ArrayRef = Arc::new(Int64Array::from(
+        (0..rows).map(|row| row as i64).collect::<Vec<i64>>(),
+    ));
+    let file = write_parquet(vec![("v", floats), ("id", ints)]);
+
+    let capped = analyze_structure(file.path(), Some(10)).unwrap();
+    let float_column = &capped.columns[0];
+    let int_column = &capped.columns[1];
+
+    assert_eq!(
+        float_column.null_count, None,
+        "a prefix count is not a count"
+    );
+    assert_eq!(float_column.null_ratio, None);
+    // Its neighbour is still exact: the footer answered it for free.
+    assert_eq!(int_column.null_count, Some(0));
+    // total_count is the file's row count for both, never the sample's.
+    assert_eq!(float_column.total_count, Some(rows));
+    assert_eq!(int_column.total_count, Some(rows));
+
+    // Given the whole file, the float column is counted and agrees with a
+    // profile of it.
+    let whole = analyze_structure(file.path(), Some(rows)).unwrap();
+    let profile = Profiler::new().analyze_file(file.path()).unwrap();
+    assert_eq!(whole.columns[0].null_count, Some(10));
+    assert_eq!(
+        whole.columns[0].null_count,
+        Some(profile.column_profiles[0].null_count)
+    );
 }
 
 /// Duplicate column names are refused, as they are on every other surface.

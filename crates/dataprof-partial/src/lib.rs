@@ -234,24 +234,46 @@ fn infer_schema_parquet(
     start: Instant,
     sample_rows: usize,
 ) -> Result<SchemaResult, DataProfilerError> {
-    parquet_schema(path, start, sample_rows).map(|(schema, _)| schema)
+    parquet_scan(path, start, sample_rows, false).map(|scan| scan.schema)
 }
 
-/// [`infer_schema_parquet`], plus the names of the columns whose type the
-/// metadata could not decide. `analyze_structure()` reports that split as
-/// per-column provenance.
-///
-/// The split is the schema decision, not a report of what the read produced: a
-/// text column is governed by its values whether or not the caller's row budget
-/// let them be read. `rows_sampled` and `truncated` say what was read, and the
-/// CSV path draws the same line — it labels every column `"sample"` at
-/// `max_rows(0)`.
+/// What one bounded pass over a Parquet file's metadata (and, where it must,
+/// its values) can say about the file.
 #[cfg(feature = "parquet")]
-fn parquet_schema(
+struct ParquetScan {
+    schema: SchemaResult,
+    /// Names of the columns whose type the metadata could not decide.
+    value_typed: Vec<String>,
+    /// Exact whole-file null counts, by column name. A column is absent when
+    /// no count could be established for the whole file — never a partial one.
+    null_counts: std::collections::HashMap<String, usize>,
+    /// Rows in the file, from the footer. Exact.
+    total_rows: usize,
+}
+
+/// One pass for both partial surfaces.
+///
+/// `value_typed` is the schema decision, not a report of what the read
+/// produced: a text column is governed by its values whether or not the
+/// caller's row budget let them be read. `rows_sampled` and `truncated` say
+/// what was read, and the CSV path draws the same line — it labels every column
+/// `"sample"` at `max_rows(0)`.
+///
+/// `counters` asks for the per-column null counts `analyze_structure()`
+/// reports and `infer_schema()` has no use for. They come from the footer,
+/// which carries an exact per-column-chunk null count for the whole file at no
+/// read cost — except for floats, where the footer counts absent values and the
+/// profiler also counts NaN, so the footer number is a lower bound rather than
+/// an answer (#700). Those columns are counted from the values instead, and
+/// only when the scan covered the file: every counter in the report describes
+/// the whole file, or is absent.
+#[cfg(feature = "parquet")]
+fn parquet_scan(
     path: &Path,
     start: Instant,
     sample_rows: usize,
-) -> Result<(SchemaResult, Vec<String>), DataProfilerError> {
+    counters: bool,
+) -> Result<ParquetScan, DataProfilerError> {
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
@@ -282,9 +304,16 @@ fn parquet_schema(
 
     let mut columns: Vec<ColumnSchema> = Vec::with_capacity(arrow_schema.fields().len());
     let mut text_columns: Vec<usize> = Vec::new();
+    // Columns whose null count the footer cannot answer, so they are counted
+    // from the values with the text sample. Empty unless counters were asked
+    // for.
+    let mut nan_capable_columns: Vec<usize> = Vec::new();
 
     for (index, field) in arrow_schema.fields().iter().enumerate() {
         let logical = logical_arrow_type(field.data_type());
+        if counters && counts_nan_as_null(&logical) {
+            nan_capable_columns.push(index);
+        }
         let data_type = match data_type_from_arrow_type(&logical) {
             // The Arrow type decides this column on its own, and the profiler
             // reads the same list.
@@ -310,10 +339,30 @@ fn parquet_schema(
 
     let total_rows = builder.metadata().file_metadata().num_rows().max(0) as usize;
 
-    if text_columns.is_empty() || sample_rows == 0 {
+    // The footer's counts, for the columns whose definition of null it shares.
+    // Read before the builder is consumed by the projection below.
+    let mut null_counts = if counters {
+        footer_null_counts(&builder, &columns, &nan_capable_columns)
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // Which columns the scan has to open the data for. Text columns need it to
+    // be typed at all, even from a prefix. NaN-capable columns need it only for
+    // their null count, which is reported only when it covers the file — so
+    // when the budget cannot cover the file, reading them would buy a number
+    // that gets thrown away, and they are left out.
+    let mut projected: Vec<usize> = text_columns.clone();
+    if total_rows <= sample_rows {
+        projected.extend(nan_capable_columns.iter().copied());
+    }
+    projected.sort_unstable();
+    projected.dedup();
+
+    if projected.is_empty() || sample_rows == 0 {
         let value_typed = value_typed_names(&columns, &text_columns);
-        return Ok((
-            SchemaResult {
+        return Ok(ParquetScan {
+            schema: SchemaResult {
                 columns,
                 rows_sampled: 0,
                 inference_time_ms: start.elapsed().as_millis(),
@@ -325,10 +374,15 @@ fn parquet_schema(
                 schema_stable: text_columns.is_empty() || total_rows == 0,
             },
             value_typed,
-        ));
+            null_counts,
+            total_rows,
+        });
     }
 
-    let projection = ProjectionMask::roots(builder.parquet_schema(), text_columns.iter().copied());
+    let projection = ProjectionMask::roots(builder.parquet_schema(), projected.iter().copied());
+    // `RecordBatchReader::schema()` needs the trait in scope; the projected
+    // schema is what the analyzer must be seeded with, not the file's.
+    use arrow::record_batch::RecordBatchReader as _;
     let reader = builder
         .with_projection(projection)
         .with_batch_size(sample_rows.min(PARQUET_SAMPLE_BATCH_ROWS))
@@ -345,6 +399,14 @@ fn parquet_schema(
     // exactly as it does for CSV and JSON in `schema_from_profiles`. Statistics
     // and patterns are skipped: only the type is read.
     let mut analyzer = RecordBatchAnalyzer::new();
+    // Seed from the projected schema: a zero-row file yields no batch, and
+    // without this its columns would have no profile to read a type or a count
+    // off — the same reason the Parquet profiler seeds itself.
+    analyzer
+        .initialize_schema(reader.schema().as_ref())
+        .map_err(|e| {
+            DataProfilerError::parquet_error(&format!("Failed to read Parquet schema: {}", e))
+        })?;
     let mut rows_sampled = 0usize;
     for batch in reader {
         let batch = batch.map_err(|e| {
@@ -359,8 +421,21 @@ fn parquet_schema(
         })?;
     }
 
+    // A count from a truncated scan describes a prefix, and its neighbours in
+    // the report describe the whole file. Rather than mix the two scopes in one
+    // row, a column the scan could not cover keeps no count at all.
+    let scan_covered_file = rows_sampled >= total_rows;
+    let text_names = value_typed_names(&columns, &text_columns);
+
     // Names are unique — validated above — so this lookup names one column.
     for profile in analyzer.to_profiles(true, true, None) {
+        let types_from_values = text_names.contains(&profile.name);
+        if counters && scan_covered_file {
+            null_counts.insert(profile.name.clone(), profile.null_count);
+        }
+        if !types_from_values {
+            continue;
+        }
         if let Some(column) = columns
             .iter_mut()
             .find(|column| column.name == profile.name)
@@ -369,20 +444,102 @@ fn parquet_schema(
         }
     }
 
-    let value_typed = value_typed_names(&columns, &text_columns);
-
-    Ok((
-        SchemaResult {
+    Ok(ParquetScan {
+        schema: SchemaResult {
             columns,
             rows_sampled,
             inference_time_ms: start.elapsed().as_millis(),
             // Every row of the sampled columns was read, so no further row can
             // change a type. A truncated sample can: the same clause the CSV
             // and JSON paths report.
-            schema_stable: rows_sampled >= total_rows,
+            schema_stable: scan_covered_file,
         },
-        value_typed,
-    ))
+        value_typed: text_names,
+        null_counts,
+        total_rows,
+    })
+}
+
+/// Whether the profiler counts values in this column as null that the Parquet
+/// footer does not.
+///
+/// The footer counts absent values — definition levels. The profiler counts NaN
+/// as null too, so for a float column holding `[1.0, NaN, null, 4.0]` the
+/// footer says 1 and a full profile says 2. Taking the footer number there
+/// would put a different number in the fast path than in the profile, which is
+/// the defect #693 fixed for types; these columns are counted from their values
+/// instead (#700).
+///
+/// Only floats: no other type has a NaN. Decimals are exact.
+#[cfg(feature = "parquet")]
+fn counts_nan_as_null(logical: &arrow::datatypes::DataType) -> bool {
+    matches!(
+        logical,
+        arrow::datatypes::DataType::Float16
+            | arrow::datatypes::DataType::Float32
+            | arrow::datatypes::DataType::Float64
+    )
+}
+
+/// Exact whole-file null counts from the footer's column-chunk statistics.
+///
+/// Free: the footer is already read for the schema and the row count. A column
+/// is left out — rather than guessed at — when any row group omits the
+/// statistic, when the column is nested (its leaves have multi-part paths and
+/// their null counts describe levels, not the column), or when the profiler
+/// would count values the footer does not (`counts_nan_as_null`).
+#[cfg(feature = "parquet")]
+fn footer_null_counts(
+    builder: &ParquetRecordBatchReaderBuilder<fs::File>,
+    columns: &[ColumnSchema],
+    counted_from_values: &[usize],
+) -> std::collections::HashMap<String, usize> {
+    let metadata = builder.metadata();
+    let descriptor = builder.parquet_schema();
+
+    // Top-level primitives only: a nested column's leaves carry multi-part
+    // paths, so they never match a field name and the column is left out.
+    let mut leaf_of_column: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for leaf in 0..descriptor.num_columns() {
+        let path = descriptor.column(leaf).path().parts().to_vec();
+        if let [only] = path.as_slice() {
+            leaf_of_column.insert(only.clone(), leaf);
+        }
+    }
+
+    let mut counts = std::collections::HashMap::new();
+    for (index, column) in columns.iter().enumerate() {
+        if counted_from_values.contains(&index) {
+            continue;
+        }
+        let Some(leaf) = leaf_of_column.get(column.name.as_str()).copied() else {
+            continue;
+        };
+
+        let mut total = 0usize;
+        let mut every_group_reported = true;
+        for group in 0..metadata.num_row_groups() {
+            match metadata
+                .row_group(group)
+                .column(leaf)
+                .statistics()
+                .and_then(|statistics| statistics.null_count_opt())
+            {
+                Some(nulls) => total += nulls as usize,
+                None => {
+                    every_group_reported = false;
+                    break;
+                }
+            }
+        }
+
+        if every_group_reported {
+            counts.insert(column.name.clone(), total);
+        }
+    }
+
+    counts
 }
 
 /// The names of the columns whose type the metadata could not decide.
@@ -1044,17 +1201,25 @@ fn analyze_structure_parquet(
 ) -> Result<StructureReport, DataProfilerError> {
     #[cfg(feature = "parquet")]
     {
-        let (schema, value_typed) = parquet_schema(path, Instant::now(), max_rows)?;
+        let scan = parquet_scan(path, Instant::now(), max_rows, true)?;
         let row_count = quick_row_count_with_format(path, FileFormat::Parquet)?;
-        // Provenance is per column, because a Parquet file is now typed from
-        // both sources: the encoding answers for an already-typed column, a
-        // bounded value sample for a text one. Labelling a sampled column
-        // "metadata" would claim a stability the sample does not have.
+        let ParquetScan {
+            schema,
+            value_typed,
+            null_counts,
+            total_rows,
+        } = scan;
+
+        // Provenance is per column, because a Parquet file is typed from both
+        // sources: the encoding answers for an already-typed column, a bounded
+        // value sample for a text one. Labelling a sampled column "metadata"
+        // would claim a stability the sample does not have.
         //
-        // The counters stay `None` even for the sampled columns: the rows read
-        // here type the column and are not counted. Whether a Parquet
-        // structural report should carry counters, and over which row set, is
-        // #700.
+        // The counters are a separate question from the type, and their answer
+        // is narrower: `total_count` and `null_count` describe the whole file
+        // or are absent, never a prefix (#700). Distinct counts have no
+        // whole-file source at all — the footer does not carry one — so they
+        // stay `None`, which is this repo's "not analyzed".
         let columns = schema
             .columns
             .into_iter()
@@ -1064,12 +1229,13 @@ fn analyze_structure_parquet(
                 } else {
                     "metadata"
                 };
+                let null_count = null_counts.get(&column.name).copied();
                 StructureColumnSummary {
                     name: column.name,
                     data_type: column.data_type,
-                    total_count: None,
-                    null_count: None,
-                    null_ratio: None,
+                    total_count: Some(total_rows),
+                    null_count,
+                    null_ratio: null_count.and_then(|nulls| ratio(nulls, total_rows)),
                     unique_count: None,
                     uniqueness_ratio: None,
                     distinct_count_approximate: None,
@@ -2086,7 +2252,18 @@ mod tests {
             .map(|col| (col.name.as_str(), col.provenance.as_str()))
             .collect();
         assert_eq!(provenance, vec![("id", "metadata"), ("label", "sample")]);
-        assert!(report.columns.iter().all(|col| col.total_count.is_none()));
+
+        // The counters describe the whole file even though the type sample was
+        // truncated to one row: they come from the footer, which counts every
+        // row group (#700).
+        for column in &report.columns {
+            assert_eq!(column.total_count, Some(2), "{}", column.name);
+            assert_eq!(column.null_count, Some(0), "{}", column.name);
+            assert_eq!(column.null_ratio, Some(0.0), "{}", column.name);
+            // No whole-file source for a distinct count, so none is claimed.
+            assert_eq!(column.unique_count, None, "{}", column.name);
+            assert_eq!(column.distinct_count_approximate, None, "{}", column.name);
+        }
     }
 
     /// A file whose columns are all typed by their encoding keeps the
