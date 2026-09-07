@@ -281,19 +281,25 @@ fn parquet_schema(
         });
     }
 
+    let total_rows = builder.metadata().file_metadata().num_rows().max(0) as usize;
+
     if text_columns.is_empty() || sample_rows == 0 {
         return Ok((
             SchemaResult {
                 columns,
                 rows_sampled: 0,
                 inference_time_ms: start.elapsed().as_millis(),
-                schema_stable: true,
+                // Stable only because nothing was left to read: either the
+                // metadata typed every column, or the file has no rows. A
+                // caller who asked for a zero-row sample of a file that does
+                // have text columns is told the schema is not settled, as the
+                // CSV and JSON paths tell them.
+                schema_stable: text_columns.is_empty() || total_rows == 0,
             },
             Vec::new(),
         ));
     }
 
-    let total_rows = builder.metadata().file_metadata().num_rows().max(0) as usize;
     let projection = ProjectionMask::roots(builder.parquet_schema(), text_columns.iter().copied());
     let reader = builder
         .with_projection(projection)
@@ -1022,6 +1028,11 @@ fn analyze_structure_parquet(
         // both sources: the encoding answers for an already-typed column, a
         // bounded value sample for a text one. Labelling a sampled column
         // "metadata" would claim a stability the sample does not have.
+        //
+        // The counters stay `None` even for the sampled columns: the rows read
+        // here type the column and are not counted. Whether a Parquet
+        // structural report should carry counters, and over which row set, is
+        // #700.
         let columns = schema
             .columns
             .into_iter()

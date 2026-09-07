@@ -1699,6 +1699,9 @@ class TestPartialAnalysis:
         # every row of it was read.
         assert structure.rows_sampled == 3
         assert structure.source_exhausted is True
+        # The sampled rows type the column; they are not counted. #700 decides
+        # whether a Parquet structural report should carry counters at all.
+        assert all(column.null_count is None for column in structure.columns)
         assert dataprof.infer_schema(path).schema_stable is True
 
     def test_fully_typed_parquet_still_reads_no_rows(self, tmp_path):

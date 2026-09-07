@@ -227,6 +227,48 @@ fn infer_schema_agrees_with_profile_on_a_time_column() {
     assert_eq!(infer_schema(file.path()).unwrap().rows_sampled, 0);
 }
 
+/// A zero-row sample of a file that does have text columns is not a settled
+/// schema, and must not claim to be. The CSV and JSON paths report the same
+/// clause for the same reason.
+#[test]
+fn a_zero_row_sample_is_not_a_stable_schema() {
+    let parquet = parquet_fixture();
+
+    let report = analyze_structure(parquet.path(), Some(0)).unwrap();
+    assert_eq!(report.rows_sampled, 0);
+    assert!(report.truncated);
+    assert!(!report.source_exhausted);
+}
+
+/// An empty file is settled, though: there is no row left that could change a
+/// type, so nothing is truncated and the text column keeps the type an empty
+/// profile reports.
+#[test]
+fn an_empty_parquet_file_is_stable_without_reading_rows() {
+    let empty = write_parquet(vec![
+        (
+            "id",
+            Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
+        ),
+        (
+            "label",
+            Arc::new(StringArray::from(Vec::<String>::new())) as ArrayRef,
+        ),
+    ]);
+
+    let schema = infer_schema(empty.path()).unwrap();
+    assert_eq!(schema.rows_sampled, 0);
+    assert!(schema.schema_stable);
+    assert_eq!(
+        schema
+            .columns
+            .into_iter()
+            .map(|column| (column.name, column.data_type))
+            .collect::<Vec<_>>(),
+        profile_types(&empty)
+    );
+}
+
 /// The physical encoding a Parquet writer chose must not reach the schema
 /// either: a dictionary is a compression of the values, not a type.
 #[test]
