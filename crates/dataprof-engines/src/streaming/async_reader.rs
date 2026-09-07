@@ -1257,9 +1257,12 @@ impl AsyncStreamingProfiler {
             } else {
                 0.0
             };
+            let reached_eof = size_hint.is_some_and(|size| total_bytes >= size);
 
             if stop_eval.update(chunk_rows as u64, chunk_bytes, memory_fraction) {
-                truncation_reason = stop_eval.truncation_reason();
+                if !reached_eof {
+                    truncation_reason = stop_eval.truncation_reason();
+                }
                 drop(rx); // signal reader task to stop
                 break;
             }
@@ -1268,7 +1271,9 @@ impl AsyncStreamingProfiler {
             if let Some(ref mut tracker) = schema_tracker {
                 let fingerprint = column_stats.column_type_fingerprint();
                 if tracker.update(fingerprint, chunk_rows as u64) {
-                    truncation_reason = Some(tracker.truncation_reason());
+                    if !reached_eof {
+                        truncation_reason = Some(tracker.truncation_reason());
+                    }
                     drop(rx);
                     break;
                 }

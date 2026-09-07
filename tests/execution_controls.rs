@@ -426,6 +426,59 @@ mod async_controls {
     }
 
     #[tokio::test]
+    async fn async_conditions_met_on_the_final_chunk_are_complete() {
+        for condition in [
+            StopCondition::MaxBytes(1),
+            StopCondition::SchemaStable {
+                consecutive_stable_rows: 1,
+            },
+        ] {
+            let data = csv_bytes(123);
+            let size = data.len() as u64;
+            let report = Profiler::new()
+                .chunk_size(ChunkSize::Fixed((size as usize) * 2))
+                .stop_when(condition.clone())
+                .profile_stream(source(data, FileFormat::Csv))
+                .await
+                .unwrap();
+
+            assert_eq!(report.execution.rows_processed, 123, "{condition:?}");
+            assert!(
+                report.execution.source_exhausted,
+                "{condition:?}: a final-chunk stop leaves nothing unread"
+            );
+            assert!(
+                report.execution.truncation_reason.is_none(),
+                "{condition:?}"
+            );
+            assert_provenance_consistent(&report, size, &format!("async {condition:?}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn async_byte_caps_are_chunk_granular() {
+        let data = csv_bytes(500);
+        let size = data.len() as u64;
+        let cap = 1u64;
+        let report = Profiler::new()
+            .chunk_size(ChunkSize::Fixed(1_024))
+            .stop_when(StopCondition::MaxBytes(cap))
+            .profile_stream(source(data, FileFormat::Csv))
+            .await
+            .unwrap();
+
+        assert!(!report.execution.source_exhausted);
+        assert!(matches!(
+            report.execution.truncation_reason,
+            Some(dataprof::TruncationReason::MaxBytes(1))
+        ));
+        let consumed = report.execution.bytes_consumed.unwrap_or(0);
+        assert!(consumed > cap);
+        assert!(consumed < size);
+        assert_provenance_consistent(&report, size, "async byte cap");
+    }
+
+    #[tokio::test]
     async fn async_chunk_size_never_changes_a_complete_profile() {
         let mut baseline: Option<(usize, usize)> = None;
         for chunk in [

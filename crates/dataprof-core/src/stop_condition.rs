@@ -8,13 +8,17 @@ use crate::execution::TruncationReason;
 
 /// A composable condition that can trigger early termination of profiling.
 ///
-/// Conditions are checked per-chunk (not per-row) for performance.
-/// The actual row count at termination may slightly exceed the limit.
+/// Conditions other than [`StopCondition::MaxRows`] are checked per chunk for
+/// performance. Their observed boundary can therefore vary with chunk size.
 #[derive(Debug, Clone, Default)]
 pub enum StopCondition {
     /// Stop after processing this many rows.
     MaxRows(u64),
     /// Stop after consuming this many bytes from the source.
+    ///
+    /// The budget is evaluated after whole data chunks. `bytes_consumed`
+    /// reports every source byte read, including headers, so it can exceed the
+    /// requested value; configure smaller chunks for a tighter bound.
     MaxBytes(u64),
     /// Stop when column types have not changed for approximately N rows
     /// (accumulated across chunks).
