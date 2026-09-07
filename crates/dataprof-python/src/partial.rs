@@ -320,8 +320,12 @@ impl PyRowCountEstimate {
 ///
 /// Much faster than full profiling — reads only a small sample of rows.
 /// A Parquet file is answered from its metadata except for text columns,
-/// whose type only their values decide; those are sampled, so the schema
-/// names the same type `profile()` will (#693).
+/// whose type only their values decide; those are sampled through the same
+/// inference the profiler runs (#693).
+///
+/// The sample is bounded, so it names the type `profile()` reports whenever
+/// `schema_stable` is true — the scan reached the end of the source. Once it
+/// stops at the cap, a later row can still move the type, in any format.
 #[pyfunction]
 pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
     let result = dataprof::infer_schema(Path::new(path)).map_err(|e| analysis_error_to_py(&e))?;
