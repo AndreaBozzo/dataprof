@@ -102,6 +102,7 @@ dp.profile(
     progress_interval_ms=None,       # int -- ms between progress events
     metrics=None,                    # list[str] -- "schema", "statistics", "patterns", "quality"
     quality_dimensions=None,         # list[str] -- subset of dimensions to compute
+    columns=None,                    # list[str] -- profile only these columns
     locale=None,                     # str -- "CA"|"DE"|"FR"|"GB"|"IT"|"US"
     positive_columns=None,           # list[str] -- columns expected to be non-negative
     identifier_columns=None,         # list[str] -- semantic IDs, not measures
@@ -145,6 +146,66 @@ header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
 JSON/JSONL the field order of the first record, with fields that only appear in
 later records appended where they were first seen. Converting a dataset between
 formats therefore does not reshuffle the report.
+
+**Column projection** narrows a profile to the columns you name. `columns`
+takes a list of source column names and is accepted by `dp.profile()`,
+`dp.profile_file()`, `dp.Profiler().columns([...])`, and every
+`dataprof.asyncio` entry point — `profile_file()`, `profile_bytes()` and
+`profile_url()` forward it through `ProfilerConfig`, which also carries it into
+`analyze_database_async()`:
+
+```python
+report = dp.profile("orders.csv", columns=["amount_eur", "city"])
+list(report)        # ['city', 'amount_eur']
+report.rows         # every row is still read
+```
+
+Projection selects columns, never rows: `report.rows` is unchanged, and each
+retained column reports exactly the values it reports in an unprojected profile
+of the same source — same types, statistics, patterns, and lengths. It applies
+identically on every input and transport (CSV, JSON, JSONL, Parquet, bytes,
+dicts, row dicts, DataFrames, and Arrow) and on both engines.
+
+The projected report keeps **source order**, not the order you listed the names
+in, so a projection is a filter on the report rather than a reordering of it.
+
+Names are validated rather than silently ignored. A name absent from the source
+raises `ValueError` listing the unmatched names, and so does a repeated name.
+`columns=[]` is a projection onto no columns, which is distinct from
+`columns=None` (no projection): it reports `columns == 0` while `rows` still
+counts the rows that were read.
+
+Quality is assessed over the projected columns only, so `quality_score`
+generally differs from the score for the whole dataset. Two dimensions are
+**withheld** rather than narrowed: `completeness` and `uniqueness` both report
+row-level measurements (`complete_records_ratio`, `total_cells`,
+`duplicate_rows`, `rows_checked`) that mean something different once a row has
+been projected, and the report schema cannot mark only those fields as
+projected. Rather than publish plausible numbers under full-row names, a
+projected report leaves both dimensions `None` and out of
+`assessed_dimensions()`:
+
+```python
+dp.profile("orders.csv").quality.completeness
+# {'complete_records_ratio': 73.8, 'total_cells': 5000, ...}
+
+dp.profile("orders.csv", columns=["amount_eur", "city"]).quality.completeness
+# None
+```
+
+The overall score is therefore an average over fewer dimensions, and is often
+*higher* than the unprojected score even for the same columns — dropping
+`completeness` drops the dimension that penalizes nulls. Compare projected
+scores against other projected scores, not against whole-dataset ones.
+
+If a projection leaves no assessable dimension — `quality_dimensions` selecting
+only `completeness` and/or `uniqueness` — the report carries no quality object
+at all: `report.quality` is `None` and so is `quality_score`, which is the
+"not analyzed" answer rather than a zero.
+
+Semantic hints are resolved against the projection too — a `positive_columns`
+hint naming a column that projection excluded raises, since that column is not
+in the report it would describe.
 
 Synchronous byte inputs use the in-memory columnar path. They support
 `max_rows`, metric/quality selection, semantic hints, CSV delimiters, and JSONL
