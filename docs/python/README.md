@@ -149,8 +149,10 @@ formats therefore does not reshuffle the report.
 
 **Column projection** narrows a profile to the columns you name. `columns`
 takes a list of source column names and is accepted by `dp.profile()`,
-`dp.profile_file()`, and `dp.Profiler().columns([...])`; on the database path
-`ProfilerConfig(columns=[...])` carries it into `analyze_database_async()`:
+`dp.profile_file()`, `dp.Profiler().columns([...])`, and every
+`dataprof.asyncio` entry point — `profile_file()`, `profile_bytes()` and
+`profile_url()` forward it through `ProfilerConfig`, which also carries it into
+`analyze_database_async()`:
 
 ```python
 report = dp.profile("orders.csv", columns=["amount_eur", "city"])
@@ -173,11 +175,37 @@ raises `ValueError` listing the unmatched names, and so does a repeated name.
 `columns=None` (no projection): it reports `columns == 0` while `rows` still
 counts the rows that were read.
 
-Quality is assessed over the projected columns only, so `quality_score` answers
-"how good are the columns I asked about" and generally differs from the score
-for the whole dataset. Semantic hints are resolved against the projection too —
-a `positive_columns` hint naming a column that projection excluded raises, since
-that column is not in the report it would describe.
+Quality is assessed over the projected columns only, so `quality_score`
+generally differs from the score for the whole dataset. Two dimensions are
+**withheld** rather than narrowed: `completeness` and `uniqueness` both report
+row-level measurements (`complete_records_ratio`, `total_cells`,
+`duplicate_rows`, `rows_checked`) that mean something different once a row has
+been projected, and the report schema cannot mark only those fields as
+projected. Rather than publish plausible numbers under full-row names, a
+projected report leaves both dimensions `None` and out of
+`assessed_dimensions()`:
+
+```python
+dp.profile("orders.csv").quality.completeness
+# {'complete_records_ratio': 73.8, 'total_cells': 5000, ...}
+
+dp.profile("orders.csv", columns=["amount_eur", "city"]).quality.completeness
+# None
+```
+
+The overall score is therefore an average over fewer dimensions, and is often
+*higher* than the unprojected score even for the same columns — dropping
+`completeness` drops the dimension that penalizes nulls. Compare projected
+scores against other projected scores, not against whole-dataset ones.
+
+If a projection leaves no assessable dimension — `quality_dimensions` selecting
+only `completeness` and/or `uniqueness` — the report carries no quality object
+at all: `report.quality` is `None` and so is `quality_score`, which is the
+"not analyzed" answer rather than a zero.
+
+Semantic hints are resolved against the projection too — a `positive_columns`
+hint naming a column that projection excluded raises, since that column is not
+in the report it would describe.
 
 Synchronous byte inputs use the in-memory columnar path. They support
 `max_rows`, metric/quality selection, semantic hints, CSV delimiters, and JSONL
