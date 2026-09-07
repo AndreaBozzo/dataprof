@@ -1638,6 +1638,85 @@ class TestPartialAnalysis:
         assert age.uniqueness_ratio is not None
         assert age.distinct_count_approximate is False
 
+    def test_parquet_schema_agrees_with_profile_and_with_csv(self, tmp_path):
+        """One dataset, two formats, one answer (#693).
+
+        A Parquet writer that did not type its input leaves dates, integers and
+        booleans in string columns. The schema used to be read from the file
+        metadata alone, so ``infer_schema`` reported ``string`` for three of
+        these five columns while ``profile`` on the same file reported the
+        types the values carry.
+        """
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+
+        rows = 50
+        columns = {
+            "when": ["2026-01-02T03:04:05Z"] * rows,
+            "ident": [f"ORD-{i}" for i in range(rows)],
+            "numish": [str(i * 3) for i in range(rows)],
+            "boolish": ["true", "false"] * (rows // 2),
+            "real_int": [str(i) for i in range(rows)],
+        }
+        parquet_path = tmp_path / "typed.parquet"
+        pq.write_table(pa.table({**columns, "real_int": list(range(rows))}), parquet_path)
+
+        # The identical data as CSV. No value needs quoting, so a plain join is
+        # the whole writer.
+        csv_path = tmp_path / "typed.csv"
+        lines = [",".join(columns)]
+        lines += [",".join(values[row] for values in columns.values()) for row in range(rows)]
+        csv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        expected = {
+            "when": "date",
+            "ident": "string",
+            "numish": "integer",
+            "boolish": "boolean",
+            "real_int": "integer",
+        }
+        for path in (parquet_path, csv_path):
+            profile = dataprof.profile(path)
+            schema = dataprof.infer_schema(path)
+            structure = dataprof.analyze_structure(path)
+
+            assert {name: profile[name].data_type for name in expected} == expected, path
+            assert {c["name"]: c["data_type"] for c in schema.columns} == expected, path
+            assert {c.name: c.data_type for c in structure.columns} == expected, path
+
+    def test_parquet_structure_provenance_separates_metadata_from_sample(self, tmp_path):
+        """A Parquet file is typed from two sources, and says which is which."""
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+
+        path = tmp_path / "mixed.parquet"
+        pq.write_table(pa.table({"id": [1, 2, 3], "label": ["a", "b", "c"]}), path)
+
+        structure = dataprof.analyze_structure(path)
+        provenance = {column.name: column.provenance for column in structure.columns}
+        assert provenance == {"id": "metadata", "label": "sample"}
+        # Only the text column needed values, and the file is short enough that
+        # every row of it was read.
+        assert structure.rows_sampled == 3
+        assert structure.source_exhausted is True
+        # The sampled rows type the column; they are not counted. #700 decides
+        # whether a Parquet structural report should carry counters at all.
+        assert all(column.null_count is None for column in structure.columns)
+        assert dataprof.infer_schema(path).schema_stable is True
+
+    def test_fully_typed_parquet_still_reads_no_rows(self, tmp_path):
+        """The metadata fast path survives where the metadata is the answer."""
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+
+        path = tmp_path / "typed_only.parquet"
+        pq.write_table(pa.table({"id": [1, 2, 3], "score": [1.5, 2.5, 3.5]}), path)
+
+        schema = dataprof.infer_schema(path)
+        assert schema.rows_sampled == 0
+        assert schema.schema_stable is True
+        assert [c["data_type"] for c in schema.columns] == ["integer", "float"]
+
     def test_missing_file_raises_file_not_found(self):
         missing = str(FIXTURES / "does_not_exist.csv")
         with pytest.raises(FileNotFoundError, match="does_not_exist.csv") as excinfo:
