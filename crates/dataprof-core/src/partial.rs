@@ -66,10 +66,14 @@ pub struct StructureColumnSummary {
     pub unique_count: Option<usize>,
     pub uniqueness_ratio: Option<f64>,
     pub distinct_count_approximate: Option<bool>,
-    /// `"sample"` when the column's type came from reading values,
-    /// `"metadata"` when the declared schema decided it. CSV/JSON/JSONL are
-    /// always `"sample"`; a Parquet file carries both, since only its text
-    /// columns need values read to be typed (#693).
+    /// Which source governs this column's type: `"metadata"` when the declared
+    /// schema decided it, `"sample"` when only the column's values can. It
+    /// names the source, not the read — a `"sample"` column is one the metadata
+    /// could not type, whether or not the caller's row budget allowed any row
+    /// to be read for it. `rows_sampled` and `truncated` report the read.
+    ///
+    /// CSV/JSON/JSONL are always `"sample"`; a Parquet file carries both, since
+    /// only its text columns need values to be typed (#693).
     pub provenance: String,
 }
 

@@ -51,7 +51,7 @@ pub use async_http::{
 
 #[cfg(feature = "arrow")]
 pub use record_batch_analyzer::{
-    RecordBatchAnalyzer, data_type_from_arrow_type, logical_arrow_type,
+    RecordBatchAnalyzer, data_type_from_arrow_type, logical_arrow_type, sampling_can_decide_type,
 };
 
 #[cfg(feature = "parquet")]

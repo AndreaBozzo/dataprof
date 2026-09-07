@@ -767,8 +767,10 @@ which is what a writer that did not type its input leaves behind.
 `rows_sampled` reports what that cost -- `0` for a fully typed file.
 
 The sample is bounded in every format, so the type matches a full `profile()`
-whenever `schema_stable` is true; once inference stops at the cap, a later row
-can still move it.
+whenever `schema_stable` is true -- nothing was left unread that could move it,
+either because the scan reached the end of the file or because the Parquet
+metadata typed every column and no scan was needed. Once inference stops at the
+cap, a later row can still move it.
 
 ### `quick_row_count()`
 

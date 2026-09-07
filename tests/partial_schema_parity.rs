@@ -227,6 +227,97 @@ fn infer_schema_agrees_with_profile_on_a_time_column() {
     assert_eq!(infer_schema(file.path()).unwrap().rows_sampled, 0);
 }
 
+/// Duplicate column names are refused, as they are on every other surface.
+///
+/// The projected sample hides the collision from the analyzer's own validation
+/// when only one of the duplicates is text, and the sampled type then landed on
+/// the wrong column: `x: Int64, x: Utf8` holding dates reported
+/// `[("x", Date), ("x", String)]` — the integer column typed as a date, the
+/// date column left at its fallback. `profile()` and `infer_schema()` on a CSV
+/// with a duplicated header both reject the file, so this one now does too.
+#[test]
+fn duplicate_column_names_are_refused_like_every_other_surface() {
+    let ints: ArrayRef = Arc::new(Int64Array::from(vec![1_i64, 2, 3]));
+    let dates: ArrayRef = Arc::new(StringArray::from(vec![
+        "2026-01-02".to_string(),
+        "2026-01-03".to_string(),
+        "2026-01-04".to_string(),
+    ]));
+    let file = write_parquet(vec![("x", ints), ("x", dates)]);
+
+    let error = infer_schema(file.path()).expect_err("duplicate names must be refused");
+    assert_eq!(error.category(), "duplicate_column_name");
+    assert!(
+        error.to_string().contains("'x'"),
+        "the message must name the duplicate: {error}"
+    );
+
+    // The same file through the other two surfaces, so the three cannot drift.
+    assert_eq!(
+        analyze_structure(file.path(), None)
+            .expect_err("duplicate names must be refused")
+            .category(),
+        "duplicate_column_name"
+    );
+    assert!(Profiler::new().analyze_file(file.path()).is_err());
+}
+
+/// Provenance names the source that governs a column's type, not how many rows
+/// happened to be read for it.
+///
+/// A text column is typed by its values whether or not the caller's row budget
+/// let them be read — with a zero-row cap nothing decided it and `String` is a
+/// fallback, which is the opposite of a metadata answer. The CSV path draws the
+/// same line: it labels every column `"sample"` at `max_rows(0)` too.
+#[test]
+fn provenance_follows_the_schema_decision_not_the_read() {
+    let parquet = parquet_fixture();
+
+    let capped = analyze_structure(parquet.path(), Some(0)).unwrap();
+    assert_eq!(capped.rows_sampled, 0);
+    assert!(capped.truncated);
+    let provenance: Vec<(String, String)> = capped
+        .columns
+        .into_iter()
+        .map(|column| (column.name, column.provenance))
+        .collect();
+    assert_eq!(
+        provenance,
+        vec![
+            ("when".to_string(), "sample".to_string()),
+            ("ident".to_string(), "sample".to_string()),
+            ("numish".to_string(), "sample".to_string()),
+            ("boolish".to_string(), "sample".to_string()),
+            ("real_int".to_string(), "metadata".to_string()),
+        ]
+    );
+
+    // An empty file reads no rows either, and its text column is still the one
+    // the metadata could not type.
+    let empty = write_parquet(vec![
+        (
+            "id",
+            Arc::new(Int64Array::from(Vec::<i64>::new())) as ArrayRef,
+        ),
+        (
+            "label",
+            Arc::new(StringArray::from(Vec::<String>::new())) as ArrayRef,
+        ),
+    ]);
+    let report = analyze_structure(empty.path(), None).unwrap();
+    assert_eq!(
+        report
+            .columns
+            .into_iter()
+            .map(|column| (column.name, column.provenance))
+            .collect::<Vec<_>>(),
+        vec![
+            ("id".to_string(), "metadata".to_string()),
+            ("label".to_string(), "sample".to_string()),
+        ]
+    );
+}
+
 /// A zero-row sample of a file that does have text columns is not a settled
 /// schema, and must not claim to be. The CSV and JSON paths report the same
 /// clause for the same reason.
