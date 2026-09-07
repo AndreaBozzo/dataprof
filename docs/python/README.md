@@ -760,6 +760,12 @@ for col in result.columns:
     print(f"  {col['name']}: {col['data_type']}")
 ```
 
+The type is the one `profile()` will report, in every format. On a Parquet file
+that means the metadata answers for every column it types, and text columns are
+sampled: only their values say whether they hold dates, integers or booleans,
+which is what a writer that did not type its input leaves behind.
+`rows_sampled` reports what that cost -- `0` for a fully typed file.
+
 ### `quick_row_count()`
 
 ```python

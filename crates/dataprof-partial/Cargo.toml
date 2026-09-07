@@ -11,7 +11,13 @@ readme = "README.md"
 
 [features]
 default = []
-parquet = ["dep:arrow", "dep:parquet", "dataprof-core/arrow"]
+parquet = [
+    "dep:arrow",
+    "dep:parquet",
+    "dep:dataprof-parquet",
+    "dataprof-parquet/parquet",
+    "dataprof-core/arrow",
+]
 async-streaming = [
     "dep:bytes",
     "dep:tokio",
@@ -27,6 +33,7 @@ csv = { workspace = true }
 dataprof-core = { workspace = true }
 dataprof-csv = { workspace = true }
 dataprof-json = { workspace = true }
+dataprof-parquet = { workspace = true, optional = true }
 dataprof-runtime = { workspace = true }
 parquet = { workspace = true, optional = true }
 serde = { workspace = true }

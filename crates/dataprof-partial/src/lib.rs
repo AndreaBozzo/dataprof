@@ -10,6 +10,8 @@ use std::path::Path;
 use std::time::Instant;
 
 #[cfg(feature = "parquet")]
+use parquet::arrow::ProjectionMask;
+#[cfg(feature = "parquet")]
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde::Deserialize;
 
@@ -21,6 +23,8 @@ use dataprof_core::{
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_json::JsonParserConfig;
+#[cfg(feature = "parquet")]
+use dataprof_parquet::{RecordBatchAnalyzer, data_type_from_arrow_type, logical_arrow_type};
 use dataprof_runtime::StreamingColumnCollection;
 
 /// Schema inference sample size (rows to read for CSV/JSON).
@@ -44,6 +48,12 @@ const ROW_SAMPLE_LINES_PER_WINDOW: usize = ROW_SAMPLE_LINES / ROW_SAMPLE_WINDOWS
 /// Default row cap for `analyze_structure()`.
 const STRUCTURE_SAMPLE_ROWS: usize = 1000;
 
+/// Batch size for the Parquet value sample. Caps the decode buffer when a
+/// caller asks `analyze_structure()` for a row limit far above the sample
+/// budget; the reader is stopped by its row limit, not by this.
+#[cfg(feature = "parquet")]
+const PARQUET_SAMPLE_BATCH_ROWS: usize = 8192;
+
 // ---------------------------------------------------------------------------
 // Public free functions
 // ---------------------------------------------------------------------------
@@ -51,7 +61,10 @@ const STRUCTURE_SAMPLE_ROWS: usize = 1000;
 /// Infer the schema (column names + data types) of a file.
 ///
 /// This is much faster than a full `Profiler::analyze_file` because it reads
-/// only a small sample of rows (or just the metadata for Parquet files).
+/// only a small sample of rows. A Parquet file is answered from its
+/// metadata wherever the metadata decides the type; its text columns are
+/// sampled, because only their values say whether they hold dates,
+/// integers or text (#693).
 ///
 /// # Example
 /// ```no_run
@@ -125,7 +138,7 @@ pub fn infer_schema_with_format(
         FileFormat::Parquet => {
             #[cfg(feature = "parquet")]
             {
-                infer_schema_parquet(path, start)
+                infer_schema_parquet(path, start, SCHEMA_SAMPLE_ROWS)
             }
             #[cfg(not(feature = "parquet"))]
             {
@@ -185,7 +198,7 @@ pub fn analyze_structure_with_format(
     match format {
         FileFormat::Csv => analyze_structure_csv(path, limit),
         FileFormat::Json | FileFormat::Jsonl => analyze_structure_json(path, format, limit),
-        FileFormat::Parquet => analyze_structure_parquet(path),
+        FileFormat::Parquet => analyze_structure_parquet(path, limit),
         FileFormat::Unknown(ref ext) => Err(DataProfilerError::UnsupportedFormat {
             format: ext.clone(),
         }),
@@ -196,8 +209,41 @@ pub fn analyze_structure_with_format(
 // Schema inference — per format
 // ---------------------------------------------------------------------------
 
+/// Infer a Parquet schema, reading values only for the columns whose type the
+/// file's metadata cannot decide.
+///
+/// A Parquet writer that did not type its input leaves dates, integers and
+/// booleans in `Utf8` columns — the shape any CSV-to-Parquet export produces.
+/// `profile()` re-infers those from the values, so a metadata-only schema
+/// disagreed with the full profiler about the same column of the same file, and
+/// with `infer_schema()` on the identical data as CSV (#693).
+///
+/// The metadata fast path is kept where it is authoritative: a column whose
+/// Arrow type decides its profiled type costs no read, so a fully typed file
+/// still reports `rows_sampled: 0`. Only text columns are projected, and only
+/// up to `sample_rows` of them, so the cost is bounded by the sample rather
+/// than the file.
+///
+/// The sample is the file prefix, as the profiling row cap is; spreading it
+/// across row groups is #639.
 #[cfg(feature = "parquet")]
-fn infer_schema_parquet(path: &Path, start: Instant) -> Result<SchemaResult, DataProfilerError> {
+fn infer_schema_parquet(
+    path: &Path,
+    start: Instant,
+    sample_rows: usize,
+) -> Result<SchemaResult, DataProfilerError> {
+    parquet_schema(path, start, sample_rows).map(|(schema, _)| schema)
+}
+
+/// [`infer_schema_parquet`], plus the names of the columns whose type came from
+/// the value sample rather than the metadata. `analyze_structure()` reports
+/// that split as per-column provenance.
+#[cfg(feature = "parquet")]
+fn parquet_schema(
+    path: &Path,
+    start: Instant,
+    sample_rows: usize,
+) -> Result<(SchemaResult, Vec<String>), DataProfilerError> {
     let file = fs::File::open(path).map_err(|_| DataProfilerError::FileNotFound {
         path: path.display().to_string(),
     })?;
@@ -206,22 +252,118 @@ fn infer_schema_parquet(path: &Path, start: Instant) -> Result<SchemaResult, Dat
         DataProfilerError::parquet_with_source(format!("Failed to read Parquet metadata: {}", e), e)
     })?;
 
-    let arrow_schema = builder.schema();
-    let columns = arrow_schema
-        .fields()
-        .iter()
-        .map(|field| ColumnSchema {
-            name: field.name().clone(),
-            data_type: arrow_type_to_dataprof(field.data_type()),
-        })
-        .collect();
+    let arrow_schema = builder.schema().clone();
+    let mut columns: Vec<ColumnSchema> = Vec::with_capacity(arrow_schema.fields().len());
+    let mut text_columns: Vec<usize> = Vec::new();
 
-    Ok(SchemaResult {
-        columns,
-        rows_sampled: 0,
-        inference_time_ms: start.elapsed().as_millis(),
-        schema_stable: true,
-    })
+    for (index, field) in arrow_schema.fields().iter().enumerate() {
+        let logical = logical_arrow_type(field.data_type());
+        let data_type = match data_type_from_arrow_type(&logical) {
+            // The Arrow type decides this column on its own, and the profiler
+            // reads the same list.
+            Some(decided) => decided,
+            // No arm: the profiler types this column from its values. Where the
+            // values *are* their rendering the sample below settles it; where
+            // the rendering is an encoding or a container serialisation the
+            // profiler reports `String`, which is what stands here (binary is
+            // #645, nested containers #637).
+            None => {
+                if values_decide_type(&logical) {
+                    text_columns.push(index);
+                }
+                DataType::String
+            }
+        };
+
+        columns.push(ColumnSchema {
+            name: field.name().clone(),
+            data_type,
+        });
+    }
+
+    if text_columns.is_empty() || sample_rows == 0 {
+        return Ok((
+            SchemaResult {
+                columns,
+                rows_sampled: 0,
+                inference_time_ms: start.elapsed().as_millis(),
+                schema_stable: true,
+            },
+            Vec::new(),
+        ));
+    }
+
+    let total_rows = builder.metadata().file_metadata().num_rows().max(0) as usize;
+    let projection = ProjectionMask::roots(builder.parquet_schema(), text_columns.iter().copied());
+    let reader = builder
+        .with_projection(projection)
+        .with_batch_size(sample_rows.min(PARQUET_SAMPLE_BATCH_ROWS))
+        .with_limit(sample_rows)
+        .build()
+        .map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to read Parquet sample: {}", e),
+                e,
+            )
+        })?;
+
+    // The profiler's own analyzer, so the type comes off a `ColumnProfile`
+    // exactly as it does for CSV and JSON in `schema_from_profiles`. Statistics
+    // and patterns are skipped: only the type is read.
+    let mut analyzer = RecordBatchAnalyzer::new();
+    let mut rows_sampled = 0usize;
+    for batch in reader {
+        let batch = batch.map_err(|e| {
+            DataProfilerError::parquet_with_source(
+                format!("Failed to read Parquet sample: {}", e),
+                e,
+            )
+        })?;
+        rows_sampled += batch.num_rows();
+        analyzer.process_batch(&batch).map_err(|e| {
+            DataProfilerError::parquet_error(&format!("Failed to analyze Parquet sample: {}", e))
+        })?;
+    }
+
+    let mut sampled_columns = Vec::with_capacity(text_columns.len());
+    for profile in analyzer.to_profiles(true, true, None) {
+        if let Some(column) = columns
+            .iter_mut()
+            .find(|column| column.name == profile.name)
+        {
+            column.data_type = profile.data_type;
+            sampled_columns.push(profile.name);
+        }
+    }
+
+    Ok((
+        SchemaResult {
+            columns,
+            rows_sampled,
+            inference_time_ms: start.elapsed().as_millis(),
+            // Every row of the sampled columns was read, so no further row can
+            // change a type. A truncated sample can: the same clause the CSV
+            // and JSON paths report.
+            schema_stable: rows_sampled >= total_rows,
+        },
+        sampled_columns,
+    ))
+}
+
+/// Whether a column's values, rather than its Arrow type, decide the type the
+/// profiler reports — and reading a sample can therefore change the answer.
+///
+/// Text is the one case worth a read. Every other type without a decided answer
+/// reaches the profile through a formatter, so a sample would type the
+/// rendering rather than the data: hex for binary (#645), a container
+/// serialisation for nested columns (#637). Both report `String` today, which
+/// the metadata path names without reading anything.
+#[cfg(feature = "parquet")]
+fn values_decide_type(logical: &arrow::datatypes::DataType) -> bool {
+    matches!(
+        logical,
+        arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8
+    )
 }
 
 fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataProfilerError> {
@@ -868,44 +1010,63 @@ fn analyze_structure_json(
     })
 }
 
-fn analyze_structure_parquet(path: &Path) -> Result<StructureReport, DataProfilerError> {
+fn analyze_structure_parquet(
+    path: &Path,
+    max_rows: usize,
+) -> Result<StructureReport, DataProfilerError> {
     #[cfg(feature = "parquet")]
     {
-        let schema = infer_schema_with_format(path, FileFormat::Parquet)?;
+        let (schema, sampled_columns) = parquet_schema(path, Instant::now(), max_rows)?;
         let row_count = quick_row_count_with_format(path, FileFormat::Parquet)?;
+        // Provenance is per column, because a Parquet file is now typed from
+        // both sources: the encoding answers for an already-typed column, a
+        // bounded value sample for a text one. Labelling a sampled column
+        // "metadata" would claim a stability the sample does not have.
         let columns = schema
             .columns
             .into_iter()
-            .map(|column| StructureColumnSummary {
-                name: column.name,
-                data_type: column.data_type,
-                total_count: None,
-                null_count: None,
-                null_ratio: None,
-                unique_count: None,
-                uniqueness_ratio: None,
-                distinct_count_approximate: None,
-                provenance: "metadata".to_string(),
+            .map(|column| {
+                let provenance = if sampled_columns.contains(&column.name) {
+                    "sample"
+                } else {
+                    "metadata"
+                };
+                StructureColumnSummary {
+                    name: column.name,
+                    data_type: column.data_type,
+                    total_count: None,
+                    null_count: None,
+                    null_ratio: None,
+                    unique_count: None,
+                    uniqueness_ratio: None,
+                    distinct_count_approximate: None,
+                    provenance: provenance.to_string(),
+                }
             })
             .collect();
+
+        // Only the sampled columns can be truncated; a file with nothing to
+        // sample is exhausted by its metadata, as it was before (#693).
+        let truncated = !schema.schema_stable;
+        let warnings = structure_warnings(&row_count, truncated, None);
 
         Ok(StructureReport {
             source: path.display().to_string(),
             format: FileFormat::Parquet,
             row_count,
-            rows_sampled: 0,
-            source_exhausted: true,
-            truncated: false,
-            truncation_reason: None,
+            rows_sampled: schema.rows_sampled,
+            source_exhausted: !truncated,
+            truncated,
+            truncation_reason: truncated.then(|| format!("max_rows({max_rows})")),
             delimiter: None,
             columns,
-            warnings: Vec::new(),
+            warnings,
         })
     }
 
     #[cfg(not(feature = "parquet"))]
     {
-        let _ = path;
+        let _ = (path, max_rows);
         Err(DataProfilerError::UnsupportedFormat {
             format: "parquet (enable the `parquet` feature)".to_string(),
         })
@@ -1029,7 +1190,7 @@ fn schema_from_profiles(
         .collect();
 
     // schema_stable is true when the sample scan reached EOF — the whole
-    // source was consumed — or for Parquet (metadata-only). The parsers probe
+    // source was consumed. The parsers probe
     // one record past SCHEMA_SAMPLE_ROWS so a file with exactly `cap` rows is
     // not mistaken for a truncated one (gh #553).
     let schema_stable = !truncated;
@@ -1039,35 +1200,6 @@ fn schema_from_profiles(
         rows_sampled,
         inference_time_ms: elapsed_ms,
         schema_stable,
-    }
-}
-
-/// Map Arrow data types to dataprof's simplified 4-variant DataType.
-#[cfg(feature = "parquet")]
-fn arrow_type_to_dataprof(arrow_type: &arrow::datatypes::DataType) -> DataType {
-    use arrow::datatypes::DataType as AT;
-    match arrow_type {
-        AT::Int8
-        | AT::Int16
-        | AT::Int32
-        | AT::Int64
-        | AT::UInt8
-        | AT::UInt16
-        | AT::UInt32
-        | AT::UInt64 => DataType::Integer,
-
-        AT::Float16 | AT::Float32 | AT::Float64 | AT::Decimal128(_, _) | AT::Decimal256(_, _) => {
-            DataType::Float
-        }
-
-        AT::Date32 | AT::Date64 | AT::Timestamp(_, _) | AT::Time32(_) | AT::Time64(_) => {
-            DataType::Date
-        }
-
-        // Everything else (Utf8, LargeUtf8, Binary, List, Struct, etc.)
-        // Boolean gets its own type
-        AT::Boolean => DataType::Boolean,
-        _ => DataType::String,
     }
 }
 
@@ -1384,7 +1516,10 @@ mod tests {
         }
 
         let result = infer_schema(f.path()).unwrap();
-        assert_eq!(result.rows_sampled, 0); // Parquet reads metadata only
+        // Two rows read: the `label` column is `Utf8`, so only its values say
+        // what it holds. The typed columns cost no read (#693).
+        assert_eq!(result.rows_sampled, 2);
+        assert!(result.schema_stable);
         assert_eq!(result.columns.len(), 3);
         assert_eq!(result.columns[0].name, "id");
         assert_eq!(result.columns[0].data_type, DataType::Integer);
@@ -1827,28 +1962,48 @@ mod tests {
         assert!(matches!(err, DataProfilerError::FileNotFound { .. }));
     }
 
+    /// The schema path reads the profiler's own type map, so the two cannot
+    /// name a column's type differently (#693). `None` is the profiler's "only
+    /// the values say", and is what sends a text column to the value sample.
     #[cfg(feature = "parquet")]
     #[test]
     fn test_arrow_type_mapping() {
         use arrow::datatypes::DataType as AT;
 
-        assert_eq!(arrow_type_to_dataprof(&AT::Int32), DataType::Integer);
-        assert_eq!(arrow_type_to_dataprof(&AT::UInt64), DataType::Integer);
-        assert_eq!(arrow_type_to_dataprof(&AT::Float64), DataType::Float);
+        let mapped = |arrow_type: &AT| data_type_from_arrow_type(&logical_arrow_type(arrow_type));
+
+        assert_eq!(mapped(&AT::Int32), Some(DataType::Integer));
+        assert_eq!(mapped(&AT::UInt64), Some(DataType::Integer));
+        assert_eq!(mapped(&AT::Float64), Some(DataType::Float));
+        assert_eq!(mapped(&AT::Decimal128(10, 2)), Some(DataType::Float));
+        assert_eq!(mapped(&AT::Date32), Some(DataType::Date));
         assert_eq!(
-            arrow_type_to_dataprof(&AT::Decimal128(10, 2)),
-            DataType::Float
-        );
-        assert_eq!(arrow_type_to_dataprof(&AT::Date32), DataType::Date);
-        assert_eq!(
-            arrow_type_to_dataprof(&AT::Timestamp(
+            mapped(&AT::Timestamp(
                 arrow::datatypes::TimeUnit::Millisecond,
                 None
             )),
-            DataType::Date
+            Some(DataType::Date)
         );
-        assert_eq!(arrow_type_to_dataprof(&AT::Utf8), DataType::String);
-        assert_eq!(arrow_type_to_dataprof(&AT::Boolean), DataType::Boolean);
+        assert_eq!(mapped(&AT::Boolean), Some(DataType::Boolean));
+
+        // A dictionary is an encoding, not a type: the values it compresses
+        // decide, exactly as they do for the plain column.
+        assert_eq!(
+            mapped(&AT::Dictionary(Box::new(AT::Int8), Box::new(AT::Int64))),
+            Some(DataType::Integer)
+        );
+
+        // Text: no answer from the type, and the one case worth reading rows
+        // for.
+        assert_eq!(mapped(&AT::Utf8), None);
+        assert_eq!(mapped(&AT::LargeUtf8), None);
+        assert!(values_decide_type(&logical_arrow_type(&AT::Utf8)));
+        assert!(values_decide_type(&logical_arrow_type(&AT::Utf8View)));
+
+        // No answer from the type either, but the rendering is not the value,
+        // so a sample would type the rendering. Left to #637 and #645.
+        assert_eq!(mapped(&AT::Binary), None);
+        assert!(!values_decide_type(&logical_arrow_type(&AT::Binary)));
     }
 
     #[cfg(feature = "parquet")]
@@ -1880,20 +2035,71 @@ mod tests {
             writer.close().unwrap();
         }
 
+        // max_rows(1) against two rows: the text column is typed from the
+        // first row only, so the pass is truncated and says so.
         let report = analyze_structure(f.path(), Some(1)).unwrap();
         assert_eq!(report.format, FileFormat::Parquet);
         assert_eq!(report.row_count.count, 2);
+        assert_eq!(report.rows_sampled, 1);
+        assert!(!report.source_exhausted);
+        assert!(report.truncated);
+        assert_eq!(report.truncation_reason.as_deref(), Some("max_rows(1)"));
+        assert_eq!(report.columns.len(), 2);
+        // Provenance is per column: the encoding types `id`, the value sample
+        // types `label`.
+        let provenance: Vec<_> = report
+            .columns
+            .iter()
+            .map(|col| (col.name.as_str(), col.provenance.as_str()))
+            .collect();
+        assert_eq!(provenance, vec![("id", "metadata"), ("label", "sample")]);
+        assert!(report.columns.iter().all(|col| col.total_count.is_none()));
+    }
+
+    /// A file whose columns are all typed by their encoding keeps the
+    /// metadata-only fast path: nothing to re-infer, so nothing is read (#693).
+    #[cfg(feature = "parquet")]
+    #[test]
+    fn test_parquet_without_text_columns_reads_no_rows() {
+        use arrow::array::{Float64Array, Int32Array};
+        use arrow::datatypes::{DataType as ArrowDT, Field, Schema};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+
+        let schema = Schema::new(vec![
+            Field::new("id", ArrowDT::Int32, false),
+            Field::new("score", ArrowDT::Float64, false),
+        ]);
+        let batch = RecordBatch::try_new(
+            std::sync::Arc::new(schema),
+            vec![
+                std::sync::Arc::new(Int32Array::from(vec![1, 2])),
+                std::sync::Arc::new(Float64Array::from(vec![1.5, 2.5])),
+            ],
+        )
+        .unwrap();
+
+        let mut f = NamedTempFile::with_suffix(".parquet").unwrap();
+        {
+            let mut writer = ArrowWriter::try_new(&mut f, batch.schema(), None).unwrap();
+            writer.write(&batch).unwrap();
+            writer.close().unwrap();
+        }
+
+        let schema = infer_schema(f.path()).unwrap();
+        assert_eq!(schema.rows_sampled, 0);
+        assert!(schema.schema_stable);
+
+        let report = analyze_structure(f.path(), Some(1)).unwrap();
         assert_eq!(report.rows_sampled, 0);
         assert!(report.source_exhausted);
         assert!(!report.truncated);
-        assert_eq!(report.columns.len(), 2);
         assert!(
             report
                 .columns
                 .iter()
                 .all(|col| col.provenance == "metadata")
         );
-        assert!(report.columns.iter().all(|col| col.total_count.is_none()));
     }
 }
 

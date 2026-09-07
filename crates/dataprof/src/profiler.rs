@@ -425,7 +425,9 @@ impl Profiler {
     /// Infer the schema (column names + data types) of a file.
     ///
     /// Respects the builder's format override. This is much faster than a full
-    /// `analyze_file` — it reads only a small sample (or just metadata for Parquet).
+    /// `analyze_file` — it reads only a small sample of rows. A Parquet file is
+    /// answered from its metadata except for text columns, whose type only
+    /// their values decide (#693).
     pub fn infer_schema<P: AsRef<Path>>(&self, path: P) -> Result<SchemaResult, DataProfilerError> {
         let path = path.as_ref();
         let format = self

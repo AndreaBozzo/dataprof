@@ -50,7 +50,10 @@ impl PySchemaResult {
             .collect()
     }
 
-    /// Number of rows sampled to infer the schema (0 for Parquet metadata)
+    /// Number of rows sampled to infer the schema.
+    ///
+    /// 0 when nothing had to be read: a Parquet file whose every column is
+    /// typed by its encoding is answered from the metadata alone.
     #[getter]
     fn rows_sampled(&self) -> usize {
         self.inner.rows_sampled
@@ -315,8 +318,10 @@ impl PyRowCountEstimate {
 
 /// Infer the schema (column names + data types) of a file.
 ///
-/// Much faster than full profiling — reads only a small sample
-/// (or just metadata for Parquet).
+/// Much faster than full profiling — reads only a small sample of rows.
+/// A Parquet file is answered from its metadata except for text columns,
+/// whose type only their values decide; those are sampled, so the schema
+/// names the same type `profile()` will (#693).
 #[pyfunction]
 pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
     let result = dataprof::infer_schema(Path::new(path)).map_err(|e| analysis_error_to_py(&e))?;

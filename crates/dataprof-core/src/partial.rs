@@ -7,13 +7,15 @@ pub struct SchemaResult {
     /// the header/schema, JSON/JSONL follow the first record's field order with
     /// later-only fields appended in first-seen order.
     pub columns: Vec<ColumnSchema>,
-    /// How many rows were sampled to infer the schema (0 for Parquet metadata).
+    /// How many rows were sampled to infer the schema. 0 when nothing had to
+    /// be read: a Parquet file whose every column is typed by its encoding
+    /// is answered from the metadata alone.
     pub rows_sampled: usize,
     /// Time taken for inference in milliseconds.
     pub inference_time_ms: u128,
-    /// `true` when the entire file was consumed or schema was read from
-    /// metadata; `false` when inference stopped at the sample-size cap and
-    /// the schema may not have fully stabilized.
+    /// `true` when the entire file was consumed or the schema was read from
+    /// metadata alone; `false` when inference stopped at the sample-size cap
+    /// and the schema may not have fully stabilized.
     pub schema_stable: bool,
 }
 
@@ -64,7 +66,10 @@ pub struct StructureColumnSummary {
     pub unique_count: Option<usize>,
     pub uniqueness_ratio: Option<f64>,
     pub distinct_count_approximate: Option<bool>,
-    /// `"sample"` for CSV/JSON/JSONL, `"metadata"` for Parquet.
+    /// `"sample"` when the column's type came from reading values,
+    /// `"metadata"` when the declared schema decided it. CSV/JSON/JSONL are
+    /// always `"sample"`; a Parquet file carries both, since only its text
+    /// columns need values read to be typed (#693).
     pub provenance: String,
 }
 

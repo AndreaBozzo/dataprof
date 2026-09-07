@@ -241,10 +241,10 @@ entry points all agree on what a record is.
 
 ### Parquet
 
-Parquet is the most efficient format to profile. Schema inference and row counting read only the file metadata -- zero row scanning required.
+Parquet is the most efficient format to profile. Row counting reads only the file metadata, and so does schema inference for every column the metadata types. Text columns are the exception: a writer that did not type its input leaves dates, integers and booleans in string columns, so `infer_schema()` reads a bounded sample of those columns and reports the same type `profile()` will. `rows_sampled` says how many rows that cost.
 
 ```python
-schema = dp.infer_schema("data.parquet")      # instant schema from metadata
+schema = dp.infer_schema("data.parquet")      # metadata, plus a bounded sample of text columns
 rows = dp.quick_row_count("data.parquet")     # instant row count from metadata
 report = dp.profile("data.parquet")           # full profiling reads row groups
 ```

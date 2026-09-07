@@ -39,9 +39,7 @@ const NUMERIC_SAMPLE_CAP: usize = 10_000;
 /// Only encodings are stripped. A type whose *values* need a decision of their
 /// own — nested types (#637), binary (#645) — keeps its identity and is decided
 /// there.
-pub(crate) fn logical_arrow_type(
-    data_type: &arrow::datatypes::DataType,
-) -> arrow::datatypes::DataType {
+pub fn logical_arrow_type(data_type: &arrow::datatypes::DataType) -> arrow::datatypes::DataType {
     use arrow::datatypes::DataType as ArrowDataType;
 
     match data_type {
@@ -54,6 +52,45 @@ pub(crate) fn logical_arrow_type(
         // Half precision has no arm of its own; f32 holds every f16 exactly.
         ArrowDataType::Float16 => ArrowDataType::Float32,
         other => other.clone(),
+    }
+}
+
+/// The type a column profiles as when its Arrow type alone decides it, or
+/// `None` when only the values can say.
+///
+/// `None` is the answer for text (`Utf8`/`LargeUtf8`), where the same column
+/// holds `"2026-01-02"` in one file and `"ORD-7"` in another, and for every
+/// Arrow type without a native arm below, which reaches the profile through a
+/// formatter and is re-inferred from its rendering.
+///
+/// Callers that hold the values pass them through [`infer_type`]; callers that
+/// hold only the schema — `infer_schema()` on a Parquet file — decide from this
+/// whether reading a sample can change the answer. Both read one list, so the
+/// fast schema path and the full profiler cannot name a column's type
+/// differently (#693).
+///
+/// Pass a type that has been through [`logical_arrow_type`]: this maps the
+/// logical type, not the physical encoding.
+pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Option<DataType> {
+    use arrow::datatypes::DataType as ArrowDataType;
+
+    match arrow_type {
+        ArrowDataType::Float64 | ArrowDataType::Float32 => Some(DataType::Float),
+        ArrowDataType::Int64
+        | ArrowDataType::Int32
+        | ArrowDataType::Int16
+        | ArrowDataType::Int8
+        | ArrowDataType::UInt64
+        | ArrowDataType::UInt32
+        | ArrowDataType::UInt16
+        | ArrowDataType::UInt8 => Some(DataType::Integer),
+        ArrowDataType::Date32 | ArrowDataType::Date64 | ArrowDataType::Timestamp(_, _) => {
+            Some(DataType::Date)
+        }
+        ArrowDataType::Decimal128(_, _) | ArrowDataType::Decimal256(_, _) => Some(DataType::Float),
+        ArrowDataType::Duration(_) => Some(DataType::Integer),
+        ArrowDataType::Boolean => Some(DataType::Boolean),
+        _ => None,
     }
 }
 
@@ -1185,38 +1222,23 @@ impl ColumnAnalyzer {
     }
 
     fn infer_data_type(&self) -> DataType {
-        match &self.data_type {
-            arrow::datatypes::DataType::Float64 | arrow::datatypes::DataType::Float32 => {
-                DataType::Float
-            }
-            arrow::datatypes::DataType::Int64
-            | arrow::datatypes::DataType::Int32
-            | arrow::datatypes::DataType::Int16
-            | arrow::datatypes::DataType::Int8
-            | arrow::datatypes::DataType::UInt64
-            | arrow::datatypes::DataType::UInt32
-            | arrow::datatypes::DataType::UInt16
-            | arrow::datatypes::DataType::UInt8 => DataType::Integer,
-            arrow::datatypes::DataType::Date32
-            | arrow::datatypes::DataType::Date64
-            | arrow::datatypes::DataType::Timestamp(_, _) => DataType::Date,
-            arrow::datatypes::DataType::Decimal128(_, _)
-            | arrow::datatypes::DataType::Decimal256(_, _) => DataType::Float,
-            arrow::datatypes::DataType::Duration(_) => DataType::Integer,
-            arrow::datatypes::DataType::Boolean => DataType::Boolean,
-            // Everything below reached the profile as text: `Utf8`/`LargeUtf8`
-            // natively, and every type without an arm through the generic
-            // formatter. Where those samples are the values themselves, only
-            // they say what the column holds, so they are re-inferred rather
-            // than declared `String` — which is what made a dictionary of
-            // digits profile as text while the same digits written plain
-            // profiled as integers. Where the rendering is an encoding rather
-            // than the value (hex, for binary), re-inference would read the
-            // encoding as data, so the column stays text.
-            _ if !self.renders_values_as_encoded_bytes() => {
-                infer_type(self.sample_values.samples())
-            }
-            _ => DataType::String,
+        if let Some(decided) = data_type_from_arrow_type(&self.data_type) {
+            return decided;
+        }
+
+        // Everything left reached the profile as text: `Utf8`/`LargeUtf8`
+        // natively, and every type without an arm through the generic
+        // formatter. Where those samples are the values themselves, only they
+        // say what the column holds, so they are re-inferred rather than
+        // declared `String` — which is what made a dictionary of digits profile
+        // as text while the same digits written plain profiled as integers.
+        // Where the rendering is an encoding rather than the value (hex, for
+        // binary), re-inference would read the encoding as data, so the column
+        // stays text.
+        if self.renders_values_as_encoded_bytes() {
+            DataType::String
+        } else {
+            infer_type(self.sample_values.samples())
         }
     }
 }
