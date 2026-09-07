@@ -102,6 +102,7 @@ dp.profile(
     progress_interval_ms=None,       # int -- ms between progress events
     metrics=None,                    # list[str] -- "schema", "statistics", "patterns", "quality"
     quality_dimensions=None,         # list[str] -- subset of dimensions to compute
+    columns=None,                    # list[str] -- profile only these columns
     locale=None,                     # str -- "CA"|"DE"|"FR"|"GB"|"IT"|"US"
     positive_columns=None,           # list[str] -- columns expected to be non-negative
     identifier_columns=None,         # list[str] -- semantic IDs, not measures
@@ -145,6 +146,38 @@ header, the Parquet/Arrow schema, the dict or DataFrame key order, and for
 JSON/JSONL the field order of the first record, with fields that only appear in
 later records appended where they were first seen. Converting a dataset between
 formats therefore does not reshuffle the report.
+
+**Column projection** narrows a profile to the columns you name. `columns`
+takes a list of source column names and is accepted by `dp.profile()`,
+`dp.profile_file()`, and `dp.Profiler().columns([...])`; on the database path
+`ProfilerConfig(columns=[...])` carries it into `analyze_database_async()`:
+
+```python
+report = dp.profile("orders.csv", columns=["amount_eur", "city"])
+list(report)        # ['city', 'amount_eur']
+report.rows         # every row is still read
+```
+
+Projection selects columns, never rows: `report.rows` is unchanged, and each
+retained column reports exactly the values it reports in an unprojected profile
+of the same source — same types, statistics, patterns, and lengths. It applies
+identically on every input and transport (CSV, JSON, JSONL, Parquet, bytes,
+dicts, row dicts, DataFrames, and Arrow) and on both engines.
+
+The projected report keeps **source order**, not the order you listed the names
+in, so a projection is a filter on the report rather than a reordering of it.
+
+Names are validated rather than silently ignored. A name absent from the source
+raises `ValueError` listing the unmatched names, and so does a repeated name.
+`columns=[]` is a projection onto no columns, which is distinct from
+`columns=None` (no projection): it reports `columns == 0` while `rows` still
+counts the rows that were read.
+
+Quality is assessed over the projected columns only, so `quality_score` answers
+"how good are the columns I asked about" and generally differs from the score
+for the whole dataset. Semantic hints are resolved against the projection too —
+a `positive_columns` hint naming a column that projection excluded raises, since
+that column is not in the report it would describe.
 
 Synchronous byte inputs use the in-memory columnar path. They support
 `max_rows`, metric/quality selection, semantic hints, CSV delimiters, and JSONL
