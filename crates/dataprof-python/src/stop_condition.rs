@@ -37,6 +37,10 @@ impl PyStopCondition {
     }
 
     /// Stop after consuming this many bytes.
+    ///
+    /// The budget is checked after whole data chunks. Reported bytes include
+    /// headers, so consumption can exceed the requested value; use smaller
+    /// chunks for a tighter bound.
     #[staticmethod]
     fn max_bytes(n: u64) -> PyResult<Self> {
         if n == 0 {
