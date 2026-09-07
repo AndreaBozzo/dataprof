@@ -56,18 +56,24 @@ pub fn logical_arrow_type(data_type: &arrow::datatypes::DataType) -> arrow::data
 }
 
 /// The type a column profiles as when its Arrow type alone decides it, or
-/// `None` when only the values can say.
+/// `None` when it has no native arm here and the profile types it from
+/// whatever text reaches the accumulator.
 ///
-/// `None` is the answer for text (`Utf8`/`LargeUtf8`), where the same column
-/// holds `"2026-01-02"` in one file and `"ORD-7"` in another, and for every
-/// Arrow type without a native arm below, which reaches the profile through a
-/// formatter and is re-inferred from its rendering.
+/// `None` is not the same claim as "the values decide". It covers three cases
+/// that behave differently, and a caller who cannot read values needs
+/// [`sampling_can_decide_type`] to tell them apart:
 ///
-/// Callers that hold the values pass them through [`infer_type`]; callers that
-/// hold only the schema — `infer_schema()` on a Parquet file — decide from this
-/// whether reading a sample can change the answer. Both read one list, so the
-/// fast schema path and the full profiler cannot name a column's type
-/// differently (#693).
+/// - text (`Utf8`/`LargeUtf8`), where the rendering *is* the value, so
+///   re-inference answers and reading a sample can change the answer;
+/// - binary, where the rendering is hex and re-inference is refused outright —
+///   the profile declares `String` (#645);
+/// - nested containers, where the rendering is a bracketed serialisation, so
+///   re-inference reads the serialisation rather than the data and lands on
+///   `String` for every container shape (#637).
+///
+/// Both the profiler and `infer_schema()` read this one list, so the fast
+/// schema path and the full profiler cannot name a column's type differently
+/// (#693).
 ///
 /// Pass a type that has been through [`logical_arrow_type`]: this maps the
 /// logical type, not the physical encoding.
@@ -92,6 +98,25 @@ pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Opt
         ArrowDataType::Boolean => Some(DataType::Boolean),
         _ => None,
     }
+}
+
+/// Whether reading a sample of this column's values can decide its type.
+///
+/// The question `infer_schema()` asks before it pays for a read, kept next to
+/// the map it refines rather than restated by each caller — the same list in
+/// two places is what #661 removed from the profiler itself.
+///
+/// True only for text. A native arm needs no values, and the two families
+/// without one reach the profile as a *rendering* of their values — hex for
+/// binary, a bracketed serialisation for a container — which re-inference reads
+/// as text either way, so a read cannot move the answer off `String`.
+///
+/// Pass a type that has been through [`logical_arrow_type`].
+pub fn sampling_can_decide_type(arrow_type: &arrow::datatypes::DataType) -> bool {
+    use arrow::datatypes::DataType as ArrowDataType;
+
+    data_type_from_arrow_type(arrow_type).is_none()
+        && matches!(arrow_type, ArrowDataType::Utf8 | ArrowDataType::LargeUtf8)
 }
 
 /// Full-stream duplicate-row tracking over Arrow batches.

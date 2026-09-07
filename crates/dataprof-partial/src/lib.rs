@@ -24,7 +24,9 @@ use dataprof_core::{
 use dataprof_csv::CsvParserConfig;
 use dataprof_json::JsonParserConfig;
 #[cfg(feature = "parquet")]
-use dataprof_parquet::{RecordBatchAnalyzer, data_type_from_arrow_type, logical_arrow_type};
+use dataprof_parquet::{
+    RecordBatchAnalyzer, data_type_from_arrow_type, logical_arrow_type, sampling_can_decide_type,
+};
 use dataprof_runtime::StreamingColumnCollection;
 
 /// Schema inference sample size (rows to read for CSV/JSON).
@@ -235,9 +237,15 @@ fn infer_schema_parquet(
     parquet_schema(path, start, sample_rows).map(|(schema, _)| schema)
 }
 
-/// [`infer_schema_parquet`], plus the names of the columns whose type came from
-/// the value sample rather than the metadata. `analyze_structure()` reports
-/// that split as per-column provenance.
+/// [`infer_schema_parquet`], plus the names of the columns whose type the
+/// metadata could not decide. `analyze_structure()` reports that split as
+/// per-column provenance.
+///
+/// The split is the schema decision, not a report of what the read produced: a
+/// text column is governed by its values whether or not the caller's row budget
+/// let them be read. `rows_sampled` and `truncated` say what was read, and the
+/// CSV path draws the same line — it labels every column `"sample"` at
+/// `max_rows(0)`.
 #[cfg(feature = "parquet")]
 fn parquet_schema(
     path: &Path,
@@ -253,6 +261,25 @@ fn parquet_schema(
     })?;
 
     let arrow_schema = builder.schema().clone();
+
+    // Reject duplicate names up front, on the *whole* schema.
+    //
+    // Two reasons, and either alone is enough. The full profiler refuses this
+    // file, and so does `infer_schema()` on a CSV with a duplicated header, so
+    // answering here made Parquet the one surface that accepted a file nothing
+    // else would read. And the sample below is projected: with `x: Int64` and
+    // `x: Utf8` the projection hides the collision from the analyzer's own
+    // validation, and the sampled type then lands on whichever `x` comes first
+    // — reporting the integer column as a date and leaving the text column at
+    // its fallback. Validating here also makes the name lookup after the scan
+    // unambiguous by construction.
+    let names: Vec<String> = arrow_schema
+        .fields()
+        .iter()
+        .map(|field| field.name().to_string())
+        .collect();
+    dataprof_core::validate_unique_column_names(&names, "Arrow/Parquet schema")?;
+
     let mut columns: Vec<ColumnSchema> = Vec::with_capacity(arrow_schema.fields().len());
     let mut text_columns: Vec<usize> = Vec::new();
 
@@ -268,7 +295,7 @@ fn parquet_schema(
             // profiler reports `String`, which is what stands here (binary is
             // #645, nested containers #637).
             None => {
-                if values_decide_type(&logical) {
+                if sampling_can_decide_type(&logical) {
                     text_columns.push(index);
                 }
                 DataType::String
@@ -284,6 +311,7 @@ fn parquet_schema(
     let total_rows = builder.metadata().file_metadata().num_rows().max(0) as usize;
 
     if text_columns.is_empty() || sample_rows == 0 {
+        let value_typed = value_typed_names(&columns, &text_columns);
         return Ok((
             SchemaResult {
                 columns,
@@ -296,7 +324,7 @@ fn parquet_schema(
                 // CSV and JSON paths tell them.
                 schema_stable: text_columns.is_empty() || total_rows == 0,
             },
-            Vec::new(),
+            value_typed,
         ));
     }
 
@@ -331,16 +359,17 @@ fn parquet_schema(
         })?;
     }
 
-    let mut sampled_columns = Vec::with_capacity(text_columns.len());
+    // Names are unique — validated above — so this lookup names one column.
     for profile in analyzer.to_profiles(true, true, None) {
         if let Some(column) = columns
             .iter_mut()
             .find(|column| column.name == profile.name)
         {
             column.data_type = profile.data_type;
-            sampled_columns.push(profile.name);
         }
     }
+
+    let value_typed = value_typed_names(&columns, &text_columns);
 
     Ok((
         SchemaResult {
@@ -352,24 +381,17 @@ fn parquet_schema(
             // and JSON paths report.
             schema_stable: rows_sampled >= total_rows,
         },
-        sampled_columns,
+        value_typed,
     ))
 }
 
-/// Whether a column's values, rather than its Arrow type, decide the type the
-/// profiler reports — and reading a sample can therefore change the answer.
-///
-/// Text is the one case worth a read. Every other type without a decided answer
-/// reaches the profile through a formatter, so a sample would type the
-/// rendering rather than the data: hex for binary (#645), a container
-/// serialisation for nested columns (#637). Both report `String` today, which
-/// the metadata path names without reading anything.
+/// The names of the columns whose type the metadata could not decide.
 #[cfg(feature = "parquet")]
-fn values_decide_type(logical: &arrow::datatypes::DataType) -> bool {
-    matches!(
-        logical,
-        arrow::datatypes::DataType::Utf8 | arrow::datatypes::DataType::LargeUtf8
-    )
+fn value_typed_names(columns: &[ColumnSchema], text_columns: &[usize]) -> Vec<String> {
+    text_columns
+        .iter()
+        .map(|index| columns[*index].name.clone())
+        .collect()
 }
 
 fn infer_schema_csv(path: &Path, start: Instant) -> Result<SchemaResult, DataProfilerError> {
@@ -1022,7 +1044,7 @@ fn analyze_structure_parquet(
 ) -> Result<StructureReport, DataProfilerError> {
     #[cfg(feature = "parquet")]
     {
-        let (schema, sampled_columns) = parquet_schema(path, Instant::now(), max_rows)?;
+        let (schema, value_typed) = parquet_schema(path, Instant::now(), max_rows)?;
         let row_count = quick_row_count_with_format(path, FileFormat::Parquet)?;
         // Provenance is per column, because a Parquet file is now typed from
         // both sources: the encoding answers for an already-typed column, a
@@ -1037,7 +1059,7 @@ fn analyze_structure_parquet(
             .columns
             .into_iter()
             .map(|column| {
-                let provenance = if sampled_columns.contains(&column.name) {
+                let provenance = if value_typed.contains(&column.name) {
                     "sample"
                 } else {
                     "metadata"
@@ -2008,13 +2030,13 @@ mod tests {
         // for.
         assert_eq!(mapped(&AT::Utf8), None);
         assert_eq!(mapped(&AT::LargeUtf8), None);
-        assert!(values_decide_type(&logical_arrow_type(&AT::Utf8)));
-        assert!(values_decide_type(&logical_arrow_type(&AT::Utf8View)));
+        assert!(sampling_can_decide_type(&logical_arrow_type(&AT::Utf8)));
+        assert!(sampling_can_decide_type(&logical_arrow_type(&AT::Utf8View)));
 
         // No answer from the type either, but the rendering is not the value,
         // so a sample would type the rendering. Left to #637 and #645.
         assert_eq!(mapped(&AT::Binary), None);
-        assert!(!values_decide_type(&logical_arrow_type(&AT::Binary)));
+        assert!(!sampling_can_decide_type(&logical_arrow_type(&AT::Binary)));
     }
 
     #[cfg(feature = "parquet")]

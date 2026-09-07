@@ -53,7 +53,8 @@ impl PySchemaResult {
     /// Number of rows sampled to infer the schema.
     ///
     /// 0 when nothing had to be read: a Parquet file whose every column is
-    /// typed by its encoding is answered from the metadata alone.
+    /// typed by its encoding is answered from the metadata alone, and reports
+    /// `schema_stable` true on that basis rather than on a scan.
     #[getter]
     fn rows_sampled(&self) -> usize {
         self.inner.rows_sampled
@@ -324,8 +325,10 @@ impl PyRowCountEstimate {
 /// inference the profiler runs (#693).
 ///
 /// The sample is bounded, so it names the type `profile()` reports whenever
-/// `schema_stable` is true — the scan reached the end of the source. Once it
-/// stops at the cap, a later row can still move the type, in any format.
+/// `schema_stable` is true — nothing was left unread that could move a type,
+/// because the scan reached the end of the source or, for Parquet, because the
+/// metadata typed every column and no scan was needed. Once inference stops at
+/// the cap, a later row can still move the type, in any format.
 #[pyfunction]
 pub fn infer_schema(path: &str) -> PyResult<PySchemaResult> {
     let result = dataprof::infer_schema(Path::new(path)).map_err(|e| analysis_error_to_py(&e))?;
