@@ -56,6 +56,15 @@ pub struct StructureReport {
 }
 
 /// Sample-derived or metadata-derived structural summary for one column.
+///
+/// The counters and the type answer to different sources, and `provenance`
+/// names the one that decided the *type*. A counter is present only when it
+/// describes the whole source: for CSV/JSON/JSONL that is the bounded
+/// structural sample, disclosed by `rows_sampled` and `truncated`; for Parquet
+/// the counts come from the file footer and cover every row, so they hold even
+/// when the type sample was truncated. `None` keeps its usual meaning — not
+/// analyzed — and is what a counter reports rather than a partial number
+/// (#700).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StructureColumnSummary {
     pub name: String,
