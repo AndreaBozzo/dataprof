@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import ProfileReport, RowCountEstimate, SchemaResult
+from ._dataprof import RowCountEstimate, SchemaResult
+from ._report import ProfileReport
 
 __all__ = [
     "profile_bytes",

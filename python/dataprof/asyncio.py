@@ -40,12 +40,12 @@ try:
 except ImportError:
     _HAS_URL = False
 
-from . import (
-    ProfileReport as _ProfileReport,
+from ._dataprof import (
+    ProfilerConfig as _ProfilerConfig,  # type: ignore[import-not-found]
     RowCountEstimate as _RowCountEstimate,
     SchemaResult as _SchemaResult,
 )
-from ._dataprof import ProfilerConfig as _ProfilerConfig  # type: ignore[import-not-found]
+from ._report import ProfileReport as _ProfileReport
 
 __all__ = [
     "profile_bytes",

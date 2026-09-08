@@ -31,13 +31,12 @@ from collections.abc import Callable as _Callable, Sequence as _Sequence
 from dataclasses import dataclass as _dataclass
 from typing import Any as _Any, TypeVar as _TypeVar, cast as _cast
 
-from . import (
-    ProfileReport as _ProfileReport,
-    StopCondition as _StopCondition,
-    StructureReport as _StructureReport,
+from ._api import (
     analyze_structure as _analyze_structure,
     profile as _profile,
 )
+from ._dataprof import StopCondition as _StopCondition, StructureReport as _StructureReport
+from ._report import ProfileReport as _ProfileReport
 
 __all__ = [
     "AgentGuard",

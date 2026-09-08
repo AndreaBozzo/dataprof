@@ -107,6 +107,9 @@ enforces it for every module below, and carries the same names as
 `EXPECTED_SURFACE`, so growing the API is a deliberate edit rather than a side
 effect.
 
+The [Python bindings architecture](python-bindings.md) describes the private
+implementation modules and their dependency boundaries behind this surface.
+
 | Module | Exports |
 | --- | --- |
 | `dataprof` | `Capabilities`, `capabilities`, `REPORT_SCHEMA_VERSION`, `profile`, `profile_file`, `Profiler`, `ProfileReport`, `ProfilerConfig`, `ColumnProfile`, `DataQualityMetrics`, `SamplingStrategy`, `StopCondition`, `ProgressEvent`, `list_patterns`, `infer_schema`, `quick_row_count`, `analyze_structure`, `SchemaResult`, `RowCountEstimate`, `StructureColumnSummary`, `StructureReport`, `RecordBatch`, `column_to_dict`, `asyncio`, `__version__`, `analyze_database_async`, `count_table_rows_async`, `get_table_schema_async`, `test_connection_async` |

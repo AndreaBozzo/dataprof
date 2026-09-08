@@ -25,6 +25,9 @@ from __future__ import annotations
 import __future__
 
 import importlib
+import pickle
+import subprocess
+import sys
 from types import ModuleType
 
 import pytest
@@ -261,3 +264,46 @@ def test_star_import_yields_exactly_the_declared_surface():
         f"star-import surface differs: unexpected {sorted(imported - expected)}, "
         f"missing {sorted(expected - imported)}"
     )
+
+
+@pytest.mark.parametrize("entrypoint", sorted(EXPECTED_SURFACE))
+def test_public_entrypoints_import_in_a_fresh_process_without_optional_dependencies(entrypoint):
+    """Module extraction must not introduce import cycles or eager optional imports."""
+    code = """
+import importlib
+import sys
+
+importlib.import_module(sys.argv[1])
+import dataprof
+
+assert all(hasattr(dataprof, name) for name in dataprof.__all__)
+assert not {"pandas", "polars", "pyarrow"}.intersection(sys.modules)
+report = dataprof.profile({"id": [1, 2]})
+assert isinstance(report, dataprof.ProfileReport)
+assert report.rows == 2
+assert dataprof.ProfileReport.from_dict(report.to_dict()).to_dict() == report.to_dict()
+"""
+    subprocess.run([sys.executable, "-c", code, entrypoint], check=True)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Capabilities",
+        "Profiler",
+        "ProfileReport",
+        "capabilities",
+        "profile",
+        "profile_file",
+        "infer_schema",
+        "quick_row_count",
+        "analyze_structure",
+        "list_patterns",
+        "column_to_dict",
+    ],
+)
+def test_python_api_objects_keep_the_public_import_path(name):
+    """Private implementation paths must not replace public identities in pickles."""
+    value = getattr(_module("dataprof"), name)
+    assert value.__module__ == "dataprof"
+    assert pickle.loads(pickle.dumps(value)) is value

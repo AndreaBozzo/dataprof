@@ -31,7 +31,7 @@ import pytest
 # they are not part of the declared surface #514 pins. Reaching them here is
 # intentional: the convention has to be exercised on arbitrary values, which no
 # public accessor allows.
-from dataprof import _r2, _r4  # ty: ignore[unresolved-import]
+from dataprof._rounding import _r2, _r4
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures"
 _CONVENTION = "round the stored f64 at n decimal places, ties away from zero"
