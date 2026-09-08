@@ -57,6 +57,15 @@ The reference files stay on disk and cost nothing until the agent needs them, wh
 
 `include_samples=True` is an explicit opt-in for non-sensitive numeric extrema only. If a column has a detected sensitive pattern, such as email, phone, identifier, financial, geographic, network, or file-path data, `to_llm_context()` still withholds the concrete values and reports only the pattern name and counts.
 
+For sandboxed tools, use `guard.llm_context(report)` to also hide the host's
+absolute source path. It names datasets relative to the first containing sandbox
+root, using forward slashes (for example, `exports/customers.csv`), so the agent
+can reuse that name in a follow-up call. Sources that cannot be placed inside a
+root appear as `<source withheld>`. This works for saved reports even after the
+source file is removed. The original `report.source` and direct report exports
+retain the source path for trusted callers; their cell-value redaction does not
+hide host paths.
+
 ## Why this order
 
 `analyze_structure()` is the cheap first look. It helps an agent avoid over-reading a dataset before it knows the shape. `profile()` is the full metrics pass. `to_llm_context()` is the safest chat-facing summary; `to_markdown()`, `quality_summary()`, and the top-level fields of `to_dict()` are useful when a more structured export is needed. `compare()` is the right tool when the question is about drift or whether a cleaning step helped.
