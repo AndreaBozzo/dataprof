@@ -454,7 +454,7 @@ uv run maturin develop
 uv run pytest python/tests/test_python_api.py -q
 
 # Run a focused Python test
-uv run pytest python/tests/test_python_api.py::TestToLlmContext -v -ra
+uv run pytest python/tests/test_llm_context.py::TestToLlmContext -v -ra
 
 # Generate documentation
 cargo doc --open
