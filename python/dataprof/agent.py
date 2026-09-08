@@ -5,7 +5,7 @@ dataprof reads real files — so a careless agent surface is a data-exfiltration
 vector. This module is the enforcement point that sits between untrusted input
 and the profiling engine: it resolves paths against a sandbox root, bounds the
 work a single call can do, and keeps file contents and host paths out of error
-messages.
+messages. Guarded model context uses sandbox-relative source names.
 
 It is deliberately transport-agnostic. The MCP server (#330) is one caller; a
 bare tool wrapper or a notebook helper is another. Nothing here imports an MCP
@@ -427,6 +427,16 @@ class AgentGuard:
     ) -> str:
         """Render ``report`` as bounded, redacted model context.
 
+        The dataset source is relative to the first containing sandbox root,
+        with forward slashes, so the host's absolute directory layout does not
+        cross the agent boundary. Sources without an absolute path inside a
+        root are shown as ``<source withheld>``. Rendering does not reopen the
+        file, so saved reports still work after the source has been removed.
+
+        The report itself retains its original source for trusted callers;
+        its direct exports, including ``report.to_llm_context()``, do not apply
+        this sandbox-specific path redaction.
+
         Raises:
             AgentSecurityError: ``include_samples`` was requested but the
                 policy does not allow raw values.
@@ -436,7 +446,15 @@ class AgentGuard:
                 "include_samples is disabled by the sandbox policy; "
                 "raw values must not cross the agent boundary"
             )
-        return report.to_llm_context(max_tokens=max_tokens, include_samples=include_samples)
+        # Guard-produced reports carry resolved absolute paths. Normalize any
+        # dot segments in imported reports before containment, without touching
+        # the filesystem or resolving relative sources against the host CWD.
+        path = _pathlib.Path(_os.path.normpath(report.source))
+        root = self._containing_root(path) if path.is_absolute() else None
+        source = self._relative(path, root) if root is not None else "<source withheld>"
+        return report._to_llm_context(
+            source=source, max_tokens=max_tokens, include_samples=include_samples
+        )
 
     def sanitize_error(self, exc: BaseException) -> str:
         """Render any exception as a message safe to hand back to a model.

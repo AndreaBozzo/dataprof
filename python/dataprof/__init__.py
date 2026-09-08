@@ -2590,11 +2590,17 @@ class ProfileReport:
             so a round-tripped report redacts exactly as the original did.
         :returns: A plain-text summary. Stable across runs for a given report.
         """
+        return self._to_llm_context(
+            source=self.source, max_tokens=max_tokens, include_samples=include_samples
+        )
+
+    def _to_llm_context(self, *, source: str, max_tokens: int, include_samples: bool) -> str:
+        """Render with a caller-selected source label before budgeting the header."""
         qs = self.quality_score
         qs_str = f"{qs:.1f}/100" if qs is not None else "n/a"
 
         header = [
-            f"dataset: {_one_line(self.source)} ({self.source_type})",
+            f"dataset: {_one_line(source)} ({self.source_type})",
             f"rows: {self.rows:,} | columns: {self.columns} | quality: {qs_str}",
         ]
 

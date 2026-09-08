@@ -397,6 +397,72 @@ def test_llm_context_leaks_no_raw_cell_values(guard: AgentGuard, sandbox: Path) 
         assert raw not in context
 
 
+@pytest.mark.parametrize("restored", [False, True])
+@pytest.mark.parametrize("max_tokens", [1, 100, 1000])
+def test_llm_context_uses_relative_source_without_changing_report(
+    guard: AgentGuard, sandbox: Path, restored: bool, max_tokens: int
+) -> None:
+    nested = sandbox / "exports"
+    nested.mkdir()
+    source = nested / "customers.csv"
+    source.write_text(CSV_BODY)
+    report = guard.profile("exports/customers.csv")
+    if restored:
+        report = dataprof.ProfileReport.from_dict(report.to_dict())
+    original = report.to_dict()
+    # Rendering a saved report must not require the source to still exist.
+    source.unlink()
+
+    context = guard.llm_context(report, max_tokens=max_tokens)
+
+    assert context.startswith("dataset: exports/customers.csv (file)\n")
+    assert str(sandbox) not in context
+    assert sandbox.as_posix() not in context
+    assert report.to_dict() == original
+    assert report.source == str(source.resolve())
+    assert report.source in report.to_llm_context()
+    # The relative label must participate in budgeting, not be substituted
+    # after the absolute path has already consumed the section allowance.
+    relative_report = dataprof.ProfileReport.from_dict(
+        {**original, "source": "exports/customers.csv"}
+    )
+    assert context == relative_report.to_llm_context(max_tokens=max_tokens)
+
+
+def test_llm_context_uses_the_containing_sandbox_root(sandbox: Path, tmp_path: Path) -> None:
+    second = tmp_path / "second-root"
+    second.mkdir()
+    (second / "second.csv").write_text(CSV_BODY)
+    guard = AgentGuard(SandboxPolicy(roots=[sandbox, second]))
+
+    context = guard.llm_context(guard.profile("second.csv"))
+
+    assert context.startswith("dataset: second.csv (file)\n")
+    assert str(tmp_path) not in context
+    assert guard.resolve_path("second.csv") == (second / "second.csv").resolve()
+
+
+@pytest.mark.parametrize("source_kind", ["outside", "traversal", "relative", "url", "bytes"])
+def test_llm_context_withholds_sources_without_a_sandbox_name(
+    guard: AgentGuard, sandbox: Path, outside: Path, source_kind: str
+) -> None:
+    payload = guard.profile("data.csv").to_dict()
+    payload["source"] = {
+        "outside": str(outside),
+        "traversal": str(sandbox / ".." / "outside" / "secret.csv"),
+        "relative": "../outside/secret.csv",
+        "url": "https://admin:secret@host.example/data.csv",
+        "bytes": "<bytes>",
+    }[source_kind]
+    report = dataprof.ProfileReport.from_dict(payload)
+
+    context = guard.llm_context(report)
+
+    assert context.startswith("dataset: <source withheld> (file)\n")
+    assert str(sandbox.parent) not in context
+    assert payload["source"] not in context
+
+
 def test_samples_require_an_explicit_policy_opt_in(sandbox: Path) -> None:
     guard = AgentGuard(SandboxPolicy(roots=sandbox, allow_samples=True))
     report = guard.profile(sandbox / "data.csv")
