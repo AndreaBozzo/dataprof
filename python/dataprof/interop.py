@@ -21,7 +21,7 @@ from dataprof._dataprof import (  # type: ignore[import-not-found]
     profile_dataframe,
 )
 
-from . import column_to_dict
+from ._columns import column_to_dict
 
 
 def _normalize_pathlike(path: str | _os.PathLike[str], *, arg_name: str = "path") -> str:

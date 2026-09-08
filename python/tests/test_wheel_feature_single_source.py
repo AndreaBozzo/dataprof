@@ -113,7 +113,7 @@ WHEEL_SMOKE = REPO_ROOT / ".github/scripts/wheel_smoke.py"
 
 # What each shipped feature is supposed to turn on in `dataprof.capabilities()`.
 # Derived from `crates/dataprof-python/src/lib.rs`, where the flags are set from
-# `cfg!`, and `python/dataprof/__init__.py`, which maps them to the public
+# `cfg!`, and `python/dataprof/_capabilities.py`, which maps them to the public
 # names. A feature that is only a prerequisite turns nothing on by itself.
 SHIPPED_FEATURE_CAPABILITIES: dict[str, tuple[str, ...]] = {
     "python": (),
@@ -227,7 +227,7 @@ SOURCE_BUILD_DOCS = (
     "docs/python/README.md",
     "docs/guides/database-connectors.md",
     "Makefile",
-    "python/dataprof/__init__.py",
+    "python/dataprof/_database.py",
     "python/tests/test_column_order.py",
     "python/tests/test_database_api.py",
     "python/tests/test_database_option_parity.py",

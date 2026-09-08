@@ -28,11 +28,11 @@ import math
 import warnings
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import dataprof
 import pytest
-from dataprof import _column_flags  # ty: ignore[unresolved-import]
+from dataprof._render import _column_flags
 
 # Members that cannot participate in a value-parity sweep, each for a reason
 # that is not "it disagrees":
@@ -358,7 +358,8 @@ def test_all_null_flag_requires_exact_counts():
         outlier_count=0,
         type_homogeneity=None,
     )
-    flags = _column_flags(almost_all_null)
+    # This deliberate test double supplies only the attributes the renderer reads.
+    flags = _column_flags(cast(dataprof.ColumnProfile, almost_all_null))
     texts = [text for _, text in flags]
     assert "almost: all-null" not in texts
     assert "almost: null-heavy (100.0% null)" in texts
@@ -374,7 +375,9 @@ def test_all_null_flag_requires_exact_counts():
         # Classified, and there was nothing to classify.
         type_homogeneity={"numeric": 0, "date": 0, "boolean": 0, "text": 0},
     )
-    assert [text for _, text in _column_flags(genuinely_all_null)] == ["empty: all-null"]
+    assert [
+        text for _, text in _column_flags(cast(dataprof.ColumnProfile, genuinely_all_null))
+    ] == ["empty: all-null"]
 
 
 def test_small_uniqueness_ratio_is_not_rounded_to_zero(rich_report):

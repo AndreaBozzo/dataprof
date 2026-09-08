@@ -6,7 +6,7 @@ high-level Python ``dataprof.ProfileReport`` wrapper.
 
 from os import PathLike
 
-from . import column_to_dict as column_to_dict
+from ._columns import column_to_dict as column_to_dict
 from ._dataprof import (  # type: ignore[import-not-found]
     ColumnProfile,
     DataQualityMetrics,

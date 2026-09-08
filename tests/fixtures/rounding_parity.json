@@ -1,5 +1,5 @@
 {
-  "description": "Shared expectations for the dataprof rounding convention (#513). Both the Rust serializer (crates/dataprof-core/src/serde_helpers.rs) and the Python helpers (python/dataprof/__init__.py) assert against this file, so changing either implementation in isolation fails that layer's test.",
+  "description": "Shared expectations for the dataprof rounding convention (#513). Both the Rust serializer (crates/dataprof-core/src/serde_helpers.rs) and the Python helpers (python/dataprof/_rounding.py) assert against this file, so changing either implementation in isolation fails that layer's test.",
   "convention": "round the stored f64 at n decimal places, ties away from zero",
   "cases": [
     {

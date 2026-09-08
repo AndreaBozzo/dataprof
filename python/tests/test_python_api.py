@@ -17,6 +17,7 @@ from conftest import CSV_FILE, FIXTURES, JSON_FILE, JSONL_FILE, PARQUET_FILE
 
 try:
     import dataprof
+    from dataprof import _capabilities, _database
 except ImportError:
     pytest.skip(
         "dataprof native extension not built. Run: maturin develop --features python",
@@ -336,7 +337,7 @@ class TestProfileAdHocInputs:
         def explode(feature):
             raise AssertionError(f"ad-hoc path called _require_pandas({feature!r})")
 
-        monkeypatch.setattr(dataprof, "_require_pandas", explode)
+        monkeypatch.setattr(_capabilities, "_require_pandas", explode)
         dataprof.profile({"a": [1, 2]})
         dataprof.profile([{"a": 1}, {"a": 2}])
         dataprof.profile(b"a\n1\n2\n", format="csv")
@@ -605,7 +606,7 @@ class TestNamespace:
 
     def test_database_helpers_fail_loudly_without_feature(self):
         """On the published wheels the stubs must explain the rebuild, not AttributeError."""
-        if dataprof._HAS_DATABASE:
+        if _database._HAS_DATABASE:
             pytest.skip("built with database support; stubs not installed")
         with pytest.raises(ImportError, match="requires database support"):
             # The ImportError stub raises at call time, before any coroutine

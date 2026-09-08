@@ -6,6 +6,7 @@ import pytest
 
 try:
     import dataprof
+    from dataprof._render import _estimate_tokens
 except ImportError:
     pytest.skip(
         "dataprof native extension not built. Run: maturin develop --features python",
@@ -108,13 +109,13 @@ class TestToLlmContext:
     @staticmethod
     def _header_tokens(report):
         """Cost of the always-emitted header, which is the effective budget floor."""
-        return dataprof._estimate_tokens(report.to_llm_context(max_tokens=1))
+        return _estimate_tokens(report.to_llm_context(max_tokens=1))
 
     @pytest.mark.parametrize("over_floor", [0, 5, 20, 60, 150, 400])
     def test_stays_within_budget(self, messy, over_floor):
         budget = self._header_tokens(messy) + over_floor
         out = messy.to_llm_context(max_tokens=budget)
-        assert dataprof._estimate_tokens(out) <= budget
+        assert _estimate_tokens(out) <= budget
 
     def test_header_always_emitted_below_budget(self, messy):
         # Documented floor: identity survives even an unsatisfiable budget
