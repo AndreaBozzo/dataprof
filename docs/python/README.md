@@ -126,6 +126,7 @@ emitted, and `auto` reports the engine it selected.
 | pandas `DataFrame` | In-memory DataFrame |
 | polars `DataFrame` | In-memory Polars DataFrame |
 | PyArrow `Table` or `RecordBatch` | Zero-copy via PyCapsule interface |
+| Arrow `RecordBatchReader` / `__arrow_c_stream__` producer | One-shot, incremental batch profiling; includes DuckDB relations |
 | `dict[str, list]` | Columns of cells; profiled natively, no dependencies |
 | `list[dict]` | Row-oriented notebook data; rows may omit keys, which read as nulls |
 | `bytes` or `io.BytesIO` | In-memory file contents; requires `format="csv"`, `"json"`, `"jsonl"`, or `"parquet"` |
@@ -918,6 +919,48 @@ asyncio.run(main())
 unique; duplicate aliases are rejected before values can be merged.
 
 ## Arrow Interop
+
+`profile()` also accepts one-shot producers implementing the
+[Arrow C Stream capsule protocol](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html#arrowstream-export):
+
+```python
+import pyarrow as pa
+import dataprof
+
+batches = [pa.record_batch({"id": [1, 2]}), pa.record_batch({"id": [3, 4]})]
+reader = pa.RecordBatchReader.from_batches(batches[0].schema, iter(batches))
+report = dataprof.profile(reader, max_rows=3)
+assert report.rows == 3
+assert report.source_type == "stream"
+
+# With DuckDB installed, pass a relation directly:
+# report = dataprof.profile(duckdb.sql("select * from my_table"), max_rows=1000)
+```
+
+dataprof consumes and releases each batch before fetching another; it does not
+call `to_arrow_table()` or collect the stream. Producer batch buffers and the
+bounded profiling accumulators determine memory use. A producer may itself
+materialize data when exporting; dataprof cannot control that allocation.
+PyArrow and DuckDB remain optional producer dependencies.
+
+`max_rows` stops at the requested row boundary, including zero, without asking
+for a subsequent batch. Reaching the cap sets `truncation_reason` even if that
+row happened to be the stream's last: end-of-stream was not checked. An uncapped
+or shorter stream is complete only after its producer signals the end. The
+report uses engine `columnar`, source type `stream`, and source system
+`arrow_c_stream`; the name identifies one profiling operation (`batch_id="0"`).
+The stream is one-shot: use a fresh reader for another profile.
+
+Metric packs, quality dimensions, locale, semantic hints, and column selection
+work as on Arrow tables. Unsupported file/transport controls raise `ValueError`
+before capsule export. Duplicate names are rejected before any batch is read,
+even with column selection. Selected nested types (structs, lists, maps, unions)
+raise `TypeError`; select flat columns before exporting, or with `columns=`.
+An empty stream with a schema retains its columns and unassessed quality.
+Batch/schema failures abort the call; no partial report is returned. The C
+interface carries producer error text, which is retained as `__cause__`, rather
+than the original Python exception object. Existing Table, C Array, pandas, and
+polars adapters retain their behavior.
 
 The `RecordBatch` class supports zero-copy exchange via the [Arrow PyCapsule interface](https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html):
 

@@ -341,10 +341,11 @@ pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
     Ok(PyRecordBatch::new(batch))
 }
 
-/// Profile a pandas or polars DataFrame directly.
+/// Profile a pandas/polars DataFrame or Arrow C Array / C Stream producer.
 ///
 /// This function accepts any object implementing the Arrow PyCapsule protocol,
-/// including pandas DataFrames (with pyarrow) and polars DataFrames.
+/// including pandas DataFrames (with pyarrow), polars DataFrames, and one-shot
+/// Arrow C Stream producers.
 ///
 /// # Arguments
 /// * `df` - A pandas DataFrame, polars DataFrame, or any Arrow-compatible object
@@ -362,6 +363,9 @@ pub fn profile_dataframe(
     max_rows: Option<usize>,
     config: Option<&PyProfilerConfig>,
 ) -> PyResult<super::types::PyProfileReport> {
+    if is_stream_source(df.bind(py))? {
+        return super::arrow_stream::profile_stream(py, df.bind(py), name, max_rows, config);
+    }
     let start = std::time::Instant::now();
 
     // decode-audit: no-data — an omitted optional config intentionally uses
@@ -475,13 +479,13 @@ pub fn profile_dataframe(
     Ok(super::types::PyProfileReport::new(report))
 }
 
-/// Profile a PyArrow Table or RecordBatch directly.
+/// Profile a PyArrow Table, RecordBatch, or Arrow C Stream producer directly.
 ///
 /// This function is optimized for PyArrow objects and avoids the library
 /// detection overhead of `profile_dataframe()`.
 ///
 /// # Arguments
-/// * `table` - A pyarrow.Table or pyarrow.RecordBatch
+/// * `table` - A pyarrow.Table, pyarrow.RecordBatch, or `__arrow_c_stream__` producer
 /// * `name` - Optional name for identification in reports (default: "arrow_table")
 /// * `max_rows` - Optional maximum number of rows to analyze (None = all rows)
 ///
@@ -496,6 +500,9 @@ pub fn profile_arrow(
     max_rows: Option<usize>,
     config: Option<&PyProfilerConfig>,
 ) -> PyResult<super::types::PyProfileReport> {
+    if is_stream_source(table.bind(py))? {
+        return super::arrow_stream::profile_stream(py, table.bind(py), name, max_rows, config);
+    }
     let start = std::time::Instant::now();
 
     // decode-audit: no-data — an omitted optional config intentionally uses
@@ -611,6 +618,16 @@ pub fn profile_arrow(
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Preserve the established DataFrame/Table/C Array adapters. A producer with
+/// only the stream protocol needs no library-specific adapter or materialization.
+fn is_stream_source(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let library = detect_dataframe_library(obj.py(), &obj.clone().unbind())?;
+    Ok(obj.hasattr("__arrow_c_stream__")?
+        && !obj.hasattr("__arrow_c_array__")?
+        && !matches!(library, DataFrameLibrary::Pandas | DataFrameLibrary::Polars)
+        && !(matches!(library, DataFrameLibrary::PyArrow) && obj.get_type().name()? == "Table"))
+}
 
 /// Convert column profiles to Arrow RecordBatch for export.
 fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<RecordBatch> {

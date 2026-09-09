@@ -24,7 +24,7 @@ def profile_dataframe(
     name: str = "dataframe",
     max_rows: int | None = None,
 ) -> ProfileReport:
-    """Profile a pandas/polars DataFrame via Arrow PyCapsule protocol."""
+    """Profile a pandas/polars DataFrame or Arrow C Array / C Stream producer."""
     ...
 
 def profile_arrow(
@@ -32,7 +32,7 @@ def profile_arrow(
     name: str = "arrow_table",
     max_rows: int | None = None,
 ) -> ProfileReport:
-    """Profile a PyArrow Table or RecordBatch directly."""
+    """Profile a PyArrow Table, RecordBatch, or one-shot Arrow C Stream producer."""
     ...
 
 def analyze_csv_to_arrow(path: str | PathLike[str]) -> RecordBatch:

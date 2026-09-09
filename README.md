@@ -188,6 +188,7 @@ For the leanest Rust build, use `default-features = false` or `cargo --no-defaul
 | Database query | Async | PostgreSQL, MySQL, SQLite via connection string |
 | pandas / polars DataFrame | Columnar | Python API only |
 | Arrow RecordBatch | Columnar | Via PyCapsule (zero-copy) or Rust API |
+| Arrow C Stream producer | Columnar | Python `RecordBatchReader`, DuckDB relation, or `__arrow_c_stream__` object; consumed batch by batch |
 | dict / list of dicts | Columnar | Python API only; no dependencies |
 | bytes / BytesIO | Columnar | Python API only; requires `format=`. CSV, JSON, JSONL, and Parquet need no Python dependencies |
 | Async byte stream | Incremental | Any `AsyncRead` source (HTTP, WebSocket, etc.) |
