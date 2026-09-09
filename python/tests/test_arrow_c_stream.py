@@ -125,6 +125,24 @@ def test_invalid_controls_fail_before_export(kwargs):
     assert source.exports == 0
 
 
+@pytest.mark.parametrize("engine", ["auto", "AUTO", "columnar", "COLUMNAR", "arrow", "ArRoW"])
+def test_stream_accepts_documented_engine_spellings(engine):
+    source = StreamProducer(_batches()[0].schema, _batches())
+    report = dataprof.profile(source, engine=engine)
+    assert report.rows == 4
+    assert report.engine == "columnar"
+
+
+@pytest.mark.parametrize(
+    "engine", ["incremental", "INCREMENTAL", "streaming", "STREAMING", "bogus"]
+)
+def test_stream_rejects_unsupported_engines_before_export(engine):
+    source = StreamProducer(_batches()[0].schema, _batches())
+    with pytest.raises(ValueError, match="engine"):
+        dataprof.profile(source, engine=engine)
+    assert source.exports == 0
+
+
 def test_stream_option_parity():
     batches = _batches()
 

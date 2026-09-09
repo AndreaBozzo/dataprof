@@ -24,7 +24,7 @@ def profile_dataframe(
     name: str = "dataframe",
     max_rows: int | None = None,
 ) -> ProfileReport:
-    """Profile a pandas/polars DataFrame via Arrow PyCapsule protocol."""
+    """Profile a pandas/polars DataFrame or Arrow C Array / C Stream producer."""
     ...
 
 def profile_arrow(

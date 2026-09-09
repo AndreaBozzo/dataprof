@@ -341,10 +341,11 @@ pub fn analyze_parquet_to_arrow(path: &str) -> PyResult<PyRecordBatch> {
     Ok(PyRecordBatch::new(batch))
 }
 
-/// Profile a pandas or polars DataFrame directly.
+/// Profile a pandas/polars DataFrame or Arrow C Array / C Stream producer.
 ///
 /// This function accepts any object implementing the Arrow PyCapsule protocol,
-/// including pandas DataFrames (with pyarrow) and polars DataFrames.
+/// including pandas DataFrames (with pyarrow), polars DataFrames, and one-shot
+/// Arrow C Stream producers.
 ///
 /// # Arguments
 /// * `df` - A pandas DataFrame, polars DataFrame, or any Arrow-compatible object

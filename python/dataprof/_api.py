@@ -563,7 +563,7 @@ def profile(
         or (source_module.startswith("pyarrow") and type(source).__name__ == "Table")
     ):
         unsupported = [k for k, v in _file_only_kwargs.items() if v and k != "engine"]
-        if engine not in ("auto", "columnar"):
+        if engine.lower() not in ("auto", "columnar", "arrow"):
             unsupported.append("engine")
         if jsonl_on_error != "skip":
             unsupported.append("jsonl_on_error")
