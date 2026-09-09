@@ -32,7 +32,7 @@ def profile_arrow(
     name: str = "arrow_table",
     max_rows: int | None = None,
 ) -> ProfileReport:
-    """Profile a PyArrow Table or RecordBatch directly."""
+    """Profile a PyArrow Table, RecordBatch, or one-shot Arrow C Stream producer."""
     ...
 
 def analyze_csv_to_arrow(path: str | PathLike[str]) -> RecordBatch:

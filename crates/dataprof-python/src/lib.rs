@@ -2,6 +2,7 @@
 
 pub mod analysis;
 pub mod arrow_export;
+mod arrow_stream;
 pub mod columns;
 pub mod config;
 pub mod errors;

@@ -30,6 +30,7 @@ AUDITED_PATHS = [
     "crates/dataprof-csv/src",
     "crates/dataprof-engines/src/streaming",
     "crates/dataprof-python/src/arrow_export.rs",
+    "crates/dataprof-python/src/arrow_stream.rs",
     "crates/dataprof-metrics/src/stats",
 ]
 

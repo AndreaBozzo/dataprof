@@ -18,6 +18,7 @@ anyhow = { workspace = true }
 arrow = { workspace = true }
 bytes = { workspace = true, optional = true }
 dataprof = { workspace = true, default-features = true }
+dataprof-core = { workspace = true }
 dataprof-parquet = { workspace = true, features = ["arrow"] }
 dataprof-runtime = { workspace = true }
 pyo3 = { workspace = true }

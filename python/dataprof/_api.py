@@ -236,7 +236,7 @@ def profile(
     """Profile a data source and return a report.
 
     Accepts file paths (str/Path), pandas DataFrames, polars DataFrames,
-    Arrow PyCapsule-compatible objects, dict/list-of-dicts, and bytes-like
+    Arrow C Array / C Stream producers, dict/list-of-dicts, and bytes-like
     file contents when ``format=`` is provided. Synchronous bytes use the
     in-memory columnar path and reject streaming-only controls such as
     ``chunk_size``, ``memory_limit_mb``, ``stop_condition``, and progress
@@ -555,6 +555,23 @@ def profile(
     if source_module.startswith("polars"):
         _warn_if_config_ignored()
         return _profile_python_dataframe(source, "dataframe")
+
+    # One-shot streams must reject ignored controls before exporting a capsule.
+    # Existing Table, DataFrame and C Array adapters retain their behavior.
+    if hasattr(source, "__arrow_c_stream__") and not (
+        hasattr(source, "__arrow_c_array__")
+        or (source_module.startswith("pyarrow") and type(source).__name__ == "Table")
+    ):
+        unsupported = [k for k, v in _file_only_kwargs.items() if v and k != "engine"]
+        if engine not in ("auto", "columnar"):
+            unsupported.append("engine")
+        if jsonl_on_error != "skip":
+            unsupported.append("jsonl_on_error")
+        if unsupported:
+            raise ValueError(
+                f"Arrow streams cannot apply: {', '.join(unsupported)}. Use max_rows for a row cap."
+            )
+        return ProfileReport(_profile_arrow(source, name or "arrow_stream", max_rows, _df_config()))
 
     # PyArrow objects (Table, RecordBatch) or any Arrow PyCapsule-compatible object
     if source_module.startswith("pyarrow") or hasattr(source, "__arrow_c_array__"):
