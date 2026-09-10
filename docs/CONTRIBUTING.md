@@ -130,9 +130,10 @@ on Linux, macOS and Windows. PyPy, preview Python and free-threaded builds are
 outside this support policy; they are not published. Adopting free-threading or
 the stable ABI requires a separate decision and matching runtime coverage.
 
-The release workflow installs the declared interpreters and passes their names
-to maturin explicitly. Before uploading any build leg's wheels, it checks that
-each declared interpreter appears exactly once, that filename and archive ABI
+The release workflow installs the declared interpreters and resolves their
+absolute paths with `uv python find` on Windows and macOS. Linux builds select
+versioned names inside manylinux. Before uploading any build leg's wheels, it
+checks that each declared interpreter appears exactly once, that filename and archive ABI
 tags agree, and that `Requires-Python` matches the supported range. Both baseline
 and optimized builds pass this check before optimized artifacts are renamed.
 Linux wheels select interpreters inside the manylinux container; host Python
@@ -148,10 +149,10 @@ Python package metadata cannot exclude the free-threaded ABI or PyPy by itself;
 the artifact check and this policy define that boundary.
 
 ```bash
-python .github/scripts/wheel_interpreters.py
+uv run python .github/scripts/wheel_interpreters.py
 uv run pytest python/tests/test_wheel_interpreters.py -q
 # After building a complete set for one platform/CPU profile:
-python .github/scripts/wheel_interpreters.py --wheels dist
+uv run python .github/scripts/wheel_interpreters.py --wheels dist
 ```
 
 ### Database regression tests

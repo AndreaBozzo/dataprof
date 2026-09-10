@@ -337,7 +337,7 @@ report.<span class="t-fn">save</span>(<span class="t-str">"report.json"</span>) 
 
 before = dp.ProfileReport.<span class="t-fn">load</span>(<span class="t-str">"report.json"</span>)
 delta = before.<span class="t-fn">compare</span>(dp.<span class="t-fn">profile</span>(<span class="t-str">"data_clean.csv"</span>))</code></pre>
-      <p class="note">Python 3.10+. Pre-built wheels have <strong>zero Python dependencies</strong> &mdash;
+      <p class="note">Standard, GIL-enabled CPython 3.10–3.14. Pre-built wheels have <strong>zero Python dependencies</strong> &mdash;
         pandas is optional, for DataFrame-typed exports and Parquet byte buffers.
         See the <a href="https://github.com/AndreaBozzo/dataprof/blob/HEAD/docs/python/README.md">Python API guide</a>.</p>
     </div>

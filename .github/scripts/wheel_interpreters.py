@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
+import subprocess
 import sys
 from email.parser import Parser
 from pathlib import Path
@@ -19,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_versions(root: Path = REPO_ROOT) -> list[str]:
+    """Read the ordered, contiguous list of supported CPython minor versions."""
     versions = json.loads((root / ".github/python-interpreters.json").read_text())["cpython"]
     if not isinstance(versions, list) or not versions:
         raise ValueError("cpython must be a nonempty list of minor versions")
@@ -31,11 +34,13 @@ def load_versions(root: Path = REPO_ROOT) -> list[str]:
 
 
 def requires_python(versions: list[str]) -> str:
+    """Derive the inclusive minimum and exclusive maximum Python requirements."""
     upper_minor = int(versions[-1].split(".")[1]) + 1
     return f">={versions[0]},<3.{upper_minor}"
 
 
 def matches_requires_python(value: str | None, versions: list[str]) -> bool:
+    """Compare requirement bounds regardless of their order in wheel metadata."""
     # Maturin can reorder specifiers when writing METADATA.
     return value is not None and {s.strip() for s in value.split(",")} == set(
         requires_python(versions).split(",")
@@ -43,6 +48,7 @@ def matches_requires_python(value: str | None, versions: list[str]) -> bool:
 
 
 def validate_metadata(versions: list[str], root: Path = REPO_ROOT) -> None:
+    """Reject package requirements or classifiers that disagree with support."""
     if sys.version_info >= (3, 11):
         import tomllib
     else:
@@ -62,10 +68,38 @@ def validate_metadata(versions: list[str], root: Path = REPO_ROOT) -> None:
         raise ValueError("only CPython may be advertised as a supported implementation")
 
 
-def github_outputs(versions: list[str]) -> str:
+def resolve_interpreters(versions: list[str]) -> list[str]:
+    """Find installed host interpreters without using a venv or downloading Python.
+
+    Windows setup-python installs python.exe in separate toolcache directories;
+    versioned command names are not guaranteed to exist. Linux container builds
+    must keep using container-local names instead of resolving host paths.
+    """
+    interpreters = []
+    for version in versions:
+        result = subprocess.run(
+            ["uv", "python", "find", "--system", "--no-python-downloads", version],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if result.returncode:
+            raise ValueError(f"could not resolve CPython {version}: {result.stderr.strip()}")
+        executable = Path(result.stdout.strip())
+        if not executable.is_absolute() or not executable.is_file():
+            raise ValueError(f"CPython {version} did not resolve to an existing absolute path")
+        interpreters.append(executable.as_posix())
+    return interpreters
+
+
+def github_outputs(versions: list[str], interpreters: list[str] | None = None) -> str:
+    """Emit setup-python versions and safely quoted maturin interpreter arguments."""
+    if interpreters is None:
+        interpreters = ["python" + v for v in versions]
     return (
         f"versions={json.dumps(versions)}\n"
-        f"interpreters={' '.join('python' + v for v in versions)}\n"
+        f"interpreters={shlex.join(interpreters)}\n"
         "setup-versions<<PYTHON_VERSIONS\n" + "\n".join(versions) + "\nPYTHON_VERSIONS\n"
     )
 
@@ -105,16 +139,23 @@ def verify_wheels(directory: Path, versions: list[str]) -> None:
 
 
 def main() -> int:
+    """Validate support metadata, optionally emit build inputs and check wheels."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument(
+        "--resolve-interpreters",
+        action="store_true",
+        help="resolve host paths with uv (not Linux containers)",
+    )
     parser.add_argument("--wheels", type=Path, help="verify one platform/CPU build directory")
     args = parser.parse_args()
     try:
         versions = load_versions()
         validate_metadata(versions)
+        interpreters = resolve_interpreters(versions) if args.resolve_interpreters else None
         if args.github_output:
             with args.github_output.open("a", encoding="utf-8") as output:
-                output.write(github_outputs(versions))
+                output.write(github_outputs(versions, interpreters))
         if args.wheels:
             verify_wheels(args.wheels, versions)
     except (ValueError, OSError) as error:
