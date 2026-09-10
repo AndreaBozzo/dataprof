@@ -69,6 +69,15 @@ EXPECTED_EXCEPTIONS: dict[tuple[str, str, str], Any] = {
     ("pandas", "n", "data_type"): "float",
 }
 
+# Same mechanism for the quality block: (engine, dimension, field) -> value.
+QUALITY_EXCEPTIONS: dict[tuple[str, str, str], Any] = {
+    # Downstream of the `n` widening above: four more values are numeric once
+    # pandas has made them floats, so they enter the precision check. The
+    # consistency percentage is unaffected, which is the point of pinning the
+    # count rather than skipping the dimension.
+    ("pandas", "precision", "numeric_values_checked"): 12,
+}
+
 ENGINES = (
     "csv",
     "csv.incremental",
@@ -174,6 +183,16 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
     # exact numbers, including every optional statistic and absence marker.
     assert report.to_dict()["columns"] == expected_columns, engine
     assert json.loads(report.to_json())["columns"] == expected_columns, engine
+    # Quality scores are rounded metrics, not execution provenance, so they are
+    # on the contract surface too. Left out, an engine could agree on every
+    # column and still report a different overall score.
+    expected_quality = reference.to_dict()["quality"]
+    for (exception_engine, dimension, field), value in QUALITY_EXCEPTIONS.items():
+        if exception_engine == engine:
+            assert dimension in expected_quality, f"unknown quality dimension: {dimension}"
+            assert field in expected_quality[dimension], f"unknown quality field: {field}"
+            expected_quality[dimension][field] = value
+    assert report.to_dict()["quality"] == expected_quality, engine
     mismatches = []
     for column in COLUMNS:
         for field in FIELDS:
@@ -207,7 +226,15 @@ def test_engine_parity(engine, reference, tmp_path):
 
 @pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
 def test_serialized_parity_preserves_full_precision_accessors(engine, tmp_path):
-    """Serialization defines equality without rounding native attribute access."""
+    """Characterize the contract: serialized equality, native precision intact.
+
+    This pins the two-surface behaviour the contract names; it is not a
+    regression guard, and it passes on the code before #547 because nothing
+    here was broken -- what was missing was the statement of which surface
+    equality is defined on. The `to_llm_context()` assertion covers only the
+    derived output this fixture reaches; `_dominant_pattern` still thresholds
+    on native confidence and is tracked separately.
+    """
     path = tmp_path / "fractional.csv"
     path.write_text("amount,label\n0,a\n0,東京\n1,café\n", encoding="utf-8")
     report = dataprof.profile(path, engine=engine)

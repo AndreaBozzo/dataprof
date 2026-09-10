@@ -555,6 +555,14 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
         "serialized column profiles must match across CSV engines"
     );
 
+    // Quality scores are rounded metrics on the same contract surface, and are
+    // compared apart from the execution provenance that surrounds them.
+    assert_eq!(
+        serde_json::to_value(&std_report.quality).unwrap(),
+        serde_json::to_value(&arrow_report.quality).unwrap(),
+        "serialized quality must match across CSV engines"
+    );
+
     // Raw attributes retain full precision. These diagnostics allow only
     // accumulation-order differences, independently of serialized equality.
     for (standard, arrow) in std_report
