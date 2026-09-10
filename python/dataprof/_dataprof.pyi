@@ -149,7 +149,13 @@ class Pattern:
     confidence: float
 
 class ColumnProfile:
-    """Column-level profiling statistics."""
+    """Column-level profiling statistics.
+
+    Native float attributes retain full precision and may differ across engines
+    with accumulation order. Cross-engine equality applies to the rounded
+    metrics in ProfileReport.to_dict()/to_json(); loaded reports retain that
+    serialized precision.
+    """
 
     name: str
     data_type: str

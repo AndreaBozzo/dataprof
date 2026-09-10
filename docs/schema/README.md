@@ -22,6 +22,56 @@ reader policy and lets compatible fields be added without invalidating stored
 reports. Required fields, schema version, known enum values, and primitive
 types remain enforced.
 
+## Numeric equality contract
+
+The cross-engine identical-numbers contract governs **serialized, rounded
+metric values** (#547): Rust's Serde report and Python's `to_dict()`,
+`to_json()`, and JSON `save()` output. Compare corresponding metrics across
+the two dialects; their document layouts differ.
+
+For the same logical values, schema semantics, analysis options and analyzed
+population, serialized metrics must compare exactly, with no additional
+tolerance or rounding by the consumer. Counts, types and absence must also
+agree: `None`/missing means not analyzed, while empty means analyzed with
+nothing found. Source names, engine identifiers, timestamps, elapsed time,
+throughput, memory and input-byte measurements describe execution and are not
+cross-path equality targets. Whole report documents need not be identical.
+
+| Metric kind | Serialized precision |
+| --- | --- |
+| 0–100 percentages, including coefficient of variation | 2 decimal places |
+| Statistics and data values, including mean, standard deviation and extrema | 4 decimal places |
+| 0–1 ratios and average text length | 4 decimal places |
+| Quartiles | 2 decimal places |
+
+Rounding uses the stored binary float, with ties away from zero. The Rust
+`serde_helpers` and Python `_rounding` modules implement the same convention.
+Native Rust fields and Python `ColumnProfile` attributes retain full precision;
+their final digits may depend on accumulation order. Raw values are not
+required to be bit-identical across engines, or to equal the rounded values
+restored from JSON. Parity tests supplement exact serialized comparisons with
+raw diagnostics using relative tolerance `1e-9` and absolute tolerance `1e-12`;
+those tolerances do not weaken the serialized contract.
+
+This is a contract decision, not a change to reported values or the schema.
+Rounding alone cannot mathematically guarantee equality for every possible
+floating-point input, especially near rounding boundaries or at large
+magnitudes. A difference that survives serialization remains a parity defect
+to investigate, rather than an allowed raw-precision difference. The known
+nested JSON/Arrow representation mismatch (#637) is one such defect.
+
+Sampling and approximate statistics must retain their provenance. Different
+row selections or retained samples are different analyzed populations; compare
+like with like rather than treating sampling differences as numeric drift.
+Producer-side conversions also matter: pandas widening nullable integers to
+floats changes the schema before dataprof sees it.
+
+Derived threshold decisions use serialized precision so saving and loading
+cannot change the verdict, as established for `to_llm_context()` in #526.
+Structural claims remain exact: `all-null` is based on null and total counts,
+not a percentage rounded to 100. This decision does not define historical
+metric-unit compatibility, tracked separately in #675.
+
 ## Regenerate and verify
 
 Run from the repository root:
