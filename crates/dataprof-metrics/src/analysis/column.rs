@@ -7,7 +7,7 @@ use crate::analysis::inference::{
 };
 use crate::analysis::patterns::detect_patterns;
 use crate::stats::numeric::compute_numeric_stats_with_parsed_count;
-use crate::stats::{calculate_datetime_stats, calculate_text_stats};
+use crate::stats::{calculate_datetime_stats, calculate_text_stats_from_refs};
 
 /// Which parts of a column analysis to perform.
 ///
@@ -165,12 +165,11 @@ fn analyze_column_with_options(
                 // text values, so they must not enter the length statistics.
                 // The streaming engines feed a null-excluding accumulator here
                 // and this path has to agree with them (#547).
-                let values: Vec<String> = data
+                let values: Vec<&String> = data
                     .iter()
                     .filter(|s| !is_null_like_token(s.trim()))
-                    .cloned()
                     .collect();
-                calculate_text_stats(&values)
+                calculate_text_stats_from_refs(&values)
             }
         }
     };
