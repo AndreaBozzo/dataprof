@@ -107,16 +107,22 @@ data and analysis options; execution provenance such as timing and memory can
 differ. Loading preserves the saved precision. The contract itself changes no
 rounding rule and no schema version (#547).
 
-Enforcing it did surface one real violation. Text length statistics
-(`min_length`, `max_length`, `avg_length`) reported by the database connectors
-counted null-like tokens (`NULL`, `NaN`, in any case) as text values, while
-every file and in-memory engine excluded them. Database profiles of string columns
-containing those tokens now report the same lengths as every other path. This
-is the only reported-value change here.
+Enforcing it did surface one real violation. Text statistics reported by the
+database connectors counted null-like tokens (`NULL`, `NaN`, in any case) as
+text values, while every file and in-memory engine excluded them. Database
+profiles of string columns containing those tokens now report the same
+`min_length`, `max_length` and `avg_length` as every other path. The same
+filtering applies to the `most_frequent` and `least_frequent` entries those
+profiles carry: a null-like token no longer appears as a value, and the
+remaining percentages are shares of the non-null values. Those are the only
+reported-value changes here.
 
-Agent-facing thresholds continue to use serialized precision, while `all-null`
-remains an exact count-based claim (#526). See the
-[numeric contract](schema/README.md#numeric-equality-contract) for the full scope.
+Agent-facing thresholds should read serialized precision, and `all-null` remains
+an exact count-based claim (#526). One consumer does not yet follow that rule —
+`_dominant_pattern` thresholds on the native pattern confidence — so a value
+just under the boundary can survive a round trip differently. See the
+[numeric contract](schema/README.md#numeric-equality-contract) for the full
+scope and the open defects (#709).
 
 ## Planned for 0.12: explicit Python interpreter support
 

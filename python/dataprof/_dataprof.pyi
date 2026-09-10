@@ -153,7 +153,9 @@ class ColumnProfile:
 
     Native float attributes retain full precision and may differ across engines
     with accumulation order. Cross-engine equality applies to the rounded
-    metrics in ProfileReport.to_dict()/to_json(); loaded reports retain that
+    metrics in ProfileReport.to_dict()/to_json(), for the same logical data,
+    analysis options and analyzed population -- a sampled or truncated run is a
+    different population, not a numeric difference. Loaded reports retain that
     serialized precision.
     """
 

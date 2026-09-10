@@ -53,12 +53,15 @@ restored from JSON. Parity tests supplement exact serialized comparisons with
 raw diagnostics using relative tolerance `1e-9` and absolute tolerance `1e-12`;
 those tolerances do not weaken the serialized contract.
 
-This is a contract decision, not a change to reported values or the schema.
+This decision changes no rounding rule and no schema version.
 Rounding alone cannot mathematically guarantee equality for every possible
 floating-point input, especially near rounding boundaries or at large
 magnitudes. A difference that survives serialization remains a parity defect
 to investigate, rather than an allowed raw-precision difference. The known
-nested JSON/Arrow representation mismatch (#637) is one such defect.
+nested JSON/Arrow representation mismatch (#637) is one such defect, as is the
+text frequency divergence in #709: `most_frequent` and `least_frequent`
+serialize as absent from the streaming builders and present from
+`analyze_column`, which the database connectors use.
 
 Sampling and approximate statistics must retain their provenance. Different
 row selections or retained samples are different analyzed populations; compare
@@ -66,8 +69,12 @@ like with like rather than treating sampling differences as numeric drift.
 Producer-side conversions also matter: pandas widening nullable integers to
 floats changes the schema before dataprof sees it.
 
-Derived threshold decisions use serialized precision so saving and loading
-cannot change the verdict, as established for `to_llm_context()` in #526.
+Derived threshold decisions should use serialized precision so that saving and
+loading cannot change the verdict, as established for `to_llm_context()` in
+#526. That is not yet true of every consumer: `_dominant_pattern` compares the
+native `confidence` against its 0.5 threshold while serialization rounds that
+value to four decimals, so a confidence just under the boundary can be
+suppressed natively and emitted after a round trip.
 Structural claims remain exact: `all-null` is based on null and total counts,
 not a percentage rounded to 100. This decision does not define historical
 metric-unit compatibility, tracked separately in #675.
