@@ -335,7 +335,14 @@ The Rust and Python layers implement the same convention and are held to shared
 fixtures (`tests/fixtures/rounding_parity.json` and
 `report_rounding_parity.json`), so the same data profiled through either gives
 the same numbers. Raw property access on `ColumnProfile` returns unrounded Rust
-values; use the export methods for rounded output.
+values; use the export methods for rounded output. Cross-engine numeric
+equality is defined on those serialized metrics, with no extra tolerance.
+Native attributes may differ in their final digits with accumulation order;
+loading a report retains the precision that was saved. Compare the same data,
+schema semantics, analysis options and analyzed population, and exclude source
+and execution provenance such as timing and memory from equality checks. See
+the [numeric contract](../schema/README.md#numeric-equality-contract) for scope,
+sampling and absence semantics.
 
 **Round-trip fidelity:** a report reloaded with `from_dict`, `from_json`, or
 `load` reports the same values as the report it was saved from, at the precision

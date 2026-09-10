@@ -39,6 +39,13 @@ class ProfileReport:
         "column_name" in report        # -> bool
         for name in report: ...        # iterate column names
         len(report)                    # number of columns
+
+    Cross-engine numeric equality applies to the rounded metrics exported by
+    ``to_dict()`` and ``to_json()``, for the same logical data, analysis options
+    and analyzed population -- a sampled or truncated run is a different
+    population, not a numeric difference. Native column float attributes retain
+    full precision and may differ in their final digits with accumulation order.
+    Loading a report preserves its serialized precision.
     """
 
     _MAX_REPR_COLUMNS = 15

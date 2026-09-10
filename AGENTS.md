@@ -76,9 +76,15 @@ change; run what matches the change and list the commands in the PR body.
   into a plausible number is the worst bug class for a profiler.
 - **Semantics**: `None`/absent means "not analyzed"; empty means "analyzed,
   nothing found". Preserve this distinction in reports and bindings.
-- **Output contract**: profile numbers must be identical regardless of which
-  engine or input path produced them. If you touch an engine or parser, check
-  the other paths for parity.
+- **Output contract**: the serialized, rounded metric values must be identical
+  across engines and input paths for the same logical data, analysis options,
+  and analyzed population. Rust Serde output and Python `to_dict()`/`to_json()`
+  govern this contract; source/execution provenance is compared separately.
+  Native raw floats retain full precision and may differ with accumulation
+  order. Parity tests compare serialized values exactly; raw diagnostics use
+  explicit tolerances (relative `1e-9`, absolute `1e-12`). Preserve absence as
+  well as numbers. See [the numeric contract](docs/schema/README.md#numeric-equality-contract).
+  If you touch an engine or parser, check the other paths for parity.
 
 ## Project board rules
 

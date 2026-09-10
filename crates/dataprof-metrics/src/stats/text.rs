@@ -9,9 +9,27 @@ pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     ColumnStats::Text(compute_text_stats(data))
 }
 
+/// Borrowing variant for callers that must filter the column first.
+///
+/// Filtering through references keeps the caller from duplicating every string
+/// in the column just to drop a few of them.
+pub fn calculate_text_stats_from_refs(data: &[&String]) -> ColumnStats {
+    ColumnStats::Text(compute_text_stats_from_refs(data))
+}
+
 /// Compute text stats and return the inner struct directly.
 pub fn compute_text_stats(data: &[String]) -> TextStats {
-    let non_empty: Vec<&String> = data.iter().filter(|s| !s.trim().is_empty()).collect();
+    let borrowed: Vec<&String> = data.iter().collect();
+    compute_text_stats_from_refs(&borrowed)
+}
+
+/// Compute text stats over already-borrowed values.
+pub fn compute_text_stats_from_refs(data: &[&String]) -> TextStats {
+    let non_empty: Vec<&String> = data
+        .iter()
+        .copied()
+        .filter(|s| !s.trim().is_empty())
+        .collect();
 
     if non_empty.is_empty() {
         return TextStats::empty();

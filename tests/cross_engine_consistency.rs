@@ -1,7 +1,8 @@
 //! Cross-engine consistency test.
 //!
 //! Profiles the same CSV through the standard CSV engine and Arrow CSV engine,
-//! then asserts that numeric stats match within tolerance.
+//! then asserts exact equality of serialized metrics (#547). Raw numeric
+//! diagnostics allow relative tolerance 1e-9 or absolute tolerance 1e-12.
 
 use std::io::Write;
 use std::path::Path;
@@ -422,27 +423,24 @@ fn test_base_numeric_stats_exact_beyond_sample_capacity() {
         assert_eq!(id.invalid_count, Some(0), "[{engine}] invalid_count");
     }
 
-    // And the two engines must agree with each other exactly on base stats.
-    for name in ["id", "value"] {
-        let get = |r: &dataprof::ProfileReport| {
-            let col = r.column_profiles.iter().find(|c| c.name == name).unwrap();
-            match &col.stats {
-                ColumnStats::Numeric(n) => (n.min, n.max, n.mean, n.std_dev),
-                other => panic!("'{name}' should be numeric, got {other:?}"),
-            }
-        };
-        let (min1, max1, mean1, std1) = get(&std_report);
-        let (min2, max2, mean2, std2) = get(&arrow_report);
-        assert_eq!(min1, min2, "'{name}' min must match across engines");
-        assert_eq!(max1, max2, "'{name}' max must match across engines");
-        assert!(
-            (mean1 - mean2).abs() < 1e-9,
-            "'{name}' mean: {mean1} vs {mean2}"
-        );
-        assert!(
-            (std1 - std2).abs() < 1e-6 * std1.abs().max(1.0),
-            "'{name}' std_dev: {std1} vs {std2}"
-        );
+    // The contract applies at serialized precision. Sample-derived order
+    // statistics can differ because each engine retains a different sample;
+    // these base statistics consume the same complete population (#547).
+    let standard = serde_json::to_value(&std_report.column_profiles).unwrap();
+    let arrow = serde_json::to_value(&arrow_report.column_profiles).unwrap();
+    assert_eq!(
+        std_report.column_profiles.len(),
+        arrow_report.column_profiles.len()
+    );
+    for index in 0..std_report.column_profiles.len() {
+        for field in ["min", "max", "mean", "std_dev", "variance"] {
+            assert!(standard[index]["stats"]["Numeric"][field].is_number());
+            assert!(arrow[index]["stats"]["Numeric"][field].is_number());
+            assert_eq!(
+                standard[index]["stats"]["Numeric"][field], arrow[index]["stats"]["Numeric"][field],
+                "column {index}, serialized {field}"
+            );
+        }
     }
 }
 
@@ -549,113 +547,45 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
         .analyze_file(path)
         .expect("Arrow CSV analysis should succeed");
 
-    // Same number of columns
+    // No tolerance on the contract surface, including optional fields: an
+    // absent statistic must not silently compare equal to a measured one.
     assert_eq!(
-        std_report.column_profiles.len(),
-        arrow_report.column_profiles.len(),
-        "Both engines should detect the same number of columns"
+        serde_json::to_value(&std_report.column_profiles).unwrap(),
+        serde_json::to_value(&arrow_report.column_profiles).unwrap(),
+        "serialized column profiles must match across CSV engines"
     );
 
-    for std_col in &std_report.column_profiles {
-        let arrow_col = arrow_report
-            .column_profiles
-            .iter()
-            .find(|c| c.name == std_col.name)
-            .unwrap_or_else(|| panic!("Column '{}' missing from Arrow report", std_col.name));
+    // Quality scores are rounded metrics on the same contract surface, and are
+    // compared apart from the execution provenance that surrounds them.
+    assert_eq!(
+        serde_json::to_value(&std_report.quality).unwrap(),
+        serde_json::to_value(&arrow_report.quality).unwrap(),
+        "serialized quality must match across CSV engines"
+    );
 
-        // Data type should match
-        assert_eq!(
-            std_col.data_type, arrow_col.data_type,
-            "Type mismatch for column '{}'",
-            std_col.name
-        );
-
-        // Row counts should match
-        assert_eq!(
-            std_col.total_count, arrow_col.total_count,
-            "total_count mismatch for '{}'",
-            std_col.name
-        );
-        assert_eq!(
-            std_col.null_count, arrow_col.null_count,
-            "null_count mismatch for '{}'",
-            std_col.name
-        );
-
-        // Compare numeric stats within tolerance
-        if let (ColumnStats::Numeric(n1), ColumnStats::Numeric(n2)) =
-            (&std_col.stats, &arrow_col.stats)
+    // Raw attributes retain full precision. These diagnostics allow only
+    // accumulation-order differences, independently of serialized equality.
+    for (standard, arrow) in std_report
+        .column_profiles
+        .iter()
+        .zip(&arrow_report.column_profiles)
+    {
+        if let (ColumnStats::Numeric(a), ColumnStats::Numeric(b)) = (&standard.stats, &arrow.stats)
         {
-            let tol = 0.01;
-            assert!(
-                (n1.min - n2.min).abs() < tol,
-                "'{}' min: {} vs {}",
-                std_col.name,
-                n1.min,
-                n2.min
-            );
-            assert!(
-                (n1.max - n2.max).abs() < tol,
-                "'{}' max: {} vs {}",
-                std_col.name,
-                n1.max,
-                n2.max
-            );
-            assert!(
-                (n1.mean - n2.mean).abs() < tol,
-                "'{}' mean: {} vs {}",
-                std_col.name,
-                n1.mean,
-                n2.mean
-            );
-            assert!(
-                (n1.std_dev - n2.std_dev).abs() < tol,
-                "'{}' std_dev: {} vs {}",
-                std_col.name,
-                n1.std_dev,
-                n2.std_dev
-            );
-            assert!(
-                (n1.variance - n2.variance).abs() < 0.1,
-                "'{}' variance: {} vs {}",
-                std_col.name,
-                n1.variance,
-                n2.variance
-            );
-
-            // Optional stats: only compare when both are Some
-            if let (Some(m1), Some(m2)) = (n1.median, n2.median) {
+            for (field, left, right) in [
+                ("min", a.min, b.min),
+                ("max", a.max, b.max),
+                ("mean", a.mean, b.mean),
+                ("std_dev", a.std_dev, b.std_dev),
+                ("variance", a.variance, b.variance),
+            ] {
+                let tolerance = (1e-9 * left.abs().max(right.abs())).max(1e-12);
                 assert!(
-                    (m1 - m2).abs() < 0.1,
-                    "'{}' median: {} vs {}",
-                    std_col.name,
-                    m1,
-                    m2
+                    (left - right).abs() <= tolerance,
+                    "{} raw {field}: {left} vs {right}",
+                    standard.name
                 );
             }
-            if let (Some(s1), Some(s2)) = (n1.skewness, n2.skewness) {
-                assert!(
-                    (s1 - s2).abs() < 0.1,
-                    "'{}' skewness: {} vs {}",
-                    std_col.name,
-                    s1,
-                    s2
-                );
-            }
-            if let (Some(k1), Some(k2)) = (n1.kurtosis, n2.kurtosis) {
-                assert!(
-                    (k1 - k2).abs() < 0.1,
-                    "'{}' kurtosis: {} vs {}",
-                    std_col.name,
-                    k1,
-                    k2
-                );
-            }
-        } else if matches!(std_col.data_type, DataType::Integer | DataType::Float) {
-            panic!(
-                "Column '{}' is {:?} but one engine produced non-Numeric stats: std={:?}, arrow={:?}",
-                std_col.name, std_col.data_type, std_col.stats, arrow_col.stats
-            );
         }
     }
 }

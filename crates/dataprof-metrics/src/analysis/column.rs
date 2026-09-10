@@ -7,7 +7,7 @@ use crate::analysis::inference::{
 };
 use crate::analysis::patterns::detect_patterns;
 use crate::stats::numeric::compute_numeric_stats_with_parsed_count;
-use crate::stats::{calculate_datetime_stats, calculate_text_stats};
+use crate::stats::{calculate_datetime_stats, calculate_text_stats_from_refs};
 
 /// Which parts of a column analysis to perform.
 ///
@@ -160,7 +160,17 @@ fn analyze_column_with_options(
                     ColumnStats::None
                 }
             }
-            DataType::String | DataType::Identifier => calculate_text_stats(data),
+            DataType::String | DataType::Identifier => {
+                // Null-like tokens are counted as nulls above; they are not
+                // text values, so they must not enter the length statistics.
+                // The streaming engines feed a null-excluding accumulator here
+                // and this path has to agree with them (#547).
+                let values: Vec<&String> = data
+                    .iter()
+                    .filter(|s| !is_null_like_token(s.trim()))
+                    .collect();
+                calculate_text_stats_from_refs(&values)
+            }
         }
     };
 
@@ -434,5 +444,27 @@ mod tests {
 
         assert_eq!(profile.null_count, 2); // 2 whitespace-only
         assert_eq!(profile.unique_count, Some(2)); // "value1" and "value2"
+    }
+
+    #[test]
+    fn text_lengths_exclude_null_like_tokens() {
+        // This path feeds the database connectors; the streaming engines use a
+        // null-excluding length accumulator. A token counted as a null must not
+        // also be counted as a four-character string (#547).
+        let data = vec![
+            "NULL".to_string(),
+            "a".to_string(),
+            "nan".to_string(),
+            "b".to_string(),
+        ];
+        let profile = analyze_column("test_col", &data);
+
+        assert_eq!(profile.null_count, 2);
+        let ColumnStats::Text(stats) = profile.stats else {
+            panic!("expected text stats");
+        };
+        assert_eq!(stats.min_length, 1);
+        assert_eq!(stats.max_length, 1);
+        assert_eq!(stats.avg_length, 1.0);
     }
 }
