@@ -121,6 +121,40 @@ Raising the MSRV is a deliberate, separate change: bump `rust-version` in
 version stated in `README.md`, `AGENTS.md` and this file. The script fails
 loudly if the toolchain pin and `rust-version` drift apart.
 
+### Python interpreters and release wheels
+
+Starting with 0.12, `.github/python-interpreters.json` declares the release
+interpreter set: standard, GIL-enabled CPython 3.10–3.14. CI runs the Python
+suite on every declared version and wheel smoke tests on every declared version
+on Linux, macOS and Windows. PyPy, preview Python and free-threaded builds are
+outside this support policy; they are not published. Adopting free-threading or
+the stable ABI requires a separate decision and matching runtime coverage.
+
+The release workflow installs the declared interpreters and resolves their
+absolute paths with `uv python find` on Windows and macOS. Linux builds select
+versioned names inside manylinux. Before uploading any build leg's wheels, it
+checks that each declared interpreter appears exactly once, that filename and archive ABI
+tags agree, and that `Requires-Python` matches the supported range. Both baseline
+and optimized builds pass this check before optimized artifacts are renamed.
+Linux wheels select interpreters inside the manylinux container; host Python
+installation does not control those builds (see the
+[maturin action documentation](https://github.com/PyO3/maturin-action#usage)).
+
+When changing support, update the JSON declaration and the version classifiers
+and `requires-python` in `pyproject.toml`, then refresh `uv.lock`. Metadata must
+agree with the declaration or both CI and the release fail. The bound excludes
+Python 3.15+ from source installs too; extending support is a tested release
+change, rather than an implicit promise made by an open-ended requirement.
+Python package metadata cannot exclude the free-threaded ABI or PyPy by itself;
+the artifact check and this policy define that boundary.
+
+```bash
+uv run python .github/scripts/wheel_interpreters.py
+uv run pytest python/tests/test_wheel_interpreters.py -q
+# After building a complete set for one platform/CPU profile:
+uv run python .github/scripts/wheel_interpreters.py --wheels dist
+```
+
 ### Database regression tests
 
 CI runs both the facade integration target and every test target in the database

@@ -32,6 +32,24 @@ permissions:
   contents: read
 
 jobs:
+  python-interpreters:
+    name: Python Interpreter Contract
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.contract.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          token: ${{ github.token }}
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Validate metadata and generate interpreter matrix
+        id: contract
+        run: python .github/scripts/wheel_interpreters.py --github-output "$GITHUB_OUTPUT"
+
   test-suite:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -266,9 +284,16 @@ jobs:
         run: uv run --no-sync ty check python/
 
   python-tests:
-    name: Python Tests
+    name: Python Tests (${{ matrix.python }})
     runs-on: ubuntu-latest
+    needs: python-interpreters
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(needs.python-interpreters.outputs.versions) }}
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1
@@ -279,12 +304,12 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-prefix: rust-python
+          cache-prefix: rust-python-${{ matrix.python }}
 
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -304,8 +329,9 @@ jobs:
     # The pytest job runs against an editable build inside the dev environment,
     # so it cannot see packaging mistakes or an accidental dependency on pandas.
     # This one installs the built wheel into a bare venv, the way a user would.
-    name: Wheel Smoke (${{ matrix.os }})
+    name: Wheel Smoke (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    needs: python-interpreters
     # A dependency bump changes Cargo.lock, which changes the rust-cache key, so
     # every such PR builds ~400 crates cold. Warm, Windows takes 6 minutes; cold,
     # it needs more than the 20 this used to allow, and a timeout is worse than a
@@ -315,6 +341,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        python: ${{ fromJSON(needs.python-interpreters.outputs.versions) }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
           - os: ubuntu-latest
             venv_python: .smoke/bin/python
@@ -322,6 +350,8 @@ jobs:
             venv_python: .smoke/bin/python
           - os: windows-latest
             venv_python: .smoke/Scripts/python
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     defaults:
       run:
         shell: bash
@@ -335,14 +365,13 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          # Keyed per OS: the three legs build different artifacts and must not
-          # race for one cache entry.
-          cache-prefix: rust-wheel-smoke-${{ matrix.os }}
+          # Each OS/interpreter pair builds a different extension artifact.
+          cache-prefix: rust-wheel-smoke-${{ matrix.os }}-${{ matrix.python }}
 
       - name: Setup Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7

@@ -96,3 +96,18 @@ Shipping with these, tracked for 0.12:
   decimal commas still profiles those columns as text.
 
 <!-- release-body:end -->
+
+## Planned for 0.12: explicit Python interpreter support
+
+Release wheels will support standard, GIL-enabled CPython 3.10–3.14 on the
+existing Linux, macOS and Windows targets. The 0.11 runner-dependent PyPy,
+preview Python and free-threaded artifacts are not part of this supported set.
+Package metadata will declare `>=3.10,<3.15` and CPython classifiers through
+3.14; use a supported CPython interpreter for 0.12 until support for other
+interpreters is explicitly added and tested.
+
+The same interpreter declaration drives the Python test and wheel smoke
+matrices. Every release build must contain exactly one wheel per declared
+interpreter with matching archive tags and Python requirements before upload.
+See the [contributor policy](CONTRIBUTING.md#python-interpreters-and-release-wheels)
+for the declaration and checks (#649).

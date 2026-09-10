@@ -49,7 +49,9 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 uv pip install dataprof
 ```
 
-Requires Python 3.10 or newer.
+Supports standard CPython 3.10–3.14. Release wheels target these versions on
+Linux, macOS and Windows; PyPy, preview Python and free-threaded builds are not
+part of the supported wheel set. See the [interpreter policy](docs/CONTRIBUTING.md#python-interpreters-and-release-wheels).
 
 The pre-built PyPI wheels have **no Python dependencies**. Everything below runs on a bare `pip install dataprof`: local files, dicts, row dicts, byte buffers (including Parquet), and every export in this section. Install the `pandas` extra only for the pandas-typed exports (`to_dataframe()`, `describe()` as a DataFrame). Async profiling, including HTTP URLs and remote Parquet, is in the wheel too; database connectors are the one documented feature that still needs a source build.
 
