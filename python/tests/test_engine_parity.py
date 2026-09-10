@@ -1,8 +1,9 @@
 """Cross-engine parity suite (issue #363).
 
 One canonical fixture, materialised into every input format dataprof supports,
-profiled through every input path, asserting the resulting column profiles are
-identical. Each engine is tested against its own hand-written expectations
+profiled through every input path, asserting the serialized column profiles are
+identical (#547). Raw floats retain full precision and are additionally checked
+with explicit relative/absolute tolerances. Each engine has hand-written expectations
 elsewhere; this suite exists because an engine can be confidently, consistently
 wrong on its own — the 0.9.0 nullable-Parquet and database-decoding bugs both
 survived a full test suite and were only found by cross-engine disagreement.
@@ -14,6 +15,7 @@ expected exception with a comment, never by weakening the assertion.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from typing import Any
 
@@ -50,8 +52,11 @@ COLUMNS: dict[str, list[Any]] = {
 }
 N_ROWS = 5
 
-# The full observable numeric/type surface of a ColumnProfile. Assert on all of
-# it — a sampled field is how an engine stays consistently wrong.
+# Raw-access diagnostics supplement exact comparisons of every serialized field.
+# These tolerances accommodate floating-point accumulation order; they do not
+# apply to the serialized equality contract.
+RAW_REL_TOL = 1e-9
+RAW_ABS_TOL = 1e-12
 FIELDS = ("data_type", "null_count", "unique_count", "min", "max", "mean", "std_dev")
 
 # Explicit, justified exceptions: (engine, column, field) -> expected value.
@@ -66,11 +71,16 @@ EXPECTED_EXCEPTIONS: dict[tuple[str, str, str], Any] = {
 
 ENGINES = (
     "csv",
+    "csv.incremental",
+    "csv.columnar",
+    "csv.bytes",
+    "csv.buffer",
     "json",
     "jsonl",
     "dict",
     "rows",
     "parquet",
+    "parquet.bytes",
     "arrow",
     "pandas",
     "polars",
@@ -98,14 +108,19 @@ def build_report(engine: str, tmp_path):
     if engine == "rows":
         return dataprof.profile(fixture_rows())
 
-    if engine == "csv":
+    if engine == "csv" or engine.startswith("csv."):
         path = tmp_path / "fixture.csv"
         with open(path, "w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(COLUMNS.keys())
             for row in fixture_rows():
                 writer.writerow([_csv_cell(row[name]) for name in COLUMNS])
-        return dataprof.profile(str(path))
+        if engine == "csv.bytes":
+            return dataprof.profile(path.read_bytes(), format="csv")
+        if engine == "csv.buffer":
+            return dataprof.profile(io.BytesIO(path.read_bytes()), format="csv")
+        selected = engine.partition(".")[2] or "auto"
+        return dataprof.profile(str(path), engine=selected)
 
     if engine == "json":
         path = tmp_path / "fixture.json"
@@ -117,11 +132,13 @@ def build_report(engine: str, tmp_path):
         path.write_text("\n".join(json.dumps(row) for row in fixture_rows()), encoding="utf-8")
         return dataprof.profile(str(path))
 
-    if engine == "parquet":
+    if engine in ("parquet", "parquet.bytes"):
         pa = pytest.importorskip("pyarrow")
         pq = pytest.importorskip("pyarrow.parquet")
         path = tmp_path / "fixture.parquet"
         pq.write_table(pa.table(COLUMNS), path)
+        if engine == "parquet.bytes":
+            return dataprof.profile(path.read_bytes(), format="parquet")
         return dataprof.profile(str(path))
 
     if engine == "arrow":
@@ -144,8 +161,19 @@ def field_value(report, column: str, field: str) -> Any:
 
 
 def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
+    """Compare complete serialized columns exactly, then diagnose raw floats."""
     __tracebackhide__ = True
     assert report.rows == N_ROWS, f"{engine}: expected {N_ROWS} rows, got {report.rows}"
+    expected_columns = reference.to_dict()["columns"]
+    for column in expected_columns:
+        for (exception_engine, name, field), value in exceptions.items():
+            if exception_engine == engine and name == column["name"]:
+                assert field in column, f"exception names an unknown serialized field: {field}"
+                column[field] = value
+    # No approximation or post-export re-rounding here: consumers see these
+    # exact numbers, including every optional statistic and absence marker.
+    assert report.to_dict()["columns"] == expected_columns, engine
+    assert json.loads(report.to_json())["columns"] == expected_columns, engine
     mismatches = []
     for column in COLUMNS:
         for field in FIELDS:
@@ -154,7 +182,7 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
                 (engine, column, field), field_value(reference, column, field)
             )
             if isinstance(expected, float) and isinstance(actual, float):
-                matches = actual == pytest.approx(expected, rel=1e-9)
+                matches = actual == pytest.approx(expected, rel=RAW_REL_TOL, abs=RAW_ABS_TOL)
             else:
                 matches = actual == expected
             if not matches:
@@ -175,6 +203,27 @@ def reference():
 def test_engine_parity(engine, reference, tmp_path):
     report = build_report(engine, tmp_path)
     assert_profiles_match(engine, report, reference, EXPECTED_EXCEPTIONS)
+
+
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+def test_serialized_parity_preserves_full_precision_accessors(engine, tmp_path):
+    """Serialization defines equality without rounding native attribute access."""
+    path = tmp_path / "fractional.csv"
+    path.write_text("amount,label\n0,a\n0,東京\n1,café\n", encoding="utf-8")
+    report = dataprof.profile(path, engine=engine)
+    reference = dataprof.profile(path, engine="incremental")
+    document = report.to_dict()
+    assert document["columns"] == reference.to_dict()["columns"]
+    assert document["quality"] == reference.to_dict()["quality"]
+    assert document["columns"][0]["stats"]["mean"] == 0.3333
+    assert report["amount"].mean == pytest.approx(1 / 3, rel=RAW_REL_TOL, abs=RAW_ABS_TOL)
+    assert report["amount"].mean != document["columns"][0]["stats"]["mean"]
+    # Loading retains the serialized precision rather than reconstructing the
+    # producer's full-precision float. Derived agent output must still agree.
+    restored = dataprof.ProfileReport.from_dict(document)
+    assert restored["amount"].mean == 0.3333
+    assert restored.to_dict() == document
+    assert restored.to_llm_context() == report.to_llm_context()
 
 
 # ── Column order (issue #465) ──
@@ -309,8 +358,6 @@ def test_sqlite_parity(tmp_path):
         return await analyze_database_async(str(db_path), "SELECT * FROM fixture")
 
     report = asyncio.run(_run())
-    # The raw report exposes column_profiles as a list, not a mapping.
-    profiles = {profile.name: profile for profile in report.column_profiles}
 
     # SQLite has no boolean type: sqlite3 stores True/False as INTEGER 1/0, so
     # the database really contains integers. The reference for this arm is the
@@ -319,21 +366,7 @@ def test_sqlite_parity(tmp_path):
     sqlite_visible["flag"] = [int(value) for value in COLUMNS["flag"]]
     reference = dataprof.profile(sqlite_visible)
 
-    assert report.rows_processed == N_ROWS
-    mismatches = []
-    for column in COLUMNS:
-        for field in FIELDS:
-            actual = getattr(profiles[column], field)
-            expected = getattr(reference[column], field)
-            if isinstance(expected, float) and isinstance(actual, float):
-                matches = actual == pytest.approx(expected, rel=1e-9)
-            else:
-                matches = actual == expected
-            if not matches:
-                mismatches.append(f"  {column}.{field}: sqlite={actual!r} expected={expected!r}")
-    assert not mismatches, "sqlite disagrees with the reference profile on:\n" + "\n".join(
-        mismatches
-    )
+    assert_profiles_match("sqlite", dataprof.ProfileReport(report), reference, {})
 
 
 # ── Duplicate-row detection with nulls (issue #417) ──
