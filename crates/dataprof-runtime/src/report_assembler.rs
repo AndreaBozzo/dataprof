@@ -8,15 +8,15 @@
 use std::collections::HashMap;
 
 use dataprof_core::{
-    AnalysisOptions, ColumnProfile, DataSource, DataType, ExecutionMetadata, QualityDimension,
-    SemanticHintBinding, SemanticHintKind, SemanticHints,
+    AnalysisOptions, ColumnProfile, DataProfilerError, DataSource, DataType, ExecutionMetadata,
+    QualityDimension, SemanticHintBinding, SemanticHintKind, SemanticHints,
 };
 use dataprof_metrics::{
     MetricConfidence, MetricsCalculator, QualityAssessment, RowCompletenessSummary,
     RowDuplicateSummary, analysis::metrics::BifurcatedResult, compute_value_hint_bindings,
 };
 
-use crate::ProfileReport;
+use crate::{ProfileReport, QualityAnalysisStatus};
 
 /// Builder for constructing a [`ProfileReport`].
 pub struct ReportAssembler {
@@ -25,12 +25,21 @@ pub struct ReportAssembler {
     columns: Vec<ColumnProfile>,
     quality_data: Option<HashMap<String, Vec<String>>>,
     confidence: Option<MetricConfidence>,
-    skip_quality: bool,
+    /// Why quality will not be computed, when it will not be. `None` means the
+    /// caller asked for it.
+    skip: Option<QualityAnalysisStatus>,
     requested_dimensions: Option<Vec<QualityDimension>>,
     semantic_hints: SemanticHints,
     exact_value_hint_bindings: Option<Vec<SemanticHintBinding>>,
     row_duplicates: Option<RowDuplicateSummary>,
     row_completeness: Option<RowCompletenessSummary>,
+    /// Test seam for the failure branch. No input path can currently make
+    /// `MetricsCalculator` return `Err`: both of its error constructions sit
+    /// behind an emptiness check that has already returned by then. The branch
+    /// still has to be handled, because the calculator is a public API whose
+    /// signature says it can fail, so this is how the handling is exercised.
+    #[cfg(test)]
+    forced_quality_failure: Option<String>,
 }
 
 impl ReportAssembler {
@@ -42,13 +51,23 @@ impl ReportAssembler {
             columns: Vec::new(),
             quality_data: None,
             confidence: None,
-            skip_quality: false,
+            skip: None,
             requested_dimensions: None,
             semantic_hints: SemanticHints::default(),
             exact_value_hint_bindings: None,
             row_duplicates: None,
             row_completeness: None,
+            #[cfg(test)]
+            forced_quality_failure: None,
         }
+    }
+
+    /// Make the quality computation fail with `message`. See
+    /// [`forced_quality_failure`](Self::forced_quality_failure).
+    #[cfg(test)]
+    fn force_quality_failure(mut self, message: &str) -> Self {
+        self.forced_quality_failure = Some(message.to_string());
+        self
     }
 
     /// Set the column profiles for this report.
@@ -69,9 +88,25 @@ impl ReportAssembler {
         self
     }
 
-    /// Explicitly skip quality metric calculation.
+    /// Explicitly skip quality metric calculation because the caller did not
+    /// ask for it.
+    ///
+    /// Use [`skip_quality_no_data`](Self::skip_quality_no_data) when quality
+    /// was wanted but the source held nothing to measure. The report states
+    /// which of the two happened, so they must not be conflated here.
     pub fn skip_quality(mut self) -> Self {
-        self.skip_quality = true;
+        self.skip = Some(QualityAnalysisStatus::NotRequested);
+        self
+    }
+
+    /// Skip quality metric calculation because there was nothing to compute
+    /// from: an empty source, or a path that retained no sample.
+    ///
+    /// A caller that already deselected quality keeps that answer. Not asking
+    /// is the more specific reason, and it does not stop being true when the
+    /// source also turns out to be empty.
+    pub fn skip_quality_no_data(mut self) -> Self {
+        self.skip.get_or_insert(QualityAnalysisStatus::NoData);
         self
     }
 
@@ -96,10 +131,10 @@ impl ReportAssembler {
     /// object rather than an assessment with every dimension absent — "not
     /// analyzed" and "analyzed, nothing found" are different answers.
     pub fn with_analysis_options(mut self, options: &AnalysisOptions) -> Self {
-        self.skip_quality = !options.include_quality();
+        self.skip = (!options.include_quality()).then_some(QualityAnalysisStatus::NotRequested);
         self.semantic_hints = options.semantic_hints().clone();
         self.requested_dimensions = options.quality_dimensions().map(<[_]>::to_vec);
-        if options.has_column_projection() && !self.skip_quality {
+        if options.has_column_projection() && self.skip.is_none() {
             // Completeness and uniqueness both contain row-level measurements.
             // Those measurements have a different meaning after projecting a
             // row, and the current report schema cannot label only the row-level
@@ -115,7 +150,9 @@ impl ReportAssembler {
                     QualityDimension::Completeness | QualityDimension::Uniqueness
                 )
             });
-            self.skip_quality = dimensions.is_empty();
+            if dimensions.is_empty() {
+                self.skip = Some(QualityAnalysisStatus::WithheldByProjection);
+            }
             self.requested_dimensions = Some(dimensions);
         }
         self
@@ -147,17 +184,24 @@ impl ReportAssembler {
     }
 
     /// Build the final [`ProfileReport`].
+    ///
+    /// This does not fail. A quality computation that returns an error leaves
+    /// the report without an assessment, exactly as a run that never asked for
+    /// one does, so the report records which of the two happened in
+    /// [`ProfileReport::quality_status`] rather than discarding the column
+    /// profiles that did compute.
     pub fn build(self) -> ProfileReport {
-        let quality = if self.skip_quality {
-            None
-        } else if let Some(data) = &self.quality_data {
-            self.compute_quality(data)
-        } else {
-            None
+        let (quality, status) = match &self.skip {
+            Some(reason) => (None, reason.clone()),
+            None => match &self.quality_data {
+                Some(data) => self.compute_quality(data),
+                None => (None, QualityAnalysisStatus::NoData),
+            },
         };
         let bindings = self.compute_hint_bindings();
 
         ProfileReport::new(self.source, self.columns, self.execution, quality)
+            .with_quality_status(status)
             .with_semantic_hint_bindings(bindings)
     }
 
@@ -215,7 +259,17 @@ impl ReportAssembler {
         bindings
     }
 
-    fn compute_quality(&self, data: &HashMap<String, Vec<String>>) -> Option<QualityAssessment> {
+    fn compute_quality(
+        &self,
+        data: &HashMap<String, Vec<String>>,
+    ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
+        #[cfg(test)]
+        if let Some(message) = &self.forced_quality_failure {
+            return Self::failed(DataProfilerError::MetricsCalculationError {
+                message: message.clone(),
+            });
+        }
+
         let sample_size = data.values().map(|v| v.len()).max().unwrap_or(0);
         let is_streaming = self.is_streaming_context(sample_size);
 
@@ -226,6 +280,20 @@ impl ReportAssembler {
         }
     }
 
+    /// Record a quality computation that was requested, attempted, and failed.
+    fn failed(error: DataProfilerError) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
+        // Still logged, so an operator watching a run sees it happen. The
+        // report carries it too: a log line is not part of the output a
+        // consumer reads back, and absence alone reads as a clean skip.
+        log::warn!("Quality metrics calculation failed: {error}");
+        (
+            None,
+            QualityAnalysisStatus::Failed {
+                error: error.to_string(),
+            },
+        )
+    }
+
     fn is_streaming_context(&self, sample_size: usize) -> bool {
         self.execution.sampling_applied
             || (sample_size > 0 && sample_size < self.execution.rows_processed)
@@ -234,7 +302,7 @@ impl ReportAssembler {
     fn compute_bifurcated_quality(
         &self,
         data: &HashMap<String, Vec<String>>,
-    ) -> Option<QualityAssessment> {
+    ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
         let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
         match calculator.calculate_bifurcated_metrics_with_all_semantic_hints(
             data,
@@ -248,19 +316,19 @@ impl ReportAssembler {
                     .confidence
                     .clone()
                     .unwrap_or_else(|| self.mixed_confidence(&result));
-                Some(QualityAssessment::new(result.metrics, confidence))
+                (
+                    Some(QualityAssessment::new(result.metrics, confidence)),
+                    QualityAnalysisStatus::Computed,
+                )
             }
-            Err(error) => {
-                log::warn!("Bifurcated quality metrics calculation failed: {error}");
-                None
-            }
+            Err(error) => Self::failed(error),
         }
     }
 
     fn compute_uniform_quality(
         &self,
         data: &HashMap<String, Vec<String>>,
-    ) -> Option<QualityAssessment> {
+    ) -> (Option<QualityAssessment>, QualityAnalysisStatus) {
         let calculator = MetricsCalculator::new().with_row_completeness(self.row_completeness);
         match calculator.calculate_comprehensive_metrics_with_all_semantic_hints(
             data,
@@ -271,12 +339,12 @@ impl ReportAssembler {
         ) {
             Ok(metrics) => {
                 let confidence = self.confidence.clone().unwrap_or(MetricConfidence::Exact);
-                Some(QualityAssessment::new(metrics, confidence))
+                (
+                    Some(QualityAssessment::new(metrics, confidence)),
+                    QualityAnalysisStatus::Computed,
+                )
             }
-            Err(error) => {
-                log::warn!("Quality metrics calculation failed: {error}");
-                None
-            }
+            Err(error) => Self::failed(error),
         }
     }
 
@@ -292,7 +360,7 @@ impl ReportAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dataprof_core::{FileFormat, TruncationReason};
+    use dataprof_core::{FileFormat, MetricPack, TruncationReason};
 
     fn test_source() -> DataSource {
         DataSource::File {
@@ -325,6 +393,111 @@ mod tests {
             .build();
 
         assert!(report.quality.is_none());
+    }
+
+    /// The defect: a quality computation that was requested and failed used to
+    /// produce a report byte-identical to one that never asked for quality.
+    #[test]
+    fn failed_quality_computation_is_not_a_skip() {
+        let mut data = HashMap::new();
+        data.insert("col".to_string(), vec!["a".to_string(), "b".to_string()]);
+
+        let failed = ReportAssembler::new(test_source(), ExecutionMetadata::new(2, 1, 10))
+            .with_quality_data(data.clone())
+            .force_quality_failure("uniqueness accumulator disagreed with the row count")
+            .build();
+        let skipped = ReportAssembler::new(test_source(), ExecutionMetadata::new(2, 1, 10))
+            .with_quality_data(data)
+            .skip_quality()
+            .build();
+
+        assert!(failed.quality.is_none());
+        assert!(skipped.quality.is_none());
+        assert_eq!(
+            failed.quality_status,
+            QualityAnalysisStatus::Failed {
+                error: "Metrics calculation failed: uniqueness accumulator disagreed with the \
+                        row count"
+                    .to_string(),
+            }
+        );
+        assert_eq!(skipped.quality_status, QualityAnalysisStatus::NotRequested);
+        assert_ne!(failed.quality_status, skipped.quality_status);
+    }
+
+    #[test]
+    fn computed_quality_reports_computed() {
+        let mut data = HashMap::new();
+        data.insert("col".to_string(), vec!["a".to_string(), "b".to_string()]);
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(2, 1, 10))
+            .with_quality_data(data)
+            .build();
+
+        assert!(report.quality.is_some());
+        assert_eq!(report.quality_status, QualityAnalysisStatus::Computed);
+    }
+
+    #[test]
+    fn absent_quality_data_reports_no_data() {
+        let explicit = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1))
+            .skip_quality_no_data()
+            .build();
+        let implicit = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1)).build();
+
+        assert_eq!(explicit.quality_status, QualityAnalysisStatus::NoData);
+        assert_eq!(implicit.quality_status, QualityAnalysisStatus::NoData);
+    }
+
+    /// Not asking is the more specific reason, and an empty source does not
+    /// make it untrue. Builder order must not change the answer either way.
+    #[test]
+    fn deselected_quality_survives_an_empty_source() {
+        let deselected =
+            AnalysisOptions::default().with_metric_packs(Some(vec![MetricPack::Schema]));
+        let options_first = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1))
+            .with_analysis_options(&deselected)
+            .skip_quality_no_data()
+            .build();
+        let skip_first = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1))
+            .skip_quality_no_data()
+            .with_analysis_options(&deselected)
+            .build();
+
+        assert_eq!(
+            options_first.quality_status,
+            QualityAnalysisStatus::NotRequested
+        );
+        assert_eq!(
+            skip_first.quality_status,
+            QualityAnalysisStatus::NotRequested
+        );
+    }
+
+    /// Completeness and uniqueness measure whole rows; the projection path
+    /// withholds them rather than publishing projected numbers under full-row
+    /// names. A consumer must not read that as "you did not ask".
+    #[test]
+    fn projection_withholding_every_dimension_is_not_a_skip() {
+        let mut data = HashMap::new();
+        data.insert("col".to_string(), vec!["a".to_string(), "b".to_string()]);
+        let options = AnalysisOptions::default()
+            .with_quality_dimensions(Some(vec![
+                QualityDimension::Completeness,
+                QualityDimension::Uniqueness,
+            ]))
+            .with_columns(Some(vec!["col".to_string()]));
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(2, 1, 10))
+            .with_quality_data(data)
+            .with_analysis_options(&options)
+            .build();
+
+        assert!(report.quality.is_none());
+        assert_eq!(
+            report.quality_status,
+            QualityAnalysisStatus::WithheldByProjection
+        );
     }
 
     #[test]

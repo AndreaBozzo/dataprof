@@ -129,6 +129,11 @@ A dimension missing from `assessed_dimensions()` was not assessed; its entry in
 empty, `overall_quality_score()` is `None` too — report "not assessed", never a
 zero.
 
+When `report.quality` is `None`, `report.quality_status` says why: `computed`,
+`not_requested`, `no_data`, `withheld_by_projection`, `unrecorded`, or `failed`
+— the last meaning the computation was asked for and broke, with the message in
+`report.quality_error`. Read it before concluding a run skipped quality.
+
 | Dimension | Keys |
 | --- | --- |
 | `completeness` | `missing_values_ratio`, `complete_records_ratio`, `null_columns`, `total_cells` |

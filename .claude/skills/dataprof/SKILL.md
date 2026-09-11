@@ -143,6 +143,10 @@ re-read and eyeball two files by hand.
   quality assessment at all, so `report.quality.overall_quality_score()` raises
   `AttributeError` on a path where `report.quality_score` simply returns `None`.
   Check before dereferencing, and report "not assessed" rather than a number.
+- **`report.quality_status` says *why* it is `None`.** `not_requested`,
+  `no_data`, `withheld_by_projection`, `unrecorded` — or `failed`, where the
+  computation was asked for and broke and `report.quality_error` carries the
+  message. Never report a `failed` run as a skipped one.
 - A quality score is a measurement, not a verdict. Say what drove it.
 - **A high score on a messy-looking column deserves a second look.** Consistency
   is measured against the column's type, and a `string` column is scored on the

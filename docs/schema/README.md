@@ -311,3 +311,33 @@ dimension configured with a weight of `0.0` is assessed and serialized while
 contributing nothing to `overall_score`, so it is absent from
 `assessed_dimensions`. Read a dimension's presence as "this was measured", not
 as "this is behind the overall score".
+
+## v1 additive change: `quality_status`
+
+Both dialects now carry a top-level `quality_status` object naming what
+happened to the quality computation. It has a `state` string and, on `failed`
+only, an `error` message:
+
+| `state` | meaning |
+| --- | --- |
+| `computed` | quality was computed; `quality` holds the assessment |
+| `not_requested` | the quality pack was deselected for this run |
+| `no_data` | requested, but the source held nothing to measure |
+| `withheld_by_projection` | requested, but every requested dimension measures whole rows and the run profiled a subset of columns |
+| `failed` | requested and attempted; the computation failed, and `error` says how |
+| `unrecorded` | read back from a document written before this field existed |
+
+`quality` alone could not answer this. A run that never asked for quality and a
+run whose quality computation failed both left it absent, so absence itself was
+the plausible value that hid the failure, and the only record of the failure was
+a `log::warn!` line that no consumer reads back.
+
+The field is additive and not `required`: stored v1 reports remain valid. A
+document without it reads back as `computed` when it carries an assessment and
+`unrecorded` when it does not — a stored assessment proves the computation ran,
+and nothing else about an older document is knowable.
+
+`quality_status` is provenance, not a metric, so it is outside the numeric
+equality contract above. It is still identical across engines and input paths
+for the same data and analysis options: it is assigned in `ReportAssembler`,
+which every path builds through.

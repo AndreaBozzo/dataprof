@@ -20,6 +20,43 @@ use dataprof_metrics::{
 ///   into a plausible-but-wrong report.
 pub const REPORT_SCHEMA_VERSION: u32 = 1;
 
+/// Why a report does or does not carry a quality assessment.
+///
+/// `quality` alone cannot answer that. A run that never asked for quality
+/// metrics and a run whose quality computation failed both leave it `None`,
+/// so absence itself became the plausible value that hid the failure. This
+/// names the difference: a consumer deciding on a report can tell "you did
+/// not ask for this" from "this broke" from "there was nothing to measure".
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum QualityAnalysisStatus {
+    /// Computed: `quality` carries the assessment.
+    Computed,
+    /// Not requested for this run — the quality pack was deselected.
+    NotRequested,
+    /// Requested, but the run had nothing to compute from: an empty source,
+    /// or an input path that retained no sample.
+    NoData,
+    /// Requested, but every requested dimension measures whole rows and the
+    /// run profiled a subset of columns. Completeness and uniqueness mean
+    /// something else after projection, and the report cannot label only
+    /// their row-level fields as projected, so they are withheld rather than
+    /// published under full-row names.
+    WithheldByProjection,
+    /// Requested and attempted; the computation failed. `quality` is absent
+    /// because the computation broke, not because nothing was asked for.
+    Failed {
+        /// The error the metrics calculator reported.
+        error: String,
+    },
+    /// Written by a release that did not record this. Only reachable by
+    /// deserializing a document from before the field existed that carries no
+    /// quality assessment; a stored assessment is read back as `Computed`.
+    Unrecorded,
+}
+
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
@@ -47,6 +84,12 @@ pub struct ProfileReport {
     /// Data quality assessment (optional — partial analysis may skip quality)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<QualityAssessment>,
+    /// What happened to the quality computation. Always present: it is the
+    /// reason `quality` is or is not there, and a report must never leave a
+    /// failed computation to a log line. Additive field — documents written
+    /// before it deserialize as [`QualityAnalysisStatus::Unrecorded`], or as
+    /// `Computed` when they carry an assessment.
+    pub quality_status: QualityAnalysisStatus,
     /// Per-column evidence of how each semantic hint bound to the data.
     ///
     /// Empty when no hints were supplied. Recorded for provenance: a hint proven
@@ -90,6 +133,7 @@ struct PythonProfileReportDocument {
     execution: PythonExecutionDocument,
     columns: Vec<PythonColumnDocument>,
     quality: Option<PythonQualityDocument>,
+    quality_status: QualityAnalysisStatus,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
 }
@@ -330,14 +374,28 @@ fn canonicalize_key_order(value: &mut serde_json::Value) {
     }
 }
 
+/// Drop fields that this build always writes but a reader supplies a default
+/// for, from the schema's `required` lists.
+///
+/// A document written under an earlier v1 build does not carry them. Declaring
+/// them required would fail validation for documents the readers accept, which
+/// is the opposite of what an additive widening means.
 fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
-    let Some(required) = document
-        .pointer_mut("/$defs/ExecutionMetadata/required")
-        .and_then(serde_json::Value::as_array_mut)
-    else {
-        return;
-    };
-    required.retain(|field| field.as_str() != Some("ragged_row_count"));
+    for (pointer, field) in [
+        ("/$defs/ExecutionMetadata/required", "ragged_row_count"),
+        ("/$defs/ProfileReport/required", "quality_status"),
+        (
+            "/$defs/PythonProfileReportDocument/required",
+            "quality_status",
+        ),
+    ] {
+        if let Some(required) = document
+            .pointer_mut(pointer)
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            required.retain(|declared| declared.as_str() != Some(field));
+        }
+    }
 }
 
 fn allow_additive_properties(value: &mut serde_json::Value) {
@@ -374,9 +432,22 @@ impl ProfileReport {
             data_source,
             column_profiles,
             execution,
+            quality_status: match quality {
+                Some(_) => QualityAnalysisStatus::Computed,
+                // A caller constructing a report directly did not compute
+                // quality; `ReportAssembler` overrides this with the reason it
+                // actually observed.
+                None => QualityAnalysisStatus::NotRequested,
+            },
             quality,
             semantic_hint_bindings: Vec::new(),
         }
+    }
+
+    /// Record what happened to the quality computation.
+    pub fn with_quality_status(mut self, status: QualityAnalysisStatus) -> Self {
+        self.quality_status = status;
+        self
     }
 
     /// Attach per-column semantic-hint binding evidence.
@@ -432,6 +503,8 @@ struct ProfileReportFields {
     )]
     quality: Option<QualityAssessment>,
     #[serde(default)]
+    quality_status: Option<QualityAnalysisStatus>,
+    #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
 }
 
@@ -444,6 +517,15 @@ impl From<ProfileReportFields> for ProfileReport {
             data_source: fields.data_source,
             column_profiles: fields.column_profiles,
             execution: fields.execution,
+            // A document written before the field: a stored assessment proves
+            // the computation ran, and nothing else about it is knowable.
+            quality_status: fields.quality_status.unwrap_or({
+                if fields.quality.is_some() {
+                    QualityAnalysisStatus::Computed
+                } else {
+                    QualityAnalysisStatus::Unrecorded
+                }
+            }),
             quality: fields.quality,
             semantic_hint_bindings: fields.semantic_hint_bindings,
         }
@@ -521,6 +603,109 @@ mod tests {
     use dataprof_core::FileFormat;
     use dataprof_metrics::MetricConfidence;
     use serde_json::json;
+
+    fn report_without_quality() -> ProfileReport {
+        ProfileReport::new(
+            DataSource::File {
+                path: "test.csv".to_string(),
+                format: FileFormat::Csv,
+                size_bytes: 1024,
+                modified_at: None,
+                parquet_metadata: None,
+            },
+            vec![],
+            ExecutionMetadata::new(100, 5, 50),
+            None,
+        )
+    }
+
+    /// The `state` strings are the wire vocabulary: consumers branch on them,
+    /// the Python binding repeats them by hand, and the committed schema
+    /// enumerates them. Pin them here so a variant rename has to be deliberate.
+    #[test]
+    fn every_status_has_a_stable_wire_name() {
+        let cases = [
+            (QualityAnalysisStatus::Computed, "computed"),
+            (QualityAnalysisStatus::NotRequested, "not_requested"),
+            (QualityAnalysisStatus::NoData, "no_data"),
+            (
+                QualityAnalysisStatus::WithheldByProjection,
+                "withheld_by_projection",
+            ),
+            (
+                QualityAnalysisStatus::Failed {
+                    error: "boom".to_string(),
+                },
+                "failed",
+            ),
+            (QualityAnalysisStatus::Unrecorded, "unrecorded"),
+        ];
+
+        for (status, name) in cases {
+            let value = serde_json::to_value(&status).unwrap();
+            assert_eq!(value.get("state"), Some(&json!(name)), "{status:?}");
+            let restored: QualityAnalysisStatus = serde_json::from_value(value).unwrap();
+            assert_eq!(restored, status);
+        }
+    }
+
+    #[test]
+    fn quality_status_survives_a_json_roundtrip() {
+        let report = report_without_quality().with_quality_status(QualityAnalysisStatus::Failed {
+            error: "Metrics calculation failed: no data columns found".to_string(),
+        });
+
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: ProfileReport = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.quality_status, report.quality_status);
+        assert!(restored.quality.is_none());
+    }
+
+    /// The serialized document is the contract, so the two states have to be
+    /// distinguishable there and not only in the Rust value.
+    #[test]
+    fn serialized_failure_and_skip_differ() {
+        let failed = serde_json::to_value(report_without_quality().with_quality_status(
+            QualityAnalysisStatus::Failed {
+                error: "boom".to_string(),
+            },
+        ))
+        .unwrap();
+        let skipped = serde_json::to_value(
+            report_without_quality().with_quality_status(QualityAnalysisStatus::NotRequested),
+        )
+        .unwrap();
+
+        assert_eq!(
+            failed.get("quality_status"),
+            Some(&json!({"state": "failed", "error": "boom"}))
+        );
+        assert_eq!(
+            skipped.get("quality_status"),
+            Some(&json!({"state": "not_requested"}))
+        );
+        assert!(failed.get("quality").is_none());
+        assert!(skipped.get("quality").is_none());
+    }
+
+    /// A document written before the field existed: an assessment proves the
+    /// computation ran, and its absence proves nothing.
+    #[test]
+    fn documents_without_the_field_read_back_honestly() {
+        let mut document = serde_json::to_value(report_without_quality()).unwrap();
+        document.as_object_mut().unwrap().remove("quality_status");
+
+        let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(restored.quality_status, QualityAnalysisStatus::Unrecorded);
+
+        document.as_object_mut().unwrap().insert(
+            "quality".to_string(),
+            serde_json::to_value(QualityAssessment::exact(QualityMetrics::empty())).unwrap(),
+        );
+        let restored: ProfileReport = serde_json::from_value(document).unwrap();
+        assert_eq!(restored.quality_status, QualityAnalysisStatus::Computed);
+    }
 
     #[test]
     fn test_profile_report_json_roundtrip() {

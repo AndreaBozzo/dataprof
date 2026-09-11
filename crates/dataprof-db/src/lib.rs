@@ -284,7 +284,7 @@ pub async fn analyze_database_with_options(
             },
             exec,
         )
-        .skip_quality()
+        .skip_quality_no_data()
         .build());
     }
 

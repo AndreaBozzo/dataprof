@@ -6,8 +6,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use dataprof::{
-    ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport, QualityMetrics,
-    SemanticHintKind, TruncationReason,
+    ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport,
+    QualityAnalysisStatus, QualityMetrics, SemanticHintKind, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1063,6 +1063,35 @@ impl PyProfileReport {
     #[getter]
     fn quality_score(&self) -> Option<f64> {
         self.inner.quality_score()
+    }
+
+    /// What happened to the quality computation, as a stable string.
+    ///
+    /// ``quality is None`` alone cannot say whether quality was never asked
+    /// for or was asked for and broke. One of ``computed``, ``not_requested``,
+    /// ``no_data``, ``withheld_by_projection``, ``failed``, or ``unrecorded``
+    /// (a report loaded from a release that predates this field).
+    #[getter]
+    fn quality_status(&self) -> &'static str {
+        match self.inner.quality_status {
+            QualityAnalysisStatus::Computed => "computed",
+            QualityAnalysisStatus::NotRequested => "not_requested",
+            QualityAnalysisStatus::NoData => "no_data",
+            QualityAnalysisStatus::WithheldByProjection => "withheld_by_projection",
+            QualityAnalysisStatus::Failed { .. } => "failed",
+            QualityAnalysisStatus::Unrecorded => "unrecorded",
+        }
+    }
+
+    /// The error a failed quality computation reported, else None.
+    ///
+    /// Non-None exactly when ``quality_status == "failed"``.
+    #[getter]
+    fn quality_error(&self) -> Option<&str> {
+        match &self.inner.quality_status {
+            QualityAnalysisStatus::Failed { error } => Some(error),
+            _ => None,
+        }
     }
 
     /// Per-column semantic-hint binding evidence.

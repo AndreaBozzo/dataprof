@@ -358,15 +358,17 @@ impl ArrowProfiler {
         .with_row_duplicates(row_tracker.summary())
         .with_row_completeness(row_tracker.completeness_summary());
 
-        if MetricPack::include_quality(packs) && !empty_source {
+        if !MetricPack::include_quality(packs) {
+            assembler = assembler.skip_quality();
+        } else if empty_source {
+            assembler = assembler.skip_quality_no_data();
+        } else {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_exact_value_hint_bindings(
                     hint_bindings.bindings(projected_header_names.iter().map(String::as_str)),
                 )
                 .with_analysis_options(&options);
-        } else {
-            assembler = assembler.skip_quality();
         }
 
         Ok(assembler.build())

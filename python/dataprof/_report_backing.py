@@ -283,4 +283,15 @@ class _DictBackedReport:
         quality = d.get("quality")
         self.quality = _DictQuality(quality) if isinstance(quality, dict) else None
         self.quality_score = quality.get("overall_score") if isinstance(quality, dict) else None
+        # Additive field. A document written before it exists cannot say why
+        # quality is absent, but one carrying an assessment proves it was
+        # computed -- the same rule the Rust deserializer applies.
+        status = d.get("quality_status")
+        if isinstance(status, dict) and isinstance(status.get("state"), str):
+            self.quality_status = status["state"]
+            error = status.get("error")
+            self.quality_error = error if isinstance(error, str) else None
+        else:
+            self.quality_status = "computed" if self.quality is not None else "unrecorded"
+            self.quality_error = None
         self.column_profiles = [_DictColumn(c) for c in d.get("columns", [])]

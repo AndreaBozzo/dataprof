@@ -1,8 +1,8 @@
 use std::io::Write;
 
 use dataprof::{
-    DataFrameLibrary, DataSource, ExecutionMetadata, ProfileReport, Profiler, QueryEngine,
-    REPORT_SCHEMA_VERSION,
+    DataFrameLibrary, DataSource, ExecutionMetadata, FileFormat, ProfileReport, Profiler,
+    QualityAnalysisStatus, QualityAssessment, QualityMetrics, QueryEngine, REPORT_SCHEMA_VERSION,
 };
 use dataprof_core::StreamSourceSystem;
 use serde_json::{Value, json};
@@ -223,6 +223,51 @@ fn legacy_v1_defaults_validate_and_deserialize() {
         serde_json::from_value(legacy).expect("legacy v1 report must remain readable");
     assert_eq!(report.execution.ragged_row_count, 0);
     assert!(report.semantic_hint_bindings.is_empty());
+    // The writer did not record why quality was absent, and nothing in the
+    // document can establish it. Saying so beats inventing a reason (#715).
+    assert_eq!(report.quality_status, QualityAnalysisStatus::Unrecorded);
+}
+
+/// A report saved by an earlier v1 build carries no `quality_status`. The field
+/// is additive, so those documents must still validate; declaring it `required`
+/// would reject documents this build reads back happily.
+#[test]
+fn reports_saved_before_quality_status_still_validate() {
+    let schema = committed_schema();
+
+    for quality in [
+        None,
+        Some(QualityAssessment::exact(QualityMetrics::empty())),
+    ] {
+        let expected = if quality.is_some() {
+            QualityAnalysisStatus::Computed
+        } else {
+            QualityAnalysisStatus::Unrecorded
+        };
+        let report = ProfileReport::new(
+            DataSource::File {
+                path: "sample.csv".to_string(),
+                format: FileFormat::Csv,
+                size_bytes: 12,
+                modified_at: None,
+                parquet_metadata: None,
+            },
+            vec![],
+            ExecutionMetadata::new(1, 0, 1),
+            quality,
+        );
+        let mut document = serde_json::to_value(report).expect("serialize report");
+        document
+            .as_object_mut()
+            .expect("a serialized report is a JSON object")
+            .remove("quality_status")
+            .expect("this build writes the field");
+
+        assert_valid(&schema, &document);
+        let restored: ProfileReport =
+            serde_json::from_value(document).expect("pre-0.12 report must remain readable");
+        assert_eq!(restored.quality_status, expected);
+    }
 }
 
 #[test]
