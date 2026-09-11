@@ -233,6 +233,9 @@ class TestAsyncUrlProfiling:
     def test_capped_parquet_url_matches_local_sample(self, url_server, cap):
         import dataprof
 
+        if not dataprof.capabilities().remote_parquet:
+            pytest.skip("Remote Parquet profiling requires the parquet-async feature")
+
         local = dataprof.profile(PARQUET_FILE, max_rows=cap)
         remote = _run(profile_url, url_server["parquet"], max_rows=cap)
         assert remote.rows == local.rows

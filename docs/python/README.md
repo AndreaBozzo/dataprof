@@ -95,7 +95,7 @@ dp.profile(
     chunk_size=None,                 # int -- bytes per streaming chunk
     memory_limit_mb=None,            # int -- memory cap
     format=None,                     # str -- file format override
-    max_rows=None,                   # int -- stop after N rows
+    max_rows=None,                   # int -- row cap; Parquet samples across the file
     name=None,                       # str -- label for DataFrame/Arrow sources
     csv_delimiter=None,              # str -- override auto-detection (e.g. ";")
     csv_flexible=None,               # bool -- allow variable column counts

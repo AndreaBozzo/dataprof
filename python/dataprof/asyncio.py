@@ -101,6 +101,10 @@ async def profile_file(
 
     All formats supported including Parquet.
 
+    For Parquet, ``max_rows`` selects up to 32 ranges spread across the file;
+    ``report.sampled_row_ranges`` records the exact selection. Other formats
+    stop at the row cap.
+
     Args:
         path: File path to profile.
         **kwargs: Additional config options (passed to ProfilerConfig).
@@ -125,6 +129,10 @@ async def profile_url(
     Supports CSV, JSON, and JSONL when async streaming is compiled in.
     Remote Parquet uses HTTP Range requests and additionally requires the
     ``parquet-async`` feature.
+
+    For Parquet, ``max_rows`` selects up to 32 ranges spread across the source;
+    ``report.sampled_row_ranges`` records the exact selection. Other formats
+    stop at the row cap.
 
     Args:
         url: URL to profile.
