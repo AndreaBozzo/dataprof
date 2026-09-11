@@ -60,6 +60,11 @@ pub struct ExecutionMetadata {
     /// Ratio of rows analyzed to total rows when sampling is meaningful.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling_ratio: Option<f64>,
+    /// Exact zero-based, half-open source row ranges selected for analysis,
+    /// in source order. Absent when the input path does not record a selection;
+    /// an empty list means a recorded selection of zero rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampled_row_ranges: Option<Vec<[u64; 2]>>,
 }
 
 impl ExecutionMetadata {
@@ -85,6 +90,7 @@ impl ExecutionMetadata {
             truncation_reason: None,
             sampling_applied: false,
             sampling_ratio: None,
+            sampled_row_ranges: None,
         }
     }
 
@@ -194,6 +200,24 @@ mod tests {
         }"#;
         let meta: ExecutionMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(meta.ragged_row_count, 0);
+        assert_eq!(meta.sampled_row_ranges, None);
+        assert!(
+            serde_json::to_value(&meta)
+                .unwrap()
+                .get("sampled_row_ranges")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn recorded_row_selection_preserves_empty_and_nonempty_ranges() {
+        for ranges in [vec![], vec![[0, 1], [99, 100]]] {
+            let mut meta = ExecutionMetadata::new(0, 1, 0);
+            meta.sampled_row_ranges = Some(ranges.clone());
+            let json = serde_json::to_value(&meta).unwrap();
+            let restored: ExecutionMetadata = serde_json::from_value(json).unwrap();
+            assert_eq!(restored.sampled_row_ranges, Some(ranges));
+        }
     }
 
     #[test]

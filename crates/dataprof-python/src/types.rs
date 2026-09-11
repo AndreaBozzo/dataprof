@@ -1028,6 +1028,16 @@ impl PyProfileReport {
         self.inner.execution.sampling_ratio
     }
 
+    /// Exact zero-based, half-open source row ranges, when recorded.
+    #[getter]
+    fn sampled_row_ranges(&self) -> Option<Vec<Vec<u64>>> {
+        self.inner
+            .execution
+            .sampled_row_ranges
+            .as_ref()
+            .map(|ranges| ranges.iter().map(|range| range.to_vec()).collect())
+    }
+
     // -- Profile data --
 
     /// Column-level statistics list (preserves original order)

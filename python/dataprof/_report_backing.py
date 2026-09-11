@@ -274,6 +274,7 @@ class _DictBackedReport:
         self.ragged_row_count = execution.get("ragged_row_count") or 0
         self.sampling_applied = bool(execution.get("sampling_applied", False))
         self.sampling_ratio = execution.get("sampling_ratio")
+        self.sampled_row_ranges = execution.get("sampled_row_ranges")
         # Additive field, written by to_dict() only when hints were supplied.
         # It was never read back, so a reloaded report reported no bindings —
         # indistinguishable from a run profiled without hints at all (#512).

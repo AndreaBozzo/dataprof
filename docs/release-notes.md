@@ -1,3 +1,15 @@
+# Pending 0.12.0 changes
+
+- Capped Parquet profiling (`max_rows`) now selects up to 32 contiguous ranges
+  spread across the file instead of its prefix (#639). Files, byte buffers and
+  HTTP reads use the same selection; HTTP reads now honor the cap. Re-baseline
+  comparisons that used capped Parquet input: their analyzed population changes.
+  `execution.sampled_row_ranges` records exact zero-based, half-open row ranges,
+  alongside `sampling_applied`, `sampling_ratio` and the existing `max_rows`
+  truncation reason. This optional field is additive to report schema v1; older
+  reports without it retain unknown selection provenance. Metrics describe the
+  selected rows, including duplicates across ranges, not the whole source.
+
 # dataprof 0.11.0 — The documented API, and metrics that earn their scores
 
 <!-- release-body:start -->

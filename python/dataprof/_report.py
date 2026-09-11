@@ -194,6 +194,16 @@ class ProfileReport:
     def sampling_ratio(self) -> float | None:
         return _r4(self._report.sampling_ratio)
 
+    @property
+    def sampled_row_ranges(self) -> list[list[int]] | None:
+        """Exact zero-based, half-open source row ranges, when recorded.
+
+        ``None`` means no selection was recorded; an empty list means zero
+        rows were selected. Capped Parquet profiles record their spread sample.
+        """
+        ranges = self._report.sampled_row_ranges
+        return None if ranges is None else [list(bounds) for bounds in ranges]
+
     # -- Mapping protocol --
 
     def __getitem__(self, key: str) -> ColumnProfile:
@@ -251,7 +261,7 @@ class ProfileReport:
                 if values is not None:
                     quality_dict[dimension] = _round_dimension(values)
 
-        document = {
+        document: dict[str, _Any] = {
             "schema_version": REPORT_SCHEMA_VERSION,
             "source": self._report.source,
             "source_type": self._report.source_type,
@@ -273,6 +283,10 @@ class ProfileReport:
             "columns": cols,
             "quality": quality_dict,
         }
+        # Additive provenance is omitted when the input path did not record it.
+        ranges = self.sampled_row_ranges
+        if ranges is not None:
+            _cast(dict[str, _Any], document["execution"])["sampled_row_ranges"] = ranges
         # Additive: only present when hints were supplied, so hint-free reports
         # keep their existing shape.
         bindings = self.semantic_hint_bindings

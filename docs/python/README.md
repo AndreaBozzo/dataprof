@@ -277,6 +277,25 @@ Returned by `profile()` and all analysis functions.
 | `ragged_row_count` | `int` | Rows whose field count differed from the header (`0` = clean parse). Reported for file, async and columnar CSV inputs |
 | `sampling_applied` | `bool` | Whether sampling was used |
 | `sampling_ratio` | `float \| None` | Fraction of data sampled |
+| `sampled_row_ranges` | `list[list[int]] \| None` | Exact zero-based, half-open source row intervals when recorded; `[]` means zero selected rows |
+
+For Parquet files, byte buffers and HTTP URLs, `max_rows=N` selects up to 32
+contiguous ranges spread across the file, with exactly N rows when the file
+is larger than the cap. The first and last rows are included for N ≥ 2;
+N = 1 selects the middle row and N = 0 selects none. Selection is deterministic
+and independent of row-group sizes, batch sizes and transport. The exact ranges
+appear in `sampled_row_ranges` and `to_dict()["execution"]["sampled_row_ranges"]`.
+`sampling_applied` is true, `sampling_ratio` is selected rows / file rows, and
+`source_exhausted` is false with the usual `max_rows(N)` truncation reason.
+A cap at or above the file row count reads the whole file without sampling.
+
+Statistics and row-level quality metrics describe the selected population.
+Duplicate detection includes matches across separate ranges. This deterministic
+sample does not establish full-source uniqueness or provide an unbiased
+estimate of full-source ratios. Before 0.12, local and byte-buffer Parquet caps
+selected a prefix, while HTTP reads ignored the cap. Older reports have no
+recorded ranges and load with `sampled_row_ranges=None`. Re-baseline capped
+Parquet comparisons when upgrading.
 
 **Dict-like column access:**
 

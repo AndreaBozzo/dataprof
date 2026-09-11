@@ -200,6 +200,11 @@ CSV header, the Parquet/Arrow schema, and for JSON/JSONL the first record's fiel
 order, with fields that only appear in later records appended where they were
 first seen. Converting a dataset between formats does not reshuffle the report.
 
+For Parquet, `max_rows` selects a deterministic sample spread across the file.
+`report.sampled_row_ranges` records the exact zero-based, half-open intervals;
+metrics describe those selected rows. See the [Python guide](docs/python/README.md)
+for cap behavior and sampling provenance.
+
 ## Quality Metrics
 
 dataprof reports seven quality dimensions informed by concepts in [ISO 8000-8](https://www.iso.org/standard/76834.html) and [ISO/IEC 25012](https://www.iso.org/standard/35749.html):

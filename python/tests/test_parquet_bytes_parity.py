@@ -154,6 +154,85 @@ def test_max_rows_caps_the_buffer(tmp_path):
     assert report.truncation_reason is not None
 
 
+@pytest.mark.parametrize("row_group_size", [7, 25, 100])
+def test_capped_sample_spans_file_and_survives_serialization(tmp_path, row_group_size):
+    path = tmp_path / "spread.parquet"
+    pq.write_table(pa.table({"id": list(range(100))}), path, row_group_size=row_group_size)
+    native = dp.profile(path, max_rows=4)
+    buffered = dp.profile(path.read_bytes(), format="parquet", max_rows=4)
+    saved = tmp_path / "report.json"
+    native.save(saved)
+    reports = [native, buffered, dp.ProfileReport.load(saved)]
+    for report in reports:
+        assert report.rows == 4
+        assert report["id"].min == 0
+        assert report["id"].max == 99
+        assert report["id"].mean == 49.5
+        assert report.sampling_applied
+        assert report.sampling_ratio == 0.04
+        assert not report.source_exhausted
+        assert report.truncation_reason == "max_rows(4)"
+        assert report.sampled_row_ranges == [[0, 1], [33, 34], [66, 67], [99, 100]]
+        document = report.to_dict()
+        assert document["execution"]["sampled_row_ranges"] == report.sampled_row_ranges
+        assert document["columns"] == native.to_dict()["columns"]
+        assert document["quality"] == native.to_dict()["quality"]
+
+
+@pytest.mark.parametrize("cap", [0, 1, 2, 31, 32, 33, 99, 100, 101])
+def test_capped_sample_population_and_boundaries(tmp_path, cap):
+    path = _write(tmp_path, pa.table({"id": list(range(100))}))
+    report = dp.profile(path, max_rows=cap)
+    assert report.rows == min(cap, 100)
+    if cap >= 100:
+        assert report.sampled_row_ranges is None
+        assert "sampled_row_ranges" not in report.to_dict()["execution"]
+        assert not report.sampling_applied
+        assert report.source_exhausted
+        return
+    ranges = report.sampled_row_ranges
+    assert ranges is not None
+    assert len(ranges) <= 32
+    selected = [i for start, end in ranges for i in range(start, end)]
+    assert len(selected) == cap
+    assert selected == sorted(set(selected))
+    if cap == 0:
+        assert ranges == []
+        assert dp.ProfileReport.from_json(report.to_json()).sampled_row_ranges == []
+        assert report["id"].mean is None
+    elif cap == 1:
+        assert selected == [50]
+        assert report["id"].min == report["id"].max == 50
+    else:
+        assert selected[0] == 0 and selected[-1] == 99
+    if selected:
+        assert report["id"].mean == pytest.approx(
+            sum(selected) / len(selected), rel=1e-9, abs=1e-12
+        )
+
+
+def test_spread_sample_counts_duplicates_across_distant_rows(tmp_path):
+    data = _write(tmp_path, pa.table({"id": [7, 1, 2, 3, 7]})).read_bytes()
+    report = dp.profile(data, format="parquet", max_rows=2)
+    assert report.sampled_row_ranges == [[0, 1], [4, 5]]
+    assert report.quality is not None
+    uniqueness = report.quality.uniqueness
+    assert uniqueness is not None
+    assert uniqueness["duplicate_rows"] == 1
+
+
+def test_legacy_prefix_report_does_not_gain_spread_provenance(tmp_path):
+    data = _write(tmp_path, pa.table({"id": [1, 2, 3]})).read_bytes()
+    document = dp.profile(data, format="parquet", max_rows=2).to_dict()
+    del document["execution"]["sampled_row_ranges"]
+    document["execution"]["sampling_applied"] = False
+    document["execution"]["sampling_ratio"] = None
+    restored = dp.ProfileReport.from_dict(document)
+    assert restored.sampled_row_ranges is None
+    assert restored.truncation_reason == "max_rows(2)"
+    assert "sampled_row_ranges" not in restored.to_dict()["execution"]
+
+
 def test_max_rows_equal_to_the_row_count_is_not_truncation(tmp_path):
     data = _write(tmp_path, pa.table({"id": [1, 2, 3]})).read_bytes()
     report = dp.profile(data, format="parquet", max_rows=3)

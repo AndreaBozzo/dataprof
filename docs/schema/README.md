@@ -22,6 +22,15 @@ reader policy and lets compatible fields be added without invalidating stored
 reports. Required fields, schema version, known enum values, and primitive
 types remain enforced.
 
+`execution.sampled_row_ranges` is an optional additive v1 field in both
+dialects. Each `[start, end]` pair identifies a zero-based, half-open source
+row interval selected for analysis, in source order. Capped Parquet reads
+record at most 32 ranges. Absence means the selection was not recorded, while
+`[]` means a recorded selection of zero rows. Existing prefix-capped reports
+remain readable and do not gain inferred ranges. The existing truncation reason
+and sampling fields describe the cap and coverage; these ranges identify its
+analyzed population exactly.
+
 ## Numeric equality contract
 
 The cross-engine identical-numbers contract governs **serialized, rounded
