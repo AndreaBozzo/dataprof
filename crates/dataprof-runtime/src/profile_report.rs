@@ -121,6 +121,8 @@ struct PythonExecutionDocument {
     ragged_row_count: usize,
     sampling_applied: bool,
     sampling_ratio: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sampled_row_ranges: Option<Vec<[u64; 2]>>,
 }
 
 #[allow(dead_code)]

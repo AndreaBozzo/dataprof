@@ -233,7 +233,7 @@ fn json_honours_max_rows() {
     }
 }
 
-/// Parquet enforces a row cap via the reader's `with_limit`.
+/// Parquet enforces a row cap by selecting ranges spread across the file.
 #[cfg(feature = "parquet")]
 #[test]
 fn parquet_honours_max_rows() {
@@ -245,6 +245,8 @@ fn parquet_honours_max_rows() {
         .expect("parquet profile should succeed");
     assert_eq!(full.execution.rows_processed, 20);
     assert!(full.execution.truncation_reason.is_none());
+    assert!(!full.execution.sampling_applied);
+    assert!(full.execution.sampled_row_ranges.is_none());
 
     for engine in [EngineType::Auto, EngineType::Columnar] {
         let report = Profiler::new()
@@ -256,6 +258,16 @@ fn parquet_honours_max_rows() {
         assert_eq!(
             report.execution.rows_processed, 5,
             "parquet ignored max_rows on {engine:?}"
+        );
+        assert!(
+            report.execution.sampling_applied,
+            "not sampled on {engine:?}"
+        );
+        assert_eq!(report.execution.sampling_ratio, Some(0.25));
+        assert_eq!(
+            report.execution.sampled_row_ranges,
+            Some(vec![[0, 1], [4, 5], [9, 10], [14, 15], [19, 20]]),
+            "wrong selection on {engine:?}",
         );
         assert!(
             report.execution.truncation_reason.is_some(),

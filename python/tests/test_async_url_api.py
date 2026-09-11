@@ -228,3 +228,19 @@ class TestAsyncUrlProfiling:
         assert report.rows > 0
         assert report.columns > 0
         assert report.source_type == "file"
+
+    @pytest.mark.parametrize("cap", [0, 1, 2])
+    def test_capped_parquet_url_matches_local_sample(self, url_server, cap):
+        import dataprof
+
+        if not dataprof.capabilities().remote_parquet:
+            pytest.skip("Remote Parquet profiling requires the parquet-async feature")
+
+        local = dataprof.profile(PARQUET_FILE, max_rows=cap)
+        remote = _run(profile_url, url_server["parquet"], max_rows=cap)
+        assert remote.rows == local.rows
+        assert remote.sampled_row_ranges == local.sampled_row_ranges
+        assert remote.sampling_applied == local.sampling_applied
+        assert remote.source_exhausted == local.source_exhausted
+        assert remote.to_dict()["columns"] == local.to_dict()["columns"]
+        assert remote.to_dict()["quality"] == local.to_dict()["quality"]

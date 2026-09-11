@@ -658,6 +658,23 @@
           "minimum": 0,
           "type": "integer"
         },
+        "sampled_row_ranges": {
+          "description": "Exact zero-based, half-open source row ranges selected for analysis,\nin source order. Absent when the input path does not record a selection;\nan empty list means a recorded selection of zero rows.",
+          "items": {
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "sampling_applied": {
           "description": "Whether sampling was applied.",
           "type": "boolean"
@@ -1440,6 +1457,22 @@
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "sampled_row_ranges": {
+          "items": {
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "sampling_applied": {
           "type": "boolean"

@@ -61,7 +61,11 @@ class Profiler:
         return self
 
     def max_rows(self, n: int) -> Profiler:
-        """Set maximum rows to process."""
+        """Set maximum rows to analyze.
+
+        Parquet selects up to 32 ranges spread across the source and records
+        them in ``report.sampled_row_ranges``. Other inputs stop at the cap.
+        """
         self._kwargs["max_rows"] = n
         return self
 

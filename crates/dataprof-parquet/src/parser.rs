@@ -1,7 +1,7 @@
 use arrow::record_batch::RecordBatchReader;
 use bytes::Bytes;
 use parquet::arrow::ProjectionMask;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{ParquetRecordBatchReaderBuilder, RowSelection};
 use parquet::file::reader::ChunkReader;
 use parquet::schema::types::SchemaDescriptor;
 use std::fs::File;
@@ -14,6 +14,73 @@ use dataprof_core::{
     QualityDimension, SemanticHints, TruncationReason,
 };
 use dataprof_runtime::{ProfileReport, ReportAssembler};
+
+/// Shared file/bytes/HTTP sampling plan. Fixed-size planning stays independent
+/// of row-group layout and reader batch size, and never allocates per row.
+pub(crate) struct ParquetRowSample {
+    source_rows: usize,
+    max_rows: usize,
+    ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl ParquetRowSample {
+    pub(crate) fn new(
+        source_rows: i64,
+        max_rows: Option<usize>,
+    ) -> Result<Option<Self>, DataProfilerError> {
+        let source_rows = usize::try_from(source_rows).map_err(|error| {
+            DataProfilerError::parquet_with_source("Invalid Parquet source row count", error)
+        })?;
+        let Some(max_rows) = max_rows.filter(|max| *max < source_rows) else {
+            return Ok(None);
+        };
+        let count = max_rows.min(32);
+        let ranges = match count {
+            0 => Vec::new(),
+            1 => {
+                let middle = source_rows / 2;
+                std::iter::once(middle..middle + 1).collect()
+            }
+            _ => {
+                let width = max_rows / count;
+                let extra = max_rows % count;
+                let skipped = source_rows - max_rows;
+                (0..count)
+                    .map(|i| {
+                        // Widen the product: valid large file sizes must not
+                        // overflow while distributing the skipped rows.
+                        let gap = (i as u128 * skipped as u128 / (count - 1) as u128) as usize;
+                        let start = i * width + i.min(extra) + gap;
+                        start..start + width + usize::from(i < extra)
+                    })
+                    .collect()
+            }
+        };
+        Ok(Some(Self {
+            source_rows,
+            max_rows,
+            ranges,
+        }))
+    }
+
+    pub(crate) fn selection(&self) -> RowSelection {
+        RowSelection::from_consecutive_ranges(self.ranges.iter().cloned(), self.source_rows)
+    }
+
+    pub(crate) fn record(&self, execution: ExecutionMetadata) -> ExecutionMetadata {
+        let ratio = execution.rows_processed as f64 / self.source_rows as f64;
+        let mut execution = execution
+            .with_truncation(TruncationReason::MaxRows(self.max_rows as u64))
+            .with_sampling(ratio);
+        execution.sampled_row_ranges = Some(
+            self.ranges
+                .iter()
+                .map(|range| [range.start as u64, range.end as u64])
+                .collect(),
+        );
+        execution
+    }
+}
 
 /// Expand selected top-level roots to their physical Parquet leaves.
 ///
@@ -136,7 +203,7 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
 /// assert_eq!(config.batch_size, 8192);
 /// assert_eq!(config.max_rows, None);
 ///
-/// // Size the batches for a ~500 MB file, and read the first 1,000 rows only.
+/// // Size the batches for a ~500 MB file, and sample 1,000 rows across it.
 /// let config = ParquetConfig::batch_size(ParquetConfig::adaptive_batch_size(500 * 1024 * 1024))
 ///     .with_max_rows(1_000);
 /// assert_eq!(config.batch_size, 16384);
@@ -145,7 +212,7 @@ pub fn is_parquet_file(file_path: &Path) -> bool {
 #[derive(Debug, Clone)]
 pub struct ParquetConfig {
     pub batch_size: usize,
-    /// Stop after this many rows. `None` reads the whole file.
+    /// Sample at most this many rows across the file. `None` reads it all.
     pub max_rows: Option<usize>,
 }
 
@@ -172,6 +239,14 @@ impl ParquetConfig {
     /// so a file with exactly `max_rows` rows is reported as read in full.
     /// Parquet records its row count in the footer, so this is decided from
     /// what the file holds rather than inferred from how much was read.
+    ///
+    /// Capped reads select up to 32 evenly spaced contiguous ranges, including
+    /// the first and last rows when the cap is at least two. A cap of one picks
+    /// the middle row; zero selects no rows. Selection is independent of row
+    /// groups and batch size. Execution metadata records `sampled_row_ranges`
+    /// as zero-based, half-open intervals, plus the sampling ratio. Metrics,
+    /// including duplicate rows, describe only this selected population; the
+    /// deterministic sample is not an unbiased estimate of the whole file.
     ///
     /// # Examples
     ///
@@ -508,7 +583,7 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
     let version = file_metadata.version();
     // Parquet knows its exact row count up front, so truncation can be decided on
     // what the file holds rather than inferred from how many rows we read.
-    let file_rows = file_metadata.num_rows().max(0) as u64;
+    let row_sample = ParquetRowSample::new(file_metadata.num_rows(), config.max_rows)?;
 
     let compression = if num_row_groups > 0 && parquet_meta.row_group(0).num_columns() > 0 {
         format!("{:?}", parquet_meta.row_group(0).column(0).compression())
@@ -535,8 +610,8 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
         let mask = projection_mask_for_roots(reader_builder.parquet_schema(), &indices);
         reader_builder = reader_builder.with_projection(mask);
     }
-    if let Some(max) = config.max_rows {
-        reader_builder = reader_builder.with_limit(max);
+    if let Some(sample) = &row_sample {
+        reader_builder = reader_builder.with_row_selection(sample.selection());
     }
     let reader = reader_builder.build().map_err(|error| {
         DataProfilerError::parquet_with_source(
@@ -581,12 +656,8 @@ fn analyze_parquet_chunks<R: ChunkReader + 'static>(
 
     let mut execution =
         ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("parquet");
-    // A cap only truncates when the file actually holds more rows than the cap.
-    // A file with exactly `max_rows` rows was read in full, not cut short.
-    if let Some(max) = config.max_rows
-        && file_rows > max as u64
-    {
-        execution = execution.with_truncation(TruncationReason::MaxRows(max as u64));
+    if let Some(sample) = &row_sample {
+        execution = sample.record(execution);
     }
 
     let data_source = match origin {
@@ -644,6 +715,43 @@ mod tests {
         writer.write(batch)?;
         writer.close()?;
         Ok(buffer)
+    }
+
+    #[test]
+    fn spread_sample_is_bounded_and_selects_exactly_the_cap() -> Result<()> {
+        let largest = i64::try_from(usize::MAX).unwrap_or(i64::MAX);
+        for rows in [1, 2, 31, 32, 33, 100, 1_001, largest] {
+            for cap in [0, 1, 2, 3, 31, 32, 33, 99, rows as usize - 1, rows as usize] {
+                let sample = ParquetRowSample::new(rows, Some(cap))?;
+                if cap >= rows as usize {
+                    assert!(sample.is_none());
+                    continue;
+                }
+                let sample = sample.expect("cap smaller than source");
+                assert!(sample.ranges.len() <= 32);
+                assert_eq!(
+                    sample.ranges.iter().map(|range| range.len()).sum::<usize>(),
+                    cap
+                );
+                assert!(
+                    sample
+                        .ranges
+                        .windows(2)
+                        .all(|pair| pair[0].end <= pair[1].start)
+                );
+                assert!(sample.ranges.iter().all(|range| range.end <= rows as usize));
+                if cap >= 2 {
+                    assert_eq!(sample.ranges.first().unwrap().start, 0);
+                    assert_eq!(sample.ranges.last().unwrap().end, rows as usize);
+                }
+                // Exercise Arrow's conversion too, including zero selected rows.
+                assert_eq!(sample.selection().row_count(), cap);
+            }
+        }
+        assert!(ParquetRowSample::new(-1, Some(1)).is_err());
+        assert!(ParquetRowSample::new(0, Some(0))?.is_none());
+        assert!(ParquetRowSample::new(100, None)?.is_none());
+        Ok(())
     }
 
     /// A batch exercising the shapes whose typing differs between readers:

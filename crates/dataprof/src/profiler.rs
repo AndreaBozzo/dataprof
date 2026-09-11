@@ -1231,9 +1231,11 @@ impl Profiler {
             FileFormat::Parquet => {
                 #[cfg(feature = "parquet-async")]
                 {
+                    self.ensure_row_limit_only("the remote Parquet reader")?;
+                    self.ensure_no_sampling("the remote Parquet reader")?;
                     let report = dataprof_parquet::analyze_parquet_async_http_with_options(
                         url,
-                        &dataprof_parquet::ParquetConfig::default(),
+                        &self.parquet_config_for_stop(),
                         &self.analysis_options(),
                     )
                     .await?;

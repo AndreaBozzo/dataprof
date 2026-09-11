@@ -10,7 +10,10 @@ use parquet::arrow::async_reader::AsyncFileReader;
 use reqwest::{Client, header};
 use std::ops::Range;
 
-use crate::{ParquetConfig, RecordBatchAnalyzer, parser::projection_mask_for_roots};
+use crate::{
+    ParquetConfig, RecordBatchAnalyzer,
+    parser::{ParquetRowSample, projection_mask_for_roots},
+};
 
 /// An asynchronous reader that fetches byte ranges from an HTTP server
 /// using HTTP Range requests. Designed specifically for remote Parquet parsing.
@@ -316,6 +319,7 @@ pub async fn analyze_parquet_async_http_with_options(
 
     let parquet_meta = builder.metadata().clone();
     let file_metadata = parquet_meta.file_metadata();
+    let row_sample = ParquetRowSample::new(file_metadata.num_rows(), config.max_rows)?;
 
     let num_row_groups = parquet_meta.num_row_groups();
     let version = file_metadata.version();
@@ -343,6 +347,9 @@ pub async fn analyze_parquet_async_http_with_options(
     if let Some(indices) = projection {
         let mask = projection_mask_for_roots(stream_builder.parquet_schema(), &indices);
         stream_builder = stream_builder.with_projection(mask);
+    }
+    if let Some(sample) = &row_sample {
+        stream_builder = stream_builder.with_row_selection(sample.selection());
     }
     let mut stream = stream_builder.build().map_err(|e| {
         DataProfilerError::parquet_with_source(format!("Failed to build Parquet stream: {}", e), e)
@@ -384,6 +391,11 @@ pub async fn analyze_parquet_async_http_with_options(
     });
 
     let num_columns = column_profiles.len();
+    let mut execution =
+        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("parquet");
+    if let Some(sample) = &row_sample {
+        execution = sample.record(execution);
+    }
 
     Ok(ReportAssembler::new(
         DataSource::File {
@@ -393,7 +405,7 @@ pub async fn analyze_parquet_async_http_with_options(
             modified_at: None,
             parquet_metadata,
         },
-        ExecutionMetadata::new(total_rows, num_columns, scan_time_ms).with_engine("parquet"),
+        execution,
     )
     .columns(column_profiles)
     .with_row_duplicates(analyzer.row_duplicate_summary())
@@ -710,5 +722,41 @@ mod tests {
         assert_eq!(report.column_profiles.len(), 2);
 
         server.join();
+    }
+
+    #[tokio::test]
+    async fn capped_http_and_bytes_select_and_report_the_same_rows() {
+        for cap in [0, 1, 2, 3, 4] {
+            let data = test_parquet_bytes();
+            let server = spawn_mock_server(data.clone(), HeadBehavior::WithContentLength);
+            let config = ParquetConfig::batch_size(1).with_max_rows(cap);
+            let remote = analyze_parquet_async_http(server.url(), &config)
+                .await
+                .unwrap();
+            let local = crate::analyze_parquet_bytes(
+                Bytes::from(data),
+                "fixture",
+                &config,
+                None,
+                &SemanticHints::default(),
+            )
+            .unwrap();
+            assert_eq!(remote.execution.rows_processed, cap.min(3));
+            assert_eq!(
+                remote.execution.sampled_row_ranges,
+                local.execution.sampled_row_ranges
+            );
+            assert_eq!(remote.execution.sampling_applied, cap < 3);
+            assert_eq!(remote.execution.source_exhausted, cap >= 3);
+            assert_eq!(
+                serde_json::to_value(&remote.column_profiles).unwrap(),
+                serde_json::to_value(&local.column_profiles).unwrap(),
+            );
+            assert_eq!(
+                serde_json::to_value(&remote.quality).unwrap(),
+                serde_json::to_value(&local.quality).unwrap(),
+            );
+            server.join();
+        }
     }
 }

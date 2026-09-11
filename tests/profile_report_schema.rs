@@ -54,6 +54,31 @@ fn minimal_v1_document() -> Value {
 }
 
 #[test]
+fn sampled_row_ranges_are_optional_but_have_fixed_pair_shape() {
+    let schema = committed_schema();
+    let mut document = minimal_v1_document();
+    assert_valid(&schema, &document);
+    for ranges in [json!([]), json!([[0, 1], [99, 100]])] {
+        document["execution"]["sampled_row_ranges"] = ranges;
+        assert_valid(&schema, &document);
+        let report: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(report).unwrap()["execution"]["sampled_row_ranges"],
+            document["execution"]["sampled_row_ranges"],
+        );
+    }
+    for malformed in [
+        json!([[0]]),
+        json!([[0, 1, 2]]),
+        json!([[-1, 2]]),
+        json!([[0, "1"]]),
+    ] {
+        document["execution"]["sampled_row_ranges"] = malformed;
+        assert!(!validator(&schema).is_valid(&document));
+    }
+}
+
+#[test]
 fn committed_schema_is_current_and_valid_draft_2020_12() {
     let committed = committed_schema();
     let generated = dataprof_runtime::profile_report_schema_document();
