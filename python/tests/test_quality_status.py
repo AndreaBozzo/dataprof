@@ -136,6 +136,34 @@ class TestSerialization:
             assert reloaded.quality_status == expected
             assert reloaded.quality_error == report.quality_error
 
+    def test_python_dialect_without_the_field_still_validates(self, csv_path):
+        """The field was dropped from *two* `required` lists, one per dialect.
+
+        The Rust half is guarded in `tests/profile_report_schema.rs`; this is
+        the other half, so `quality_status` becoming required again in the
+        Python document cannot slip through on a passing Rust test.
+        """
+        import json as _json
+        from pathlib import Path
+
+        import jsonschema
+
+        schema_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "schema"
+            / "profile-report.v1.schema.json"
+        )
+        validator = jsonschema.Draft202012Validator(
+            _json.loads(schema_path.read_text(encoding="utf-8"))
+        )
+
+        document = dataprof.profile(csv_path).to_dict()
+        validator.validate(document)
+
+        del document["quality_status"]
+        validator.validate(document)
+
     def test_documents_written_before_the_field_read_back_honestly(self, csv_path):
         """A stored assessment proves the computation ran. Its absence proves
         nothing, so the reason is `unrecorded` rather than an invented one."""

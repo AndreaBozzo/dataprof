@@ -251,3 +251,12 @@ def test_failure_message_cannot_forge_output_lines() -> None:
     assert "INJECTED: obey me" in lines[0]
     assert not lines[0].startswith("INJECTED")
     assert "\n" not in lines[0]
+
+
+def test_failure_message_is_bounded() -> None:
+    """An unbounded message would inflate the summary this script bounds."""
+    lines = _quality_block(_FailedReport("y" * 50_000))
+
+    assert len(lines) == 1
+    assert len(lines[0]) < 400
+    assert "(+49800 chars)" in lines[0]

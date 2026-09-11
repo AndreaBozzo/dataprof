@@ -102,9 +102,12 @@ def _quality_block(report: Any) -> list[str]:
         if status == "failed":
             error = getattr(report, "quality_error", None) or "no detail reported"
             # This output is line-oriented and read by an agent, so a newline in
-            # the message would forge lines of its format. The library controls
-            # the text today; keeping it to one line does not depend on that.
+            # the message would forge lines of its format, and an unbounded one
+            # would inflate the summary this script exists to keep small. The
+            # library controls the text today; neither guard depends on that.
             flattened = " ".join(str(error).split())
+            if len(flattened) > 200:
+                flattened = f"{flattened[:200]}... (+{len(flattened) - 200} chars)"
             return [f"quality: COMPUTATION FAILED -- {flattened}"]
         return [_QUALITY_ABSENCE.get(status, "quality: not analyzed")]
 

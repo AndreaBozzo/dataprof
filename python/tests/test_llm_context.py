@@ -331,6 +331,24 @@ class TestToLlmContext:
             assert not line.startswith("INJECTED"), f"injected line: {line!r}"
             assert "certified clean" not in line or line.startswith("caveat: no quality")
 
+    def test_quality_failure_message_is_bounded(self, tmp_path):
+        """The header is emitted outside the ``max_tokens`` budget.
+
+        A loaded report can carry an arbitrarily long message, which would
+        inflate the context past the ceiling the caller asked for.
+        """
+        path = tmp_path / "rows.csv"
+        path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+        document = dataprof.profile(str(path)).to_dict()
+        document["quality"] = None
+        document["quality_status"] = {"state": "failed", "error": "x" * 50_000}
+
+        out = dataprof.ProfileReport.from_dict(document).to_llm_context()
+
+        caveat = next(line for line in out.splitlines() if line.startswith("caveat: no quality"))
+        assert len(caveat) < 400
+        assert "(+49800 chars)" in caveat
+
     def test_works_on_reloaded_report(self, report):
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
         assert reloaded.to_llm_context() == report.to_llm_context()

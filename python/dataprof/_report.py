@@ -15,6 +15,7 @@ from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ColumnProfile, DataQualityMetrics, ProfileReport as _RustProfileReport
 from ._paths import _normalize_pathlike
 from ._render import (
+    _bounded,
     _column_flags,
     _estimate_tokens,
     _fit_section,
@@ -624,7 +625,7 @@ class ProfileReport:
         # here goes through.
         if self.quality_status != "computed":
             error = self.quality_error
-            detail = f": {_one_line(error)}" if error else ""
+            detail = f": {_bounded(_one_line(error))}" if error else ""
             header.append(
                 f"caveat: no quality assessment ({_one_line(self.quality_status)}{detail})"
             )

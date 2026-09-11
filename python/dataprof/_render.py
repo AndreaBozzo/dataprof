@@ -85,6 +85,18 @@ def _estimate_tokens(text: str) -> int:
 
 _ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
 
+#: Cap for free-text carried in a report and echoed into the agent header.
+#: The header is emitted outside the ``max_tokens`` budget, so an unbounded
+#: string from a loaded document would inflate the prompt without limit.
+_MAX_BORROWED_TEXT = 200
+
+
+def _bounded(text: str, limit: int = _MAX_BORROWED_TEXT) -> str:
+    """Truncate borrowed free text, saying so rather than trailing off."""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}... (+{len(text) - limit} chars)"
+
 
 def _one_line(value: object) -> str:
     """Render ``value`` so it cannot break the line-oriented LLM context.

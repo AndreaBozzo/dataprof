@@ -102,11 +102,15 @@ impl ReportAssembler {
     /// Skip quality metric calculation because there was nothing to compute
     /// from: an empty source, or a path that retained no sample.
     ///
-    /// A caller that already deselected quality keeps that answer. Not asking
-    /// is the more specific reason, and it does not stop being true when the
-    /// source also turns out to be empty.
+    /// A caller that already deselected quality keeps that answer, and only
+    /// that one. Not asking is the more specific reason and does not stop being
+    /// true when the source also turns out to be empty. Every other reason is
+    /// replaced: a projection withholds dimensions that *could* have been
+    /// measured, which says nothing once there was nothing to measure at all.
     pub fn skip_quality_no_data(mut self) -> Self {
-        self.skip.get_or_insert(QualityAnalysisStatus::NoData);
+        if !matches!(self.skip, Some(QualityAnalysisStatus::NotRequested)) {
+            self.skip = Some(QualityAnalysisStatus::NoData);
+        }
         self
     }
 
@@ -472,6 +476,26 @@ mod tests {
             skip_first.quality_status,
             QualityAnalysisStatus::NotRequested
         );
+    }
+
+    /// Deselection is the only reason that outranks an empty source. A
+    /// projection withholds dimensions that could have been measured, which
+    /// says nothing once there was nothing to measure at all.
+    #[test]
+    fn an_empty_source_outranks_projection_withholding() {
+        let projected = AnalysisOptions::default()
+            .with_quality_dimensions(Some(vec![
+                QualityDimension::Completeness,
+                QualityDimension::Uniqueness,
+            ]))
+            .with_columns(Some(vec!["col".to_string()]));
+
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1))
+            .with_analysis_options(&projected)
+            .skip_quality_no_data()
+            .build();
+
+        assert_eq!(report.quality_status, QualityAnalysisStatus::NoData);
     }
 
     /// Completeness and uniqueness measure whole rows; the projection path
