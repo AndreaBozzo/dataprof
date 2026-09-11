@@ -106,6 +106,21 @@ def test_structure_mode_scales_null_ratio_to_a_percentage() -> None:
     assert "RowCountEstimate" not in result.stdout
 
 
+def test_absent_quality_is_reported_with_its_reason(tmp_path: Path) -> None:
+    """ "quality: not analyzed" alone would read as a clean skip.
+
+    The agent reading this output has to be able to tell a run that was never
+    asked for quality from one whose computation broke (#715).
+    """
+    source = tmp_path / "empty.csv"
+    source.write_bytes(b"")
+
+    result = run(str(source))
+
+    assert result.returncode == 0, result.stderr
+    assert "quality: not analyzed (the source held nothing to measure)" in result.stdout
+
+
 def test_compare_mode_emits_deltas() -> None:
     result = run(
         str(FIXTURES / "inventory_before.csv"),

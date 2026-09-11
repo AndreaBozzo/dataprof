@@ -617,9 +617,17 @@ class ProfileReport:
         # "quality: n/a" reads as a skipped run whatever the reason was. A
         # computation that was asked for and broke is a caveat about the whole
         # report, not a missing number.
+        #
+        # The message comes from a loaded document, so it is untrusted text in a
+        # line-oriented context: a newline in it would forge caveat lines of the
+        # reader's own format. `_one_line` is what every other borrowed string
+        # here goes through.
         if self.quality_status != "computed":
-            detail = f": {self.quality_error}" if self.quality_error else ""
-            header.append(f"caveat: no quality assessment ({self.quality_status}{detail})")
+            error = self.quality_error
+            detail = f": {_one_line(error)}" if error else ""
+            header.append(
+                f"caveat: no quality assessment ({_one_line(self.quality_status)}{detail})"
+            )
 
         header_text = "\n".join(header)
         budget = max_tokens - _estimate_tokens(header_text)

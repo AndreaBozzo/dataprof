@@ -87,13 +87,40 @@ class TestStates:
         assert report.quality_score is None
 
 
+def _every_reachable_state(csv_path, tmp_path):
+    """One report per state a Python caller can actually produce.
+
+    `failed` is absent because no input path can make the metrics calculator
+    return `Err`; it is forced in the Rust assembler tests. `unrecorded` only
+    comes from loading an older document, which `TestSerialization` covers.
+    """
+    empty = tmp_path / "empty.csv"
+    empty.write_bytes(b"")
+    return {
+        "computed": dataprof.profile(csv_path),
+        "not_requested": dataprof.profile(csv_path, metrics=["schema"]),
+        "no_data": dataprof.profile(str(empty)),
+        "withheld_by_projection": dataprof.profile(
+            csv_path,
+            columns=["amount"],
+            quality_dimensions=["completeness", "uniqueness"],
+        ),
+    }
+
+
 class TestSerialization:
-    def test_both_dialects_agree(self, csv_path):
-        for report in (
-            dataprof.profile(csv_path),
-            dataprof.profile(csv_path, metrics=["schema"]),
-        ):
-            assert report.to_dict()["quality_status"] == _native_status(report)
+    def test_both_dialects_agree(self, csv_path, tmp_path):
+        """The binding spells these strings by hand next to serde's rename_all.
+
+        Nothing but this comparison stops the two from drifting apart, so it
+        covers every state a Python caller can reach rather than a sample.
+        """
+        for expected, report in _every_reachable_state(csv_path, tmp_path).items():
+            native = _native_status(report)
+            assert native == {"state": expected}, expected
+            assert report.to_dict()["quality_status"] == native, expected
+            assert report.quality_status == expected
+            assert report.quality_error is None
 
     def test_document_shape(self, csv_path):
         report = dataprof.profile(csv_path, metrics=["schema"])
@@ -102,14 +129,11 @@ class TestSerialization:
         assert report.to_dict()["quality_status"] == {"state": "not_requested"}
         assert json.loads(report.to_json())["quality_status"] == {"state": "not_requested"}
 
-    def test_round_trip(self, csv_path):
-        for report in (
-            dataprof.profile(csv_path),
-            dataprof.profile(csv_path, metrics=["schema"]),
-        ):
+    def test_round_trip(self, csv_path, tmp_path):
+        for expected, report in _every_reachable_state(csv_path, tmp_path).items():
             reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
 
-            assert reloaded.quality_status == report.quality_status
+            assert reloaded.quality_status == expected
             assert reloaded.quality_error == report.quality_error
 
     def test_documents_written_before_the_field_read_back_honestly(self, csv_path):
@@ -122,3 +146,41 @@ class TestSerialization:
 
         document["quality"] = None
         assert dataprof.ProfileReport.from_dict(document).quality_status == "unrecorded"
+
+
+class TestMalformedDocuments:
+    """`from_dict` used to accept any status document it was handed.
+
+    Two of these re-serialized into a document the committed schema rejects, so
+    a report could round-trip into an invalid one; the other two state a verdict
+    their own contents contradict. The Rust reader already refused the first
+    pair, so accepting them here also made the same file load in one language
+    and fail in the other.
+    """
+
+    @pytest.mark.parametrize(
+        ("status", "message"),
+        [
+            ({"state": "made_up"}, "unknown quality_status state"),
+            ({"state": "failed"}, "must carry a string `error`"),
+            ({"state": "computed", "error": "x"}, "must not carry an `error`"),
+            ({"state": "not_requested"}, "contradicts the report"),
+            ("computed", "must be an object"),
+        ],
+    )
+    def test_rejected(self, csv_path, status, message):
+        document = dataprof.profile(csv_path).to_dict()
+        document["quality_status"] = status
+
+        with pytest.raises(ValueError, match=message):
+            dataprof.ProfileReport.from_dict(document)
+
+    def test_a_status_that_agrees_with_the_report_is_accepted(self, csv_path):
+        document = dataprof.profile(csv_path).to_dict()
+        document["quality"] = None
+        document["quality_status"] = {"state": "failed", "error": "boom"}
+
+        report = dataprof.ProfileReport.from_dict(document)
+
+        assert report.quality_status == "failed"
+        assert report.quality_error == "boom"

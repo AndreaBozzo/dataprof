@@ -101,7 +101,11 @@ def _quality_block(report: Any) -> list[str]:
         status = getattr(report, "quality_status", "unrecorded")
         if status == "failed":
             error = getattr(report, "quality_error", None) or "no detail reported"
-            return [f"quality: COMPUTATION FAILED -- {error}"]
+            # This output is line-oriented and read by an agent, so a newline in
+            # the message would forge lines of its format. The library controls
+            # the text today; keeping it to one line does not depend on that.
+            flattened = " ".join(str(error).split())
+            return [f"quality: COMPUTATION FAILED -- {flattened}"]
         return [_QUALITY_ABSENCE.get(status, "quality: not analyzed")]
 
     scores = quality.dimension_scores()

@@ -480,6 +480,33 @@ impl ProfileReport {
     pub fn source_identifier(&self) -> String {
         self.data_source.identifier()
     }
+
+    /// Reject a document whose `quality_status` contradicts its `quality`.
+    ///
+    /// `Computed` and an assessment imply each other: no writer can produce one
+    /// without the other, because [`ReportAssembler`](crate::ReportAssembler)
+    /// derives the status from the computation that produced the assessment. A
+    /// document that pairs them any other way is internally inconsistent, and
+    /// loading it would hand a consumer a report that states a verdict its own
+    /// contents contradict — a gate could act on an assessment the report says
+    /// failed. Failing the decode is the answer the rest of this crate gives to
+    /// a malformed document, rather than repairing it into something plausible.
+    fn check_quality_pairing(self) -> Result<Self, String> {
+        let assessed = self.quality.is_some();
+        let claims_computed = matches!(self.quality_status, QualityAnalysisStatus::Computed);
+        if claims_computed == assessed {
+            return Ok(self);
+        }
+        Err(if assessed {
+            format!(
+                "report carries a quality assessment but reports quality_status \
+                 {:?}; only `computed` may accompany an assessment",
+                self.quality_status
+            )
+        } else {
+            "report reports quality_status `computed` but carries no quality assessment".to_string()
+        })
+    }
 }
 
 /// Mirror of [`ProfileReport`] carrying the field-level deserialization
@@ -564,9 +591,10 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
                 )));
             }
         }
-        ProfileReportFields::deserialize(value)
+        let report = ProfileReportFields::deserialize(value)
             .map(ProfileReport::from)
-            .map_err(D::Error::custom)
+            .map_err(D::Error::custom)?;
+        report.check_quality_pairing().map_err(D::Error::custom)
     }
 }
 
@@ -647,6 +675,40 @@ mod tests {
             let restored: QualityAnalysisStatus = serde_json::from_value(value).unwrap();
             assert_eq!(restored, status);
         }
+    }
+
+    /// A document may not claim one thing in `quality_status` and another in
+    /// `quality`. Loading one would let a consumer act on an assessment the
+    /// report says never completed.
+    #[test]
+    fn contradictory_status_and_assessment_fail_to_decode() {
+        let with_assessment =
+            report_without_quality().with_quality_status(QualityAnalysisStatus::Failed {
+                error: "boom".to_string(),
+            });
+        let mut document = serde_json::to_value(&with_assessment).unwrap();
+        document.as_object_mut().unwrap().insert(
+            "quality".to_string(),
+            serde_json::to_value(QualityAssessment::exact(QualityMetrics::empty())).unwrap(),
+        );
+        let error = serde_json::from_value::<ProfileReport>(document)
+            .expect_err("an assessment under a `failed` status is not a readable report");
+        assert!(
+            error.to_string().contains("only `computed`"),
+            "unhelpful error: {error}"
+        );
+
+        let mut document = serde_json::to_value(
+            report_without_quality().with_quality_status(QualityAnalysisStatus::Computed),
+        )
+        .unwrap();
+        document.as_object_mut().unwrap().remove("quality");
+        let error = serde_json::from_value::<ProfileReport>(document)
+            .expect_err("`computed` without an assessment is not a readable report");
+        assert!(
+            error.to_string().contains("carries no quality assessment"),
+            "unhelpful error: {error}"
+        );
     }
 
     #[test]

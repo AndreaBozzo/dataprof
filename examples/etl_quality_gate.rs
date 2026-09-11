@@ -84,7 +84,8 @@ fn violations(report: &ProfileReport, gate: &Gate) -> Vec<String> {
                 "quality was requested but the extract held nothing to measure".to_string()
             }
             QualityAnalysisStatus::WithheldByProjection => {
-                "quality was withheld: the requested dimensions measure whole rows and                  only some columns were profiled"
+                "quality was withheld: the requested dimensions measure whole \
+                 rows and only some columns were profiled"
                     .to_string()
             }
             // `Unrecorded` is a report saved before the reason was written

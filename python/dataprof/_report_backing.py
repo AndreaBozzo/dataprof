@@ -252,6 +252,60 @@ class _DictQuality:
         return dict.fromkeys(_QUALITY_DIMENSIONS)
 
 
+# The states a `quality_status` document may declare, and whether each one
+# comes with a quality assessment. `computed` is the only state that does.
+_QUALITY_STATES = {
+    "computed": True,
+    "not_requested": False,
+    "no_data": False,
+    "withheld_by_projection": False,
+    "failed": False,
+    "unrecorded": False,
+}
+
+
+def _read_quality_status(status: _Any, assessed: bool) -> tuple[str, str | None]:
+    """Read `quality_status` back, refusing a document that contradicts itself.
+
+    The Rust reader already rejects an unknown state and a `failed` with no
+    message, so accepting them here would make the same file load in one
+    language and fail in the other. Worse, both re-serialize to a document the
+    committed schema rejects: a report would round-trip into an invalid one.
+
+    A state that disagrees with the presence of `quality` is refused for the
+    reason the field exists at all -- a gate must not be handed an assessment
+    by a report that says the computation never finished.
+    """
+    if status is None:
+        # Written before the field existed. An assessment proves the
+        # computation ran; its absence proves nothing.
+        return ("computed" if assessed else "unrecorded"), None
+
+    if not isinstance(status, dict):
+        raise ValueError(f"quality_status must be an object, got {type(status).__name__}")
+
+    state = status.get("state")
+    if state not in _QUALITY_STATES:
+        raise ValueError(
+            f"unknown quality_status state {state!r}; expected one of "
+            f"{', '.join(sorted(_QUALITY_STATES))}"
+        )
+
+    error = status.get("error")
+    if state == "failed":
+        if not isinstance(error, str):
+            raise ValueError("quality_status `failed` must carry a string `error`")
+    elif error is not None:
+        raise ValueError(f"quality_status {state!r} must not carry an `error`")
+
+    if _QUALITY_STATES[state] != assessed:
+        raise ValueError(
+            f"quality_status {state!r} contradicts the report: quality is "
+            f"{'present' if assessed else 'absent'}"
+        )
+    return state, error if state == "failed" else None
+
+
 class _DictBackedReport:
     """Read-only stand-in for the native ProfileReport, built from to_dict()."""
 
@@ -286,12 +340,7 @@ class _DictBackedReport:
         # Additive field. A document written before it exists cannot say why
         # quality is absent, but one carrying an assessment proves it was
         # computed -- the same rule the Rust deserializer applies.
-        status = d.get("quality_status")
-        if isinstance(status, dict) and isinstance(status.get("state"), str):
-            self.quality_status = status["state"]
-            error = status.get("error")
-            self.quality_error = error if isinstance(error, str) else None
-        else:
-            self.quality_status = "computed" if self.quality is not None else "unrecorded"
-            self.quality_error = None
+        self.quality_status, self.quality_error = _read_quality_status(
+            d.get("quality_status"), self.quality is not None
+        )
         self.column_profiles = [_DictColumn(c) for c in d.get("columns", [])]
