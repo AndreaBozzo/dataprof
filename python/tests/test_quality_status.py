@@ -166,6 +166,9 @@ class TestMalformedDocuments:
             ({"state": "computed", "error": "x"}, "must not carry an `error`"),
             ({"state": "not_requested"}, "contradicts the report"),
             ("computed", "must be an object"),
+            # An absent key is a pre-0.12 document; an explicit null is a
+            # malformed current one, which the committed schema also rejects.
+            (None, "must be an object"),
         ],
     )
     def test_rejected(self, csv_path, status, message):

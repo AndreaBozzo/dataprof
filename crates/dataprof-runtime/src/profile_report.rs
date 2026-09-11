@@ -89,6 +89,15 @@ pub struct ProfileReport {
     /// failed computation to a log line. Additive field — documents written
     /// before it deserialize as [`QualityAnalysisStatus::Unrecorded`], or as
     /// `Computed` when they carry an assessment.
+    ///
+    /// This and `quality` are two halves of one fact:
+    /// [`Computed`](QualityAnalysisStatus::Computed) accompanies an assessment
+    /// and every other status accompanies its absence. Construction goes
+    /// through [`ReportAssembler`](crate::ReportAssembler), which derives one
+    /// from the other, and deserialization rejects a document that pairs them
+    /// any other way. Assigning either field directly can still break the
+    /// pair, and such a report serializes into a document this crate will
+    /// refuse to read back.
     pub quality_status: QualityAnalysisStatus,
     /// Per-column evidence of how each semantic hint bound to the data.
     ///
@@ -445,7 +454,15 @@ impl ProfileReport {
     }
 
     /// Record what happened to the quality computation.
-    pub fn with_quality_status(mut self, status: QualityAnalysisStatus) -> Self {
+    ///
+    /// Deliberately not public. `quality_status` and `quality` are two halves
+    /// of one fact, and [`check_quality_pairing`](Self::check_quality_pairing)
+    /// refuses to decode a document that pairs them wrongly — so a public
+    /// setter would let a caller build a report that serializes and then
+    /// cannot be read back by this same crate. Every path assigns the status
+    /// through [`ReportAssembler`](crate::ReportAssembler), which derives it
+    /// from the computation that produced the assessment.
+    pub(crate) fn with_quality_status(mut self, status: QualityAnalysisStatus) -> Self {
         self.quality_status = status;
         self
     }
@@ -591,6 +608,16 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
                 )));
             }
         }
+        // `quality_status` deserializes through `Option`, which cannot tell an
+        // absent field from an explicit null. Only the absent one is legacy;
+        // a null is a malformed current document, and the fallback would
+        // silently repair it into a plausible reason it never recorded.
+        if value.get("quality_status") == Some(&serde_json::Value::Null) {
+            return Err(D::Error::custom(
+                "report quality_status must be an object; an explicit null is malformed, \
+                 not a document written before the field existed",
+            ));
+        }
         let report = ProfileReportFields::deserialize(value)
             .map(ProfileReport::from)
             .map_err(D::Error::custom)?;
@@ -707,6 +734,25 @@ mod tests {
             .expect_err("`computed` without an assessment is not a readable report");
         assert!(
             error.to_string().contains("carries no quality assessment"),
+            "unhelpful error: {error}"
+        );
+    }
+
+    /// An absent field is a document written before it existed. An explicit
+    /// null is a malformed current one, and the legacy fallback would repair it
+    /// into a reason the writer never recorded.
+    #[test]
+    fn an_explicit_null_status_is_malformed_not_legacy() {
+        let mut document = serde_json::to_value(report_without_quality()).unwrap();
+        document
+            .as_object_mut()
+            .unwrap()
+            .insert("quality_status".to_string(), serde_json::Value::Null);
+
+        let error = serde_json::from_value::<ProfileReport>(document)
+            .expect_err("an explicit null is not a readable status");
+        assert!(
+            error.to_string().contains("explicit null is malformed"),
             "unhelpful error: {error}"
         );
     }

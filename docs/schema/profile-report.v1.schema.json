@@ -1133,7 +1133,7 @@
         },
         "quality_status": {
           "$ref": "#/$defs/QualityAnalysisStatus",
-          "description": "What happened to the quality computation. Always present: it is the\nreason `quality` is or is not there, and a report must never leave a\nfailed computation to a log line. Additive field — documents written\nbefore it deserialize as [`QualityAnalysisStatus::Unrecorded`], or as\n`Computed` when they carry an assessment."
+          "description": "What happened to the quality computation. Always present: it is the\nreason `quality` is or is not there, and a report must never leave a\nfailed computation to a log line. Additive field — documents written\nbefore it deserialize as [`QualityAnalysisStatus::Unrecorded`], or as\n`Computed` when they carry an assessment.\n\nThis and `quality` are two halves of one fact:\n[`Computed`](QualityAnalysisStatus::Computed) accompanies an assessment\nand every other status accompanies its absence. Construction goes\nthrough [`ReportAssembler`](crate::ReportAssembler), which derives one\nfrom the other, and deserialization rejects a document that pairs them\nany other way. Assigning either field directly can still break the\npair, and such a report serializes into a document this crate will\nrefuse to read back."
         },
         "schema_version": {
           "const": 1,

@@ -264,6 +264,9 @@ _QUALITY_STATES = {
 }
 
 
+_MISSING = object()
+
+
 def _read_quality_status(status: _Any, assessed: bool) -> tuple[str, str | None]:
     """Read `quality_status` back, refusing a document that contradicts itself.
 
@@ -275,8 +278,12 @@ def _read_quality_status(status: _Any, assessed: bool) -> tuple[str, str | None]
     A state that disagrees with the presence of `quality` is refused for the
     reason the field exists at all -- a gate must not be handed an assessment
     by a report that says the computation never finished.
+
+    Only an *absent* key is legacy. An explicit ``null`` is a malformed current
+    document, which the committed schema also rejects, so it is not repaired
+    into a reason the writer never recorded.
     """
-    if status is None:
+    if status is _MISSING:
         # Written before the field existed. An assessment proves the
         # computation ran; its absence proves nothing.
         return ("computed" if assessed else "unrecorded"), None
@@ -341,6 +348,6 @@ class _DictBackedReport:
         # quality is absent, but one carrying an assessment proves it was
         # computed -- the same rule the Rust deserializer applies.
         self.quality_status, self.quality_error = _read_quality_status(
-            d.get("quality_status"), self.quality is not None
+            d.get("quality_status", _MISSING), self.quality is not None
         )
         self.column_profiles = [_DictColumn(c) for c in d.get("columns", [])]
