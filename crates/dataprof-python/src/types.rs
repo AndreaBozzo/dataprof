@@ -1050,7 +1050,11 @@ impl PyProfileReport {
             .collect()
     }
 
-    /// Data quality metrics (None if quality assessment was skipped)
+    /// Data quality metrics, or None when there is no assessment.
+    ///
+    /// `quality_status` says why: the pack was deselected, the source held
+    /// nothing to measure, projection withheld every requested dimension, or
+    /// the computation failed. Do not read absence as a skip.
     #[getter]
     fn quality(&self) -> Option<PyDataQualityMetrics> {
         self.inner
@@ -1059,7 +1063,11 @@ impl PyProfileReport {
             .map(|q| PyDataQualityMetrics::from(&q.metrics))
     }
 
-    /// Overall quality score (None if quality assessment was skipped)
+    /// Overall quality score, or None.
+    ///
+    /// None means either that there is no assessment — see `quality_status` —
+    /// or that an assessment was computed in which no dimension had anything
+    /// to assess. Never a zero, and never a skip by default.
     #[getter]
     fn quality_score(&self) -> Option<f64> {
         self.inner.quality_score()
