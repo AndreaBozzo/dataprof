@@ -169,6 +169,10 @@ class TestMalformedDocuments:
             # An absent key is a pre-0.12 document; an explicit null is a
             # malformed current one, which the committed schema also rejects.
             (None, "must be an object"),
+            # An unhashable state used to raise TypeError out of the membership
+            # test, which is not the contract this function promises.
+            ({"state": []}, "unknown quality_status state"),
+            ({"state": 3}, "unknown quality_status state"),
         ],
     )
     def test_rejected(self, csv_path, status, message):

@@ -292,7 +292,10 @@ def _read_quality_status(status: _Any, assessed: bool) -> tuple[str, str | None]
         raise ValueError(f"quality_status must be an object, got {type(status).__name__}")
 
     state = status.get("state")
-    if state not in _QUALITY_STATES:
+    # Check the type before the membership test: an unhashable value such as a
+    # list raises TypeError out of `in`, which is not the ValueError this
+    # function promises for a malformed document.
+    if not isinstance(state, str) or state not in _QUALITY_STATES:
         raise ValueError(
             f"unknown quality_status state {state!r}; expected one of "
             f"{', '.join(sorted(_QUALITY_STATES))}"

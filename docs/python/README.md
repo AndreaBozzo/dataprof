@@ -299,10 +299,11 @@ selected a prefix, while HTTP reads ignored the cap. Older reports have no
 recorded ranges and load with `sampled_row_ranges=None`. Re-baseline capped
 Parquet comparisons when upgrading.
 
-**Why quality is absent:**
+**What happened to the quality computation:**
 
 `quality is None` answers two different questions, so every report carries
-`quality_status`:
+`quality_status`. It is `computed` exactly when `quality` holds an assessment;
+the other five states are the reasons it does not:
 
 | `quality_status` | meaning |
 |---|---|
