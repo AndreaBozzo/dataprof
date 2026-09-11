@@ -1131,6 +1131,10 @@
           ],
           "description": "Data quality assessment (optional — partial analysis may skip quality)"
         },
+        "quality_status": {
+          "$ref": "#/$defs/QualityAnalysisStatus",
+          "description": "What happened to the quality computation. Always present: it is the\nreason `quality` is or is not there, and a report must never leave a\nfailed computation to a log line. Additive field — documents written\nbefore it deserialize as [`QualityAnalysisStatus::Unrecorded`], or as\n`Computed` when they carry an assessment.\n\nThis and `quality` are two halves of one fact:\n[`Computed`](QualityAnalysisStatus::Computed) accompanies an assessment\nand every other status accompanies its absence. Construction goes\nthrough [`ReportAssembler`](crate::ReportAssembler), which derives one\nfrom the other, and deserialization rejects a document that pairs them\nany other way. Assigning either field directly can still break the\npair, and such a report serializes into a document this crate will\nrefuse to read back."
+        },
         "schema_version": {
           "const": 1,
           "description": "Version of the serialized report schema (see [`REPORT_SCHEMA_VERSION`]).\n\n`0` means the document predates schema versioning (a 0.9-era report).\nDeserialization rejects versions newer than [`REPORT_SCHEMA_VERSION`].",
@@ -1579,6 +1583,9 @@
             }
           ]
         },
+        "quality_status": {
+          "$ref": "#/$defs/QualityAnalysisStatus"
+        },
         "schema_version": {
           "const": 1,
           "minimum": 0,
@@ -1819,6 +1826,94 @@
         "duplicate_rows_approximate"
       ],
       "type": "object"
+    },
+    "QualityAnalysisStatus": {
+      "description": "Why a report does or does not carry a quality assessment.\n\n`quality` alone cannot answer that. A run that never asked for quality\nmetrics and a run whose quality computation failed both leave it `None`,\nso absence itself became the plausible value that hid the failure. This\nnames the difference: a consumer deciding on a report can tell \"you did\nnot ask for this\" from \"this broke\" from \"there was nothing to measure\".",
+      "oneOf": [
+        {
+          "description": "Computed: `quality` carries the assessment.",
+          "properties": {
+            "state": {
+              "const": "computed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Not requested for this run — the quality pack was deselected.",
+          "properties": {
+            "state": {
+              "const": "not_requested",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Requested, but the run had nothing to compute from: an empty source,\nor an input path that retained no sample.",
+          "properties": {
+            "state": {
+              "const": "no_data",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Requested, but every requested dimension measures whole rows and the\nrun profiled a subset of columns. Completeness and uniqueness mean\nsomething else after projection, and the report cannot label only\ntheir row-level fields as projected, so they are withheld rather than\npublished under full-row names.",
+          "properties": {
+            "state": {
+              "const": "withheld_by_projection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Requested and attempted; the computation failed. `quality` is absent\nbecause the computation broke, not because nothing was asked for.",
+          "properties": {
+            "error": {
+              "description": "The error the metrics calculator reported.",
+              "type": "string"
+            },
+            "state": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Written by a release that did not record this. Only reachable by\ndeserializing a document from before the field existed that carries no\nquality assessment; a stored assessment is read back as `Computed`.",
+          "properties": {
+            "state": {
+              "const": "unrecorded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "QualityAssessment": {
       "description": "Wraps quality metrics with confidence information.",

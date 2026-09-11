@@ -12,7 +12,8 @@
 use std::io::Write;
 
 use dataprof::{
-    ColumnStats, EngineType, Locale, MetricPack, ProfileReport, Profiler, QualityDimension,
+    ColumnStats, EngineType, Locale, MetricPack, ProfileReport, Profiler, QualityAnalysisStatus,
+    QualityDimension,
 };
 use tempfile::NamedTempFile;
 
@@ -163,6 +164,109 @@ fn column_projection_matches_full_profiles_on_every_format() {
         assert!(
             quality.metrics.uniqueness.is_none(),
             "[{label}] full-row duplicates must be withheld under projection"
+        );
+    }
+}
+
+/// Absent quality has to say why, and every format has to say it the same way.
+///
+/// `quality: None` on its own cannot separate "you did not ask for this" from
+/// "this broke", so a consumer deciding on a report reads the same answer for
+/// both. `ReportAssembler` is the one place that knows, and every format builds
+/// through it (#715).
+#[test]
+fn quality_status_explains_absence_on_every_format() {
+    for (label, file) in fixtures() {
+        let computed = Profiler::new()
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{label}] profiling failed: {e}"));
+        assert_eq!(
+            computed.quality_status,
+            QualityAnalysisStatus::Computed,
+            "[{label}] a computed assessment must say so"
+        );
+        assert!(computed.quality.is_some(), "[{label}] quality present");
+
+        let deselected = Profiler::new()
+            .metric_packs(vec![MetricPack::Schema])
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{label}] profiling failed: {e}"));
+        assert_eq!(
+            deselected.quality_status,
+            QualityAnalysisStatus::NotRequested,
+            "[{label}] a deselected quality pack must read as not requested"
+        );
+
+        // Both requested dimensions measure whole rows, so projection withholds
+        // every one of them. That is not the same as never asking.
+        let projected = Profiler::new()
+            .quality_dimensions(vec![
+                QualityDimension::Completeness,
+                QualityDimension::Uniqueness,
+            ])
+            .columns(vec!["amount".to_string()])
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{label}] profiling failed: {e}"));
+        assert!(projected.quality.is_none(), "[{label}] withheld");
+        assert_eq!(
+            projected.quality_status,
+            QualityAnalysisStatus::WithheldByProjection,
+            "[{label}] projection-withheld quality must not read as not requested"
+        );
+
+        // The serialized document carries the distinction, not just the Rust
+        // value: it is what a stored baseline is compared from.
+        let document = serde_json::to_value(&deselected).unwrap();
+        assert_eq!(
+            document.get("quality_status"),
+            Some(&serde_json::json!({"state": "not_requested"})),
+            "[{label}] serialized status"
+        );
+    }
+}
+
+#[test]
+fn both_csv_engines_report_the_same_quality_status() {
+    for engine in [EngineType::Incremental, EngineType::Columnar] {
+        let file = csv_fixture();
+        let computed = Profiler::new()
+            .engine(engine)
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{engine:?}] profiling failed: {e}"));
+        let deselected = Profiler::new()
+            .engine(engine)
+            .metric_packs(vec![MetricPack::Schema])
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{engine:?}] profiling failed: {e}"));
+
+        assert_eq!(computed.quality_status, QualityAnalysisStatus::Computed);
+        assert_eq!(
+            deselected.quality_status,
+            QualityAnalysisStatus::NotRequested
+        );
+    }
+}
+
+/// An empty CSV is not a run that skipped quality: nothing was asked to be
+/// skipped, there was simply nothing to measure.
+#[test]
+fn an_empty_source_reports_no_data_rather_than_a_skip() {
+    let file = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
+    for engine in [
+        EngineType::Auto,
+        EngineType::Incremental,
+        EngineType::Columnar,
+    ] {
+        let report = Profiler::new()
+            .engine(engine)
+            .analyze_file(file.path())
+            .unwrap_or_else(|e| panic!("[{engine:?}] profiling failed: {e}"));
+
+        assert!(report.quality.is_none());
+        assert_eq!(
+            report.quality_status,
+            QualityAnalysisStatus::NoData,
+            "[{engine:?}] empty source"
         );
     }
 }
@@ -384,6 +488,11 @@ mod async_transport {
             assert!(
                 report.quality.is_none(),
                 "[{label}, async] quality must be absent under metrics=[schema]"
+            );
+            assert_eq!(
+                report.quality_status,
+                QualityAnalysisStatus::NotRequested,
+                "[{label}, async] absent quality must say it was not requested"
             );
             for profile in &report.column_profiles {
                 assert!(

@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::Result;
-use dataprof::{ProfileReport, Profiler};
+use dataprof::{ProfileReport, Profiler, QualityAnalysisStatus};
 
 const GOOD_DROP: &str = "\
 transaction_id,account,amount_eur,booked_at
@@ -69,8 +69,32 @@ fn violations(report: &ProfileReport, gate: &Gate) -> Vec<String> {
         }
     }
 
+    // Absence has several causes and a gate must not report them all as a
+    // skip: "you did not ask for quality" is a pipeline misconfiguration, and
+    // "the computation failed" is an incident.
     let Some(quality) = &report.quality else {
-        reasons.push("quality assessment was skipped".to_string());
+        reasons.push(match &report.quality_status {
+            QualityAnalysisStatus::Failed { error } => {
+                format!("quality computation failed: {error}")
+            }
+            QualityAnalysisStatus::NotRequested => {
+                "quality metrics were not requested for this run".to_string()
+            }
+            QualityAnalysisStatus::NoData => {
+                "quality was requested but the extract held nothing to measure".to_string()
+            }
+            QualityAnalysisStatus::WithheldByProjection => {
+                "quality was withheld: the requested dimensions measure whole \
+                 rows and only some columns were profiled"
+                    .to_string()
+            }
+            // `Unrecorded` is a report saved before the reason was written
+            // down. `Computed` with no assessment cannot come from a profiling
+            // run; neither tells the gate anything beyond the absence itself.
+            QualityAnalysisStatus::Unrecorded | QualityAnalysisStatus::Computed => {
+                "this report carries no quality assessment".to_string()
+            }
+        });
         return reasons;
     };
 

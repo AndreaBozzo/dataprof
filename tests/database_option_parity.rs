@@ -14,8 +14,8 @@
 use std::io::Write;
 
 use dataprof::{
-    ColumnStats, DatabaseConfig, Locale, MetricPack, ProfileReport, Profiler, QualityDimension,
-    SemanticHints,
+    ColumnStats, DatabaseConfig, Locale, MetricPack, ProfileReport, Profiler,
+    QualityAnalysisStatus, QualityDimension, SemanticHints,
 };
 use tempfile::NamedTempFile;
 
@@ -126,6 +126,51 @@ async fn schema_pack_omits_statistics_patterns_and_quality() {
     }
     // Schema itself is still reported — a narrowed profile, not an empty one.
     assert_eq!(report.column_profiles.len(), 3);
+}
+
+/// The database path has to say *why* a report carries no quality, and give the
+/// same answers the file paths give (#715).
+///
+/// A zero-row query still describes its columns, so it is "analyzed, nothing
+/// found" rather than an empty source — the same answer a header-only CSV gets.
+/// The no-columns branch in `analyze_database_with_options` is not reachable
+/// from SQL and so is not asserted here.
+#[tokio::test]
+async fn query_reports_why_quality_is_absent() {
+    let (_dir, db_path) = sqlite_fixture().await;
+    const NO_ROWS: &str = "SELECT * FROM parity WHERE 0";
+
+    let rows = sqlite_profiler(&db_path)
+        .analyze_query(QUERY)
+        .await
+        .expect("query profiling should succeed");
+    let no_rows = sqlite_profiler(&db_path)
+        .analyze_query(NO_ROWS)
+        .await
+        .expect("query profiling should succeed");
+    let deselected = sqlite_profiler(&db_path)
+        .metric_packs(vec![MetricPack::Schema])
+        .analyze_query(NO_ROWS)
+        .await
+        .expect("query profiling should succeed");
+
+    assert_eq!(rows.quality_status, QualityAnalysisStatus::Computed);
+    assert_eq!(
+        no_rows.quality_status,
+        QualityAnalysisStatus::Computed,
+        "a query that returned its columns was analyzed, whatever it found"
+    );
+    assert_eq!(no_rows.execution.rows_processed, 0);
+    assert!(
+        no_rows.quality_score().is_none(),
+        "nothing was assessable, which is not a score of zero"
+    );
+    assert!(deselected.quality.is_none());
+    assert_eq!(
+        deselected.quality_status,
+        QualityAnalysisStatus::NotRequested,
+        "a deselected quality pack must not read as an empty source"
+    );
 }
 
 #[tokio::test]

@@ -456,15 +456,17 @@ impl IncrementalProfiler {
         )
         .columns(column_profiles);
 
-        if MetricPack::include_quality(packs) && !empty_source {
+        if !MetricPack::include_quality(packs) {
+            assembler = assembler.skip_quality();
+        } else if empty_source {
+            assembler = assembler.skip_quality_no_data();
+        } else {
             assembler = assembler
                 .with_quality_data(sample_columns)
                 .with_row_duplicates(column_stats.row_duplicate_summary())
                 .with_row_completeness(column_stats.row_completeness_summary())
                 .with_exact_value_hint_bindings(column_stats.semantic_hint_bindings())
                 .with_analysis_options(&options);
-        } else {
-            assembler = assembler.skip_quality();
         }
 
         Ok(assembler.build())

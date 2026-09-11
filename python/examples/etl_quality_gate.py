@@ -46,6 +46,23 @@ POSITIVE_COLUMNS = ["amount_eur"]
 MAX_MISSING_PERCENTAGE = 5.0
 
 
+def _no_assessment(report: dp.ProfileReport) -> str:
+    """Say why the report carries no quality, in the gate's own terms."""
+    if report.quality_status == "failed":
+        return f"quality computation failed: {report.quality_error}"
+    return {
+        "not_requested": "quality metrics were not requested for this run",
+        "no_data": "quality was requested but the extract held nothing to measure",
+        "withheld_by_projection": (
+            "quality was withheld: the requested dimensions measure whole rows "
+            "and only some columns were profiled"
+        ),
+        # A report saved before the reason was recorded, or -- impossible from a
+        # profiling run -- `computed` with nothing attached. Neither tells the
+        # gate anything beyond the absence itself.
+    }.get(report.quality_status, "this report carries no quality assessment")
+
+
 def violations(report: dp.ProfileReport) -> list[str]:
     """Return every reason this dataset must not be loaded. Empty means "accept".
 
@@ -60,9 +77,20 @@ def violations(report: dp.ProfileReport) -> list[str]:
         if required not in columns:
             reasons.append(f"missing required column `{required}`")
 
+    # Absence has several causes and a gate must not report them all as a skip:
+    # "you did not ask for quality" is a pipeline misconfiguration, and "the
+    # computation failed" is an incident. `quality_status` says which.
     quality = report.quality
-    if report.quality_score is None or quality is None or quality.completeness is None:
-        return [*reasons, "quality assessment was skipped"]
+    if quality is None:
+        return [*reasons, _no_assessment(report)]
+
+    # A computed assessment can still score `None` when no dimension had
+    # anything to assess -- an empty extract, say. That is not a zero, and it is
+    # not a skip either.
+    if report.quality_score is None:
+        return [*reasons, "no quality dimension had anything to assess"]
+    if quality.completeness is None:
+        return [*reasons, "completeness was not among the assessed dimensions"]
 
     if report.quality_score < MIN_QUALITY_SCORE:
         reasons.append(

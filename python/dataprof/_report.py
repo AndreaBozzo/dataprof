@@ -15,6 +15,7 @@ from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ColumnProfile, DataQualityMetrics, ProfileReport as _RustProfileReport
 from ._paths import _normalize_pathlike
 from ._render import (
+    _bounded,
     _column_flags,
     _estimate_tokens,
     _fit_section,
@@ -28,6 +29,18 @@ from ._render import (
 from ._report_backing import _DictBackedReport
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
+
+
+def _quality_status_document(state: str, error: str | None) -> dict[str, _Any]:
+    """Serialize the quality-computation outcome.
+
+    One object, one fact, the same shape the Rust dialect writes. ``error`` is
+    present only on ``failed``, where it is the whole point of the record.
+    """
+    document: dict[str, _Any] = {"state": state}
+    if error is not None:
+        document["error"] = error
+    return document
 
 
 class ProfileReport:
@@ -120,6 +133,38 @@ class ProfileReport:
     @property
     def quality(self) -> DataQualityMetrics | None:
         return self._report.quality
+
+    @property
+    def quality_status(self) -> str:
+        """What happened to the quality computation.
+
+        ``quality is None`` alone cannot say whether quality was never asked
+        for or was asked for and broke, so every report carries the reason:
+
+        ``computed``
+            Quality was computed; :attr:`quality` holds the assessment.
+        ``not_requested``
+            The quality pack was deselected for this run.
+        ``no_data``
+            Requested, but the source held nothing to measure.
+        ``withheld_by_projection``
+            Requested, but every requested dimension measures whole rows and
+            the run profiled a subset of columns.
+        ``failed``
+            Requested and attempted; the computation failed. The message is in
+            :attr:`quality_error`.
+        ``unrecorded``
+            Loaded from a document written before this field existed.
+        """
+        return self._report.quality_status
+
+    @property
+    def quality_error(self) -> str | None:
+        """The error a failed quality computation reported, else ``None``.
+
+        Non-``None`` exactly when :attr:`quality_status` is ``failed``.
+        """
+        return self._report.quality_error
 
     @property
     def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
@@ -282,6 +327,10 @@ class ProfileReport:
             },
             "columns": cols,
             "quality": quality_dict,
+            # Why `quality` is or is not there. Always emitted: a report whose
+            # quality computation failed must not read back as one that never
+            # asked for quality.
+            "quality_status": _quality_status_document(self.quality_status, self.quality_error),
         }
         # Additive provenance is omitted when the input path did not record it.
         ranges = self.sampled_row_ranges
@@ -566,6 +615,20 @@ class ProfileReport:
             header.append(f"caveat: scan stopped early ({self.truncation_reason})")
         if self.low_sample_warning:
             header.append("caveat: low sample size, quality metrics are unreliable")
+        # "quality: n/a" reads as a skipped run whatever the reason was. A
+        # computation that was asked for and broke is a caveat about the whole
+        # report, not a missing number.
+        #
+        # The message comes from a loaded document, so it is untrusted text in a
+        # line-oriented context: a newline in it would forge caveat lines of the
+        # reader's own format. `_one_line` is what every other borrowed string
+        # here goes through.
+        if self.quality_status != "computed":
+            error = self.quality_error
+            detail = f": {_bounded(_one_line(error))}" if error else ""
+            header.append(
+                f"caveat: no quality assessment ({_one_line(self.quality_status)}{detail})"
+            )
 
         header_text = "\n".join(header)
         budget = max_tokens - _estimate_tokens(header_text)

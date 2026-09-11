@@ -379,7 +379,7 @@ pub fn analyze_csv_file_with_dimensions_and_hints(
             file_source,
             ExecutionMetadata::new(0, 0, start.elapsed().as_millis()).with_engine("csv"),
         )
-        .skip_quality()
+        .skip_quality_no_data()
         .build());
     }
 

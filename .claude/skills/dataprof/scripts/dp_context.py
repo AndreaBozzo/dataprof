@@ -80,11 +80,36 @@ def _caveats(report: Any) -> list[str]:
     return lines
 
 
+# Why a report carries no quality assessment. "Not analyzed" is only one of
+# the answers: a computation that was asked for and failed leaves the same hole,
+# and a reader told only that it was "not analyzed" would report a clean skip.
+_QUALITY_ABSENCE = {
+    "not_requested": "quality: not analyzed (not requested for this run)",
+    "no_data": "quality: not analyzed (the source held nothing to measure)",
+    "withheld_by_projection": (
+        "quality: not analyzed (withheld: the requested dimensions measure whole "
+        "rows and only some columns were profiled)"
+    ),
+    "unrecorded": "quality: not analyzed (this report predates the recorded reason)",
+}
+
+
 def _quality_block(report: Any) -> list[str]:
     """Dimension scores plus their evidence, skipping what was not assessed."""
     quality = report.quality
     if quality is None:
-        return ["quality: not analyzed"]
+        status = getattr(report, "quality_status", "unrecorded")
+        if status == "failed":
+            error = getattr(report, "quality_error", None) or "no detail reported"
+            # This output is line-oriented and read by an agent, so a newline in
+            # the message would forge lines of its format, and an unbounded one
+            # would inflate the summary this script exists to keep small. The
+            # library controls the text today; neither guard depends on that.
+            flattened = " ".join(str(error).split())
+            if len(flattened) > 200:
+                flattened = f"{flattened[:200]}... (+{len(flattened) - 200} chars)"
+            return [f"quality: COMPUTATION FAILED -- {flattened}"]
+        return [_QUALITY_ABSENCE.get(status, "quality: not analyzed")]
 
     scores = quality.dimension_scores()
     overall = quality.overall_quality_score()

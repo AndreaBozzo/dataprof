@@ -269,6 +269,8 @@ Returned by `profile()` and all analysis functions.
 | `column_profiles` | `dict[str, ColumnProfile]` | Per-column statistics (by name) |
 | `quality_score` | `float \| None` | Overall quality score (0--100) |
 | `quality` | `DataQualityMetrics \| None` | Detailed quality breakdown |
+| `quality_status` | `str` | Why `quality` is or is not there (see below) |
+| `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -296,6 +298,34 @@ estimate of full-source ratios. Before 0.12, local and byte-buffer Parquet caps
 selected a prefix, while HTTP reads ignored the cap. Older reports have no
 recorded ranges and load with `sampled_row_ranges=None`. Re-baseline capped
 Parquet comparisons when upgrading.
+
+**What happened to the quality computation:**
+
+`quality is None` answers two different questions, so every report carries
+`quality_status`. It is `computed` exactly when `quality` holds an assessment;
+the other five states are the reasons it does not:
+
+| `quality_status` | meaning |
+|---|---|
+| `computed` | quality was computed; `quality` holds the assessment |
+| `not_requested` | the quality pack was deselected (`metrics=["schema"]`) |
+| `no_data` | requested, but the source held nothing to measure |
+| `withheld_by_projection` | requested, but every requested dimension measures whole rows and `columns=` selected a subset |
+| `failed` | requested and attempted; the computation failed, and `quality_error` says how |
+| `unrecorded` | loaded from a report saved before 0.12 that carried no assessment |
+
+A gate deciding on a report should branch on this before reading
+`quality_score`: a failed computation and a run that never asked for quality
+both leave the score `None`, and they are not the same verdict.
+
+```python
+report = dataprof.profile("data.csv")
+if report.quality_status != "computed":
+    raise SystemExit(f"no quality to gate on: {report.quality_status}")
+```
+
+The same object is in `to_dict()["quality_status"]`, as `{"state": ...}` plus
+an `"error"` key on `failed` only.
 
 **Dict-like column access:**
 
