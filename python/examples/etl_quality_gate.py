@@ -52,7 +52,7 @@ def _no_assessment(report: dp.ProfileReport) -> str:
         return f"quality computation failed: {report.quality_error}"
     return {
         "not_requested": "quality metrics were not requested for this run",
-        "no_data": "quality was requested but the extract held nothing to measure",
+        "no_data": "quality was requested but no quality sample was supplied",
         "withheld_by_projection": (
             "quality was withheld: the requested dimensions measure whole rows "
             "and only some columns were profiled"

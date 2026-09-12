@@ -128,15 +128,15 @@ async fn schema_pack_omits_statistics_patterns_and_quality() {
     assert_eq!(report.column_profiles.len(), 3);
 }
 
-/// The database path has to say *why* a report carries no quality, and give the
-/// same answers the file paths give (#715).
+/// Queries follow the file paths' quality-status contract for both analyzed
+/// empty results and explicitly deselected quality (#715, #723).
 ///
 /// A zero-row query still describes its columns, so it is "analyzed, nothing
 /// found" — the same answer both empty and header-only CSV sources get (#723).
 /// The no-columns branch in `analyze_database_with_options` is not reachable
 /// from SQL and so is not asserted here.
 #[tokio::test]
-async fn query_reports_why_quality_is_absent() {
+async fn query_quality_status_distinguishes_empty_results_from_deselection() {
     let (_dir, db_path) = sqlite_fixture().await;
     const NO_ROWS: &str = "SELECT * FROM parity WHERE 0";
 

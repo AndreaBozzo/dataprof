@@ -242,10 +242,27 @@ fn test_empty_csv_quality_presence_matches_across_engines_and_serialization() {
     for (engine, report) in reports {
         assert!(report.column_profiles.is_empty(), "{engine}");
         assert_eq!(report.execution.rows_processed, 0, "{engine}");
-        assert!(report.quality.is_none(), "{engine} must not assess no data");
+        assert_eq!(
+            report.quality_status,
+            dataprof::QualityAnalysisStatus::Computed,
+            "{engine}"
+        );
+        assert!(report.quality_score().is_none(), "{engine}");
+        let quality = report.quality.as_ref().expect("empty input was analyzed");
+        assert!(quality.metrics.assessed_dimensions().is_empty(), "{engine}");
 
         let serialized = serde_json::to_value(&report).expect("report should serialize");
-        assert!(serialized["quality"].is_null(), "{engine}");
+        assert!(serialized["quality"].is_object(), "{engine}");
+        assert_eq!(
+            serialized["quality_status"],
+            json!({"state": "computed"}),
+            "{engine}"
+        );
+        assert_eq!(
+            serialized["quality"]["confidence"],
+            json!("NotAssessed"),
+            "{engine}"
+        );
     }
 }
 

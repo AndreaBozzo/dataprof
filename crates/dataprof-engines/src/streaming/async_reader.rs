@@ -1309,7 +1309,7 @@ impl Default for AsyncStreamingProfiler {
 mod tests {
     use super::*;
     use dataprof_core::DataType;
-    use dataprof_runtime::{AsyncSourceInfo, BytesSource};
+    use dataprof_runtime::{AsyncSourceInfo, BytesSource, QualityAnalysisStatus};
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
@@ -1362,11 +1362,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_input() {
+    async fn test_empty_input_has_an_empty_quality_assessment() {
         let source = csv_source(b"");
         let profiler = AsyncStreamingProfiler::new();
-        let result = profiler.analyze_stream(source).await;
-        assert!(result.is_err());
+        let report = profiler.analyze_stream(source).await.unwrap();
+
+        assert!(report.column_profiles.is_empty());
+        assert_eq!(report.execution.rows_processed, 0);
+        assert_eq!(report.execution.columns_detected, 0);
+        assert!(report.execution.source_exhausted);
+        assert_eq!(report.quality_status, QualityAnalysisStatus::Computed);
+        assert!(report.quality_score().is_none());
+        let quality = report.quality.expect("empty input was analyzed");
+        assert!(quality.metrics.assessed_dimensions().is_empty());
     }
 
     #[tokio::test]

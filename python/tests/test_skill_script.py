@@ -106,19 +106,17 @@ def test_structure_mode_scales_null_ratio_to_a_percentage() -> None:
     assert "RowCountEstimate" not in result.stdout
 
 
-def test_absent_quality_is_reported_with_its_reason(tmp_path: Path) -> None:
-    """ "quality: not analyzed" alone would read as a clean skip.
-
-    The agent reading this output has to be able to tell a run that was never
-    asked for quality from one whose computation broke (#715).
-    """
+def test_empty_input_reports_quality_as_unassessed(tmp_path: Path) -> None:
+    """An empty source was analyzed, but no quality dimension was assessable (#723)."""
     source = tmp_path / "empty.csv"
     source.write_bytes(b"")
 
     result = run(str(source))
 
     assert result.returncode == 0, result.stderr
-    assert "quality: not analyzed (the source held nothing to measure)" in result.stdout
+    assert "rows: 0 | columns: 0 | quality: n/a" in result.stdout
+    assert "quality score: not assessed" in result.stdout
+    assert "quality: not analyzed" not in result.stdout
 
 
 def test_compare_mode_emits_deltas() -> None:
@@ -235,6 +233,13 @@ class _FailedReport:
 
     def __init__(self, error: str) -> None:
         self.quality_error = error
+
+
+def test_unavailable_quality_sample_is_distinct_from_analyzed_empty_input() -> None:
+    from types import SimpleNamespace
+
+    report = SimpleNamespace(quality=None, quality_status="no_data")
+    assert _quality_block(report) == ["quality: not analyzed (no quality sample was supplied)"]
 
 
 def test_failed_quality_computation_is_not_rendered_as_a_skip() -> None:
