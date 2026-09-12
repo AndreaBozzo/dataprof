@@ -36,8 +36,8 @@ pub enum QualityAnalysisStatus {
     Computed,
     /// Not requested for this run — the quality pack was deselected.
     NotRequested,
-    /// Requested, but the run had nothing to compute from: an empty source,
-    /// or an input path that retained no sample.
+    /// Requested, but no quality sample was supplied to the assembler.
+    /// An empty sample is analyzed and reports `Computed`, even without columns.
     NoData,
     /// Requested, but every requested dimension measures whole rows and the
     /// run profiled a subset of columns. Completeness and uniqueness mean

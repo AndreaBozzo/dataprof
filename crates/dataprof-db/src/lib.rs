@@ -275,7 +275,7 @@ pub async fn analyze_database_with_options(
                 .with_sampling(info.sampling_ratio)
                 .with_source_exhausted(false);
         }
-        let assembler = ReportAssembler::new(
+        return Ok(ReportAssembler::new(
             DataSource::Query {
                 engine: query_engine.clone(),
                 statement: query.to_string(),
@@ -283,17 +283,10 @@ pub async fn analyze_database_with_options(
                 execution_id: None,
             },
             exec,
-        );
-        // Not asking for quality outranks having nothing to measure, the same
-        // precedence the streaming and columnar engines apply to their own
-        // empty sources. Reading it off the options directly, rather than
-        // through `with_analysis_options`, keeps a column projection from
-        // answering an empty result set with `WithheldByProjection`.
-        return Ok(if options.include_quality() {
-            assembler.skip_quality_no_data().build()
-        } else {
-            assembler.skip_quality().build()
-        });
+        )
+        .with_quality_data(columns.into_map())
+        .with_analysis_options(options)
+        .build());
     }
 
     // decode-audit: no-data — the empty-columns case returned early above, so

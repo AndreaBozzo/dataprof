@@ -322,7 +322,7 @@ only, an `error` message:
 | --- | --- |
 | `computed` | quality was computed; `quality` holds the assessment |
 | `not_requested` | the quality pack was deselected for this run |
-| `no_data` | requested, but the source held nothing to measure |
+| `no_data` | requested, but no quality sample was supplied to the assembler |
 | `withheld_by_projection` | requested, but every requested dimension measures whole rows and the run profiled a subset of columns |
 | `failed` | requested and attempted; the computation failed, and `error` says how |
 | `unrecorded` | read back from a document written before this field existed |
@@ -340,14 +340,31 @@ and nothing else about an older document is knowable.
 `quality_status` is provenance, not a metric, so it is outside the numeric
 equality contract above. It is assigned in one place, `ReportAssembler`, which
 every input path builds through, and agrees across engines and paths for a
-source that holds data.
+source with the same analysis options, including an empty source.
 
-It does **not** yet agree for an empty source, and the field is what made that
-visible. An empty CSV file reports `no_data`, while the same bytes through a
-buffer — and JSON, JSONL and the Arrow paths — report `computed` with an
-assessment in which nothing was assessable. Only three sites check for an empty
-source; every other path hands the assembler an empty sample. Which of the two
-answers is right is tracked in
-[#723](https://github.com/AndreaBozzo/dataprof/issues/723); until it is settled,
-do not compare `quality_status` across transports for a source that may be
-empty.
+### 0.12 empty-source quality parity (#723)
+
+A successfully analyzed zero-row source is **analyzed, nothing found**, whether
+it declares columns or has no columns at all. With quality enabled, CSV, JSON,
+JSONL, Parquet, queries and Arrow/dataframe inputs report `computed` and carry
+an assessment with no assessable dimensions. Python serializes
+`overall_score: null`, `assessed_dimensions: []` and null dimension scores;
+Rust serializes the corresponding empty quality metrics. File, byte-buffer,
+async and HTTP transports follow the same rule. Header-only CSV and zero-row
+Arrow/Parquet schemas retain their columns.
+Empty CSV streams and zero-column Arrow RecordBatches, which previously raised
+errors, now produce reports too.
+
+Previously, empty CSV files on the direct parser, incremental and columnar
+paths withheld quality and reported `no_data`, while CSV buffers and most
+other inputs emitted an empty assessment. Those CSV file paths, and the
+database assembler's no-column branch, now emit the assessment too. This is a
+behavior correction within schema v1: both shapes were already valid. Stored
+reports keep their original status and quality presence when loaded; consumers
+comparing empty extracts should regenerate older baselines for parity.
+
+Deselecting quality still yields absent `quality` and `not_requested`, and
+projection withholding still applies to the requested dimensions. `no_data`
+remains available for an assembler that receives no quality sample, distinct
+from an explicitly supplied empty sample. It no longer denotes a successfully
+analyzed empty source.

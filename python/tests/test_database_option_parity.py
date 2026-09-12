@@ -125,6 +125,28 @@ def sqlite_db(tmp_path):
     return db_path
 
 
+def test_empty_query_quality_matches_empty_csv(sqlite_db, tmp_path):
+    path = tmp_path / "empty.csv"
+    path.write_bytes(b"id,cap,amount\n")
+    expected = dp.profile(path).to_dict()["quality"]
+    report = dp.ProfileReport(
+        _run(
+            analyze_database_async,
+            str(sqlite_db),
+            "SELECT * FROM parity WHERE 0",
+            10000,
+            None,
+            None,
+        )
+    )
+    assert report.rows == 0
+    assert report.quality_status == "computed"
+    assert report.quality is not None
+    assert report.to_dict()["quality"]["overall_score"] is None
+    assert report.to_dict()["quality"]["assessed_dimensions"] == []
+    assert report.to_dict()["quality"] == expected
+
+
 @pytest.fixture()
 def csv_file(tmp_path):
     """The same records on disk, for cross-source comparison."""

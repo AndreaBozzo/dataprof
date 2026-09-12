@@ -132,7 +132,7 @@ async fn schema_pack_omits_statistics_patterns_and_quality() {
 /// same answers the file paths give (#715).
 ///
 /// A zero-row query still describes its columns, so it is "analyzed, nothing
-/// found" rather than an empty source — the same answer a header-only CSV gets.
+/// found" — the same answer both empty and header-only CSV sources get (#723).
 /// The no-columns branch in `analyze_database_with_options` is not reachable
 /// from SQL and so is not asserted here.
 #[tokio::test]

@@ -62,13 +62,34 @@ class _ThreadingTcpServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 @pytest.fixture()
-def url_server():
+def url_server(tmp_path):
     incidents_csv = INCIDENTS_CSV.read_bytes()
     checkout_jsonl = CHECKOUT_JSONL.read_bytes()
     parquet_bytes = PARQUET_FILE.read_bytes()
     bom_json = codecs.BOM_UTF8 + b'[{"id":1,"score":2.5},{"id":2,"score":3.5}]'
     bom_jsonl = codecs.BOM_UTF8 + b'{"id":1,"score":2.5}\n{"id":2,"score":3.5}\n'
     fieldless_json = b"[{},{}]"
+    empty_payloads = {
+        "empty.csv": b"",
+        "header.csv": b"a,b\n",
+        "empty.json": b"[]",
+        "empty.jsonl": b"",
+    }
+
+    def empty_payload(name):
+        if name not in empty_payloads:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = (
+                pa.table({"a": pa.array([], type=pa.int64())})
+                if name == "header.parquet"
+                else pa.table({})
+            )
+            path = tmp_path / name
+            pq.write_table(table, path)
+            empty_payloads[name] = path.read_bytes()
+        return empty_payloads[name]
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -111,6 +132,8 @@ def url_server():
             return
 
         def _payload(self):
+            if self.path.removeprefix("/") in [*empty_payloads, "empty.parquet", "header.parquet"]:
+                return empty_payload(self.path.removeprefix("/"))
             if self.path == "/incidents.csv":
                 return incidents_csv
             if self.path == "/checkout_events.jsonl":
@@ -132,6 +155,8 @@ def url_server():
     try:
         port = server.server_address[1]
         yield {
+            "base": f"http://127.0.0.1:{port}",
+            "empty_payload": empty_payload,
             "csv": f"http://127.0.0.1:{port}/incidents.csv",
             "jsonl": f"http://127.0.0.1:{port}/checkout_events.jsonl",
             "parquet": f"http://127.0.0.1:{port}/data.parquet",
@@ -147,6 +172,40 @@ def url_server():
 
 
 class TestAsyncUrlProfiling:
+    @pytest.mark.parametrize(
+        "name",
+        ["empty.csv", "header.csv", "empty.json", "empty.jsonl", "empty.parquet", "header.parquet"],
+    )
+    @pytest.mark.parametrize("quality", [True, False])
+    def test_empty_quality_matches_files_bytes_and_http(self, url_server, tmp_path, name, quality):
+        import dataprof
+
+        if name.endswith("parquet"):
+            pytest.importorskip("pyarrow")
+            if not dataprof.capabilities().remote_parquet:
+                pytest.skip("Remote Parquet profiling requires the parquet-async feature")
+        payload = url_server["empty_payload"](name)
+        path = tmp_path / name
+        path.write_bytes(payload)
+        fmt = path.suffix.lstrip(".")
+        metrics = None if quality else ["schema"]
+        csv = b"a,b\n" if name.startswith("header") else b""
+        baseline = dataprof.profile(csv, format="csv", metrics=metrics).to_dict()["quality"]
+        reports = [
+            dataprof.profile(path, metrics=metrics),
+            _run(profile_file, path, metrics=metrics),
+            _run(profile_bytes, payload, format=fmt, metrics=metrics),
+            _run(profile_url, f"{url_server['base']}/{name}", metrics=metrics),
+        ]
+        for report in reports:
+            assert report.rows == 0
+            assert report.quality_status == ("computed" if quality else "not_requested")
+            assert report.to_dict()["quality"] == baseline
+            if quality:
+                assert report.quality is not None
+                assert report.to_dict()["quality"]["overall_score"] is None
+                assert report.to_dict()["quality"]["assessed_dimensions"] == []
+
     def test_profile_file_with_dogfood_csv(self):
         report = _run(profile_file, INCIDENTS_CSV)
 

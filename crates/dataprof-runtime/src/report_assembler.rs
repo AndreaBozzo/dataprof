@@ -92,21 +92,22 @@ impl ReportAssembler {
     /// ask for it.
     ///
     /// Use [`skip_quality_no_data`](Self::skip_quality_no_data) when quality
-    /// was wanted but the source held nothing to measure. The report states
-    /// which of the two happened, so they must not be conflated here.
+    /// was wanted but no sample is available. An analyzed empty source supplies
+    /// an empty sample through [`with_quality_data`](Self::with_quality_data).
     pub fn skip_quality(mut self) -> Self {
         self.skip = Some(QualityAnalysisStatus::NotRequested);
         self
     }
 
-    /// Skip quality metric calculation because there was nothing to compute
-    /// from: an empty source, or a path that retained no sample.
+    /// Skip quality metric calculation because no sample is available.
+    /// An analyzed empty source must instead supply an empty quality sample;
+    /// that produces an assessment with no assessable dimensions (#723).
     ///
     /// A caller that already deselected quality keeps that answer, and only
     /// that one. Not asking is the more specific reason and does not stop being
-    /// true when the source also turns out to be empty. Every other reason is
+    /// true when the sample is also unavailable. Every other reason is
     /// replaced: a projection withholds dimensions that *could* have been
-    /// measured, which says nothing once there was nothing to measure at all.
+    /// measured, which says nothing once no sample is available at all.
     pub fn skip_quality_no_data(mut self) -> Self {
         if !matches!(self.skip, Some(QualityAnalysisStatus::NotRequested)) {
             self.skip = Some(QualityAnalysisStatus::NoData);
@@ -453,10 +454,28 @@ mod tests {
         assert_eq!(implicit.quality_status, QualityAnalysisStatus::NoData);
     }
 
-    /// Not asking is the more specific reason, and an empty source does not
+    #[test]
+    fn empty_quality_data_is_analyzed() {
+        let report = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1))
+            .with_quality_data(HashMap::new())
+            .build();
+
+        assert_eq!(report.quality_status, QualityAnalysisStatus::Computed);
+        assert!(report.quality_score().is_none());
+        assert!(
+            report
+                .quality
+                .unwrap()
+                .metrics
+                .assessed_dimensions()
+                .is_empty()
+        );
+    }
+
+    /// Not asking is the more specific reason, and an unavailable sample does not
     /// make it untrue. Builder order must not change the answer either way.
     #[test]
-    fn deselected_quality_survives_an_empty_source() {
+    fn deselected_quality_survives_an_unavailable_sample() {
         let deselected =
             AnalysisOptions::default().with_metric_packs(Some(vec![MetricPack::Schema]));
         let options_first = ReportAssembler::new(test_source(), ExecutionMetadata::new(0, 0, 1))
@@ -478,11 +497,11 @@ mod tests {
         );
     }
 
-    /// Deselection is the only reason that outranks an empty source. A
+    /// Deselection is the only reason that outranks an unavailable sample. A
     /// projection withholds dimensions that could have been measured, which
-    /// says nothing once there was nothing to measure at all.
+    /// says nothing once no sample is available at all.
     #[test]
-    fn an_empty_source_outranks_projection_withholding() {
+    fn an_unavailable_sample_outranks_projection_withholding() {
         let projected = AnalysisOptions::default()
             .with_quality_dimensions(Some(vec![
                 QualityDimension::Completeness,

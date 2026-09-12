@@ -1857,7 +1857,7 @@
           "type": "object"
         },
         {
-          "description": "Requested, but the run had nothing to compute from: an empty source,\nor an input path that retained no sample.",
+          "description": "Requested, but no quality sample was supplied to the assembler.\nAn empty sample is analyzed and reports `Computed`, even without columns.",
           "properties": {
             "state": {
               "const": "no_data",

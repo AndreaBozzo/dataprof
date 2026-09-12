@@ -1,5 +1,14 @@
 # Pending 0.12.0 changes
 
+- Empty inputs now consistently carry an empty quality assessment with
+  `quality_status: computed`, no score and no assessed dimensions (#723).
+  Empty CSV files previously withheld quality while buffers and other formats
+  emitted the assessment. Header-only sources follow the same rule; deselecting
+  quality still reports `not_requested`. Regenerate stored empty-input baselines
+  to compare across transports. The report schema remains v1.
+  Async empty CSV and zero-column Arrow RecordBatch inputs now produce reports
+  instead of errors.
+
 - Capped Parquet profiling (`max_rows`) now selects up to 32 contiguous ranges
   spread across the file instead of its prefix (#639). Files, byte buffers and
   HTTP reads use the same selection; HTTP reads now honor the cap. Re-baseline

@@ -26,6 +26,87 @@ import pytest
 pa = pytest.importorskip("pyarrow", reason="pyarrow is required for Arrow import tests")
 
 
+def _assert_empty_quality(report, expected):
+    assert report.rows == 0
+    assert report.quality_status == "computed"
+    assert report.quality is not None
+    document = report.to_dict()
+    assert document["quality_status"] == {"state": "computed"}
+    assert document["quality"]["overall_score"] is None
+    assert document["quality"]["assessed_dimensions"] == []
+    assert document["quality"] == expected
+    restored = dataprof.ProfileReport.from_json(report.to_json())
+    assert restored.quality_status == "computed"
+    assert restored.to_dict()["quality"] == expected
+
+
+@pytest.mark.parametrize("engine", ["auto", "incremental", "columnar"])
+@pytest.mark.parametrize(
+    ("fmt", "payload"), [("csv", b""), ("csv", b"a,b\n"), ("json", b"[]"), ("jsonl", b"")]
+)
+def test_empty_quality_matches_across_files_and_buffers(tmp_path, engine, fmt, payload):
+    """Same empty population, same serialized quality across paths (#723)."""
+    import io
+
+    path = tmp_path / f"empty.{fmt}"
+    path.write_bytes(payload)
+    table = _empty_pyarrow_table() if payload == b"a,b\n" else pa.table({})
+    expected = dataprof.profile(table).to_dict()["quality"]
+    for source in [path, payload, io.BytesIO(payload)]:
+        # Synchronous buffers use the columnar path; engine selection is only
+        # supported on file inputs.
+        selected_engine = engine if source is path else "auto"
+        report = dataprof.profile(source, format=fmt, engine=selected_engine)
+        _assert_empty_quality(report, expected)
+        if isinstance(source, io.BytesIO):
+            source.seek(0)
+        skipped = dataprof.profile(source, format=fmt, engine=selected_engine, metrics=["schema"])
+        assert skipped.quality is None
+        assert skipped.quality_status == "not_requested"
+
+
+@pytest.mark.parametrize("with_schema", [False, True])
+def test_empty_parquet_and_dataframe_quality_matches_csv(tmp_path, with_schema):
+    import pyarrow.parquet as pq
+
+    table = _empty_pyarrow_table() if with_schema else pa.table({})
+    path = tmp_path / "empty.parquet"
+    pq.write_table(table, path)
+    expected = dataprof.profile(b"a,b\n" if with_schema else b"", format="csv").to_dict()["quality"]
+    batch = pa.RecordBatch.from_arrays(
+        [pa.array([], type=field.type) for field in table.schema], schema=table.schema
+    )
+    for source in [path, path.read_bytes(), table, batch]:
+        fmt = "parquet" if isinstance(source, bytes) else None
+        _assert_empty_quality(dataprof.profile(source, format=fmt), expected)
+        skipped = dataprof.profile(source, format=fmt, metrics=["schema"])
+        assert skipped.quality is None
+        assert skipped.quality_status == "not_requested"
+
+
+@pytest.mark.parametrize("producer", ["pandas", "polars"])
+@pytest.mark.parametrize("with_schema", [False, True])
+def test_empty_dataframe_quality_matches_csv(producer, with_schema):
+    library = pytest.importorskip(producer)
+    frame = library.DataFrame({"a": [], "b": []} if with_schema else {})
+    expected = dataprof.profile(b"a,b\n" if with_schema else b"", format="csv").to_dict()["quality"]
+    _assert_empty_quality(dataprof.profile(frame), expected)
+    skipped = dataprof.profile(frame, metrics=["schema"])
+    assert skipped.quality is None
+    assert skipped.quality_status == "not_requested"
+
+
+@pytest.mark.parametrize("rows", [0, 2])
+def test_zero_column_record_batch_preserves_its_row_count(rows):
+    batch = pa.record_batch({"a": list(range(rows))}).select([])
+    assert batch.num_rows == rows
+    report = dataprof.profile(batch)
+    assert report.rows == rows
+    assert report.columns == 0
+    assert report.quality_status == "computed"
+    assert report.quality_score is None
+
+
 def _report(source, name):
     return dataprof.profile(source, name=name).to_dict()
 

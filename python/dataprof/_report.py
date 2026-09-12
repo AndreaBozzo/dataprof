@@ -146,7 +146,8 @@ class ProfileReport:
         ``not_requested``
             The quality pack was deselected for this run.
         ``no_data``
-            Requested, but the source held nothing to measure.
+            Requested, but no quality sample was supplied to the assembler.
+            An empty sample is analyzed and reports ``computed``.
         ``withheld_by_projection``
             Requested, but every requested dimension measures whole rows and
             the run profiled a subset of columns.
