@@ -85,7 +85,7 @@ def _caveats(report: Any) -> list[str]:
 # and a reader told only that it was "not analyzed" would report a clean skip.
 _QUALITY_ABSENCE = {
     "not_requested": "quality: not analyzed (not requested for this run)",
-    "no_data": "quality: not analyzed (the source held nothing to measure)",
+    "no_data": "quality: not analyzed (no quality sample was supplied)",
     "withheld_by_projection": (
         "quality: not analyzed (withheld: the requested dimensions measure whole "
         "rows and only some columns were profiled)"

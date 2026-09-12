@@ -54,14 +54,15 @@ class TestStates:
         assert report.quality_status == "not_requested"
         assert report.quality_error is None
 
-    def test_empty_source_reads_as_no_data(self, tmp_path):
+    def test_empty_source_is_analyzed_with_nothing_assessable(self, tmp_path):
         path = tmp_path / "empty.csv"
         path.write_text("")
 
         report = dataprof.profile(str(path))
 
-        assert report.quality is None
-        assert report.quality_status == "no_data"
+        assert report.quality is not None
+        assert report.quality_status == "computed"
+        assert report.quality_score is None
 
     def test_projection_withholding_every_dimension_is_not_a_skip(self, csv_path):
         # Completeness and uniqueness both measure whole rows, so projecting a
@@ -87,19 +88,18 @@ class TestStates:
         assert report.quality_score is None
 
 
-def _every_reachable_state(csv_path, tmp_path):
+def _every_reachable_state(csv_path):
     """One report per state a Python caller can actually produce.
 
     `failed` is absent because no input path can make the metrics calculator
     return `Err`; it is forced in the Rust assembler tests. `unrecorded` only
     comes from loading an older document, which `TestSerialization` covers.
+    `no_data` requires an assembler with no supplied quality sample; empty
+    sources supply an empty sample and therefore report `computed` (#723).
     """
-    empty = tmp_path / "empty.csv"
-    empty.write_bytes(b"")
     return {
         "computed": dataprof.profile(csv_path),
         "not_requested": dataprof.profile(csv_path, metrics=["schema"]),
-        "no_data": dataprof.profile(str(empty)),
         "withheld_by_projection": dataprof.profile(
             csv_path,
             columns=["amount"],
@@ -109,13 +109,25 @@ def _every_reachable_state(csv_path, tmp_path):
 
 
 class TestSerialization:
+    def test_stored_empty_source_status_is_preserved(self, tmp_path):
+        path = tmp_path / "empty.csv"
+        path.write_bytes(b"")
+        document = dataprof.profile(path).to_dict()
+        document["quality"] = None
+        document["quality_status"] = {"state": "no_data"}
+
+        restored = dataprof.ProfileReport.from_dict(document)
+        assert restored.quality is None
+        assert restored.quality_status == "no_data"
+        assert restored.to_dict() == document
+
     def test_both_dialects_agree(self, csv_path, tmp_path):
         """The binding spells these strings by hand next to serde's rename_all.
 
         Nothing but this comparison stops the two from drifting apart, so it
         covers every state a Python caller can reach rather than a sample.
         """
-        for expected, report in _every_reachable_state(csv_path, tmp_path).items():
+        for expected, report in _every_reachable_state(csv_path).items():
             native = _native_status(report)
             assert native == {"state": expected}, expected
             assert report.to_dict()["quality_status"] == native, expected
@@ -130,7 +142,7 @@ class TestSerialization:
         assert json.loads(report.to_json())["quality_status"] == {"state": "not_requested"}
 
     def test_round_trip(self, csv_path, tmp_path):
-        for expected, report in _every_reachable_state(csv_path, tmp_path).items():
+        for expected, report in _every_reachable_state(csv_path).items():
             reloaded = dataprof.ProfileReport.from_dict(report.to_dict())
 
             assert reloaded.quality_status == expected

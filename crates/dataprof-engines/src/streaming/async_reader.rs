@@ -393,9 +393,6 @@ impl AsyncStreamingProfiler {
         let json_error_policy = self.json_error_policy;
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
-        // JSON records with no fields are rows against an empty schema; a CSV
-        // stream with no header line has nothing to profile.
-        let allow_empty_schema = matches!(format, FileFormat::Json | FileFormat::Jsonl);
         let reader_handle = tokio::task::spawn_blocking(move || match format {
             FileFormat::Csv => Self::reader_task(
                 sync_reader,
@@ -415,9 +412,7 @@ impl AsyncStreamingProfiler {
         });
 
         // Process chunks on the current task
-        let process_result = self
-            .process_chunks(rx, source_info.size_hint, allow_empty_schema)
-            .await;
+        let process_result = self.process_chunks(rx, source_info.size_hint).await;
 
         // If processing failed, prefer the reader's error when it also failed:
         // a strict-mode malformed record aborts the reader before any data
@@ -1088,7 +1083,6 @@ impl AsyncStreamingProfiler {
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
         size_hint: Option<u64>,
-        allow_empty_schema: bool,
     ) -> Result<
         (
             Vec<String>,
@@ -1138,24 +1132,15 @@ impl AsyncStreamingProfiler {
             });
         }
 
-        // decode-audit: impossible — `records` was checked non-empty above, and
-        // an empty header row is rejected right below.
+        // decode-audit: impossible — `records` was checked non-empty above.
         let headers: Vec<String> = header_chunk
             .records
             .into_iter()
             .next()
             .expect("non-empty header chunk has a first record");
 
-        // A JSON source may legitimately have no columns: records with no fields
-        // are rows against an empty schema. A CSV stream cannot — its first line
-        // is the schema, so an empty one means there is nothing to profile.
-        if headers.is_empty() && !allow_empty_schema {
-            return Err(DataProfilerError::StreamingError {
-                message: "No column headers found in stream".to_string(),
-                suggestion: "Provide a header row in the first chunk of the stream".to_string(),
-            });
-        }
-
+        // Both parsers explicitly send an empty schema for an empty source.
+        // It is analyzed with no columns, just like the synchronous paths (#723).
         // Headers are the declared schema even when the stream contains no
         // records. Pre-register them so the public async path preserves the
         // same header-only CSV invariant as the file-based engines.
@@ -1324,7 +1309,7 @@ impl Default for AsyncStreamingProfiler {
 mod tests {
     use super::*;
     use dataprof_core::DataType;
-    use dataprof_runtime::{AsyncSourceInfo, BytesSource};
+    use dataprof_runtime::{AsyncSourceInfo, BytesSource, QualityAnalysisStatus};
 
     fn csv_source(data: &'static [u8]) -> BytesSource {
         BytesSource::new(
@@ -1377,11 +1362,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_input() {
+    async fn test_empty_input_has_an_empty_quality_assessment() {
         let source = csv_source(b"");
         let profiler = AsyncStreamingProfiler::new();
-        let result = profiler.analyze_stream(source).await;
-        assert!(result.is_err());
+        let report = profiler.analyze_stream(source).await.unwrap();
+
+        assert!(report.column_profiles.is_empty());
+        assert_eq!(report.execution.rows_processed, 0);
+        assert_eq!(report.execution.columns_detected, 0);
+        assert!(report.execution.source_exhausted);
+        assert_eq!(report.quality_status, QualityAnalysisStatus::Computed);
+        assert!(report.quality_score().is_none());
+        let quality = report.quality.expect("empty input was analyzed");
+        assert!(quality.metrics.assessed_dimensions().is_empty());
     }
 
     #[tokio::test]

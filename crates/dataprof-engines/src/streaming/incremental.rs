@@ -443,7 +443,6 @@ impl IncrementalProfiler {
             execution = execution.with_source_exhausted(false);
         }
 
-        let empty_source = column_profiles.is_empty() && analyzed_rows == 0;
         let mut assembler = ReportAssembler::new(
             DataSource::File {
                 path: file_path.display().to_string(),
@@ -458,8 +457,6 @@ impl IncrementalProfiler {
 
         if !MetricPack::include_quality(packs) {
             assembler = assembler.skip_quality();
-        } else if empty_source {
-            assembler = assembler.skip_quality_no_data();
         } else {
             assembler = assembler
                 .with_quality_data(sample_columns)

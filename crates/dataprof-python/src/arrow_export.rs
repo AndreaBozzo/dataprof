@@ -1180,8 +1180,14 @@ fn import_via_pycapsule(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Reco
             .collect::<Vec<_>>(),
     ));
 
-    RecordBatch::try_new(schema, struct_array.columns().to_vec())
-        .map_err(|e| PyRuntimeError::new_err(format!("RecordBatch creation failed: {}", e)))
+    // A zero-column batch cannot infer its row count from a child array.
+    // Preserve the count carried by the imported struct, including zero (#723).
+    RecordBatch::try_new_with_options(
+        schema,
+        struct_array.columns().to_vec(),
+        &arrow::record_batch::RecordBatchOptions::new().with_row_count(Some(struct_array.len())),
+    )
+    .map_err(|e| PyRuntimeError::new_err(format!("RecordBatch creation failed: {}", e)))
 }
 
 /// Validate an FFI-imported batch, then fold it into the analyzer.

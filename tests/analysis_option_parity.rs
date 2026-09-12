@@ -247,27 +247,82 @@ fn both_csv_engines_report_the_same_quality_status() {
     }
 }
 
-/// An empty CSV is not a run that skipped quality: nothing was asked to be
-/// skipped, there was simply nothing to measure.
+/// Zero rows is "analyzed, nothing found", with or without a schema (#723).
+/// Transports and dataframe producers are covered in the Python parity suite.
 #[test]
-fn an_empty_source_reports_no_data_rather_than_a_skip() {
-    let file = tempfile::NamedTempFile::with_suffix(".csv").unwrap();
-    for engine in [
-        EngineType::Auto,
-        EngineType::Incremental,
-        EngineType::Columnar,
+fn empty_sources_have_the_same_quality_on_every_format_and_engine() {
+    let mut sources = Vec::new();
+    for (suffix, content) in [
+        (".csv", ""),
+        (".csv", "a,b\n"),
+        (".json", "[]"),
+        (".jsonl", ""),
     ] {
-        let report = Profiler::new()
-            .engine(engine)
-            .analyze_file(file.path())
-            .unwrap_or_else(|e| panic!("[{engine:?}] profiling failed: {e}"));
+        let mut file = NamedTempFile::with_suffix(suffix).unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file.flush().unwrap();
+        sources.push(file);
+    }
+    #[cfg(feature = "parquet")]
+    for fields in [
+        vec![],
+        vec![arrow::datatypes::Field::new(
+            "a",
+            arrow::datatypes::DataType::Int64,
+            true,
+        )],
+    ] {
+        let file = NamedTempFile::with_suffix(".parquet").unwrap();
+        parquet::arrow::ArrowWriter::try_new(
+            file.reopen().unwrap(),
+            std::sync::Arc::new(arrow::datatypes::Schema::new(fields)),
+            None,
+        )
+        .unwrap()
+        .close()
+        .unwrap();
+        sources.push(file);
+    }
 
-        assert!(report.quality.is_none());
-        assert_eq!(
-            report.quality_status,
-            QualityAnalysisStatus::NoData,
-            "[{engine:?}] empty source"
-        );
+    let mut baselines = [None, None];
+    for file in sources {
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let label = format!("[{:?}, {engine:?}]", file.path());
+            let report = Profiler::new()
+                .engine(engine)
+                .analyze_file(file.path())
+                .unwrap_or_else(|e| panic!("{label} profiling failed: {e}"));
+            assert_eq!(report.execution.rows_processed, 0, "{label}");
+            assert_eq!(
+                report.quality_status,
+                QualityAnalysisStatus::Computed,
+                "{label}"
+            );
+            assert!(report.quality_score().is_none(), "{label}");
+            // The existing low-sample warning depends on whether there are
+            // columns. Compare whole metrics only between matching shapes.
+            let baseline = &mut baselines[usize::from(!report.column_profiles.is_empty())];
+            let quality = report.quality.unwrap();
+            assert!(quality.metrics.assessed_dimensions().is_empty(), "{label}");
+            let metrics = serde_json::to_value(&quality.metrics).unwrap();
+            assert_eq!(baseline.get_or_insert(metrics.clone()), &metrics, "{label}");
+
+            let deselected = Profiler::new()
+                .engine(engine)
+                .metric_packs(vec![MetricPack::Schema])
+                .analyze_file(file.path())
+                .unwrap();
+            assert!(deselected.quality.is_none(), "{label}");
+            assert_eq!(
+                deselected.quality_status,
+                QualityAnalysisStatus::NotRequested,
+                "{label}"
+            );
+        }
     }
 }
 

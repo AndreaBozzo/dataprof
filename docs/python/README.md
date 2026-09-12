@@ -309,10 +309,14 @@ the other five states are the reasons it does not:
 |---|---|
 | `computed` | quality was computed; `quality` holds the assessment |
 | `not_requested` | the quality pack was deselected (`metrics=["schema"]`) |
-| `no_data` | requested, but the source held nothing to measure |
+| `no_data` | requested, but no quality sample was supplied to the assembler |
 | `withheld_by_projection` | requested, but every requested dimension measures whole rows and `columns=` selected a subset |
 | `failed` | requested and attempted; the computation failed, and `quality_error` says how |
 | `unrecorded` | loaded from a report saved before 0.12 that carried no assessment |
+
+An analyzed empty source reports `computed` with an empty assessment and
+`quality_score=None`, whether or not it declares columns. This is distinct from
+an unavailable quality sample (`no_data`).
 
 A gate deciding on a report should branch on this before reading
 `quality_score`: a failed computation and a run that never asked for quality
