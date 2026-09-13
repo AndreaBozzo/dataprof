@@ -42,6 +42,8 @@ EXPECTED_SURFACE: dict[str, frozenset[str]] = {
             "ProfileReport",
             "Profiler",
             "ProfilerConfig",
+            "QualityCheck",
+            "QualityGateResult",
             "REPORT_SCHEMA_VERSION",
             "RecordBatch",
             "RowCountEstimate",

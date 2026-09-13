@@ -18,7 +18,7 @@
 
 dataprof is a Rust and Python library for profiling tabular data. It computes column-level statistics, detects data types and patterns, and assesses data quality across dimensions informed by ISO 8000 and ISO/IEC 25012, all with bounded memory usage that lets you profile datasets far larger than your available RAM.
 
-It is built for the first ten minutes with unfamiliar data: find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious values before they turn into pipeline bugs.
+It earns its place twice. The first run is the first ten minutes with unfamiliar data: find sparse columns, unstable types, duplicate keys, stale timestamps, and suspicious values before they turn into pipeline bugs. After that it stays in the pipeline as a checkpoint, re-reading the same feed on every load and deciding whether it still looks like itself.
 
 > [!NOTE]
 > dataprof is in beta. Current releases ship a Rust crate and a Python package. The historical CLI remains documented only for older releases.
@@ -32,12 +32,14 @@ It is built for the first ten minutes with unfamiliar data: find sparse columns,
 | Are these IDs really unique or just pretending to be keys? | Distinct counts, uniqueness ratios, and duplicate warnings |
 | Are my timestamps plausible and fresh? | Future-date detection, stale-data signals, and timeliness scoring |
 | Did parsing silently go wrong? | Type inference, pattern matches, format violations, and source metadata |
+| Is today's load good enough to accept? | A declared policy, evaluated into pass, fail, or "cannot tell from this scan" |
 
 ## Pick your entry point
 
 | You are doing this | Start with |
 |---|---|
 | Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof` and `Profiler::new().analyze_file(...)` |
+| Gating a pipeline or CI job on data quality | Profile, then `report.check(...)` / `QualityPolicy::new()` — no CLI, no process exit |
 | Inspecting files in notebooks, validation scripts, or data apps | `uv pip install dataprof` and `dp.profile(...)` |
 | Profiling streams, remote Parquet, or database queries | Rust feature flags, or a source-built Python extension with async/database features enabled |
 
@@ -92,7 +94,30 @@ report.save("report.json")       # full report, reloadable
 print(report.to_markdown())      # a table for a PR comment or a notebook
 ```
 
-#### 4. Compare
+#### 4. Gate
+
+State a policy as data and get a structured verdict. Nothing is printed and the
+process is not exited, so it composes into any pipeline without a CLI:
+
+```python
+result = report.check(
+    min_quality_score=90,
+    max_null_percentage={"customer_id": 0, "*": 20},
+    require_metrics=["quality"],
+)
+if not result.passed:
+    for check in result.violations:
+        print(check.code, check.column, check.message, check.observed)
+```
+
+The verdict has three values. `"fail"` means a requirement was conclusively
+violated, `"pass"` means everything was checked and met, and `"inconclusive"`
+means nothing was violated and something could not be checked -- an unanalyzed
+metric, or a scan that did not read as far as the policy asks about.
+`result.passed` is true only for `"pass"`, so an unanswerable gate never reads
+as a green one.
+
+#### 5. Compare
 
 Profile before and after a cleaning step, or yesterday against today:
 
@@ -103,7 +128,7 @@ after = dp.profile("data_clean.csv")
 delta = before.compare(after)    # what changed, per column
 ```
 
-#### 5. Hand it to an agent
+#### 6. Hand it to an agent
 
 A token-bounded summary of shape, quality flags, and schema. Values matching a
 sensitive pattern are never echoed, and no raw cell values are included unless
@@ -121,7 +146,7 @@ they print is real profiler output, and CI runs all six on every push.
 | Scenario | What it shows | Run it |
 |---|---|---|
 | [Messy CSV inspection](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/messy_csv_inspection.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/messy_csv_inspection.py) | A duplicated key, null-heavy columns, a negative price, and PII flagged but never printed | `cargo run --example messy_csv_inspection` |
-| [ETL quality gate](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/etl_quality_gate.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/etl_quality_gate.py) | Accept or reject a daily drop on thresholds, with the rejection reason in the log | `cargo run --example etl_quality_gate` |
+| [ETL quality gate](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/etl_quality_gate.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/etl_quality_gate.py) | Accept, reject or hold a daily drop on a declared policy, with the reason in the log | `cargo run --example etl_quality_gate` |
 | [Before/after cleaning](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/before_after_cleaning.rs) · [Python](https://github.com/AndreaBozzo/dataprof/blob/HEAD/python/examples/before_after_cleaning.py) | Save a baseline report, diff it against the cleaned data, and check the defects really went away | `cargo run --example before_after_cleaning` |
 
 See [examples/README.md](https://github.com/AndreaBozzo/dataprof/blob/HEAD/examples/README.md) for the Python commands and a note on
@@ -154,6 +179,26 @@ for col in &report.column_profiles {
 }
 ```
 
+The same gate is available here, with the same verdicts and the same serialized
+result:
+
+```rust
+use dataprof::{QualityPolicy, Verdict};
+
+let result = QualityPolicy::new()
+    .min_quality_score(90.0)
+    .max_null_percentage("customer_id", 0.0)
+    .max_null_percentage_any(20.0)
+    .require_quality()
+    .evaluate(&report)?;
+
+if result.verdict != Verdict::Pass {
+    for check in result.violations() {
+        eprintln!("{}: {}", check.code, check.message);
+    }
+}
+```
+
 ## Why it feels modern
 
 - **Fast first-pass signal** -- surface null pockets, type drift, duplicate keys, and outliers quickly
@@ -162,6 +207,7 @@ for col in &report.column_profiles {
 - **Two polished entry points** -- a compact Rust facade and a Python package that feels natural in notebooks
 - **Async-ready** -- Rust async APIs and a Python async module that ships in the wheel cover stream pipelines, services, and remote Parquet sources
 - **Explainable quality assessment** -- seven selectively requestable dimensions, including validity and decimal-scale precision, with inspectable facts behind every score
+- **Gates that say when they cannot tell** -- a declared policy returns pass, fail, or inconclusive, and a truncated or sampled scan never passes a claim about the whole source
 
 ## Feature Flags
 

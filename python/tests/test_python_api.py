@@ -559,6 +559,8 @@ class TestNamespace:
             "Profiler",
             "ProfileReport",
             "ProfilerConfig",
+            "QualityCheck",
+            "QualityGateResult",
             "ColumnProfile",
             "DataQualityMetrics",
             "SamplingStrategy",

@@ -33,6 +33,10 @@ from ._dataprof import (
     StructureReport as StructureReport,
     __version__ as __version__,
 )
+from ._gate import (
+    QualityCheck as QualityCheck,
+    QualityGateResult as QualityGateResult,
+)
 from ._profiler import Profiler as Profiler
 from ._report import ProfileReport as ProfileReport
 from ._report_schema import REPORT_SCHEMA_VERSION as REPORT_SCHEMA_VERSION
@@ -49,6 +53,8 @@ __all__ = [
     "profile_file",
     "Profiler",
     "ProfileReport",
+    "QualityCheck",
+    "QualityGateResult",
     "ProfilerConfig",
     "ColumnProfile",
     "DataQualityMetrics",

@@ -6,17 +6,19 @@ Run with:
 
 The scenario: a daily drop lands in a staging bucket. You want the pipeline to
 stop on the bad file rather than propagate it downstream, and you want the
-rejection reason in the logs. The gate below is a plain function over a
-`ProfileReport`, so it composes into Airflow, Dagster, or a shell script.
+rejection reason in the logs. `ProfileReport.check()` states the policy as data
+and returns a structured result, so the gate composes into Airflow, Dagster, or
+a shell script without a CLI.
 
-This example profiles a good file and a bad one and prints both verdicts, so it
-always exits 0. A real gate would `sys.exit(1)` on rejection.
+This example profiles four drops and prints all three verdicts, so it always
+exits 0. A real gate would `sys.exit(1)` on anything but a pass.
 """
 
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import dataprof as dp
 
@@ -38,119 +40,78 @@ T-2004,,,2026-01-05
 T-2005,,17.99,2026-01-06
 """
 
-# What the warehouse is willing to accept.
-MIN_QUALITY_SCORE = 90.0
-REQUIRED_COLUMNS = ("transaction_id", "account", "amount_eur", "booked_at")
+# Same rows as the good drop, but the last one repeats the first. A capped scan
+# still sees it, which is what makes the third verdict interesting.
+DUPLICATED_DROP = GOOD_DROP + "T-1001,ACC-1,120.00,2026-01-04\n"
+
 KEY_COLUMN = "transaction_id"
-POSITIVE_COLUMNS = ["amount_eur"]
-MAX_MISSING_PERCENTAGE = 5.0
+REQUIRED_COLUMNS = ("transaction_id", "account", "amount_eur", "booked_at")
+
+# What the warehouse is willing to accept. Every threshold is a 0-100
+# percentage, matching what the report reports.
+POLICY: dict[str, Any] = {
+    "min_quality_score": 90,
+    "max_null_percentage": {KEY_COLUMN: 0, "*": 5},
+    "max_duplicate_rows": 0,
+    # Without this, a run that never computed quality would leave the score
+    # check unevaluated rather than failing. A pipeline wants the
+    # misconfiguration to be loud.
+    "require_metrics": ["quality", "completeness"],
+}
 
 
-def _no_assessment(report: dp.ProfileReport) -> str:
-    """Say why the report carries no quality, in the gate's own terms."""
-    if report.quality_status == "failed":
-        return f"quality computation failed: {report.quality_error}"
-    return {
-        "not_requested": "quality metrics were not requested for this run",
-        "no_data": "quality was requested but no quality sample was supplied",
-        "withheld_by_projection": (
-            "quality was withheld: the requested dimensions measure whole rows "
-            "and only some columns were profiled"
-        ),
-        # A report saved before the reason was recorded, or -- impossible from a
-        # profiling run -- `computed` with nothing attached. Neither tells the
-        # gate anything beyond the absence itself.
-    }.get(report.quality_status, "this report carries no quality assessment")
+def missing_columns(report: dp.ProfileReport) -> list[str]:
+    """Schema presence, which the numeric policy deliberately does not cover.
 
-
-def violations(report: dp.ProfileReport) -> list[str]:
-    """Return every reason this dataset must not be loaded. Empty means "accept".
-
-    Each check answers a question an on-call engineer would actually ask, and the
-    message names the column, so the pipeline log is enough to triage without
-    re-running the profiler.
+    A column absent from a report was either projected away or not in the
+    source, and the report does not record which -- so `check()` leaves it
+    undecided. Here the run profiles everything, so absence means absence.
     """
-    reasons: list[str] = []
-    columns = report.column_profiles
-
-    for required in REQUIRED_COLUMNS:
-        if required not in columns:
-            reasons.append(f"missing required column `{required}`")
-
-    # Absence has several causes and a gate must not report them all as a skip:
-    # "you did not ask for quality" is a pipeline misconfiguration, and "the
-    # computation failed" is an incident. `quality_status` says which.
-    quality = report.quality
-    if quality is None:
-        return [*reasons, _no_assessment(report)]
-
-    # A computed assessment can still score `None` when no dimension had
-    # anything to assess -- an empty extract, say. That is not a zero, and it is
-    # not a skip either.
-    if report.quality_score is None:
-        return [*reasons, "no quality dimension had anything to assess"]
-    if quality.completeness is None:
-        return [*reasons, "completeness was not among the assessed dimensions"]
-
-    if report.quality_score < MIN_QUALITY_SCORE:
-        reasons.append(
-            f"quality score {report.quality_score:.1f} is below "
-            f"the {MIN_QUALITY_SCORE:.1f} threshold"
-        )
-
-    completeness = quality.completeness
-    # `missing_values_ratio` is reported as a percentage, not a 0..1 fraction.
-    if completeness["missing_values_ratio"] > MAX_MISSING_PERCENTAGE:
-        reasons.append(
-            f"{completeness['missing_values_ratio']:.1f}% of cells are missing, "
-            f"above the {MAX_MISSING_PERCENTAGE:.1f}% allowance"
-        )
-    # `null_columns` lists columns past the configured null threshold (50% by
-    # default), not only columns that are entirely null.
-    for null_column in completeness["null_columns"]:
-        reasons.append(f"column `{null_column}` is mostly null")
-
-    # A key that repeats means the upstream job double-wrote, or we are about to
-    # create duplicates on load. Either way, do not proceed.
-    key = columns.get(KEY_COLUMN)
-    if key is not None:
-        present = key.total_count - key.null_count
-        if key.unique_count is not None and key.unique_count < present:
-            reasons.append(
-                f"key `{KEY_COLUMN}` has {present} values but only {key.unique_count} distinct"
-            )
-        if key.null_count:
-            reasons.append(f"key `{KEY_COLUMN}` has {key.null_count} null value(s)")
-
-    accuracy = quality.accuracy or {}
-    negatives = accuracy.get("negative_values_in_positive")
-    if negatives:
-        reasons.append(f"{negatives} negative value(s) in {POSITIVE_COLUMNS}")
-
-    return reasons
+    return [name for name in REQUIRED_COLUMNS if name not in report]
 
 
 def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        for label, contents in (("good_drop.csv", GOOD_DROP), ("bad_drop.csv", BAD_DROP)):
+        # The fourth drop is the third one read under a row cap: the duplicate
+        # sits past the cap, so the scan never witnesses it. The policy asks
+        # about the whole source, and a clean prefix is not a clean source.
+        drops = (
+            ("good_drop.csv", GOOD_DROP, None),
+            ("bad_drop.csv", BAD_DROP, None),
+            ("duplicated_drop.csv", DUPLICATED_DROP, None),
+            ("capped_scan.csv", DUPLICATED_DROP, 3),
+        )
+        for label, contents, max_rows in drops:
             path = Path(tmp) / label
             path.write_text(contents, encoding="utf-8")
 
             report = dp.profile(
                 str(path),
-                positive_columns=POSITIVE_COLUMNS,
                 identifier_columns=[KEY_COLUMN],
+                stop_condition=None if max_rows is None else dp.StopCondition.max_rows(max_rows),
             )
-            reasons = violations(report)
+            result = report.check(**POLICY)
 
             print(label)
-            if not reasons:
-                print(f"  ACCEPT -- quality {report.quality_score:.1f}/100\n")
+            for name in missing_columns(report):
+                print(f"  REJECT -- missing required column `{name}`")
+
+            # Three verdicts, not two. "inconclusive" means nothing was
+            # violated and something could not be checked -- an unanalyzed
+            # metric, or a scan that did not reach as far as the policy asks.
+            # Treating it as a pass is exactly the mistake to avoid.
+            if result.verdict == "pass":
+                print(f"  ACCEPT -- quality {report.quality_score}/100\n")
                 continue
 
-            print(f"  REJECT -- {len(reasons)} violation(s):")
-            for reason in reasons:
-                print(f"    - {reason}")
+            outcome = "REJECT" if result.verdict == "fail" else "HOLD"
+            reported = result.violations or result.unevaluated
+            print(f"  {outcome} -- {len(reported)} finding(s):")
+            for check in reported:
+                where = check.column or check.dimension or "report"
+                print(f"    - [{check.code}] {where}: {check.message}")
+                if check.observed is not None:
+                    print(f"        observed {check.observed}, expected {check.expected}")
             print("  a real pipeline would sys.exit(1) here\n")
 
 

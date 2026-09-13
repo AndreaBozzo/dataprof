@@ -8,11 +8,16 @@ import html as _html
 import json as _json
 import os as _os
 import warnings as _warnings
-from collections.abc import Iterator as _Iterator
+from collections.abc import (
+    Iterator as _Iterator,
+    Mapping as _Mapping,
+    Sequence as _Sequence,
+)
 from typing import Any as _Any, cast as _cast
 
 from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ColumnProfile, DataQualityMetrics, ProfileReport as _RustProfileReport
+from ._gate import QualityGateResult as _QualityGateResult, _Policy
 from ._paths import _normalize_pathlike
 from ._render import (
     _bounded,
@@ -168,6 +173,24 @@ class ProfileReport:
         return self._report.quality_error
 
     @property
+    def quality_sampled_dimensions(self) -> list[str] | None:
+        """Metric components computed from a retained sample of the scanned rows.
+
+        ``None`` when the report carries no quality assessment, or when it was
+        loaded from a document written before dataprof recorded this. An empty
+        list means every computed component saw every scanned row.
+
+        A bounded quality sample is how a profiler keeps memory flat over a
+        large source, so a fully scanned file can still carry sampled quality
+        numbers: :attr:`source_exhausted` and :attr:`sampling_applied` do not
+        answer this. Uniqueness appears as its two components,
+        ``key_uniqueness`` and ``duplicate_rows``, which can differ in
+        provenance.
+        """
+        sampled = self._report.quality_sampled_dimensions
+        return None if sampled is None else list(sampled)
+
+    @property
     def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
         """Per-column evidence of how each semantic hint bound to the data.
 
@@ -298,6 +321,14 @@ class ProfileReport:
             # so consumers never have to infer absence, and from_dict round-trips
             # both states. See docs/python/README.md report-schema notes.
             quality_dict["low_sample_warning"] = bool(q.low_sample_warning)
+            # How the numbers were obtained. Always emitted when there is an
+            # assessment: a score computed from a retained sample must not read
+            # back as one computed over every scanned row.
+            # Absence is preserved: a document loaded from a release that did
+            # not record this must not round-trip as "nothing was sampled".
+            sampled = self.quality_sampled_dimensions
+            if sampled is not None:
+                quality_dict["sampled_dimensions"] = sampled
             # The dimension dicts used to be passed through raw while the Rust
             # serializer rounded every float in them to 2dp, so the two layers
             # reported different numbers for the same field — 4.833333333333333
@@ -432,6 +463,70 @@ class ProfileReport:
             return pd.DataFrame(summary)
         except ImportError:
             return summary
+
+    def check(
+        self,
+        *,
+        min_quality_score: float | None = None,
+        min_dimension_scores: _Mapping[str, float] | None = None,
+        max_null_percentage: _Mapping[str, float] | float | None = None,
+        max_duplicate_rows: int | None = None,
+        require_metrics: _Sequence[str] | None = None,
+        scope: str = "full_source",
+    ) -> _QualityGateResult:
+        """Evaluate a quality policy against this report.
+
+        Returns a :class:`~dataprof._gate.QualityGateResult`: structured,
+        deterministic data. Nothing is printed, the process is not exited, and
+        the report is not modified, so this composes into any orchestrator::
+
+            result = report.check(
+                min_quality_score=90,
+                max_null_percentage={"customer_id": 0, "*": 20},
+                require_metrics=["quality"],
+            )
+            if not result.passed:
+                for violation in result.violations:
+                    print(violation.code, violation.message)
+
+        The verdict is three-valued. ``"fail"`` means a requirement was
+        conclusively violated; ``"inconclusive"`` means nothing was violated
+        and something could not be checked; ``"pass"`` means everything was
+        checked and met. ``result.passed`` is True only for ``"pass"``, so an
+        unanswerable gate never reads as a green one.
+
+        Args:
+            min_quality_score: Floor for the overall score, 0-100.
+            min_dimension_scores: Floor per ISO 25012 dimension, 0-100.
+            max_null_percentage: Ceiling for a column's null percentage,
+                0-100. A mapping keyed by column name, where ``"*"`` sets the
+                limit for every column without its own entry; a bare number is
+                the same as ``{"*": number}``.
+            max_duplicate_rows: Ceiling for the duplicate-row count.
+            require_metrics: Metrics that must have been analyzed at all:
+                ``"quality"`` for the assessment as a whole, or a dimension
+                name. Without this, a report with no assessment leaves the
+                related checks unevaluated rather than failed.
+            scope: ``"full_source"`` (the default) states the requirements
+                about the entire source, so a truncated or sampled scan leaves
+                them unevaluated unless it already witnessed a violation.
+                ``"observed"`` states them about whatever the metrics actually
+                measured, which is always evaluable and says nothing about the
+                rows that were not read.
+
+        Raises:
+            ValueError: the policy is unevaluable as written -- a threshold
+                outside 0-100, an unknown dimension name, or no requirement at
+                all. A misconfigured gate is not a failing dataset.
+        """
+        return _Policy(
+            min_quality_score=min_quality_score,
+            min_dimension_scores=min_dimension_scores,
+            max_null_percentage=max_null_percentage,
+            max_duplicate_rows=max_duplicate_rows,
+            require_metrics=require_metrics,
+            scope=scope,
+        ).evaluate(self)
 
     def quality_summary(self) -> dict[str, _Any]:
         """Single-row quality summary for easy aggregation.

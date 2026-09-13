@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from os import PathLike
 from typing import Any
 
 from ._dataprof import ColumnProfile, DataQualityMetrics
+from ._gate import QualityGateResult
 
 class ProfileReport:
     """High-level profiling report with export methods.
@@ -43,6 +44,8 @@ class ProfileReport:
     def quality_status(self) -> str: ...
     @property
     def quality_error(self) -> str | None: ...
+    @property
+    def quality_sampled_dimensions(self) -> list[str] | None: ...
     @property
     def semantic_hint_bindings(self) -> list[dict[str, Any]]: ...
     @property
@@ -110,6 +113,18 @@ class ProfileReport:
         """
         ...
     def _to_llm_context(self, *, source: str, max_tokens: int, include_samples: bool) -> str: ...
+    def check(
+        self,
+        *,
+        min_quality_score: float | None = ...,
+        min_dimension_scores: Mapping[str, float] | None = ...,
+        max_null_percentage: Mapping[str, float] | float | None = ...,
+        max_duplicate_rows: int | None = ...,
+        require_metrics: Sequence[str] | None = ...,
+        scope: str = ...,
+    ) -> QualityGateResult:
+        """Evaluate a quality policy and return the structured result."""
+        ...
     def compare(self, other: ProfileReport) -> dict[str, Any]:
         """Dict of quality/schema/null deltas versus another report."""
         ...

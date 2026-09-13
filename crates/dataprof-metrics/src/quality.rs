@@ -687,6 +687,54 @@ impl QualityAssessment {
     pub fn score(&self) -> Option<f64> {
         self.metrics.overall_score()
     }
+
+    /// Labels of the metric components computed from a retained sample of the
+    /// scanned rows rather than from every one of them.
+    ///
+    /// A bounded quality sample is how a profiler keeps memory flat over a
+    /// large source, so a fully scanned file can still carry sampled quality
+    /// numbers. Anything deciding about the *whole source* needs to know
+    /// which: a ratio over a sample bounds nothing about the rows it left out.
+    /// Empty means every computed component saw every scanned row.
+    ///
+    /// The labels are the ones [`MetricConfidence::Mixed`] already records, so
+    /// uniqueness appears as its two components, `key_uniqueness` and
+    /// `duplicate_rows`, rather than as one dimension name. They carry
+    /// different provenance: a full-stream row tracker counts duplicates
+    /// exactly while the key scan reads the sample.
+    pub fn sampled_dimensions(&self) -> Vec<String> {
+        match &self.confidence {
+            MetricConfidence::Exact | MetricConfidence::NotAssessed => Vec::new(),
+            MetricConfidence::Mixed {
+                sampled_dimensions, ..
+            } => sampled_dimensions.clone(),
+            // One sample produced everything, so every component carrying
+            // signal came out of it.
+            MetricConfidence::Approximate { .. } => QualityDimension::all()
+                .into_iter()
+                .filter(|dimension| self.metrics.supports_dimension(*dimension))
+                .flat_map(|dimension| self.component_labels(dimension))
+                .collect(),
+        }
+    }
+
+    /// The component labels a dimension contributes, skipping components that
+    /// were computed but carry no signal.
+    fn component_labels(&self, dimension: QualityDimension) -> Vec<String> {
+        let QualityDimension::Uniqueness = dimension else {
+            return vec![dimension.to_string()];
+        };
+        let mut labels = Vec::new();
+        if let Some(uniqueness) = &self.metrics.uniqueness {
+            if uniqueness.key_column.is_some() {
+                labels.push("key_uniqueness".to_string());
+            }
+            if uniqueness.rows_checked > 0 {
+                labels.push("duplicate_rows".to_string());
+            }
+        }
+        labels
+    }
 }
 
 impl From<QualityMetrics> for QualityAssessment {

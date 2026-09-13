@@ -1739,6 +1739,16 @@
             }
           ]
         },
+        "sampled_dimensions": {
+          "description": "Metric components computed from a retained quality sample rather than\nfrom every scanned row. Additive field: a document written before it\nexisted omits it, and its absence is preserved on reload because\nunknown coverage is not the same statement as \"nothing was sampled\".\nUniqueness appears here as `key_uniqueness` and `duplicate_rows`.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "timeliness": {
           "anyOf": [
             {

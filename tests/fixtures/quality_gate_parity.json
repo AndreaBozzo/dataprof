@@ -1,0 +1,559 @@
+{
+  "csv": "order_id,customer_id,amount\nA-1,C-1,10\nA-2,C-2,20\nA-3,,30\nA-2,C-2,20\nA-5,C-3,50\nA-6,C-4,60\n",
+  "cases": [
+    {
+      "name": "complete_input_meets_every_requirement",
+      "why": "A fully consumed source evaluates every requirement and passes.",
+      "options": {},
+      "policy": {
+        "min_quality_score": 90,
+        "min_dimension_scores": {
+          "consistency": 100
+        },
+        "max_null_percentage": {
+          "order_id": 0,
+          "*": 20
+        },
+        "require_metrics": [
+          "quality"
+        ]
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "require_metric",
+            "expected": {
+              "comparison": "analyzed"
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "quality was analyzed"
+          },
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 90.0
+            },
+            "observed": 92.96,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "the overall quality score meets the required minimum"
+          },
+          {
+            "code": "min_dimension_score",
+            "dimension": "consistency",
+            "expected": {
+              "comparison": "at_least",
+              "value": 100.0
+            },
+            "observed": 100.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this dimension's score meets the required minimum"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0.0
+            },
+            "observed": 0.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 20.0
+            },
+            "observed": 16.67,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "amount",
+            "expected": {
+              "comparison": "at_most",
+              "value": 20.0
+            },
+            "observed": 0.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          }
+        ]
+      }
+    },
+    {
+      "name": "violated_threshold_fails",
+      "why": "customer_id is one-sixth null, above its own allowance.",
+      "options": {},
+      "policy": {
+        "max_null_percentage": {
+          "customer_id": 10,
+          "*": 0
+        }
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "max_null_percentage",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 10.0
+            },
+            "observed": 16.67,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "failed",
+            "message": "this column's null percentage is above the allowance"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0.0
+            },
+            "observed": 0.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "amount",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0.0
+            },
+            "observed": 0.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unavailable_metric_is_inconclusive",
+      "why": "Quality was deselected. Absence is neither zero nor a pass.",
+      "options": {
+        "metrics": [
+          "schema"
+        ]
+      },
+      "policy": {
+        "min_quality_score": 90
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 90.0
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "not_evaluated",
+            "reason": "quality_unavailable",
+            "quality_status": "not_requested",
+            "message": "quality metrics were not requested for this run"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unavailable_metric_fails_when_required",
+      "why": "require_metrics is how a caller makes the absence itself a failure.",
+      "options": {
+        "metrics": [
+          "schema"
+        ]
+      },
+      "policy": {
+        "min_quality_score": 90,
+        "require_metrics": [
+          "quality"
+        ]
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "require_metric",
+            "expected": {
+              "comparison": "analyzed"
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "failed",
+            "message": "the report carries no quality assessment"
+          },
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 90.0
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "not_evaluated",
+            "reason": "quality_unavailable",
+            "quality_status": "not_requested",
+            "message": "quality metrics were not requested for this run"
+          }
+        ]
+      }
+    },
+    {
+      "name": "projected_columns_withhold_whole_row_checks",
+      "why": "Completeness and uniqueness measure whole rows, so after a column projection they are withheld and a check on either is not evaluated. A column that was projected away is not decided either way.",
+      "options": {
+        "columns": [
+          "amount"
+        ]
+      },
+      "policy": {
+        "min_dimension_scores": {
+          "completeness": 90,
+          "consistency": 90
+        },
+        "max_null_percentage": {
+          "customer_id": 0
+        }
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_dimension_score",
+            "dimension": "completeness",
+            "expected": {
+              "comparison": "at_least",
+              "value": 90.0
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "not_evaluated",
+            "reason": "not_assessed",
+            "message": "this dimension had nothing to assess in this run"
+          },
+          {
+            "code": "min_dimension_score",
+            "dimension": "consistency",
+            "expected": {
+              "comparison": "at_least",
+              "value": 90.0
+            },
+            "observed": 100.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this dimension's score meets the required minimum"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0.0
+            },
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "not_evaluated",
+            "reason": "column_not_profiled",
+            "message": "this column has no profile in the report"
+          }
+        ]
+      }
+    },
+    {
+      "name": "capped_input_cannot_pass_a_full_source_policy",
+      "why": "A ratio over a prefix bounds nothing about the rows never read.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "min_quality_score": 50,
+        "max_null_percentage": {
+          "*": 50
+        }
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 50.0
+            },
+            "observed": 89.44,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the overall quality score was computed over part of the source, which bounds nothing about the rest"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 50.0
+            },
+            "observed": 0.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the scan does not cover the whole source, and a null percentage over part of it bounds nothing about the rest"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 50.0
+            },
+            "observed": 25.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the scan does not cover the whole source, and a null percentage over part of it bounds nothing about the rest"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "amount",
+            "expected": {
+              "comparison": "at_most",
+              "value": 50.0
+            },
+            "observed": 0.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "truncated",
+            "message": "the scan does not cover the whole source, and a null percentage over part of it bounds nothing about the rest"
+          }
+        ]
+      }
+    },
+    {
+      "name": "capped_input_evaluates_the_observed_scope",
+      "why": "The same report, asked about the rows actually read, is decidable.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "min_quality_score": 50,
+        "max_null_percentage": {
+          "*": 50
+        },
+        "scope": "observed"
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "observed",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 50.0
+            },
+            "observed": 89.44,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "the overall quality score meets the required minimum"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "order_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 50.0
+            },
+            "observed": 0.0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "customer_id",
+            "expected": {
+              "comparison": "at_most",
+              "value": 50.0
+            },
+            "observed": 25.0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          },
+          {
+            "code": "max_null_percentage",
+            "column": "amount",
+            "expected": {
+              "comparison": "at_most",
+              "value": 50.0
+            },
+            "observed": 0.0,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "passed",
+            "message": "this column's null percentage is within the allowance"
+          }
+        ]
+      }
+    },
+    {
+      "name": "witnessed_duplicate_fails_despite_incomplete_coverage",
+      "why": "Rows already seen as duplicates stay duplicates when more rows are read, so a capped scan still settles this requirement.",
+      "options": {
+        "max_rows": 4
+      },
+      "policy": {
+        "max_duplicate_rows": 0
+      },
+      "expected": {
+        "verdict": "fail",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "incomplete",
+          "reason": "truncated"
+        },
+        "checks": [
+          {
+            "code": "max_duplicate_rows",
+            "dimension": "uniqueness",
+            "expected": {
+              "comparison": "at_most",
+              "value": 0
+            },
+            "observed": 1,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "truncated"
+            },
+            "status": "failed",
+            "message": "duplicate rows were observed above the allowance"
+          }
+        ]
+      }
+    }
+  ]
+}
