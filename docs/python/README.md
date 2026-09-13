@@ -271,6 +271,7 @@ Returned by `profile()` and all analysis functions.
 | `quality` | `DataQualityMetrics \| None` | Detailed quality breakdown |
 | `quality_status` | `str` | Why `quality` is or is not there (see below) |
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
+| `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -780,6 +781,125 @@ When quality metrics are present, the `quality` block always carries a
 recommended minimum of 10 rows, `false` otherwise). It round-trips through
 `to_dict()`/`from_dict()`; treat `quality_score` and the per-dimension ratios
 as directional rather than reliable whenever it is `true`.
+
+### `check()` -- quality gates
+
+State a policy as data and get a structured verdict back. Nothing is printed,
+the process is not exited, and the report is not modified, so this composes
+into Airflow, Dagster, a GitHub Action, or a shell script -- no CLI involved.
+
+```python
+report = dp.profile("daily_drop.csv")
+result = report.check(
+    min_quality_score=90,
+    max_null_percentage={"customer_id": 0, "*": 20},
+    max_duplicate_rows=0,
+    require_metrics=["quality"],
+)
+
+if not result.passed:
+    for check in result.violations:
+        print(check.code, check.column, check.message, check.observed)
+```
+
+| Keyword | Type | Meaning |
+|---|---|---|
+| `min_quality_score` | `float` | Floor for the overall score, 0--100 |
+| `min_dimension_scores` | `dict[str, float]` | Floor per ISO 25012 dimension, 0--100 |
+| `max_null_percentage` | `dict[str, float] \| float` | Ceiling for a column's null percentage, 0--100. `"*"` sets the limit for every column without its own entry; a bare number means the same as `{"*": number}` |
+| `max_duplicate_rows` | `int` | Ceiling for the duplicate-row count |
+| `require_metrics` | `list[str]` | Metrics that must have been analyzed: `"quality"`, or a dimension name |
+| `scope` | `str` | `"full_source"` (default) or `"observed"` |
+
+Thresholds are percentages on the same 0--100 scale the report reports, not
+0--1 ratios. A policy that cannot be evaluated as written -- a threshold
+outside the range, an unknown dimension, no requirement at all -- raises
+`ValueError` rather than failing the dataset: a misconfigured gate is not a
+bad extract.
+
+**The verdict has three values, not two.**
+
+| `result.verdict` | Meaning |
+|---|---|
+| `"fail"` | At least one requirement was conclusively violated |
+| `"inconclusive"` | Nothing was violated, and something could not be checked |
+| `"pass"` | Every requirement was evaluated and met |
+
+`result.passed` is True only for `"pass"`, so an unanswerable gate never reads
+as a green one. `"fail"` wins over `"inconclusive"`: a witnessed violation is a
+decision.
+
+A requirement goes unevaluated -- and lands in `result.unevaluated` -- when:
+
+- the report carries no quality assessment (`reason: quality_unavailable`,
+  carrying the report's own `quality_status`, so "you did not ask for this" is
+  distinguishable from "this broke");
+- the dimension or column had nothing to measure (`reason: not_assessed`);
+- the report holds no profile for a named column (`reason:
+  column_not_profiled`) -- it was projected away or it is not in the source,
+  and a report does not record which, so it is not decided either way;
+- the evidence does not reach as far as the requirement does (`reason:
+  evidence_incomplete`).
+
+`require_metrics` is how a caller turns the first of those into a failure,
+which is usually what a pipeline wants when quality is supposed to be
+configured on.
+
+**Scope and evidence.** `scope="full_source"` states the requirements about the
+entire source. A ratio or an average computed over a truncated scan, a sampled
+scan, or a bounded quality sample bounds nothing about the rows that were not
+read, so such a requirement is left unevaluated rather than passed. The
+exception is a witnessed count: rows already seen as duplicates do not stop
+being duplicates when more rows are read, so an exact duplicate count above the
+allowance fails conclusively even on a partial scan -- while a count at or
+below it is still not a pass, and an estimated count settles neither direction.
+
+`scope="observed"` states the requirements about whatever the metrics actually
+measured, which is always evaluable and says nothing about the rest of the
+source.
+
+Each check records its own `evidence`, which can be weaker than the scan's:
+`report.quality_sampled_dimensions` names the components computed from a
+retained sample, and a fully read file can still have them. Provenance is
+resolved per component, so a completeness score from exact column counters
+stays decidable while a consistency score from the reservoir does not, and the
+overall score is only withheld when a sampled component actually reaches it
+(a dimension the score weights exclude cannot move the aggregate).
+
+A report loaded from a document written before dataprof recorded this says
+nothing about how its numbers were obtained. Unknown coverage is a third answer
+rather than "nothing was sampled", so `quality_sampled_dimensions` is `None`
+and a full-source check reports `coverage_unrecorded`. Both language layers
+answer the same way for such a report.
+
+**`result.to_dict()` / `to_json()`** serialize the whole result, identical to
+what the Rust `QualityPolicy` writes for the same report and policy:
+
+```python
+{
+  "verdict": "fail",
+  "scope": "full_source",
+  "evidence": {"coverage": "complete"},
+  "checks": [
+    {
+      "code": "max_null_percentage",
+      "column": "customer_id",
+      "expected": {"comparison": "at_most", "value": 0.0},
+      "observed": 16.67,
+      "scope": "full_source",
+      "evidence": {"coverage": "complete"},
+      "status": "failed",
+      "message": "this column's null percentage is above the allowance",
+    }
+  ],
+}
+```
+
+`message` carries no numbers on purpose: `observed` and `expected` hold those,
+so nothing depends on how a float was formatted into a sentence.
+
+See [`python/examples/etl_quality_gate.py`](../../python/examples/etl_quality_gate.py)
+for a runnable gate over four drops.
 
 ### `compare()`
 

@@ -347,6 +347,13 @@ class _DictBackedReport:
         quality = d.get("quality")
         self.quality = _DictQuality(quality) if isinstance(quality, dict) else None
         self.quality_score = quality.get("overall_score") if isinstance(quality, dict) else None
+        # Additive field: how the quality numbers were obtained. A document
+        # written before it existed does not say, and absence is preserved --
+        # unknown coverage is not full coverage, and a quality gate asked
+        # about the whole source must say so rather than assume an exact scan.
+        self.quality_sampled_dimensions = (
+            quality.get("sampled_dimensions") if isinstance(quality, dict) else None
+        )
         # Additive field. A document written before it exists cannot say why
         # quality is absent, but one carrying an assessment proves it was
         # computed -- the same rule the Rust deserializer applies.

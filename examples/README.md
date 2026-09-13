@@ -27,13 +27,18 @@ uv run python python/examples/messy_csv_inspection.py
 ### 2. ETL quality gate
 
 A daily drop lands in a staging bucket. Stop the bad file before it reaches the
-warehouse, and put the reason in the log. The gate is a plain function over a
-`ProfileReport` — required columns, a minimum quality score, a missing-cell
-allowance, key uniqueness, and no negative values where negatives are impossible —
-so it composes into Airflow, Dagster, or a shell script.
+warehouse, and put the reason in the log. The policy is declared as data — a
+minimum quality score, per-column null allowances, no duplicate rows, and the
+metrics that must have been analyzed at all — and evaluating it returns a
+structured result rather than printing or exiting, so it composes into Airflow,
+Dagster, or a shell script.
 
-Both examples profile a good file and a bad one and print both verdicts, so they
-exit 0. A real gate would exit non-zero on rejection.
+Watch the fourth drop: it is the third one read under a row cap, so the scan
+never reaches the duplicate. The verdict is `inconclusive`, not `pass`. A clean
+prefix is not a clean source, and a gate that cannot tell should not say yes.
+
+Both examples profile four drops and print all three verdicts, so they exit 0.
+A real gate would exit non-zero on anything but a pass.
 
 ```bash
 cargo run --example etl_quality_gate

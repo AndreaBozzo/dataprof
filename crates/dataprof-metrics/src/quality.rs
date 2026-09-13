@@ -474,6 +474,21 @@ impl QualityMetrics {
         ]
     }
 
+    /// One dimension's score (0-100), or `None` when it had nothing to
+    /// assess. Weight-independent: a dimension weighted `0.0` still reports
+    /// the score it measured, it just does not move the aggregate.
+    pub fn dimension_score(&self, dimension: QualityDimension) -> Option<f64> {
+        match dimension {
+            QualityDimension::Completeness => self.completeness_score(),
+            QualityDimension::Consistency => self.consistency_score(),
+            QualityDimension::Uniqueness => self.uniqueness_score(),
+            QualityDimension::Accuracy => self.accuracy_score(),
+            QualityDimension::Timeliness => self.timeliness_score(),
+            QualityDimension::Validity => self.validity_score(),
+            QualityDimension::Precision => self.precision_score(),
+        }
+    }
+
     /// Dimensions that were computed *and* had data to assess. Only these
     /// contribute to [`overall_score`](Self::overall_score).
     pub fn assessed_dimensions(&self) -> Vec<QualityDimension> {
@@ -637,6 +652,14 @@ pub enum MetricConfidence {
     /// other variants to describe. Reporting `Exact` here would claim
     /// certainty about a number that was never computed.
     NotAssessed,
+    /// The document this assessment was read from does not say how its
+    /// numbers were obtained. Only produced by deserializing a report written
+    /// before dataprof recorded confidence; a profiling run always records it.
+    ///
+    /// Distinct from every other variant on purpose. Reading an unrecorded
+    /// provenance as `Exact` would let a decision about the whole source rest
+    /// on numbers that may have come from a sample.
+    Unrecorded,
 }
 
 /// Wraps quality metrics with confidence information.
@@ -652,11 +675,21 @@ impl QualityAssessment {
     /// `confidence` is downgraded to [`MetricConfidence::NotAssessed`] when
     /// no dimension was assessable: how the numbers were obtained is only
     /// meaningful when there are numbers.
+    ///
+    /// "Assessable" here is weight-independent. `assessed_dimensions()`
+    /// narrows to the dimensions carrying a positive score weight, because it
+    /// answers what is behind the aggregate; provenance is not about the
+    /// aggregate. A dimension weighted `0.0` is still measured and still
+    /// reported, and a consumer deciding on it needs to know whether its
+    /// number came from a sample.
     pub fn new(metrics: QualityMetrics, confidence: MetricConfidence) -> Self {
-        let confidence = if metrics.assessed_dimensions().is_empty() {
-            MetricConfidence::NotAssessed
-        } else {
+        let measured = QualityDimension::all()
+            .into_iter()
+            .any(|dimension| metrics.dimension_score(dimension).is_some());
+        let confidence = if measured {
             confidence
+        } else {
+            MetricConfidence::NotAssessed
         };
         Self {
             metrics,
@@ -686,6 +719,60 @@ impl QualityAssessment {
     /// See [`QualityMetrics::overall_score`].
     pub fn score(&self) -> Option<f64> {
         self.metrics.overall_score()
+    }
+
+    /// Labels of the metric components computed from a retained sample of the
+    /// scanned rows rather than from every one of them.
+    ///
+    /// A bounded quality sample is how a profiler keeps memory flat over a
+    /// large source, so a fully scanned file can still carry sampled quality
+    /// numbers. Anything deciding about the *whole source* needs to know
+    /// which: a ratio over a sample bounds nothing about the rows it left out.
+    /// An empty list means every computed component saw every scanned row.
+    /// `None` means the assessment does not record this at all, which only a
+    /// report read back from a document written before dataprof recorded it
+    /// can be: unknown coverage is a third answer, not "nothing was sampled".
+    ///
+    /// The labels are the ones [`MetricConfidence::Mixed`] already records, so
+    /// uniqueness appears as its two components, `key_uniqueness` and
+    /// `duplicate_rows`, rather than as one dimension name. They carry
+    /// different provenance: a full-stream row tracker counts duplicates
+    /// exactly while the key scan reads the sample.
+    pub fn sampled_dimensions(&self) -> Option<Vec<String>> {
+        match &self.confidence {
+            MetricConfidence::Exact | MetricConfidence::NotAssessed => Some(Vec::new()),
+            MetricConfidence::Mixed {
+                sampled_dimensions, ..
+            } => Some(sampled_dimensions.clone()),
+            // One sample produced everything, so every component carrying
+            // signal came out of it.
+            MetricConfidence::Approximate { .. } => Some(
+                QualityDimension::all()
+                    .into_iter()
+                    .filter(|dimension| self.metrics.supports_dimension(*dimension))
+                    .flat_map(|dimension| self.component_labels(dimension))
+                    .collect(),
+            ),
+            MetricConfidence::Unrecorded => None,
+        }
+    }
+
+    /// The component labels a dimension contributes, skipping components that
+    /// were computed but carry no signal.
+    fn component_labels(&self, dimension: QualityDimension) -> Vec<String> {
+        let QualityDimension::Uniqueness = dimension else {
+            return vec![dimension.to_string()];
+        };
+        let mut labels = Vec::new();
+        if let Some(uniqueness) = &self.metrics.uniqueness {
+            if uniqueness.key_column.is_some() {
+                labels.push("key_uniqueness".to_string());
+            }
+            if uniqueness.rows_checked > 0 {
+                labels.push("duplicate_rows".to_string());
+            }
+        }
+        labels
     }
 }
 

@@ -7,7 +7,7 @@ use pyo3::types::PyDict;
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport,
-    QualityAnalysisStatus, QualityMetrics, SemanticHintKind, TruncationReason,
+    QualityAnalysisStatus, QualityAssessment, QualityMetrics, SemanticHintKind, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1089,6 +1089,31 @@ impl PyProfileReport {
             QualityAnalysisStatus::Failed { .. } => "failed",
             QualityAnalysisStatus::Unrecorded => "unrecorded",
         }
+    }
+
+    /// Metric components computed from a retained sample of the scanned rows
+    /// rather than from every one of them, or None when there is no
+    /// assessment.
+    ///
+    /// A bounded quality sample is how a profiler keeps memory flat over a
+    /// large source, so a fully scanned file can still carry sampled quality
+    /// numbers: ``source_exhausted`` and ``sampling_applied`` do not answer
+    /// this. An empty list means every computed component saw every scanned
+    /// row.
+    ///
+    /// None covers both ways the report cannot answer: there is no
+    /// assessment, or the assessment came from a document written before
+    /// dataprof recorded provenance. Either way it is not "nothing was
+    /// sampled".
+    ///
+    /// Uniqueness appears as its two components, ``key_uniqueness`` and
+    /// ``duplicate_rows``, which can differ in provenance.
+    #[getter]
+    fn quality_sampled_dimensions(&self) -> Option<Vec<String>> {
+        self.inner
+            .quality
+            .as_ref()
+            .and_then(QualityAssessment::sampled_dimensions)
     }
 
     /// The error a failed quality computation reported, else None.

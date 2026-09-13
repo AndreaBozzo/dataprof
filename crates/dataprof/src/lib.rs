@@ -57,7 +57,11 @@ pub use dataprof_parquet::{
     analyze_parquet_with_quality_dims, is_parquet_file,
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
-pub use dataprof_runtime::{ProfileReport, QualityAnalysisStatus, REPORT_SCHEMA_VERSION};
+pub use dataprof_runtime::{
+    Check, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult, MetricValue,
+    NotEvaluated, PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus, QualityPolicy,
+    REPORT_SCHEMA_VERSION, RequiredMetric, Verdict,
+};
 
 #[cfg(feature = "async-streaming")]
 pub use dataprof_engines::streaming::ReqwestSource;

@@ -40,6 +40,8 @@ from dataprof._render import _column_flags
 #   - save() writes a file and needs a path
 #   - compare() needs a second report
 #   - the dataframe exports need pandas/polars/pyarrow, which are optional
+#   - check() needs a policy; that a loaded report gates identically is
+#     asserted in test_quality_gate.py, where the policy can be stated
 _UNCOMPARABLE_REPORT_MEMBERS = frozenset(
     {
         "from_dict",
@@ -47,6 +49,7 @@ _UNCOMPARABLE_REPORT_MEMBERS = frozenset(
         "load",
         "save",
         "compare",
+        "check",
         "to_dataframe",
         "to_polars",
         "to_arrow",

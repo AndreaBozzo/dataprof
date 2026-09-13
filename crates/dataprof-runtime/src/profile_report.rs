@@ -1,7 +1,7 @@
 use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, SemanticHintBinding};
 use dataprof_metrics::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
-    QualityMetrics, TimelinessMetrics, ValidityMetrics,
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
+    QualityAssessment, QualityMetrics, TimelinessMetrics, ValidityMetrics,
 };
 
 /// Version of the serialized `ProfileReport` schema written by this build.
@@ -285,6 +285,13 @@ struct PythonQualityDocument {
     assessed_dimensions: Vec<PythonQualityDimension>,
     dimension_scores: std::collections::BTreeMap<PythonQualityDimension, Option<f64>>,
     low_sample_warning: bool,
+    /// Metric components computed from a retained quality sample rather than
+    /// from every scanned row. Additive field: a document written before it
+    /// existed omits it, and its absence is preserved on reload because
+    /// unknown coverage is not the same statement as "nothing was sampled".
+    /// Uniqueness appears here as `key_uniqueness` and `duplicate_rows`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sampled_dimensions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     completeness: Option<CompletenessMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -396,6 +403,10 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
         (
             "/$defs/PythonProfileReportDocument/required",
             "quality_status",
+        ),
+        (
+            "/$defs/PythonQualityDocument/required",
+            "sampled_dimensions",
         ),
     ] {
         if let Some(required) = document
@@ -646,7 +657,14 @@ where
             } else {
                 let metrics: QualityMetrics =
                     serde_json::from_value(v).map_err(serde::de::Error::custom)?;
-                Ok(Some(QualityAssessment::exact(metrics)))
+                // A flat legacy quality object says nothing about how its
+                // numbers were obtained. Recording `Exact` here would invent
+                // that, and a gate asked about the whole source would then
+                // rest a verdict on numbers that may have come from a sample.
+                Ok(Some(QualityAssessment::new(
+                    metrics,
+                    MetricConfidence::Unrecorded,
+                )))
             }
         }
     }
