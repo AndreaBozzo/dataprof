@@ -178,7 +178,8 @@ class ProfileReport:
 
         ``None`` when the report carries no quality assessment, or when it was
         loaded from a document written before dataprof recorded this. An empty
-        list means every computed component saw every scanned row.
+        list means every computed component saw every scanned row; ``None`` is
+        a third answer rather than a synonym for that empty list.
 
         A bounded quality sample is how a profiler keeps memory flat over a
         large source, so a fully scanned file can still carry sampled quality

@@ -167,8 +167,9 @@ pub enum EvidenceGap {
     QualitySampled,
     /// The report does not record how its quality numbers were obtained, so
     /// whether they cover every scanned row is unknown. Only reachable for a
-    /// report loaded from a document written before dataprof recorded that;
-    /// a profiling run always records it.
+    /// report read back from a document written before dataprof recorded it;
+    /// a profiling run always records it. Unknown coverage is not full
+    /// coverage, so a full-source requirement is left unevaluated.
     CoverageUnrecorded,
 }
 
@@ -648,7 +649,9 @@ impl QualityPolicy {
         let analyzed = match (report.quality.as_ref(), dimension) {
             (None, _) => false,
             (Some(_), None) => true,
-            (Some(quality), Some(dimension)) => dimension_score(quality, dimension).is_some(),
+            (Some(quality), Some(dimension)) => {
+                quality.metrics.dimension_score(dimension).is_some()
+            }
         };
         let message = match (analyzed, dimension) {
             (true, None) => "quality was analyzed",
@@ -732,7 +735,7 @@ impl QualityPolicy {
         let Some(quality) = report.quality.as_ref() else {
             return unavailable_quality(check, report);
         };
-        let Some(score) = dimension_score(quality, dimension) else {
+        let Some(score) = quality.metrics.dimension_score(dimension) else {
             check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
             check.message = "this dimension had nothing to assess in this run".to_string();
             return check;
@@ -979,19 +982,6 @@ fn quality_status_name(status: &QualityAnalysisStatus) -> &'static str {
     }
 }
 
-fn dimension_score(quality: &QualityAssessment, dimension: QualityDimension) -> Option<f64> {
-    let metrics = &quality.metrics;
-    match dimension {
-        QualityDimension::Completeness => metrics.completeness_score(),
-        QualityDimension::Consistency => metrics.consistency_score(),
-        QualityDimension::Uniqueness => metrics.uniqueness_score(),
-        QualityDimension::Accuracy => metrics.accuracy_score(),
-        QualityDimension::Timeliness => metrics.timeliness_score(),
-        QualityDimension::Validity => metrics.validity_score(),
-        QualityDimension::Precision => metrics.precision_score(),
-    }
-}
-
 /// Share of a column's values that are null, or `None` when no value was read.
 /// Mirrors the Python binding's `ColumnProfile.null_percentage`.
 fn null_percentage(profile: &ColumnProfile) -> Option<f64> {
@@ -1059,13 +1049,28 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
         // absence itself, and there is no number for evidence to describe.
         return Evidence::Complete;
     };
-    let sampled = quality.sampled_dimensions();
+    let Some(sampled) = quality.sampled_dimensions() else {
+        return Evidence::Incomplete {
+            reason: EvidenceGap::CoverageUnrecorded,
+        };
+    };
+    let contains = |component: &str| sampled.iter().any(|label| label == component);
     let is_sampled = match provenance {
-        Provenance::Overall => !sampled.is_empty(),
+        // The overall score is a weighted average over the *assessed*
+        // dimensions, so a sampled dimension the weights exclude does not
+        // reach it. Reporting the aggregate as sampled because of one would
+        // withhold a verdict the number does not depend on.
+        Provenance::Overall => quality
+            .metrics
+            .assessed_dimensions()
+            .into_iter()
+            .flat_map(dimension_components)
+            .any(|component| contains(component)),
         Provenance::Dimension(dimension) => dimension_components(dimension)
             .iter()
-            .any(|component| sampled.iter().any(|label| label == component)),
-        Provenance::Component(component) => sampled.iter().any(|label| label == component),
+            .copied()
+            .any(contains),
+        Provenance::Component(component) => contains(component),
     };
     if is_sampled {
         Evidence::Incomplete {
@@ -1080,7 +1085,9 @@ fn quality_evidence(quality: Option<&QualityAssessment>, provenance: Provenance)
 mod tests {
     use std::collections::HashMap;
 
-    use dataprof_core::{ColumnStats, DataSource, DataType, FileFormat, TruncationReason};
+    use dataprof_core::{
+        ColumnStats, DataSource, DataType, FileFormat, QualityScoreWeights, TruncationReason,
+    };
     use dataprof_metrics::{QualityMetrics, UniquenessMetrics};
     use serde_json::{Value, json};
 
@@ -1209,7 +1216,8 @@ mod tests {
             .quality
             .as_ref()
             .expect("quality was computed")
-            .sampled_dimensions();
+            .sampled_dimensions()
+            .expect("a profiling run records its provenance");
         assert!(
             !sampled.is_empty(),
             "the assembler did not bifurcate; this test no longer reaches the \
@@ -1248,7 +1256,8 @@ mod tests {
             .quality
             .as_ref()
             .expect("quality was computed")
-            .sampled_dimensions();
+            .sampled_dimensions()
+            .expect("a profiling run records its provenance");
         assert!(
             !sampled.iter().any(|label| label == "completeness"),
             "completeness is supposed to come from exact column counters"
@@ -1277,6 +1286,135 @@ mod tests {
             Some(Evidence::Incomplete {
                 reason: EvidenceGap::QualitySampled
             })
+        );
+    }
+
+    /// A report read back from a document written before dataprof recorded
+    /// provenance does not say whether its numbers cover every scanned row.
+    ///
+    /// The compat path used to answer `Exact` for those, which is a claim the
+    /// document never made: a full-source policy would then rest a verdict on
+    /// numbers that may have come from a sample. The Python reload path
+    /// reports the same gap, so the two agree on legacy input.
+    #[test]
+    fn a_legacy_document_without_recorded_coverage_is_not_read_as_a_full_scan() {
+        let document = serde_json::to_value(complete_report()).expect("serializes");
+        let mut legacy = document.clone();
+        // Pre-0.10 documents carried the metrics flat, with no confidence.
+        legacy["quality"] = document["quality"]["metrics"].clone();
+        let report: ProfileReport = serde_json::from_value(legacy).expect("legacy document loads");
+
+        assert_eq!(
+            report
+                .quality
+                .as_ref()
+                .expect("the metrics survived")
+                .sampled_dimensions(),
+            None
+        );
+
+        let result = QualityPolicy::new()
+            .min_quality_score(1.0)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(result.verdict, Verdict::Inconclusive);
+        let check = check_for(&result, CheckCode::MinQualityScore);
+        assert_eq!(
+            check.evidence,
+            Evidence::Incomplete {
+                reason: EvidenceGap::CoverageUnrecorded
+            }
+        );
+
+        // Asked about what the metrics measured, the same report is decidable.
+        let observed = QualityPolicy::new()
+            .min_quality_score(1.0)
+            .scope(PolicyScope::Observed)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(observed.verdict, Verdict::Pass);
+    }
+
+    /// Weights say what reaches the aggregate, not what was measured.
+    ///
+    /// The overall score renormalizes over the assessed dimensions, so a
+    /// sampled dimension the weights exclude cannot move it, and reporting the
+    /// aggregate as sampled because of one would withhold a verdict the number
+    /// does not depend on. The excluded dimension keeps its own provenance.
+    #[test]
+    fn a_zero_weighted_sampled_dimension_does_not_taint_the_overall_score() {
+        let mut report = reservoir_report();
+        let quality = report.quality.as_mut().expect("quality was computed");
+        let sampled = quality
+            .sampled_dimensions()
+            .expect("a profiling run records its provenance");
+        assert!(
+            sampled.iter().any(|label| label == "consistency"),
+            "consistency is supposed to come from the reservoir"
+        );
+        // Completeness is the one dimension here computed from exact column
+        // counters, so weighting only it leaves an aggregate that no sampled
+        // component reaches.
+        quality.metrics.score_weights = QualityScoreWeights {
+            completeness: 1.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+            validity: 0.0,
+            precision: 0.0,
+        };
+
+        let result = QualityPolicy::new()
+            .min_quality_score(1.0)
+            .min_dimension_score(QualityDimension::Consistency, 1.0)
+            .evaluate(&report)
+            .unwrap();
+
+        // The aggregate no longer depends on the sampled dimension.
+        assert_eq!(
+            check_for(&result, CheckCode::MinQualityScore).evidence,
+            Evidence::Complete
+        );
+        // The dimension itself still reports where its number came from.
+        assert_eq!(
+            check_for(&result, CheckCode::MinDimensionScore).evidence,
+            Evidence::Incomplete {
+                reason: EvidenceGap::QualitySampled
+            }
+        );
+    }
+
+    /// A dimension excluded from the aggregate by a zero weight is still
+    /// measured, and a gate reading its score still needs its provenance.
+    ///
+    /// Confidence used to be downgraded to `NotAssessed` whenever the
+    /// *weighted* set was empty, which erased the sampling record for every
+    /// dimension at once.
+    #[test]
+    fn zero_weights_do_not_erase_the_sampling_record() {
+        let mut report = reservoir_report();
+        let quality = report.quality.as_mut().expect("quality was computed");
+        quality.metrics.score_weights = QualityScoreWeights {
+            completeness: 0.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+            validity: 0.0,
+            precision: 0.0,
+        };
+        let reassessed =
+            QualityAssessment::new(quality.metrics.clone(), quality.confidence.clone());
+
+        assert!(reassessed.metrics.assessed_dimensions().is_empty());
+        assert!(
+            reassessed
+                .sampled_dimensions()
+                .expect("provenance survives")
+                .iter()
+                .any(|label| label == "consistency"),
+            "a measured dimension kept no record of coming from a sample"
         );
     }
 

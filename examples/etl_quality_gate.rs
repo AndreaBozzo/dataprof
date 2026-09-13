@@ -104,15 +104,16 @@ fn main() -> Result<()> {
         let result = policy().evaluate(&report)?;
 
         println!("{label}");
-        for missing in missing_columns(&report) {
-            println!("  REJECT -- missing required column `{missing}`");
+        let missing = missing_columns(&report);
+        for column in &missing {
+            println!("  REJECT -- missing required column `{column}`");
         }
 
         // Three verdicts, not two. `Inconclusive` means nothing was violated
         // and something could not be checked: an unanalyzed metric, or a scan
         // that did not reach as far as the policy asks. Treating it as a pass
         // is exactly the mistake to avoid.
-        if result.verdict == Verdict::Pass {
+        if result.verdict == Verdict::Pass && missing.is_empty() {
             println!(
                 "  ACCEPT -- quality {:.1}/100\n",
                 report.quality_score().unwrap_or_default()
@@ -124,10 +125,9 @@ fn main() -> Result<()> {
             Verdict::Fail => "REJECT",
             _ => "HOLD",
         };
-        let reported: Vec<_> = match result.verdict {
-            Verdict::Fail => result.violations().collect(),
-            _ => result.unevaluated().collect(),
-        };
+        // Both, always. A drop can fail one requirement while another went
+        // unchecked, and printing only the failure hides the evidence gap.
+        let reported: Vec<_> = result.violations().chain(result.unevaluated()).collect();
         println!("  {outcome} -- {} finding(s):", reported.len());
         for check in reported {
             let where_ = check.column.clone().unwrap_or_else(|| {

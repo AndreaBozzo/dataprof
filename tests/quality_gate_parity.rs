@@ -11,8 +11,12 @@
 //!
 //! The cases cover what the ticket's evidence section calls for: a complete
 //! input, a capped one, unavailable metrics, projected columns, and a
-//! conclusive violation witnessed under incomplete coverage.
+//! conclusive violation witnessed under incomplete coverage. They also cover a
+//! source read in full whose quality numbers still came from the bounded
+//! reservoir, which is the one path where the scan and the metric disagree
+//! about how much was seen.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -43,9 +47,27 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The fixture's second input, stated as a rule rather than as bytes.
+///
+/// It has to exceed the quality reservoir (10,000 values per column) for the
+/// sampled-metric cases to mean anything, which is too much CSV to commit.
+/// Both layers build it from this same rule, so they profile the same file.
+fn generated_csv(rows: u64) -> String {
+    let mut csv = String::from("key,bucket\n");
+    for n in 0..rows {
+        csv.push_str(&format!("K-{n},{}\n", n % 7));
+    }
+    csv
+}
+
 /// Build the profiler the case describes. The option names are the fixture's
 /// own; each layer maps them onto its own spelling of the same request.
-fn profile(path: &PathBuf, options: &Value) -> ProfileReport {
+fn profile(paths: &HashMap<&str, PathBuf>, options: &Value) -> ProfileReport {
+    let input = options
+        .get("input")
+        .and_then(Value::as_str)
+        .unwrap_or("orders");
+    let path = paths.get(input).expect("the fixture names a known input");
     let mut profiler = Profiler::new();
     if let Some(metrics) = options.get("metrics") {
         profiler = profiler.metric_packs(
@@ -112,19 +134,31 @@ fn policy_from(spec: &Value) -> QualityPolicy {
 fn rust_gate_matches_the_shared_fixture() {
     let fixture = fixture();
     let directory = tempfile::tempdir().expect("temp dir");
-    let path = directory.path().join("orders.csv");
+    let paths = HashMap::from([
+        ("orders", directory.path().join("orders.csv")),
+        ("generated", directory.path().join("generated.csv")),
+    ]);
     fs::write(
-        &path,
+        &paths["orders"],
         fixture["csv"].as_str().expect("fixture carries the CSV"),
     )
     .expect("write the fixture CSV");
+    fs::write(
+        &paths["generated"],
+        generated_csv(
+            fixture["generated_rows"]
+                .as_u64()
+                .expect("fixture states the generated row count"),
+        ),
+    )
+    .expect("write the generated CSV");
 
     let cases = fixture["cases"].as_array().expect("fixture has cases");
     assert!(!cases.is_empty(), "fixture states no case");
 
     for case in cases {
         let name = case["name"].as_str().expect("case has a name");
-        let report = profile(&path, &case["options"]);
+        let report = profile(&paths, &case["options"]);
         let result = policy_from(&case["policy"])
             .evaluate(&report)
             .unwrap_or_else(|e| panic!("{name}: policy is unevaluable: {e}"));

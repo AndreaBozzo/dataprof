@@ -40,8 +40,7 @@ T-2004,,,2026-01-05
 T-2005,,17.99,2026-01-06
 """
 
-# Same rows as the good drop, but the last one repeats the first. A capped scan
-# still sees it, which is what makes the third verdict interesting.
+# Same rows as the good drop, but the last one repeats the first.
 DUPLICATED_DROP = GOOD_DROP + "T-1001,ACC-1,120.00,2026-01-04\n"
 
 KEY_COLUMN = "transaction_id"
@@ -93,19 +92,22 @@ def main() -> None:
             result = report.check(**POLICY)
 
             print(label)
-            for name in missing_columns(report):
+            missing = missing_columns(report)
+            for name in missing:
                 print(f"  REJECT -- missing required column `{name}`")
 
             # Three verdicts, not two. "inconclusive" means nothing was
             # violated and something could not be checked -- an unanalyzed
             # metric, or a scan that did not reach as far as the policy asks.
             # Treating it as a pass is exactly the mistake to avoid.
-            if result.verdict == "pass":
+            if result.verdict == "pass" and not missing:
                 print(f"  ACCEPT -- quality {report.quality_score}/100\n")
                 continue
 
             outcome = "REJECT" if result.verdict == "fail" else "HOLD"
-            reported = result.violations or result.unevaluated
+            # Both, always. A drop can fail one requirement while another went
+            # unchecked, and printing only the failure hides the evidence gap.
+            reported = [*result.violations, *result.unevaluated]
             print(f"  {outcome} -- {len(reported)} finding(s):")
             for check in reported:
                 where = check.column or check.dimension or "report"

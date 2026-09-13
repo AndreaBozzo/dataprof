@@ -1101,6 +1101,11 @@ impl PyProfileReport {
     /// this. An empty list means every computed component saw every scanned
     /// row.
     ///
+    /// None covers both ways the report cannot answer: there is no
+    /// assessment, or the assessment came from a document written before
+    /// dataprof recorded provenance. Either way it is not "nothing was
+    /// sampled".
+    ///
     /// Uniqueness appears as its two components, ``key_uniqueness`` and
     /// ``duplicate_rows``, which can differ in provenance.
     #[getter]
@@ -1108,7 +1113,7 @@ impl PyProfileReport {
         self.inner
             .quality
             .as_ref()
-            .map(QualityAssessment::sampled_dimensions)
+            .and_then(QualityAssessment::sampled_dimensions)
     }
 
     /// The error a failed quality computation reported, else None.

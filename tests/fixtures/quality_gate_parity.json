@@ -1,5 +1,6 @@
 {
   "csv": "order_id,customer_id,amount\nA-1,C-1,10\nA-2,C-2,20\nA-3,,30\nA-2,C-2,20\nA-5,C-3,50\nA-6,C-4,60\n",
+  "generated_rows": 12000,
   "cases": [
     {
       "name": "complete_input_meets_every_requirement",
@@ -551,6 +552,114 @@
             },
             "status": "failed",
             "message": "duplicate rows were observed above the allowance"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_sampled_metric_on_a_completely_read_source",
+      "why": "The source was read in full and no row sampler ran, so the scan's own evidence is complete. Quality still came from the bounded reservoir, and the overall score is withheld while completeness, which comes from exact column counters, stays decidable.",
+      "options": {
+        "input": "generated"
+      },
+      "policy": {
+        "min_quality_score": 1,
+        "min_dimension_scores": {
+          "completeness": 1,
+          "consistency": 1
+        }
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 1.0
+            },
+            "observed": 99.92,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "quality_sampled",
+            "message": "the overall quality score was computed over part of the source, which bounds nothing about the rest"
+          },
+          {
+            "code": "min_dimension_score",
+            "dimension": "completeness",
+            "expected": {
+              "comparison": "at_least",
+              "value": 1.0
+            },
+            "observed": 100.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "complete"
+            },
+            "status": "passed",
+            "message": "this dimension's score meets the required minimum"
+          },
+          {
+            "code": "min_dimension_score",
+            "dimension": "consistency",
+            "expected": {
+              "comparison": "at_least",
+              "value": 1.0
+            },
+            "observed": 100.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "not_evaluated",
+            "reason": "evidence_incomplete",
+            "gap": "quality_sampled",
+            "message": "this dimension's score was computed over part of the source, which bounds nothing about the rest"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_sampled_metric_evaluates_the_observed_scope",
+      "why": "The same sampled numbers are decidable as a statement about themselves.",
+      "options": {
+        "input": "generated"
+      },
+      "policy": {
+        "min_quality_score": 1,
+        "scope": "observed"
+      },
+      "expected": {
+        "verdict": "pass",
+        "scope": "observed",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 1.0
+            },
+            "observed": 99.92,
+            "scope": "observed",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "status": "passed",
+            "message": "the overall quality score meets the required minimum"
           }
         ]
       }

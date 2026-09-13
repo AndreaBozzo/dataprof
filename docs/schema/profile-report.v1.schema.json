@@ -845,6 +845,11 @@
           "const": "NotAssessed",
           "description": "No dimension had anything to assess, so there is no score for the\nother variants to describe. Reporting `Exact` here would claim\ncertainty about a number that was never computed.",
           "type": "string"
+        },
+        {
+          "const": "Unrecorded",
+          "description": "The document this assessment was read from does not say how its\nnumbers were obtained. Only produced by deserializing a report written\nbefore dataprof recorded confidence; a profiling run always records it.\n\nDistinct from every other variant on purpose. Reading an unrecorded\nprovenance as `Exact` would let a decision about the whole source rest\non numbers that may have come from a sample.",
+          "type": "string"
         }
       ]
     },

@@ -183,6 +183,28 @@ def test_a_document_without_recorded_coverage_is_not_read_as_a_full_scan(report)
     assert legacy.check(min_quality_score=90, scope="observed").verdict == "pass"
 
 
+def test_a_zero_weighted_sampled_dimension_does_not_taint_the_overall_score(report):
+    """Weights say what reaches the aggregate, not what was measured.
+
+    The overall score renormalizes over the assessed dimensions, so a sampled
+    dimension the weights exclude cannot move it. Withholding the aggregate
+    because of one would refuse a verdict the number does not depend on.
+    """
+    document = report.to_dict()
+    document["quality"]["sampled_dimensions"] = ["consistency"]
+    # `assessed_dimensions` is the weighted contributing set, and consistency
+    # is not in it once its weight is zero.
+    document["quality"]["assessed_dimensions"] = ["completeness"]
+    loaded = dp.ProfileReport.from_dict(document)
+
+    result = loaded.check(min_quality_score=1, min_dimension_scores={"consistency": 1})
+    assert _check(result, "min_quality_score").evidence == {"coverage": "complete"}
+    assert _check(result, "min_dimension_score").evidence == {
+        "coverage": "incomplete",
+        "reason": "quality_sampled",
+    }
+
+
 def test_quality_sampled_dimensions_round_trips(report):
     assert report.quality_sampled_dimensions == []
     assert report.to_dict()["quality"]["sampled_dimensions"] == []

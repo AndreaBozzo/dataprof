@@ -860,7 +860,17 @@ source.
 
 Each check records its own `evidence`, which can be weaker than the scan's:
 `report.quality_sampled_dimensions` names the components computed from a
-retained sample, and a fully read file can still have them.
+retained sample, and a fully read file can still have them. Provenance is
+resolved per component, so a completeness score from exact column counters
+stays decidable while a consistency score from the reservoir does not, and the
+overall score is only withheld when a sampled component actually reaches it
+(a dimension the score weights exclude cannot move the aggregate).
+
+A report loaded from a document written before dataprof recorded this says
+nothing about how its numbers were obtained. Unknown coverage is a third answer
+rather than "nothing was sampled", so `quality_sampled_dimensions` is `None`
+and a full-source check reports `coverage_unrecorded`. Both language layers
+answer the same way for such a report.
 
 **`result.to_dict()` / `to_json()`** serialize the whole result, identical to
 what the Rust `QualityPolicy` writes for the same report and policy:

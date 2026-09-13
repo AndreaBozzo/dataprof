@@ -677,7 +677,16 @@ def _quality_evidence(
     if component is not None:
         return _incomplete("quality_sampled") if component in sampled else _complete()
     if dimension is None:
-        return _incomplete("quality_sampled") if sampled else _complete()
-    components = _DIMENSION_COMPONENTS[dimension]
-    matched = any(label in sampled for label in components)
+        # The overall score is a weighted average over the *assessed*
+        # dimensions, so a sampled dimension the weights exclude does not reach
+        # it. Reporting the aggregate as sampled because of one would withhold
+        # a verdict the number does not depend on.
+        contributing = {
+            label
+            for assessed in report.quality.assessed_dimensions()
+            for label in _DIMENSION_COMPONENTS[assessed]
+        }
+        matched = any(label in sampled for label in contributing)
+    else:
+        matched = any(label in sampled for label in _DIMENSION_COMPONENTS[dimension])
     return _incomplete("quality_sampled") if matched else _complete()

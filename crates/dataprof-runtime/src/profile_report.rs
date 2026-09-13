@@ -1,7 +1,7 @@
 use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, SemanticHintBinding};
 use dataprof_metrics::{
-    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, PrecisionMetrics, QualityAssessment,
-    QualityMetrics, TimelinessMetrics, ValidityMetrics,
+    AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
+    QualityAssessment, QualityMetrics, TimelinessMetrics, ValidityMetrics,
 };
 
 /// Version of the serialized `ProfileReport` schema written by this build.
@@ -657,7 +657,14 @@ where
             } else {
                 let metrics: QualityMetrics =
                     serde_json::from_value(v).map_err(serde::de::Error::custom)?;
-                Ok(Some(QualityAssessment::exact(metrics)))
+                // A flat legacy quality object says nothing about how its
+                // numbers were obtained. Recording `Exact` here would invent
+                // that, and a gate asked about the whole source would then
+                // rest a verdict on numbers that may have come from a sample.
+                Ok(Some(QualityAssessment::new(
+                    metrics,
+                    MetricConfidence::Unrecorded,
+                )))
             }
         }
     }

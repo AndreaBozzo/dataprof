@@ -23,7 +23,18 @@ def _fixture() -> dict[str, Any]:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def _profile(path: Path, options: dict[str, Any]):
+def _generated_csv(rows: int) -> str:
+    """The fixture's second input, stated as a rule rather than as bytes.
+
+    It has to exceed the quality reservoir (10,000 values per column) for the
+    sampled-metric cases to mean anything, which is too much CSV to commit.
+    Both layers build it from this same rule, so they profile the same file.
+    """
+    body = "".join(f"K-{n},{n % 7}\n" for n in range(rows))
+    return f"key,bucket\n{body}"
+
+
+def _profile(paths: dict[str, Path], options: dict[str, Any]):
     """Map the fixture's option names onto this layer's spelling of them."""
     kwargs: dict[str, Any] = {}
     if "metrics" in options:
@@ -32,7 +43,7 @@ def _profile(path: Path, options: dict[str, Any]):
         kwargs["columns"] = options["columns"]
     if "max_rows" in options:
         kwargs["stop_condition"] = dp.StopCondition.max_rows(options["max_rows"])
-    return dp.profile_file(path, **kwargs)
+    return dp.profile_file(paths[options.get("input", "orders")], **kwargs)
 
 
 @pytest.fixture(scope="module")
@@ -43,15 +54,20 @@ def cases() -> list[dict[str, Any]]:
 
 
 @pytest.fixture(scope="module")
-def csv_path(tmp_path_factory) -> Path:
-    path = tmp_path_factory.mktemp("gate") / "orders.csv"
-    path.write_text(_fixture()["csv"], encoding="utf-8")
-    return path
+def csv_paths(tmp_path_factory) -> dict[str, Path]:
+    document = _fixture()
+    directory = tmp_path_factory.mktemp("gate")
+    paths = {"orders": directory / "orders.csv", "generated": directory / "generated.csv"}
+    paths["orders"].write_text(document["csv"], encoding="utf-8")
+    paths["generated"].write_text(_generated_csv(document["generated_rows"]), encoding="utf-8")
+    return paths
 
 
-def test_python_gate_matches_the_shared_fixture(csv_path: Path, cases: list[dict[str, Any]]):
+def test_python_gate_matches_the_shared_fixture(
+    csv_paths: dict[str, Path], cases: list[dict[str, Any]]
+):
     for case in cases:
-        report = _profile(csv_path, case["options"])
+        report = _profile(csv_paths, case["options"])
         result = report.check(**case["policy"])
         assert result.to_dict() == case["expected"], f"{case['name']}: {case['why']}"
 
@@ -88,4 +104,24 @@ def test_every_case_the_ticket_asks_for_is_covered(cases: list[dict[str, Any]]):
         and case["expected"]["evidence"]["coverage"] == "incomplete"
         and case["expected"]["scope"] == "full_source"
         for case in cases
+    )
+
+    # The other half of that rule: the same incomplete evidence is decidable
+    # once the policy asks about what was measured rather than the source.
+    assert any(
+        case["expected"]["verdict"] == "pass"
+        and case["expected"]["evidence"]["coverage"] == "incomplete"
+        and case["expected"]["scope"] == "observed"
+        for case in cases
+    )
+
+    # A metric sampled on a source that was read in full. Without this the two
+    # implementations can disagree on sampled-dimension handling while every
+    # other case still matches, because truncation reaches the same verdict by
+    # a different route.
+    assert any(
+        check["evidence"].get("reason") == "quality_sampled"
+        and case["expected"]["evidence"]["coverage"] == "complete"
+        for case in cases
+        for check in case["expected"]["checks"]
     )
