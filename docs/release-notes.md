@@ -1,5 +1,13 @@
 # Pending 0.12.0 changes
 
+- `python -m dataprof.check` evaluates a local file against the batch quality-gate
+  API (#710). It accepts JSON policy files and threshold flags, writes the gate
+  result to stdout with `--json`, and sends human summaries to stderr. Exit codes
+  are `0` for pass, `1` for a proven violation, and `2` for inconclusive results or
+  input errors. Baseline comparisons remain unsupported by the gate API;
+  `--baseline` explicitly exits `2`. See the
+  [CI entrypoint guide](python/README.md#python--m-dataprofcheck----ci-entrypoint-012).
+
 - Empty inputs now consistently carry an empty quality assessment with
   `quality_status: computed`, no score and no assessed dimensions (#723).
   Empty CSV files previously withheld quality while buffers and other formats

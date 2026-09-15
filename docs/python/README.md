@@ -901,6 +901,87 @@ so nothing depends on how a float was formatted into a sentence.
 See [`python/examples/etl_quality_gate.py`](../../python/examples/etl_quality_gate.py)
 for a runnable gate over four drops.
 
+### `python -m dataprof.check` -- CI entrypoint (0.12+)
+
+Evaluate the same policy from a shell or CI job:
+
+```bash
+python -m dataprof.check daily_drop.csv --min-quality 90 --max-null 'customer_id=0' --json
+python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
+```
+
+The policy file is a UTF-8 JSON object containing the `check()` keywords above.
+Commit it alongside the pipeline so threshold changes can be reviewed:
+
+```json
+{
+  "min_quality_score": 90,
+  "max_null_percentage": {"customer_id": 0, "*": 20},
+  "max_duplicate_rows": 0,
+  "require_metrics": ["quality"],
+  "scope": "full_source"
+}
+```
+
+Flags replace the corresponding policy-file key in full. For example,
+`--max-null '*=10'` replaces the entire `max_null_percentage` mapping, including
+any column-specific entries. Repeat `--max-null COLUMN=PERCENT`,
+`--min-dimension NAME=PERCENT`, or `--require-metric NAME` to supply multiple
+entries; the last occurrence of a repeated mapping key wins.
+`--min-quality`, `--max-duplicate-rows`, and `--scope` cover the other policy
+keywords. Empty policies, unknown keywords, and duplicate JSON keys (including
+inside dimension or column mappings) are input errors.
+
+`--engine`, `--format`, `--max-rows`, and repeatable `--metric PACK` pass through
+to `profile_file()`. As with the library, capped or sampled evidence may leave a
+full-source requirement inconclusive. `--scope observed` explicitly limits the
+claim to the analyzed population. A threshold on an unavailable metric stays
+unevaluated; an explicit `--require-metric` requirement fails if it is absent.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Every requirement passed; also used by `--help` |
+| `1` | The gate found a proven violation, even if other checks are unevaluated |
+| `2` | The gate is inconclusive, or an argument, policy, or source could not be read or used |
+
+Human summaries go to stderr. With `--json`, stdout contains only the existing
+`QualityGateResult.to_json()` document, including inconclusive results. Input
+errors produce no result document and leave stdout empty. Without `--json`,
+stdout is empty. `--help` prints usage to stdout and lists every flag and code.
+
+Baseline-relative gates await support in `ProfileReport.check()`.
+`--baseline PATH` currently exits `2` with an explicit unsupported-operation
+message, whether or not the path exists. It never ignores the requested
+comparison or substitutes an absolute check.
+
+For a project with `daily_drop.csv` and `quality-policy.json` checked in, this
+GitHub Actions job runs the gate and retains its result even when it fails:
+
+```yaml
+name: Data quality
+on: [push, pull_request]
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install dataprof==0.12.0
+      - name: Check incoming data
+        run: python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > verdict.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: quality-verdict
+          path: verdict.json
+```
+
+This example targets the 0.12 release. Before it is published, build this
+checkout with `uv sync` and `uv run maturin develop`, then invoke the module with
+`uv run --no-sync python -m dataprof.check ...`.
+
 ### `compare()`
 
 Detect quality drift or schema changes between two profiles (e.g. the same
