@@ -39,7 +39,7 @@ It earns its place twice. The first run is the first ten minutes with unfamiliar
 | You are doing this | Start with |
 |---|---|
 | Embedding profiling in a Rust service, ETL job, or batch tool | `cargo add dataprof` and `Profiler::new().analyze_file(...)` |
-| Gating a pipeline or CI job on data quality | Profile, then `report.check(...)` / `QualityPolicy::new()` — no CLI, no process exit |
+| Gating a pipeline or CI job on data quality | `report.check(...)` / `QualityPolicy::new()`, or [`python -m dataprof.check` (0.12+)](docs/python/README.md#python--m-dataprofcheck----ci-entrypoint-012) |
 | Inspecting files in notebooks, validation scripts, or data apps | `uv pip install dataprof` and `dp.profile(...)` |
 | Profiling streams, remote Parquet, or database queries | Rust feature flags, or a source-built Python extension with async/database features enabled |
 

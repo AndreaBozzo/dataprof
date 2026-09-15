@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -212,6 +213,28 @@ def acceptance_async_is_in_the_base_wheel(workdir: Path) -> None:
     check(report.columns == 2, "async profile_file() reads 2 columns")
 
 
+def acceptance_check_entrypoint(workdir: Path) -> None:
+    """The CI module and its JSON result must ship without optional dependencies."""
+    print("acceptance: quality-gate entrypoint")
+    source = workdir / "gate.csv"
+    source.write_text("id,amount\n1,10\n2,\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "dataprof.check", str(source), "--max-null", "*=100", "--json"],
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    check(result.returncode == 0, f"check entrypoint passes: {result.stderr.strip()}")
+    check(
+        json.loads(result.stdout)
+        == dp.profile_file(source).check(max_null_percentage=100).to_dict(),
+        "check entrypoint emits only the library gate result on stdout",
+    )
+
+
 def main() -> int:
     print(f"dataprof {dp.__version__} from {Path(dp.__file__).parent}")
     if Path(dp.__file__).resolve().parents[1].name == "python":
@@ -227,6 +250,7 @@ def main() -> int:
         acceptance_export_reload_compare(workdir)
         acceptance_agent_output_is_redacted(workdir)
         acceptance_async_is_in_the_base_wheel(workdir)
+        acceptance_check_entrypoint(workdir)
 
     print("\nwheel smoke passed")
     return 0
