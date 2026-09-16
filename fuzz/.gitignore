@@ -1,0 +1,5 @@
+/target/
+/artifacts/
+/coverage/
+# Keep reviewed seeds separate from the fuzzer's growing corpus.
+/corpus/

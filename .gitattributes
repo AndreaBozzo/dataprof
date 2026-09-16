@@ -26,3 +26,8 @@
 *.so binary
 *.pyd binary
 *.dll binary
+
+# Fuzz seeds are exact byte sequences, including malformed UTF-8 and CRLF.
+fuzz/seeds/** -text
+fuzz/seeds/**/*.bin binary
+fuzz/seeds/csv/quoted-record.csv whitespace=cr-at-eol

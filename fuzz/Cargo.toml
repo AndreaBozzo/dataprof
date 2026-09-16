@@ -1,0 +1,48 @@
+[package]
+name = "dataprof-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# Isolated from the published workspace: stable corpus replay needs no
+# libFuzzer, nightly toolchain, or sanitizer, including on Windows.
+[workspace]
+
+[features]
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+dataprof-core = { path = "../crates/dataprof-core" }
+dataprof-csv = { path = "../crates/dataprof-csv" }
+dataprof-json = { path = "../crates/dataprof-json" }
+dataprof-runtime = { path = "../crates/dataprof-runtime" }
+libfuzzer-sys = { version = "=0.4.13", optional = true }
+serde_json = "1.0.149"
+
+[[bin]]
+name = "csv"
+path = "fuzz_targets/csv.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]
+
+[[bin]]
+name = "report"
+path = "fuzz_targets/report.rs"
+test = false
+doc = false
+bench = false
+required-features = ["fuzzing"]

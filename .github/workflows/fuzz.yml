@@ -1,0 +1,106 @@
+name: Bounded Fuzzing
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'fuzz/**'
+      - 'crates/**'
+      - 'Cargo.*'
+      - '.github/workflows/fuzz.yml'
+      - '.github/actions/setup-rust/**'
+  push:
+    branches: [master]
+    paths:
+      - 'fuzz/**'
+      - 'crates/**'
+      - 'Cargo.*'
+      - '.github/workflows/fuzz.yml'
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  corpus:
+    name: Stable corpus (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-prefix: fuzz-stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          prefix-key: fuzz-corpus
+      - run: cargo test --manifest-path fuzz/Cargo.toml --locked --test smoke
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path fuzz/Cargo.toml --locked --all-targets -- -D warnings
+
+  libfuzzer:
+    name: ASan (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [csv, json, report]
+    env:
+      FUZZ_TARGET: ${{ matrix.target }}
+      EVENT_NAME: ${{ github.event_name }}
+      RUSTUP_TOOLCHAIN: nightly-2026-09-01
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-01
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          prefix-key: fuzz-asan-${{ matrix.target }}
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fetch locked harness dependencies
+        run: cargo fetch --manifest-path fuzz/Cargo.toml --locked
+      - name: Replay seeds or run a bounded campaign
+        shell: bash
+        env:
+          CARGO_NET_OFFLINE: 'true'
+        run: |
+          mkdir -p "fuzz/corpus/$FUZZ_TARGET"
+          cp fuzz/seeds/"$FUZZ_TARGET"/* "fuzz/corpus/$FUZZ_TARGET/"
+          # PRs and pushes replay a fixed corpus. Scheduled/manual runs mutate
+          # it for five minutes per target, retaining all discoveries.
+          budget=(-runs=0)
+          if [[ "$EVENT_NAME" == schedule || "$EVENT_NAME" == workflow_dispatch ]]; then
+            budget=(-max_total_time=300)
+          fi
+          cargo fuzz run "$FUZZ_TARGET" --features fuzzing -- \
+            "${budget[@]}" -max_len=4096 -timeout=10 -rss_limit_mb=1024 -seed=274
+          git diff --exit-code -- fuzz/Cargo.lock
+      - name: Retain crash inputs and evolved corpus
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}/
+            fuzz/corpus/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14
