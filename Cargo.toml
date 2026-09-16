@@ -94,6 +94,7 @@ readme = "README.md"
 documentation = "https://docs.rs/dataprof"
 homepage = "https://andreabozzo.github.io/dataprof/"
 exclude = [
+    "fuzz/*",
     "assets/animations/*",
     "assets/images/*.png",
     "examples/test_data/*",

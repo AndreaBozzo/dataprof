@@ -448,6 +448,12 @@ rationale.
 
 ### Testing Standards
 
+For bounded parser and report fuzzing, run
+`cargo test --manifest-path fuzz/Cargo.toml --locked --test smoke`.
+The [fuzzing guide](../fuzz/README.md) covers stable Windows-compatible corpus
+replay, pinned Linux sanitizer campaigns, retained artifacts, and minimizing
+findings into ordinary regression tests.
+
 - **Unit tests**: Test individual functions and modules
 - **Integration tests**: Test end-to-end workflows
 - **Edge cases**: Test with:
