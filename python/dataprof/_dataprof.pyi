@@ -8,7 +8,7 @@ wraps the module-level functions with Python-friendly APIs.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NoReturn
 
 __version__: str
 _compiled_capabilities: dict[str, bool]
@@ -211,22 +211,9 @@ class ColumnProfile:
 class DataQualityMetrics:
     """Quality metrics informed by ISO 8000/25012 concepts."""
 
-    missing_values_ratio: float
-    complete_records_ratio: float
-    null_columns: list[str]
-    data_type_consistency: float
-    format_violations: int
-    encoding_issues: int
-    duplicate_rows: int
-    key_uniqueness: float
-    high_cardinality_warning: bool
-    outlier_ratio: float
-    range_violations: int
-    negative_values_in_positive: int
-    future_dates_count: int
-    stale_data_ratio: float
-    temporal_violations: int
-    invalid_date_values: int
+    @staticmethod
+    def _attribute_error(name: str) -> NoReturn: ...
+
     low_sample_warning: bool
     score_weights: dict[str, float]
 

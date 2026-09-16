@@ -1,5 +1,33 @@
 # Pending 0.12.0 changes
 
+- **Breaking (Python):** Remove the 16 flat `DataQualityMetrics` accessors in
+  **0.12** (#509), following their deprecation in 0.9. During beta, with no
+  downstream dependents, the nested dimension API replaces them now. Native and
+  restored reports raise `AttributeError` naming the exact replacement key;
+  the old names no longer appear in `dir()` or the type stubs. Use the nested
+  dimension only after checking it is not
+  `None`; an unassessed dimension must not become a fabricated zero or perfect
+  score. For example:
+
+  ```python
+  quality = report.quality
+  completeness = quality.completeness if quality is not None else None
+  missing_ratio = (
+      completeness["missing_values_ratio"] if completeness is not None else None
+  )
+  ```
+
+  | Dimension | Removed flat names (replacement keys) |
+  | --- | --- |
+  | `completeness` | `missing_values_ratio`, `complete_records_ratio`, `null_columns` |
+  | `consistency` | `data_type_consistency`, `format_violations`, `encoding_issues` |
+  | `uniqueness` | `duplicate_rows`, `key_uniqueness`, `high_cardinality_warning` |
+  | `accuracy` | `outlier_ratio`, `range_violations`, `negative_values_in_positive` |
+  | `timeliness` | `future_dates_count`, `stale_data_ratio`, `temporal_violations`, `invalid_date_values` |
+
+  Nested values, report serialization, and the report schema version are
+  unchanged. Existing saved reports still load through the nested API.
+
 - `python -m dataprof.check` evaluates a local file against the batch quality-gate
   API (#710). It accepts JSON policy files and threshold flags, writes the gate
   result to stdout with `--json`, and sends human summaries to stderr. Exit codes

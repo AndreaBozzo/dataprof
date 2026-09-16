@@ -1,7 +1,4 @@
-use std::ffi::CString;
-
-use pyo3::PyErr;
-use pyo3::exceptions::PyDeprecationWarning;
+use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -311,8 +308,8 @@ impl PyColumnProfile {
 
 /// Python wrapper for quality dimensions informed by ISO 8000/25012 concepts.
 ///
-/// Exposes both flat backward-compatible properties and new nested dimension
-/// accessors (completeness, consistency, uniqueness, accuracy, timeliness,
+/// Exposes nested dimension accessors
+/// (completeness, consistency, uniqueness, accuracy, timeliness,
 /// validity, precision).
 /// Un-computed dimensions are `None` at the Python level.
 #[pyclass(name = "DataQualityMetrics", from_py_object)]
@@ -327,99 +324,35 @@ impl From<&QualityMetrics> for PyDataQualityMetrics {
     }
 }
 
-fn warn_flat_quality_accessor(py: Python<'_>, name: &str) -> PyResult<()> {
-    let message = CString::new(format!(
-        "DataQualityMetrics.{name} is deprecated; use the nested dimension properties \
-         such as completeness, consistency, uniqueness, accuracy, timeliness, validity, or precision instead"
-    ))
-    .expect("warning message contains no nul bytes");
-    let category = py.get_type::<PyDeprecationWarning>();
-    PyErr::warn(py, &category, message.as_c_str(), 2)
-}
-
 #[pymethods]
 impl PyDataQualityMetrics {
-    // -- Deprecated flat properties --
+    // Shared with the restored-report adapter so removed names and migration
+    // hints have a single definition. This private helper always raises.
+    #[staticmethod]
+    fn _attribute_error(name: &str) -> PyResult<()> {
+        let dimension = match name {
+            "missing_values_ratio" | "complete_records_ratio" | "null_columns" => "completeness",
+            "data_type_consistency" | "format_violations" | "encoding_issues" => "consistency",
+            "duplicate_rows" | "key_uniqueness" | "high_cardinality_warning" => "uniqueness",
+            "outlier_ratio" | "range_violations" | "negative_values_in_positive" => "accuracy",
+            "future_dates_count"
+            | "stale_data_ratio"
+            | "temporal_violations"
+            | "invalid_date_values" => "timeliness",
+            _ => {
+                return Err(PyAttributeError::new_err(format!(
+                    "'DataQualityMetrics' object has no attribute {name:?}"
+                )));
+            }
+        };
+        Err(PyAttributeError::new_err(format!(
+            "DataQualityMetrics.{name} was removed in 0.12; use quality.{dimension}[\"{name}\"] \
+             instead (check quality.{dimension} is not None)."
+        )))
+    }
 
-    #[getter]
-    fn missing_values_ratio(&self, py: Python<'_>) -> PyResult<f64> {
-        warn_flat_quality_accessor(py, "missing_values_ratio")?;
-        Ok(self.inner.missing_values_ratio())
-    }
-    #[getter]
-    fn complete_records_ratio(&self, py: Python<'_>) -> PyResult<f64> {
-        warn_flat_quality_accessor(py, "complete_records_ratio")?;
-        Ok(self.inner.complete_records_ratio())
-    }
-    #[getter]
-    fn null_columns(&self, py: Python<'_>) -> PyResult<Vec<String>> {
-        warn_flat_quality_accessor(py, "null_columns")?;
-        Ok(self.inner.null_columns().to_vec())
-    }
-    #[getter]
-    fn data_type_consistency(&self, py: Python<'_>) -> PyResult<f64> {
-        warn_flat_quality_accessor(py, "data_type_consistency")?;
-        Ok(self.inner.data_type_consistency())
-    }
-    #[getter]
-    fn format_violations(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "format_violations")?;
-        Ok(self.inner.format_violations())
-    }
-    #[getter]
-    fn encoding_issues(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "encoding_issues")?;
-        Ok(self.inner.encoding_issues())
-    }
-    #[getter]
-    fn duplicate_rows(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "duplicate_rows")?;
-        Ok(self.inner.duplicate_rows())
-    }
-    #[getter]
-    fn key_uniqueness(&self, py: Python<'_>) -> PyResult<f64> {
-        warn_flat_quality_accessor(py, "key_uniqueness")?;
-        Ok(self.inner.key_uniqueness())
-    }
-    #[getter]
-    fn high_cardinality_warning(&self, py: Python<'_>) -> PyResult<bool> {
-        warn_flat_quality_accessor(py, "high_cardinality_warning")?;
-        Ok(self.inner.high_cardinality_warning())
-    }
-    #[getter]
-    fn outlier_ratio(&self, py: Python<'_>) -> PyResult<f64> {
-        warn_flat_quality_accessor(py, "outlier_ratio")?;
-        Ok(self.inner.outlier_ratio())
-    }
-    #[getter]
-    fn range_violations(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "range_violations")?;
-        Ok(self.inner.range_violations())
-    }
-    #[getter]
-    fn negative_values_in_positive(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "negative_values_in_positive")?;
-        Ok(self.inner.negative_values_in_positive())
-    }
-    #[getter]
-    fn future_dates_count(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "future_dates_count")?;
-        Ok(self.inner.future_dates_count())
-    }
-    #[getter]
-    fn stale_data_ratio(&self, py: Python<'_>) -> PyResult<f64> {
-        warn_flat_quality_accessor(py, "stale_data_ratio")?;
-        Ok(self.inner.stale_data_ratio())
-    }
-    #[getter]
-    fn temporal_violations(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "temporal_violations")?;
-        Ok(self.inner.temporal_violations())
-    }
-    #[getter]
-    fn invalid_date_values(&self, py: Python<'_>) -> PyResult<usize> {
-        warn_flat_quality_accessor(py, "invalid_date_values")?;
-        Ok(self.inner.invalid_date_values())
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Self::_attribute_error(name)
     }
 
     /// True when the underlying sample was below the recommended minimum
@@ -833,10 +766,8 @@ impl PyDataQualityMetrics {
     }
 
     fn __str__(&self) -> String {
-        // Render only what was assessed. The flat accessors below substitute a
-        // perfect 100.0 for an absent dimension (kept for the deprecated
-        // getters), so reading them here would print "consistency=100.0%" for a
-        // dimension that never ran — a reassuring number with nothing behind it.
+        // Render only what was assessed: a skipped dimension must never print
+        // "consistency=100.0%", a reassuring number with nothing behind it.
         // No overall score means no dimension was assessed, so there is
         // nothing below to render either.
         let Some(score) = self.inner.overall_score() else {
