@@ -605,14 +605,12 @@ column used to report exactly that. Serialized reports follow the same rule: an
 unassessed dimension has no key, so a stored report cannot be read as a perfect
 score either.
 
-Flat `DataQualityMetrics` accessors are deprecated in 0.9. Use nested
-dimensions so skipped dimensions are explicit:
+Flat `DataQualityMetrics` accessors, deprecated in 0.9, are removed in 0.12.
+The old names raise `AttributeError` naming the replacement key. Use nested
+dimensions so skipped dimensions are explicit (see the
+[migration table](../release-notes.md#pending-0120-changes)):
 
 ```python
-# Old
-q.missing_values_ratio
-
-# New
 if q.completeness is not None:
     q.completeness["missing_values_ratio"]
 ```

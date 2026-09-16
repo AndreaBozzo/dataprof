@@ -149,9 +149,9 @@ meaning the computation was asked for and broke, with the message in
 <details>
 <summary>Old patterns: flat evidence accessors</summary>
 
-`q.missing_values_ratio`, `q.duplicate_rows`, `q.future_dates_count` and the
-other flat accessors still resolve but emit a `DeprecationWarning`. Read the
-nested dimension dict instead.
+Flat evidence accessors were removed in 0.12 and raise `AttributeError`.
+Read the nested dimension dicts listed above, checking for `None` first.
+See the [migration table](../../../../docs/release-notes.md#pending-0120-changes).
 
 </details>
 

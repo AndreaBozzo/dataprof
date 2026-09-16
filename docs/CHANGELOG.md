@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 For the user-oriented overview, upgrade checklist, and migration details, read
 the [0.11.0 release notes](release-notes.md).
 
+## [Unreleased]
+
+### Removed
+
+- Python: Remove all 16 flat `DataQualityMetrics` accessors in **0.12** (#509).
+  Native and restored reports raise `AttributeError` naming the exact nested
+  replacement key. Type stubs and introspection expose only the nested API;
+  persisted reports and metric values are unchanged. See the
+  [migration table](release-notes.md#pending-0120-changes).
+
 ## [0.11.0] - 2026-08-25
 
 ### Added

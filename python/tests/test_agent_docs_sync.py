@@ -22,7 +22,6 @@ import ast
 import inspect
 import json
 import re
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -326,48 +325,22 @@ def test_documented_quality_dimension_keys_exist() -> None:
     assert not wrong, f"reference/api.md documents quality keys that do not exist: {wrong}"
 
 
-def test_agent_docs_do_not_teach_deprecated_accessors() -> None:
-    """No agent doc may name a DataQualityMetrics accessor that warns on access.
-
-    Existence is not enough. The flat quality accessors were deprecated in 0.9
-    but still resolve, still appear in ``dir()``, and are unmarked in the stubs,
-    so a reference written by introspection documents them without noticing
-    (#509). Access each one and let the warning decide.
-    """
+def test_agent_docs_teach_existing_quality_accessors() -> None:
+    """Removed flat accessors must not return to agent-facing examples (#509)."""
     quality = dataprof.profile(
         str(REPO_ROOT / ".claude/skills/dataprof/evals/fixtures/inventory_before.csv")
     ).quality
-
-    deprecated = set()
-    for name in dir(type(quality)):
-        if name.startswith("_"):
-            continue
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", DeprecationWarning)
-            try:
-                getattr(quality, name)
-            except Exception:  # pragma: no cover - not an accessor we can probe
-                continue
-        if any(issubclass(w.category, DeprecationWarning) for w in caught):
-            deprecated.add(name)
-
-    assert deprecated, (
-        "probe found no deprecated quality accessors; if the deprecation was "
-        "lifted or removed, delete this test rather than letting it pass vacuously"
-    )
-
-    # Only attribute-style access counts. `missing_values_ratio` named as a key
-    # of the completeness dict is the correct way to reach the same evidence;
-    # `quality.missing_values_ratio` is the deprecated way.
-    taught = []
+    assert quality is not None
+    missing = []
     for rel, text in _docs():
         body = re.sub(r"<details>.*?</details>", "", text, flags=re.DOTALL)
-        taught += [
-            f"{rel}: quality.{name}" for name in _QUALITY_ATTR.findall(body) if name in deprecated
+        missing += [
+            f"{rel}: quality.{name}"
+            for name in _QUALITY_ATTR.findall(body)
+            if not hasattr(quality, name)
         ]
-
-    assert not taught, (
-        f"agent docs name deprecated quality accessors: {sorted(set(taught))}. "
+    assert not missing, (
+        f"agent docs name absent quality accessors: {sorted(set(missing))}. "
         "Document the nested dimension key instead; see #509."
     )
 

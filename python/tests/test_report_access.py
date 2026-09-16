@@ -129,44 +129,65 @@ class TestProfileReport:
         assert quality.precision["inconsistent_precision_values"] == 2
         assert quality.precision["decimal_places_consistency"] == 80.0
 
+    @pytest.mark.parametrize("restore", ["native", "dict", "json", "file"])
+    @pytest.mark.parametrize("dimensions", [None, ["validity"]])
     @pytest.mark.parametrize(
-        ("attr", "dimension", "key", "default"),
+        ("dimension", "names"),
         [
-            ("missing_values_ratio", "completeness", "missing_values_ratio", 0.0),
-            ("complete_records_ratio", "completeness", "complete_records_ratio", 100.0),
-            ("null_columns", "completeness", "null_columns", []),
-            ("data_type_consistency", "consistency", "data_type_consistency", 100.0),
-            ("format_violations", "consistency", "format_violations", 0),
-            ("encoding_issues", "consistency", "encoding_issues", 0),
-            ("duplicate_rows", "uniqueness", "duplicate_rows", 0),
-            ("key_uniqueness", "uniqueness", "key_uniqueness", 100.0),
-            ("high_cardinality_warning", "uniqueness", "high_cardinality_warning", False),
-            ("outlier_ratio", "accuracy", "outlier_ratio", 0.0),
-            ("range_violations", "accuracy", "range_violations", 0),
-            ("negative_values_in_positive", "accuracy", "negative_values_in_positive", 0),
-            ("future_dates_count", "timeliness", "future_dates_count", 0),
-            ("stale_data_ratio", "timeliness", "stale_data_ratio", 0.0),
-            ("temporal_violations", "timeliness", "temporal_violations", 0),
+            ("completeness", ("missing_values_ratio", "complete_records_ratio", "null_columns")),
+            ("consistency", ("data_type_consistency", "format_violations", "encoding_issues")),
+            ("uniqueness", ("duplicate_rows", "key_uniqueness", "high_cardinality_warning")),
+            ("accuracy", ("outlier_ratio", "range_violations", "negative_values_in_positive")),
+            (
+                "timeliness",
+                (
+                    "future_dates_count",
+                    "stale_data_ratio",
+                    "temporal_violations",
+                    "invalid_date_values",
+                ),
+            ),
         ],
     )
-    def test_quality_flat_accessors_warn_and_match_nested(
-        self, report, attr, dimension, key, default
+    def test_removed_quality_accessors_name_replacement(
+        self, tmp_path, restore, dimensions, dimension, names
     ):
-        q = report.quality
-        assert q is not None
-        nested = getattr(q, dimension)
+        report = dataprof.profile(CSV_FILE, quality_dimensions=dimensions)
+        document = report.to_dict()
+        if restore == "dict":
+            report = dataprof.ProfileReport.from_dict(document)
+        elif restore == "json":
+            report = dataprof.ProfileReport.from_json(report.to_json())
+        elif restore == "file":
+            path = tmp_path / "report.json"
+            report.save(path)
+            report = dataprof.ProfileReport.load(path)
+        quality = report.quality
+        assert quality is not None
+        if dimensions is not None:
+            assert getattr(quality, dimension) is None
+        for name in names:
+            assert name not in dir(quality)
+            assert not hasattr(quality, name)
+            with pytest.raises(AttributeError) as caught:
+                getattr(quality, name)
+            assert str(caught.value) == (
+                f"DataQualityMetrics.{name} was removed in 0.12; "
+                f'use quality.{dimension}["{name}"] instead '
+                f"(check quality.{dimension} is not None)."
+            )
+        # Rejected lookups must not materialize defaults for absent dimensions
+        # or otherwise change the persisted report.
+        assert report.to_dict() == document
 
-        with pytest.warns(DeprecationWarning, match=f"DataQualityMetrics\\.{attr}"):
-            value = getattr(q, attr)
-
-        if nested is None:
-            # The dimension assessed nothing, so there is no evidence to agree
-            # with (#622). The deprecated flat accessor keeps substituting its
-            # documented default until #509 settles its end state, which is the
-            # divergence that made the evidence dicts worth withholding.
-            assert value == default
-        else:
-            assert value == nested.get(key, default)
+    @pytest.mark.parametrize("restored", [False, True])
+    def test_unknown_quality_accessor_raises_attribute_error(self, report, restored):
+        if restored:
+            report = dataprof.ProfileReport.from_dict(report.to_dict())
+        quality = report.quality
+        assert quality is not None
+        with pytest.raises(AttributeError, match="has no attribute.*unknown_metric"):
+            getattr(quality, "unknown_metric")
 
     @pytest.mark.parametrize(
         ("dims", "present", "absent"),
@@ -183,15 +204,6 @@ class TestProfileReport:
         assert getattr(q, present) is not None
         for dimension in absent:
             assert getattr(q, dimension) is None
-
-    def test_skipped_flat_accessor_warns_and_returns_default(self):
-        report = dataprof.profile(CSV_FILE, quality_dimensions=["completeness"])
-        q = report.quality
-        assert q is not None
-        assert q.uniqueness is None
-
-        with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.key_uniqueness"):
-            assert q.key_uniqueness == 100.0
 
     @pytest.mark.parametrize("source", ["file", "dict"])
     def test_empty_quality_dimensions_means_not_analyzed(self, source, tmp_path):
@@ -269,15 +281,6 @@ class TestProfileReport:
         q = dataprof.profile({"a": []}).quality
         assert q is not None
         assert str(q) == "DataQualityMetrics(not assessed)"
-
-    def test_reloaded_quality_flat_accessors_warn(self, report):
-        reloaded = dataprof.ProfileReport.from_json(report.to_json())
-        q = reloaded.quality
-        assert q is not None
-        assert q.completeness is not None
-
-        with pytest.warns(DeprecationWarning, match="DataQualityMetrics\\.missing_values_ratio"):
-            assert q.missing_values_ratio == q.completeness["missing_values_ratio"]
 
     def test_to_dict(self, report):
         d = report.to_dict()

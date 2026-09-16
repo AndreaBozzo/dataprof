@@ -4,7 +4,7 @@ A ``ProfileReport`` has two backings. One wraps the native report returned by
 the extension; the other (``_DictBackedReport`` and friends) reconstructs the
 same surface from a plain dict, and is what ``from_dict()``, ``from_json()``
 and ``load()`` return. Nothing asserted the two agreed, and they had already
-drifted — the deprecation set is maintained separately in each (#509), and
+drifted — for example,
 ``semantic_hint_bindings`` was written by ``to_dict()`` but never read back.
 
 Saving and reloading a report must not change what it reports.
@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import math
-import warnings
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from types import SimpleNamespace
 from typing import Any, cast
@@ -152,17 +151,10 @@ def _public_names(obj: object) -> set[str]:
 
 
 def _read(obj: object, name: str) -> Any:
-    """Read a member, calling it if it is a zero-argument method.
-
-    Deprecation warnings from the flat quality accessors are suppressed: this
-    test asserts the *values* agree. That the two backings warn consistently is
-    #509's territory.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        value = getattr(obj, name)
-        if callable(value):
-            value = value()
+    """Read a member, calling it if it is a zero-argument method."""
+    value = getattr(obj, name)
+    if callable(value):
+        value = value()
     # to_json() differs only in the key order the two backings happen to build
     # their dicts in; compare the decoded documents, not the text.
     if name == "to_json" and isinstance(value, str):
