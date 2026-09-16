@@ -15,6 +15,7 @@ use serde_json::Value;
 pub const MAX_INPUT_BYTES: usize = 4096;
 pub const MAX_ROWS: usize = 32;
 
+/// Invariants every successful parse owes its caller, whatever produced it.
 fn check_columns(columns: &[ColumnProfile], rows: usize) {
     assert!(rows <= MAX_ROWS);
     let names: HashSet<_> = columns.iter().map(|column| &column.name).collect();
@@ -31,6 +32,7 @@ fn check_columns(columns: &[ColumnProfile], rows: usize) {
     let _: Value = serde_json::from_slice(&encoded).expect("columns are valid JSON");
 }
 
+/// A refused parse must say why: an empty message is a lost diagnosis.
 fn check_error(error: &DataProfilerError) {
     assert!(
         !error.to_string().is_empty(),
@@ -38,6 +40,12 @@ fn check_error(error: &DataProfilerError) {
     );
 }
 
+/// Profile the bytes as CSV across header, strict/flexible, and
+/// detected/explicit delimiter combinations.
+///
+/// Delimiter detection reads from memory, so it cannot fail and must choose a
+/// known candidate. Every successful parse names its columns exactly as the
+/// header did, and every refusal carries a typed error rather than a default.
 pub fn csv(data: &[u8]) {
     if data.len() > MAX_INPUT_BYTES {
         return;
@@ -73,6 +81,12 @@ pub fn csv(data: &[u8]) {
     }
 }
 
+/// Read the bytes as a JSON document, as JSONL, and under format sniffing,
+/// with each error policy.
+///
+/// The scanner and the profiler see the same bytes through the same config, so
+/// they must agree on success, on row and skipped counts, on the detected
+/// format, and on first-seen column order. A strict success skips nothing.
 pub fn json(data: &[u8]) {
     if data.len() > MAX_INPUT_BYTES {
         return;
@@ -139,6 +153,13 @@ fn sampled_row_ranges(document: &Value) -> Option<&Value> {
     .filter(|ranges| !ranges.is_null())
 }
 
+/// Deserialize the bytes as a [`ProfileReport`] and check what survives.
+///
+/// A document the reader cannot honour must be refused, never repaired into a
+/// plausible report: non-JSON bytes, a future schema version, an explicit null
+/// `quality_status`, and a status contradicting the assessment it describes.
+/// An accepted report re-serializes to valid JSON and reloads unchanged, and
+/// absence stays distinct from emptiness on the way through.
 pub fn report(data: &[u8]) {
     if data.len() > MAX_INPUT_BYTES {
         return;
