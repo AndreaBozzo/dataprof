@@ -125,12 +125,18 @@ pub fn json(data: &[u8]) {
     }
 }
 
-/// The recorded row selection, treating an explicit null as the absence serde
-/// cannot distinguish it from. An empty list stays distinct from both.
+/// The recorded row selection, read through the legacy `scan_info` alias as
+/// well so a legacy document is compared against its canonical re-emission.
+/// An explicit null is the absence serde cannot tell it apart from; an empty
+/// list stays distinct from both.
 fn sampled_row_ranges(document: &Value) -> Option<&Value> {
-    document
-        .pointer("/execution/sampled_row_ranges")
-        .filter(|ranges| !ranges.is_null())
+    [
+        "/execution/sampled_row_ranges",
+        "/scan_info/sampled_row_ranges",
+    ]
+    .into_iter()
+    .find_map(|pointer| document.pointer(pointer))
+    .filter(|ranges| !ranges.is_null())
 }
 
 pub fn report(data: &[u8]) {

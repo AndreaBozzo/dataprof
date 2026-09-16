@@ -32,7 +32,7 @@ against every allocation or hang.
 | --- | --- |
 | `csv` | Delimiter detection and reader profiling; header/headerless, strict/flexible, detected/explicit delimiter. Successful results have unique ordered names, bounded row counts, coherent null/distinct counts, and serializable columns. Invalid UTF-8 and duplicate headers must return typed errors; ragged rows fail strictly or follow documented padding/truncation. |
 | `json` | JSON document, JSONL, and format sniffing, under strict and skip policies. Scanner and profiler agree on success, ordered columns, rows, skipped records, and format. Empty objects count as records. Strict success has no skipped records. |
-| `report` | Rust `ProfileReport` deserialization, including legacy and current versions. Accepted reports reserialize to valid JSON and reload with their version, quality status, and whole emitted document unchanged. Missing, null, and empty values are compared distinctly, and a recorded row selection of zero rows stays distinct from no selection. Rejected outright: non-JSON input, future versions, an explicit null `quality_status`, and a status contradicting the presence of the assessment it describes. |
+| `report` | Rust `ProfileReport` deserialization, including legacy and current versions. Accepted reports reserialize to valid JSON and reload with their version, quality status, and whole emitted document unchanged. Missing, null, and empty values in the emitted document are compared distinctly. A recorded row selection of zero rows stays distinct from no selection, read through the legacy `scan_info` alias so a legacy document is compared against its canonical re-emission; absent and explicit null are one case there, because the field cannot tell them apart. Rejected outright: non-JSON input, future versions, an explicit null `quality_status`, and a status contradicting the presence of the assessment it describes. |
 
 Parser errors are valid outcomes, not crashes. Panics and invariant violations
 are never caught or turned into defaults. Report deserialization uses its
@@ -109,9 +109,10 @@ Seeds are small synthetic reproductions of already documented boundaries:
 - JSON zero-field records (#463), first-seen column order (#465), nested nulls,
   pretty documents versus JSONL, non-object/malformed records, excessive
   nesting, invalid UTF-8/numbers, Unicode, and the row cap.
-- Report legacy/current/future versions (#374), absent/null/empty quality and
-  row-range evidence, contradictory/null quality status (#715), and truncated
-  non-JSON bytes.
+- Report legacy/current/future versions (#374), the legacy `scan_info` alias
+  carrying row-range evidence, absent/null/empty quality and row-range
+  evidence, contradictory/null quality status (#715), and truncated non-JSON
+  bytes.
 
 #461 (Parquet/Python dependency routing) and #464 (dependency security policy)
 are outside these parser and report targets. No exhaustive correctness or
