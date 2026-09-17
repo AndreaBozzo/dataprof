@@ -87,6 +87,11 @@ jobs:
           if [ -d "benchmark-reports/target/criterion" ]; then
             mkdir -p pages-content/benchmarks
             cp -r benchmark-reports/target/criterion/. pages-content/benchmarks/
+            if [ -d "benchmark-reports/benchmark-results/comparison" ]; then
+              mkdir -p pages-content/benchmarks/comparison
+              cp benchmark-reports/benchmark-results/comparison/results.json pages-content/benchmarks/comparison/
+              cp benchmark-reports/benchmark-results/comparison/comparison.md pages-content/benchmarks/comparison/
+            fi
             python3 .github/scripts/build_benchmark_pages.py pages-content/benchmarks
           else
             echo "No Criterion data available; publishing placeholder benchmarks page"

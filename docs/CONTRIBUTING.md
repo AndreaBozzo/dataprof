@@ -515,6 +515,11 @@ cargo bench
 cargo check --workspace --all-targets
 ```
 
+The benchmark suite inventory, reproducible Python comparison command, and shared
+CI-to-website artifact contract live in [benches/README.md](../benches/README.md).
+Keep new benchmark scenarios within that structure so they remain publishable
+alongside the existing Criterion reports.
+
 ### Project Structure
 
 - `crates/dataprof/src/` - Public `dataprof` facade source

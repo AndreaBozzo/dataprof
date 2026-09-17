@@ -1,0 +1,80 @@
+/* Benchmark evidence shares the site's tokens; it works without JavaScript. */
+.bench-hero { display: grid; grid-template-columns: 1.45fr 1fr; gap: 48px; padding: 64px 0 38px; align-items: center; }
+.bench-hero h1 { font-size: clamp(2.6rem, 5vw, 4.25rem); max-width: 13ch; letter-spacing: -.045em; margin: 20px 0; }
+.bench-hero .lede { color: var(--muted); max-width: 58ch; font-size: 1.1rem; }
+.bench-hero .btn-primary { color: var(--bg-raised); }
+.evidence-card { padding: 26px; background: var(--terminal-bg); color: var(--terminal-ink); border-radius: 16px; overflow: hidden; }
+.evidence-card .eyebrow { color: #e5a27d; }
+.evidence-card h2 { margin: 14px 0 22px; font-size: 1.25rem; }
+.evidence-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 12px 22px; font-size: .88rem; }
+.evidence-card dt { color: #94a9bc; }
+.evidence-card dd { margin: 0; overflow-wrap: anywhere; }
+.evidence-card a { color: #a8d8f7; }
+.suite-nav { display: flex; gap: 24px; flex-wrap: wrap; border-block: 1px solid var(--line); padding: 16px 0; margin-bottom: 38px; }
+.suite-nav a { text-decoration: none; color: var(--muted); font-size: .9rem; font-weight: 650; }
+.suite-nav a:hover { color: var(--accent-ink); }
+.section-head { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin: 48px 0 20px; }
+.section-head h2 { font-size: 1.75rem; margin: 9px 0; }
+.section-head p, .section-note { color: var(--muted); max-width: 72ch; margin: 8px 0; }
+.comparison-card { padding: 28px; }
+.chart-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.mode-switch { display: none; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 4px; }
+.js .mode-switch { display: flex; }
+.mode-switch button { border: 0; background: none; color: var(--muted); padding: 9px 14px; border-radius: 7px; font: inherit; font-size: .88rem; cursor: pointer; }
+.mode-switch button[aria-selected="true"] { background: var(--accent); color: var(--bg-raised); }
+.chart-unit { color: var(--muted); font-size: .85rem; }
+.timing-panel h3 { font-size: 1rem; margin-bottom: 8px; }
+.timing-panel > p { color: var(--muted); font-size: .9rem; margin: 0 0 22px; }
+.timing-panel + .timing-panel { margin-top: 28px; }
+.js .timing-panel + .timing-panel { margin-top: 0; }
+.timing-row { display: grid; grid-template-columns: 145px minmax(0, 1fr) 145px; align-items: center; gap: 16px; min-height: 56px; border-bottom: 1px solid var(--line); }
+.timing-name { font-size: .91rem; font-weight: 600; }
+.timing-row.is-dataprof .timing-name { color: var(--rust); }
+.timing-value { font-size: .86rem; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.timing-track { height: 24px; position: relative; background: repeating-linear-gradient(to right, transparent, transparent calc(25% - 1px), var(--line) calc(25% - 1px), var(--line) 25%); }
+.timing-track::before { content: ""; height: 1px; background: var(--line); position: absolute; top: 11px; width: 100%; }
+.timing-iqr { position: absolute; top: 5px; height: 14px; min-width: 2px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.timing-median { position: absolute; top: 7px; width: 10px; height: 10px; border-radius: 50%; transform: translateX(-50%); background: var(--accent); }
+.is-dataprof .timing-iqr { background: color-mix(in srgb, var(--rust) 32%, transparent); }
+.is-dataprof .timing-median { background: var(--rust); }
+.chart-legend { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-top: 14px; color: var(--muted); font-size: .8rem; }
+.scope-note { border-left: 3px solid var(--rust); background: color-mix(in srgb, var(--rust) 6%, var(--bg-raised)); padding: 14px 18px; margin: 24px 0; font-size: .91rem; color: var(--muted); }
+.scope-note strong { color: var(--ink); }
+.evidence-details { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 14px; }
+summary { cursor: pointer; font-weight: 600; color: var(--accent-ink); }
+.evidence-details dl { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 10px 18px; font-size: .88rem; }
+.evidence-details dt { color: var(--muted); }
+.evidence-details dd { margin: 0; overflow-wrap: anywhere; }
+.download-links { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 22px; font-size: .88rem; }
+.download-links a { font-weight: 600; }
+.section-head input { background: var(--bg-raised); color: var(--ink); border: 1px solid var(--line); border-radius: 9px; padding: 11px 14px; font: inherit; font-size: .9rem; max-width: 100%; }
+.filter-control { display: none; }
+.js .filter-control { display: block; }
+.filter-control label { display: block; font-size: .78rem; color: var(--muted); margin-bottom: 5px; }
+.group-card { box-shadow: none; min-width: 0; }
+.group-card .group-preview { max-height: 330px; overflow: auto; }
+.criterion-heading { display: flex; align-items: center; gap: 12px; }
+.criterion-heading .pill { font-size: .72rem; }
+.repro-section { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 54px; }
+.repro-section article { padding: 26px; min-width: 0; }
+.repro-section h2 { font-size: 1.25rem; margin: 12px 0; }
+.repro-section p { color: var(--muted); font-size: .93rem; }
+.repro-section pre { padding: 18px; border-radius: 9px; background: var(--terminal-bg); color: var(--terminal-ink); overflow-x: auto; font-size: .79rem; line-height: 1.8; }
+.protocol-list { padding-left: 20px; color: var(--muted); font-size: .91rem; }
+.protocol-list li { margin: 10px 0; }
+:is(section, article)[id] { scroll-margin-top: 85px; }
+:focus-visible { outline: 3px solid var(--rust); outline-offset: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 760px) {
+  .bench-hero { grid-template-columns: 1fr; gap: 20px; padding-top: 36px; }
+  .bench-hero h1 { max-width: 16ch; }
+  .section-head { align-items: start; flex-direction: column; }
+  .timing-row { grid-template-columns: 108px minmax(0, 1fr) 96px; gap: 8px; }
+  .timing-name, .timing-value { font-size: .77rem; }
+  .comparison-card { padding: 18px; }
+  .repro-section { grid-template-columns: 1fr; }
+  .evidence-details dl { grid-template-columns: 1fr; gap: 4px; }
+  .evidence-details dd { margin-bottom: 12px; }
+  .suite-nav { gap: 14px 20px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

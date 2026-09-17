@@ -8,6 +8,9 @@ on:
       - 'benches/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'python/dataprof/**'
+      - 'pyproject.toml'
+      - '.github/scripts/benchmark_comparison.py'
       - '.github/workflows/benchmarks.yml'
 
   pull_request:
@@ -17,6 +20,10 @@ on:
       - 'benches/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'python/dataprof/**'
+      - 'pyproject.toml'
+      - '.github/scripts/benchmark_comparison.py'
+      - '.github/workflows/benchmarks.yml'
 
   workflow_dispatch:
     inputs:
@@ -39,7 +46,7 @@ jobs:
   benchmark:
     name: Run Benchmarks
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -57,6 +64,17 @@ jobs:
       - name: Build benchmarks
         run: cargo bench --no-run
 
+      - name: Setup Python comparison environment
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            benches/pyproject.toml
+            benches/uv.lock
+            benches/.python-version
+            pyproject.toml
+            Cargo.lock
+
       - name: Run benchmarks
         run: |
           mkdir -p benchmark-results
@@ -66,6 +84,14 @@ jobs:
           else
             echo "Running quick benchmark suite for CI"
             cargo bench --bench benchmarks -- 'csv_parsing|full_analysis' 2>&1 | tee benchmark-results/output.txt
+          fi
+
+      - name: Run tool comparison
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_benchmark }}" = "true" ]; then
+            uv run --project benches --locked --reinstall-package dataprof python .github/scripts/benchmark_comparison.py
+          else
+            uv run --project benches --locked --reinstall-package dataprof python .github/scripts/benchmark_comparison.py --rows 1000 --iterations 3 --warmups 1
           fi
 
       - name: Upload results
@@ -84,3 +110,4 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           grep -E "(csv_parsing|full_analysis|throughput_metrics|time:|thrpt:)" benchmark-results/output.txt | head -80 >> $GITHUB_STEP_SUMMARY || echo "No results found"
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat benchmark-results/comparison/comparison.md >> "$GITHUB_STEP_SUMMARY"
