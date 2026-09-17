@@ -872,6 +872,29 @@ impl PyProfileReport {
         self.inner.execution.engine.as_deref()
     }
 
+    /// Failed attempts and retries, or None if history was not recorded.
+    #[getter]
+    fn recovery_events<'py>(&self, py: Python<'py>) -> PyResult<Option<Vec<Bound<'py, PyDict>>>> {
+        self.inner
+            .execution
+            .recovery_events
+            .as_ref()
+            .map(|events| {
+                events
+                    .iter()
+                    .map(|event| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("kind", event.kind.as_str())?;
+                        dict.set_item("attempted", &event.attempted)?;
+                        dict.set_item("retry", &event.retry)?;
+                        dict.set_item("error", &event.error)?;
+                        Ok(dict)
+                    })
+                    .collect()
+            })
+            .transpose()
+    }
+
     /// Number of rows processed
     #[getter]
     fn rows_processed(&self) -> usize {

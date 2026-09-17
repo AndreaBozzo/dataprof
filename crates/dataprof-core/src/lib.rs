@@ -31,7 +31,7 @@ pub use config::{
     OutputConfig, QualityConfig, QualityScoreWeights,
 };
 pub use errors::{DataProfilerError, RecoveryAttempt, RecoveryStrategy, RetryConfig};
-pub use execution::{ExecutionMetadata, TruncationReason};
+pub use execution::{ExecutionMetadata, RecoveryEvent, RecoveryKind, TruncationReason};
 #[doc(hidden)]
 pub use io::Utf8BomReader;
 pub use locale::Locale;

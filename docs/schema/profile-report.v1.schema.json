@@ -652,6 +652,16 @@
           "minimum": 0,
           "type": "integer"
         },
+        "recovery_events": {
+          "description": "Failed attempts and their retries. None means history was not recorded\n(e.g. a legacy report); Some([]) means no recovery occurred.",
+          "items": {
+            "$ref": "#/$defs/RecoveryEvent"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "rows_processed": {
           "description": "Number of rows actually processed or analyzed.",
           "format": "uint",
@@ -1462,6 +1472,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "recovery_events": {
+          "items": {
+            "$ref": "#/$defs/RecoveryEvent"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "rows_processed": {
           "format": "uint",
           "minimum": 0,
@@ -2125,6 +2144,40 @@
         }
       ],
       "description": "Supported query engines for SQL-based profiling"
+    },
+    "RecoveryEvent": {
+      "description": "A failed execution attempt followed by a retry, in chronological order.\n\nThis is execution provenance, not a metric or a count of damaged rows.\nError text is diagnostic and is not a stable machine-readable contract.",
+      "properties": {
+        "attempted": {
+          "description": "Engine or parse strategy that failed.",
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RecoveryKind"
+        },
+        "retry": {
+          "description": "Engine or parse strategy tried next.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "attempted",
+        "retry",
+        "error"
+      ],
+      "type": "object"
+    },
+    "RecoveryKind": {
+      "description": "Recovery boundaries recorded by dataprof.",
+      "enum": [
+        "engine_fallback",
+        "csv_auto_recovery"
+      ],
+      "type": "string"
     },
     "SemanticHintBinding": {
       "description": "Per-column evidence of whether a semantic hint actually bound to any value.\n\nA hint expresses user domain knowledge about a column; this records how much\nof the column that knowledge matched. `matched_values` counts the values of\nthe kind the hint expects (numeric for `positive`, date-parseable for\n`temporal`, every non-null value for `identifier`, which coerces the column).\n\n`exact` distinguishes a full-data count from a sampled one: a hint that\nmatched nothing (`matched_values == 0`) is only *proven* inert when the count\ncovers every row. A sampled zero is recorded but never treated as an error,\nbecause absence in a sample is not proof of absence in the data.",

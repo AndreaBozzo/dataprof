@@ -28,10 +28,10 @@ pub use dataprof_core::{
     DataprofConfigBuilder, DateTimeStats, ExecutionMetadata, FileFormat, FrequencyItem,
     InputValidator, IsoQualityConfig, LexicalClass, Locale, MetricPack, NumericStats, OutputFormat,
     ParquetMetadata, Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension,
-    QualityScoreWeights, Quartiles, QueryEngine, RowCountEstimate, SamplingStrategy, SchemaResult,
-    SemanticHintBinding, SemanticHintKind, SemanticHints, StopCondition, StopEvaluator,
-    StructureColumnSummary, StructureReport, TextStats, TruncationReason, TypeHomogeneity,
-    ValidationError, validate_unique_column_names,
+    QualityScoreWeights, Quartiles, QueryEngine, RecoveryEvent, RecoveryKind, RowCountEstimate,
+    SamplingStrategy, SchemaResult, SemanticHintBinding, SemanticHintKind, SemanticHints,
+    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextStats,
+    TruncationReason, TypeHomogeneity, ValidationError, validate_unique_column_names,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,

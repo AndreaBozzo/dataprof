@@ -162,6 +162,8 @@ enum PythonSourceType {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 struct PythonExecutionDocument {
     engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recovery_events: Option<Vec<dataprof_core::execution::RecoveryEvent>>,
     rows_processed: usize,
     columns_detected: usize,
     scan_time_ms: u128,

@@ -79,6 +79,32 @@ fn sampled_row_ranges_are_optional_but_have_fixed_pair_shape() {
 }
 
 #[test]
+fn recovery_events_are_additive_and_validated() {
+    let schema = committed_schema();
+    let mut document = minimal_v1_document();
+    assert_valid(&schema, &document);
+    for history in [
+        json!([]),
+        json!([
+            {"kind": "engine_fallback", "attempted": "columnar", "retry": "incremental", "error": "failed"},
+            {"kind": "csv_auto_recovery", "attempted": "strict", "retry": "flexible", "error": "ragged row"}
+        ]),
+    ] {
+        document["execution"]["recovery_events"] = history;
+        assert_valid(&schema, &document);
+        let report: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(report).unwrap()["execution"]["recovery_events"],
+            document["execution"]["recovery_events"]
+        );
+    }
+    document["execution"]["recovery_events"][0]["kind"] = json!("unknown");
+    assert!(!validator(&schema).is_valid(&document));
+    document["execution"]["recovery_events"] = json!([{"kind": "engine_fallback"}]);
+    assert!(!validator(&schema).is_valid(&document));
+}
+
+#[test]
 fn committed_schema_is_current_and_valid_draft_2020_12() {
     let committed = committed_schema();
     let generated = dataprof_runtime::profile_report_schema_document();

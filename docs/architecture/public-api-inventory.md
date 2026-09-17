@@ -17,7 +17,7 @@ breaking public API change.
 | Partial file APIs | `infer_schema`, `quick_row_count`, `ColumnSchema`, `CountMethod`, `RowCountEstimate`, `SchemaResult` |
 | Error and config primitives | `DataProfilerError`, `DataprofConfig`, `DataprofConfigBuilder`, `InputValidator`, `ValidationError` |
 | Execution controls | `ChunkSize`, `SamplingStrategy`, `StopCondition`, `StopEvaluator`, `ProgressEvent`, `ProgressSink` |
-| Core report model | `ProfileReport`, `ColumnProfile`, `ColumnStats`, `DataSource`, `FileFormat`, `DataType`, `ExecutionMetadata`, `MetricPack`, `OutputFormat`, `Pattern`, `PatternCategory`, `QualityAssessment`, `QualityDimension`, `QualityMetrics`, `QueryEngine`, `TruncationReason` |
+| Core report model | `ProfileReport`, `ColumnProfile`, `ColumnStats`, `DataSource`, `FileFormat`, `DataType`, `ExecutionMetadata`, `RecoveryEvent`, `RecoveryKind`, `MetricPack`, `OutputFormat`, `Pattern`, `PatternCategory`, `QualityAssessment`, `QualityDimension`, `QualityMetrics`, `QueryEngine`, `TruncationReason` |
 | Quality metric DTOs | `AccuracyMetrics`, `CompletenessMetrics`, `ConsistencyMetrics`, `MetricConfidence`, `TimelinessMetrics`, `UniquenessMetrics` |
 | Format entry points | `CsvParserConfig`, `CsvDiagnostics`, `analyze_csv_file`, `analyze_csv_from_reader`, `JsonFormat`, `JsonParserConfig`, `analyze_json_file`, `analyze_json_from_reader` |
 | Analysis helpers | `MetricsCalculator`, `analyze_column_fast`, `detect_patterns`, `infer_type`, `calculate_numeric_stats`, `calculate_text_stats` |

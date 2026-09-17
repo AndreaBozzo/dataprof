@@ -1,8 +1,10 @@
 use std::path::Path;
 
+#[cfg(feature = "parquet")]
+use dataprof_core::AnalysisOptions;
+use dataprof_core::execution::{RecoveryEvent, RecoveryKind};
 use dataprof_core::{
-    AnalysisOptions, ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension,
-    SemanticHints,
+    ChunkSize, DataProfilerError, Locale, MetricPack, QualityDimension, SemanticHints,
 };
 use dataprof_csv::CsvParserConfig;
 use dataprof_runtime::ProfileReport;
@@ -17,6 +19,16 @@ pub(crate) enum InternalEngineType {
     #[cfg(feature = "arrow")]
     Arrow,
     Incremental,
+}
+
+impl InternalEngineType {
+    fn name(&self) -> &'static str {
+        match self {
+            #[cfg(feature = "arrow")]
+            Self::Arrow => "columnar",
+            Self::Incremental => "incremental",
+        }
+    }
 }
 
 /// Adaptive profiler that selects the best engine for a given file.
@@ -126,8 +138,15 @@ impl AdaptiveProfiler {
     pub fn analyze_csv_file(&self, file_path: &Path) -> Result<ProfileReport, DataProfilerError> {
         let engine = self.select_engine(file_path);
         log::info!("Engine selected: {:?}", engine);
+        self.analyze_csv_with_runner(engine, |engine| self.try_engine(engine, file_path))
+    }
 
-        let result = self.try_engine(&engine, file_path);
+    fn analyze_csv_with_runner(
+        &self,
+        engine: InternalEngineType,
+        mut run_engine: impl FnMut(&InternalEngineType) -> Result<ProfileReport, DataProfilerError>,
+    ) -> Result<ProfileReport, DataProfilerError> {
+        let result = run_engine(&engine);
 
         // On failure, try the other engine as fallback
         match result {
@@ -159,7 +178,25 @@ impl AdaptiveProfiler {
                 #[cfg(not(feature = "arrow"))]
                 let fallback = InternalEngineType::Incremental;
                 log::warn!("Fallback: {:?} → {:?} — {}", engine, fallback, primary_err);
-                self.try_engine(&fallback, file_path)
+                run_engine(&fallback)
+                    .map(|mut report| {
+                        // The failed primary precedes any recovery within the
+                        // fallback engine. Preserve that chronological order.
+                        report
+                            .execution
+                            .recovery_events
+                            .get_or_insert_with(Vec::new)
+                            .insert(
+                                0,
+                                RecoveryEvent {
+                                    kind: RecoveryKind::EngineFallback,
+                                    attempted: engine.name().to_string(),
+                                    retry: fallback.name().to_string(),
+                                    error: primary_err.to_string(),
+                                },
+                            );
+                        report
+                    })
                     .map_err(|fallback_err| DataProfilerError::AllEnginesFailed {
                         // The `AllEnginesFailed` variant already prefixes
                         // "All engines failed: "; don't repeat it here.
@@ -350,12 +387,13 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 3);
         assert_eq!(report.execution.rows_processed, 2);
+        assert_eq!(report.execution.recovery_events, Some(vec![]));
 
         Ok(())
     }
 
     #[test]
-    fn test_fallback_mechanism() -> Result<()> {
+    fn test_quoted_csv() -> Result<()> {
         let profiler = AdaptiveProfiler::new();
 
         let mut temp_file = NamedTempFile::new()?;
@@ -367,6 +405,87 @@ mod tests {
         assert_eq!(report.column_profiles.len(), 2);
 
         Ok(())
+    }
+
+    #[cfg(feature = "arrow")]
+    #[test]
+    fn failed_primary_engine_is_recorded_on_successful_fallback() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        writeln!(
+            file,
+            "{}",
+            (0..20)
+                .map(|i| format!("c{i}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        )?;
+        writeln!(file, "{}", ["1"; 20].join(","))?;
+        file.flush()?;
+
+        // Inject a primary failure at the runner boundary, then run the real
+        // fallback engine. No dependency on parser quirks or memory pressure.
+        let profiler = AdaptiveProfiler::new();
+        assert_eq!(
+            profiler.select_engine(file.path()),
+            InternalEngineType::Arrow
+        );
+        let primary_error = DataProfilerError::arrow_error("forced primary failure");
+        let mut attempts = Vec::new();
+        let report = profiler.analyze_csv_with_runner(InternalEngineType::Arrow, |engine| {
+            attempts.push(engine.clone());
+            if *engine == InternalEngineType::Arrow {
+                Err(DataProfilerError::arrow_error("forced primary failure"))
+            } else {
+                profiler.try_engine(engine, file.path())
+            }
+        })?;
+        assert_eq!(
+            attempts,
+            vec![InternalEngineType::Arrow, InternalEngineType::Incremental]
+        );
+        assert_eq!(report.execution.engine.as_deref(), Some("incremental"));
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.execution.ragged_row_count, 0);
+        assert_eq!(
+            report.execution.recovery_events,
+            Some(vec![RecoveryEvent {
+                kind: RecoveryKind::EngineFallback,
+                attempted: "columnar".into(),
+                retry: "incremental".into(),
+                error: primary_error.to_string(),
+            }])
+        );
+
+        // Explicit strict parsing must still fail rather than recovering.
+        let strict = AdaptiveProfiler::new().csv_config(CsvParserConfig {
+            flexible: false,
+            ..Default::default()
+        });
+        writeln!(file, "2")?;
+        file.flush()?;
+        assert!(matches!(
+            strict.analyze_file(file.path()),
+            Err(DataProfilerError::CsvParsingError { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_retries_remain_errors() {
+        let profiler = AdaptiveProfiler::new();
+        let mut attempts = 0;
+        let error = profiler
+            .analyze_csv_with_runner(InternalEngineType::Incremental, |_| {
+                attempts += 1;
+                Err(DataProfilerError::streaming_error(&format!(
+                    "failure {attempts}"
+                )))
+            })
+            .unwrap_err();
+        assert_eq!(attempts, 2);
+        assert!(matches!(&error, DataProfilerError::AllEnginesFailed { .. }));
+        assert!(error.to_string().contains("failure 1"));
+        assert!(error.to_string().contains("failure 2"));
     }
 
     #[test]

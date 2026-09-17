@@ -4,10 +4,22 @@ use std::io::{BufRead, BufReader, Cursor};
 use std::path::Path;
 
 use dataprof_core::errors::AutoRecoveryManager;
+use dataprof_core::execution::{RecoveryEvent, RecoveryKind};
 use dataprof_core::{DataProfilerError, RecoveryStrategy, RetryConfig};
 
 /// Result type for robust CSV parsing operations.
 pub type RobustParseResult = (Option<Vec<String>>, Vec<Vec<String>>);
+
+/// Parsed CSV data and the recovery history needed to interpret it.
+///
+/// Unlike row-level diagnostics, these events describe whole parse attempts.
+/// Callers assembling a report can retain them in ExecutionMetadata.recovery_events.
+#[derive(Debug)]
+pub struct CsvParseOutput {
+    pub headers: Vec<String>,
+    pub records: Vec<Vec<String>>,
+    pub recovery_events: Vec<RecoveryEvent>,
+}
 
 /// What [`diagnose_non_utf8`] found about a file that failed UTF-8 decoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,25 +205,27 @@ impl RobustCsvParser {
     }
 
     /// Enhanced parsing with auto-recovery.
-    pub fn parse_csv_with_recovery(
-        &self,
-        file_path: &Path,
-    ) -> Result<(Vec<String>, Vec<Vec<String>>)> {
+    pub fn parse_csv_with_recovery(&self, file_path: &Path) -> Result<CsvParseOutput> {
         if !self.auto_recovery {
             return self.parse_csv(file_path);
         }
 
         let mut recovery_manager = AutoRecoveryManager::new(self.retry_config.clone());
+        let mut recovery_events = Vec::new();
 
-        match self.parse_csv(file_path) {
-            Ok(result) => Ok(result),
+        match self.parse_csv_recording(file_path, &mut recovery_events) {
+            Ok((headers, records)) => Ok(CsvParseOutput {
+                headers,
+                records,
+                recovery_events,
+            }),
             Err(initial_error) => {
                 log::warn!(
                     "Initial CSV parsing failed: {}. Attempting auto-recovery...",
                     initial_error
                 );
 
-                let initial_error_string = initial_error.to_string();
+                let initial_error_string = format!("{initial_error:#}");
                 let dp_error = if let Ok(dp_err) = initial_error.downcast::<DataProfilerError>() {
                     dp_err
                 } else {
@@ -228,11 +242,40 @@ impl RobustCsvParser {
                     return Err(dp_error.into());
                 }
 
-                recovery_manager
+                let (headers, records) = recovery_manager
                     .attempt_recovery(dp_error, |strategy| {
                         self.try_recovery_strategy(file_path, strategy)
-                    })
-                    .map_err(|error| error.into())
+                    })?;
+                let mut attempted = recovery_events
+                    .last()
+                    .map(|event| event.retry.clone())
+                    .unwrap_or_else(|| "configured_parse".to_string());
+                let mut error = initial_error_string;
+                for attempt in recovery_manager.get_recovery_log() {
+                    // The encoding strategy is currently only a flexible
+                    // parsing retry. Do not claim that bytes were transcoded.
+                    let retry = match &attempt.strategy {
+                        RecoveryStrategy::EncodingConversion { .. }
+                        | RecoveryStrategy::FlexibleParsing => "flexible".to_string(),
+                        strategy => format!("{strategy:?}"),
+                    };
+                    recovery_events.push(RecoveryEvent {
+                        kind: RecoveryKind::CsvAutoRecovery,
+                        attempted,
+                        retry: retry.clone(),
+                        error,
+                    });
+                    attempted = retry;
+                    error = match &attempt.error_message {
+                        Some(message) => message.clone(),
+                        None => break, // The final retry succeeded.
+                    };
+                }
+                Ok(CsvParseOutput {
+                    headers,
+                    records,
+                    recovery_events,
+                })
             }
         }
     }
@@ -362,7 +405,21 @@ impl RobustCsvParser {
     }
 
     /// Parse CSV with robust error handling.
-    pub fn parse_csv(&self, file_path: &Path) -> Result<(Vec<String>, Vec<Vec<String>>)> {
+    pub fn parse_csv(&self, file_path: &Path) -> Result<CsvParseOutput> {
+        let mut recovery_events = Vec::new();
+        let (headers, records) = self.parse_csv_recording(file_path, &mut recovery_events)?;
+        Ok(CsvParseOutput {
+            headers,
+            records,
+            recovery_events,
+        })
+    }
+
+    fn parse_csv_recording(
+        &self,
+        file_path: &Path,
+        recovery_events: &mut Vec<RecoveryEvent>,
+    ) -> Result<(Vec<String>, Vec<Vec<String>>)> {
         let delimiter = if let Some(delimiter) = self.delimiter {
             delimiter
         } else {
@@ -373,6 +430,12 @@ impl RobustCsvParser {
         let result = match self.try_strict_parsing(file_path, delimiter) {
             Ok(result) => result,
             Err(error) => {
+                recovery_events.push(RecoveryEvent {
+                    kind: RecoveryKind::CsvAutoRecovery,
+                    attempted: "strict".to_string(),
+                    retry: "flexible".to_string(),
+                    error: error.to_string(),
+                });
                 if self.verbosity >= 2 {
                     log::info!("Using flexible CSV parsing (strict mode failed: {})", error);
                 }
@@ -725,7 +788,12 @@ mod tests {
         temp_file.flush()?;
 
         let parser = RobustCsvParser::new();
-        let (headers, records) = parser.parse_csv(temp_file.path())?;
+        let CsvParseOutput {
+            headers,
+            records,
+            recovery_events,
+        } = parser.parse_csv(temp_file.path())?;
+        assert!(recovery_events.is_empty());
 
         assert_eq!(headers, vec!["name", "age", "city"]);
         assert_eq!(records.len(), 2);
@@ -746,7 +814,16 @@ mod tests {
         let mut parser = RobustCsvParser::new();
         parser.delimiter = Some(b',');
         let parser = parser.allow_variable_columns(true);
-        let (headers, records) = parser.parse_csv(temp_file.path())?;
+        let CsvParseOutput {
+            headers,
+            records,
+            recovery_events,
+        } = parser.parse_csv(temp_file.path())?;
+        assert_eq!(recovery_events.len(), 1);
+        assert_eq!(recovery_events[0].kind, RecoveryKind::CsvAutoRecovery);
+        assert_eq!(recovery_events[0].attempted, "strict");
+        assert_eq!(recovery_events[0].retry, "flexible");
+        assert!(recovery_events[0].error.contains("fields"));
 
         assert_eq!(headers, vec!["name", "age", "city"]);
         assert_eq!(records.len(), 3);
@@ -768,6 +845,60 @@ mod tests {
         let delimiter = parser.detect_delimiter(temp_file.path())?;
         assert!(delimiter == b';' || delimiter == b',');
 
+        Ok(())
+    }
+
+    #[test]
+    fn auto_recovery_records_initial_failure_and_every_retry() -> Result<()> {
+        let mut file = NamedTempFile::new()?;
+        writeln!(file, "name,value")?;
+        // Enough invalid UTF-8 records to exhaust the ordinary flexible
+        // parser's error budget and reach the outer recovery manager.
+        for _ in 0..101 {
+            file.write_all(b"bad,\xff\n")?;
+        }
+        writeln!(file, "good,42")?;
+        file.flush()?;
+
+        let mut parser = RobustCsvParser::new();
+        parser.delimiter = Some(b',');
+        // Delimiter retries retain strict parsing and fail. The encoding
+        // strategy currently retries flexible parsing and succeeds.
+        parser.flexible = false;
+        parser.retry_config.max_attempts = 5;
+        let output = parser.parse_csv_with_recovery(file.path())?;
+        assert_eq!(output.records, vec![vec!["good", "42"]]);
+        assert_eq!(output.recovery_events.len(), 6);
+        assert_eq!(output.recovery_events[0].attempted, "strict");
+        assert_eq!(output.recovery_events[0].retry, "flexible");
+        assert_eq!(output.recovery_events[1].attempted, "flexible");
+        assert!(
+            output.recovery_events[1]
+                .error
+                .contains("Both strict and flexible")
+        );
+        for pair in output.recovery_events.windows(2) {
+            assert_eq!(pair[0].retry, pair[1].attempted);
+        }
+        assert_eq!(output.recovery_events.last().unwrap().retry, "flexible");
+        assert!(
+            output
+                .recovery_events
+                .iter()
+                .all(|event| !event.retry.contains("EncodingConversion"))
+        );
+        assert!(
+            output
+                .recovery_events
+                .iter()
+                .all(|event| !event.error.is_empty())
+        );
+        assert!(
+            parser
+                .with_auto_recovery(false)
+                .parse_csv_with_recovery(file.path())
+                .is_err()
+        );
         Ok(())
     }
 

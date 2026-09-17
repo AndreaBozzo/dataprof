@@ -39,6 +39,25 @@ fn stable_facade_builder_surface_compiles() {
 }
 
 #[test]
+fn recovery_field_types_are_available_through_the_facade() {
+    use dataprof::{ExecutionMetadata, RecoveryEvent, RecoveryKind};
+
+    let mut execution = ExecutionMetadata::new(1, 1, 0);
+    execution.recovery_events = Some(vec![RecoveryEvent {
+        kind: RecoveryKind::EngineFallback,
+        attempted: "columnar".into(),
+        retry: "incremental".into(),
+        error: "primary failed".into(),
+    }]);
+    let event = &execution.recovery_events.as_ref().unwrap()[0];
+    let kind = match event.kind {
+        RecoveryKind::EngineFallback => "engine_fallback",
+        RecoveryKind::CsvAutoRecovery => "csv_auto_recovery",
+    };
+    assert_eq!(kind, "engine_fallback");
+}
+
+#[test]
 fn parser_and_metrics_reexports_compile() {
     let numeric_values = vec!["1".to_string(), "2".to_string(), "3".to_string()];
     let text_values = vec![
