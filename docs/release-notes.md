@@ -1,5 +1,15 @@
 # Pending 0.12.0 changes
 
+- A reproducible Python tool-comparison harness (#401) joins the existing Rust
+  suites under `benches/`, using a separate locked environment. It records fresh
+  process and warm timings, raw samples, median/IQR, fixture and binary hashes,
+  and host metadata. Both suites publish through the existing benchmark workflow
+  and website, with interactive timing charts, dispersion, workload details and
+  reproduction instructions. Rust scenarios now live in separate modules with
+  isolated deterministic fixtures; existing benchmark IDs and links are preserved.
+  Workload differences and cache conditions remain explicit. See
+  the [benchmark protocol](../benches/README.md).
+
 - Engine fallback now records the failed engine, error and retry target in
   `execution.recovery_events` (#716), exposed as `report.recovery_events` in
   Python. The successful engine remains in `execution.engine`. New reports
