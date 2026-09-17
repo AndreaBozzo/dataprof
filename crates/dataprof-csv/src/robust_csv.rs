@@ -246,7 +246,10 @@ impl RobustCsvParser {
                     .attempt_recovery(dp_error, |strategy| {
                         self.try_recovery_strategy(file_path, strategy)
                     })?;
-                let mut attempted = "configured_parse".to_string();
+                let mut attempted = recovery_events
+                    .last()
+                    .map(|event| event.retry.clone())
+                    .unwrap_or_else(|| "configured_parse".to_string());
                 let mut error = initial_error_string;
                 for attempt in recovery_manager.get_recovery_log() {
                     // The encoding strategy is currently only a flexible
@@ -868,13 +871,13 @@ mod tests {
         assert_eq!(output.recovery_events.len(), 6);
         assert_eq!(output.recovery_events[0].attempted, "strict");
         assert_eq!(output.recovery_events[0].retry, "flexible");
-        assert_eq!(output.recovery_events[1].attempted, "configured_parse");
+        assert_eq!(output.recovery_events[1].attempted, "flexible");
         assert!(
             output.recovery_events[1]
                 .error
                 .contains("Both strict and flexible")
         );
-        for pair in output.recovery_events[1..].windows(2) {
+        for pair in output.recovery_events.windows(2) {
             assert_eq!(pair[0].retry, pair[1].attempted);
         }
         assert_eq!(output.recovery_events.last().unwrap().retry, "flexible");
