@@ -31,6 +31,32 @@ remain readable and do not gain inferred ranges. The existing truncation reason
 and sampling fields describe the cap and coverage; these ranges identify its
 analyzed population exactly.
 
+## Execution recovery provenance
+
+`execution.recovery_events` is optional execution provenance in both v1
+dialects. New reports record an ordered array; `[]` means no recovery occurred.
+An absent field means history is unknown, including when loading older reports,
+and remains absent on reserialization. It does not change metric semantics or
+participate in cross-engine metric comparisons.
+
+Each event contains `kind` (`engine_fallback` or `csv_auto_recovery`),
+`attempted` (the engine or parse strategy that failed), `retry` (the next engine
+or strategy), and `error` (diagnostic text). Engine names are `columnar` and
+`incremental`, matching `execution.engine`, which still identifies the engine
+that produced the report. Strategy names and error messages are diagnostics,
+not stable codes. The last retry in a successful result succeeded; preceding
+retries may have failed and led to further events. Row-level error and ragged-row
+counts retain their existing meaning and are not incremented for failed attempts.
+
+Python exposes the same history through `report.recovery_events`. The standalone
+Rust `dataprof_csv::RobustCsvParser` does not produce a `ProfileReport`; its
+`parse_csv()` and `parse_csv_with_recovery()` methods return `CsvParseOutput`
+with `headers`, `records`, and `recovery_events`. This includes the ordinary
+strict-to-flexible retry and the outer auto-recovery strategies. Callers building
+their own report should transfer this history to its execution metadata.
+The existing encoding-recovery placeholder only retries flexible parsing; its
+history therefore records `flexible`, without claiming an encoding conversion.
+
 ## Numeric equality contract
 
 The cross-engine identical-numbers contract governs **serialized, rounded

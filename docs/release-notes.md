@@ -1,5 +1,15 @@
 # Pending 0.12.0 changes
 
+- Engine fallback now records the failed engine, error and retry target in
+  `execution.recovery_events` (#716), exposed as `report.recovery_events` in
+  Python. The successful engine remains in `execution.engine`. New reports
+  record `[]` when no recovery occurred; older reports retain unknown history
+  (`None` / absent). This is additive to schema v1 and changes no metrics or
+  recovery policy. **Breaking (lower-level Rust CSV API):**
+  `RobustCsvParser::parse_csv()` and `parse_csv_with_recovery()` now return
+  `CsvParseOutput { headers, records, recovery_events }` instead of a tuple,
+  preserving strict-to-flexible and auto-recovery attempts alongside the data.
+
 - **Breaking (Python):** Remove the 16 flat `DataQualityMetrics` accessors in
   **0.12** (#509), following their deprecation in 0.9. During beta, with no
   downstream dependents, the nested dimension API replaces them now. Native and

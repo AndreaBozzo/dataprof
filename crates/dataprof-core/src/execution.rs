@@ -1,3 +1,39 @@
+/// A failed execution attempt followed by a retry, in chronological order.
+///
+/// This is execution provenance, not a metric or a count of damaged rows.
+/// Error text is diagnostic and is not a stable machine-readable contract.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct RecoveryEvent {
+    pub kind: RecoveryKind,
+    /// Engine or parse strategy that failed.
+    pub attempted: String,
+    /// Engine or parse strategy tried next.
+    pub retry: String,
+    pub error: String,
+}
+
+/// Recovery boundaries recorded by dataprof.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryKind {
+    EngineFallback,
+    CsvAutoRecovery,
+}
+
+impl RecoveryKind {
+    /// Stable serialized name, also used by the Python binding.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EngineFallback => "engine_fallback",
+            Self::CsvAutoRecovery => "csv_auto_recovery",
+        }
+    }
+}
+
 /// Reason why profiling was truncated before exhausting the source.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum TruncationReason {
@@ -21,6 +57,10 @@ pub struct ExecutionMetadata {
     /// Engine or parser that actually produced the report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
+    /// Failed attempts and their retries. None means history was not recorded
+    /// (e.g. a legacy report); Some([]) means no recovery occurred.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_events: Option<Vec<RecoveryEvent>>,
     /// Number of rows actually processed or analyzed.
     pub rows_processed: usize,
     /// Number of bytes consumed from the source, if known.
@@ -78,6 +118,7 @@ impl ExecutionMetadata {
 
         Self {
             engine: None,
+            recovery_events: Some(Vec::new()),
             rows_processed,
             bytes_consumed: None,
             columns_detected,
@@ -201,6 +242,13 @@ mod tests {
         let meta: ExecutionMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(meta.ragged_row_count, 0);
         assert_eq!(meta.sampled_row_ranges, None);
+        assert_eq!(meta.recovery_events, None);
+        assert!(
+            serde_json::to_value(&meta)
+                .unwrap()
+                .get("recovery_events")
+                .is_none()
+        );
         assert!(
             serde_json::to_value(&meta)
                 .unwrap()
@@ -217,6 +265,40 @@ mod tests {
             let json = serde_json::to_value(&meta).unwrap();
             let restored: ExecutionMetadata = serde_json::from_value(json).unwrap();
             assert_eq!(restored.sampled_row_ranges, Some(ranges));
+        }
+    }
+
+    #[test]
+    fn recovery_history_preserves_absence_empty_and_ordered_events() {
+        let events = vec![
+            RecoveryEvent {
+                kind: RecoveryKind::EngineFallback,
+                attempted: "columnar".into(),
+                retry: "incremental".into(),
+                error: "primary failed".into(),
+            },
+            RecoveryEvent {
+                kind: RecoveryKind::CsvAutoRecovery,
+                attempted: "strict".into(),
+                retry: "flexible".into(),
+                error: "unequal field count".into(),
+            },
+        ];
+        assert_eq!(
+            ExecutionMetadata::new(0, 0, 0).recovery_events,
+            Some(vec![])
+        );
+        for history in [None, Some(vec![]), Some(events)] {
+            let mut meta = ExecutionMetadata::new(0, 0, 0);
+            meta.recovery_events = history.clone();
+            let json = serde_json::to_value(&meta).unwrap();
+            if let Some(events) = &history {
+                for (index, event) in events.iter().enumerate() {
+                    assert_eq!(json["recovery_events"][index]["kind"], event.kind.as_str());
+                }
+            }
+            let restored: ExecutionMetadata = serde_json::from_value(json).unwrap();
+            assert_eq!(restored.recovery_events, history);
         }
     }
 

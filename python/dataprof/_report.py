@@ -86,6 +86,16 @@ class ProfileReport:
         return self._report.engine
 
     @property
+    def recovery_events(self) -> list[dict[str, str]] | None:
+        """Failed attempts and retries in order; None means history is unknown.
+
+        An empty list means no recovery occurred. Each event records ``kind``,
+        ``attempted``, ``retry`` and diagnostic ``error`` text.
+        """
+        events = self._report.recovery_events
+        return None if events is None else [dict(event) for event in events]
+
+    @property
     def rows(self) -> int:
         return self._report.rows_processed
 
@@ -366,6 +376,9 @@ class ProfileReport:
             "quality_status": _quality_status_document(self.quality_status, self.quality_error),
         }
         # Additive provenance is omitted when the input path did not record it.
+        events = self.recovery_events
+        if events is not None:
+            _cast(dict[str, _Any], document["execution"])["recovery_events"] = events
         ranges = self.sampled_row_ranges
         if ranges is not None:
             _cast(dict[str, _Any], document["execution"])["sampled_row_ranges"] = ranges

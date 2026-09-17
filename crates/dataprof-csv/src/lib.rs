@@ -15,7 +15,8 @@ mod robust_csv;
 
 pub use memmap_reader::MemoryMappedCsvReader;
 pub use robust_csv::{
-    CsvDiagnostics, EncodingDiagnostic, RobustCsvParser, RobustParseResult, diagnose_non_utf8,
+    CsvDiagnostics, CsvParseOutput, EncodingDiagnostic, RobustCsvParser, RobustParseResult,
+    diagnose_non_utf8,
 };
 
 /// Configuration for CSV parsing and analysis.
