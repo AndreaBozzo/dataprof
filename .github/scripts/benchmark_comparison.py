@@ -255,6 +255,8 @@ def compare_runs(previous: dict, current: dict) -> dict:
         "logical_cpus",
         "ram_bytes",
         "versions",
+        "git_commit",
+        "git_status",
         "native_extensions",
         "benchmark_script_sha256",
         "benchmark_lock_sha256",

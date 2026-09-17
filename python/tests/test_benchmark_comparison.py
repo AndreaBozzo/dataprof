@@ -186,7 +186,8 @@ def test_repeatability_refuses_changed_fixture():
         bench.compare_runs({"fixture": {"sha256": "a"}}, {"fixture": {"sha256": "b"}})
 
 
-def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment():
+@pytest.mark.parametrize("changed_field", ["cpu", "git_commit", "git_status"])
+def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment(changed_field):
     previous: dict[str, Any] = {
         "fixture": {"sha256": "same"},
         "config": {"threads": 1},
@@ -200,6 +201,8 @@ def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment():
                 "logical_cpus",
                 "ram_bytes",
                 "versions",
+                "git_commit",
+                "git_status",
                 "native_extensions",
                 "benchmark_script_sha256",
                 "benchmark_lock_sha256",
@@ -214,8 +217,8 @@ def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment():
     assert bench.compare_runs(previous, current) == {"dataprof": {"warm": True}}
     current["results"]["dataprof"]["warm"] = {"q1_seconds": 3, "q3_seconds": 4}
     assert bench.compare_runs(previous, current) == {"dataprof": {"warm": False}}
-    current["environment"]["cpu"] = "different"
-    with pytest.raises(ValueError, match="environment.cpu"):
+    current["environment"][changed_field] = "different"
+    with pytest.raises(ValueError, match=rf"environment\.{changed_field}"):
         bench.compare_runs(previous, current)
 
 

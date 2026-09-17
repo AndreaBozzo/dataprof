@@ -85,6 +85,8 @@ def test_old_artifacts_keep_their_links(artifact, monkeypatch):
     assert 'href="csv_parsing/report/index.html"' in index
     assert 'href="csv_parsing/parse/small/report/index.html"' in index
     assert 'id="comparison"' not in index
+    assert "01 / Rust profiling" in index
+    assert "02 / Rust profiling" not in index
     assert (
         artifact / "csv_parsing/parse/small/report/index.html"
     ).read_text() == "original Criterion report"
@@ -101,6 +103,8 @@ def test_combined_artifact_publishes_both_without_mixing_statistics(artifact, mo
     index = (artifact / "index.html").read_text(encoding="utf-8")
     assert 'href="csv_parsing/parse/small/report/index.html"' in index
     assert 'id="comparison"' in index
+    assert "01 / Python tool comparison" in index
+    assert "02 / Rust profiling" in index
     assert 'href="comparison/results.json"' in index
     assert "Cold median [IQR]" in index
     assert "metric equivalence is not established" in index

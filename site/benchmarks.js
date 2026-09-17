@@ -15,9 +15,11 @@ for (const button of modeButtons) {
   button.addEventListener("keydown", (event) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
+    const index = modeButtons.indexOf(button);
+    const offset = event.key === "ArrowLeft" ? -1 : 1;
     const next = event.key === "Home" ? modeButtons[0]
       : event.key === "End" ? modeButtons.at(-1)
-      : modeButtons[(modeButtons.indexOf(button) + 1) % modeButtons.length];
+      : modeButtons[(index + offset + modeButtons.length) % modeButtons.length];
     selectMode(next);
     next.focus();
   });

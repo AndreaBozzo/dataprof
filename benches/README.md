@@ -60,7 +60,8 @@ uv run --project benches --locked python .github/scripts/benchmark_comparison.py
 ```
 
 The second command deliberately reuses the same installed binary. `--compare`
-requires matching fixture, environment fingerprints, and configuration, then
+requires matching fixture, environment fingerprints (including the recorded Git
+commit and working-tree status), and configuration, then
 reports whether each pair of interquartile ranges overlaps. A disjoint result
 is evidence of noise or drift, not a performance conclusion. It retains all
 outliers; IQR is dispersion, not a confidence interval. No harness can guarantee

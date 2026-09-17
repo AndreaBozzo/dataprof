@@ -554,7 +554,8 @@ def render_index(
   </nav>
   {render_comparison(comparison)}
   <section id="rust-scenarios">
-    <div class="section-head"><div><span class="eyebrow">02 / Rust profiling</span>
+    <div class="section-head"><div><span class="eyebrow">
+      {"02" if comparison else "01"} / Rust profiling</span>
       <h2>Explore the pipeline.</h2>
       <p>Repeated in-process measurements, from scan and column profiling to full report assembly.
         Each case links to its Criterion distributions and estimates.</p></div>
