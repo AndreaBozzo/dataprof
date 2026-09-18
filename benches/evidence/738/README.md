@@ -7,8 +7,8 @@ checkpoints and Markdown tables. This is diagnostic evidence from a development
 workstation, not an established performance baseline.
 
 The same raw [first-run JSON](first-run.json) and [repeat-run JSON](repeat-run.json)
-are also available as reviewable text. Their bytes match the corresponding
-`results.json` entries in the archive.
+are also available as reviewable text. Their contents match the corresponding
+`results.json` entries in the archive; Git normalizes their line endings to LF.
 
 ## Experiment
 
