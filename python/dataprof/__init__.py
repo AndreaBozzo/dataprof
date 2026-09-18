@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from . import asyncio as asyncio
+from ._accessors import ColumnProfile as ColumnProfile, DataQualityMetrics as DataQualityMetrics
 from ._api import (
     analyze_structure as analyze_structure,
     infer_schema as infer_schema,
@@ -20,8 +21,6 @@ from ._database import (
     test_connection_async as test_connection_async,
 )
 from ._dataprof import (
-    ColumnProfile as ColumnProfile,
-    DataQualityMetrics as DataQualityMetrics,
     ProfilerConfig as ProfilerConfig,
     ProgressEvent as ProgressEvent,
     RecordBatch as RecordBatch,

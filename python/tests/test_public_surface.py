@@ -294,6 +294,8 @@ assert dataprof.ProfileReport.from_dict(report.to_dict()).to_dict() == report.to
         "Capabilities",
         "Profiler",
         "ProfileReport",
+        "ColumnProfile",
+        "DataQualityMetrics",
         "capabilities",
         "profile",
         "profile_file",

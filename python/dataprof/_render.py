@@ -2,8 +2,8 @@
 
 from __future__ import annotations as _annotations
 
+from ._accessors import ColumnProfile
 from ._columns import _dominant_pattern, _type_mixture
-from ._dataprof import ColumnProfile
 from ._rounding import _r2, _r4
 
 

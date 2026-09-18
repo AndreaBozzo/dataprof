@@ -1,5 +1,14 @@
 # Pending 0.12.0 changes
 
+- Python reports now use shared read-only column, pattern, and quality views
+  over native or restored values (#516). `report.profiles` and `report.quality`
+  expose the same public classes after `from_dict()`, `from_json()`, or `load()`.
+  Native floats retain full precision; saved reports retain serialized precision
+  and missing metrics remain `None`. The document schema and exported values are
+  unchanged. Use the public `dataprof.ColumnProfile` and
+  `dataprof.DataQualityMetrics` types for type checks; private extension types
+  remain available internally but are no longer the public report's view classes.
+
 - A reproducible Python tool-comparison harness (#401) joins the existing Rust
   suites under `benches/`, using a separate locked environment. It records fresh
   process and warm timings, raw samples, median/IQR, fixture and binary hashes,
