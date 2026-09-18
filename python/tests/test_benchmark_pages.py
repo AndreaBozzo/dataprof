@@ -95,9 +95,17 @@ def test_old_artifacts_keep_their_links(artifact, monkeypatch):
     assert "comparison" not in summary
 
 
-def test_combined_artifact_publishes_both_without_mixing_statistics(artifact, monkeypatch):
+@pytest.mark.parametrize("with_status", [False, True])
+def test_combined_artifact_publishes_both_without_mixing_statistics(
+    artifact, monkeypatch, with_status
+):
     document = comparison_document()
+    if with_status:
+        document["status"] = "complete"
     write_comparison(artifact, document)
+    if with_status:
+        (artifact / "run-status.json").write_text(json.dumps({"status": "complete"}))
+        (artifact / "comparison/progress.json").write_text(json.dumps({"status": "complete"}))
     monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
     assert pages.main() == 0
     index = (artifact / "index.html").read_text(encoding="utf-8")
@@ -125,18 +133,39 @@ def test_comparison_html_escapes_metadata(artifact):
     assert "&lt;script&gt;" in output
 
 
-@pytest.mark.parametrize("invalid", ["schema", "sample_count", "nan"])
+@pytest.mark.parametrize("invalid", ["schema", "sample_count", "nan", "incomplete", "missing_tool"])
 def test_invalid_present_comparison_is_rejected(artifact, invalid):
     document = comparison_document()
     if invalid == "schema":
         document["schema_version"] = 999
     elif invalid == "sample_count":
         document["config"]["iterations"] = 3
+    elif invalid == "incomplete":
+        document["status"] = "incomplete"
+    elif invalid == "missing_tool":
+        document["config"]["workloads"]["pandas"] = "read_csv"
     else:
         document["results"]["dataprof"]["cold"]["median_seconds"] = float("nan")
     write_comparison(artifact, document)
     with pytest.raises(ValueError):
         pages.load_comparison(artifact)
+
+
+@pytest.mark.parametrize("status_file", ["run-status.json", "comparison/progress.json"])
+@pytest.mark.parametrize("has_results", [False, True])
+def test_incomplete_artifact_cannot_publish_even_with_criterion(
+    artifact, monkeypatch, status_file, has_results
+):
+    if has_results:
+        write_comparison(artifact, comparison_document())
+    path = artifact / status_file
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps({"status": "incomplete"}))
+    monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
+    with pytest.raises(ValueError, match="incomplete benchmark artifact"):
+        pages.main()
+    assert not (artifact / "index.html").exists()
+    assert not (artifact / "benchmark-summary.json").exists()
 
 
 def test_placeholder_still_works_without_an_artifact(tmp_path, monkeypatch):

@@ -115,6 +115,60 @@ disables expensive computations, and
 [`description_set`](https://docs.profiling.ydata.ai/4.7/features/profile_values/)
 forces the otherwise lazy summary. HTML report rendering is outside all workloads.
 
+## Import preflight and failed runs
+
+Every comparison checks the pinned environment and imports each selected adapter
+in a disposable subprocess before creating the fixture or taking measurements.
+Preflight resolves the same imports as the measured worker, without invoking its
+operation. To check the environment alone:
+
+```bash
+uv run --project benches --locked python .github/scripts/benchmark_comparison.py --preflight-only --output benchmark-results/preflight
+```
+
+CI installs the environment and runs this check before building or measuring the
+Rust benchmark suite. The comparison repeats preflight immediately before its
+own measurements. Neither check is timed as a benchmark sample. Subprocesses
+isolate Python module state, but imports can warm OS library pages and persistent
+library caches. Those caches are **not evicted**. Fresh-process samples are
+therefore subsequent to environment preparation and preflight, not the first
+invocation on an untouched host. This policy is recorded in `config.preflight`,
+and each successful preflight worker's PID and diagnostics are retained. Fixture
+cache policy is separate and unchanged. More detailed startup boundaries belong
+to #738; do not interpret preflight duration as a pure import measurement.
+
+`setuptools==80.9.0` remains pinned because ydata-profiling 4.18.4 imports
+`pkg_resources`, which [setuptools removed in 82.0.0](https://setuptools.pypa.io/en/latest/deprecated/pkg_resources.html).
+Dependabot continues maintaining `/benches`, but ignores setuptools 82 and newer.
+Remove that bound and upgrade the pin together with a ydata version that no
+longer requires `pkg_resources`, verified by the import preflight and comparison
+smoke run. Do not merge a standalone setuptools upgrade across this boundary.
+
+`progress.json` is an atomic checkpoint after each completed worker. On failure
+it keeps completed raw observations, environment and fixture metadata when
+available, an explicit `incomplete` status, and the failed tool/stage/iteration.
+Failure diagnostics include the traceback and worker stdout/stderr/exit code;
+timeouts retain output captured before termination. An interrupted process leaves
+the last checkpoint incomplete with its active stage. Observations from a worker
+that did not complete are not promoted to successful measurements. No failed or
+missing tool gets a zero-time row. Successful runs still export `results.json`
+and `comparison.md`; incomplete runs do not produce a successful comparison.
+
+CI always attempts to upload `benchmark-results/` and `target/criterion/`, even
+after failure. `run-status.json` identifies failed or skipped workflow stages;
+logs retain dependency, build, Rust and Python diagnostics. A Python failure
+therefore preserves completed Criterion output. The job stays failed. Pages
+only selects successful workflow runs, and the page builder also rejects
+incomplete status files or missing requested tools. Earlier successful artifacts
+without status files remain supported.
+
+Exercise real workers, broken imports, partial-run retention and publication
+filtering without rebuilding Rust:
+
+```bash
+uv run --no-sync pytest python/tests/test_benchmark_comparison.py python/tests/test_benchmark_pages.py python/tests/test_benchmark_workflow.py -q
+```
+
 ## Expansion and publishing rules
 
 Extend this inventory when adding a scenario; do not introduce another root

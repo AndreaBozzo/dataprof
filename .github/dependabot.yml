@@ -26,6 +26,24 @@ updates:
       prefix: "deps"
       include: "scope"
 
+  # Maintain the optional benchmark environment, including its coupled pins.
+  - package-ecosystem: "uv"
+    directory: "/benches"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 3
+    ignore:
+      # ydata-profiling 4.18.4 imports pkg_resources. Remove this bound only
+      # with a ydata upgrade that passes the benchmark import preflight (#739).
+      # Security fixes within the compatible range remain eligible.
+      - dependency-name: "setuptools"
+        versions: [">=82"]
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

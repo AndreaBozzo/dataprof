@@ -11,6 +11,8 @@ on:
       - 'python/dataprof/**'
       - 'pyproject.toml'
       - '.github/scripts/benchmark_comparison.py'
+      - 'python/tests/test_benchmark_comparison.py'
+      - '.github/dependabot.yml'
       - '.github/workflows/benchmarks.yml'
 
   pull_request:
@@ -23,6 +25,8 @@ on:
       - 'python/dataprof/**'
       - 'pyproject.toml'
       - '.github/scripts/benchmark_comparison.py'
+      - 'python/tests/test_benchmark_comparison.py'
+      - '.github/dependabot.yml'
       - '.github/workflows/benchmarks.yml'
 
   workflow_dispatch:
@@ -61,9 +65,6 @@ jobs:
           cache-prefix: rust-bench
           components: rustfmt
 
-      - name: Build benchmarks
-        run: cargo bench --no-run
-
       - name: Setup Python comparison environment
         uses: astral-sh/setup-uv@v7
         with:
@@ -75,8 +76,33 @@ jobs:
             pyproject.toml
             Cargo.lock
 
-      - name: Run benchmarks
+      - name: Install comparison dependencies
+        id: dependencies
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p benchmark-results
+          uv sync --project benches --locked --reinstall-package dataprof 2>&1 | tee benchmark-results/dependencies.txt
+
+      - name: Preflight comparison imports
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py --preflight-only --output benchmark-results/preflight 2>&1 | tee benchmark-results/preflight.txt
+
+      - name: Build benchmarks
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench --no-run 2>&1 | tee benchmark-results/build.txt
+
+      - name: Run benchmarks
+        id: rust
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p benchmark-results
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_benchmark }}" = "true" ]; then
             echo "Running full benchmark suite"
@@ -87,14 +113,41 @@ jobs:
           fi
 
       - name: Run tool comparison
+        id: comparison
+        shell: bash
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_benchmark }}" = "true" ]; then
-            uv run --project benches --locked --reinstall-package dataprof python .github/scripts/benchmark_comparison.py
+            uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py 2>&1 | tee benchmark-results/comparison.txt
           else
-            uv run --project benches --locked --reinstall-package dataprof python .github/scripts/benchmark_comparison.py --rows 1000 --iterations 3 --warmups 1
+            uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py --rows 1000 --iterations 3 --warmups 1 2>&1 | tee benchmark-results/comparison.txt
           fi
 
+      - name: Record run status
+        if: always()
+        env:
+          BENCHMARK_STEPS: ${{ toJSON(steps) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          steps = json.loads(os.environ["BENCHMARK_STEPS"])
+          outcomes = {name: steps.get(name, {}).get("outcome", "skipped")
+                      for name in ("dependencies", "preflight", "build", "rust", "comparison")}
+          status = "complete" if all(value == "success" for value in outcomes.values()) else "incomplete"
+          output = Path("benchmark-results")
+          output.mkdir(exist_ok=True)
+          (output / "run-status.json").write_text(json.dumps({"status": status, "stages": outcomes}, indent=2))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"## Benchmark run: {status}\n\n")
+              for name, outcome in outcomes.items():
+                  summary.write(f"- {name}: {outcome}\n")
+          PY
+
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
@@ -104,10 +157,15 @@ jobs:
           retention-days: 30
 
       - name: Summary
+        if: always()
         run: |
           echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           grep -E "(csv_parsing|full_analysis|throughput_metrics|time:|thrpt:)" benchmark-results/output.txt | head -80 >> $GITHUB_STEP_SUMMARY || echo "No results found"
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat benchmark-results/comparison/comparison.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f benchmark-results/comparison/comparison.md ]; then
+            cat benchmark-results/comparison/comparison.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Comparison incomplete; see run-status.json, progress.json and logs in the artifact." >> "$GITHUB_STEP_SUMMARY"
+          fi

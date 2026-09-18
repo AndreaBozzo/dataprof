@@ -99,6 +99,8 @@ def test_matrix_separates_process_and_operation_timers(tmp_path, monkeypatch):
 
     def run(request, timeout):
         requests.append(request)
+        if request.get("preflight"):
+            return {"pid": len(requests), "status": "complete"}
         return {
             "pid": len(requests),
             "process_seconds": 10.0,
@@ -124,9 +126,13 @@ def test_matrix_separates_process_and_operation_timers(tmp_path, monkeypatch):
         == 0
     )
     result = json.loads((output / "results.json").read_text())
-    assert len(requests) == 8  # Three fresh processes per tool, then one warm process per tool.
-    assert all(r["warmups"] == 0 and r["iterations"] == 1 for r in requests[:6])
-    assert all(r["warmups"] == 2 and r["iterations"] == 3 for r in requests[6:])
+    assert len(requests) == 10  # Two import preflights, six cold workers, two warm workers.
+    assert all(r["preflight"] for r in requests[:2])
+    assert all(r["warmups"] == 0 and r["iterations"] == 1 for r in requests[2:8])
+    assert all(r["warmups"] == 2 and r["iterations"] == 3 for r in requests[8:])
+    assert result["status"] == "complete"
+    assert "subsequent to preflight" in result["config"]["preflight"]
+    assert json.loads((output / "progress.json").read_text())["status"] == "complete"
     for tool in ("pandas", "polars"):
         assert result["results"][tool]["cold"]["median_seconds"] == 10
         assert result["results"][tool]["warm"]["median_seconds"] == 1
@@ -247,3 +253,189 @@ def test_invalid_run_never_publishes_results(tmp_path, monkeypatch):
     assert bench.main(["--output", str(tmp_path), "--rows", "100"]) == 1
     assert not (tmp_path / "results.json").exists()
     assert not (tmp_path / "comparison.md").exists()
+    progress = json.loads((tmp_path / "progress.json").read_text())
+    assert progress["status"] == "incomplete"
+    assert progress["failure"]["stage"] == "preflight"
+    assert progress["failure"]["tool"] == "dataprof"
+    assert progress["runs"] == []
+
+
+def test_preflight_imports_without_running_an_operation(monkeypatch):
+    imported = []
+
+    def operation(tool, path, threads):
+        imported.append(tool)
+
+        def unexpected():
+            pytest.fail("preflight must not read the fixture or initialize an operation")
+
+        return unexpected
+
+    monkeypatch.setattr(bench, "operation", operation)
+    assert (
+        bench.worker({"tool": "pandas", "path": "nonexistent", "threads": 1, "preflight": True})[
+            "status"
+        ]
+        == "complete"
+    )
+    assert imported == ["pandas"]
+
+
+def test_preflight_only_has_no_measurements(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "environment_metadata", lambda: {})
+    assert bench.main(["--output", str(tmp_path), "--tools", "pandas", "--preflight-only"]) == 0
+    progress = json.loads((tmp_path / "progress.json").read_text())
+    assert progress["status"] == "complete"
+    assert progress["preflight"][0]["tool"] == "pandas"
+    assert progress["runs"] == []
+    assert not (tmp_path / "fixture.csv").exists()
+    assert not (tmp_path / "results.json").exists()
+
+
+def test_broken_adapter_import_retains_diagnostics(tmp_path, monkeypatch):
+    adapters = tmp_path / "adapters"
+    adapters.mkdir()
+    (adapters / "pandas.py").write_text("import deliberately_unavailable_benchmark_dependency\n")
+    monkeypatch.setenv("PYTHONPATH", str(adapters))
+    monkeypatch.setattr(bench, "environment_metadata", lambda: {})
+    output = tmp_path / "output"
+    assert bench.main(["--output", str(output), "--tools", "pandas"]) == 1
+    progress = json.loads((output / "progress.json").read_text())
+    assert progress["status"] == "incomplete"
+    assert progress["failure"]["stage"] == "preflight"
+    assert progress["failure"]["tool"] == "pandas"
+    assert progress["failure"]["returncode"] != 0
+    assert "deliberately_unavailable_benchmark_dependency" in progress["failure"]["stderr"]
+    assert progress["runs"] == []
+    assert not (output / "results.json").exists()
+
+
+@pytest.mark.parametrize("mode", ["cold", "warm"])
+def test_failure_retains_completed_workers_and_existing_criterion(tmp_path, monkeypatch, mode):
+    criterion = tmp_path / "target/criterion/example/new/estimates.json"
+    criterion.parent.mkdir(parents=True)
+    criterion.write_text('{"mean": {"point_estimate": 123}}')
+    monkeypatch.setattr(bench, "environment_metadata", lambda: {})
+    real_worker = bench.run_worker
+    completed = []
+
+    def fail_later(request, timeout):
+        if not request.get("preflight"):
+            if (mode == "cold" and len(completed) == 1) or (mode == "warm" and request["warmups"]):
+                # Exercise a real worker protocol failure, after real measurements.
+                return real_worker({**request, "tool": "deliberately-broken-adapter"}, timeout)
+            result = real_worker(request, timeout)
+            completed.append(result)
+            return result
+        return real_worker(request, timeout)
+
+    monkeypatch.setattr(bench, "run_worker", fail_later)
+    output = tmp_path / "benchmark-results/comparison"
+    assert (
+        bench.main(
+            ["--output", str(output), "--tools", "pandas", "--rows", "100", "--iterations", "2"]
+        )
+        == 1
+    )
+    progress = json.loads((output / "progress.json").read_text())
+    assert progress["status"] == "incomplete"
+    assert progress["failure"]["stage"] == mode
+    assert progress["failure"]["tool"] == "pandas"
+    assert "deliberately-broken-adapter" in progress["failure"]["stderr"]
+    assert len(progress["runs"]) == len(completed) > 0
+    assert all(run["operation_seconds"][0] > 0 for run in progress["runs"])
+    assert progress["results"] == {}
+    assert not (output / "results.json").exists()
+    assert not (output / "comparison.md").exists()
+    assert json.loads(criterion.read_text())["mean"]["point_estimate"] == 123
+
+
+@pytest.mark.parametrize("failure", ["timeout", "invalid_json"])
+def test_worker_protocol_failure_preserves_output(monkeypatch, failure):
+    def run(*args, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(
+                "worker", 1, output=b"partial stdout", stderr=b"details"
+            )
+        return subprocess.CompletedProcess(args, 0, "partial stdout", "details")
+
+    monkeypatch.setattr(bench.subprocess, "run", run)
+    with pytest.raises(bench.WorkerError) as exc:
+        bench.run_worker({"tool": "pandas", "threads": 1}, 1)
+    assert exc.value.diagnostics["stdout"] == "partial stdout"
+    assert exc.value.diagnostics["stderr"] == "details"
+
+
+def test_environment_failure_writes_incomplete_status(tmp_path, monkeypatch):
+    def fail():
+        raise ModuleNotFoundError("missing psutil")
+
+    monkeypatch.setattr(bench, "environment_metadata", fail)
+    assert bench.main(["--output", str(tmp_path)]) == 1
+    progress = json.loads((tmp_path / "progress.json").read_text())
+    assert progress["failure"]["stage"] == "environment"
+    assert progress["failure"]["type"] == "ModuleNotFoundError"
+    assert "missing psutil" in progress["failure"]["traceback"]
+
+
+def test_incomplete_repeatability_input_is_rejected():
+    with pytest.raises(ValueError, match="complete previous run"):
+        bench.compare_runs({"status": "incomplete"}, {})
+
+
+def test_unreadable_baseline_fails_before_measurements(tmp_path, monkeypatch):
+    def unexpected():
+        pytest.fail("invalid baseline must fail before preparing the benchmark environment")
+
+    monkeypatch.setattr(bench, "environment_metadata", unexpected)
+    output = tmp_path / "run"
+    assert (
+        bench.main(["--output", str(output), "--compare", str(tmp_path / "missing-results.json")])
+        == 1
+    )
+    progress = json.loads((output / "progress.json").read_text())
+    assert progress["failure"]["stage"] == "compare_input"
+    assert progress["runs"] == []
+
+
+@pytest.mark.parametrize("filename", ["comparison.md", "results.json"])
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_export_failure_keeps_run_incomplete(tmp_path, monkeypatch, filename, interrupted):
+    monkeypatch.setattr(bench, "environment_metadata", lambda: {})
+
+    def run(request, timeout):
+        if request.get("preflight"):
+            return {"pid": 1, "status": "complete"}
+        return {
+            "pid": 2,
+            "process_seconds": 2.0,
+            "operation_seconds": [1.0] * request["iterations"],
+        }
+
+    monkeypatch.setattr(bench, "run_worker", run)
+    write_text = Path.write_text
+
+    def fail_export(path, *args, **kwargs):
+        if path.name == filename:
+            if interrupted:
+                # Bypass the Exception cleanup, as an abrupt interruption would.
+                raise KeyboardInterrupt("injected export interruption")
+            raise OSError("injected export failure")
+        return write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_export)
+    args = ["--output", str(tmp_path), "--tools", "pandas", "--rows", "100", "--iterations", "2"]
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            bench.main(args)
+    else:
+        assert bench.main(args) == 1
+    progress = json.loads((tmp_path / "progress.json").read_text())
+    assert progress["status"] == "incomplete"
+    assert progress["active_stage"]["stage"] == "export"
+    if not interrupted:
+        assert progress["failure"]["stage"] == "export"
+    assert len(progress["runs"]) == 3
+    assert progress["results"]["pandas"]["cold"]["median_seconds"] == 2.0
+    assert not (tmp_path / "results.json").exists()
+    assert (tmp_path / "comparison.md").exists() == (interrupted and filename == "results.json")
