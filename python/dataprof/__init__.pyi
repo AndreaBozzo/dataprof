@@ -6,7 +6,6 @@ from . import asyncio as asyncio
 from ._accessors import (
     ColumnProfile as ColumnProfile,
     DataQualityMetrics as DataQualityMetrics,
-    Pattern as Pattern,
 )
 from ._api import (
     analyze_structure as analyze_structure,

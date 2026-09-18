@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any, Any as _Any
 
 from ._accessors import ColumnProfile, Pattern as _Pattern
+from ._dataprof import ColumnProfile as _NativeColumn
 
-def column_to_dict(col: ColumnProfile) -> dict[str, Any]:
+def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, Any]:
     """Convert a ColumnProfile to the nested dict layout used in ``report.to_dict()['columns']``."""
     ...
 

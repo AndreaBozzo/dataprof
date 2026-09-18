@@ -39,14 +39,23 @@ class _NativeAccessor:
         return value
 
 
+def _copy_collections(value: Any) -> Any:
+    """Detach JSON containers while preserving nested accessor objects."""
+    if isinstance(value, dict):
+        return {key: _copy_collections(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_collections(item) for item in value]
+    return value
+
+
 class _MappingAccessor:
     """Read normalized stored values; unknown fields are not exposed as attributes."""
 
     def __init__(self, values: dict[str, Any]):
-        self._values = values
+        self._values = _copy_collections(values)
 
     def get(self, name: str) -> Any:
-        return self._values.get(name)
+        return _copy_collections(self._values.get(name))
 
 
 class _View:

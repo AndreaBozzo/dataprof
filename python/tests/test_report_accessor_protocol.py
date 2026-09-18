@@ -6,7 +6,7 @@ from typing import Any
 
 import dataprof
 import pytest
-from dataprof import _dataprof as native
+from dataprof import _dataprof as native, interop
 
 
 def _public_values(value: Any) -> Any:
@@ -133,3 +133,57 @@ def test_legacy_quality_defaults_do_not_invent_an_assessment(raw_report):
     assert report.quality.assessed_dimensions() == []
     assert set(report.quality.dimension_scores().values()) == {None}
     assert report.quality_sampled_dimensions is None
+
+
+@pytest.mark.parametrize("restore", [False, True])
+def test_mutating_returned_collections_does_not_change_report(raw_report, restore):
+    report = dataprof.ProfileReport(raw_report)
+    if restore:
+        report = dataprof.ProfileReport.from_dict(report.to_dict())
+    before = report.to_dict()
+    quality = report.quality
+    assert quality is not None
+    quality.dimension_scores().clear()
+    quality.score_weights.clear()
+    quality.assessed_dimensions().clear()
+    for value in (
+        quality.completeness,
+        report["number"].quartiles,
+        report["number"].type_homogeneity,
+    ):
+        if value is not None:
+            value.clear()
+    assert report.to_dict() == before
+
+
+def test_restored_report_owns_nested_input_collections(raw_report):
+    document = dataprof.ProfileReport(raw_report).to_dict()
+    document["columns"][0]["stats"]["quartiles"] = {"q1": 0.0, "q2": 0.0, "q3": 0.5}
+    report = dataprof.ProfileReport.from_dict(document)
+    before = report.to_dict()
+    quartiles = report["number"].quartiles
+    assert quartiles is not None
+    quartiles.clear()
+    assert report.to_dict() == before
+
+    def corrupt_containers(value):
+        if isinstance(value, dict):
+            for child in list(value.values()):
+                corrupt_containers(child)
+            value.clear()
+        elif isinstance(value, list):
+            for child in value:
+                corrupt_containers(child)
+            value.clear()
+
+    corrupt_containers(document)
+    assert report.to_dict() == before
+
+
+def test_interop_column_to_dict_accepts_native_column(tmp_path):
+    path = tmp_path / "native.csv"
+    path.write_text("number\n1\n2\n", encoding="utf-8")
+    raw = interop.analyze_file(path)
+    column = raw.column_profiles[0]
+    assert isinstance(column, interop.ColumnProfile)
+    assert interop.column_to_dict(column) == dataprof.ProfileReport(raw).to_dict()["columns"][0]

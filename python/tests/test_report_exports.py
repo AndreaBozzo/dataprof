@@ -76,7 +76,8 @@ class TestReportErgonomics:
         reloaded = dataprof.ProfileReport.from_json(report.to_json())
         assert reloaded.quality is not None
         assert reloaded.quality.score_weights == expected
-        assert reloaded.quality.score_weights is reloaded.quality.score_weights
+        reloaded.quality.score_weights.clear()
+        assert reloaded.quality.score_weights == expected
 
     def test_from_dict_round_trip_idempotent(self, report):
         reloaded = dataprof.ProfileReport.from_dict(report.to_dict())

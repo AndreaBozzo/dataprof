@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 from typing import Any as _Any
 
 from ._accessors import ColumnProfile, Pattern as _Pattern
+from ._dataprof import ColumnProfile as _NativeColumn
 from ._rounding import _r2, _r4, _round_quartiles
 
 # ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ def _type_mixture(col: ColumnProfile) -> list[tuple[str, int, float]]:
     return [(name, n, n / total) for name, n in present]
 
 
-def column_to_dict(col: ColumnProfile) -> dict[str, _Any]:
+def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
     """Convert a single ColumnProfile to the nested dict layout used by
     :meth:`ProfileReport.to_dict`.
 
