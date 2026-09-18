@@ -69,12 +69,58 @@ overlap on a busy or thermally changing host. Increase `--iterations` and inspec
 raw samples before drawing conclusions. Shared CI runners provide smoke evidence,
 not a controlled performance baseline.
 
+### Publication experiment budget
+
+Use `--publication --host-description "host identity; load, power and thermal controls"`
+for a larger experiment: by default, 21 samples per condition in each of three
+serial process blocks. Each block creates fresh cold workers and a fresh warm
+worker per tool. `--iterations` and `--blocks` can tune that budget (publication
+mode requires at least seven samples per block and two blocks). Seven or 21
+samples do not guarantee precision. Operations within one warm block share a
+process; blocks share the machine and OS caches, so they are not independent
+hosts. Raw observations and per-block summaries are retained alongside pooled
+summaries. Routine CI remains at three samples in one block.
+
+```bash
+uv run --project benches --locked python .github/scripts/benchmark_comparison.py --publication --host-description "lab-01; idle; AC power; fixed power profile" --output benchmark-results/publication-a
+uv run --project benches --locked python .github/scripts/benchmark_comparison.py --publication --host-description "lab-01; idle; AC power; fixed power profile" --output benchmark-results/publication-b --compare benchmark-results/publication-a/results.json
+```
+
+Keep the checkout, installed binaries, fixture, configuration and host controls
+unchanged between repeats. `--compare` rejects unknown or architecture-only CPU
+identifiers even when both runs contain the same placeholder. CPU detection uses
+the OS model identifier when `platform.processor()` supplies only an architecture.
+The website labels all automated results **diagnostic, no established baseline**,
+including publication experiments. Establishing a baseline requires reviewing
+ordered samples and across-run stability on the declared host; IQR overlap is
+not a significance test and is never promoted automatically to baseline status.
+
+See the [#738 repeat-run demonstration](evidence/738/README.md) for two complete
+four-tool runs, downloadable raw artifacts and an interpretation of their limits.
+
 ## Measurement contract
 
 - **Cold** means a fresh process for each sample. The parent measures interpreter
   startup, tool imports, CSV read, summary computation, observation export, IPC,
   and process exit. The worker's operation-only timing is also retained.
-- **Warm** uses a fresh worker per tool, imports once, performs unmeasured warmups,
+- **Import/setup** is measured directly in each worker around the adapter import
+  and callable construction. It excludes interpreter and harness imports; any
+  deferred import inside the callable remains in operation time. Preflight records
+  the first adapter import after this harness's environment preparation. Build,
+  install or earlier workflow preflights can already have warmed library pages.
+  The first fixture operation after preflight is labeled separately from subsequent
+  fresh processes. All observations retain block, round and execution order; the
+  first sample is never discarded.
+- **First operation** is the first CSV read, summary and observation in every
+  worker, including first-use initialization. For warm workers this is the first
+  warmup; warmup timings are retained separately from measured steady-state samples.
+- **Minimal-worker control** runs before each cold round with the same interpreter,
+  thread environment and parent timer. It imports only JSON/OS/system support and
+  measures interpreter startup, minimal IPC and exit, without the benchmark
+  harness or tools. It is a separate observation, not subtracted from independent
+  medians to manufacture an import estimate. Unseparated process costs remain
+  labeled as combined costs.
+- **Warm** uses a fresh worker per tool per block, imports once, performs warmups,
   then times repeated CSV reads and fresh summaries. Inputs and reports are never
   reused. Garbage collection occurs before each sample outside the operation
   timer; automatic GC stays enabled.
@@ -134,8 +180,9 @@ library caches. Those caches are **not evicted**. Fresh-process samples are
 therefore subsequent to environment preparation and preflight, not the first
 invocation on an untouched host. This policy is recorded in `config.preflight`,
 and each successful preflight worker's PID and diagnostics are retained. Fixture
-cache policy is separate and unchanged. More detailed startup boundaries belong
-to #738; do not interpret preflight duration as a pure import measurement.
+cache policy is separate and unchanged. The import/setup timer described above
+separates adapter setup from the overall preflight process duration; neither
+should be interpreted as a pure import measurement.
 
 `setuptools==80.9.0` remains pinned because ydata-profiling 4.18.4 imports
 `pkg_resources`, which [setuptools removed in 82.0.0](https://setuptools.pypa.io/en/latest/deprecated/pkg_resources.html).

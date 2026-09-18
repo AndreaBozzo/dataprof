@@ -66,6 +66,9 @@ def test_worker_warms_up_but_only_records_measured_calls(monkeypatch):
     )
     assert len(calls) == 5
     assert len(result["operation_seconds"]) == 3
+    assert len(result["warmup_seconds"]) == 2
+    assert result["first_operation_seconds"] == result["warmup_seconds"][0]
+    assert result["import_setup_seconds"] >= 0
 
 
 @pytest.mark.parametrize("warmups", [0, 1])
@@ -99,8 +102,8 @@ def test_matrix_separates_process_and_operation_timers(tmp_path, monkeypatch):
 
     def run(request, timeout):
         requests.append(request)
-        if request.get("preflight"):
-            return {"pid": len(requests), "status": "complete"}
+        if request.get("preflight") or request.get("control"):
+            return {"pid": len(requests), "status": "complete", "process_seconds": 0.1}
         return {
             "pid": len(requests),
             "process_seconds": 10.0,
@@ -126,10 +129,13 @@ def test_matrix_separates_process_and_operation_timers(tmp_path, monkeypatch):
         == 0
     )
     result = json.loads((output / "results.json").read_text())
-    assert len(requests) == 10  # Two import preflights, six cold workers, two warm workers.
+    assert len(requests) == 13  # Preflights, three controls, six cold and two warm workers.
     assert all(r["preflight"] for r in requests[:2])
-    assert all(r["warmups"] == 0 and r["iterations"] == 1 for r in requests[2:8])
-    assert all(r["warmups"] == 2 and r["iterations"] == 3 for r in requests[8:])
+    measured = [r for r in requests[2:] if not r.get("control")]
+    assert all(r["warmups"] == 0 and r["iterations"] == 1 for r in measured[:6])
+    assert all(r["warmups"] == 2 and r["iterations"] == 3 for r in measured[6:])
+    assert len(result["controls"]) == 3
+    assert result["control_summary"]["median_seconds"] == 0.1
     assert result["status"] == "complete"
     assert "subsequent to preflight" in result["config"]["preflight"]
     assert json.loads((output / "progress.json").read_text())["status"] == "complete"
@@ -155,6 +161,8 @@ def test_real_pandas_workers_are_fresh_processes(tmp_path):
     assert first["pid"] != second["pid"]
     assert first["observed"] == second["observed"] == fixture["expected"]
     assert first["process_seconds"] > first["operation_seconds"][0] > 0
+    assert first["first_operation_seconds"] == first["operation_seconds"][0]
+    assert first["process_seconds"] > first["import_setup_seconds"] > 0
 
 
 def test_cache_eviction_is_never_silently_emulated(tmp_path, monkeypatch):
@@ -235,6 +243,11 @@ def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment(chan
         ["--timeout", "nan"],
         ["--tools", "pandas", "pandas"],
         ["--reference", "polars", "--tools", "pandas"],
+        ["--blocks", "0"],
+        ["--publication"],
+        ["--publication", "--host-description", "  "],
+        ["--publication", "--host-description", "controlled host", "--iterations", "3"],
+        ["--publication", "--host-description", "controlled host", "--blocks", "1"],
     ],
 )
 def test_invalid_configuration_fails_before_work(args):
@@ -320,7 +333,7 @@ def test_failure_retains_completed_workers_and_existing_criterion(tmp_path, monk
     completed = []
 
     def fail_later(request, timeout):
-        if not request.get("preflight"):
+        if not request.get("preflight") and not request.get("control"):
             if (mode == "cold" and len(completed) == 1) or (mode == "warm" and request["warmups"]):
                 # Exercise a real worker protocol failure, after real measurements.
                 return real_worker({**request, "tool": "deliberately-broken-adapter"}, timeout)
@@ -404,8 +417,8 @@ def test_export_failure_keeps_run_incomplete(tmp_path, monkeypatch, filename, in
     monkeypatch.setattr(bench, "environment_metadata", lambda: {})
 
     def run(request, timeout):
-        if request.get("preflight"):
-            return {"pid": 1, "status": "complete"}
+        if request.get("preflight") or request.get("control"):
+            return {"pid": 1, "status": "complete", "process_seconds": 0.1}
         return {
             "pid": 2,
             "process_seconds": 2.0,
@@ -439,3 +452,138 @@ def test_export_failure_keeps_run_incomplete(tmp_path, monkeypatch, filename, in
     assert progress["results"]["pandas"]["cold"]["median_seconds"] == 2.0
     assert not (tmp_path / "results.json").exists()
     assert (tmp_path / "comparison.md").exists() == (interrupted and filename == "results.json")
+
+
+def test_publication_retains_independent_blocks_and_every_first_sample(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "environment_metadata", lambda: {})
+    requests = []
+
+    def run(request, timeout):
+        requests.append(request)
+        if request.get("preflight") or request.get("control"):
+            return {"pid": len(requests), "status": "complete", "process_seconds": 0.1}
+        return {
+            "pid": len(requests),
+            "process_seconds": float(len(requests)),
+            "operation_seconds": [float(len(requests))] * request["iterations"],
+        }
+
+    monkeypatch.setattr(bench, "run_worker", run)
+    assert (
+        bench.main(
+            [
+                "--output",
+                str(tmp_path),
+                "--tools",
+                "pandas",
+                "--rows",
+                "100",
+                "--publication",
+                "--host-description",
+                "lab host; AC; idle",
+            ]
+        )
+        == 0
+    )
+    result = json.loads((tmp_path / "results.json").read_text())
+    assert result["config"]["iterations"] == 21
+    assert result["config"]["blocks"] == 3
+    assert result["evidence_status"] == "diagnostic"
+    assert len(result["controls"]) == 63
+    assert len(result["block_results"]) == 3
+    assert [run["invocation"] for run in result["runs"]].count(
+        "first_fixture_operation_after_preflight"
+    ) == 1
+    cold = [r["process_seconds"] for r in result["runs"] if r["mode"] == "cold"]
+    assert result["results"]["pandas"]["cold"]["samples_seconds"] == cold
+    assert len(cold) == 63
+    warm = [r for r in result["runs"] if r["mode"] == "warm"]
+    assert len({r["pid"] for r in warm}) == 3
+    assert result["results"]["pandas"]["warm"]["sample_count"] == 63
+    for block in result["block_results"]:
+        assert block["results"]["pandas"]["cold"]["sample_count"] == 21
+
+
+def test_import_and_first_operation_boundaries_are_measured_directly(monkeypatch):
+    ticks = iter([0, 5_000_000_000, 10_000_000_000, 13_000_000_000, 20_000_000_000, 21_000_000_000])
+    monkeypatch.setattr(bench.time, "perf_counter_ns", lambda: next(ticks))
+    monkeypatch.setattr(bench, "operation", lambda *args: lambda: {"rows": 100})
+    result = bench.worker(
+        {
+            "tool": "pandas",
+            "path": "unused",
+            "threads": 1,
+            "warmups": 1,
+            "iterations": 1,
+            "expected": {"rows": 100},
+        }
+    )
+    assert result["import_setup_seconds"] == 5
+    assert result["first_operation_seconds"] == 3
+    assert result["warmup_seconds"] == [3]
+    assert result["operation_seconds"] == [1]
+
+
+def test_minimal_control_does_not_import_harness_or_tool(tmp_path, monkeypatch):
+    (tmp_path / "pandas.py").write_text("raise RuntimeError('no tool import')")
+    (tmp_path / "argparse.py").write_text("raise RuntimeError('no harness import')")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    result = bench.run_worker({"tool": "minimal-worker", "threads": 1, "control": True}, 60)
+    assert result["status"] == "complete"
+    assert result["process_seconds"] > 0
+
+
+@pytest.mark.parametrize("cpu", ["x86_64", "armv8l", "armv7l", "ppc64le", "riscv64"])
+def test_cpu_model_falls_back_when_processor_is_only_architecture(tmp_path, monkeypatch, cpu):
+    cpuinfo = tmp_path / "cpuinfo"
+    cpuinfo.write_text("processor : 0\nmodel name : Example CPU 1234\n")
+    monkeypatch.setattr(bench.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(bench.platform, "processor", lambda: cpu)
+    monkeypatch.setattr(bench, "Path", lambda path: cpuinfo)
+    assert bench.cpu_model() == "Example CPU 1234"
+
+
+@pytest.mark.parametrize(
+    "cpu",
+    [
+        "unknown",
+        "",
+        "x86_64",
+        "AMD64",
+        "aarch64",
+        "armv8l",
+        " ARMv7L ",
+        "armv8-a",
+        "arm64e",
+        "aarch64_be",
+        "i486",
+        "x86_64_v3",
+        "ppc64le",
+        "powerpc64",
+        "mips64el",
+        "s390x",
+        "riscv64",
+        "sparcv9",
+        "loongarch64",
+    ],
+)
+def test_unknown_hardware_cannot_establish_matched_repeat_run(cpu, monkeypatch):
+    monkeypatch.setattr(bench.platform, "machine", lambda: "aarch64")
+    document = {"fixture": {"sha256": "same"}, "config": {}, "environment": {"cpu": cpu}}
+    with pytest.raises(ValueError, match="known CPU model"):
+        bench.compare_runs(document, document)
+
+
+@pytest.mark.parametrize(
+    "cpu",
+    [
+        "Intel(R) Core(TM) Ultra 7 258V",
+        "AMD Ryzen 9 7950X",
+        "Apple M4",
+        "ARM Cortex-A72",
+        "POWER9",
+        "Loongson-3A5000",
+    ],
+)
+def test_concrete_cpu_models_remain_accepted(cpu):
+    assert bench.known_cpu(cpu)

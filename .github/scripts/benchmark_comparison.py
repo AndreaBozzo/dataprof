@@ -13,6 +13,7 @@ import math
 import os
 import platform
 import random
+import re
 import statistics
 import subprocess
 import sys
@@ -42,6 +43,11 @@ PREFLIGHT_POLICY = (
     "may warm OS library pages and on-disk library caches, which are not evicted; "
     "fresh-process samples are subsequent to preflight, not first host invocations"
 )
+CONTROL_CODE = (
+    "import json,os,sys; json.load(sys.stdin); "
+    "print(json.dumps({'pid': os.getpid(), 'status': 'complete'}))"
+)
+CONTROL_SCOPE = "interpreter, minimal JSON worker, IPC and exit; no harness or tool imports"
 
 
 def checkpoint(output: Path, document: dict) -> None:
@@ -151,15 +157,17 @@ def operation(tool: str, path: Path, threads: int):
 
 
 def worker(request: dict) -> dict:
+    start = time.perf_counter_ns()
     run = operation(request["tool"], Path(request["path"]), request["threads"])
+    import_setup_seconds = (time.perf_counter_ns() - start) / 1e9
     if request.get("preflight"):
-        return {"pid": os.getpid(), "status": "complete"}
-    for _ in range(request["warmups"]):
-        observed = run()
-        if observed != request["expected"]:
-            raise ValueError(f"fixture mismatch during warmup: {observed!r}")
-    samples = []
-    for _ in range(request["iterations"]):
+        return {
+            "pid": os.getpid(),
+            "status": "complete",
+            "import_setup_seconds": import_setup_seconds,
+        }
+    samples, warmups = [], []
+    for index in range(request["warmups"] + request["iterations"]):
         gc.collect()  # Outside the operation timer; automatic GC remains enabled.
         start = time.perf_counter_ns()
         observed = run()
@@ -168,8 +176,15 @@ def worker(request: dict) -> dict:
             raise ValueError(
                 f"fixture mismatch: expected {request['expected']!r}, got {observed!r}"
             )
-        samples.append(seconds)
-    return {"pid": os.getpid(), "operation_seconds": samples, "observed": observed}
+        (warmups if index < request["warmups"] else samples).append(seconds)
+    return {
+        "pid": os.getpid(),
+        "import_setup_seconds": import_setup_seconds,
+        "first_operation_seconds": (warmups or samples)[0],
+        "warmup_seconds": warmups,
+        "operation_seconds": samples,
+        "observed": observed,
+    }
 
 
 def prime_file(path: Path) -> None:
@@ -197,7 +212,9 @@ def run_worker(request: dict, timeout: float) -> dict:
     start = time.perf_counter_ns()
     try:
         completed = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), "--worker"],
+            [sys.executable, "-c", CONTROL_CODE]
+            if request.get("control")
+            else [sys.executable, str(Path(__file__).resolve()), "--worker"],
             input=json.dumps(request),
             text=True,
             encoding="utf-8",
@@ -241,6 +258,7 @@ def summarize(samples: list[float]) -> dict:
         raise ValueError("at least two samples are required")
     q1, _, q3 = statistics.quantiles(samples, n=4, method="inclusive")
     return {
+        "sample_count": len(samples),
         "samples_seconds": samples,
         "median_seconds": statistics.median(samples),
         "q1_seconds": q1,
@@ -265,6 +283,11 @@ def render_table(document: dict) -> str:
         f"Reference: {reference}. Different workloads; metric equivalence is not established.",
         "Cold = fresh process (startup/import/exit included); warm = operation after warmup.",
         "Times in seconds: median [IQR]. Cache treatment is recorded in results.json.",
+        f"Evidence: diagnostic; {document['config']['blocks']} process blocks, "
+        f"{document['config']['iterations']} samples per block. "
+        "Publication mode is not an established baseline.",
+        "Import/setup and first-operation boundaries and ordered controls are retained in JSON; "
+        "no independent medians are subtracted.",
         "",
         "| Tool | Cold median [IQR] | Warm median [IQR] | Cold vs reference | Warm vs reference |",
         "| --- | ---: | ---: | --- | --- |",
@@ -300,6 +323,8 @@ def compare_runs(previous: dict, current: dict) -> dict:
         raise ValueError("repeatability comparison requires the same fixture")
     if previous["config"] != current["config"]:
         raise ValueError("repeatability comparison requires the same benchmark configuration")
+    if any(not known_cpu(doc["environment"]["cpu"]) for doc in (previous, current)):
+        raise ValueError("repeatability comparison requires a known CPU model")
     for key in (
         "python",
         "os",
@@ -333,6 +358,52 @@ def git_output(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
 
+def known_cpu(value: str) -> bool:
+    """Reject unknown identifiers and architecture aliases, including cross-host aliases."""
+    model = value.strip().lower()
+    architecture = re.fullmatch(
+        r"x86(?:_64(?:h|_v[234])?)?|i[3-6]86|amd64|x64|ia64|"
+        r"aarch64(?:_be)?|arm(?:64e?|v\d+(?:[a-z]+|[-_][a-z0-9]+)?)?|"
+        r"(?:ppc|powerpc)(?:64)?(?:le|el)?|mips(?:32|64)?(?:el|le)?|"
+        r"s390x?|riscv(?:32|64)|sparc(?:32|64|v9)?|loongarch64|alpha",
+        model,
+    )
+    return (
+        model not in {"", "unknown", platform.machine().strip().lower()}
+        and not model.startswith(("intel64 family", "amd64 family"))
+        and architecture is None
+    )
+
+
+def cpu_model() -> str:
+    """Prefer a model identifier to platform.processor's architecture placeholder."""
+    candidate = platform.processor()
+    if known_cpu(candidate):
+        return candidate
+    cpuinfo = Path("/proc/cpuinfo")
+    if cpuinfo.exists():
+        for line in cpuinfo.read_text().splitlines():
+            key, separator, value = line.partition(":")
+            if (
+                separator
+                and key.strip() in ("model name", "Hardware", "Model")
+                and known_cpu(value)
+            ):
+                return value.strip()
+    if sys.platform == "win32":
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+        ) as key:
+            candidate = winreg.QueryValueEx(key, "ProcessorNameString")[0]
+    elif sys.platform == "darwin":
+        candidate = subprocess.check_output(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
+        ).strip()
+    return candidate if known_cpu(candidate) else "unknown"
+
+
 def environment_metadata() -> dict:
     import psutil
     import tomllib
@@ -361,23 +432,13 @@ def environment_metadata() -> dict:
     ]
     if not native:
         raise RuntimeError("cannot fingerprint the installed dataprof extension")
-    cpu = platform.processor()
-    if not cpu and Path("/proc/cpuinfo").exists():
-        cpu = next(
-            (
-                line.split(":", 1)[1].strip()
-                for line in Path("/proc/cpuinfo").read_text().splitlines()
-                if line.startswith("model name")
-            ),
-            "unknown",
-        )
     return {
         "python": sys.version,
         "executable": sys.executable,
         "os": platform.platform(),
         "hostname": platform.node(),
         "architecture": platform.machine(),
-        "cpu": cpu or "unknown",
+        "cpu": cpu_model(),
         "logical_cpus": psutil.cpu_count(),
         "physical_cpus": psutil.cpu_count(logical=False),
         "ram_bytes": psutil.virtual_memory().total,
@@ -409,6 +470,10 @@ def new_document(args: argparse.Namespace) -> dict:
         "status": "incomplete",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
+            "protocol_version": 2,
+            "mode": "publication" if args.publication else "routine",
+            "blocks": args.blocks,
+            "host_description": args.host_description,
             "iterations": args.iterations,
             "warmups": args.warmups,
             "threads": args.threads,
@@ -417,12 +482,22 @@ def new_document(args: argparse.Namespace) -> dict:
             "reference": args.reference,
             "cold_cache": args.cold_cache,
             "cold_timer": "parent wall time: process startup, imports, operation, IPC, exit",
-            "warm_timer": "worker wall time: CSV read, summary, observation; imports excluded",
+            "warm_timer": "worker wall time: CSV read, summary, observation; "
+            "adapter import/setup excluded",
             "preflight": PREFLIGHT_POLICY,
+            "import_timer": "worker wall time around adapter import and callable setup; "
+            "deferred imports remain in operations",
+            "first_operation_timer": "first CSV read, summary and observation in each worker, "
+            "before any repeated operation",
+            "control_timer": CONTROL_SCOPE,
+            "library_cache": "not evicted; environment preparation and preflight "
+            "may warm library pages and caches",
             "workloads": {tool: WORKLOADS[tool] for tool in args.tools},
         },
         "runs": [],
         "preflight": [],
+        "controls": [],
+        "evidence_status": "diagnostic",
         "results": {},
     }
 
@@ -439,8 +514,34 @@ def preflight(args: argparse.Namespace, document: dict) -> None:
             {"tool": tool, "path": "unused", "threads": args.threads, "preflight": True},
             args.timeout,
         )
-        document["preflight"].append({"tool": tool, **result})
+        document["preflight"].append(
+            {
+                "tool": tool,
+                "invocation": "first_adapter_import_after_environment_preparation",
+                **result,
+            }
+        )
         checkpoint(args.output, document)
+
+
+def summarize_runs(runs: list[dict], tools: list[str]) -> dict:
+    results = {}
+    for tool in tools:
+        selected = [run for run in runs if run["tool"] == tool]
+        results[tool] = {
+            "cold": summarize(
+                [run["process_seconds"] for run in selected if run["mode"] == "cold"]
+            ),
+            "warm": summarize(
+                [
+                    sample
+                    for run in selected
+                    if run["mode"] == "warm"
+                    for sample in run["operation_seconds"]
+                ]
+            ),
+        }
+    return results
 
 
 def benchmark(args: argparse.Namespace, document: dict) -> dict:
@@ -456,39 +557,75 @@ def benchmark(args: argparse.Namespace, document: dict) -> dict:
     }
     # Interleave cold cells by round to avoid giving one tool all the idle-host
     # samples and another all the busy-host samples. Never run tools concurrently.
-    for iteration in range(args.iterations):
+    for block in range(1, args.blocks + 1):
+        for iteration in range(1, args.iterations + 1):
+            stage(args, document, "control", block=block, iteration=iteration)
+            control = run_worker(
+                {"tool": "minimal-worker", "threads": args.threads, "control": True}, args.timeout
+            )
+            document["controls"].append({"block": block, "iteration": iteration, **control})
+            checkpoint(args.output, document)
+            order = list(args.tools)
+            rng.shuffle(order)
+            for tool in order:
+                stage(args, document, "cold", tool=tool, block=block, iteration=iteration)
+                cache = prepare_cache(path, args.cold_cache)
+                print(f"block {block}, cold {iteration}/{args.iterations}: {tool}", file=sys.stderr)
+                result = run_worker(
+                    {**base, "tool": tool, "warmups": 0, "iterations": 1}, args.timeout
+                )
+                document["runs"].append(
+                    {
+                        "tool": tool,
+                        "mode": "cold",
+                        "block": block,
+                        "iteration": iteration,
+                        "invocation": "first_fixture_operation_after_preflight"
+                        if block == iteration == 1
+                        else "subsequent_fresh_process",
+                        "cache": cache,
+                        **result,
+                    }
+                )
+                checkpoint(args.output, document)
         order = list(args.tools)
         rng.shuffle(order)
         for tool in order:
-            stage(args, document, "cold", tool=tool, iteration=iteration + 1)
-            cache = prepare_cache(path, args.cold_cache)
-            print(f"cold {iteration + 1}/{args.iterations}: {tool}", file=sys.stderr)
-            result = run_worker({**base, "tool": tool, "warmups": 0, "iterations": 1}, args.timeout)
-            document["runs"].append({"tool": tool, "mode": "cold", "cache": cache, **result})
+            stage(args, document, "warm", tool=tool, block=block)
+            cache = prepare_cache(path, "warm")
+            print(f"block {block}, warm: {tool}", file=sys.stderr)
+            result = run_worker(
+                {**base, "tool": tool, "warmups": args.warmups, "iterations": args.iterations},
+                args.timeout,
+            )
+            document["runs"].append(
+                {
+                    "tool": tool,
+                    "mode": "warm",
+                    "block": block,
+                    "invocation": "subsequent_fresh_process",
+                    "cache": cache,
+                    **result,
+                }
+            )
             checkpoint(args.output, document)
-    order = list(args.tools)
-    rng.shuffle(order)
-    for tool in order:
-        stage(args, document, "warm", tool=tool)
-        cache = prepare_cache(path, "warm")
-        print(f"warm: {tool}", file=sys.stderr)
-        result = run_worker(
-            {**base, "tool": tool, "warmups": args.warmups, "iterations": args.iterations},
-            args.timeout,
-        )
-        document["runs"].append({"tool": tool, "mode": "warm", "cache": cache, **result})
-        checkpoint(args.output, document)
     stage(args, document, "validation")
     if fingerprint(path) != fixture["sha256"]:
         raise RuntimeError("fixture changed during the benchmark")
-    for tool in args.tools:
-        runs = [run for run in document["runs"] if run["tool"] == tool]
-        document["results"][tool] = {
-            "cold": summarize([run["process_seconds"] for run in runs if run["mode"] == "cold"]),
-            "warm": summarize(
-                next(run["operation_seconds"] for run in runs if run["mode"] == "warm")
+    document["results"] = summarize_runs(document["runs"], args.tools)
+    document["control_summary"] = summarize(
+        [run["process_seconds"] for run in document["controls"]]
+    )
+    # Blocks remain individually assessable; pooled operations are not independent hosts.
+    document["block_results"] = [
+        {
+            "block": block,
+            "results": summarize_runs(
+                [r for r in document["runs"] if r["block"] == block], args.tools
             ),
         }
+        for block in range(1, args.blocks + 1)
+    ]
     return document
 
 
@@ -502,9 +639,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--rows", type=int, default=10_000, help="generated fixture rows (>= 100)")
     parser.add_argument(
-        "--iterations", type=int, default=7, help="measured samples per cell (>= 2)"
+        "--iterations", type=int, help="samples per block (routine: 7, publication: 21)"
     )
-    parser.add_argument("--warmups", type=int, default=2, help="unmeasured warm operations (>= 1)")
+    parser.add_argument(
+        "--publication",
+        action="store_true",
+        help="larger experiment budget; still diagnostic until independently assessed",
+    )
+    parser.add_argument(
+        "--blocks", type=int, help="independent process blocks (routine: 1, publication: 3)"
+    )
+    parser.add_argument(
+        "--host-description",
+        default="",
+        help="host identity and load/power controls; required for publication mode",
+    )
+    parser.add_argument(
+        "--warmups",
+        type=int,
+        default=2,
+        help="timed warmups excluded from steady-state aggregates (>= 1)",
+    )
     parser.add_argument("--threads", type=int, default=1, help="requested library thread limits")
     parser.add_argument("--tools", nargs="+", choices=TOOLS, default=list(TOOLS))
     parser.add_argument("--reference", choices=TOOLS, default="pandas")
@@ -520,6 +675,18 @@ def main(argv: list[str] | None = None) -> int:
         help="pre-read fixture, or request POSIX file eviction (unverified)",
     )
     args = parser.parse_args(argv)
+    args.iterations = (
+        args.iterations if args.iterations is not None else (21 if args.publication else 7)
+    )
+    args.blocks = args.blocks if args.blocks is not None else (3 if args.publication else 1)
+    args.host_description = args.host_description.strip()
+    if args.blocks < 1:
+        parser.error("require blocks >= 1")
+    if args.publication and (args.iterations < 7 or args.blocks < 2 or not args.host_description):
+        parser.error(
+            "publication requires iterations >= 7, blocks >= 2 and --host-description; "
+            "this is a budget, not a precision guarantee"
+        )
     if args.rows < 100 or args.iterations < 2 or args.warmups < 1 or args.threads < 1:
         parser.error("require rows >= 100, iterations >= 2, warmups >= 1, threads >= 1")
     if (

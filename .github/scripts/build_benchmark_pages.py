@@ -346,7 +346,9 @@ def load_comparison(pages: Path) -> dict | None:
                     raise ValueError(f"invalid comparison timing: {tool}.{mode}.{key}")
             if not cell["q1_seconds"] <= cell["median_seconds"] <= cell["q3_seconds"]:
                 raise ValueError(f"invalid comparison quartiles: {tool}.{mode}")
-            if len(cell["samples_seconds"]) != document["config"]["iterations"]:
+            if len(cell["samples_seconds"]) != document["config"]["iterations"] * document[
+                "config"
+            ].get("blocks", 1):
                 raise ValueError(f"comparison sample count mismatch: {tool}.{mode}")
     return document
 
@@ -370,7 +372,7 @@ def render_timing_chart(document: dict, mode: str) -> str:
           <span class="timing-value">{fmt_time(median * 1000)}</span>
         </div>""")
     description = (
-        "Repeated CSV reads and fresh summaries after warmup. Imports excluded."
+        "Repeated CSV reads and fresh summaries after warmup. Adapter import/setup excluded."
         if mode == "warm"
         else "A fresh process per sample. Startup, imports, operation and exit included."
     )
@@ -396,11 +398,18 @@ def render_comparison(document: dict | None) -> str:
         rows.append(f"<tr><td>{html.escape(tool)}</td>{cells}<td>{workload}</td></tr>")
     config = document["config"]
     environment = document["environment"]
+    blocks = config.get("blocks", 1)
+    sample_count = config["iterations"] * blocks
     details = {
         "Measured at": document["created_at"],
         "Operating system": environment["os"],
         "Processor": environment["cpu"],
-        "Samples / warmups": f"{config['iterations']} / {config['warmups']}",
+        "Samples / warmups per block": f"{config['iterations']} / {config['warmups']}",
+        "Process blocks": str(blocks),
+        "Experiment mode": config.get("mode", "routine"),
+        "Declared host controls": config.get("host_description") or "Not declared",
+        "Library cache": config.get("library_cache", "Not controlled / not recorded"),
+        "Import preflight": config.get("preflight", "Not recorded"),
         "Thread request": str(config["threads"]),
         "Cold file cache": config["cold_cache"] + " (residency / eviction unverified)",
         "Fixture SHA-256": document["fixture"]["sha256"],
@@ -420,7 +429,8 @@ def render_comparison(document: dict | None) -> str:
       <h2>One input. Explicit workloads.</h2>
       <p>File-to-summary timings for {document["fixture"]["expected"]["rows"]:,} rows of
         numeric, text and null data. Every sample checks row counts, column order and nulls.</p>
-    </div><span class="pill">{config["iterations"]} samples per condition</span></div>
+    </div><span class="pill">{sample_count} samples per condition · {blocks} process blocks</span>
+    </div>
     <div class="card comparison-card">
     <div class="chart-controls">
       <div class="mode-switch" role="tablist" aria-label="Timing condition">
@@ -436,6 +446,12 @@ def render_comparison(document: dict | None) -> str:
       Each tool computes a different summary; metric equivalence is not established.
       Fresh process does not imply cold storage. These measurements describe this run,
       not a universal ranking. IQR shows variation, not a confidence interval.</div>
+    <p><strong>Diagnostic evidence — no established baseline.</strong>
+      Publication mode increases the experiment budget; it does not certify precision.
+      Warm samples share a process within each block. Separate blocks use fresh processes,
+      but share host and OS caches. Within-run intervals do not demonstrate across-run stability;
+      repeat-run IQR overlap is a diagnostic, not a significance test.</p>
+    {render_ordered_samples(document)}
     <details class="evidence-details"><summary>Exact workloads and timing table</summary>
     <div class="bench-table"><table><caption>Seconds: median [IQR]</caption>
       <thead><tr><th>Tool</th><th>Cold median [IQR]</th><th>Warm median [IQR]</th>
@@ -450,6 +466,71 @@ def render_comparison(document: dict | None) -> str:
     </div>
   </section>
 """
+
+
+def render_ordered_samples(document: dict) -> str:
+    """Expose actual measurement order and boundaries, including first use and controls."""
+
+    def seconds(value):
+        return "Not recorded" if value is None else f"{value:.6f}"
+
+    rows = []
+    for index, run in enumerate(document.get("runs", []), 1):
+        values = [
+            str(index),
+            str(run.get("block", 1)),
+            run["tool"],
+            run["mode"],
+            run.get("invocation", "Not recorded"),
+            seconds(run.get("process_seconds")),
+            seconds(run.get("import_setup_seconds")),
+            seconds(run.get("first_operation_seconds")),
+            ", ".join(seconds(value) for value in run["operation_seconds"]),
+        ]
+        rows.append(
+            "<tr>" + "".join(f"<td>{html.escape(value)}</td>" for value in values) + "</tr>"
+        )
+    if not rows:
+        # Older artifacts lack boundary metadata; preserve their ordered observations.
+        for tool, modes in document["results"].items():
+            for mode, cell in modes.items():
+                values = ", ".join(seconds(value) for value in cell["samples_seconds"])
+                rows.append(
+                    f'<tr><td colspan="9">{html.escape(tool)} / {html.escape(mode)}: '
+                    f"{values}</td></tr>"
+                )
+    controls = (
+        "; ".join(
+            f"block {run['block']}, round {run['iteration']}: {seconds(run['process_seconds'])}"
+            for run in document.get("controls", [])
+        )
+        or "Not recorded"
+    )
+    preflight = (
+        "; ".join(
+            f"{run['tool']}: {seconds(run.get('import_setup_seconds'))}"
+            for run in document.get("preflight", [])
+        )
+        or "Not recorded"
+    )
+    return f"""<details class="evidence-details">
+      <summary>Ordered samples and timing boundaries</summary>
+      <p>Seconds in execution order; no first sample is discarded. Process time includes
+        interpreter startup, harness imports, adapter import/setup, operations, validation,
+        garbage collection, IPC and exit. Import/setup is timed directly around the adapter;
+        deferred imports remain inside operations. First operation includes initialization and,
+        for warm workers, is the first warmup. Warmup samples are retained in the raw JSON.</p>
+      <p>First adapter import after environment preparation (preflight): {html.escape(preflight)}.
+        Earlier installs or workflow preflights may have warmed library pages;
+        this is not disk-cold.</p>
+      <div class="bench-table"><table><caption>Ordered worker observations (seconds)</caption>
+        <thead><tr><th>Order</th><th>Block</th><th>Tool</th><th>Mode</th><th>Invocation</th>
+          <th>Process</th><th>Import/setup</th><th>First operation</th><th>Measured operations</th>
+        </tr></thead><tbody>{"".join(rows)}</tbody></table></div>
+      <p>Minimal-worker controls, before each round (seconds): {html.escape(controls)}.</p>
+      <p>Control scope: interpreter, minimal JSON worker, IPC and exit, without harness or tool
+        imports. It is context for combined startup costs, not a subtractable import estimate.</p>
+    </details>"""
 
 
 def render_index(
@@ -533,7 +614,8 @@ def render_index(
     evidence = (
         f"<dt>Comparison run</dt><dd>{html.escape(comparison['created_at'][:10])}</dd>"
         f"<dt>Fixture</dt><dd>{comparison['fixture']['expected']['rows']:,} rows · 3 columns</dd>"
-        f"<dt>Repetitions</dt><dd>{comparison['config']['iterations']} per condition</dd>"
+        f"<dt>Repetitions</dt><dd>{comparison['config']['iterations']} per block × "
+        f"{comparison['config'].get('blocks', 1)} process blocks</dd>"
         f"<dt>Tool versions</dt><dd>{len(comparison['results'])} pinned tools</dd>"
         if comparison
         else "<dt>Comparison suite</dt><dd>Not included in this artifact</dd>"

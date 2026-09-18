@@ -133,6 +133,47 @@ def test_comparison_html_escapes_metadata(artifact):
     assert "&lt;script&gt;" in output
 
 
+def test_process_blocks_and_ordered_boundaries_are_visible(artifact):
+    document = comparison_document()
+    document["config"].update({"blocks": 2, "mode": "publication", "host_description": "<lab>"})
+    for mode in ("cold", "warm"):
+        document["results"]["dataprof"][mode] = {
+            **document["results"]["dataprof"][mode],
+            "samples_seconds": [0.9, 1.1, 1.0, 1.0],
+        }
+    document["runs"] = [
+        {
+            "tool": "dataprof",
+            "mode": "cold",
+            "block": 1,
+            "invocation": "first_fixture_operation_after_preflight",
+            "process_seconds": 1.23,
+            "import_setup_seconds": 0.12,
+            "first_operation_seconds": 0.23,
+            "operation_seconds": [0.23],
+        }
+    ]
+    document["controls"] = [{"block": 1, "iteration": 1, "process_seconds": 0.045}]
+    document["preflight"] = [{"tool": "dataprof", "import_setup_seconds": 0.34}]
+    write_comparison(artifact, document)
+    output = pages.render_comparison(pages.load_comparison(artifact))
+    assert "4 samples per condition · 2 process blocks" in output
+    assert "first_fixture_operation_after_preflight" in output
+    for seconds in ("1.230000", "0.120000", "0.230000", "0.045000", "0.340000"):
+        assert seconds in output
+    assert "Diagnostic evidence — no established baseline" in output
+    assert "not a significance test" in output
+    assert "&lt;lab&gt;" in output
+    assert "<lab>" not in output
+
+
+def test_old_comparison_exposes_ordered_samples_without_inventing_boundaries():
+    output = pages.render_comparison(comparison_document())
+    assert "0.900000, 1.100000" in output
+    assert "Not recorded" in output
+    assert "Diagnostic evidence — no established baseline" in output
+
+
 @pytest.mark.parametrize("invalid", ["schema", "sample_count", "nan", "incomplete", "missing_tool"])
 def test_invalid_present_comparison_is_rejected(artifact, invalid):
     document = comparison_document()
