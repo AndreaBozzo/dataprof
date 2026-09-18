@@ -552,11 +552,11 @@ def main(argv: list[str] | None = None) -> int:
             # The progress checkpoint stays incomplete until both exports exist.
             exported = {key: value for key, value in document.items() if key != "active_stage"}
             exported["status"] = "complete"
+            (args.output / "comparison.md").write_text(table, encoding="utf-8")
             (args.output / "results.json").write_text(
                 json.dumps(exported, indent=2, allow_nan=False) + "\n",
                 encoding="utf-8",
             )
-            (args.output / "comparison.md").write_text(table, encoding="utf-8")
             print(table, end="")
         document["status"] = "complete"
         document.pop("active_stage", None)

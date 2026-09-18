@@ -398,7 +398,9 @@ def test_unreadable_baseline_fails_before_measurements(tmp_path, monkeypatch):
     assert progress["runs"] == []
 
 
-def test_export_failure_removes_success_files_but_retains_evidence(tmp_path, monkeypatch):
+@pytest.mark.parametrize("filename", ["comparison.md", "results.json"])
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_export_failure_keeps_run_incomplete(tmp_path, monkeypatch, filename, interrupted):
     monkeypatch.setattr(bench, "environment_metadata", lambda: {})
 
     def run(request, timeout):
@@ -413,22 +415,27 @@ def test_export_failure_removes_success_files_but_retains_evidence(tmp_path, mon
     monkeypatch.setattr(bench, "run_worker", run)
     write_text = Path.write_text
 
-    def fail_table(path, *args, **kwargs):
-        if path.name == "comparison.md":
-            raise OSError("injected table export failure")
+    def fail_export(path, *args, **kwargs):
+        if path.name == filename:
+            if interrupted:
+                # Bypass the Exception cleanup, as an abrupt interruption would.
+                raise KeyboardInterrupt("injected export interruption")
+            raise OSError("injected export failure")
         return write_text(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "write_text", fail_table)
-    assert (
-        bench.main(
-            ["--output", str(tmp_path), "--tools", "pandas", "--rows", "100", "--iterations", "2"]
-        )
-        == 1
-    )
+    monkeypatch.setattr(Path, "write_text", fail_export)
+    args = ["--output", str(tmp_path), "--tools", "pandas", "--rows", "100", "--iterations", "2"]
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            bench.main(args)
+    else:
+        assert bench.main(args) == 1
     progress = json.loads((tmp_path / "progress.json").read_text())
     assert progress["status"] == "incomplete"
-    assert progress["failure"]["stage"] == "export"
+    assert progress["active_stage"]["stage"] == "export"
+    if not interrupted:
+        assert progress["failure"]["stage"] == "export"
     assert len(progress["runs"]) == 3
     assert progress["results"]["pandas"]["cold"]["median_seconds"] == 2.0
     assert not (tmp_path / "results.json").exists()
-    assert not (tmp_path / "comparison.md").exists()
+    assert (tmp_path / "comparison.md").exists() == (interrupted and filename == "results.json")
