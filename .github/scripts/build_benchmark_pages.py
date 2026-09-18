@@ -317,14 +317,25 @@ def build_observations(grouped: dict[str, list[dict]]) -> list[str]:
 
 
 def load_comparison(pages: Path) -> dict | None:
+    # Failed artifacts are retained for diagnosis, never treated as old artifacts
+    # that merely lack a comparison suite.
+    for status_path in (pages / "run-status.json", pages / "comparison" / "progress.json"):
+        if status_path.exists():
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            if status.get("status") != "complete":
+                raise ValueError(f"incomplete benchmark artifact: {status_path.name}")
     path = pages / "comparison" / "results.json"
     if not path.exists():
         return None
     document = json.loads(path.read_text(encoding="utf-8"))
+    if document.get("status", "complete") != "complete":
+        raise ValueError("incomplete comparison results")
     if document["schema_version"] != 1:
         raise ValueError("unsupported comparison result schema")
     if not document["results"]:
         raise ValueError("comparison contains no results")
+    if document["results"].keys() != document["config"]["workloads"].keys():
+        raise ValueError("comparison is missing requested tools")
     for tool, modes in document["results"].items():
         if tool not in document["config"]["workloads"]:
             raise ValueError(f"comparison has no workload description for {tool}")

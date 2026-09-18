@@ -17,6 +17,7 @@ import statistics
 import subprocess
 import sys
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +37,33 @@ WORKLOADS = {
     "polars": "read_csv + describe + null counts",
     "ydata-profiling": "pandas.read_csv + ProfileReport(minimal=True).description_set",
 }
+PREFLIGHT_POLICY = (
+    "imports only, in disposable workers before measurements; no fixture operations; "
+    "may warm OS library pages and on-disk library caches, which are not evicted; "
+    "fresh-process samples are subsequent to preflight, not first host invocations"
+)
+
+
+def checkpoint(output: Path, document: dict) -> None:
+    """Atomically retain completed observations without publishing a comparison."""
+    temporary = output / "progress.json.tmp"
+    temporary.write_text(json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    temporary.replace(output / "progress.json")
+
+
+class WorkerError(RuntimeError):
+    def __init__(self, message: str, *, stdout="", stderr="", returncode=None):
+        super().__init__(message)
+        # TimeoutExpired may carry bytes even when subprocess.run uses text=True.
+        self.diagnostics = {
+            "stdout": stdout.decode("utf-8", errors="replace")
+            if isinstance(stdout, bytes)
+            else stdout,
+            "stderr": stderr.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes)
+            else stderr,
+            "returncode": returncode,
+        }
 
 
 def fingerprint(path: Path) -> str:
@@ -124,6 +152,8 @@ def operation(tool: str, path: Path, threads: int):
 
 def worker(request: dict) -> dict:
     run = operation(request["tool"], Path(request["path"]), request["threads"])
+    if request.get("preflight"):
+        return {"pid": os.getpid(), "status": "complete"}
     for _ in range(request["warmups"]):
         observed = run()
         if observed != request["expected"]:
@@ -165,20 +195,42 @@ def run_worker(request: dict, timeout: float) -> dict:
     env["PYTHONHASHSEED"] = "0"
     env["PYTHONIOENCODING"] = "utf-8"
     start = time.perf_counter_ns()
-    completed = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), "--worker"],
-        input=json.dumps(request),
-        text=True,
-        encoding="utf-8",
-        capture_output=True,
-        env=env,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--worker"],
+            input=json.dumps(request),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            env=env,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WorkerError(
+            f"{request['tool']} worker timed out after {timeout}s",
+            stdout=exc.stdout,
+            stderr=exc.stderr,
+        ) from exc
     elapsed = (time.perf_counter_ns() - start) / 1e9
     if completed.returncode:
-        raise RuntimeError(f"{request['tool']} worker failed:\n{completed.stderr}")
-    result = json.loads(completed.stdout)
+        raise WorkerError(
+            f"{request['tool']} worker failed:\n{completed.stderr}",
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            returncode=completed.returncode,
+        )
+    try:
+        result = json.loads(completed.stdout)
+        if not isinstance(result, dict):
+            raise ValueError("worker response must be an object")
+    except ValueError as exc:
+        raise WorkerError(
+            f"{request['tool']} worker returned invalid JSON: {exc}",
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            returncode=completed.returncode,
+        ) from exc
     result["process_seconds"] = elapsed
     result["stderr"] = completed.stderr
     return result
@@ -242,6 +294,8 @@ def render_table(document: dict) -> str:
 
 def compare_runs(previous: dict, current: dict) -> dict:
     """Refuse mismatched experiments before reporting repeat-run dispersion."""
+    if previous.get("status", "complete") != "complete":
+        raise ValueError("repeatability comparison requires a complete previous run")
     if previous["fixture"]["sha256"] != current["fixture"]["sha256"]:
         raise ValueError("repeatability comparison requires the same fixture")
     if previous["config"] != current["config"]:
@@ -349,16 +403,11 @@ def environment_metadata() -> dict:
     }
 
 
-def benchmark(args: argparse.Namespace) -> dict:
-    args.output.mkdir(parents=True, exist_ok=True)
-    fixture = make_fixture((args.output / "fixture.csv").resolve(), args.rows)
-    path = Path(fixture["path"])
-    metadata = environment_metadata()
-    document = {
+def new_document(args: argparse.Namespace) -> dict:
+    return {
         "schema_version": 1,
+        "status": "incomplete",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "environment": metadata,
-        "fixture": fixture,
         "config": {
             "iterations": args.iterations,
             "warmups": args.warmups,
@@ -369,11 +418,36 @@ def benchmark(args: argparse.Namespace) -> dict:
             "cold_cache": args.cold_cache,
             "cold_timer": "parent wall time: process startup, imports, operation, IPC, exit",
             "warm_timer": "worker wall time: CSV read, summary, observation; imports excluded",
+            "preflight": PREFLIGHT_POLICY,
             "workloads": {tool: WORKLOADS[tool] for tool in args.tools},
         },
         "runs": [],
+        "preflight": [],
         "results": {},
     }
+
+
+def stage(args: argparse.Namespace, document: dict, name: str, **context) -> None:
+    document["active_stage"] = {"stage": name, **context}
+    checkpoint(args.output, document)
+
+
+def preflight(args: argparse.Namespace, document: dict) -> None:
+    for tool in args.tools:
+        stage(args, document, "preflight", tool=tool)
+        result = run_worker(
+            {"tool": tool, "path": "unused", "threads": args.threads, "preflight": True},
+            args.timeout,
+        )
+        document["preflight"].append({"tool": tool, **result})
+        checkpoint(args.output, document)
+
+
+def benchmark(args: argparse.Namespace, document: dict) -> dict:
+    stage(args, document, "fixture")
+    fixture = make_fixture((args.output / "fixture.csv").resolve(), args.rows)
+    document["fixture"] = fixture
+    path = Path(fixture["path"])
     rng = random.Random(args.seed)
     base = {
         "path": str(path),
@@ -386,13 +460,16 @@ def benchmark(args: argparse.Namespace) -> dict:
         order = list(args.tools)
         rng.shuffle(order)
         for tool in order:
+            stage(args, document, "cold", tool=tool, iteration=iteration + 1)
             cache = prepare_cache(path, args.cold_cache)
             print(f"cold {iteration + 1}/{args.iterations}: {tool}", file=sys.stderr)
             result = run_worker({**base, "tool": tool, "warmups": 0, "iterations": 1}, args.timeout)
             document["runs"].append({"tool": tool, "mode": "cold", "cache": cache, **result})
+            checkpoint(args.output, document)
     order = list(args.tools)
     rng.shuffle(order)
     for tool in order:
+        stage(args, document, "warm", tool=tool)
         cache = prepare_cache(path, "warm")
         print(f"warm: {tool}", file=sys.stderr)
         result = run_worker(
@@ -400,6 +477,8 @@ def benchmark(args: argparse.Namespace) -> dict:
             args.timeout,
         )
         document["runs"].append({"tool": tool, "mode": "warm", "cache": cache, **result})
+        checkpoint(args.output, document)
+    stage(args, document, "validation")
     if fingerprint(path) != fixture["sha256"]:
         raise RuntimeError("fixture changed during the benchmark")
     for tool in args.tools:
@@ -416,6 +495,11 @@ def benchmark(args: argparse.Namespace) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "benchmark-results/comparison")
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="validate pins and imports without measurements",
+    )
     parser.add_argument("--rows", type=int, default=10_000, help="generated fixture rows (>= 100)")
     parser.add_argument(
         "--iterations", type=int, default=7, help="measured samples per cell (>= 2)"
@@ -448,27 +532,52 @@ def main(argv: list[str] | None = None) -> int:
     # Fail before doing work rather than silently retaining a table from an older run.
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("output directory must be empty; choose a new --output for each run")
+    args.output.mkdir(parents=True, exist_ok=True)
+    document = new_document(args)
     try:
-        previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
-        document = benchmark(args)
-        if previous is not None:
-            document["repeatability"] = compare_runs(previous, document)
-    except (
-        OSError,
-        ValueError,
-        KeyError,
-        TypeError,
-        RuntimeError,
-        subprocess.SubprocessError,
-    ) as exc:
+        previous = None
+        if args.compare and not args.preflight_only:
+            stage(args, document, "compare_input")
+            previous = json.loads(args.compare.read_text(encoding="utf-8"))
+        stage(args, document, "environment")
+        document["environment"] = environment_metadata()
+        preflight(args, document)
+        if not args.preflight_only:
+            benchmark(args, document)
+            if previous is not None:
+                stage(args, document, "compare")
+                document["repeatability"] = compare_runs(previous, document)
+            stage(args, document, "export")
+            table = render_table(document)
+            # The progress checkpoint stays incomplete until both exports exist.
+            exported = {key: value for key, value in document.items() if key != "active_stage"}
+            exported["status"] = "complete"
+            (args.output / "results.json").write_text(
+                json.dumps(exported, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            (args.output / "comparison.md").write_text(table, encoding="utf-8")
+            print(table, end="")
+        document["status"] = "complete"
+        document.pop("active_stage", None)
+        checkpoint(args.output, document)
+    except Exception as exc:
+        # Preserve evidence, then fail the run. No failed observation becomes a timing.
+        document["status"] = "incomplete"
+        document["failure"] = {
+            **document.get("active_stage", {}),
+            "type": type(exc).__name__,
+            "message": str(exc),
+            "traceback": traceback.format_exc(),
+            **(exc.diagnostics if isinstance(exc, WorkerError) else {}),
+        }
+        checkpoint(args.output, document)
+        # An export error may leave one file behind. Keep raw evidence only in
+        # progress.json, so an incomplete run cannot be reused as a baseline.
+        (args.output / "results.json").unlink(missing_ok=True)
+        (args.output / "comparison.md").unlink(missing_ok=True)
         print(f"benchmark failed: {exc}", file=sys.stderr)
         return 1
-    table = render_table(document)
-    (args.output / "results.json").write_text(
-        json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8"
-    )
-    (args.output / "comparison.md").write_text(table, encoding="utf-8")
-    print(table, end="")
     return 0
 
 

@@ -87,10 +87,16 @@ jobs:
           if [ -d "benchmark-reports/target/criterion" ]; then
             mkdir -p pages-content/benchmarks
             cp -r benchmark-reports/target/criterion/. pages-content/benchmarks/
+            if [ -f "benchmark-reports/benchmark-results/run-status.json" ]; then
+              cp benchmark-reports/benchmark-results/run-status.json pages-content/benchmarks/
+            fi
             if [ -d "benchmark-reports/benchmark-results/comparison" ]; then
               mkdir -p pages-content/benchmarks/comparison
               cp benchmark-reports/benchmark-results/comparison/results.json pages-content/benchmarks/comparison/
               cp benchmark-reports/benchmark-results/comparison/comparison.md pages-content/benchmarks/comparison/
+              if [ -f "benchmark-reports/benchmark-results/comparison/progress.json" ]; then
+                cp benchmark-reports/benchmark-results/comparison/progress.json pages-content/benchmarks/comparison/
+              fi
             fi
             python3 .github/scripts/build_benchmark_pages.py pages-content/benchmarks
           else
