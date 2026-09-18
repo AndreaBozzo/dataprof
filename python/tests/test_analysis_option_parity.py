@@ -132,8 +132,8 @@ def test_projection_preserves_python_source_memory_provenance() -> None:
 
     # The native report carries source-memory provenance; the high-level wrapper
     # intentionally does not duplicate every native metadata accessor.
-    full_native = cast(Any, full)._report
-    projected_native = cast(Any, projected)._report
+    full_native = cast(Any, full)._report._accessor._value
+    projected_native = cast(Any, projected)._report._accessor._value
     assert full_native.memory_bytes is not None
     assert projected_native.memory_bytes == full_native.memory_bytes
 

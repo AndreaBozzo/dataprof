@@ -2,17 +2,10 @@
 
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING as _TYPE_CHECKING, Any as _Any
+from typing import Any as _Any
 
-from ._dataprof import ColumnProfile
+from ._accessors import ColumnProfile, Pattern as _Pattern
 from ._rounding import _r2, _r4, _round_quartiles
-
-if _TYPE_CHECKING:
-    from ._dataprof import Pattern as _NativePattern
-    from ._report_backing import _DictPattern
-else:
-    _NativePattern = _Any
-
 
 # ---------------------------------------------------------------------------
 # Shared column record builder
@@ -245,7 +238,7 @@ def _column_record(col: ColumnProfile) -> dict[str, _Any]:
 _MIN_SUMMARY_PATTERN_CONFIDENCE = 0.5
 
 
-def _dominant_pattern(col: ColumnProfile) -> _NativePattern | _DictPattern | None:
+def _dominant_pattern(col: ColumnProfile) -> _Pattern | None:
     """Return the strongest pattern that clears the summary evidence threshold."""
     if not col.patterns:
         return None

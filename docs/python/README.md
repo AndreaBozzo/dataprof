@@ -401,8 +401,11 @@ sampling and absence semantics.
 
 **Round-trip fidelity:** a report reloaded with `from_dict`, `from_json`, or
 `load` reports the same values as the report it was saved from, at the precision
-above. Reloaded reports are read-only proxies rather than native reports, so the
-two are different objects with the same answers.
+above. Live and reloaded reports use the same read-only column, pattern, and
+quality accessors. They read native values or the saved document respectively;
+reloading does not recompute metrics or invent values for missing fields.
+Both expose `dataprof.ColumnProfile` and `dataprof.DataQualityMetrics` objects,
+so type checks and accessor behavior no longer depend on how a report was loaded.
 
 ## `ColumnProfile`
 

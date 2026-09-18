@@ -1,10 +1,8 @@
 """Round-trip parity between native and dict-backed reports (#512).
 
-A ``ProfileReport`` has two backings. One wraps the native report returned by
-the extension; the other (``_DictBackedReport`` and friends) reconstructs the
-same surface from a plain dict, and is what ``from_dict()``, ``from_json()``
-and ``load()`` return. Nothing asserted the two agreed, and they had already
-drifted — for example,
+A ``ProfileReport`` reads native or restored values through shared accessors
+(#516). The former dict-backed stand-ins had already drifted before these
+tests were added — for example,
 ``semantic_hint_bindings`` was written by ``to_dict()`` but never read back.
 
 Saving and reloading a report must not change what it reports.
@@ -229,8 +227,8 @@ def _assert_parity(native: Any, restored: Any, path: str) -> None:
         return
 
     # Anything else is a profile object (ColumnProfile, Pattern,
-    # DataQualityMetrics). The two backings use different classes by design, so
-    # compare the union of their public members rather than the objects.
+    # DataQualityMetrics). Compare every member so this sweep catches missing
+    # data as well as numeric differences, regardless of the object's backing.
     _assert_members_agree(native, restored, path)
 
 

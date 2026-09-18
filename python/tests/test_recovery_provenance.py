@@ -16,7 +16,8 @@ def test_successful_first_attempt_records_empty_history(tmp_path, engine):
     assert report.recovery_events == []
     assert report.to_dict()["execution"]["recovery_events"] == []
     # The extension's Rust document and the Python export agree on provenance.
-    assert json.loads(getattr(report, "_report").to_json())["execution"]["recovery_events"] == []
+    native = getattr(report, "_report")._accessor._value
+    assert json.loads(native.to_json())["execution"]["recovery_events"] == []
     assert dataprof.ProfileReport.from_json(report.to_json()).recovery_events == []
 
 

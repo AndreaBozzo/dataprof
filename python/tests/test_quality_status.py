@@ -36,7 +36,8 @@ def csv_path(tmp_path):
 
 def _native_status(report: dataprof.ProfileReport) -> dict:
     """The status as the Rust dialect serializes it."""
-    return json.loads(cast(Any, report)._report.to_json())["quality_status"]
+    native = cast(Any, report)._report._accessor._value
+    return json.loads(native.to_json())["quality_status"]
 
 
 class TestStates:

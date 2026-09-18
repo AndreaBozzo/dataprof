@@ -15,8 +15,9 @@ from collections.abc import (
 )
 from typing import Any as _Any, cast as _cast
 
+from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _ReportView
 from ._columns import _column_record, _dominant_pattern, column_to_dict
-from ._dataprof import ColumnProfile, DataQualityMetrics, ProfileReport as _RustProfileReport
+from ._dataprof import ProfileReport as _RustProfileReport
 from ._gate import QualityGateResult as _QualityGateResult, _Policy
 from ._paths import _normalize_pathlike
 from ._render import (
@@ -31,7 +32,7 @@ from ._render import (
     _section_min_cost,
     _stats_cell,
 )
-from ._report_backing import _DictBackedReport
+from ._report_backing import _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
 
@@ -49,7 +50,7 @@ def _quality_status_document(state: str, error: str | None) -> dict[str, _Any]:
 
 
 class ProfileReport:
-    """High-level wrapper around the Rust ProfileReport with export methods.
+    """Report access and export methods shared by native and restored backings.
 
     Supports dict-like column access::
 
@@ -68,8 +69,10 @@ class ProfileReport:
 
     _MAX_REPR_COLUMNS = 15
 
-    def __init__(self, report: _RustProfileReport):
-        self._report = report
+    def __init__(self, report: _RustProfileReport | _ReportView):
+        self._report = (
+            report if isinstance(report, _ReportView) else _ReportView(_NativeAccessor(report))
+        )
 
     # -- Property accessors --
 
@@ -212,7 +215,7 @@ class ProfileReport:
         only ever carries bindings that matched something or whose evidence was
         sampled.
         """
-        return list(getattr(self._report, "semantic_hint_bindings", []))
+        return list(self._report.semantic_hint_bindings)
 
     @property
     def low_sample_warning(self) -> bool:
@@ -889,8 +892,8 @@ class ProfileReport:
     def from_dict(cls, data: dict[str, _Any]) -> ProfileReport:
         """Rebuild a read-only ProfileReport from a dict produced by :meth:`to_dict`.
 
-        The reconstructed report is backed by a lightweight proxy rather than
-        the native engine, so it is read-only, but all export methods
+        The reconstructed report uses the same read-only accessors as a live
+        report, reading saved values rather than the native engine. All export methods
         (``to_json``, ``to_markdown``, ``to_dataframe``, ``describe``,
         ``quality_summary``, mapping access, …) work as usual. Useful for
         reloading a report saved yesterday without re-profiling the data.
@@ -938,9 +941,7 @@ class ProfileReport:
         columns = data["columns"]
         if not isinstance(columns, list) or not all(isinstance(c, dict) for c in columns):
             raise ValueError("from_dict(): 'columns' must be a list of mappings.")
-        # _DictBackedReport is a read-only proxy that duck-types the raw Rust
-        # report; it intentionally isn't a nominal _RustProfileReport.
-        return cls(_cast("_RustProfileReport", _DictBackedReport(data)))
+        return cls(_report_from_dict(data))
 
     @classmethod
     def from_json(cls, text: str) -> ProfileReport:

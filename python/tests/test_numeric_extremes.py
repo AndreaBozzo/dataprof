@@ -47,7 +47,7 @@ def test_extreme_distribution_values(tmp_path, route, values, field, expected):
 @pytest.mark.parametrize("value", [1e308, -1e308])
 def test_large_finite_values_survive_native_serialization(value):
     report = dataprof.profile({"x": [value]})
-    native_report = getattr(report, "_report")
+    native_report = getattr(report, "_report")._accessor._value
     native = json.loads(native_report.to_json())["column_profiles"][0]["stats"]["Numeric"]
     public = report.to_dict()["columns"][0]["stats"]
     for field in ("min", "max", "mean", "median"):

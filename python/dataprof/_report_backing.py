@@ -1,164 +1,16 @@
-"""Read-only adapters for reports restored from serialized documents."""
+"""Normalize saved report layouts into the shared accessor protocol.
 
-from __future__ import annotations as _annotations
+This module only decodes the document's layout and legacy defaults. Public
+properties and methods live in _accessors, exactly as for native reports.
+"""
 
-from typing import Any as _Any, NoReturn as _NoReturn
+from __future__ import annotations
 
+from typing import Any
+
+from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
 from ._columns import _homogeneity_counts
-from ._dataprof import DataQualityMetrics as _NativeQuality
 from ._report_schema import _QUALITY_DIMENSIONS
-
-# ---------------------------------------------------------------------------
-# Read-only proxy backing ProfileReport.from_dict() / from_json().
-#
-# The native ProfileReport can't be constructed from Python, so these classes
-# mimic the attribute surface the export methods read (self._report.<attr> and
-# self._report.column_profiles) closely enough that every ProfileReport method
-# works unchanged on a reloaded report.
-# ---------------------------------------------------------------------------
-
-
-class _DictPattern:
-    """Read-only stand-in for a native Pattern, built from a to_dict() entry."""
-
-    def __init__(self, d: dict[str, _Any]):
-        self.name = d.get("name")
-        self.regex = d.get("regex")
-        self.match_count = d.get("match_count")
-        self.match_percentage = d.get("match_percentage")
-        self.category = d.get("category")
-        self.confidence = d.get("confidence", 0.0)
-
-
-class _DictColumn:
-    """Read-only stand-in for a native ColumnProfile, built from to_dict()."""
-
-    # Optional stat attributes, all defaulting to None; a subset is overlaid
-    # from the nested "stats" dict depending on the column's data type.
-    _STAT_ATTRS = (
-        "min",
-        "max",
-        "mean",
-        "std_dev",
-        "variance",
-        "median",
-        "mode",
-        "skewness",
-        "kurtosis",
-        "coefficient_of_variation",
-        "quartiles",
-        "is_approximate",
-        "outlier_count",
-        "min_length",
-        "max_length",
-        "avg_length",
-        "true_count",
-        "false_count",
-        "true_ratio",
-    )
-
-    def __init__(self, d: dict[str, _Any]):
-        for attr in self._STAT_ATTRS:
-            setattr(self, attr, None)
-        self.name = d.get("name")
-        self.data_type = d.get("data_type")
-        self.total_count = d.get("total_count")
-        self.null_count = d.get("null_count")
-        self.null_percentage = d.get("null_percentage")
-        self.unique_count = d.get("unique_count")
-        self.unique_count_is_approximate = d.get("unique_count_is_approximate")
-        self.uniqueness_ratio = d.get("uniqueness_ratio")
-        self.invalid_count = d.get("invalid_count")
-        # Normalized on the way in, so a hand-edited or truncated mapping reads
-        # back as "not classified" rather than as counts that were never taken.
-        self.type_homogeneity = _homogeneity_counts(d.get("type_homogeneity"))
-        # Overlay only known stat attributes — never setattr arbitrary keys from
-        # (possibly malformed) input, which could inject unexpected/dunder names.
-        stats = d.get("stats")
-        if isinstance(stats, dict):
-            allowed = set(self._STAT_ATTRS)
-            for key, value in stats.items():
-                if key in allowed:
-                    setattr(self, key, value)
-        patterns = d.get("patterns")
-        self.patterns = (
-            [_DictPattern(p) for p in patterns if isinstance(p, dict)]
-            if isinstance(patterns, list)
-            else None
-        )
-
-
-class _DictQuality:
-    """Read-only stand-in for native DataQualityMetrics, built from to_dict()."""
-
-    _DEFAULT_SCORE_WEIGHTS = {
-        "completeness": 0.25,
-        "consistency": 0.20,
-        "uniqueness": 0.15,
-        "accuracy": 0.15,
-        "timeliness": 0.10,
-        "validity": 0.10,
-        "precision": 0.05,
-    }
-
-    def __init__(self, d: dict[str, _Any]):
-        self._d = d
-        self.low_sample_warning = bool(d.get("low_sample_warning", False))
-
-    def __getattr__(self, name: str) -> _NoReturn:
-        _NativeQuality._attribute_error(name)
-
-    @property
-    def completeness(self) -> dict[str, _Any] | None:
-        return self._d.get("completeness")
-
-    @property
-    def consistency(self) -> dict[str, _Any] | None:
-        return self._d.get("consistency")
-
-    @property
-    def uniqueness(self) -> dict[str, _Any] | None:
-        return self._d.get("uniqueness")
-
-    @property
-    def accuracy(self) -> dict[str, _Any] | None:
-        return self._d.get("accuracy")
-
-    @property
-    def timeliness(self) -> dict[str, _Any] | None:
-        return self._d.get("timeliness")
-
-    @property
-    def validity(self) -> dict[str, _Any] | None:
-        return self._d.get("validity")
-
-    @property
-    def precision(self) -> dict[str, _Any] | None:
-        return self._d.get("precision")
-
-    @property
-    def score_weights(self) -> dict[str, float]:
-        weights = self._d.get("score_weights")
-        if isinstance(weights, dict):
-            return weights
-        return self._DEFAULT_SCORE_WEIGHTS
-
-    def overall_quality_score(self) -> float | None:
-        """Overall score (0-100), None when no dimension was assessable."""
-        return self._d.get("overall_score")
-
-    def assessed_dimensions(self) -> list[str]:
-        """Dimensions that had data to assess. Empty for reports serialized
-        before denominators existed — no score is fabricated for them."""
-        return self._d.get("assessed_dimensions") or []
-
-    def dimension_scores(self) -> dict[str, float | None]:
-        """Per-dimension scores (0-100), None when not assessable."""
-        scores = self._d.get("dimension_scores")
-        if isinstance(scores, dict):
-            return scores
-        return dict.fromkeys(_QUALITY_DIMENSIONS)
-
 
 # The states a `quality_status` document may declare, and whether each one
 # comes with a quality assessment. `computed` is the only state that does.
@@ -175,7 +27,7 @@ _QUALITY_STATES = {
 _MISSING = object()
 
 
-def _read_quality_status(status: _Any, assessed: bool) -> tuple[str, str | None]:
+def _read_quality_status(status: Any, assessed: bool) -> tuple[str, str | None]:
     """Read `quality_status` back, refusing a document that contradicts itself.
 
     The Rust reader already rejects an unknown state and a `failed` with no
@@ -224,49 +76,72 @@ def _read_quality_status(status: _Any, assessed: bool) -> tuple[str, str | None]
     return state, error if state == "failed" else None
 
 
-class _DictBackedReport:
-    """Read-only stand-in for the native ProfileReport, built from to_dict()."""
+_DEFAULT_SCORE_WEIGHTS = {
+    "completeness": 0.25,
+    "consistency": 0.20,
+    "uniqueness": 0.15,
+    "accuracy": 0.15,
+    "timeliness": 0.10,
+    "validity": 0.10,
+    "precision": 0.05,
+}
 
-    def __init__(self, d: dict[str, _Any]):
-        execution = d.get("execution") or {}
-        self.source = d.get("source")
-        self.source_type = d.get("source_type")
-        self.engine = execution.get("engine")
-        self.rows_processed = execution.get("rows_processed")
-        self.columns_detected = execution.get("columns_detected")
-        self.scan_time_ms = execution.get("scan_time_ms")
-        self.source_exhausted = execution.get("source_exhausted")
-        self.truncation_reason = execution.get("truncation_reason")
-        self.bytes_consumed = execution.get("bytes_consumed")
-        self.throughput_rows_sec = execution.get("throughput_rows_sec")
-        self.memory_peak_mb = execution.get("memory_peak_mb")
-        self.error_count = execution.get("error_count")
-        # Additive field: reports written before it existed omit the key and
-        # must read back as 0 (not None), matching the Rust serde default.
-        self.ragged_row_count = execution.get("ragged_row_count") or 0
-        self.sampling_applied = bool(execution.get("sampling_applied", False))
-        self.sampling_ratio = execution.get("sampling_ratio")
-        self.sampled_row_ranges = execution.get("sampled_row_ranges")
-        self.recovery_events = execution.get("recovery_events")
-        # Additive field, written by to_dict() only when hints were supplied.
-        # It was never read back, so a reloaded report reported no bindings —
-        # indistinguishable from a run profiled without hints at all (#512).
-        bindings = d.get("semantic_hint_bindings")
-        self.semantic_hint_bindings = list(bindings) if isinstance(bindings, list) else []
-        quality = d.get("quality")
-        self.quality = _DictQuality(quality) if isinstance(quality, dict) else None
-        self.quality_score = quality.get("overall_score") if isinstance(quality, dict) else None
-        # Additive field: how the quality numbers were obtained. A document
-        # written before it existed does not say, and absence is preserved --
-        # unknown coverage is not full coverage, and a quality gate asked
-        # about the whole source must say so rather than assume an exact scan.
-        self.quality_sampled_dimensions = (
-            quality.get("sampled_dimensions") if isinstance(quality, dict) else None
-        )
-        # Additive field. A document written before it exists cannot say why
-        # quality is absent, but one carrying an assessment proves it was
-        # computed -- the same rule the Rust deserializer applies.
-        self.quality_status, self.quality_error = _read_quality_status(
-            d.get("quality_status", _MISSING), self.quality is not None
-        )
-        self.column_profiles = [_DictColumn(c) for c in d.get("columns", [])]
+
+def _column_accessor(document: dict[str, Any]) -> _MappingAccessor:
+    values = dict(document)
+    stats = document.get("stats")
+    # The shared accessor declares its persisted location. There is no second
+    # stat-attribute list to drift, and unknown keys cannot override core fields.
+    for name, field in vars(ColumnProfile).items():
+        if isinstance(field, _Field) and field._document_section == "stats":
+            values[name] = stats.get(name) if isinstance(stats, dict) else None
+    values["type_homogeneity"] = _homogeneity_counts(document.get("type_homogeneity"))
+    patterns = document.get("patterns")
+    values["patterns"] = (
+        [
+            _MappingAccessor({**p, "confidence": p.get("confidence", 0.0)})
+            for p in patterns
+            if isinstance(p, dict)
+        ]
+        if isinstance(patterns, list)
+        else None
+    )
+    return _MappingAccessor(values)
+
+
+def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
+    values = dict(document)
+    values["overall_quality_score"] = document.get("overall_score")
+    values["low_sample_warning"] = bool(document.get("low_sample_warning", False))
+    values["assessed_dimensions"] = document.get("assessed_dimensions") or []
+    scores = document.get("dimension_scores")
+    values["dimension_scores"] = (
+        scores if isinstance(scores, dict) else dict.fromkeys(_QUALITY_DIMENSIONS)
+    )
+    weights = document.get("score_weights")
+    values["score_weights"] = weights if isinstance(weights, dict) else dict(_DEFAULT_SCORE_WEIGHTS)
+    return _MappingAccessor(values)
+
+
+def _report_from_dict(document: dict[str, Any]) -> _ReportView:
+    execution = document.get("execution") or {}
+    values = dict(execution)
+    values["source"] = document.get("source")
+    values["source_type"] = document.get("source_type")
+    # Only these additive fields have legacy defaults. Unknown measurements
+    # stay absent; in particular an unknown history is not an empty history.
+    values["ragged_row_count"] = execution.get("ragged_row_count") or 0
+    values["sampling_applied"] = bool(execution.get("sampling_applied", False))
+    bindings = document.get("semantic_hint_bindings")
+    values["semantic_hint_bindings"] = list(bindings) if isinstance(bindings, list) else []
+    quality = document.get("quality")
+    values["quality"] = _quality_accessor(quality) if isinstance(quality, dict) else None
+    values["quality_score"] = quality.get("overall_score") if isinstance(quality, dict) else None
+    values["quality_sampled_dimensions"] = (
+        quality.get("sampled_dimensions") if isinstance(quality, dict) else None
+    )
+    values["quality_status"], values["quality_error"] = _read_quality_status(
+        document.get("quality_status", _MISSING), values["quality"] is not None
+    )
+    values["column_profiles"] = [_column_accessor(c) for c in document.get("columns", [])]
+    return _ReportView(_MappingAccessor(values))

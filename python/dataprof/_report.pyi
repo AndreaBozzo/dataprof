@@ -6,14 +6,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from os import PathLike
 from typing import Any
 
-from ._dataprof import ColumnProfile, DataQualityMetrics
+from ._accessors import ColumnProfile, DataQualityMetrics
 from ._gate import QualityGateResult
 
 class ProfileReport:
     """High-level profiling report with export methods.
 
-    Wraps the raw ``dataprof._dataprof.ProfileReport`` (or a dict-backed proxy
-    for reloaded reports). Supports dict-like column access::
+    Reads native or restored values through shared read-only accessors.
+    Supports dict-like column access::
 
         report["column_name"]          # -> ColumnProfile
         "column_name" in report        # -> bool
