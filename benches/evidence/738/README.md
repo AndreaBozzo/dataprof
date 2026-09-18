@@ -6,6 +6,10 @@ minimal-worker controls, block summaries, environment fingerprints, progress
 checkpoints and Markdown tables. This is diagnostic evidence from a development
 workstation, not an established performance baseline.
 
+The same raw [first-run JSON](first-run.json) and [repeat-run JSON](repeat-run.json)
+are also available as reviewable text. Their bytes match the corresponding
+`results.json` entries in the archive.
+
 ## Experiment
 
 On 2026-09-18, both runs used the same installed benchmark environment and native
@@ -36,7 +40,8 @@ uv run --project benches --no-sync python .github/scripts/benchmark_comparison.p
 ```
 
 The checkout was `5a9fe836ac13d1d931a7c901d90077de7c40c98b` plus the recorded
-working changes for #738. The exact executed script SHA-256 was
+working changes for #738, committed in `e72447a` before review fixes.
+The exact executed script SHA-256 was
 `eb51fc744af58230ceddebc3126bc0261f95bb665876925f8eabb7724548e39a`.
 The native extension SHA-256 was
 `f6f55e3e952164754a9406a11a5167bdb2d0afe51768163d921e9adf79372188`.

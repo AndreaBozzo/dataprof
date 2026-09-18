@@ -1,0 +1,2847 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "created_at": "2026-09-18T19:16:59.668100+00:00",
+  "config": {
+    "protocol_version": 2,
+    "mode": "publication",
+    "blocks": 2,
+    "host_description": "local Windows workstation; AC; normal power profile; background desktop and CI polling uncontrolled; diagnostic only",
+    "iterations": 7,
+    "warmups": 1,
+    "threads": 1,
+    "thread_environment": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "NUMEXPR_NUM_THREADS": "1",
+      "POLARS_MAX_THREADS": "1",
+      "RAYON_NUM_THREADS": "1"
+    },
+    "order_seed": 401,
+    "reference": "pandas",
+    "cold_cache": "warm",
+    "cold_timer": "parent wall time: process startup, imports, operation, IPC, exit",
+    "warm_timer": "worker wall time: CSV read, summary, observation; adapter import/setup excluded",
+    "preflight": "imports only, in disposable workers before measurements; no fixture operations; may warm OS library pages and on-disk library caches, which are not evicted; fresh-process samples are subsequent to preflight, not first host invocations",
+    "import_timer": "worker wall time around adapter import and callable setup; deferred imports remain in operations",
+    "first_operation_timer": "first CSV read, summary and observation in each worker, before any repeated operation",
+    "control_timer": "interpreter, minimal JSON worker, IPC and exit; no harness or tool imports",
+    "library_cache": "not evicted; environment preparation and preflight may warm library pages and caches",
+    "workloads": {
+      "dataprof": "profile(engine=\"auto\", metrics=[\"schema\", \"statistics\"])",
+      "pandas": "read_csv + describe(include=\"all\") + null counts",
+      "polars": "read_csv + describe + null counts",
+      "ydata-profiling": "pandas.read_csv + ProfileReport(minimal=True).description_set"
+    }
+  },
+  "runs": [
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 1,
+      "invocation": "first_fixture_operation_after_preflight",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 25008,
+      "import_setup_seconds": 0.2159195,
+      "first_operation_seconds": 0.0061946,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0061946
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.4347811,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 1,
+      "invocation": "first_fixture_operation_after_preflight",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 25224,
+      "import_setup_seconds": 0.4379513,
+      "first_operation_seconds": 0.0076429,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0076429
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6831405,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 1,
+      "invocation": "first_fixture_operation_after_preflight",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 29816,
+      "import_setup_seconds": 0.020904,
+      "first_operation_seconds": 0.0756237,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0756237
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.2853239,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 1,
+      "invocation": "first_fixture_operation_after_preflight",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 19616,
+      "import_setup_seconds": 4.2169404,
+      "first_operation_seconds": 0.3089844,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.3089844
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.5313254,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 131.20it/s]\n"
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 31100,
+      "import_setup_seconds": 0.0266509,
+      "first_operation_seconds": 0.0574706,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0574706
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.3708352,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 2000,
+      "import_setup_seconds": 0.5139376,
+      "first_operation_seconds": 0.008458,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.008458
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.8942364,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 5696,
+      "import_setup_seconds": 3.4443981,
+      "first_operation_seconds": 0.283409,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.283409
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 4.7681251,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 171.18it/s]\n"
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 5648,
+      "import_setup_seconds": 0.2276805,
+      "first_operation_seconds": 0.0047052,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0047052
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6109487,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 952,
+      "import_setup_seconds": 0.2244684,
+      "first_operation_seconds": 0.0056943,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0056943
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.4481555,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 10496,
+      "import_setup_seconds": 0.0205088,
+      "first_operation_seconds": 0.0351136,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0351136
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.246747,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 27692,
+      "import_setup_seconds": 0.4141518,
+      "first_operation_seconds": 0.0092223,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0092223
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6733189,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 30308,
+      "import_setup_seconds": 3.7072796,
+      "first_operation_seconds": 0.2204294,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2204294
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 4.5709179,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 188.73it/s]\n"
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 6040,
+      "import_setup_seconds": 0.0234205,
+      "first_operation_seconds": 0.0432744,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0432744
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.2779232,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 5288,
+      "import_setup_seconds": 0.5994092,
+      "first_operation_seconds": 0.009097,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.009097
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 1.0408338,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 2348,
+      "import_setup_seconds": 3.9263744,
+      "first_operation_seconds": 0.2127941,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2127941
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 4.7854467,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 191.28it/s]\n"
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 23960,
+      "import_setup_seconds": 0.2442507,
+      "first_operation_seconds": 0.0044965,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0044965
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6133873,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 17668,
+      "import_setup_seconds": 3.5306693,
+      "first_operation_seconds": 0.2481203,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2481203
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 4.7880543,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 129.79it/s]\n"
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 30308,
+      "import_setup_seconds": 0.3794052,
+      "first_operation_seconds": 0.0055795,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0055795
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.793099,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 4980,
+      "import_setup_seconds": 0.034593,
+      "first_operation_seconds": 0.0647784,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0647784
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.534438,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 8812,
+      "import_setup_seconds": 0.8775024,
+      "first_operation_seconds": 0.0175117,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0175117
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 1.2674442,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 19896,
+      "import_setup_seconds": 0.548348,
+      "first_operation_seconds": 0.0080131,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0080131
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.9684849,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 19592,
+      "import_setup_seconds": 0.0203159,
+      "first_operation_seconds": 0.0411439,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0411439
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.2557,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 10912,
+      "import_setup_seconds": 4.17757,
+      "first_operation_seconds": 0.2933433,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2933433
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.0807886,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 351.74it/s]\n"
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 17120,
+      "import_setup_seconds": 0.2651479,
+      "first_operation_seconds": 0.00429,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.00429
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.4863598,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 10260,
+      "import_setup_seconds": 4.4060443,
+      "first_operation_seconds": 0.2392116,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2392116
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.2947396,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 205.06it/s]\n"
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 24140,
+      "import_setup_seconds": 0.6308971,
+      "first_operation_seconds": 0.0185846,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0185846
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 1.0020375,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 30696,
+      "import_setup_seconds": 0.3171477,
+      "first_operation_seconds": 0.0043613,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0043613
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.5698873,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 1,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 31588,
+      "import_setup_seconds": 0.0259986,
+      "first_operation_seconds": 0.0415733,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0415733
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.3691264,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "warm",
+      "block": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 10688,
+      "import_setup_seconds": 0.2721878,
+      "first_operation_seconds": 0.0055098,
+      "warmup_seconds": [
+        0.0055098
+      ],
+      "operation_seconds": [
+        0.0013011,
+        0.0013591,
+        0.0012823,
+        0.0013184,
+        0.0017167,
+        0.0014618,
+        0.0013217
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.5412871,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "warm",
+      "block": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 12388,
+      "import_setup_seconds": 3.5294231,
+      "first_operation_seconds": 0.2638808,
+      "warmup_seconds": [
+        0.2638808
+      ],
+      "operation_seconds": [
+        0.1974406,
+        0.1979146,
+        0.2282476,
+        0.2005413,
+        0.1865728,
+        0.2428652,
+        0.2159002
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 6.929338,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 173.27it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 608.99it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 178.81it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 193.22it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 152.89it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 171.87it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 101.24it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 136.19it/s]\n"
+    },
+    {
+      "tool": "pandas",
+      "mode": "warm",
+      "block": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 21156,
+      "import_setup_seconds": 0.6990989,
+      "first_operation_seconds": 0.0152069,
+      "warmup_seconds": [
+        0.0152069
+      ],
+      "operation_seconds": [
+        0.0130622,
+        0.006973,
+        0.009428,
+        0.0071419,
+        0.0069145,
+        0.0107207,
+        0.0071306
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 1.2742934,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "warm",
+      "block": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 29036,
+      "import_setup_seconds": 0.0339891,
+      "first_operation_seconds": 0.0626133,
+      "warmup_seconds": [
+        0.0626133
+      ],
+      "operation_seconds": [
+        0.0781646,
+        0.0659139,
+        0.1004811,
+        0.2051892,
+        0.1306443,
+        0.0389764,
+        0.0351604
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 1.1311906,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 2468,
+      "import_setup_seconds": 0.2734401,
+      "first_operation_seconds": 0.0041302,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0041302
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.5503909,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 22260,
+      "import_setup_seconds": 0.4695856,
+      "first_operation_seconds": 0.0082068,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0082068
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.7439298,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 27664,
+      "import_setup_seconds": 4.7062122,
+      "first_operation_seconds": 0.2459549,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2459549
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.8012724,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 181.76it/s]\n"
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 1,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 21640,
+      "import_setup_seconds": 0.0239953,
+      "first_operation_seconds": 0.0369234,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0369234
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.2829599,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 29612,
+      "import_setup_seconds": 0.025752,
+      "first_operation_seconds": 0.0389424,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0389424
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.3069351,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 22556,
+      "import_setup_seconds": 4.0755918,
+      "first_operation_seconds": 0.2504518,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2504518
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.2803556,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 81.60it/s]\n"
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 28840,
+      "import_setup_seconds": 0.2663846,
+      "first_operation_seconds": 0.0055135,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0055135
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.7494224,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 22488,
+      "import_setup_seconds": 0.4196803,
+      "first_operation_seconds": 0.0073611,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0073611
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6715008,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 30088,
+      "import_setup_seconds": 0.0244677,
+      "first_operation_seconds": 0.0397519,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0397519
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.2582929,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 30420,
+      "import_setup_seconds": 0.3571107,
+      "first_operation_seconds": 0.0070651,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0070651
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.7564248,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 22480,
+      "import_setup_seconds": 4.0183652,
+      "first_operation_seconds": 0.2637841,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2637841
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.1294202,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 87.82it/s]\n"
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 3,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 14016,
+      "import_setup_seconds": 0.6066409,
+      "first_operation_seconds": 0.0114436,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0114436
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.9030469,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 26128,
+      "import_setup_seconds": 0.0290592,
+      "first_operation_seconds": 0.0365253,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0365253
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.3241694,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 9928,
+      "import_setup_seconds": 0.4902811,
+      "first_operation_seconds": 0.0095645,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0095645
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.7831419,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 25304,
+      "import_setup_seconds": 0.37921,
+      "first_operation_seconds": 0.0068593,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0068593
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6852215,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 4,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 1996,
+      "import_setup_seconds": 3.8226299,
+      "first_operation_seconds": 0.2298551,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2298551
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 4.7292571,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 190.21it/s]\n"
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 6976,
+      "import_setup_seconds": 0.3026047,
+      "first_operation_seconds": 0.0054235,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0054235
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.5449919,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 29456,
+      "import_setup_seconds": 3.5048384,
+      "first_operation_seconds": 0.2343118,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2343118
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 4.3810805,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 166.31it/s]\n"
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 27676,
+      "import_setup_seconds": 0.4166664,
+      "first_operation_seconds": 0.0071426,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0071426
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.8138847,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 5,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 10996,
+      "import_setup_seconds": 0.0210796,
+      "first_operation_seconds": 0.03879,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.03879
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.2607738,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 18436,
+      "import_setup_seconds": 0.4268814,
+      "first_operation_seconds": 0.0074079,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0074079
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.6684231,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 26836,
+      "import_setup_seconds": 4.255659,
+      "first_operation_seconds": 0.2277351,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.2277351
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 5.1952962,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 143.87it/s]\n"
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 17248,
+      "import_setup_seconds": 0.0221198,
+      "first_operation_seconds": 0.0379041,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0379041
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.3725803,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 6,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 30360,
+      "import_setup_seconds": 3.3523643,
+      "first_operation_seconds": 0.0060027,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0060027
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 3.8796234,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 19024,
+      "import_setup_seconds": 0.2781071,
+      "first_operation_seconds": 0.0050884,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0050884
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.5656738,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 20160,
+      "import_setup_seconds": 0.5142081,
+      "first_operation_seconds": 0.0105979,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0105979
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.8022452,
+      "stderr": ""
+    },
+    {
+      "tool": "dataprof",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 19304,
+      "import_setup_seconds": 0.0281475,
+      "first_operation_seconds": 0.0421446,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.0421446
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.3064195,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "cold",
+      "block": 2,
+      "iteration": 7,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 27704,
+      "import_setup_seconds": 7.3378187,
+      "first_operation_seconds": 0.4203212,
+      "warmup_seconds": [],
+      "operation_seconds": [
+        0.4203212
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 9.4761198,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 44.99it/s]\n"
+    },
+    {
+      "tool": "dataprof",
+      "mode": "warm",
+      "block": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 9160,
+      "import_setup_seconds": 0.0246822,
+      "first_operation_seconds": 0.0596081,
+      "warmup_seconds": [
+        0.0596081
+      ],
+      "operation_seconds": [
+        0.0509415,
+        0.0320526,
+        0.0298623,
+        0.0351379,
+        0.0324729,
+        0.0386001,
+        0.0336838
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.5918764,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "mode": "warm",
+      "block": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 6888,
+      "import_setup_seconds": 6.1645392,
+      "first_operation_seconds": 0.3149444,
+      "warmup_seconds": [
+        0.3149444
+      ],
+      "operation_seconds": [
+        0.2892902,
+        0.2464354,
+        0.2643469,
+        0.2470203,
+        0.246811,
+        0.2496086,
+        0.2731756
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 10.6648577,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 84.24it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 80.41it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 124.22it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 103.45it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 73.44it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 98.58it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 145.31it/s]\n\n  0%|          | 0/3 [00:00<?, ?it/s]\n100%|\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588| 3/3 [00:00<00:00, 73.71it/s]\n"
+    },
+    {
+      "tool": "pandas",
+      "mode": "warm",
+      "block": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 18356,
+      "import_setup_seconds": 0.4931276,
+      "first_operation_seconds": 0.0088708,
+      "warmup_seconds": [
+        0.0088708
+      ],
+      "operation_seconds": [
+        0.005044,
+        0.004662,
+        0.0099124,
+        0.0065997,
+        0.0068536,
+        0.0051262,
+        0.00514
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.891708,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "mode": "warm",
+      "block": 2,
+      "invocation": "subsequent_fresh_process",
+      "cache": "fixture read immediately before worker; residency unverified",
+      "pid": 3184,
+      "import_setup_seconds": 0.2771516,
+      "first_operation_seconds": 0.0049841,
+      "warmup_seconds": [
+        0.0049841
+      ],
+      "operation_seconds": [
+        0.0020209,
+        0.0072281,
+        0.0067631,
+        0.0057484,
+        0.0020991,
+        0.0037355,
+        0.005765
+      ],
+      "observed": {
+        "rows": 1000,
+        "columns": [
+          "id",
+          "amount",
+          "category"
+        ],
+        "null_counts": [
+          0,
+          91,
+          0
+        ]
+      },
+      "process_seconds": 0.7765159,
+      "stderr": ""
+    }
+  ],
+  "preflight": [
+    {
+      "tool": "dataprof",
+      "invocation": "first_adapter_import_after_environment_preparation",
+      "pid": 26324,
+      "status": "complete",
+      "import_setup_seconds": 0.0216737,
+      "process_seconds": 0.2891613,
+      "stderr": ""
+    },
+    {
+      "tool": "pandas",
+      "invocation": "first_adapter_import_after_environment_preparation",
+      "pid": 14880,
+      "status": "complete",
+      "import_setup_seconds": 0.4451935,
+      "process_seconds": 0.6973959,
+      "stderr": ""
+    },
+    {
+      "tool": "polars",
+      "invocation": "first_adapter_import_after_environment_preparation",
+      "pid": 27820,
+      "status": "complete",
+      "import_setup_seconds": 0.3321213,
+      "process_seconds": 0.5789954,
+      "stderr": ""
+    },
+    {
+      "tool": "ydata-profiling",
+      "invocation": "first_adapter_import_after_environment_preparation",
+      "pid": 25712,
+      "status": "complete",
+      "import_setup_seconds": 3.4500818,
+      "process_seconds": 4.037136,
+      "stderr": "C:\\dev\\dataprof\\.github\\scripts\\benchmark_comparison.py:141: DeprecationWarning: \n    `import ydata_profiling` is deprecated and will not receive more updates. \n    Please install fg-data-profiling via `pip install fg-data-profiling` and use `import data_profiling` instead.\n    \n  from ydata_profiling import ProfileReport\n"
+    }
+  ],
+  "controls": [
+    {
+      "block": 1,
+      "iteration": 1,
+      "pid": 30364,
+      "status": "complete",
+      "process_seconds": 0.0713715,
+      "stderr": ""
+    },
+    {
+      "block": 1,
+      "iteration": 2,
+      "pid": 30084,
+      "status": "complete",
+      "process_seconds": 0.1090742,
+      "stderr": ""
+    },
+    {
+      "block": 1,
+      "iteration": 3,
+      "pid": 19344,
+      "status": "complete",
+      "process_seconds": 0.0645629,
+      "stderr": ""
+    },
+    {
+      "block": 1,
+      "iteration": 4,
+      "pid": 12868,
+      "status": "complete",
+      "process_seconds": 0.0737486,
+      "stderr": ""
+    },
+    {
+      "block": 1,
+      "iteration": 5,
+      "pid": 29716,
+      "status": "complete",
+      "process_seconds": 0.0671237,
+      "stderr": ""
+    },
+    {
+      "block": 1,
+      "iteration": 6,
+      "pid": 13916,
+      "status": "complete",
+      "process_seconds": 0.0808817,
+      "stderr": ""
+    },
+    {
+      "block": 1,
+      "iteration": 7,
+      "pid": 31328,
+      "status": "complete",
+      "process_seconds": 0.0640649,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 1,
+      "pid": 21660,
+      "status": "complete",
+      "process_seconds": 0.091153,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 2,
+      "pid": 8688,
+      "status": "complete",
+      "process_seconds": 0.1580321,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 3,
+      "pid": 15232,
+      "status": "complete",
+      "process_seconds": 0.064601,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 4,
+      "pid": 19024,
+      "status": "complete",
+      "process_seconds": 0.0884918,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 5,
+      "pid": 7596,
+      "status": "complete",
+      "process_seconds": 0.1422697,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 6,
+      "pid": 12316,
+      "status": "complete",
+      "process_seconds": 0.0657493,
+      "stderr": ""
+    },
+    {
+      "block": 2,
+      "iteration": 7,
+      "pid": 30324,
+      "status": "complete",
+      "process_seconds": 0.0944866,
+      "stderr": ""
+    }
+  ],
+  "evidence_status": "diagnostic",
+  "results": {
+    "dataprof": {
+      "cold": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.2853239,
+          0.3708352,
+          0.246747,
+          0.2779232,
+          0.534438,
+          0.2557,
+          0.3691264,
+          0.2829599,
+          0.3069351,
+          0.2582929,
+          0.3241694,
+          0.2607738,
+          0.3725803,
+          0.3064195
+        ],
+        "median_seconds": 0.2958717,
+        "q1_seconds": 0.26506115,
+        "q3_seconds": 0.35788715,
+        "iqr_seconds": 0.09282599999999996,
+        "min_seconds": 0.246747,
+        "max_seconds": 0.534438
+      },
+      "warm": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.0781646,
+          0.0659139,
+          0.1004811,
+          0.2051892,
+          0.1306443,
+          0.0389764,
+          0.0351604,
+          0.0509415,
+          0.0320526,
+          0.0298623,
+          0.0351379,
+          0.0324729,
+          0.0386001,
+          0.0336838
+        ],
+        "median_seconds": 0.038788249999999996,
+        "q1_seconds": 0.034047325,
+        "q3_seconds": 0.075101925,
+        "iqr_seconds": 0.0410546,
+        "min_seconds": 0.0298623,
+        "max_seconds": 0.2051892
+      }
+    },
+    "pandas": {
+      "cold": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.6831405,
+          0.8942364,
+          0.6733189,
+          1.0408338,
+          1.2674442,
+          0.9684849,
+          1.0020375,
+          0.7439298,
+          0.6715008,
+          0.9030469,
+          0.7831419,
+          0.8138847,
+          0.6684231,
+          0.8022452
+        ],
+        "median_seconds": 0.80806495,
+        "q1_seconds": 0.6983378250000001,
+        "q3_seconds": 0.9521254,
+        "iqr_seconds": 0.25378757499999993,
+        "min_seconds": 0.6684231,
+        "max_seconds": 1.2674442
+      },
+      "warm": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.0130622,
+          0.006973,
+          0.009428,
+          0.0071419,
+          0.0069145,
+          0.0107207,
+          0.0071306,
+          0.005044,
+          0.004662,
+          0.0099124,
+          0.0065997,
+          0.0068536,
+          0.0051262,
+          0.00514
+        ],
+        "median_seconds": 0.00694375,
+        "q1_seconds": 0.005504925,
+        "q3_seconds": 0.008856475,
+        "iqr_seconds": 0.003351550000000001,
+        "min_seconds": 0.004662,
+        "max_seconds": 0.0130622
+      }
+    },
+    "polars": {
+      "cold": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.4347811,
+          0.6109487,
+          0.4481555,
+          0.6133873,
+          0.793099,
+          0.4863598,
+          0.5698873,
+          0.5503909,
+          0.7494224,
+          0.7564248,
+          0.6852215,
+          0.5449919,
+          3.8796234,
+          0.5656738
+        ],
+        "median_seconds": 0.590418,
+        "q1_seconds": 0.54634165,
+        "q3_seconds": 0.733372175,
+        "iqr_seconds": 0.18703052499999995,
+        "min_seconds": 0.4347811,
+        "max_seconds": 3.8796234
+      },
+      "warm": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.0013011,
+          0.0013591,
+          0.0012823,
+          0.0013184,
+          0.0017167,
+          0.0014618,
+          0.0013217,
+          0.0020209,
+          0.0072281,
+          0.0067631,
+          0.0057484,
+          0.0020991,
+          0.0037355,
+          0.005765
+        ],
+        "median_seconds": 0.0018687999999999999,
+        "q1_seconds": 0.00133105,
+        "q3_seconds": 0.0052451749999999995,
+        "iqr_seconds": 0.003914124999999999,
+        "min_seconds": 0.0012823,
+        "max_seconds": 0.0072281
+      }
+    },
+    "ydata-profiling": {
+      "cold": {
+        "sample_count": 14,
+        "samples_seconds": [
+          5.5313254,
+          4.7681251,
+          4.5709179,
+          4.7854467,
+          4.7880543,
+          5.0807886,
+          5.2947396,
+          5.8012724,
+          5.2803556,
+          5.1294202,
+          4.7292571,
+          4.3810805,
+          5.1952962,
+          9.4761198
+        ],
+        "median_seconds": 5.1051044,
+        "q1_seconds": 4.7724554999999995,
+        "q3_seconds": 5.2911436,
+        "iqr_seconds": 0.5186881000000003,
+        "min_seconds": 4.3810805,
+        "max_seconds": 9.4761198
+      },
+      "warm": {
+        "sample_count": 14,
+        "samples_seconds": [
+          0.1974406,
+          0.1979146,
+          0.2282476,
+          0.2005413,
+          0.1865728,
+          0.2428652,
+          0.2159002,
+          0.2892902,
+          0.2464354,
+          0.2643469,
+          0.2470203,
+          0.246811,
+          0.2496086,
+          0.2731756
+        ],
+        "median_seconds": 0.2446503,
+        "q1_seconds": 0.204381025,
+        "q3_seconds": 0.24896152500000002,
+        "iqr_seconds": 0.04458050000000002,
+        "min_seconds": 0.1865728,
+        "max_seconds": 0.2892902
+      }
+    }
+  },
+  "environment": {
+    "python": "3.12.13 (main, Jun 11 2026, 04:05:29) [MSC v.1944 64 bit (AMD64)]",
+    "executable": "C:\\dev\\dataprof\\benches\\.venv\\Scripts\\python.exe",
+    "os": "Windows-11-10.0.26200-SP0",
+    "hostname": "andrea-laptop",
+    "architecture": "AMD64",
+    "cpu": "Intel(R) Core(TM) Ultra 7 258V",
+    "logical_cpus": 8,
+    "physical_cpus": 8,
+    "ram_bytes": 33847832576,
+    "versions": {
+      "ImageHash": "4.3.2",
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.3",
+      "PyWavelets": "1.10.0",
+      "PyYAML": "6.0.3",
+      "annotated-types": "0.8.0",
+      "attrs": "26.1.0",
+      "certifi": "2026.7.22",
+      "charset-normalizer": "3.5.1",
+      "cloudpickle": "3.1.2",
+      "colorama": "0.4.6",
+      "contourpy": "1.4.0",
+      "cycler": "0.12.1",
+      "dacite": "1.9.2",
+      "dataprof": "0.11.0",
+      "filetype": "1.2.0",
+      "fonttools": "4.65.0",
+      "formulaic": "1.2.2",
+      "idna": "3.20",
+      "interface_meta": "2.0.1",
+      "joblib": "1.6.0",
+      "kiwisolver": "1.5.1",
+      "llvmlite": "0.45.1",
+      "matplotlib": "3.10.0",
+      "minify_html": "0.18.1",
+      "multimethod": "1.12",
+      "narwhals": "2.26.0",
+      "networkx": "3.6.1",
+      "numba": "0.62.1",
+      "numpy": "2.3.5",
+      "packaging": "26.3",
+      "pandas": "2.3.3",
+      "patsy": "1.0.3",
+      "phik": "0.12.5",
+      "pillow": "12.3.0",
+      "polars": "1.44.1",
+      "polars-runtime-32": "1.44.1",
+      "psutil": "7.2.2",
+      "puremagic": "2.2.0",
+      "pydantic": "2.13.5",
+      "pydantic_core": "2.46.5",
+      "pyparsing": "3.3.2",
+      "python-dateutil": "2.9.0.post0",
+      "pytz": "2026.3.post1",
+      "requests": "2.34.2",
+      "scipy": "1.16.3",
+      "seaborn": "0.13.2",
+      "setuptools": "80.9.0",
+      "six": "1.17.0",
+      "statsmodels": "0.15.0",
+      "tqdm": "4.70.1",
+      "typeguard": "4.6.0",
+      "typing-inspection": "0.4.4",
+      "typing_extensions": "4.16.0",
+      "tzdata": "2026.4",
+      "urllib3": "2.8.0",
+      "visions": "0.8.1",
+      "wordcloud": "1.9.6",
+      "wrapt": "2.4.1",
+      "ydata-profiling": "4.18.4"
+    },
+    "native_extensions": {
+      "C:\\dev\\dataprof\\benches\\.venv\\Lib\\site-packages\\dataprof\\_dataprof.cp312-win_amd64.pyd": "f6f55e3e952164754a9406a11a5167bdb2d0afe51768163d921e9adf79372188"
+    },
+    "git_commit": "5a9fe836ac13d1d931a7c901d90077de7c40c98b",
+    "git_status": "M .github/scripts/benchmark_comparison.py\n M .github/scripts/build_benchmark_pages.py\n M benches/README.md\n M python/tests/test_benchmark_comparison.py\n M python/tests/test_benchmark_pages.py",
+    "benchmark_script_sha256": "eb51fc744af58230ceddebc3126bc0261f95bb665876925f8eabb7724548e39a",
+    "benchmark_lock_sha256": "6b1a3778b6584b8a07fcdf5c39d17d5f6ef4551cb626725d365ca345106dc4e5",
+    "cargo_lock_sha256": "970af77e47ec5ae38acb5833bcd90015a698d40464fb0d9c7b248805217238b6",
+    "rustc_available": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "build_environment": {
+      "RUSTFLAGS": null,
+      "CARGO_ENCODED_RUSTFLAGS": null,
+      "RUSTUP_TOOLCHAIN": null,
+      "CARGO_BUILD_TARGET": null,
+      "CARGO_PROFILE_RELEASE_OPT_LEVEL": null,
+      "CARGO_PROFILE_RELEASE_DEBUG": null
+    }
+  },
+  "fixture": {
+    "generator": "mixed-csv-v1",
+    "path": "C:\\dev\\dataprof\\benchmark-results\\738-repeat-b\\fixture.csv",
+    "sha256": "1d766b0c21f3a89d78c31e76c9196471a2b5c7a87e6c39bdcff87e44b8e42272",
+    "bytes": 23446,
+    "expected": {
+      "rows": 1000,
+      "columns": [
+        "id",
+        "amount",
+        "category"
+      ],
+      "null_counts": [
+        0,
+        91,
+        0
+      ]
+    }
+  },
+  "control_summary": {
+    "sample_count": 14,
+    "samples_seconds": [
+      0.0713715,
+      0.1090742,
+      0.0645629,
+      0.0737486,
+      0.0671237,
+      0.0808817,
+      0.0640649,
+      0.091153,
+      0.1580321,
+      0.064601,
+      0.0884918,
+      0.1422697,
+      0.0657493,
+      0.0944866
+    ],
+    "median_seconds": 0.07731515,
+    "q1_seconds": 0.0660929,
+    "q3_seconds": 0.0936532,
+    "iqr_seconds": 0.02756030000000001,
+    "min_seconds": 0.0640649,
+    "max_seconds": 0.1580321
+  },
+  "block_results": [
+    {
+      "block": 1,
+      "results": {
+        "dataprof": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.2853239,
+              0.3708352,
+              0.246747,
+              0.2779232,
+              0.534438,
+              0.2557,
+              0.3691264
+            ],
+            "median_seconds": 0.2853239,
+            "q1_seconds": 0.2668116,
+            "q3_seconds": 0.3699808,
+            "iqr_seconds": 0.10316920000000002,
+            "min_seconds": 0.246747,
+            "max_seconds": 0.534438
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.0781646,
+              0.0659139,
+              0.1004811,
+              0.2051892,
+              0.1306443,
+              0.0389764,
+              0.0351604
+            ],
+            "median_seconds": 0.0781646,
+            "q1_seconds": 0.052445149999999996,
+            "q3_seconds": 0.11556269999999999,
+            "iqr_seconds": 0.06311755,
+            "min_seconds": 0.0351604,
+            "max_seconds": 0.2051892
+          }
+        },
+        "pandas": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.6831405,
+              0.8942364,
+              0.6733189,
+              1.0408338,
+              1.2674442,
+              0.9684849,
+              1.0020375
+            ],
+            "median_seconds": 0.9684849,
+            "q1_seconds": 0.78868845,
+            "q3_seconds": 1.02143565,
+            "iqr_seconds": 0.23274719999999993,
+            "min_seconds": 0.6733189,
+            "max_seconds": 1.2674442
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.0130622,
+              0.006973,
+              0.009428,
+              0.0071419,
+              0.0069145,
+              0.0107207,
+              0.0071306
+            ],
+            "median_seconds": 0.0071419,
+            "q1_seconds": 0.0070518,
+            "q3_seconds": 0.01007435,
+            "iqr_seconds": 0.003022549999999999,
+            "min_seconds": 0.0069145,
+            "max_seconds": 0.0130622
+          }
+        },
+        "polars": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.4347811,
+              0.6109487,
+              0.4481555,
+              0.6133873,
+              0.793099,
+              0.4863598,
+              0.5698873
+            ],
+            "median_seconds": 0.5698873,
+            "q1_seconds": 0.46725764999999997,
+            "q3_seconds": 0.612168,
+            "iqr_seconds": 0.14491035000000008,
+            "min_seconds": 0.4347811,
+            "max_seconds": 0.793099
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.0013011,
+              0.0013591,
+              0.0012823,
+              0.0013184,
+              0.0017167,
+              0.0014618,
+              0.0013217
+            ],
+            "median_seconds": 0.0013217,
+            "q1_seconds": 0.00130975,
+            "q3_seconds": 0.0014104500000000002,
+            "iqr_seconds": 0.00010070000000000023,
+            "min_seconds": 0.0012823,
+            "max_seconds": 0.0017167
+          }
+        },
+        "ydata-profiling": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              5.5313254,
+              4.7681251,
+              4.5709179,
+              4.7854467,
+              4.7880543,
+              5.0807886,
+              5.2947396
+            ],
+            "median_seconds": 4.7880543,
+            "q1_seconds": 4.7767859,
+            "q3_seconds": 5.1877641,
+            "iqr_seconds": 0.41097819999999974,
+            "min_seconds": 4.5709179,
+            "max_seconds": 5.5313254
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.1974406,
+              0.1979146,
+              0.2282476,
+              0.2005413,
+              0.1865728,
+              0.2428652,
+              0.2159002
+            ],
+            "median_seconds": 0.2005413,
+            "q1_seconds": 0.1976776,
+            "q3_seconds": 0.2220739,
+            "iqr_seconds": 0.024396299999999982,
+            "min_seconds": 0.1865728,
+            "max_seconds": 0.2428652
+          }
+        }
+      }
+    },
+    {
+      "block": 2,
+      "results": {
+        "dataprof": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.2829599,
+              0.3069351,
+              0.2582929,
+              0.3241694,
+              0.2607738,
+              0.3725803,
+              0.3064195
+            ],
+            "median_seconds": 0.3064195,
+            "q1_seconds": 0.27186685,
+            "q3_seconds": 0.31555225,
+            "iqr_seconds": 0.043685399999999985,
+            "min_seconds": 0.2582929,
+            "max_seconds": 0.3725803
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.0509415,
+              0.0320526,
+              0.0298623,
+              0.0351379,
+              0.0324729,
+              0.0386001,
+              0.0336838
+            ],
+            "median_seconds": 0.0336838,
+            "q1_seconds": 0.03226275,
+            "q3_seconds": 0.036869,
+            "iqr_seconds": 0.004606249999999999,
+            "min_seconds": 0.0298623,
+            "max_seconds": 0.0509415
+          }
+        },
+        "pandas": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.7439298,
+              0.6715008,
+              0.9030469,
+              0.7831419,
+              0.8138847,
+              0.6684231,
+              0.8022452
+            ],
+            "median_seconds": 0.7831419,
+            "q1_seconds": 0.7077153,
+            "q3_seconds": 0.80806495,
+            "iqr_seconds": 0.10034964999999996,
+            "min_seconds": 0.6684231,
+            "max_seconds": 0.9030469
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.005044,
+              0.004662,
+              0.0099124,
+              0.0065997,
+              0.0068536,
+              0.0051262,
+              0.00514
+            ],
+            "median_seconds": 0.00514,
+            "q1_seconds": 0.0050851,
+            "q3_seconds": 0.00672665,
+            "iqr_seconds": 0.0016415499999999994,
+            "min_seconds": 0.004662,
+            "max_seconds": 0.0099124
+          }
+        },
+        "polars": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.5503909,
+              0.7494224,
+              0.7564248,
+              0.6852215,
+              0.5449919,
+              3.8796234,
+              0.5656738
+            ],
+            "median_seconds": 0.6852215,
+            "q1_seconds": 0.55803235,
+            "q3_seconds": 0.7529236,
+            "iqr_seconds": 0.19489125000000007,
+            "min_seconds": 0.5449919,
+            "max_seconds": 3.8796234
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.0020209,
+              0.0072281,
+              0.0067631,
+              0.0057484,
+              0.0020991,
+              0.0037355,
+              0.005765
+            ],
+            "median_seconds": 0.0057484,
+            "q1_seconds": 0.0029173000000000003,
+            "q3_seconds": 0.00626405,
+            "iqr_seconds": 0.00334675,
+            "min_seconds": 0.0020209,
+            "max_seconds": 0.0072281
+          }
+        },
+        "ydata-profiling": {
+          "cold": {
+            "sample_count": 7,
+            "samples_seconds": [
+              5.8012724,
+              5.2803556,
+              5.1294202,
+              4.7292571,
+              4.3810805,
+              5.1952962,
+              9.4761198
+            ],
+            "median_seconds": 5.1952962,
+            "q1_seconds": 4.92933865,
+            "q3_seconds": 5.540814,
+            "iqr_seconds": 0.6114753500000001,
+            "min_seconds": 4.3810805,
+            "max_seconds": 9.4761198
+          },
+          "warm": {
+            "sample_count": 7,
+            "samples_seconds": [
+              0.2892902,
+              0.2464354,
+              0.2643469,
+              0.2470203,
+              0.246811,
+              0.2496086,
+              0.2731756
+            ],
+            "median_seconds": 0.2496086,
+            "q1_seconds": 0.24691565,
+            "q3_seconds": 0.26876125,
+            "iqr_seconds": 0.02184560000000002,
+            "min_seconds": 0.2464354,
+            "max_seconds": 0.2892902
+          }
+        }
+      }
+    }
+  ],
+  "repeatability": {
+    "dataprof": {
+      "cold": true,
+      "warm": true
+    },
+    "pandas": {
+      "cold": true,
+      "warm": true
+    },
+    "polars": {
+      "cold": true,
+      "warm": true
+    },
+    "ydata-profiling": {
+      "cold": true,
+      "warm": true
+    }
+  }
+}

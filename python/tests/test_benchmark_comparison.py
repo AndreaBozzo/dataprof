@@ -533,16 +533,57 @@ def test_minimal_control_does_not_import_harness_or_tool(tmp_path, monkeypatch):
     assert result["process_seconds"] > 0
 
 
-def test_cpu_model_falls_back_when_processor_is_only_architecture(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cpu", ["x86_64", "armv8l", "armv7l", "ppc64le", "riscv64"])
+def test_cpu_model_falls_back_when_processor_is_only_architecture(tmp_path, monkeypatch, cpu):
     cpuinfo = tmp_path / "cpuinfo"
     cpuinfo.write_text("processor : 0\nmodel name : Example CPU 1234\n")
-    monkeypatch.setattr(bench.platform, "processor", lambda: "x86_64")
+    monkeypatch.setattr(bench.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(bench.platform, "processor", lambda: cpu)
     monkeypatch.setattr(bench, "Path", lambda path: cpuinfo)
     assert bench.cpu_model() == "Example CPU 1234"
 
 
-@pytest.mark.parametrize("cpu", ["unknown", "", "x86_64", "AMD64", "aarch64"])
-def test_unknown_hardware_cannot_establish_matched_repeat_run(cpu):
+@pytest.mark.parametrize(
+    "cpu",
+    [
+        "unknown",
+        "",
+        "x86_64",
+        "AMD64",
+        "aarch64",
+        "armv8l",
+        " ARMv7L ",
+        "armv8-a",
+        "arm64e",
+        "aarch64_be",
+        "i486",
+        "x86_64_v3",
+        "ppc64le",
+        "powerpc64",
+        "mips64el",
+        "s390x",
+        "riscv64",
+        "sparcv9",
+        "loongarch64",
+    ],
+)
+def test_unknown_hardware_cannot_establish_matched_repeat_run(cpu, monkeypatch):
+    monkeypatch.setattr(bench.platform, "machine", lambda: "aarch64")
     document = {"fixture": {"sha256": "same"}, "config": {}, "environment": {"cpu": cpu}}
     with pytest.raises(ValueError, match="known CPU model"):
         bench.compare_runs(document, document)
+
+
+@pytest.mark.parametrize(
+    "cpu",
+    [
+        "Intel(R) Core(TM) Ultra 7 258V",
+        "AMD Ryzen 9 7950X",
+        "Apple M4",
+        "ARM Cortex-A72",
+        "POWER9",
+        "Loongson-3A5000",
+    ],
+)
+def test_concrete_cpu_models_remain_accepted(cpu):
+    assert bench.known_cpu(cpu)

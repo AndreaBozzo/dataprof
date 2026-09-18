@@ -13,6 +13,7 @@ import math
 import os
 import platform
 import random
+import re
 import statistics
 import subprocess
 import sys
@@ -358,20 +359,20 @@ def git_output(*args: str) -> str:
 
 
 def known_cpu(value: str) -> bool:
+    """Reject unknown identifiers and architecture aliases, including cross-host aliases."""
     model = value.strip().lower()
-    return not model.startswith(("intel64 family", "amd64 family")) and model not in {
-        "",
-        "unknown",
-        "x86_64",
-        "amd64",
-        "x86",
-        "i386",
-        "i686",
-        "aarch64",
-        "arm64",
-        "arm",
-        platform.machine().lower(),
-    }
+    architecture = re.fullmatch(
+        r"x86(?:_64(?:h|_v[234])?)?|i[3-6]86|amd64|x64|ia64|"
+        r"aarch64(?:_be)?|arm(?:64e?|v\d+(?:[a-z]+|[-_][a-z0-9]+)?)?|"
+        r"(?:ppc|powerpc)(?:64)?(?:le|el)?|mips(?:32|64)?(?:el|le)?|"
+        r"s390x?|riscv(?:32|64)|sparc(?:32|64|v9)?|loongarch64|alpha",
+        model,
+    )
+    return (
+        model not in {"", "unknown", platform.machine().strip().lower()}
+        and not model.startswith(("intel64 family", "amd64 family"))
+        and architecture is None
+    )
 
 
 def cpu_model() -> str:
@@ -653,7 +654,12 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="host identity and load/power controls; required for publication mode",
     )
-    parser.add_argument("--warmups", type=int, default=2, help="unmeasured warm operations (>= 1)")
+    parser.add_argument(
+        "--warmups",
+        type=int,
+        default=2,
+        help="timed warmups excluded from steady-state aggregates (>= 1)",
+    )
     parser.add_argument("--threads", type=int, default=1, help="requested library thread limits")
     parser.add_argument("--tools", nargs="+", choices=TOOLS, default=list(TOOLS))
     parser.add_argument("--reference", choices=TOOLS, default="pandas")

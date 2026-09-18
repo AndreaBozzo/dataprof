@@ -180,8 +180,9 @@ library caches. Those caches are **not evicted**. Fresh-process samples are
 therefore subsequent to environment preparation and preflight, not the first
 invocation on an untouched host. This policy is recorded in `config.preflight`,
 and each successful preflight worker's PID and diagnostics are retained. Fixture
-cache policy is separate and unchanged. More detailed startup boundaries belong
-to #738; do not interpret preflight duration as a pure import measurement.
+cache policy is separate and unchanged. The import/setup timer described above
+separates adapter setup from the overall preflight process duration; neither
+should be interpreted as a pure import measurement.
 
 `setuptools==80.9.0` remains pinned because ydata-profiling 4.18.4 imports
 `pkg_resources`, which [setuptools removed in 82.0.0](https://setuptools.pypa.io/en/latest/deprecated/pkg_resources.html).
