@@ -423,6 +423,15 @@ def render_comparison(document: dict | None) -> str:
         f"<dt>{html.escape(key)}</dt><dd>{html.escape(value)}</dd>"
         for key, value in details.items()
     )
+    resource_note = ""
+    if "resources" in config:
+        resource_note = """<p><strong>Optional resource collection enabled.</strong>
+          Energy and peak RSS are per worker, including imports and warmups; warm values
+          cover the entire block, not a single operation. Host energy zones include background
+          load and collector overhead and are never summed. Unavailable counters remain unavailable.
+          See the <a href="comparison/comparison.md">resource median/IQR tables</a> and
+          <a href="comparison/results.json">raw readings and paired idle baselines</a>.
+          Shared-runner results are collection smoke evidence, not energy-efficiency claims.</p>"""
     return f"""
   <section id="comparison">
     <div class="section-head"><div><span class="eyebrow">01 / Python tool comparison</span>
@@ -452,6 +461,7 @@ def render_comparison(document: dict | None) -> str:
       but share host and OS caches. Within-run intervals do not demonstrate across-run stability;
       repeat-run IQR overlap is a diagnostic, not a significance test.</p>
     {render_ordered_samples(document)}
+    {resource_note}
     <details class="evidence-details"><summary>Exact workloads and timing table</summary>
     <div class="bench-table"><table><caption>Seconds: median [IQR]</caption>
       <thead><tr><th>Tool</th><th>Cold median [IQR]</th><th>Warm median [IQR]</th>

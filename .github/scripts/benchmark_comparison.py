@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import functools
 import gc
 import hashlib
 import importlib.metadata
+import importlib.util
 import json
 import math
 import os
@@ -50,6 +52,18 @@ CONTROL_CODE = (
 CONTROL_SCOPE = "interpreter, minimal JSON worker, IPC and exit; no harness or tool imports"
 
 
+@functools.cache
+def resource_collector():
+    # Load only for opted-in runs, including when this script is imported by tests.
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_resources", Path(__file__).with_name("benchmark_resources.py")
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def checkpoint(output: Path, document: dict) -> None:
     """Atomically retain completed observations without publishing a comparison."""
     temporary = output / "progress.json.tmp"
@@ -58,7 +72,7 @@ def checkpoint(output: Path, document: dict) -> None:
 
 
 class WorkerError(RuntimeError):
-    def __init__(self, message: str, *, stdout="", stderr="", returncode=None):
+    def __init__(self, message: str, *, stdout="", stderr="", returncode=None, resources=None):
         super().__init__(message)
         # TimeoutExpired may carry bytes even when subprocess.run uses text=True.
         self.diagnostics = {
@@ -70,6 +84,8 @@ class WorkerError(RuntimeError):
             else stderr,
             "returncode": returncode,
         }
+        if resources is not None:
+            self.diagnostics["resources"] = resources
 
 
 def fingerprint(path: Path) -> str:
@@ -177,7 +193,7 @@ def worker(request: dict) -> dict:
                 f"fixture mismatch: expected {request['expected']!r}, got {observed!r}"
             )
         (warmups if index < request["warmups"] else samples).append(seconds)
-    return {
+    result = {
         "pid": os.getpid(),
         "import_setup_seconds": import_setup_seconds,
         "first_operation_seconds": (warmups or samples)[0],
@@ -185,6 +201,9 @@ def worker(request: dict) -> dict:
         "operation_seconds": samples,
         "observed": observed,
     }
+    if request.get("resources"):
+        result["peak_rss"] = resource_collector().peak_rss()
+    return result
 
 
 def prime_file(path: Path) -> None:
@@ -209,6 +228,14 @@ def run_worker(request: dict, timeout: float) -> dict:
     env = {**os.environ, **dict.fromkeys(THREAD_ENV, str(request["threads"]))}
     env["PYTHONHASHSEED"] = "0"
     env["PYTHONIOENCODING"] = "utf-8"
+    measurement = (
+        resource_collector().ResourceMeasurement(request["resources"])
+        if request.get("resources")
+        else None
+    )
+    if measurement is not None:
+        measurement.start()
+    failure = None
     start = time.perf_counter_ns()
     try:
         completed = subprocess.run(
@@ -224,18 +251,24 @@ def run_worker(request: dict, timeout: float) -> dict:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise WorkerError(
+        failure = WorkerError(
             f"{request['tool']} worker timed out after {timeout}s",
             stdout=exc.stdout,
             stderr=exc.stderr,
-        ) from exc
-    elapsed = (time.perf_counter_ns() - start) / 1e9
+        )
+        raise failure from exc
+    finally:
+        elapsed = (time.perf_counter_ns() - start) / 1e9
+        resources = measurement.finish() if measurement is not None else None
+        if failure is not None and resources is not None:
+            failure.diagnostics["resources"] = resources
     if completed.returncode:
         raise WorkerError(
             f"{request['tool']} worker failed:\n{completed.stderr}",
             stdout=completed.stdout,
             stderr=completed.stderr,
             returncode=completed.returncode,
+            resources=resources,
         )
     try:
         result = json.loads(completed.stdout)
@@ -247,9 +280,13 @@ def run_worker(request: dict, timeout: float) -> dict:
             stdout=completed.stdout,
             stderr=completed.stderr,
             returncode=completed.returncode,
+            resources=resources,
         ) from exc
     result["process_seconds"] = elapsed
     result["stderr"] = completed.stderr
+    if resources is not None:
+        resources["peak_rss"] = result.pop("peak_rss")
+        result["resources"] = resources
     return result
 
 
@@ -312,6 +349,8 @@ def render_table(document: dict) -> str:
                     for mode, overlaps in modes.items()
                 )
             )
+    if "resource_results" in document:
+        lines.extend(["", *resource_collector().render_summary(document["resource_results"])])
     return "\n".join(lines) + "\n"
 
 
@@ -323,6 +362,9 @@ def compare_runs(previous: dict, current: dict) -> dict:
         raise ValueError("repeatability comparison requires the same fixture")
     if previous["config"] != current["config"]:
         raise ValueError("repeatability comparison requires the same benchmark configuration")
+    for key in ("resource_script_sha256", "resource_host"):
+        if previous["environment"].get(key) != current["environment"].get(key):
+            raise ValueError(f"repeatability comparison has different environment.{key}")
     if any(not known_cpu(doc["environment"]["cpu"]) for doc in (previous, current)):
         raise ValueError("repeatability comparison requires a known CPU model")
     for key in (
@@ -447,6 +489,7 @@ def environment_metadata() -> dict:
         "git_commit": git_output("rev-parse", "HEAD"),
         "git_status": git_output("status", "--porcelain"),
         "benchmark_script_sha256": fingerprint(Path(__file__)),
+        "resource_script_sha256": fingerprint(Path(__file__).with_name("benchmark_resources.py")),
         "benchmark_lock_sha256": fingerprint(ROOT / "benches/uv.lock"),
         "cargo_lock_sha256": fingerprint(ROOT / "Cargo.lock"),
         "rustc_available": subprocess.check_output(["rustc", "--version"], text=True).strip(),
@@ -493,6 +536,25 @@ def new_document(args: argparse.Namespace) -> dict:
             "library_cache": "not evicted; environment preparation and preflight "
             "may warm library pages and caches",
             "workloads": {tool: WORKLOADS[tool] for tool in args.tools},
+            **(
+                {
+                    "resources": {
+                        "protocol_version": 1,
+                        "powercap_root": str(args.powercap_root.resolve()),
+                        "poll_seconds": args.energy_poll_seconds,
+                        "idle_seconds": args.idle_seconds,
+                        "max_zone_watts": args.max_zone_watts,
+                        "background_load_policy": args.background_load_policy,
+                        "power_source": args.power_source,
+                        "scope": "per worker; cold: one operation; "
+                        "warm: warmups plus all iterations",
+                        "counter_assumptions": "no resets; each zone stays below max_zone_watts; "
+                        "overlapping zones are never summed",
+                    }
+                }
+                if args.resources
+                else {}
+            ),
         },
         "runs": [],
         "preflight": [],
@@ -554,6 +616,7 @@ def benchmark(args: argparse.Namespace, document: dict) -> dict:
         "path": str(path),
         "expected": fixture["expected"],
         "threads": args.threads,
+        **({"resources": document["config"]["resources"]} if args.resources else {}),
     }
     # Interleave cold cells by round to avoid giving one tool all the idle-host
     # samples and another all the busy-host samples. Never run tools concurrently.
@@ -613,6 +676,10 @@ def benchmark(args: argparse.Namespace, document: dict) -> dict:
     if fingerprint(path) != fixture["sha256"]:
         raise RuntimeError("fixture changed during the benchmark")
     document["results"] = summarize_runs(document["runs"], args.tools)
+    if args.resources:
+        document["resource_results"] = resource_collector().summarize_resources(
+            document["runs"], args.tools
+        )
     document["control_summary"] = summarize(
         [run["process_seconds"] for run in document["controls"]]
     )
@@ -669,6 +736,43 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--timeout", type=float, default=600, help="seconds allowed per worker")
     parser.add_argument(
+        "--resources", action="store_true", help="collect host energy and worker peak RSS"
+    )
+    parser.add_argument(
+        "--powercap-root",
+        type=Path,
+        default=Path("/sys/class/powercap"),
+        help="Linux powercap sysfs root; missing/inaccessible counters are unavailable",
+    )
+    parser.add_argument(
+        "--energy-poll-seconds",
+        type=float,
+        default=0.05,
+        help="parent counter sampling interval (default: 0.05 seconds)",
+    )
+    parser.add_argument(
+        "--idle-seconds",
+        type=float,
+        default=0.25,
+        help="paired idle baseline before each worker (default: 0.25 seconds)",
+    )
+    parser.add_argument(
+        "--max-zone-watts",
+        type=float,
+        default=10000,
+        help="assumed upper power bound per zone for detecting ambiguous wraps",
+    )
+    parser.add_argument(
+        "--background-load-policy",
+        default="uncontrolled",
+        help="declared host background-load controls; observations do not enforce them",
+    )
+    parser.add_argument(
+        "--power-source",
+        default="unknown",
+        help="declared power source (for example AC or battery)",
+    )
+    parser.add_argument(
         "--cold-cache",
         choices=("warm", "evict"),
         default="warm",
@@ -680,6 +784,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     args.blocks = args.blocks if args.blocks is not None else (3 if args.publication else 1)
     args.host_description = args.host_description.strip()
+    if any(
+        not math.isfinite(v) or v <= 0
+        for v in (args.energy_poll_seconds, args.idle_seconds, args.max_zone_watts)
+    ):
+        parser.error("resource intervals and power bound must be positive and finite")
+    if (
+        args.resources
+        and args.publication
+        and (
+            args.background_load_policy.strip() in ("", "uncontrolled")
+            or args.power_source.strip() in ("", "unknown")
+        )
+    ):
+        parser.error("resource publication requires --background-load-policy and --power-source")
     if args.blocks < 1:
         parser.error("require blocks >= 1")
     if args.publication and (args.iterations < 7 or args.blocks < 2 or not args.host_description):
@@ -708,6 +826,8 @@ def main(argv: list[str] | None = None) -> int:
             previous = json.loads(args.compare.read_text(encoding="utf-8"))
         stage(args, document, "environment")
         document["environment"] = environment_metadata()
+        if args.resources:
+            document["environment"]["resource_host"] = resource_collector().host_metadata()
         preflight(args, document)
         if not args.preflight_only:
             benchmark(args, document)

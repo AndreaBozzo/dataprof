@@ -1,5 +1,13 @@
 # Pending 0.12.0 changes
 
+- The benchmark harness can collect host energy and process peak memory with
+  `--resources` (#440). Results retain raw powercap readings, paired idle
+  baselines, wraparound checks and per-worker RSS high-water marks. Missing
+  counters remain unavailable. Resource tables report repeated-worker median
+  and IQR; warm-worker totals include warmups and are not per-operation costs.
+  CI smoke-tests collection without making energy-efficiency claims. See the
+  [resource measurement protocol](../benches/README.md#energy-and-peak-memory).
+
 - Python reports now use shared read-only column, pattern, and quality views
   over native or restored values (#516). `report.profiles` and `report.quality`
   expose the same public classes after `from_dict()`, `from_json()`, or `load()`.

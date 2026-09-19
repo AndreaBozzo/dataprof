@@ -161,6 +161,118 @@ disables expensive computations, and
 [`description_set`](https://docs.profiling.ydata.ai/4.7/features/profile_values/)
 forces the otherwise lazy summary. HTML report rendering is outside all workloads.
 
+## Energy and peak memory
+
+Add `--resources` to the same runner. Dependencies remain in the optional
+benchmark environment; this adds nothing to the dataprof library or wheel.
+For a bounded collection smoke test (all four tools, 100 rows, two repeats):
+
+```bash
+uv run --project benches --locked python .github/scripts/benchmark_comparison.py --resources --rows 100 --iterations 2 --blocks 2 --warmups 1 --output benchmark-results/resources-smoke
+```
+
+The command produces the existing timing artifacts plus `runs[].resources`
+and `resource_results` in `results.json`, and separate resource tables in
+`comparison.md`. The additive `config.resources.protocol_version = 1`
+identifies this protocol; absent resource fields in older artifacts mean
+not collected. The website links the raw evidence and resource tables and
+labels the collection boundary alongside its timing charts.
+
+Publishable measurements require controlled local hardware, repeated runs and
+review of their dispersion. For example, replace the host descriptions with
+the controls actually applied on your machine:
+
+```bash
+uv run --project benches --locked python .github/scripts/benchmark_comparison.py --resources --publication --host-description "lab-01; fixed performance profile; thermally settled" --power-source AC --background-load-policy "dedicated idle host; scheduled tasks disabled" --idle-seconds 1 --output benchmark-results/resources-publication
+```
+
+The publication budget retains 21 fresh-process samples and three warm worker
+blocks per tool by default. Every warm block includes two warmups followed by
+21 timed operations. Energy/RSS observations are **per worker**, so there are
+63 cold resource samples and only three warm resource samples per tool.
+Increasing `--iterations` does not create more independent warm resource samples;
+increase `--blocks` for that. One warm block yields `insufficient_samples`,
+not a dispersion estimate. The harness never divides warm worker totals by
+iteration count to imply an operation-only resource measurement.
+
+### Energy boundary and counters
+
+- On Linux, discover readable `energy_uj` counters through
+  `/sys/class/powercap`, resolving class symlinks and deduplicating aliases.
+  `--powercap-root` can select another mounted sysfs root. Record every zone's
+  canonical counter path, name, unit and `max_energy_range_uj`. Package, core,
+  DRAM and platform zones remain separate: parent and child zones can overlap
+  and are **never summed**. Counter scope is whatever that hardware zone covers,
+  not the benchmark process, and package energy is not whole-system energy.
+- A parent thread reads each zone immediately before worker launch, every
+  `--energy-poll-seconds` (default 0.05), and after process exit. Every integer
+  reading and its monotonic read-start/read-end timestamps are retained. The
+  boundary includes interpreter startup, imports, all operations (including
+  warmups), IPC, exit, and counter-reading overhead. Host background activity
+  and the collector consume energy within the same zones. The timing timer
+  excludes the paired idle wait; collector overhead still perturbs an opted-in
+  run, so compare runs with matching resource settings.
+- Sum `(after - before) modulo max_energy_range_uj` over consecutive readings.
+  This handles repeated wraps across a long run only when each interval is
+  short enough to exclude an unseen full cycle. The declared
+  `--max-zone-watts` upper bound (default **10,000 W per zone**) is an assumption,
+  not a discovered hardware limit. An interval whose duration times that bound
+  can cover a full counter range is unavailable; so is a delta exceeding the
+  bound. The check uses actual timestamps, including delayed polls, rather than
+  assuming the polling thread ran on schedule. Choose a conservative bound for
+  the hardware and a short enough polling interval. No counter reset may occur
+  during measurement: the ABI cannot always distinguish resets from wraps.
+- Before each worker, collect a paired idle interval using the same counters
+  and polling method (`--idle-seconds`, default 0.25). This is an observation of
+  the host while the benchmark worker is absent, not a guarantee the host was
+  idle. Keep gross energy and compute the signed estimate
+  `gross_uj - (idle_uj / idle_seconds) * measured_seconds`, using actual per-zone
+  durations. Negative estimates remain negative; subtraction is not proof of
+  process attribution. The raw paired baseline remains available for audit.
+- Unavailable, inaccessible or malformed counters and read failures have
+  explicit status/reason fields, never zero energy. Without readable counters,
+  the command still succeeds and skips the idle wait. A failed interval
+  invalidates that zone's entire worker measurement; no partial total is
+  published. Any missing worker measurement suppresses that zone's aggregate,
+  while retaining the successful raw samples and the expected sample count.
+
+The source interface is the Linux kernel's
+[Power Capping Framework](https://docs.kernel.org/power/powercap/powercap.html).
+Short operations may be below counter update resolution; a measured zero is
+possible and must not be promoted to a zero-energy claim. Longer repeated
+workloads and controlled-host validation are needed before interpretation.
+
+### Peak resident memory and provenance
+
+For **every tool**, collect the OS worker-process high-water mark after its last
+operation: Linux `getrusage(RUSAGE_SELF).ru_maxrss` in KiB converted to bytes,
+macOS `ru_maxrss` already in bytes, Windows `PeakWorkingSetSize` through the
+pinned psutil `peak_wset` field in bytes. This includes native Arrow buffers,
+interpreter, imports, collector setup, and retained allocator memory. It excludes
+child processes and final JSON serialization/exit; it is neither Python-only
+allocation accounting nor a process-tree peak. Warm-worker peaks include
+warmups and all iterations and are not reset between operations. Unsupported
+platforms report unavailable rather than substituting a sampled RSS maximum.
+The OS definitions have platform differences: compare tools on the same host.
+
+Raw samples and complete repeated-worker aggregates retain median, inclusive
+Q1/Q3, IQR, minimum and maximum. Gross and idle-adjusted energy remain separate,
+as do cold and warm worker conditions. Existing fixture, binary, dependency,
+CPU, architecture and OS fingerprints apply. The collector source is hashed;
+resource provenance also records kernel version, observed Linux power-supply
+online state and governor/minimum/maximum frequency policy where accessible,
+plus the user's declared power source and background-load policy. Empty policy
+mappings mean unknown. Publication mode requires explicit power/load declarations
+and a host description; the harness records but does not enforce those controls.
+
+GitHub-hosted CI runs only the bounded collection smoke test. Its observations
+remain diagnostic even if counters happen to be readable. Run the synthetic
+counter/unit tests and real-worker unavailable-counter test locally with:
+
+```bash
+uv run --no-sync pytest python/tests/test_benchmark_resources.py -q
+```
+
 ## Import preflight and failed runs
 
 Every comparison checks the pinned environment and imports each selected adapter
@@ -235,7 +347,6 @@ Planned work stays in its tickets:
 | #402 ablation | Additional named workloads with the same repeated-run provenance |
 | #697 Parquet physical reads | A measurement suite for physical I/O and accumulator work |
 | #698 Python/Arrow boundaries | Stage timings, chunk/batch matrix, and optional producers |
-| #440 energy and peak memory | Documented instrumentation and units alongside timing samples |
 | #405 auto-engine investigation | Controlled workloads and before/after evidence |
 
 Do not merge their data into one unlabeled timing table. Add result schema versions

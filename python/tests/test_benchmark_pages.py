@@ -78,6 +78,19 @@ def write_comparison(artifact, document):
     (artifact / "comparison/comparison.md").write_text("comparison table")
 
 
+def test_resource_evidence_links_disclose_whole_worker_scope(artifact, monkeypatch):
+    document = comparison_document()
+    document["config"]["resources"] = {"protocol_version": 1}
+    write_comparison(artifact, document)
+    monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
+    assert pages.main() == 0
+    index = (artifact / "index.html").read_text(encoding="utf-8")
+    assert "Optional resource collection enabled" in index
+    assert "cover the entire block, not a single operation" in index
+    assert "resource median/IQR tables" in index
+    assert "Unavailable counters remain unavailable" in index
+
+
 def test_old_artifacts_keep_their_links(artifact, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
     assert pages.main() == 0
