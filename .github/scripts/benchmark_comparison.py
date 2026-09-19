@@ -54,6 +54,7 @@ CONTROL_SCOPE = "interpreter, minimal JSON worker, IPC and exit; no harness or t
 
 @functools.cache
 def resource_collector():
+    """Load and cache the optional collector for resource-enabled workers."""
     # Load only for opted-in runs, including when this script is imported by tests.
     spec = importlib.util.spec_from_file_location(
         "benchmark_resources", Path(__file__).with_name("benchmark_resources.py")
@@ -225,6 +226,7 @@ def prepare_cache(path: Path, mode: str) -> str:
 
 
 def run_worker(request: dict, timeout: float) -> dict:
+    """Run an isolated worker, retaining output and resource evidence on failure."""
     env = {**os.environ, **dict.fromkeys(THREAD_ENV, str(request["threads"]))}
     env["PYTHONHASHSEED"] = "0"
     env["PYTHONIOENCODING"] = "utf-8"
@@ -256,6 +258,9 @@ def run_worker(request: dict, timeout: float) -> dict:
             stdout=exc.stdout,
             stderr=exc.stderr,
         )
+        raise failure from exc
+    except OSError as exc:
+        failure = WorkerError(f"{request['tool']} worker could not start: {exc}")
         raise failure from exc
     finally:
         elapsed = (time.perf_counter_ns() - start) / 1e9
@@ -362,9 +367,10 @@ def compare_runs(previous: dict, current: dict) -> dict:
         raise ValueError("repeatability comparison requires the same fixture")
     if previous["config"] != current["config"]:
         raise ValueError("repeatability comparison requires the same benchmark configuration")
-    for key in ("resource_script_sha256", "resource_host"):
-        if previous["environment"].get(key) != current["environment"].get(key):
-            raise ValueError(f"repeatability comparison has different environment.{key}")
+    if "resources" in current["config"]:
+        for key in ("resource_script_sha256", "resource_host"):
+            if previous["environment"].get(key) != current["environment"].get(key):
+                raise ValueError(f"repeatability comparison has different environment.{key}")
     if any(not known_cpu(doc["environment"]["cpu"]) for doc in (previous, current)):
         raise ValueError("repeatability comparison requires a known CPU model")
     for key in (

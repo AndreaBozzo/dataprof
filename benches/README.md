@@ -222,6 +222,14 @@ iteration count to imply an operation-only resource measurement.
   assuming the polling thread ran on schedule. Choose a conservative bound for
   the hardware and a short enough polling interval. No counter reset may occur
   during measurement: the ABI cannot always distinguish resets from wraps.
+  In particular, the defaults are deliberately conservative and do not guarantee
+  usable readings on every counter. At 10,000 W, a 0.05-second interval needs a
+  range greater than 500,000,000 microjoules (500 J). For an illustrative 262 J
+  range, the interval must be below 0.0262 seconds: try
+  `--energy-poll-seconds 0.01`, allowing margin for scheduling delays. Inspect
+  the actual range and rejected intervals in the raw artifact; decrease the
+  power bound only with a hardware-justified upper bound, never merely to make
+  a rejected reading pass. The same check applies to idle-baseline polling.
 - Before each worker, collect a paired idle interval using the same counters
   and polling method (`--idle-seconds`, default 0.25). This is an observation of
   the host while the benchmark worker is absent, not a guarantee the host was

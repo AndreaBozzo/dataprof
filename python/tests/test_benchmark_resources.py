@@ -206,6 +206,64 @@ def test_timeout_stops_collector_and_retains_failure_evidence(tmp_path, monkeypa
     assert error.value.diagnostics["resources"]["energy"]["status"] == "unavailable"
 
 
+def test_launch_failure_retains_raw_resource_evidence_in_checkpoint(tmp_path, monkeypatch):
+    """An unstarted worker preserves counters and its cause without publishing a sample."""
+    zone_files(tmp_path / "powercap/package", value="123", maximum="1000000000000")
+    monkeypatch.setattr(bench, "environment_metadata", lambda: {})
+    monkeypatch.setattr(bench, "preflight", lambda *args: None)
+    measurements = []
+    measurement_type = resources.ResourceMeasurement
+
+    def collect(settings):
+        measurement = measurement_type(settings)
+        measurements.append(measurement)
+        return measurement
+
+    def launch(command, **kwargs):
+        if command[-1] == "--worker":
+            raise FileNotFoundError("worker interpreter unavailable")
+        return subprocess.CompletedProcess(command, 0, '{"status": "complete"}', "")
+
+    monkeypatch.setattr(resources, "ResourceMeasurement", collect)
+    monkeypatch.setattr(bench.subprocess, "run", launch)
+    output = tmp_path / "output"
+    assert (
+        bench.main(
+            [
+                "--output",
+                str(output),
+                "--tools",
+                "pandas",
+                "--rows",
+                "100",
+                "--iterations",
+                "2",
+                "--resources",
+                "--idle-seconds",
+                "0.01",
+                "--powercap-root",
+                str(tmp_path / "powercap"),
+            ]
+        )
+        == 1
+    )
+    progress = json.loads((output / "progress.json").read_text())
+    failure = progress["failure"]
+    assert failure["stage"] == "cold"
+    assert failure["type"] == "WorkerError"
+    assert "FileNotFoundError: worker interpreter unavailable" in failure["traceback"]
+    for phase in ("energy", "idle"):
+        zone = failure["resources"][phase]["zones"][0]
+        assert len(zone["readings"]) >= 2
+        assert zone["readings"][0]["energy_uj"] == 123
+    assert measurements[0].meter.thread is not None
+    assert not measurements[0].meter.thread.is_alive()
+    assert progress["status"] == "incomplete"
+    assert progress["runs"] == []
+    assert not (output / "results.json").exists()
+    assert not (output / "comparison.md").exists()
+
+
 def test_readable_counter_runs_through_idle_polling_and_worker_collection(tmp_path):
     zone_files(tmp_path / "powercap/package", value="123", maximum="1000000000000")
     settings = {**config(tmp_path), "powercap_root": str(tmp_path / "powercap")}

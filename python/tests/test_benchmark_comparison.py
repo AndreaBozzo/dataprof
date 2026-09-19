@@ -200,9 +200,10 @@ def test_repeatability_refuses_changed_fixture():
         bench.compare_runs({"fixture": {"sha256": "a"}}, {"fixture": {"sha256": "b"}})
 
 
-@pytest.mark.parametrize("changed_field", ["cpu", "git_commit", "git_status"])
-def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment(changed_field):
-    previous: dict[str, Any] = {
+@pytest.fixture
+def repeatable_run() -> dict[str, Any]:
+    """A complete timing comparison with stable environment and overlapping IQRs."""
+    return {
         "fixture": {"sha256": "same"},
         "config": {"threads": 1},
         "environment": dict.fromkeys(
@@ -227,6 +228,13 @@ def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment(chan
         ),
         "results": {"dataprof": {"warm": {"q1_seconds": 1, "q3_seconds": 2}}},
     }
+
+
+@pytest.mark.parametrize("changed_field", ["cpu", "git_commit", "git_status"])
+def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment(
+    changed_field, repeatable_run
+):
+    previous = repeatable_run
     current = copy.deepcopy(previous)
     assert bench.compare_runs(previous, current) == {"dataprof": {"warm": True}}
     current["results"]["dataprof"]["warm"] = {"q1_seconds": 3, "q3_seconds": 4}
@@ -234,6 +242,27 @@ def test_repeatability_reports_disjoint_iqr_and_rejects_changed_environment(chan
     current["environment"][changed_field] = "different"
     with pytest.raises(ValueError, match=rf"environment\.{changed_field}"):
         bench.compare_runs(previous, current)
+
+
+@pytest.mark.parametrize("field", ["resource_script_sha256", "resource_host"])
+@pytest.mark.parametrize("previous_value", [None, "older"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_repeatability_checks_resource_metadata_only_when_enabled(
+    repeatable_run, field, previous_value, enabled
+):
+    """Missing or changed collector metadata only invalidates resource measurements."""
+    previous = repeatable_run
+    if enabled:
+        previous["config"]["resources"] = {"protocol_version": 1}
+    if previous_value is not None:
+        previous["environment"][field] = previous_value
+    current = copy.deepcopy(previous)
+    current["environment"][field] = "current"
+    if enabled:
+        with pytest.raises(ValueError, match=rf"environment\.{field}"):
+            bench.compare_runs(previous, current)
+    else:
+        assert bench.compare_runs(previous, current) == {"dataprof": {"warm": True}}
 
 
 @pytest.mark.parametrize(
