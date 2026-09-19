@@ -11,6 +11,8 @@ on:
       - 'python/dataprof/**'
       - 'pyproject.toml'
       - '.github/scripts/benchmark_comparison.py'
+      - '.github/scripts/benchmark_resources.py'
+      - 'python/tests/test_benchmark_resources.py'
       - 'python/tests/test_benchmark_comparison.py'
       - '.github/dependabot.yml'
       - '.github/workflows/benchmarks.yml'
@@ -25,6 +27,8 @@ on:
       - 'python/dataprof/**'
       - 'pyproject.toml'
       - '.github/scripts/benchmark_comparison.py'
+      - '.github/scripts/benchmark_resources.py'
+      - 'python/tests/test_benchmark_resources.py'
       - 'python/tests/test_benchmark_comparison.py'
       - '.github/dependabot.yml'
       - '.github/workflows/benchmarks.yml'
@@ -118,9 +122,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_benchmark }}" = "true" ]; then
-            uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py 2>&1 | tee benchmark-results/comparison.txt
+            uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py --resources --host-description "GitHub-hosted runner; resource collection smoke test only" 2>&1 | tee benchmark-results/comparison.txt
           else
-            uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py --rows 1000 --iterations 3 --warmups 1 2>&1 | tee benchmark-results/comparison.txt
+            uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py --resources --host-description "GitHub-hosted runner; resource collection smoke test only" --rows 1000 --iterations 3 --warmups 1 2>&1 | tee benchmark-results/comparison.txt
           fi
 
       - name: Record run status
