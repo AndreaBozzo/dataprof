@@ -1,17 +1,28 @@
 //! Incremental, owning import of one-shot Arrow C Stream producers.
 //!
-//! Drive the callbacks directly: arrow-rs 59's ArrowArrayStreamReader discards
-//! schema error text and unwraps missing batch error text. Both are valid error
-//! cases that must remain catchable, with the available producer cause intact.
+//! Drive the callbacks directly: arrow-rs's `ArrowArrayStreamReader` panics on a
+//! producer that omits `get_schema` or `get_next`, folds the producer's message
+//! into one error string instead of a cause, and drops the struct-level null
+//! mask rather than rejecting it. All three are valid inputs that must stay
+//! catchable on the Python side, with the producer cause intact.
+//!
+//! The capsule holds a C Data Interface `ArrowArrayStream`, so that is what is
+//! declared below; its layout is fixed by the spec, not by arrow-rs. arrow 60.0
+//! cannot supply the struct instead: apache/arrow-rs#10431 made
+//! `FFI_ArrowArrayStream`'s callback fields private and added getters only for
+//! `release` and `private_data`, leaving a consumer no way to reach the three
+//! callbacks it has to drive. apache/arrow-rs#11125 adds those getters, but it
+//! merged three days after 60.0.0 was cut. Delete this struct and read the
+//! callbacks off `FFI_ArrowArrayStream` once the arrow release carrying it
+//! lands.
 #![allow(unsafe_code)]
 
-use std::ffi::CStr;
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::Arc;
 
 use arrow::array::{Array, RecordBatch, StructArray};
 use arrow::datatypes::{DataType, Schema, SchemaRef};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
-use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::RecordBatchOptions;
 use dataprof::{DataSource, EngineType, ExecutionMetadata, MetricPack, TruncationReason};
 use dataprof_core::StreamSourceSystem;
@@ -25,10 +36,51 @@ use crate::config::PyProfilerConfig;
 use crate::errors::{analysis_error_to_py, analyzer_error_to_py};
 use crate::types::PyProfileReport;
 
+/// The C Data Interface `ArrowArrayStream`, as the capsule stores it.
+///
+/// Field order and types are the spec's; `#[repr(C)]` is what makes this the
+/// same struct the producer wrote. A NULL `release` marks a released stream.
+#[repr(C)]
+struct ArrowArrayStream {
+    get_schema: Option<
+        unsafe extern "C" fn(stream: *mut ArrowArrayStream, out: *mut FFI_ArrowSchema) -> c_int,
+    >,
+    get_next: Option<
+        unsafe extern "C" fn(stream: *mut ArrowArrayStream, out: *mut FFI_ArrowArray) -> c_int,
+    >,
+    get_last_error: Option<unsafe extern "C" fn(stream: *mut ArrowArrayStream) -> *const c_char>,
+    release: Option<unsafe extern "C" fn(stream: *mut ArrowArrayStream)>,
+    private_data: *mut c_void,
+}
+
+impl ArrowArrayStream {
+    /// The all-NULL struct a moved-from producer slot is left holding.
+    fn empty() -> Self {
+        Self {
+            get_schema: None,
+            get_next: None,
+            get_last_error: None,
+            release: None,
+            private_data: std::ptr::null_mut(),
+        }
+    }
+}
+
+impl Drop for ArrowArrayStream {
+    fn drop(&mut self) {
+        if let Some(release) = self.release {
+            // SAFETY: the callback belongs to this stream and is called once,
+            // on the struct this type owns. It NULLs `release` itself, and the
+            // capsule's copy was already emptied by the move in `new`.
+            unsafe { release(self) };
+        }
+    }
+}
+
 /// Own the moved C struct, releasing it on every success/error path. Calls stay
 /// attached to Python because producer callbacks may execute Python code.
 struct ImportedStream {
-    stream: FFI_ArrowArrayStream,
+    stream: ArrowArrayStream,
     schema: SchemaRef,
 }
 
@@ -39,10 +91,15 @@ impl ImportedStream {
         let pointer = capsule
             .pointer_checked(Some(c"arrow_array_stream"))
             .map_err(|_| PyTypeError::new_err("Expected PyCapsule named 'arrow_array_stream'"))?;
-        // SAFETY: the named capsule contains an ArrowArrayStream. from_raw
-        // moves it and clears the original release callback, so the capsule
-        // destructor cannot release our stream a second time.
-        let mut stream = unsafe { FFI_ArrowArrayStream::from_raw(pointer.as_ptr().cast()) };
+        // SAFETY: the named capsule contains an ArrowArrayStream. Replacing it
+        // with the empty struct moves it here and clears the original release
+        // callback, so the capsule destructor cannot release it a second time.
+        let mut stream = unsafe {
+            std::ptr::replace(
+                pointer.as_ptr().cast::<ArrowArrayStream>(),
+                ArrowArrayStream::empty(),
+            )
+        };
         if stream.release.is_none() {
             return Err(PyValueError::new_err(
                 "Arrow stream was already consumed or released",
@@ -130,12 +187,7 @@ impl ImportedStream {
 
 /// The C interface carries error text, not a Python exception object. Copy it
 /// before releasing the stream, retaining it as the explicit Python cause.
-fn stream_error(
-    py: Python<'_>,
-    stream: &mut FFI_ArrowArrayStream,
-    stage: &str,
-    status: i32,
-) -> PyErr {
+fn stream_error(py: Python<'_>, stream: &mut ArrowArrayStream, stage: &str, status: i32) -> PyErr {
     let message = stream.get_last_error.and_then(|callback| {
         // SAFETY: callback belongs to the live stream; the returned string is
         // borrowed only until the next callback, and is copied here immediately.
