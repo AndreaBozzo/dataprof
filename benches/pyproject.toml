@@ -12,7 +12,7 @@ dependencies = [
     # ydata-profiling imports pkg_resources, removed in newer setuptools.
     # Upgrade this pin and remove the matching Dependabot bound only alongside
     # a ydata version that passes the import preflight without pkg_resources.
-    "setuptools==80.9.0",
+    "setuptools==81.0.0",
 ]
 
 [tool.uv.sources]
