@@ -144,7 +144,10 @@ impl ArrowProfiler {
         (builder, max_rows)
     }
 
-    /// Read only the header record. This touches the first line, not the body.
+    /// Read the first record and stop: the header row, or, under
+    /// `has_header=false`, the first data row, which is what the column count
+    /// and the generated `column_N` names come from. Either way this reads one
+    /// record rather than the body.
     fn read_headers(&self, file_path: &Path) -> Result<csv::StringRecord, DataProfilerError> {
         let (builder, _) = self.csv_reader_builder();
         let mut reader = builder.from_path(file_path)?;
@@ -497,9 +500,24 @@ impl ArrowProfiler {
     }
 }
 
+/// Whether Arrow stopped on a record whose field count the schema cannot hold.
+///
+/// The one Arrow failure a wider schema can fix, and the only one worth a
+/// retry, so both the classifier and the mapper below ask the same question
+/// here rather than each spelling out the message Arrow happens to use.
+fn is_field_count_error(error: &arrow::error::ArrowError) -> bool {
+    is_field_count_error_message(&error.to_string())
+}
+
+/// The message half of [`is_field_count_error`], so the phrase Arrow uses is
+/// written once and the tests can assert it is *not* what reached the caller.
+fn is_field_count_error_message(message: &str) -> bool {
+    message.contains("incorrect number of fields")
+}
+
 /// Separate the one Arrow error a wider schema can fix from every other one.
 fn classify_arrow_csv_error(file_path: &Path, error: arrow::error::ArrowError) -> CsvDecodeFailure {
-    if error.to_string().contains("incorrect number of fields") {
+    if is_field_count_error(&error) {
         return CsvDecodeFailure::FieldCount(error);
     }
     CsvDecodeFailure::Other(map_arrow_csv_error(file_path, error))
@@ -508,7 +526,7 @@ fn classify_arrow_csv_error(file_path: &Path, error: arrow::error::ArrowError) -
 fn map_arrow_csv_error(file_path: &Path, error: arrow::error::ArrowError) -> DataProfilerError {
     let message = error.to_string();
 
-    if message.contains("incorrect number of fields") {
+    if is_field_count_error(&error) {
         let suggestion = format!(
             "The columnar engine sizes its schema from a pre-scan of '{}', so a row Arrow still finds ragged means the two parsers disagree on where records end — most often unbalanced quotes or an embedded newline. Use engine='auto' or engine='incremental', which parse the file only once.",
             file_path.display()
@@ -1075,7 +1093,15 @@ mod tests {
 
         match error {
             DataProfilerError::CsvParsingError { message, .. } => {
-                assert!(message.contains("3 fields"), "{message}");
+                // Name both counts, the way the `csv` crate does and Arrow does
+                // not, so passing Arrow's "expected 3 got 2" through unmapped
+                // would fail here.
+                assert!(
+                    message.contains("found record with 2 fields")
+                        && message.contains("has 3 fields"),
+                    "{message}"
+                );
+                assert!(!is_field_count_error_message(&message), "{message}");
             }
             other => panic!("expected CsvParsingError, got {other:?}"),
         }
@@ -1103,7 +1129,12 @@ mod tests {
 
         match error {
             DataProfilerError::CsvParsingError { message, .. } => {
-                assert!(message.contains("3 fields"), "{message}");
+                assert!(
+                    message.contains("found record with 4 fields")
+                        && message.contains("has 3 fields"),
+                    "{message}"
+                );
+                assert!(!is_field_count_error_message(&message), "{message}");
             }
             other => panic!("expected CsvParsingError, got {other:?}"),
         }
