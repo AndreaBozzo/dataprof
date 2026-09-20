@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture
 def bench(monkeypatch):
+    """Load the runner with its sibling harness available to imports."""
     monkeypatch.syspath_prepend(str(ROOT / ".github/scripts"))
     spec = importlib.util.spec_from_file_location(
         "benchmark_boundaries", ROOT / ".github/scripts/benchmark_boundaries.py"
@@ -27,6 +28,7 @@ def bench(monkeypatch):
 @pytest.mark.parametrize("kind", ["arrow_array", "arrow_table", "pandas", "polars", "arrow_stream"])
 @pytest.mark.parametrize("offset", [0, 3])
 def test_producers_preserve_values_and_serialized_metrics(bench, kind, offset):
+    """Every producer must preserve the fixture and fail when its metric evidence differs."""
     pytest.importorskip("pyarrow")
     if kind in ("pandas", "polars"):
         pytest.importorskip(kind)
@@ -51,6 +53,7 @@ def test_producers_preserve_values_and_serialized_metrics(bench, kind, offset):
 
 
 def test_stream_is_lazy_and_batch_memory_does_not_scale_with_rows(bench):
+    """Larger streams must request batches lazily without increasing individual buffer sizes."""
     pa = pytest.importorskip("pyarrow")
     observed = []
     for rows in (100, 1000):
@@ -77,6 +80,7 @@ def test_stream_is_lazy_and_batch_memory_does_not_scale_with_rows(bench):
 
 
 def test_isolated_worker_keeps_first_use_and_warmups(bench):
+    """A real subprocess retains warmup evidence separately from measured samples."""
     pytest.importorskip("pyarrow")
     case = {"producer": "arrow_stream", "rows": 101, "chunk_size": 20, "offset": 3}
     reference = bench.worker({"case": case, "reference": True})
@@ -100,6 +104,7 @@ def test_isolated_worker_keeps_first_use_and_warmups(bench):
 
 
 def test_skips_have_reasons_and_stream_scaling_keeps_chunk_size(bench):
+    """The matrix identifies unsupported chunked arrays and reproducible stream scaling."""
     matrix = bench.cases(100, [10, 100], 4)
     skipped = [c for c in matrix if "skip_reason" in c]
     assert all(c["producer"] == "arrow_array" and c["chunk_size"] == 10 for c in skipped)
@@ -110,6 +115,7 @@ def test_skips_have_reasons_and_stream_scaling_keeps_chunk_size(bench):
 
 
 def test_failure_retains_completed_evidence_without_results(bench, tmp_path, monkeypatch):
+    """Worker failures preserve earlier observations but cannot publish a successful result."""
     monkeypatch.setattr(bench.common, "environment_metadata", lambda: {})
     calls = 0
 
@@ -131,6 +137,7 @@ def test_failure_retains_completed_evidence_without_results(bench, tmp_path, mon
 
 
 def test_runtime_budget_and_invalid_sizes_cannot_be_fast_successes(bench, tmp_path, monkeypatch):
+    """Invalid fixture sizes and exhausted time budgets fail before measurement succeeds."""
     monkeypatch.setattr(bench.common, "environment_metadata", lambda: {})
     with pytest.raises(SystemExit):
         bench.main(["--rows", "100", "--chunks", "101", "--output", str(tmp_path / "bad")])
@@ -140,3 +147,107 @@ def test_runtime_budget_and_invalid_sizes_cannot_be_fast_successes(bench, tmp_pa
     assert bench.main(["--rows", "100", "--chunks", "10", "--output", str(output)]) == 1
     assert "budget exhausted" in (output / "progress.json").read_text()
     assert not (output / "results.json").exists()
+
+
+@pytest.fixture
+def completed_run(bench, tmp_path, monkeypatch):
+    """Exercise real orchestration and publication without timing native workers."""
+    monkeypatch.setattr(bench.common, "environment_metadata", lambda: {})
+    case = {"id": "test", "producer": "arrow_array", "rows": 100, "chunk_size": 100, "offset": 0}
+    monkeypatch.setattr(bench, "cases", lambda *args: [case])
+
+    def run(request, *args, **kwargs):
+        if request.get("reference"):
+            return {"columns": [], "status": "complete"}
+        return {
+            "status": "complete",
+            "samples": [
+                {"seconds": dict.fromkeys(bench.STAGES, 1.0)}
+                for _ in range(request.get("iterations", 1))
+            ],
+        }
+
+    monkeypatch.setattr(bench.common, "run_worker", run)
+    output = tmp_path / "run"
+    return output, [
+        "--rows",
+        "100",
+        "--chunks",
+        "100",
+        "--iterations",
+        "2",
+        "--output",
+        str(output),
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure", ["serialization", "render", "results.json", "boundaries.md", "rename", "checkpoint"]
+)
+def test_failed_publication_is_incomplete_and_removes_outputs(
+    bench, completed_run, monkeypatch, failure
+):
+    """Inject failures throughout publication, including after a final output exists."""
+    output, argv = completed_run
+    write_text = Path.write_text
+    replace = Path.replace
+    checkpoint = bench.common.checkpoint
+
+    def fail_write(path, *args, **kwargs):
+        if path.name.removesuffix(".tmp") == failure:
+            write_text(path, "partial output", encoding="utf-8")
+            raise OSError("injected write failure")
+        return write_text(path, *args, **kwargs)
+
+    def fail_replace(path, target):
+        if Path(target).name == "boundaries.md":
+            raise OSError("injected rename failure")
+        return replace(path, target)
+
+    def fail_checkpoint(path, document):
+        if document["status"] == "complete":
+            raise OSError("injected completion failure")
+        return checkpoint(path, document)
+
+    if failure == "serialization":
+        monkeypatch.setattr(bench, "summarize_runs", lambda runs: {"bad": float("nan")})
+    elif failure == "render":
+
+        def fail_render(document):
+            raise ValueError("injected render failure")
+
+        monkeypatch.setattr(bench, "render", fail_render)
+    elif failure == "rename":
+        monkeypatch.setattr(Path, "replace", fail_replace)
+    elif failure == "checkpoint":
+        monkeypatch.setattr(bench.common, "checkpoint", fail_checkpoint)
+    else:
+        monkeypatch.setattr(Path, "write_text", fail_write)
+    assert bench.main(argv) == 1
+    retained = json.loads((output / "progress.json").read_text())
+    assert retained["status"] == "incomplete"
+    assert retained["failure"]
+    assert len(retained["runs"]) == 3
+    assert not (output / "results.json").exists()
+    assert not (output / "boundaries.md").exists()
+    assert not list(output.glob("*.tmp"))
+
+
+def test_completion_checkpoint_is_written_after_both_outputs(bench, completed_run, monkeypatch):
+    """The complete checkpoint acts as the publication commit marker."""
+    output, argv = completed_run
+    write_text = Path.write_text
+    observed = []
+
+    def observe_write(path, contents, *args, **kwargs):
+        if path.name.removesuffix(".tmp") in ("results.json", "boundaries.md"):
+            observed.append(json.loads((output / "progress.json").read_text())["status"])
+        if path.name == "progress.json.tmp" and json.loads(contents)["status"] == "complete":
+            assert json.loads((output / "results.json").read_text())["status"] == "complete"
+            assert "Python/Arrow boundary experiment" in (output / "boundaries.md").read_text()
+        return write_text(path, contents, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", observe_write)
+    assert bench.main(argv) == 0
+    assert observed == ["incomplete", "incomplete"]
+    assert json.loads((output / "progress.json").read_text())["status"] == "complete"

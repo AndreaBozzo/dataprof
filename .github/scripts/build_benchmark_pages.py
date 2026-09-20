@@ -26,6 +26,7 @@ import argparse
 import html
 import json
 import math
+import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -543,7 +544,37 @@ def render_ordered_samples(document: dict) -> str:
     </details>"""
 
 
+def validate_boundary_summary(cell: dict, iterations: int) -> None:
+    """Require every schema-v1 statistic to agree exactly with its raw observations."""
+    samples = cell.get("samples_seconds")
+    if not isinstance(samples, list) or len(samples) != iterations or len(samples) < 2:
+        raise ValueError("missing boundary timing samples")
+    if any(type(n) not in (int, float) or not math.isfinite(n) or n < 0 for n in samples):
+        raise ValueError("invalid boundary timing samples")
+    if type(cell.get("sample_count")) is not int or cell["sample_count"] != len(samples):
+        raise ValueError("invalid boundary sample count")
+    q1, _, q3 = statistics.quantiles(samples, n=4, method="inclusive")
+    expected = {
+        "median_seconds": statistics.median(samples),
+        "q1_seconds": q1,
+        "q3_seconds": q3,
+        "iqr_seconds": q3 - q1,
+        "min_seconds": min(samples),
+        "max_seconds": max(samples),
+    }
+    for field, calculated in expected.items():
+        value = cell.get(field)
+        if (
+            type(value) not in (int, float)
+            or not math.isfinite(value)
+            or value < 0
+            or value != calculated
+        ):
+            raise ValueError(f"invalid boundary summary: {field} disagrees with raw samples")
+
+
 def load_boundaries(pages: Path) -> dict | None:
+    """Load optional boundary evidence, rejecting incomplete runs or corrupt summaries."""
     directory = pages / "boundaries"
     if not directory.exists():
         return None  # Older artifacts did not run this suite.
@@ -566,18 +597,12 @@ def load_boundaries(pages: Path) -> dict | None:
         for condition in ("fresh", "warm"):
             for stage in ("prepare", "import_profile", "export_dict", "export_json", "end_to_end"):
                 cell = case["summary"][condition][stage]
-                samples = cell["samples_seconds"]
-                if len(samples) != document["config"]["iterations"] or len(samples) < 2:
-                    raise ValueError("missing boundary timing samples")
-                if any(
-                    not math.isfinite(n) or n < 0
-                    for n in [*samples, cell["median_seconds"], cell["iqr_seconds"]]
-                ):
-                    raise ValueError("invalid boundary timing")
+                validate_boundary_summary(cell, document["config"]["iterations"])
     return document
 
 
 def render_boundaries(document: dict | None) -> str:
+    """Render validated boundary measurements and explicit skips alongside their scope."""
     if document is None:
         return ""
     rows = []

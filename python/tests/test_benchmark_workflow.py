@@ -19,6 +19,7 @@ WORKFLOW = (ROOT / ".github/workflows/benchmarks.yml").read_text(encoding="utf-8
     "failed_stage", [None, "dependencies", "preflight", "build", "rust", "comparison", "boundaries"]
 )
 def test_workflow_records_partial_outcomes_even_after_failure(tmp_path, failed_stage):
+    """Execute the status writer to verify failures retain each stage's actual outcome."""
     # Execute the actual inline status writer without GitHub Actions or a Rust build.
     section = WORKFLOW.split("- name: Record run status\n", 1)[1].split(
         "- name: Upload results", 1
@@ -52,6 +53,7 @@ def test_workflow_records_partial_outcomes_even_after_failure(tmp_path, failed_s
 
 
 def test_workflow_uploads_both_suites_on_failure_and_publishes_only_successes():
+    """Workflow failures retain diagnostics without exposing incomplete runs through Pages."""
     upload = WORKFLOW.split("- name: Upload results\n", 1)[1].split("- name: Summary", 1)[0]
     assert "if: always()" in upload
     assert "benchmark-results/" in upload

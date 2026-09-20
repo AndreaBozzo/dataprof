@@ -424,7 +424,10 @@ Schema-v1 `results.json` retains configuration, logical fixture fingerprints,
 installed versions/native hashes, harness hashes, references, preflights, raw
 worker runs, and per-case fresh/warm stage summaries (median, Q1/Q3, IQR, min/max).
 `boundaries.md` presents the scope and stage table. Incomplete runs retain
-`progress.json` and diagnostics without publishing results. The existing workflow
+`progress.json` and diagnostics without publishing results. Output files are staged
+and promoted before the checkpoint is marked complete; failed publication removes
+partial outputs. The publisher recomputes every summary statistic from its raw
+samples and rejects missing or contradictory fields. The existing workflow
 and Pages renderer retain this suite alongside the other artifacts; older runs
 without it remain valid. Invalid present results fail publication.
 

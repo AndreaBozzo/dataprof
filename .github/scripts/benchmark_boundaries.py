@@ -55,6 +55,7 @@ def fixture_identity(rows: int) -> dict:
 
 
 def batch(pa, start: int, count: int, offset: int):
+    """Construct a typed batch whose physical arrays retain the requested slice offset."""
     data = values(start - offset, count + offset)
     types = (pa.int64(), pa.float64(), pa.string())
     arrays = [pa.array(v, type=t) for v, t in zip(data.values(), types, strict=True)]
@@ -62,9 +63,11 @@ def batch(pa, start: int, count: int, offset: int):
 
 
 def producer(pa, case: dict, evidence: dict):
+    """Construct the selected producer, recording batch work as it is performed."""
     rows, chunk, offset = case["rows"], case["chunk_size"], case["offset"]
 
     def batches():
+        """Generate one batch at a time without retaining previously yielded buffers."""
         for start in range(0, rows, chunk):
             begin = time.perf_counter_ns()
             item = batch(pa, start, min(chunk, rows - start), offset)
@@ -103,6 +106,7 @@ def producer(pa, case: dict, evidence: dict):
 
 
 def validate(document: dict, expected: list[dict], rows: int) -> None:
+    """Reject changed metrics, row counts or quality absence before accepting a sample."""
     if document["execution"]["rows_processed"] != rows:
         raise ValueError("row count mismatch")
     if document["columns"] != expected:
@@ -112,6 +116,7 @@ def validate(document: dict, expected: list[dict], rows: int) -> None:
 
 
 def worker(request: dict) -> dict:
+    """Build a reference or measure fresh producer/profile/export operations in one worker."""
     begin = time.perf_counter_ns()
     import dataprof
     import pyarrow as pa
@@ -225,6 +230,7 @@ def preflight(request: dict) -> dict:
 
 
 def cases(rows: int, chunks: list[int], scale: int) -> list[dict]:
+    """Enumerate producer/chunk/offset cases, explicit skips and fixed-batch stream growth."""
     result = []
     for kind in PRODUCERS:
         for chunk in sorted(set([*chunks, rows])):
@@ -245,6 +251,7 @@ def cases(rows: int, chunks: list[int], scale: int) -> list[dict]:
 
 
 def summarize_runs(runs: list[dict]) -> dict:
+    """Aggregate measured operations by condition, excluding retained warmup observations."""
     result = {}
     for condition in ("fresh", "warm"):
         selected = [run for run in runs if run["condition"] == condition]
@@ -257,6 +264,7 @@ def summarize_runs(runs: list[dict]) -> dict:
 
 
 def render(document: dict) -> str:
+    """Present stage medians and dispersion with the experiment's measurement limits."""
     lines = [
         "# Python/Arrow boundary experiment",
         "",
@@ -294,6 +302,7 @@ def render(document: dict) -> str:
 
 
 def main(argv=None) -> int:
+    """Run the bounded matrix and publish evidence only after every stage succeeds."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=common.ROOT / "benchmark-results/boundaries")
     parser.add_argument("--rows", type=int, default=8192)
@@ -345,6 +354,7 @@ def main(argv=None) -> int:
     start = time.monotonic()
 
     def run(request):
+        """Execute an isolated worker within the remaining experiment time budget."""
         remaining = args.budget_seconds - (time.monotonic() - start)
         if remaining <= 0:
             raise TimeoutError("experiment runtime budget exhausted")
@@ -396,27 +406,42 @@ def main(argv=None) -> int:
                 {"case": case["id"], "condition": condition, "repeat": repeat, **result}
             )
             common.checkpoint(args.output, document)
-        for case in document["cases"]:
+        document["active"] = {"stage": "publication"}
+        common.checkpoint(args.output, document)
+        # Keep the last serializable raw evidence incomplete until both outputs
+        # exist. Summary/serialization errors must not poison the failure checkpoint.
+        completed = {**document, "cases": [dict(case) for case in document["cases"]]}
+        for case in completed["cases"]:
             if case["status"] != "skipped":
                 case["summary"] = summarize_runs(
                     [r for r in document["runs"] if r["case"] == case["id"]]
                 )
                 case["status"] = "complete"
-        document.pop("active", None)
-        document["status"] = "complete"
-        common.checkpoint(args.output, document)
-        (args.output / "results.json").write_text(
-            json.dumps(document, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+        completed.pop("active", None)
+        completed["status"] = "complete"
+        (args.output / "results.json.tmp").write_text(
+            json.dumps(completed, indent=2, allow_nan=False) + "\n", encoding="utf-8"
         )
-        (args.output / "boundaries.md").write_text(render(document), encoding="utf-8")
+        (args.output / "boundaries.md.tmp").write_text(render(completed), encoding="utf-8")
+        (args.output / "results.json.tmp").replace(args.output / "results.json")
+        (args.output / "boundaries.md.tmp").replace(args.output / "boundaries.md")
+        # Publication commit marker: interrupted promotion leaves progress incomplete.
+        common.checkpoint(args.output, completed)
+        document = completed
         print(f"Completed {len(supported)} cases; evidence in {args.output}")
         return 0
     except Exception as exc:
+        document["status"] = "incomplete"
         document["failure"] = {
             "error": str(exc),
             "traceback": traceback.format_exc(),
             **getattr(exc, "diagnostics", {}),
         }
+        for name in ("results.json", "boundaries.md", "results.json.tmp", "boundaries.md.tmp"):
+            try:
+                (args.output / name).unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                document["failure"].setdefault("cleanup_errors", []).append(str(cleanup_error))
         common.checkpoint(args.output, document)
         print(f"boundary experiment failed: {exc}", file=sys.stderr)
         return 1
