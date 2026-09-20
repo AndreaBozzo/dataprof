@@ -12,6 +12,8 @@ on:
       - 'pyproject.toml'
       - '.github/scripts/benchmark_comparison.py'
       - '.github/scripts/benchmark_resources.py'
+      - '.github/scripts/benchmark_boundaries.py'
+      - 'python/tests/test_benchmark_boundaries.py'
       - 'python/tests/test_benchmark_resources.py'
       - 'python/tests/test_benchmark_comparison.py'
       - '.github/dependabot.yml'
@@ -28,6 +30,8 @@ on:
       - 'pyproject.toml'
       - '.github/scripts/benchmark_comparison.py'
       - '.github/scripts/benchmark_resources.py'
+      - '.github/scripts/benchmark_boundaries.py'
+      - 'python/tests/test_benchmark_boundaries.py'
       - 'python/tests/test_benchmark_resources.py'
       - 'python/tests/test_benchmark_comparison.py'
       - '.github/dependabot.yml'
@@ -127,6 +131,13 @@ jobs:
             uv run --project benches --no-sync python .github/scripts/benchmark_comparison.py --resources --host-description "GitHub-hosted runner; resource collection smoke test only" --rows 1000 --iterations 3 --warmups 1 2>&1 | tee benchmark-results/comparison.txt
           fi
 
+      - name: Run Python boundary experiment
+        id: boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --project benches --no-sync python .github/scripts/benchmark_boundaries.py --rows 1000 --chunks 250 --iterations 2 --warmups 1 --budget-seconds 300 --host-description "GitHub-hosted runner; diagnostic smoke only" 2>&1 | tee benchmark-results/boundaries.txt
+
       - name: Record run status
         if: always()
         env:
@@ -139,7 +150,7 @@ jobs:
 
           steps = json.loads(os.environ["BENCHMARK_STEPS"])
           outcomes = {name: steps.get(name, {}).get("outcome", "skipped")
-                      for name in ("dependencies", "preflight", "build", "rust", "comparison")}
+                      for name in ("dependencies", "preflight", "build", "rust", "comparison", "boundaries")}
           status = "complete" if all(value == "success" for value in outcomes.values()) else "incomplete"
           output = Path("benchmark-results")
           output.mkdir(exist_ok=True)

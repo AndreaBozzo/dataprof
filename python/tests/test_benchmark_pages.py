@@ -78,6 +78,68 @@ def write_comparison(artifact, document):
     (artifact / "comparison/comparison.md").write_text("comparison table")
 
 
+def boundary_document():
+    cell = {"median_seconds": 0.2, "iqr_seconds": 0.1, "samples_seconds": [0.1, 0.3]}
+    stages = ("prepare", "import_profile", "export_dict", "export_json", "end_to_end")
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "config": {"iterations": 2},
+        "cases": [
+            {
+                "id": "arrow_stream/100/10/offset-3",
+                "status": "complete",
+                "summary": {mode: dict.fromkeys(stages, cell) for mode in ("fresh", "warm")},
+            },
+            {
+                "id": "arrow_array/100/10/offset-0",
+                "status": "skipped",
+                "skip_reason": "C Array requires one batch",
+            },
+        ],
+    }
+
+
+def test_boundary_artifact_is_published_with_explicit_scope(artifact, monkeypatch):
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/results.json").write_text(json.dumps(boundary_document()))
+    monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
+    assert pages.main() == 0
+    output = (artifact / "index.html").read_text(encoding="utf-8")
+    assert 'id="boundaries"' in output
+    assert "profiling share one timer" in output
+    assert "C Array requires one batch" in output
+    assert 'href="boundaries/results.json"' in output
+    assert "boundaries" in json.loads((artifact / "benchmark-summary.json").read_text())
+
+
+@pytest.mark.parametrize("invalid", ["status", "version", "samples", "nan", "skip"])
+def test_invalid_present_boundary_results_are_rejected(artifact, invalid):
+    document = boundary_document()
+    if invalid == "status":
+        document["status"] = "incomplete"
+    elif invalid == "version":
+        document["schema_version"] = 2
+    elif invalid == "samples":
+        document["cases"][0]["summary"]["warm"]["prepare"]["samples_seconds"] = [0.1]
+    elif invalid == "nan":
+        document["cases"][0]["summary"]["fresh"]["prepare"]["median_seconds"] = float("nan")
+    else:
+        del document["cases"][1]["skip_reason"]
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/results.json").write_text(json.dumps(document))
+    with pytest.raises(ValueError):
+        pages.load_boundaries(artifact)
+
+
+def test_incomplete_boundary_checkpoint_is_not_an_absent_suite(artifact):
+    assert pages.load_boundaries(artifact) is None
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/progress.json").write_text('{"status": "incomplete"}')
+    with pytest.raises(ValueError, match="incomplete boundary"):
+        pages.load_boundaries(artifact)
+
+
 def test_resource_evidence_links_disclose_whole_worker_scope(artifact, monkeypatch):
     document = comparison_document()
     document["config"]["resources"] = {"protocol_version": 1}

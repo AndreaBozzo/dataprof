@@ -98,6 +98,9 @@ jobs:
                 cp benchmark-reports/benchmark-results/comparison/progress.json pages-content/benchmarks/comparison/
               fi
             fi
+            if [ -d "benchmark-reports/benchmark-results/boundaries" ]; then
+              cp -r benchmark-reports/benchmark-results/boundaries pages-content/benchmarks/
+            fi
             python3 .github/scripts/build_benchmark_pages.py pages-content/benchmarks
           else
             echo "No Criterion data available; publishing placeholder benchmarks page"
