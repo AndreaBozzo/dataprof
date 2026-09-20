@@ -245,7 +245,12 @@ impl ArrowProfiler {
         let mut arrow_builder = ReaderBuilder::new(schema)
             .with_header(has_header)
             .with_batch_size(self.batch_size);
-        if let Some(max) = max_rows {
+        // `arrow-csv` offsets the end bound by the header row, so a cap at the
+        // very top of the range overflows inside its builder. A cap that size
+        // cannot bind any file that exists, so it is left unset rather than
+        // special-cased further down: the decode then reads to the end, which
+        // is what such a cap asks for.
+        if let Some(max) = max_rows.filter(|&max| max < usize::MAX) {
             // Bound the decoder rather than slicing what it hands back. Slicing
             // still reads a whole batch first, so a record past the cap that
             // Arrow refuses to decode, one wider than the schema, failed the
@@ -1088,6 +1093,41 @@ mod tests {
             report.execution.truncation_reason,
             Some(TruncationReason::MaxRows(3))
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_accepts_a_row_cap_at_the_top_of_the_range()
+    -> Result<(), DataProfilerError> {
+        // `arrow-csv` adds the header offset to the end bound it is given, so
+        // handing it `usize::MAX` overflows inside the builder. A cap nothing
+        // can reach has to behave as no cap rather than panicking.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30,Milan")?;
+        temp_file.flush()?;
+
+        for has_header in [true, false] {
+            let config = CsvParserConfig {
+                max_rows: Some(usize::MAX),
+                has_header,
+                ..CsvParserConfig::default()
+            };
+            let report = ArrowProfiler::new()
+                .csv_config(config)
+                .analyze_csv_file(temp_file.path())?;
+
+            // The header row counts as data when it is not a header.
+            let expected = if has_header { 2 } else { 3 };
+            assert_eq!(report.execution.rows_processed, expected, "{has_header}");
+            assert!(
+                report.execution.truncation_reason.is_none(),
+                "{has_header}: {:?}",
+                report.execution.truncation_reason
+            );
+        }
 
         Ok(())
     }
