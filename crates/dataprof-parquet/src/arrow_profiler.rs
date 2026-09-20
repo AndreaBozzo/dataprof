@@ -24,11 +24,33 @@ const NUMERIC_SAMPLE_CAP: usize = 10_000;
 /// What a pass with the `csv` crate learns about a file that Arrow cannot
 /// report on its own: see [`ArrowProfiler::pre_scan`].
 struct CsvPreScan {
-    headers: csv::StringRecord,
     /// Rows whose field count differs from the header, in either direction.
     ragged_row_count: usize,
     /// Width of the widest record, never less than the header width.
     max_fields: usize,
+}
+
+/// Everything one Arrow decode of the file accumulated.
+struct CsvDecodeOutcome {
+    column_analyzers: std::collections::HashMap<String, ColumnAnalyzer>,
+    row_tracker: BatchRowTracker,
+    hint_bindings: ValueHintBindingAccumulator,
+    total_rows: usize,
+    truncated: bool,
+    /// Rows `arrow-csv` padded to the schema width, cumulative over the decode.
+    /// This is the ragged-row count only when no record is *wider* than the
+    /// schema, because Arrow aborts on those instead of counting them.
+    padded_rows: usize,
+    peak_memory_mb: Option<f64>,
+}
+
+/// Why an Arrow decode stopped short.
+enum CsvDecodeFailure {
+    /// A record whose field count does not match the schema. `arrow-csv` pads a
+    /// short record only under `with_truncated_rows`, and never accepts a long
+    /// one, so this is what tells the caller a `csv`-crate pass has to run.
+    FieldCount(arrow::error::ArrowError),
+    Other(DataProfilerError),
 }
 
 /// Columnar profiler using Apache Arrow for efficient column-oriented processing
@@ -97,19 +119,9 @@ impl ArrowProfiler {
         self
     }
 
-    /// One `csv`-crate pass over the file, taken before Arrow decodes it.
-    ///
-    /// Arrow cannot report either half of the ragged-row contract. A short row
-    /// is padded to null, and Arrow's own output cannot tell that padding apart
-    /// from a genuinely empty trailing field — both arrive as null — so the
-    /// count is unrecoverable after the fact. An over-long row is not decoded at
-    /// all. This pass answers both questions before the decode starts.
-    ///
-    /// It is a second read of the file on the engine chosen for speed, so the
-    /// cost was measured rather than assumed: on a 218 MB / 2M-row CSV it adds
-    /// ~0.3s to a ~9s profile, about 3%. Parsing is not what this engine spends
-    /// its time on; the per-value analysis is.
-    fn pre_scan(&self, file_path: &Path) -> Result<CsvPreScan, DataProfilerError> {
+    /// The `csv`-crate reader configured the way this profile parses the file,
+    /// with the row cap it has to honour.
+    fn csv_reader_builder(&self) -> (csv::ReaderBuilder, Option<usize>) {
         let mut builder = csv::ReaderBuilder::new();
         let (has_header, flexible, max_rows) = match self.csv_config {
             Some(ref config) => {
@@ -125,14 +137,37 @@ impl ArrowProfiler {
             None => (true, false, None),
         };
         builder.has_headers(has_header);
-        // Strict parsing rejects here, one reader earlier than Arrow would, so
-        // the caller gets the same field-count diagnostic as every other path
-        // instead of Arrow's "incorrect number of fields".
+        // Strict parsing rejects in the pre-scan, one reader earlier than Arrow
+        // would, so the caller gets the same field-count diagnostic as every
+        // other path instead of Arrow's "incorrect number of fields".
         builder.flexible(flexible);
+        (builder, max_rows)
+    }
+
+    /// Read only the header record. This touches the first line, not the body.
+    fn read_headers(&self, file_path: &Path) -> Result<csv::StringRecord, DataProfilerError> {
+        let (builder, _) = self.csv_reader_builder();
+        let mut reader = builder.from_path(file_path)?;
+        Ok(reader.headers()?.clone())
+    }
+
+    /// One `csv`-crate pass over the body, taken only when Arrow cannot answer.
+    ///
+    /// `arrow-csv` reports the rows it padded, so a file whose records are never
+    /// wider than the header needs no pass at all. A wider record is different:
+    /// Arrow aborts the scan rather than counting it, and nothing in its output
+    /// says how wide the widest record is. That is what this recovers, along
+    /// with the ragged count for the same file.
+    ///
+    /// It is a second read of the file on the engine chosen for speed, so the
+    /// cost was measured rather than assumed: on a 123 MB / 2M-row CSV it adds
+    /// ~1.4s to a ~6.5s profile, about 18% (best of five, warm cache). Keeping
+    /// it off the common path is what #549 was about.
+    fn pre_scan(&self, file_path: &Path) -> Result<CsvPreScan, DataProfilerError> {
+        let (builder, max_rows) = self.csv_reader_builder();
 
         let mut reader = builder.from_path(file_path)?;
-        let headers = reader.headers()?.clone();
-        let header_width = headers.len();
+        let header_width = reader.headers()?.len();
 
         let mut ragged_row_count = 0;
         let mut max_fields = header_width;
@@ -151,9 +186,145 @@ impl ArrowProfiler {
         }
 
         Ok(CsvPreScan {
-            headers,
             ragged_row_count,
             max_fields,
+        })
+    }
+
+    /// One Arrow decode of the whole file at a given schema width.
+    ///
+    /// Restartable on purpose: a record wider than `max_fields` aborts the scan
+    /// with [`CsvDecodeFailure::FieldCount`], and the caller retries at the
+    /// width a `csv`-crate pass found. Every accumulator is built here so a
+    /// retry starts from nothing rather than from half a file.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_csv(
+        &self,
+        file_path: &Path,
+        header_names: &[String],
+        max_fields: usize,
+        projection: &[usize],
+        projected_header_names: &[String],
+        has_header: bool,
+        max_rows: Option<usize>,
+    ) -> Result<CsvDecodeOutcome, CsvDecodeFailure> {
+        let header_width = header_names.len();
+        let mut fields = Vec::with_capacity(max_fields.max(header_width));
+        for header in header_names {
+            // Always read raw UTF-8 cells so null-token handling, type inference,
+            // and reservoir samples use the original CSV text.
+            fields.push(Field::new(header, arrow::datatypes::DataType::Utf8, true));
+        }
+        // `arrow-csv` has no counterpart to `with_truncated_rows` for a row that
+        // is *wider* than the schema: it aborts the scan. Widening the schema to
+        // the widest record in the file gives those surplus fields somewhere to
+        // land; they are projected away below, which is the same recovery the
+        // incremental engine performs when it truncates a record to header width.
+        for overflow in header_width..max_fields {
+            fields.push(Field::new(
+                format!("__dataprof_overflow_{overflow}"),
+                arrow::datatypes::DataType::Utf8,
+                true,
+            ));
+        }
+        let schema = Arc::new(Schema::new(fields));
+
+        let file = File::open(file_path).map_err(|error| CsvDecodeFailure::Other(error.into()))?;
+        let mut arrow_builder = ReaderBuilder::new(schema)
+            .with_header(has_header)
+            .with_batch_size(self.batch_size);
+        if let Some(ref config) = self.csv_config {
+            if let Some(delim) = config.delimiter {
+                arrow_builder = arrow_builder.with_delimiter(delim);
+            }
+            arrow_builder = arrow_builder
+                .with_quote(config.quote_char)
+                .with_truncated_rows(config.flexible);
+        }
+        let mut csv_reader = arrow_builder
+            .build(file)
+            .map_err(|error| classify_arrow_csv_error(file_path, error))?;
+
+        let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
+            std::collections::HashMap::new();
+        for name in projected_header_names {
+            column_analyzers.insert(name.clone(), ColumnAnalyzer::new());
+        }
+
+        let mut total_rows = 0;
+        // Full-stream duplicate-row tracking: without it, files whose sample
+        // reservoirs are misaligned (any column with nulls) would silently
+        // skip the duplicate component of the uniqueness dimension, breaking
+        // cross-engine score parity with the incremental engine.
+        let mut row_tracker = BatchRowTracker::default();
+        let mut hint_bindings = ValueHintBindingAccumulator::new(&self.semantic_hints);
+
+        // The Arrow CSV reader has no row cap, so enforce it here: stop once the
+        // limit is reached and slice the batch that straddles it, keeping the row
+        // count exact rather than rounding up to a batch boundary.
+        let mut truncated = false;
+        let mut memory_sampler = PeakMemorySampler::new();
+
+        for batch_result in csv_reader.by_ref() {
+            let mut batch =
+                batch_result.map_err(|error| classify_arrow_csv_error(file_path, error))?;
+
+            // Drop overflow and unselected columns before anything observes the
+            // batch, so every downstream calculation sees the same projection.
+            batch = batch.project(projection).map_err(|error| {
+                CsvDecodeFailure::Other(DataProfilerError::arrow_error_from(error))
+            })?;
+
+            if let Some(max) = max_rows {
+                if total_rows >= max {
+                    truncated = true;
+                    break;
+                }
+                let remaining = max - total_rows;
+                if batch.num_rows() > remaining {
+                    batch = batch.slice(0, remaining);
+                    truncated = true;
+                }
+            }
+
+            total_rows += batch.num_rows();
+            row_tracker.observe_batch(&batch);
+
+            for (col_idx, column) in batch.columns().iter().enumerate() {
+                let schema = batch.schema();
+                let field = schema.field(col_idx);
+
+                if let Some(analyzer) = column_analyzers.get_mut(field.name()) {
+                    analyzer
+                        .process_array(column)
+                        .map_err(CsvDecodeFailure::Other)?;
+                }
+                if let Some(values) = column.as_any().downcast_ref::<StringArray>() {
+                    for row_index in 0..values.len() {
+                        if !values.is_null(row_index) {
+                            hint_bindings.observe(field.name(), values.value(row_index));
+                        }
+                    }
+                }
+            }
+
+            // Sample after processing, while the batch and the analyzer state
+            // it grew are both resident, so per-batch allocation spikes count
+            // toward the peak.
+            memory_sampler.sample();
+        }
+
+        memory_sampler.sample();
+        Ok(CsvDecodeOutcome {
+            column_analyzers,
+            row_tracker,
+            hint_bindings,
+            total_rows,
+            truncated,
+            // Read after the final flush: the counter is cumulative across
+            // flushes, so this is the whole decode's total.
+            padded_rows: csv_reader.truncated_row_count(),
+            peak_memory_mb: memory_sampler.peak_mb(),
         })
     }
 
@@ -163,10 +334,9 @@ impl ArrowProfiler {
         let file_size_bytes = file.metadata()?.len();
         let _file_size_mb = file_size_bytes as f64 / 1_048_576.0;
 
-        // Read the header and the field-count shape of the body up front; see
-        // `pre_scan` for why Arrow cannot supply either.
-        let scan = self.pre_scan(file_path)?;
-        let headers = scan.headers;
+        // Only the header is needed up front. What the body looks like comes
+        // from the decoder, and from `pre_scan` only when Arrow cannot say.
+        let headers = self.read_headers(file_path)?;
         let has_header = self
             .csv_config
             .as_ref()
@@ -198,112 +368,68 @@ impl ArrowProfiler {
             .map(|index| header_names[*index].clone())
             .collect::<Vec<_>>();
 
-        let mut fields = Vec::new();
-        for header in &header_names {
-            // Always read raw UTF-8 cells so null-token handling, type inference,
-            // and reservoir samples use the original CSV text.
-            fields.push(Field::new(header, arrow::datatypes::DataType::Utf8, true));
-        }
-        // `arrow-csv` has no counterpart to `with_truncated_rows` for a row that
-        // is *wider* than the schema — it aborts the scan. Widening the schema to
-        // the widest record in the file gives those surplus fields somewhere to
-        // land; they are projected away below, which is the same recovery the
-        // incremental engine performs when it truncates a record to header width.
-        for overflow in header_width..scan.max_fields {
-            fields.push(Field::new(
-                format!("__dataprof_overflow_{overflow}"),
-                arrow::datatypes::DataType::Utf8,
-                true,
-            ));
-        }
-        let schema = Arc::new(Schema::new(fields));
-
-        // Now create Arrow reader with proper schema
-        let file = File::open(file_path)?;
-        let mut arrow_builder = ReaderBuilder::new(schema.clone())
-            .with_header(has_header)
-            .with_batch_size(self.batch_size);
-        if let Some(ref config) = self.csv_config {
-            if let Some(delim) = config.delimiter {
-                arrow_builder = arrow_builder.with_delimiter(delim);
-            }
-            arrow_builder = arrow_builder
-                .with_quote(config.quote_char)
-                .with_truncated_rows(config.flexible);
-        }
-        let csv_reader = arrow_builder
-            .build(file)
-            .map_err(|error| map_arrow_csv_error(file_path, error))?;
-
-        // Process data in columnar batches
-        let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
-            std::collections::HashMap::new();
-
-        for name in &projected_header_names {
-            column_analyzers.insert(name.clone(), ColumnAnalyzer::new());
-        }
-
-        let mut total_rows = 0;
-        // Full-stream duplicate-row tracking: without it, files whose sample
-        // reservoirs are misaligned (any column with nulls) would silently
-        // skip the duplicate component of the uniqueness dimension — breaking
-        // cross-engine score parity with the incremental engine.
-        let mut row_tracker = BatchRowTracker::default();
-        let mut hint_bindings = ValueHintBindingAccumulator::new(&self.semantic_hints);
-
-        // The Arrow CSV reader has no row cap, so enforce it here: stop once the
-        // limit is reached and slice the batch that straddles it, keeping the row
-        // count exact rather than rounding up to a batch boundary.
         let max_rows = self.csv_config.as_ref().and_then(|config| config.max_rows);
-        let mut truncated = false;
-        let mut memory_sampler = PeakMemorySampler::new();
 
-        for batch_result in csv_reader {
-            let mut batch = batch_result.map_err(|error| map_arrow_csv_error(file_path, error))?;
+        // A row cap makes the decoder's cumulative counter unusable on its own:
+        // the batch straddling the cap is sliced, and a padded row inside it
+        // cannot be attributed to either side of the cut. The pre-scan stops at
+        // the cap, so it answers exactly, and it reads only as far as the cap
+        // rather than to the end of the file.
+        let mut scan = match max_rows {
+            Some(_) => Some(self.pre_scan(file_path)?),
+            None => None,
+        };
 
-            // Drop overflow and unselected columns before anything observes the
-            // batch, so every downstream calculation sees the same projection.
-            batch = batch
-                .project(&projection)
-                .map_err(DataProfilerError::arrow_error_from)?;
-
-            if let Some(max) = max_rows {
-                if total_rows >= max {
-                    truncated = true;
-                    break;
-                }
-                let remaining = max - total_rows;
-                if batch.num_rows() > remaining {
-                    batch = batch.slice(0, remaining);
-                    truncated = true;
-                }
-            }
-
-            total_rows += batch.num_rows();
-            row_tracker.observe_batch(&batch);
-
-            // Process each column in the batch
-            for (col_idx, column) in batch.columns().iter().enumerate() {
-                let schema = batch.schema();
-                let field = schema.field(col_idx);
-
-                if let Some(analyzer) = column_analyzers.get_mut(field.name()) {
-                    analyzer.process_array(column)?;
-                }
-                if let Some(values) = column.as_any().downcast_ref::<StringArray>() {
-                    for row_index in 0..values.len() {
-                        if !values.is_null(row_index) {
-                            hint_bindings.observe(field.name(), values.value(row_index));
-                        }
+        // Decode optimistically at header width. Arrow reports the rows it pads,
+        // so nothing else is needed unless a record turns out to be wider than
+        // the schema, the one shape Arrow refuses rather than counts. That
+        // refusal is what buys the pre-scan, so a file that needs no repair
+        // never pays for one.
+        let outcome = loop {
+            let max_fields = scan.as_ref().map_or(header_width, |scan| scan.max_fields);
+            match self.decode_csv(
+                file_path,
+                &header_names,
+                max_fields,
+                &projection,
+                &projected_header_names,
+                has_header,
+                max_rows,
+            ) {
+                Ok(outcome) => break outcome,
+                Err(CsvDecodeFailure::Other(error)) => return Err(error),
+                Err(CsvDecodeFailure::FieldCount(error)) => {
+                    if scan.is_some() {
+                        // The schema already covers the widest record the `csv`
+                        // crate found, so the two parsers disagree on where
+                        // records end.
+                        return Err(map_arrow_csv_error(file_path, error));
                     }
+                    // Strict parsing rejects inside the pre-scan, with the field
+                    // counts named. Flexible parsing gets the width to retry at.
+                    let rescan = self.pre_scan(file_path)?;
+                    if rescan.max_fields <= header_width {
+                        return Err(map_arrow_csv_error(file_path, error));
+                    }
+                    scan = Some(rescan);
                 }
             }
+        };
 
-            // Sample after processing, while the batch and the analyzer state
-            // it grew are both resident, so per-batch allocation spikes count
-            // toward the peak.
-            memory_sampler.sample();
-        }
+        let CsvDecodeOutcome {
+            column_analyzers,
+            row_tracker,
+            hint_bindings,
+            total_rows,
+            truncated,
+            padded_rows,
+            peak_memory_mb,
+        } = outcome;
+        // A pre-scan, where one ran, is the authority: it saw the wide records
+        // Arrow aborted on, and it honoured the row cap. Where none ran, no
+        // record was wider than the header and no cap applied, so every ragged
+        // row is a row Arrow padded.
+        let ragged_row_count = scan.map_or(padded_rows, |scan| scan.ragged_row_count);
 
         // Convert analyzers to column profiles and extract samples
         // Iterate in header order (from schema) to preserve source column ordering
@@ -332,11 +458,10 @@ impl ArrowProfiler {
         let scan_time_ms = start.elapsed().as_millis();
         let num_columns = column_profiles.len();
 
-        memory_sampler.sample();
         let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms)
             .with_engine("columnar")
-            .with_ragged_row_count(scan.ragged_row_count);
-        if let Some(peak_mb) = memory_sampler.peak_mb() {
+            .with_ragged_row_count(ragged_row_count);
+        if let Some(peak_mb) = peak_memory_mb {
             execution = execution.with_memory_peak_mb(peak_mb);
         }
         if truncated && let Some(max) = max_rows {
@@ -370,6 +495,14 @@ impl ArrowProfiler {
 
         Ok(assembler.build())
     }
+}
+
+/// Separate the one Arrow error a wider schema can fix from every other one.
+fn classify_arrow_csv_error(file_path: &Path, error: arrow::error::ArrowError) -> CsvDecodeFailure {
+    if error.to_string().contains("incorrect number of fields") {
+        return CsvDecodeFailure::FieldCount(error);
+    }
+    CsvDecodeFailure::Other(map_arrow_csv_error(file_path, error))
 }
 
 fn map_arrow_csv_error(file_path: &Path, error: arrow::error::ArrowError) -> DataProfilerError {
@@ -874,6 +1007,78 @@ mod tests {
         assert_eq!(report.execution.ragged_row_count, 0);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_counts_a_padded_row_from_an_earlier_batch() {
+        // The decoder's counter is cumulative across flushes, so a padded row in
+        // a batch that is not the last one only survives if the count is read
+        // after the final flush rather than off the batch that carried it.
+        let mut temp_file = NamedTempFile::new().expect("temp file should be created");
+        writeln!(temp_file, "name,age,city").expect("header should write");
+        writeln!(temp_file, "Alice,25").expect("ragged row should write");
+        for row in 0..6 {
+            writeln!(temp_file, "Name{row},{row},Rome").expect("row should write");
+        }
+        temp_file.flush().expect("temp file should flush");
+
+        let report = ArrowProfiler::new()
+            .batch_size(2)
+            .csv_config(CsvParserConfig::default())
+            .analyze_csv_file(temp_file.path())
+            .expect("flexible parsing should pad the ragged row");
+
+        assert_eq!(report.execution.rows_processed, 7);
+        assert_eq!(report.execution.ragged_row_count, 1);
+    }
+
+    #[test]
+    fn test_arrow_profiler_counts_every_padded_row_across_batches() {
+        // One padded row per batch, so a count taken from any single batch, or
+        // reset between them, lands short of seven.
+        let mut temp_file = NamedTempFile::new().expect("temp file should be created");
+        writeln!(temp_file, "name,age,city").expect("header should write");
+        for row in 0..7 {
+            writeln!(temp_file, "Name{row},{row}").expect("ragged row should write");
+        }
+        temp_file.flush().expect("temp file should flush");
+
+        let report = ArrowProfiler::new()
+            .batch_size(1)
+            .csv_config(CsvParserConfig::default())
+            .analyze_csv_file(temp_file.path())
+            .expect("flexible parsing should pad every ragged row");
+
+        assert_eq!(report.execution.rows_processed, 7);
+        assert_eq!(report.execution.ragged_row_count, 7);
+    }
+
+    #[test]
+    fn test_arrow_profiler_strict_rejects_a_short_row_with_field_counts() {
+        // The wide-row case is covered below. A short row reaches Arrow first
+        // now that the pre-scan no longer runs ahead of it, so the diagnostic
+        // has to come back from the fallback pass rather than from Arrow.
+        let mut temp_file = NamedTempFile::new().expect("temp file should be created");
+        writeln!(temp_file, "name,age,city").expect("header should write");
+        writeln!(temp_file, "Alice,25,Rome").expect("row should write");
+        writeln!(temp_file, "Bob,30").expect("short row should write");
+        temp_file.flush().expect("temp file should flush");
+
+        let config = CsvParserConfig {
+            flexible: false,
+            ..CsvParserConfig::default()
+        };
+        let error = ArrowProfiler::new()
+            .csv_config(config)
+            .analyze_csv_file(temp_file.path())
+            .expect_err("strict parsing must reject a short row");
+
+        match error {
+            DataProfilerError::CsvParsingError { message, .. } => {
+                assert!(message.contains("3 fields"), "{message}");
+            }
+            other => panic!("expected CsvParsingError, got {other:?}"),
+        }
     }
 
     #[test]
