@@ -1,5 +1,14 @@
 # Pending 0.12.0 changes
 
+- The optional benchmark suite now measures Python/Arrow producer preparation,
+  combined import/profiling, and report export separately (#698). It validates
+  exact serialized metric parity across PyArrow, pandas, Polars and lazy C Stream
+  inputs, records chunk/offset cases and memory evidence, and publishes raw
+  fresh/warm samples with the existing benchmark artifacts. The bounded
+  [recorded experiment](../benches/evidence/698/README.md) identifies the combined
+  import/profiling boundary as the largest warm stage on its host; it makes no
+  general speed or constant-memory claim and changes no profiling behavior.
+
 - The benchmark harness can collect host energy and process peak memory with
   `--resources` (#440). Results retain raw powercap readings, paired idle
   baselines, wraparound checks and per-worker RSS high-water marks. Missing

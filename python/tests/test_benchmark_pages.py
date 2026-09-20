@@ -78,6 +78,139 @@ def write_comparison(artifact, document):
     (artifact / "comparison/comparison.md").write_text("comparison table")
 
 
+def boundary_document():
+    """Return a complete schema-v1 summary with exactly representable statistics."""
+    cell = {
+        "sample_count": 2,
+        "median_seconds": 2.0,
+        "q1_seconds": 1.5,
+        "q3_seconds": 2.5,
+        "iqr_seconds": 1.0,
+        "min_seconds": 1.0,
+        "max_seconds": 3.0,
+        "samples_seconds": [1.0, 3.0],
+    }
+    stages = ("prepare", "import_profile", "export_dict", "export_json", "end_to_end")
+    return {
+        "schema_version": 1,
+        "status": "complete",
+        "config": {"iterations": 2},
+        "cases": [
+            {
+                "id": "arrow_stream/100/10/offset-3",
+                "status": "complete",
+                "summary": {mode: dict.fromkeys(stages, cell) for mode in ("fresh", "warm")},
+            },
+            {
+                "id": "arrow_array/100/10/offset-0",
+                "status": "skipped",
+                "skip_reason": "C Array requires one batch",
+            },
+        ],
+    }
+
+
+def test_boundary_artifact_is_published_with_explicit_scope(artifact, monkeypatch):
+    """Publish stage measurements with their scope, skipped cases and evidence links."""
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/results.json").write_text(json.dumps(boundary_document()))
+    monkeypatch.setattr(sys, "argv", ["build_benchmark_pages.py", str(artifact)])
+    assert pages.main() == 0
+    output = (artifact / "index.html").read_text(encoding="utf-8")
+    assert 'id="boundaries"' in output
+    assert "profiling share one timer" in output
+    assert "C Array requires one batch" in output
+    assert 'href="boundaries/results.json"' in output
+    assert "boundaries" in json.loads((artifact / "benchmark-summary.json").read_text())
+
+
+@pytest.mark.parametrize("invalid", ["status", "version", "samples", "nan", "skip"])
+def test_invalid_present_boundary_results_are_rejected(artifact, invalid):
+    """Malformed present results fail publication instead of looking like an absent suite."""
+    document = boundary_document()
+    if invalid == "status":
+        document["status"] = "incomplete"
+    elif invalid == "version":
+        document["schema_version"] = 2
+    elif invalid == "samples":
+        document["cases"][0]["summary"]["warm"]["prepare"]["samples_seconds"] = [0.1]
+    elif invalid == "nan":
+        document["cases"][0]["summary"]["fresh"]["prepare"]["median_seconds"] = float("nan")
+    else:
+        del document["cases"][1]["skip_reason"]
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/results.json").write_text(json.dumps(document))
+    with pytest.raises(ValueError):
+        pages.load_boundaries(artifact)
+
+
+def test_incomplete_boundary_checkpoint_is_not_an_absent_suite(artifact):
+    """An incomplete checkpoint rejects publication even without a results file."""
+    assert pages.load_boundaries(artifact) is None
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/progress.json").write_text('{"status": "incomplete"}')
+    with pytest.raises(ValueError, match="incomplete boundary"):
+        pages.load_boundaries(artifact)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "sample_count",
+        "q1_seconds",
+        "q3_seconds",
+        "min_seconds",
+        "max_seconds",
+        "median_seconds",
+        "iqr_seconds",
+    ],
+)
+@pytest.mark.parametrize(
+    "corruption", ["missing", "inconsistent", "nan", "negative", "bool", "string"]
+)
+def test_boundary_summaries_must_match_raw_samples(artifact, field, corruption):
+    """Reject missing, mistyped and contradictory statistics before publication."""
+    document = boundary_document()
+    cell = document["cases"][0]["summary"]["warm"]["prepare"]
+    if corruption == "missing":
+        del cell[field]
+    else:
+        cell[field] = {
+            "inconsistent": cell[field] + 1,
+            "nan": float("nan"),
+            "negative": -1,
+            "bool": True,
+            "string": "1",
+        }[corruption]
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/results.json").write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="boundary"):
+        pages.load_boundaries(artifact)
+
+
+@pytest.mark.parametrize("samples", [[True, 3], ["1", 3], [float("inf"), 3], [-1, 3], None])
+def test_boundary_raw_samples_must_be_finite_nonnegative_numbers(artifact, samples):
+    """Malformed observations cannot underpin publishable statistics."""
+    document = boundary_document()
+    document["cases"][0]["summary"]["fresh"]["export_json"]["samples_seconds"] = samples
+    (artifact / "boundaries").mkdir()
+    (artifact / "boundaries/results.json").write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="boundary"):
+        pages.load_boundaries(artifact)
+
+
+def test_archived_boundary_evidence_passes_summary_validation(artifact):
+    """Keep accepting the real measured evidence, including its floating-point quartiles."""
+    from zipfile import ZipFile
+
+    (artifact / "boundaries").mkdir()
+    with ZipFile(ROOT / "benches/evidence/698/run.zip") as archive:
+        (artifact / "boundaries/results.json").write_bytes(archive.read("results.json"))
+    document = pages.load_boundaries(artifact)
+    assert document is not None
+    assert len([case for case in document["cases"] if case["status"] == "complete"]) == 27
+
+
 def test_resource_evidence_links_disclose_whole_worker_scope(artifact, monkeypatch):
     document = comparison_document()
     document["config"]["resources"] = {"protocol_version": 1}

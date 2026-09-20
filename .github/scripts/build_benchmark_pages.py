@@ -26,6 +26,7 @@ import argparse
 import html
 import json
 import math
+import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -543,12 +544,110 @@ def render_ordered_samples(document: dict) -> str:
     </details>"""
 
 
+def validate_boundary_summary(cell: dict, iterations: int) -> None:
+    """Require every schema-v1 statistic to agree exactly with its raw observations."""
+    samples = cell.get("samples_seconds")
+    if not isinstance(samples, list) or len(samples) != iterations or len(samples) < 2:
+        raise ValueError("missing boundary timing samples")
+    if any(type(n) not in (int, float) or not math.isfinite(n) or n < 0 for n in samples):
+        raise ValueError("invalid boundary timing samples")
+    if type(cell.get("sample_count")) is not int or cell["sample_count"] != len(samples):
+        raise ValueError("invalid boundary sample count")
+    q1, _, q3 = statistics.quantiles(samples, n=4, method="inclusive")
+    expected = {
+        "median_seconds": statistics.median(samples),
+        "q1_seconds": q1,
+        "q3_seconds": q3,
+        "iqr_seconds": q3 - q1,
+        "min_seconds": min(samples),
+        "max_seconds": max(samples),
+    }
+    for field, calculated in expected.items():
+        value = cell.get(field)
+        if (
+            type(value) not in (int, float)
+            or not math.isfinite(value)
+            or value < 0
+            or value != calculated
+        ):
+            raise ValueError(f"invalid boundary summary: {field} disagrees with raw samples")
+
+
+def load_boundaries(pages: Path) -> dict | None:
+    """Load optional boundary evidence, rejecting incomplete runs or corrupt summaries."""
+    directory = pages / "boundaries"
+    if not directory.exists():
+        return None  # Older artifacts did not run this suite.
+    progress = directory / "progress.json"
+    if (
+        progress.exists()
+        and json.loads(progress.read_text(encoding="utf-8")).get("status") != "complete"
+    ):
+        raise ValueError("incomplete boundary experiment")
+    document = json.loads((directory / "results.json").read_text(encoding="utf-8"))
+    if document.get("schema_version") != 1 or document.get("status") != "complete":
+        raise ValueError("unsupported or incomplete boundary experiment")
+    if not document["cases"] or not any(c["status"] == "complete" for c in document["cases"]):
+        raise ValueError("boundary experiment has no measured cases")
+    for case in document["cases"]:
+        if case["status"] == "skipped" and case.get("skip_reason"):
+            continue
+        if case["status"] != "complete":
+            raise ValueError("incomplete boundary case")
+        for condition in ("fresh", "warm"):
+            for stage in ("prepare", "import_profile", "export_dict", "export_json", "end_to_end"):
+                cell = case["summary"][condition][stage]
+                validate_boundary_summary(cell, document["config"]["iterations"])
+    return document
+
+
+def render_boundaries(document: dict | None) -> str:
+    """Render validated boundary measurements and explicit skips alongside their scope."""
+    if document is None:
+        return ""
+    rows = []
+    for case in document["cases"]:
+        if case["status"] == "skipped":
+            rows.append(
+                f"<tr><td>{html.escape(case['id'])}</td><td colspan='6'>Skipped: "
+                f"{html.escape(case['skip_reason'])}</td></tr>"
+            )
+            continue
+        for condition in ("fresh", "warm"):
+            cells = "".join(
+                f"<td>{case['summary'][condition][stage]['median_seconds']:.6f} "
+                f"[{case['summary'][condition][stage]['iqr_seconds']:.6f}]</td>"
+                for stage in (
+                    "prepare",
+                    "import_profile",
+                    "export_dict",
+                    "export_json",
+                    "end_to_end",
+                )
+            )
+            rows.append(f"<tr><td>{html.escape(case['id'])}</td><td>{condition}</td>{cells}</tr>")
+    return f"""<section id="boundaries"><h2>Python / Arrow boundaries</h2>
+      <p>Diagnostic evidence, no established baseline. Exact serialized column metrics,
+      absence, integers, nulls and order are checked before comparison. Consumer import
+      and profiling share one timer; lazy stream construction happens inside it.
+      End-to-end includes both independent exports. Fresh means a new process, not cold storage.</p>
+      <details><summary>Stage times: median [IQR], seconds</summary>
+      <div class="bench-table"><table><thead><tr><th>Producer / rows / chunk / offset</th>
+      <th>Condition</th><th>Prepare</th><th>Import + profile</th><th>Dict</th><th>JSON</th>
+      <th>End-to-end</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div></details>
+      <p>Peak RSS includes native buffers, imports and warmups across the worker lifetime.
+      Arrow pool observations are partial allocator evidence, not profiler-only memory.</p>
+      <p><a href="boundaries/results.json">Raw samples, memory and fingerprints</a> ·
+      <a href="boundaries/boundaries.md">Experiment table and scope</a></p></section>"""
+
+
 def render_index(
     pages: Path,
     benchmarks: list[dict],
     groups: list[dict],
     observations: list[str],
     comparison: dict | None = None,
+    boundaries: dict | None = None,
 ) -> str:
     group_cards = []
     for group in groups:
@@ -656,6 +755,7 @@ def render_index(
     <a href="#methodology">Methodology</a><a href="#reproduce">Reproduce</a>{full_index_link}
   </nav>
   {render_comparison(comparison)}
+  {render_boundaries(boundaries)}
   <section id="rust-scenarios">
     <div class="section-head"><div><span class="eyebrow">
       {"02" if comparison else "01"} / Rust profiling</span>
@@ -745,6 +845,7 @@ def main() -> int:
         grouped[benchmark["group"]].append(benchmark)
     observations = build_observations(grouped)
     comparison = load_comparison(pages)
+    boundaries = load_boundaries(pages)
 
     fastest = max(
         (item for item in benchmarks if item["throughput_mib_s"] is not None),
@@ -762,10 +863,13 @@ def main() -> int:
     }
     if comparison is not None:
         summary["comparison"] = comparison
+    if boundaries is not None:
+        summary["boundaries"] = boundaries
     (pages / "benchmark-summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     (pages / "index.html").write_text(
-        render_index(pages, benchmarks, groups, observations, comparison), encoding="utf-8"
+        render_index(pages, benchmarks, groups, observations, comparison, boundaries),
+        encoding="utf-8",
     )
     print(f"Wrote {pages / 'index.html'} ({len(benchmarks)} benchmarks, {len(groups)} groups)")
     return 0

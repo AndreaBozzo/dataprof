@@ -10,6 +10,7 @@ There is no second benchmark source directory or separate publishing workflow.
 | --- | --- | --- | --- |
 | Rust profiling | `benchmarks.rs`, `cargo bench --bench benchmarks` | `target/criterion/` | Existing Criterion group URLs |
 | Python tool comparison (#401) | `.github/scripts/benchmark_comparison.py`, environment in `benches/pyproject.toml` and `uv.lock` | `benchmark-results/comparison/` | `/benchmarks/#comparison`, downloadable JSON and table |
+| Python/Arrow boundaries (#698) | `.github/scripts/benchmark_boundaries.py`, same optional environment | `benchmark-results/boundaries/` | `/benchmarks/#boundaries`, stage table and raw evidence |
 
 `benchmarks.rs` only registers the Criterion groups. `scenarios/csv.rs` owns CSV
 scan, report assembly and row-count estimation; `scenarios/scaling.rs` owns scaling
@@ -336,6 +337,107 @@ filtering without rebuilding Rust:
 uv run --no-sync pytest python/tests/test_benchmark_comparison.py python/tests/test_benchmark_pages.py python/tests/test_benchmark_workflow.py -q
 ```
 
+## Python/Arrow boundary experiment
+
+This suite attributes the cost of a Python profiling call across producer
+construction, the public profiling call, and report export. It uses the same
+locked environment, subprocess isolation, thread controls, fingerprints,
+inclusive quartiles and failure checkpoints as the comparison harness. It does
+not compare different tools' statistical implementations: all producers feed
+dataprof with `metrics=["schema", "statistics"]`.
+
+```bash
+uv run --project benches --locked --reinstall-package dataprof python .github/scripts/benchmark_boundaries.py
+# Bounded CI-sized run, reusing that installed wheel:
+uv run --project benches --no-sync python .github/scripts/benchmark_boundaries.py --rows 1000 --chunks 250 --iterations 2 --output benchmark-results/boundaries-smoke
+```
+
+Use a new output directory per run. The default budget is 8,192 rows, chunks of
+256, 2,048 and 8,192 rows, offsets zero and three, three fresh-process samples
+and three measured operations after one warmup in a separate warm worker per
+case. One stream case grows total input fourfold with the smallest batch size
+held fixed. The runner enforces a 600-second total worker budget, a 60-second
+worker timeout and at most one million rows including the stream scale. Every
+budget and host-control declaration is retained in `config`. CI uses the smaller
+command above with a 300-second budget; no cloud service or large file is needed.
+
+The versioned fixture contains int64 values above 2^53, quarter-step floats,
+Unicode strings and nulls. Its logical rows are hashed independently of chunking.
+The matrix includes C Array RecordBatches, chunked PyArrow Tables, Arrow-backed
+pandas DataFrames, Polars DataFrames without rechunking, and lazy C Streams.
+Pandas preparation starts from typed Arrow batches and calls
+`to_pandas(types_mapper=pandas.ArrowDtype)`; Polars calls
+`from_arrow(rechunk=False)`. These are declared producer constructions, not a
+claim about NumPy-backed pandas or arbitrary object columns. PyArrow slices
+retain nonzero array offsets; pandas/Polars may normalize their representation.
+C Array cells with multiple chunks are explicit skips: that protocol exports
+one RecordBatch. Nested types and unsupported protocols are outside this primitive
+matrix; an unexpected import, decode or validation error fails the run, never
+becomes a zero-duration success or an automatic skip.
+
+Every supported cell passes a disposable preflight before measurement. It checks
+producer values (including exact int64 preservation), nulls, order and Arrow
+offsets, then compares **all serialized column metrics, including absence**
+against a single-batch reference. The reference additionally checks counts and
+exact distinct counts from the fixture. Metrics are compared exactly, with no
+tolerance or missing-field substitution. This establishes path parity, not
+independent correctness of every statistical formula. Quality is unrequested
+and must remain absent. Each measured operation repeats the report checks outside
+the operation timer; JSON and dict exports must agree. Reference/preflight
+workers cannot inflate the measured stream workers' RSS.
+
+| Field in each sample's `seconds` | Measured boundary |
+| --- | --- |
+| `prepare` | Generate Arrow batches and construct the selected producer; streams construct only a reader |
+| `import_profile` | `dataprof.profile()`: Python adapter, consumer import and profiling together |
+| `export_dict` | `report.to_dict()` |
+| `export_json` | `report.to_json()`, including its independent document construction |
+| `end_to_end` | Preparation through both exports, excluding imports, GC and validation |
+
+There is no public import-only operation that would preserve this behavior, so
+`import_profile` must not be called profiler-core time. For streams,
+`producer.batch_preparation_seconds` records lazy batch construction **inside**
+that combined timer. It is nested evidence, not another additive stage; no
+independent medians are subtracted to invent a consumer-import estimate. Deferred
+library imports inside preparation/profiling stay in those timings. Direct
+imports are recorded as `import_setup_seconds` in each worker.
+
+The parent also records `process_seconds`, which includes interpreter startup,
+imports, validation, IPC and exit. Warm process time covers warmups and all
+iterations. Fresh workers are fresh processes, not cold storage or an untouched
+host: imports and preflight can warm library pages. The serial schedule is shuffled
+with a recorded seed; every sample, warmup, worker PID, execution order and
+diagnostic survives in the artifact. A single warm worker per case gives
+within-process dispersion, not across-process stability or independent hosts.
+
+`peak_rss` reuses the OS high-water collector, including native buffers, imports
+and all worker operations. `producer.observed_arrow_pool_bytes` samples the Arrow
+pool after each generated batch; it is neither a continuous peak nor a measurement
+of all native allocations. Batch count, maximum rows/bytes and produced rows are
+also retained. Streams generate one batch on demand and keep no full table;
+their buffer observations can be compared as total rows grow. RSS cannot isolate
+profiler accumulators, and allocator observations do not establish an asymptotic
+memory bound. Python allocation counters are not used as a substitute for native
+memory evidence.
+
+Schema-v1 `results.json` retains configuration, logical fixture fingerprints,
+installed versions/native hashes, harness hashes, references, preflights, raw
+worker runs, and per-case fresh/warm stage summaries (median, Q1/Q3, IQR, min/max).
+`boundaries.md` presents the scope and stage table. Incomplete runs retain
+`progress.json` and diagnostics without publishing results. Output files are staged
+and promoted before the checkpoint is marked complete; failed publication removes
+partial outputs. The publisher recomputes every summary statistic from its raw
+samples and rejects missing or contradictory fields. The existing workflow
+and Pages renderer retain this suite alongside the other artifacts; older runs
+without it remain valid. Invalid present results fail publication.
+
+See the [#698 recorded experiment](evidence/698/README.md) for raw evidence and
+the bounded attribution result. Tests:
+
+```bash
+uv run --no-sync pytest python/tests/test_benchmark_boundaries.py python/tests/test_benchmark_pages.py python/tests/test_benchmark_workflow.py -q
+```
+
 ## Expansion and publishing rules
 
 Extend this inventory when adding a scenario; do not introduce another root
@@ -354,7 +456,6 @@ Planned work stays in its tickets:
 | #404 cross-tool metric parity | Workload definitions and correctness checks before fair speed comparisons |
 | #402 ablation | Additional named workloads with the same repeated-run provenance |
 | #697 Parquet physical reads | A measurement suite for physical I/O and accumulator work |
-| #698 Python/Arrow boundaries | Stage timings, chunk/batch matrix, and optional producers |
 | #405 auto-engine investigation | Controlled workloads and before/after evidence |
 
 Do not merge their data into one unlabeled timing table. Add result schema versions

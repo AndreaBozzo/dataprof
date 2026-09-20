@@ -225,7 +225,7 @@ def prepare_cache(path: Path, mode: str) -> str:
     return "file eviction requested with POSIX_FADV_DONTNEED; eviction unverified"
 
 
-def run_worker(request: dict, timeout: float) -> dict:
+def run_worker(request: dict, timeout: float, *, script: Path | None = None) -> dict:
     """Run an isolated worker, retaining output and resource evidence on failure."""
     env = {**os.environ, **dict.fromkeys(THREAD_ENV, str(request["threads"]))}
     env["PYTHONHASHSEED"] = "0"
@@ -243,7 +243,7 @@ def run_worker(request: dict, timeout: float) -> dict:
         completed = subprocess.run(
             [sys.executable, "-c", CONTROL_CODE]
             if request.get("control")
-            else [sys.executable, str(Path(__file__).resolve()), "--worker"],
+            else [sys.executable, str(script or Path(__file__).resolve()), "--worker"],
             input=json.dumps(request),
             text=True,
             encoding="utf-8",
