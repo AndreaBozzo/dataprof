@@ -28,6 +28,9 @@ struct CsvPreScan {
     ragged_row_count: usize,
     /// Width of the widest record, never less than the header width.
     max_fields: usize,
+    /// Whether a record exists past the row cap, which is what makes a profile
+    /// truncated rather than merely as long as the file.
+    has_more_rows: bool,
 }
 
 /// Everything one Arrow decode of the file accumulated.
@@ -36,7 +39,6 @@ struct CsvDecodeOutcome {
     row_tracker: BatchRowTracker,
     hint_bindings: ValueHintBindingAccumulator,
     total_rows: usize,
-    truncated: bool,
     /// Rows `arrow-csv` padded to the schema width, cumulative over the decode.
     /// This is the ragged-row count only when no record is *wider* than the
     /// schema, because Arrow aborts on those instead of counting them.
@@ -188,9 +190,16 @@ impl ArrowProfiler {
             }
         }
 
+        // One record past the cap, read but not counted. It is the only thing
+        // that separates a profile cut short from one that reached the end of
+        // its file, and the Arrow decode stops at the cap so it will never see
+        // this record itself.
+        let has_more_rows = max_rows.is_some() && reader.read_byte_record(&mut record)?;
+
         Ok(CsvPreScan {
             ragged_row_count,
             max_fields,
+            has_more_rows,
         })
     }
 
@@ -236,6 +245,18 @@ impl ArrowProfiler {
         let mut arrow_builder = ReaderBuilder::new(schema)
             .with_header(has_header)
             .with_batch_size(self.batch_size);
+        // `arrow-csv` offsets the end bound by the header row, so a cap at the
+        // very top of the range overflows inside its builder. A cap that size
+        // cannot bind any file that exists, so it is left unset rather than
+        // special-cased further down: the decode then reads to the end, which
+        // is what such a cap asks for.
+        if let Some(max) = max_rows.filter(|&max| max < usize::MAX) {
+            // Bound the decoder rather than slicing what it hands back. Slicing
+            // still reads a whole batch first, so a record past the cap that
+            // Arrow refuses to decode, one wider than the schema, failed the
+            // profile over a row the profile was never going to report (#753).
+            arrow_builder = arrow_builder.with_bounds(0, max);
+        }
         if let Some(ref config) = self.csv_config {
             if let Some(delim) = config.delimiter {
                 arrow_builder = arrow_builder.with_delimiter(delim);
@@ -254,6 +275,7 @@ impl ArrowProfiler {
             column_analyzers.insert(name.clone(), ColumnAnalyzer::new());
         }
 
+        // `with_bounds` already stops at the cap, so nothing here re-applies it.
         let mut total_rows = 0;
         // Full-stream duplicate-row tracking: without it, files whose sample
         // reservoirs are misaligned (any column with nulls) would silently
@@ -262,10 +284,6 @@ impl ArrowProfiler {
         let mut row_tracker = BatchRowTracker::default();
         let mut hint_bindings = ValueHintBindingAccumulator::new(&self.semantic_hints);
 
-        // The Arrow CSV reader has no row cap, so enforce it here: stop once the
-        // limit is reached and slice the batch that straddles it, keeping the row
-        // count exact rather than rounding up to a batch boundary.
-        let mut truncated = false;
         let mut memory_sampler = PeakMemorySampler::new();
 
         for batch_result in csv_reader.by_ref() {
@@ -277,18 +295,6 @@ impl ArrowProfiler {
             batch = batch.project(projection).map_err(|error| {
                 CsvDecodeFailure::Other(DataProfilerError::arrow_error_from(error))
             })?;
-
-            if let Some(max) = max_rows {
-                if total_rows >= max {
-                    truncated = true;
-                    break;
-                }
-                let remaining = max - total_rows;
-                if batch.num_rows() > remaining {
-                    batch = batch.slice(0, remaining);
-                    truncated = true;
-                }
-            }
 
             total_rows += batch.num_rows();
             row_tracker.observe_batch(&batch);
@@ -323,7 +329,6 @@ impl ArrowProfiler {
             row_tracker,
             hint_bindings,
             total_rows,
-            truncated,
             // Read after the final flush: the counter is cumulative across
             // flushes, so this is the whole decode's total.
             padded_rows: csv_reader.truncated_row_count(),
@@ -374,10 +379,10 @@ impl ArrowProfiler {
         let max_rows = self.csv_config.as_ref().and_then(|config| config.max_rows);
 
         // A row cap makes the decoder's cumulative counter unusable on its own:
-        // the batch straddling the cap is sliced, and a padded row inside it
-        // cannot be attributed to either side of the cut. The pre-scan stops at
-        // the cap, so it answers exactly, and it reads only as far as the cap
-        // rather than to the end of the file.
+        // rows the decoder pads are counted whether or not the cap keeps them.
+        // The pre-scan stops at the cap, so it answers exactly, it reads only as
+        // far as the cap rather than to the end of the file, and one record
+        // further tells the caller whether the profile was cut short.
         let mut scan = match max_rows {
             Some(_) => Some(self.pre_scan(file_path)?),
             None => None,
@@ -424,10 +429,10 @@ impl ArrowProfiler {
             row_tracker,
             hint_bindings,
             total_rows,
-            truncated,
             padded_rows,
             peak_memory_mb,
         } = outcome;
+        let truncated = scan.as_ref().is_some_and(|scan| scan.has_more_rows);
         // A pre-scan, where one ran, is the authority: it saw the wide records
         // Arrow aborted on, and it honoured the row cap. Where none ran, no
         // record was wider than the header and no cap applied, so every ragged
@@ -1001,6 +1006,128 @@ mod tests {
 
         assert_eq!(report.execution.rows_processed, 1);
         assert_eq!(report.execution.ragged_row_count, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_ignores_a_wide_row_past_the_row_cap() -> Result<(), DataProfilerError> {
+        // The wide row sits past the cap, so this profile never reads it. Arrow
+        // refuses a record wider than its schema, so decoding a whole batch and
+        // slicing afterwards failed the profile over a row it was discarding.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30,Milan,unexpected")?;
+        temp_file.flush()?;
+
+        let config = CsvParserConfig {
+            max_rows: Some(1),
+            ..CsvParserConfig::default()
+        };
+        let report = ArrowProfiler::new()
+            .csv_config(config)
+            .analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 1);
+        assert_eq!(report.execution.ragged_row_count, 0);
+        assert!(matches!(
+            report.execution.truncation_reason,
+            Some(TruncationReason::MaxRows(1))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_does_not_truncate_a_file_that_ends_at_the_cap()
+    -> Result<(), DataProfilerError> {
+        // A cap the file happens to reach exactly is not a truncation, and the
+        // row past the cap is the only thing that tells the two apart.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30,Milan")?;
+        temp_file.flush()?;
+
+        let config = CsvParserConfig {
+            max_rows: Some(2),
+            ..CsvParserConfig::default()
+        };
+        let report = ArrowProfiler::new()
+            .csv_config(config)
+            .analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 2);
+        assert!(
+            report.execution.truncation_reason.is_none(),
+            "a file of exactly `max_rows` rows was not cut short: {:?}",
+            report.execution.truncation_reason
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_truncates_at_a_cap_inside_a_batch() -> Result<(), DataProfilerError> {
+        // The cap falls inside a batch, so the decoder has to stop mid-batch
+        // and the row count must land on the cap rather than a batch boundary.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        for row in 0..10 {
+            writeln!(temp_file, "Name{row},{row},Rome")?;
+        }
+        temp_file.flush()?;
+
+        let config = CsvParserConfig {
+            max_rows: Some(3),
+            ..CsvParserConfig::default()
+        };
+        let report = ArrowProfiler::new()
+            .batch_size(4)
+            .csv_config(config)
+            .analyze_csv_file(temp_file.path())?;
+
+        assert_eq!(report.execution.rows_processed, 3);
+        assert!(matches!(
+            report.execution.truncation_reason,
+            Some(TruncationReason::MaxRows(3))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arrow_profiler_accepts_a_row_cap_at_the_top_of_the_range()
+    -> Result<(), DataProfilerError> {
+        // `arrow-csv` adds the header offset to the end bound it is given, so
+        // handing it `usize::MAX` overflows inside the builder. A cap nothing
+        // can reach has to behave as no cap rather than panicking.
+        let mut temp_file = NamedTempFile::new()?;
+        writeln!(temp_file, "name,age,city")?;
+        writeln!(temp_file, "Alice,25,Rome")?;
+        writeln!(temp_file, "Bob,30,Milan")?;
+        temp_file.flush()?;
+
+        for has_header in [true, false] {
+            let config = CsvParserConfig {
+                max_rows: Some(usize::MAX),
+                has_header,
+                ..CsvParserConfig::default()
+            };
+            let report = ArrowProfiler::new()
+                .csv_config(config)
+                .analyze_csv_file(temp_file.path())?;
+
+            // The header row counts as data when it is not a header.
+            let expected = if has_header { 2 } else { 3 };
+            assert_eq!(report.execution.rows_processed, expected, "{has_header}");
+            assert!(
+                report.execution.truncation_reason.is_none(),
+                "{has_header}: {:?}",
+                report.execution.truncation_reason
+            );
+        }
 
         Ok(())
     }
