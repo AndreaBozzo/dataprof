@@ -93,10 +93,19 @@ Rounding alone cannot mathematically guarantee equality for every possible
 floating-point input, especially near rounding boundaries or at large
 magnitudes. A difference that survives serialization remains a parity defect
 to investigate, rather than an allowed raw-precision difference. The known
-nested JSON/Arrow representation mismatch (#637) is one such defect, as is the
-text frequency divergence in #709: `most_frequent` and `least_frequent`
-serialize as absent from the streaming builders and present from
-`analyze_column`, which the database connectors use.
+nested JSON/Arrow representation mismatch (#637) is one such defect.
+
+Text frequencies are unassessed in newly computed profiles (#709):
+`most_frequent` and `least_frequent` are `None` and omitted by Rust Serde on
+every path, including `analyze_column` and the database connectors. Python
+exports already omit these fields. This keeps absence consistent without
+presenting retained-sample frequencies as full-column measurements. The fields
+remain optional in schema v1; Rust deserialization and reserialization preserve
+historical frequency measurements, including measured-empty lists. Callers that
+need explicit frequency analysis can use
+`dataprof_metrics::stats::text::{calculate_most_frequent, calculate_least_frequent}`
+over their chosen population; these helpers count exactly the supplied values,
+so callers choose which null-like values to exclude.
 
 Sampling and approximate statistics must retain their provenance. Different
 row selections or retained samples are different analyzed populations; compare
