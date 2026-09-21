@@ -1,8 +1,8 @@
 //! Cross-engine consistency test.
 //!
-//! Profiles the same CSV through the standard CSV engine and Arrow CSV engine,
-//! then asserts exact equality of serialized metrics (#547). Raw numeric
-//! diagnostics allow relative tolerance 1e-9 or absolute tolerance 1e-12.
+//! Profiles the same values through file engines and column analysis (used by
+//! database connectors), then asserts exact equality of serialized metrics (#547).
+//! Raw numeric diagnostics allow relative tolerance 1e-9 or absolute tolerance 1e-12.
 
 use std::io::Write;
 use std::path::Path;
@@ -13,6 +13,87 @@ use dataprof::{
 };
 use serde_json::json;
 use tempfile::NamedTempFile;
+
+/// Frequency fields used to be present only on the database column-analysis
+/// path (#709). Comparing file engines alone cannot expose that divergence.
+#[test]
+fn serialized_text_stats_match_column_analysis_and_csv_engines() {
+    for values in [
+        vec!["hello", "world", "test", "hello", "world"],
+        vec!["東京", "café", "e\u{301}", "東京", "", "  ", "NULL"],
+        vec!["", "  ", "NULL"],
+    ] {
+        let data: Vec<String> = values.iter().map(|value| (*value).to_owned()).collect();
+        let mut csv = NamedTempFile::new().unwrap();
+        writeln!(csv, "text,row").unwrap();
+        for (row, value) in values.iter().enumerate() {
+            // A second column keeps empty text cells from becoming blank lines.
+            writeln!(csv, "{value},{row}").unwrap();
+        }
+        csv.flush().unwrap();
+
+        let standard = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
+        let expected = serde_json::to_value(&standard.column_profiles[0].stats).unwrap();
+        assert!(expected["Text"].is_object(), "{values:?}");
+        assert!(expected["Text"].get("most_frequent").is_none());
+        assert!(expected["Text"].get("least_frequent").is_none());
+
+        for column in [
+            dataprof::analyze_column("text", &data),
+            dataprof::analyze_column_fast("text", &data),
+            dataprof::analyze_column_with_analysis_options(
+                "text",
+                &data,
+                &dataprof::AnalysisOptions::default(),
+            ),
+        ] {
+            assert_eq!(column.data_type, standard.column_profiles[0].data_type);
+            assert_eq!(column.null_count, standard.column_profiles[0].null_count);
+            assert_eq!(column.total_count, standard.column_profiles[0].total_count);
+            assert_eq!(
+                serde_json::to_value(&column.stats).unwrap(),
+                expected,
+                "column analysis, {values:?}"
+            );
+        }
+
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let report = Profiler::new()
+                .engine(engine)
+                .analyze_file(csv.path())
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&report.column_profiles[0].stats).unwrap(),
+                expected,
+                "{engine:?}, {values:?}"
+            );
+        }
+    }
+}
+
+/// New profiles leave frequencies unassessed, but stored Rust statistics must
+/// retain measurements made by earlier versions, including measured-empty lists.
+#[test]
+fn historical_text_frequencies_survive_rust_round_trip() {
+    for frequencies in [
+        json!([{"value": "hello", "count": 2, "percentage": 100.0}]),
+        json!([]),
+    ] {
+        let document = json!({"Text": {
+            "min_length": 5,
+            "max_length": 5,
+            "avg_length": 5.0,
+            "most_frequent": frequencies,
+            "least_frequent": frequencies,
+        }});
+        let restored: ColumnStats = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), document);
+    }
+}
 
 /// 30k rows of *sorted* values — larger than the 10k per-column sample
 /// reservoirs, so any engine that derives base statistics from its retained
