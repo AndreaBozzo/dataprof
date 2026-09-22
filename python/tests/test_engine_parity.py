@@ -182,7 +182,14 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
     # No approximation or post-export re-rounding here: consumers see these
     # exact numbers, including every optional statistic and absence marker.
     assert report.to_dict()["columns"] == expected_columns, engine
-    assert json.loads(report.to_json())["columns"] == expected_columns, engine
+    # Compare the canonical documents directly too, without re-rounding via
+    # the convenience projection. Source/execution provenance is separate.
+    canonical_columns = json.loads(reference.to_json())["column_profiles"]
+    for column in canonical_columns:
+        for (exception_engine, name, field), value in exceptions.items():
+            if exception_engine == engine and name == column["name"]:
+                column[field] = value.capitalize() if field == "data_type" else value
+    assert json.loads(report.to_json())["column_profiles"] == canonical_columns, engine
     # Quality scores are rounded metrics, not execution provenance, so they are
     # on the contract surface too. Left out, an engine could agree on every
     # column and still report a different overall score.

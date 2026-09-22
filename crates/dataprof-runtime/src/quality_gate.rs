@@ -735,7 +735,13 @@ impl QualityPolicy {
         let Some(quality) = report.quality.as_ref() else {
             return unavailable_quality(check, report);
         };
-        let Some(score) = quality.metrics.dimension_score(dimension) else {
+        let Some(score) = quality
+            .scores()
+            .dimension_scores
+            .get(&dimension.to_string())
+            .copied()
+            .flatten()
+        else {
             check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
             check.message = "this dimension had nothing to assess in this run".to_string();
             return check;

@@ -139,7 +139,7 @@ def test_the_serialized_report_omits_unassessed_dimensions(partly_assessed) -> N
             f"{dimension} disagrees between the evidence keys and assessed_dimensions"
         )
 
-    from_json = json.loads(partly_assessed.to_json())["quality"]
+    from_json = json.loads(partly_assessed.to_json())["quality"]["metrics"]
     assert set(from_json) & set(DIMENSIONS) == assessed
 
 

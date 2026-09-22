@@ -60,7 +60,9 @@ schemars = "1.2.1"
 serde = { version = "1.0", features = ["derive"] }
 # preserve_order is load-bearing: it backs `Map` with an IndexMap so JSON/JSONL
 # records profile into source field order instead of alphabetical order (#465).
-serde_json = { version = "1.0.149", features = ["preserve_order"] }
+# float_roundtrip preserves the exact serialized f64 on load, including raw
+# execution metadata, so resaving a canonical report cannot change its last bit.
+serde_json = { version = "1.0.149", features = ["preserve_order", "float_roundtrip"] }
 sqlx = { version = "0.8.1", default-features = false, features = ["runtime-tokio-rustls", "chrono", "uuid"] }
 sysinfo = "0.39"
 thiserror = "2.0"

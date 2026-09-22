@@ -1,0 +1,110 @@
+{
+  "column_profiles": [
+    {
+      "data_type": "Float",
+      "invalid_count": 0,
+      "name": "z",
+      "null_count": 0,
+      "patterns": [],
+      "stats": {
+        "Numeric": {
+          "max": 3.7655,
+          "mean": 2.5,
+          "min": 1.2345,
+          "std_dev": 1.2655,
+          "variance": 1.6015
+        }
+      },
+      "total_count": 3,
+      "unique_count": 3,
+      "unique_count_is_approximate": false
+    },
+    {
+      "data_type": "String",
+      "name": "a",
+      "null_count": 1,
+      "patterns": null,
+      "stats": {
+        "Text": {
+          "avg_length": 1.5,
+          "max_length": 2,
+          "min_length": 1,
+          "most_frequent": []
+        }
+      },
+      "total_count": 3,
+      "unique_count": null
+    }
+  ],
+  "data_source": {
+    "format": "csv",
+    "path": "東京.csv",
+    "size_bytes": 123,
+    "type": "file"
+  },
+  "execution": {
+    "columns_detected": 2,
+    "engine": "incremental",
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "recovery_events": [],
+    "rows_processed": 3,
+    "sampling_applied": false,
+    "scan_time_ms": 117,
+    "source_exhausted": true,
+    "throughput_rows_sec": 25.641025641025642
+  },
+  "id": "canonical-report-fixture",
+  "quality": {
+    "confidence": "Exact",
+    "metrics": {
+      "accuracy": {
+        "negative_values_in_positive": 0,
+        "numeric_values_checked": 3,
+        "outlier_ratio": 0.0,
+        "range_violations": 0
+      },
+      "completeness": {
+        "complete_records_ratio": 66.67,
+        "missing_values_ratio": 16.67,
+        "null_columns": [],
+        "total_cells": 6
+      },
+      "consistency": {
+        "data_type_consistency": 100.0,
+        "encoding_issues": 0,
+        "format_violations": 0,
+        "values_checked": 5
+      },
+      "low_sample_warning": true,
+      "precision": {
+        "decimal_places_consistency": 66.67,
+        "inconsistent_precision_values": 1,
+        "numeric_values_checked": 3
+      },
+      "uniqueness": {
+        "duplicate_rows": 0,
+        "high_cardinality_warning": true,
+        "key_uniqueness": 100.0,
+        "rows_checked": 3
+      }
+    },
+    "scores": {
+      "dimension_scores": {
+        "accuracy": 100.0,
+        "completeness": 75.0,
+        "consistency": 100.0,
+        "precision": 66.67,
+        "timeliness": null,
+        "uniqueness": 100.0,
+        "validity": null
+      },
+      "overall_score": 90.1
+    }
+  },
+  "quality_status": {
+    "state": "computed"
+  },
+  "schema_version": 1,
+  "timestamp": "2026-09-22T10:00:00Z"
+}

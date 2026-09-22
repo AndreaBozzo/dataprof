@@ -178,9 +178,9 @@ class TestBooleanColumns:
 
     def test_boolean_in_to_json(self, report):
         j = json.loads(report.to_json())
-        active_col = next(c for c in j["columns"] if c["name"] == "active")
+        active_col = next(c for c in j["column_profiles"] if c["name"] == "active")
         assert "stats" in active_col
-        assert "true_count" in active_col["stats"]
+        assert "true_count" in active_col["stats"]["Boolean"]
 
     def test_boolean_in_column_record(self, report):
         df = report.to_dataframe()

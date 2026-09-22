@@ -345,8 +345,8 @@ len(report)                          # number of columns
 **Export methods:**
 
 ```python
-report.to_dict()                  # nested dict (rounded values)
-report.to_json(indent=2)         # JSON string
+report.to_dict()                  # historical flat summary (rounded values)
+report.to_json(indent=2)         # complete canonical Rust report as JSON
 report.to_dataframe()            # pandas DataFrame -- all stats (requires pandas)
 report.to_polars()               # polars DataFrame -- all stats (requires polars)
 report.to_arrow()                # PyArrow Table -- all stats (requires pyarrow)
@@ -778,7 +778,15 @@ consumer. Version 1 includes both the high-level Python export shape and the
 complete Rust serialization shape; see the
 [schema notes](../schema/README.md) for compatibility and regeneration rules.
 
-When quality metrics are present, the `quality` block always carries a
+In 0.12, `to_json()` and JSON `save()` write the complete Rust document, with
+`data_source`, `column_profiles`, `id`, `timestamp`, and `quality.metrics` /
+`quality.confidence`. `to_dict()` keeps the historical summary keys `source`,
+`source_type`, `columns`, and flattened quality scores. It is a convenience
+projection, so `json.loads(report.to_json())` is the way to obtain the complete
+document as a dictionary. All three loaders accept both layouts. An old flat
+document stays flat on resave because its missing provenance cannot be inferred.
+
+When quality metrics are present, the summary's `quality` block always carries a
 `low_sample_warning` boolean (`true` when the profiled sample was below the
 recommended minimum of 10 rows, `false` otherwise). It round-trips through
 `to_dict()`/`from_dict()`; treat `quality_score` and the per-dimension ratios

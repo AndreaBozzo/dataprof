@@ -62,7 +62,7 @@ def test_serialized_report_carries_no_score(unassessable) -> None:
     assert "overall_score" in quality
     assert quality["overall_score"] is None
     assert quality["assessed_dimensions"] == []
-    assert json.loads(unassessable.to_json())["quality"]["overall_score"] is None
+    assert json.loads(unassessable.to_json())["quality"]["confidence"] == "NotAssessed"
 
 
 def test_a_reloaded_report_reads_back_the_same_absence(unassessable) -> None:
