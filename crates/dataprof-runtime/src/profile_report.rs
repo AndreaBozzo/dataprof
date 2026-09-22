@@ -1,4 +1,6 @@
-use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, SemanticHintBinding};
+use dataprof_core::{
+    ColumnProfile, DataSource, ExecutionMetadata, QualityScoreWeights, SemanticHintBinding,
+};
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
     QualityAssessment, QualityMetrics, TimelinessMetrics, ValidityMetrics,
@@ -294,6 +296,12 @@ struct PythonQualityDocument {
     /// Uniqueness appears here as `key_uniqueness` and `duplicate_rows`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_dimensions: Option<Vec<String>>,
+    /// Weights behind `overall_score`. Additive field, written as the
+    /// canonical document writes it: default weights are omitted. Summaries
+    /// written before the field existed dropped custom weights too, so its
+    /// absence there does not show the defaults applied.
+    #[serde(default, skip_serializing_if = "QualityScoreWeights::is_default")]
+    score_weights: QualityScoreWeights,
     #[serde(skip_serializing_if = "Option::is_none")]
     completeness: Option<CompletenessMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1018,6 +1026,51 @@ mod tests {
         assert_eq!(deserialized.execution.rows_processed, 100);
         assert!(deserialized.quality.is_some());
         assert_eq!(deserialized.schema_version, REPORT_SCHEMA_VERSION);
+    }
+
+    /// The weights determine the aggregate score, so a summary that drops
+    /// custom ones reloads with a score its weights no longer produce.
+    #[test]
+    fn summary_keeps_custom_score_weights_and_omits_defaults() {
+        let summary_quality = |weights| {
+            let mut metrics = QualityMetrics::empty();
+            metrics.score_weights = weights;
+            let report = ProfileReport::new(
+                DataSource::File {
+                    path: "test.csv".to_string(),
+                    format: FileFormat::Csv,
+                    size_bytes: 1024,
+                    modified_at: None,
+                    parquet_metadata: None,
+                },
+                vec![],
+                ExecutionMetadata::new(100, 5, 50),
+                Some(QualityAssessment::exact(metrics)),
+            );
+            let summary: serde_json::Value =
+                serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+            summary["quality"].clone()
+        };
+
+        let custom = QualityScoreWeights {
+            completeness: 1.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+            validity: 0.0,
+            precision: 3.0,
+        };
+        assert_eq!(
+            summary_quality(custom)["score_weights"],
+            serde_json::to_value(custom).unwrap()
+        );
+        // Mirrors the canonical document, so default-weight summaries are unchanged.
+        assert!(
+            summary_quality(QualityScoreWeights::default())
+                .get("score_weights")
+                .is_none()
+        );
     }
 
     #[test]

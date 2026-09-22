@@ -174,6 +174,35 @@ def test_legacy_summary_export_agrees_with_what_was_loaded():
         assert exported["columns"][0].get("type_homogeneity") is None
 
 
+def test_custom_score_weights_survive_the_flat_summary():
+    document = json.loads(dataprof.profile({"x": [1, None, 3], "y": [1, 1, 2]}).to_json())
+    weights = {
+        "completeness": 1.0,
+        "consistency": 0.0,
+        "uniqueness": 0.0,
+        "accuracy": 0.0,
+        "timeliness": 0.0,
+        "validity": 0.0,
+        "precision": 3.0,
+    }
+    document["quality"]["metrics"]["score_weights"] = weights
+    canonical = dataprof.ProfileReport.from_dict(document)
+    summary = canonical.to_dict()
+    assert summary["quality"]["score_weights"] == weights
+    _schema_validator().validate(summary)
+    flat = dataprof.ProfileReport.from_dict(summary)
+    assert flat.quality is not None
+    assert flat.quality.score_weights == weights
+    # The flat loader's own summary is a second producer and must agree.
+    assert flat.to_dict() == summary
+
+
+def test_default_score_weights_stay_out_of_both_summaries():
+    summary = dataprof.profile({"x": [1, None, 3]}).to_dict()
+    assert "score_weights" not in summary["quality"]
+    assert "score_weights" not in dataprof.ProfileReport.from_dict(summary).to_dict()["quality"]
+
+
 @pytest.mark.parametrize("key", ["data_source", "column_profiles"])
 def test_additive_canonical_key_does_not_reroute_a_flat_summary(key):
     summary = dataprof.profile({"x": [1, 2, None]}).to_dict()

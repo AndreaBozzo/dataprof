@@ -1773,6 +1773,10 @@
             "null"
           ]
         },
+        "score_weights": {
+          "$ref": "#/$defs/QualityScoreWeights",
+          "description": "Weights behind `overall_score`. Additive field, written as the\ncanonical document writes it: default weights are omitted. Summaries\nwritten before the field existed dropped custom weights too, so its\nabsence there does not show the defaults applied."
+        },
         "timeliness": {
           "anyOf": [
             {
