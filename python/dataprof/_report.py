@@ -32,7 +32,7 @@ from ._render import (
     _section_min_cost,
     _stats_cell,
 )
-from ._report_backing import _report_from_dict
+from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
 
@@ -348,6 +348,10 @@ class ProfileReport:
             sampled = self.quality_sampled_dimensions
             if sampled is not None:
                 quality_dict["sampled_dimensions"] = sampled
+            # Written as the Rust summary writes it: defaults are omitted.
+            weights = q.score_weights
+            if weights != _DEFAULT_SCORE_WEIGHTS:
+                quality_dict["score_weights"] = dict(weights)
             for dimension in _QUALITY_DIMENSIONS:
                 values = getattr(q, dimension)
                 if values is not None:
