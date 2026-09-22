@@ -6,6 +6,7 @@ properties and methods live in _accessors, exactly as for native reports.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
@@ -128,6 +129,8 @@ def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:
     Only a missing key takes the defaults. A mapping fills its missing
     dimensions from them and ignores unknown ones; anything else is an error,
     since substituted weights would sit next to a score they did not produce.
+    Weights must be finite: JSON cannot carry NaN or infinity, so the Rust
+    reader never accepts them, and neither does an integer beyond f64 range.
     """
     if "score_weights" not in document:
         return dict(_DEFAULT_SCORE_WEIGHTS)
@@ -136,15 +139,22 @@ def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:
         raise ValueError(
             f"from_dict(): 'quality.score_weights' must be a mapping of numbers, got {weights!r}."
         )
-    for name in _DEFAULT_SCORE_WEIGHTS:
-        value = weights.get(name, 0.0)
-        if isinstance(value, bool) or not isinstance(value, int | float):
+    read = {}
+    for name, default in _DEFAULT_SCORE_WEIGHTS.items():
+        value = weights.get(name, default)
+        number = math.nan
+        if not isinstance(value, bool) and isinstance(value, int | float):
+            try:
+                number = float(value)
+            except OverflowError:
+                number = math.inf
+        if not math.isfinite(number):
             raise ValueError(
-                f"from_dict(): 'quality.score_weights.{name}' must be a number, got {value!r}."
+                f"from_dict(): 'quality.score_weights.{name}' must be a finite number, "
+                f"got {value!r}."
             )
-    return {
-        name: float(weights.get(name, default)) for name, default in _DEFAULT_SCORE_WEIGHTS.items()
-    }
+        read[name] = number
+    return read
 
 
 def _report_from_dict(document: dict[str, Any]) -> _ReportView:

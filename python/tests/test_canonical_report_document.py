@@ -232,8 +232,28 @@ def test_flat_score_weights_read_as_the_rust_reader_reads_them(weights):
 
 @pytest.mark.parametrize(
     "weights",
-    ["x", None, {"completeness": "high"}, {"completeness": True}, [1, 2]],
-    ids=["string", "null", "string-weight", "bool-weight", "sequence"],
+    [
+        "x",
+        None,
+        {"completeness": "high"},
+        {"completeness": True},
+        [1, 2],
+        {"completeness": float("nan")},
+        {"completeness": float("inf")},
+        {"completeness": float("-inf")},
+        {"completeness": 10**400},
+    ],
+    ids=[
+        "string",
+        "null",
+        "string-weight",
+        "bool-weight",
+        "sequence",
+        "nan",
+        "inf",
+        "-inf",
+        "overflowing-int",
+    ],
 )
 def test_malformed_flat_score_weights_are_rejected_not_defaulted(weights):
     summary = dataprof.profile({"x": [1, None, 3]}).to_dict()
