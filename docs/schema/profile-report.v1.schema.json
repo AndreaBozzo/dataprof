@@ -867,15 +867,8 @@
       "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
       "properties": {
         "text_length_unit": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TextLengthUnit"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns."
+          "$ref": "#/$defs/TextLengthUnit",
+          "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns.\n\nAbsent means not recorded; an explicit null is malformed, so neither\nthe reader nor the schema accepts one."
         }
       },
       "type": "object"
@@ -1153,14 +1146,7 @@
           "type": "string"
         },
         "metric_semantics": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MetricSemantics"
-            },
-            {
-              "type": "null"
-            }
-          ],
+          "$ref": "#/$defs/MetricSemantics",
           "description": "How this report's measurements were defined; see [`MetricSemantics`].\n\nEvery report this build produces records [`MetricSemantics::current`].\n`None` is a document written before dataprof recorded it, and its\ndefinitions are unknown. Loading and saving keep the value the\ndocument had rather than the reader's. Additive field."
         },
         "quality": {
@@ -1626,14 +1612,7 @@
           "$ref": "#/$defs/PythonExecutionDocument"
         },
         "metric_semantics": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MetricSemantics"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/MetricSemantics"
         },
         "quality": {
           "anyOf": [

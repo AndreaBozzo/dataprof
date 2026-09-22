@@ -68,11 +68,14 @@ def test_a_unit_change_is_not_reported_as_comparable():
     within = current.compare(dataprof.profile(CITIES))["metric_semantics"]
     assert within == {"a": CURRENT, "b": CURRENT, "comparable": True}
 
-    # Recording the field without the text-length definition is still unknown.
+    # Recording the field without the text-length definition is still unknown,
+    # on one side or on both.
     silent = current.to_dict()
     silent["metric_semantics"] = {}
-    partial = dataprof.ProfileReport.from_dict(silent).compare(current)["metric_semantics"]
+    unknown = dataprof.ProfileReport.from_dict(silent)
+    partial = unknown.compare(current)["metric_semantics"]
     assert partial == {"a": {}, "b": CURRENT, "comparable": None}
+    assert unknown.compare(unknown)["metric_semantics"]["comparable"] is None
 
 
 def test_the_canonical_fixture_without_semantics_resaves_byte_identical(tmp_path):
@@ -96,8 +99,14 @@ def _through_both_readers(value):
 
 @pytest.mark.parametrize(
     "value",
-    [None, "unicode_scalar", {"text_length_unit": "utf8_byte"}, {"text_length_unit": 1}],
-    ids=["null", "string", "unknown-unit", "non-string-unit"],
+    [
+        None,
+        "unicode_scalar",
+        {"text_length_unit": "utf8_byte"},
+        {"text_length_unit": 1},
+        {"text_length_unit": None},
+    ],
+    ids=["null", "string", "unknown-unit", "non-string-unit", "null-unit"],
 )
 def test_malformed_semantics_are_rejected_by_both_readers(value):
     summary, canonical = _through_both_readers(value)
@@ -118,3 +127,12 @@ def test_both_readers_agree_on_accepted_semantics(value):
     flat = dataprof.ProfileReport.from_dict(summary).metric_semantics
     native = dataprof.ProfileReport.from_json(json.dumps(canonical)).metric_semantics
     assert flat == native
+
+
+@pytest.mark.parametrize("dialect", ["summary", "canonical"])
+@pytest.mark.parametrize("value", [None, {"text_length_unit": None}], ids=["null", "null-unit"])
+def test_the_schema_rejects_what_the_readers_reject(dialect, value):
+    report = dataprof.profile(CITIES)
+    document = report.to_dict() if dialect == "summary" else json.loads(report.to_json())
+    document["metric_semantics"] = value
+    assert not _validator().is_valid(document)

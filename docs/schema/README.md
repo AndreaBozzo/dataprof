@@ -478,12 +478,14 @@ Every report this release produces records the object. It is additive and not
 `required`, so stored v1 reports remain valid. A document without it was written
 before dataprof recorded it: its definitions are **unknown**, not the current
 ones, and loading and saving it keeps the object absent rather than stamping the
-reader's definitions on it. An explicit `null` is malformed and fails to load in
-both dialects. Definition names this build does not know are ignored, so a later
+reader's definitions on it. An explicit `null`, for the object or for a
+definition inside it, is malformed: it fails to load in both dialects and the
+schema rejects it. Definition names this build does not know are ignored, so a later
 release can add one; a value this build does not know fails to load.
 
 Python's `compare()` reports both sides and `comparable`: `True` when both
-record the same definitions, `None` otherwise. Only `True` makes a difference
+record every definition this release knows, with the same values, and `None`
+otherwise, including when either side records an empty object. Only `True` makes a difference
 in a measurement such as `max_length` a difference in the data.
 
 The object is provenance, not a metric, so it is outside the numeric equality

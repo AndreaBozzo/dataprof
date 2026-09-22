@@ -78,8 +78,26 @@ pub enum QualityAnalysisStatus {
 #[non_exhaustive]
 pub struct MetricSemantics {
     /// Unit of `min_length`, `max_length` and `avg_length` on text columns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// Absent means not recorded; an explicit null is malformed, so neither
+    /// the reader nor the schema accepts one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "TextLengthUnit")]
     pub text_length_unit: Option<TextLengthUnit>,
+}
+
+/// Decode a field that may be absent (serde's `default` covers that) but,
+/// when present, must carry a value: `Option<T>` alone reads `null` as `None`.
+fn present_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 impl MetricSemantics {
@@ -148,6 +166,7 @@ pub struct ProfileReport {
     /// definitions are unknown. Loading and saving keep the value the
     /// document had rather than the reader's. Additive field.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "MetricSemantics")]
     pub metric_semantics: Option<MetricSemantics>,
 }
 
@@ -188,6 +207,7 @@ struct PythonProfileReportDocument {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "MetricSemantics")]
     metric_semantics: Option<MetricSemantics>,
 }
 
@@ -1032,6 +1052,7 @@ mod tests {
             serde_json::Value::Null,
             json!("unicode_scalar"),
             json!({"text_length_unit": "utf8_byte"}),
+            json!({"text_length_unit": null}),
         ] {
             let mut document = serde_json::to_value(report_without_quality()).unwrap();
             document["metric_semantics"] = value.clone();

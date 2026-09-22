@@ -32,7 +32,7 @@ from ._render import (
     _section_min_cost,
     _stats_cell,
 )
-from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _report_from_dict
+from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _METRIC_SEMANTICS, _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
 
@@ -853,10 +853,11 @@ class ProfileReport:
           column names (missing on one side → ``None``).
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
         - ``metric_semantics``: each side's :attr:`metric_semantics` and
-          ``comparable``: ``True`` when both record the same definitions, and
-          ``None`` when either side does not record one, which includes every
-          report written before 0.12. Only ``True`` means a difference in a
-          measurement, such as a text length, is a difference in the data.
+          ``comparable``: ``True`` when both record every definition this
+          build knows, with the same values, and ``None`` when either side
+          does not, which includes every report written before 0.12. Only
+          ``True`` means a difference in a measurement, such as a text
+          length, is a difference in the data.
 
         .. note::
             The exact shape is provisional and will align with the Rust-side
@@ -914,14 +915,17 @@ class ProfileReport:
 
         a_semantics = self.metric_semantics
         b_semantics = other.metric_semantics
-        # This build reads exactly one value per definition, so two loaded
-        # reports that record the same definitions agree on them. A second
-        # recorded value is what will make a `False` answer reachable.
+        # Both sides must record every definition this build knows; an empty
+        # or partial record is as unknown as a missing one. Loaded values are
+        # validated to the one value each definition has today, so a `False`
+        # needs a second recorded value to become reachable.
+        known = _METRIC_SEMANTICS.keys()
         comparable = (
-            True
+            a_semantics == b_semantics
             if a_semantics is not None
             and b_semantics is not None
-            and a_semantics.keys() == b_semantics.keys()
+            and a_semantics.keys() == known
+            and b_semantics.keys() == known
             else None
         )
 

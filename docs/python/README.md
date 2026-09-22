@@ -1011,9 +1011,9 @@ delta = before.compare(after)
 # }
 ```
 
-`metric_semantics.comparable` is `True` when both reports record the same
-measurement definitions, and `None` when either side does not, which includes
-every report written before 0.12. Text lengths counted UTF-8 bytes through 0.11,
+`metric_semantics.comparable` is `True` when both reports record every
+measurement definition this release knows, with the same values, and `None`
+when either side does not, which includes every report written before 0.12. Text lengths counted UTF-8 bytes through 0.11,
 so across that boundary a changed `max_length` on non-ASCII text can be the unit
 rather than the data.
 
