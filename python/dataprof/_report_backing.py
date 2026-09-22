@@ -118,9 +118,33 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     values["dimension_scores"] = (
         scores if isinstance(scores, dict) else dict.fromkeys(_QUALITY_DIMENSIONS)
     )
-    weights = document.get("score_weights")
-    values["score_weights"] = weights if isinstance(weights, dict) else dict(_DEFAULT_SCORE_WEIGHTS)
+    values["score_weights"] = _read_score_weights(document)
     return _MappingAccessor(values)
+
+
+def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:
+    """Read the weights as the Rust reader reads `QualityScoreWeights`.
+
+    Only a missing key takes the defaults. A mapping fills its missing
+    dimensions from them and ignores unknown ones; anything else is an error,
+    since substituted weights would sit next to a score they did not produce.
+    """
+    if "score_weights" not in document:
+        return dict(_DEFAULT_SCORE_WEIGHTS)
+    weights = document["score_weights"]
+    if not isinstance(weights, dict):
+        raise ValueError(
+            f"from_dict(): 'quality.score_weights' must be a mapping of numbers, got {weights!r}."
+        )
+    for name in _DEFAULT_SCORE_WEIGHTS:
+        value = weights.get(name, 0.0)
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError(
+                f"from_dict(): 'quality.score_weights.{name}' must be a number, got {value!r}."
+            )
+    return {
+        name: float(weights.get(name, default)) for name, default in _DEFAULT_SCORE_WEIGHTS.items()
+    }
 
 
 def _report_from_dict(document: dict[str, Any]) -> _ReportView:
