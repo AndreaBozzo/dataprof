@@ -172,3 +172,12 @@ def test_legacy_summary_export_agrees_with_what_was_loaded():
     assert restored["x"].type_homogeneity is None
     for exported in (restored.to_dict(), json.loads(restored.to_json())):
         assert exported["columns"][0].get("type_homogeneity") is None
+
+
+@pytest.mark.parametrize("key", ["data_source", "column_profiles"])
+def test_additive_canonical_key_does_not_reroute_a_flat_summary(key):
+    summary = dataprof.profile({"x": [1, 2, None]}).to_dict()
+    summary[key] = {"added_by": "a later release"}
+    restored = dataprof.ProfileReport.from_dict(summary)
+    assert [column.name for column in restored.profiles] == ["x"]
+    assert restored.to_dict() == {k: v for k, v in summary.items() if k != key}

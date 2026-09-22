@@ -937,9 +937,12 @@ class ProfileReport:
                     f"reads up to version {REPORT_SCHEMA_VERSION}. Upgrade dataprof "
                     "to load it."
                 )
-        if "data_source" in data or "column_profiles" in data:
+        # A complete flat signature wins: the v1 additive-field policy lets a
+        # summary carry unknown keys, including ones the canonical layout uses.
+        flat = {"source", "columns", "execution"} <= data.keys()
+        if not flat and ("data_source" in data or "column_profiles" in data):
             return cls(_RustProfileReport.from_json(_json.dumps(data)))
-        if not {"source", "columns", "execution"} <= data.keys():
+        if not flat:
             raise ValueError(
                 "from_dict() expects a mapping produced by ProfileReport.to_dict() "
                 "(with 'source', 'columns', and 'execution' keys)."

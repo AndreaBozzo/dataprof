@@ -298,7 +298,7 @@ jobs:
           document_schema = {
               key: value for key, value in schema.items() if key != "anyOf"
           }
-          document_schema["$ref"] = "#/$defs/PythonProfileReportDocument"
+          document_schema["$ref"] = "#/$defs/ProfileReport"
           Draft202012Validator.check_schema(document_schema)
           validator = Draft202012Validator(document_schema)
           report_paths = sorted(Path("reports").rglob("*.json"))
