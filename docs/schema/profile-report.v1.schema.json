@@ -863,6 +863,23 @@
         }
       ]
     },
+    "MetricSemantics": {
+      "description": "How the measurements in a report were defined.\n\n`schema_version` answers whether a document validates. It cannot answer\nwhether two valid documents measured the same way: text lengths counted\nUTF-8 bytes through 0.11 and count Unicode scalar values since, with no\nchange to the document's shape. This records each intentionally changed\ndefinition by name, so a comparison can check exactly the ones both\nreports declare.\n\nEvery field is optional. A field missing from a stored report means the\nrelease that wrote it did not record that definition: unknown, never the\ncurrent one. Later releases add fields, which older readers ignore.",
+      "properties": {
+        "text_length_unit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextLengthUnit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Unit of `min_length`, `max_length` and `avg_length` on text columns."
+        }
+      },
+      "type": "object"
+    },
     "NumericStats": {
       "description": "Statistics for numeric (integer or float) columns.",
       "properties": {
@@ -1134,6 +1151,17 @@
         "id": {
           "description": "Unique identifier for this report (UUID v4)",
           "type": "string"
+        },
+        "metric_semantics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricSemantics"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How this report's measurements were defined; see [`MetricSemantics`].\n\nEvery report this build produces records [`MetricSemantics::current`].\n`None` is a document written before dataprof recorded it, and its\ndefinitions are unknown. Loading and saving keep the value the\ndocument had rather than the reader's. Additive field."
         },
         "quality": {
           "anyOf": [
@@ -1596,6 +1624,16 @@
         },
         "execution": {
           "$ref": "#/$defs/PythonExecutionDocument"
+        },
+        "metric_semantics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MetricSemantics"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "quality": {
           "anyOf": [
@@ -2299,6 +2337,16 @@
         }
       ],
       "description": "Supported stream source systems"
+    },
+    "TextLengthUnit": {
+      "description": "The unit a report's text lengths were measured in, as recorded in its\nmetric semantics.\n\nOnly the current unit has a value. Releases that counted UTF-8 bytes\nrecorded no unit at all, and a report from one reads back with the unit\nunknown rather than as a byte count it never declared.",
+      "oneOf": [
+        {
+          "const": "unicode_scalar",
+          "description": "Unicode scalar values, as counted by [`char_len`].",
+          "type": "string"
+        }
+      ]
     },
     "TextStats": {
       "description": "Statistics for text/string columns.\n\nEvery length here is a count of Unicode scalar values, not UTF-8 bytes and\nnot grapheme clusters. ASCII text is unaffected by that distinction; a\ncombining sequence counts each scalar, so the decomposed and precomposed\nspellings of the same word report different lengths. The `text_units` module\ncarries the reasoning.",

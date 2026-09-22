@@ -157,12 +157,15 @@ with every locale-specific pattern suppressed.
 
 ## Comparisons
 
-`before.compare(after)` returns deltas. Two caveats:
+`before.compare(after)` returns deltas. Three caveats:
 
 - Comparing a sampled profile to a full one measures your sampling, not drift.
   Check `sampling_applied` on both sides first.
 - Comparing profiles with different `metrics` selections produces absence, not
   change. Narrow both sides the same way.
+- A stored report can predate a change in how something is measured: text
+  lengths counted UTF-8 bytes through 0.11. Treat a measurement difference as
+  data only when `compare()["metric_semantics"]["comparable"]` is `True`.
 
 ## Things dataprof deliberately does not do
 

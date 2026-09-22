@@ -272,6 +272,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_status` | `str` | Why `quality` is or is not there (see below) |
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar"}`; `None` for a report written before 0.12, whose definitions are unknown |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -1006,8 +1007,15 @@ delta = before.compare(after)
 #   "dimensions": {"completeness": {...}, "consistency": {...}, ...},
 #   "columns": {"email": {"null_pct_a": 1.0, "null_pct_b": 6.5, "null_pct_delta": 5.5}, ...},
 #   "schema": {"added": ["phone"], "removed": [], "common": ["id", "email", ...]},
+#   "metric_semantics": {"a": {...}, "b": {...}, "comparable": True},
 # }
 ```
+
+`metric_semantics.comparable` is `True` when both reports record the same
+measurement definitions, and `None` when either side does not, which includes
+every report written before 0.12. Text lengths counted UTF-8 bytes through 0.11,
+so across that boundary a changed `max_length` on non-ASCII text can be the unit
+rather than the data.
 
 > The `compare()` result shape is provisional and will align with the Rust-side
 > `QualityDelta` type once it lands.

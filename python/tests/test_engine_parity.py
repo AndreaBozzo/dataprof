@@ -269,6 +269,16 @@ def test_serialized_parity_preserves_full_precision_accessors(engine, tmp_path):
 
 
 @pytest.mark.parametrize("engine", ENGINES)
+def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
+    """Provenance, so identical on every path and in both documents (#675)."""
+    report = build_report(engine, tmp_path)
+    expected = {"text_length_unit": "unicode_scalar"}
+    assert report.metric_semantics == expected
+    assert report.to_dict()["metric_semantics"] == expected
+    assert json.loads(report.to_json())["metric_semantics"] == expected
+
+
+@pytest.mark.parametrize("engine", ENGINES)
 def test_engine_column_order_follows_source(engine, tmp_path):
     report = build_report(engine, tmp_path)
     assert list(report) == list(COLUMNS)

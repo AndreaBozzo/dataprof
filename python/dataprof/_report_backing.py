@@ -123,6 +123,36 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     return _MappingAccessor(values)
 
 
+# Each named metric definition and the values a document may record for it.
+_METRIC_SEMANTICS = {"text_length_unit": ("unicode_scalar",)}
+
+
+def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
+    """Read `metric_semantics` as the Rust reader reads `MetricSemantics`.
+
+    A missing key is a document written before dataprof recorded it, so its
+    definitions are unknown: None, never the current ones. Unknown definition
+    names from a later writer are ignored; a malformed value is an error.
+    """
+    if "metric_semantics" not in document:
+        return None
+    semantics = document["metric_semantics"]
+    if not isinstance(semantics, dict):
+        raise ValueError(f"from_dict(): 'metric_semantics' must be a mapping, got {semantics!r}.")
+    read = {}
+    for name, allowed in _METRIC_SEMANTICS.items():
+        if name not in semantics:
+            continue
+        value = semantics[name]
+        if value not in allowed:
+            raise ValueError(
+                f"from_dict(): 'metric_semantics.{name}' must be one of "
+                f"{', '.join(allowed)}, got {value!r}."
+            )
+        read[name] = value
+    return read
+
+
 def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     execution = document.get("execution") or {}
     values = dict(execution)
@@ -134,6 +164,7 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["sampling_applied"] = bool(execution.get("sampling_applied", False))
     bindings = document.get("semantic_hint_bindings")
     values["semantic_hint_bindings"] = list(bindings) if isinstance(bindings, list) else []
+    values["metric_semantics"] = _read_metric_semantics(document)
     quality = document.get("quality")
     values["quality"] = _quality_accessor(quality) if isinstance(quality, dict) else None
     values["quality_score"] = quality.get("overall_score") if isinstance(quality, dict) else None

@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "source": "python[dataframe]",
+  "source_type": "dataframe",
+  "execution": {
+    "engine": "columnar",
+    "rows_processed": 4,
+    "columns_detected": 1,
+    "scan_time_ms": 22,
+    "source_exhausted": true,
+    "truncation_reason": null,
+    "bytes_consumed": null,
+    "throughput_rows_sec": 181.8182,
+    "memory_peak_mb": null,
+    "error_count": 0,
+    "ragged_row_count": 0,
+    "sampling_applied": false,
+    "sampling_ratio": null
+  },
+  "columns": [
+    {
+      "name": "city",
+      "data_type": "string",
+      "total_count": 4,
+      "null_count": 1,
+      "null_percentage": 25.0,
+      "unique_count": 3,
+      "unique_count_is_approximate": false,
+      "uniqueness_ratio": 0.75,
+      "type_homogeneity": {
+        "boolean": 0,
+        "date": 0,
+        "numeric": 0,
+        "text": 3
+      },
+      "stats": {
+        "min_length": 4,
+        "max_length": 7,
+        "avg_length": 5.6667
+      },
+      "patterns": []
+    }
+  ],
+  "quality": {
+    "overall_score": 89.58,
+    "assessed_dimensions": [
+      "completeness",
+      "consistency",
+      "uniqueness"
+    ],
+    "dimension_scores": {
+      "accuracy": null,
+      "completeness": 75.0,
+      "consistency": 100.0,
+      "precision": null,
+      "timeliness": null,
+      "uniqueness": 100.0,
+      "validity": null
+    },
+    "low_sample_warning": true,
+    "completeness": {
+      "complete_records_ratio": 75.0,
+      "missing_values_ratio": 25.0,
+      "null_columns": [],
+      "total_cells": 4
+    },
+    "consistency": {
+      "data_type_consistency": 100.0,
+      "encoding_issues": 0,
+      "format_violations": 0,
+      "values_checked": 3
+    },
+    "uniqueness": {
+      "duplicate_rows": 0,
+      "duplicate_rows_approximate": false,
+      "high_cardinality_warning": false,
+      "key_column": null,
+      "key_uniqueness": 100.0,
+      "rows_checked": 4
+    },
+    "accuracy": {
+      "negative_values_in_positive": 0,
+      "numeric_values_checked": 0,
+      "outlier_ratio": 0.0,
+      "range_violations": 0
+    },
+    "timeliness": {
+      "date_values_checked": 0,
+      "future_dates_count": 0,
+      "invalid_date_values": 0,
+      "stale_data_ratio": 0.0,
+      "temporal_pairs_checked": 0,
+      "temporal_violations": 0
+    },
+    "validity": {
+      "invalid_values": 0,
+      "valid_values_ratio": 100.0,
+      "values_checked": 0
+    },
+    "precision": {
+      "decimal_places_consistency": 100.0,
+      "inconsistent_precision_values": 0,
+      "numeric_values_checked": 0
+    }
+  }
+}

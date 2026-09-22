@@ -1,5 +1,6 @@
 use dataprof_core::{
     ColumnProfile, DataSource, ExecutionMetadata, QualityScoreWeights, SemanticHintBinding,
+    TextLengthUnit,
 };
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
@@ -59,6 +60,37 @@ pub enum QualityAnalysisStatus {
     Unrecorded,
 }
 
+/// How the measurements in a report were defined.
+///
+/// `schema_version` answers whether a document validates. It cannot answer
+/// whether two valid documents measured the same way: text lengths counted
+/// UTF-8 bytes through 0.11 and count Unicode scalar values since, with no
+/// change to the document's shape. This records each intentionally changed
+/// definition by name, so a comparison can check exactly the ones both
+/// reports declare.
+///
+/// Every field is optional. A field missing from a stored report means the
+/// release that wrote it did not record that definition: unknown, never the
+/// current one. Later releases add fields, which older readers ignore.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct MetricSemantics {
+    /// Unit of `min_length`, `max_length` and `avg_length` on text columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_length_unit: Option<TextLengthUnit>,
+}
+
+impl MetricSemantics {
+    /// The definitions this build measures with.
+    pub fn current() -> Self {
+        Self {
+            text_length_unit: Some(TextLengthUnit::UnicodeScalar),
+        }
+    }
+}
+
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
@@ -109,6 +141,14 @@ pub struct ProfileReport {
     /// evidence was sampled. Additive field — older readers ignore it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub semantic_hint_bindings: Vec<SemanticHintBinding>,
+    /// How this report's measurements were defined; see [`MetricSemantics`].
+    ///
+    /// Every report this build produces records [`MetricSemantics::current`].
+    /// `None` is a document written before dataprof recorded it, and its
+    /// definitions are unknown. Loading and saving keep the value the
+    /// document had rather than the reader's. Additive field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metric_semantics: Option<MetricSemantics>,
 }
 
 fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -147,6 +187,8 @@ struct PythonProfileReportDocument {
     quality_status: QualityAnalysisStatus,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metric_semantics: Option<MetricSemantics>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -482,6 +524,7 @@ impl PythonProfileReportDocument {
             quality,
             quality_status: report.quality_status.clone(),
             semantic_hint_bindings: report.semantic_hint_bindings.clone(),
+            metric_semantics: report.metric_semantics.clone(),
         })
     }
 }
@@ -630,6 +673,7 @@ impl ProfileReport {
             },
             quality,
             semantic_hint_bindings: Vec::new(),
+            metric_semantics: Some(MetricSemantics::current()),
         }
     }
 
@@ -730,6 +774,8 @@ struct ProfileReportFields {
     quality_status: Option<QualityAnalysisStatus>,
     #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
+    #[serde(default)]
+    metric_semantics: Option<MetricSemantics>,
 }
 
 impl From<ProfileReportFields> for ProfileReport {
@@ -752,6 +798,7 @@ impl From<ProfileReportFields> for ProfileReport {
             }),
             quality: fields.quality,
             semantic_hint_bindings: fields.semantic_hint_bindings,
+            metric_semantics: fields.metric_semantics,
         }
     }
 }
@@ -796,6 +843,13 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
             return Err(D::Error::custom(
                 "report quality_status must be an object; an explicit null is malformed, \
                  not a document written before the field existed",
+            ));
+        }
+        // Same rule: absent is "not recorded", which reads back as unknown;
+        // a null would be a current writer's malformed output.
+        if value.get("metric_semantics") == Some(&serde_json::Value::Null) {
+            return Err(D::Error::custom(
+                "report metric_semantics must be an object; an explicit null is malformed,                  not a document written before the field existed",
             ));
         }
         let report = ProfileReportFields::deserialize(value)
@@ -942,6 +996,59 @@ mod tests {
             error.to_string().contains("explicit null is malformed"),
             "unhelpful error: {error}"
         );
+    }
+
+    fn summary_value(report: &ProfileReport) -> serde_json::Value {
+        serde_json::from_str(&report.summary_json().unwrap()).unwrap()
+    }
+
+    /// A report built by this crate records how it measured, in both dialects.
+    /// A document written before the field reads back as unknown, and saving
+    /// it again must not stamp it with the reader's definitions.
+    #[test]
+    fn metric_semantics_are_recorded_and_absence_survives_a_roundtrip() {
+        let report = report_without_quality();
+        assert_eq!(report.metric_semantics, Some(MetricSemantics::current()));
+        let mut document = serde_json::to_value(&report).unwrap();
+        let recorded = json!({"text_length_unit": "unicode_scalar"});
+        assert_eq!(document["metric_semantics"], recorded);
+        assert_eq!(summary_value(&report)["metric_semantics"], recorded);
+
+        document.as_object_mut().unwrap().remove("metric_semantics");
+        let legacy: ProfileReport = serde_json::from_value(document).unwrap();
+        assert_eq!(legacy.metric_semantics, None);
+        assert!(
+            serde_json::to_value(&legacy)
+                .unwrap()
+                .get("metric_semantics")
+                .is_none()
+        );
+        assert!(summary_value(&legacy).get("metric_semantics").is_none());
+    }
+
+    #[test]
+    fn malformed_metric_semantics_fail_to_decode() {
+        for value in [
+            serde_json::Value::Null,
+            json!("unicode_scalar"),
+            json!({"text_length_unit": "utf8_byte"}),
+        ] {
+            let mut document = serde_json::to_value(report_without_quality()).unwrap();
+            document["metric_semantics"] = value.clone();
+            assert!(
+                serde_json::from_value::<ProfileReport>(document).is_err(),
+                "{value} decoded"
+            );
+        }
+    }
+
+    /// Later releases add definitions; an older reader keeps the ones it knows.
+    #[test]
+    fn unknown_metric_definitions_are_ignored() {
+        let mut document = serde_json::to_value(report_without_quality()).unwrap();
+        document["metric_semantics"]["grapheme_policy"] = json!("extended");
+        let restored: ProfileReport = serde_json::from_value(document).unwrap();
+        assert_eq!(restored.metric_semantics, Some(MetricSemantics::current()));
     }
 
     #[test]

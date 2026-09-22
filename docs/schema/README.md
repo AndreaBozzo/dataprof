@@ -458,3 +458,33 @@ written before this change omits the field whatever weights were used, so there
 its absence does not show that the defaults applied; the loader still reads an
 absent field as the defaults, as it did before. The canonical document from
 `to_json()` or JSON `save()` has kept custom weights since #714.
+
+## v1 additive change: `metric_semantics`
+
+Both dialects now carry a top-level `metric_semantics` object naming how the
+report's measurements were defined. It has one field per intentionally changed
+definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `text_length_unit` | `"unicode_scalar"` | unit of `min_length`, `max_length` and `avg_length` on text columns |
+
+`schema_version` answers whether a document validates. It cannot answer whether
+two valid documents measured the same way. Text lengths are the case in point:
+they counted UTF-8 bytes through 0.11 and count Unicode scalar values since
+(see above), with no change to the document's shape (#675).
+
+Every report this release produces records the object. It is additive and not
+`required`, so stored v1 reports remain valid. A document without it was written
+before dataprof recorded it: its definitions are **unknown**, not the current
+ones, and loading and saving it keeps the object absent rather than stamping the
+reader's definitions on it. An explicit `null` is malformed and fails to load in
+both dialects. Definition names this build does not know are ignored, so a later
+release can add one; a value this build does not know fails to load.
+
+Python's `compare()` reports both sides and `comparable`: `True` when both
+record the same definitions, `None` otherwise. Only `True` makes a difference
+in a measurement such as `max_length` a difference in the data.
+
+The object is provenance, not a metric, so it is outside the numeric equality
+contract above, and every engine and input path records the same value.
