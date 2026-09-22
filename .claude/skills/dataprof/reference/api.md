@@ -75,6 +75,7 @@ Read these before reporting any number. See the trust-signal step in SKILL.md.
 | `report.ragged_row_count` | rows whose field count did not match the header |
 | `report.execution_time_ms` / `report.throughput` / `report.memory_peak_mb` | cost |
 | `report.semantic_hint_bindings` | which columns the semantic policies bound to |
+| `report.metric_semantics` | how measurements were defined; `None` = written before 0.12, unknown |
 
 ## ProfileReport: output formats
 

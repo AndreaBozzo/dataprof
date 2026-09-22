@@ -32,7 +32,7 @@ from ._render import (
     _section_min_cost,
     _stats_cell,
 )
-from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _report_from_dict
+from ._report_backing import _DEFAULT_SCORE_WEIGHTS, _METRIC_SEMANTICS, _report_from_dict
 from ._report_schema import _QUALITY_DIMENSIONS, REPORT_SCHEMA_VERSION
 from ._rounding import _r2, _r4, _round_dimension, _round_quartiles
 
@@ -204,6 +204,23 @@ class ProfileReport:
         """
         sampled = self._report.quality_sampled_dimensions
         return None if sampled is None else list(sampled)
+
+    @property
+    def metric_semantics(self) -> dict[str, str] | None:
+        """How this report's measurements were defined.
+
+        A dict of named definitions, currently
+        ``{"text_length_unit": "unicode_scalar"}``. ``schema_version`` says
+        whether a document validates, not whether two reports measured the
+        same way: text lengths counted UTF-8 bytes through 0.11 with no change
+        to the document's shape.
+
+        ``None`` for a report loaded from a document written before dataprof
+        recorded this, whose definitions are unknown rather than the current
+        ones. A stored report keeps the value it was written with.
+        """
+        semantics = self._report.metric_semantics
+        return None if semantics is None else dict(semantics)
 
     @property
     def semantic_hint_bindings(self) -> list[dict[str, _Any]]:
@@ -390,6 +407,9 @@ class ProfileReport:
         bindings = self.semantic_hint_bindings
         if bindings:
             document["semantic_hint_bindings"] = bindings
+        semantics = self.metric_semantics
+        if semantics is not None:
+            document["metric_semantics"] = semantics
         return document
 
     def to_json(self, indent: int = 2) -> str:
@@ -832,6 +852,12 @@ class ProfileReport:
         - ``columns``: per-column null-percentage drift over the union of
           column names (missing on one side → ``None``).
         - ``schema``: column names ``added`` / ``removed`` / ``common``.
+        - ``metric_semantics``: each side's :attr:`metric_semantics` and
+          ``comparable``: ``True`` when both record every definition this
+          build knows, with the same values, and ``None`` when either side
+          does not, which includes every report written before 0.12. Only
+          ``True`` means a difference in a measurement, such as a text
+          length, is a difference in the data.
 
         .. note::
             The exact shape is provisional and will align with the Rust-side
@@ -887,10 +913,31 @@ class ProfileReport:
                 "null_pct_delta": null_delta,
             }
 
+        a_semantics = self.metric_semantics
+        b_semantics = other.metric_semantics
+        # Both sides must record every definition this build knows; an empty
+        # or partial record is as unknown as a missing one. Loaded values are
+        # validated to the one value each definition has today, so a `False`
+        # needs a second recorded value to become reachable.
+        known = _METRIC_SEMANTICS.keys()
+        comparable = (
+            a_semantics == b_semantics
+            if a_semantics is not None
+            and b_semantics is not None
+            and a_semantics.keys() == known
+            and b_semantics.keys() == known
+            else None
+        )
+
         return {
             "quality_score": _delta(self.quality_score, other.quality_score),
             "dimensions": dimensions,
             "columns": columns,
+            "metric_semantics": {
+                "a": a_semantics,
+                "b": b_semantics,
+                "comparable": comparable,
+            },
             "schema": {
                 "added": [name for name in b_order if name not in a_names],
                 "removed": [name for name in a_order if name not in b_names],

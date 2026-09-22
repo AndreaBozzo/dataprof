@@ -30,8 +30,8 @@ pub use dataprof_core::{
     ParquetMetadata, Pattern, PatternCategory, ProgressEvent, ProgressSink, QualityDimension,
     QualityScoreWeights, Quartiles, QueryEngine, RecoveryEvent, RecoveryKind, RowCountEstimate,
     SamplingStrategy, SchemaResult, SemanticHintBinding, SemanticHintKind, SemanticHints,
-    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextStats,
-    TruncationReason, TypeHomogeneity, ValidationError, validate_unique_column_names,
+    StopCondition, StopEvaluator, StructureColumnSummary, StructureReport, TextLengthUnit,
+    TextStats, TruncationReason, TypeHomogeneity, ValidationError, validate_unique_column_names,
 };
 pub use dataprof_csv::{
     CsvDiagnostics, CsvParserConfig, analyze_csv_file, analyze_csv_from_reader,
@@ -58,9 +58,9 @@ pub use dataprof_parquet::{
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{
-    Check, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult, MetricValue,
-    NotEvaluated, PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus, QualityPolicy,
-    REPORT_SCHEMA_VERSION, RequiredMetric, Verdict,
+    Check, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult, MetricSemantics,
+    MetricValue, NotEvaluated, PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus,
+    QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Verdict,
 };
 
 #[cfg(feature = "async-streaming")]

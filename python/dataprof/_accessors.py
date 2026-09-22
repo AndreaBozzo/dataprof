@@ -233,6 +233,7 @@ class _ReportView(_View):
     sampled_row_ranges = _Field[list[list[int]] | None]()
     recovery_events = _Field[list[dict[str, str]] | None]()
     semantic_hint_bindings = _Field[list[dict[str, Any]]]()
+    metric_semantics = _Field[dict[str, str] | None]()
     quality_score = _Field[float | None]()
     quality_sampled_dimensions = _Field[list[str] | None]()
     quality_status = _Field[str]()

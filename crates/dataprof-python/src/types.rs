@@ -5,7 +5,7 @@ use pyo3::types::PyDict;
 use dataprof::{
     ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport,
     QualityAnalysisStatus, QualityAssessment, QualityMetrics, QualityScores, SemanticHintKind,
-    TruncationReason,
+    TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1088,6 +1088,29 @@ impl PyProfileReport {
             QualityAnalysisStatus::Failed { error } => Some(error),
             _ => None,
         }
+    }
+
+    /// How this report's measurements were defined, as a dict of named
+    /// definitions such as ``{"text_length_unit": "unicode_scalar"}``.
+    ///
+    /// None for a report loaded from a document written before dataprof
+    /// recorded it: its definitions are unknown, not the current ones. A
+    /// stored report keeps the value it was written with.
+    #[getter]
+    fn metric_semantics<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(semantics) = &self.inner.metric_semantics else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        if let Some(unit) = semantics.text_length_unit {
+            dict.set_item(
+                "text_length_unit",
+                match unit {
+                    TextLengthUnit::UnicodeScalar => "unicode_scalar",
+                },
+            )?;
+        }
+        Ok(Some(dict))
     }
 
     /// Per-column semantic-hint binding evidence.
