@@ -740,24 +740,33 @@ impl<'de> Deserialize<'de> for QualityAssessment {
         }
         let document = Document::deserialize(deserializer)?;
         if let Some(scores) = &document.scores {
-            let valid_score = |score: Option<f64>, assessed: bool| {
-                score.is_some() == assessed
-                    && score.is_none_or(|value| value.is_finite() && (0.0..=100.0).contains(&value))
+            let in_range = |score: Option<f64>| {
+                score.is_none_or(|value| value.is_finite() && (0.0..=100.0).contains(&value))
             };
-            if !valid_score(
-                scores.overall_score,
-                document.metrics.overall_score().is_some(),
-            ) || QualityDimension::all().into_iter().any(|dimension| {
-                scores
-                    .dimension_scores
-                    .get(&dimension.to_string())
-                    .is_none_or(|score| {
-                        !valid_score(
-                            *score,
-                            document.metrics.dimension_score(dimension).is_some(),
-                        )
-                    })
-            }) {
+            let valid_score =
+                |score: Option<f64>, assessed: bool| score.is_some() == assessed && in_range(score);
+            // Scores for dimensions this build does not know are retained, so
+            // the range applies to every entry, not only the known ones.
+            if !scores
+                .dimension_scores
+                .values()
+                .all(|score| in_range(*score))
+                || !valid_score(
+                    scores.overall_score,
+                    document.metrics.overall_score().is_some(),
+                )
+                || QualityDimension::all().into_iter().any(|dimension| {
+                    scores
+                        .dimension_scores
+                        .get(&dimension.to_string())
+                        .is_none_or(|score| {
+                            !valid_score(
+                                *score,
+                                document.metrics.dimension_score(dimension).is_some(),
+                            )
+                        })
+                })
+            {
                 return Err(serde::de::Error::custom(
                     "quality scores must include every dimension, preserve unassessed scores as null, and lie in 0..=100",
                 ));
@@ -962,6 +971,17 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("accuracy");
+        assert!(serde_json::from_value::<QualityAssessment>(document).is_err());
+    }
+
+    #[test]
+    fn saved_scores_for_unknown_dimensions_are_range_checked() {
+        let assessment = QualityAssessment::exact(perfect_assessed());
+        let mut document = serde_json::to_value(&assessment).unwrap();
+        document["scores"]["dimension_scores"]["lineage"] = serde_json::json!(55.0);
+        let restored: QualityAssessment = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(restored.scores().dimension_scores["lineage"], Some(55.0));
+        document["scores"]["dimension_scores"]["lineage"] = serde_json::json!(1000.0);
         assert!(serde_json::from_value::<QualityAssessment>(document).is_err());
     }
 

@@ -34,8 +34,8 @@ The summary is a convenience projection, not a lossless persistence format;
 Python `from_dict()`, `from_json()` and `load()` accept either shape. A loaded
 flat summary stays flat when resaved: it never recorded report identity, full
 source metadata or quality confidence, so manufacturing those fields would
-misrepresent the original run. Missing legacy version/provenance markers remain
-missing. Rust's `ProfileReport` reader reads the canonical shape; the flat
+misrepresent the original run. Missing provenance markers stay missing; the
+resave does add `schema_version`, because it is written by a v1 build. Rust's `ProfileReport` reader reads the canonical shape; the flat
 compatibility loader remains a Python API.
 
 This preserves the published v1 validation contract instead of silently
