@@ -203,6 +203,74 @@ def test_default_score_weights_stay_out_of_both_summaries():
     assert "score_weights" not in dataprof.ProfileReport.from_dict(summary).to_dict()["quality"]
 
 
+def _weights_through_both_readers(weights):
+    """The same value read from a flat summary and from a canonical document."""
+    report = dataprof.profile({"x": [1, None, 3]})
+    summary = report.to_dict()
+    summary["quality"]["score_weights"] = weights
+    canonical = json.loads(report.to_json())
+    canonical["quality"]["metrics"]["score_weights"] = weights
+    flat = dataprof.ProfileReport.from_dict(summary).quality
+    native = dataprof.ProfileReport.from_json(json.dumps(canonical)).quality
+    assert flat is not None and native is not None
+    return flat.score_weights, native.score_weights
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [
+        {"completeness": 1.0},
+        {"completeness": 2, "precision": 0},
+        {"completeness": 1.0, "lineage": 5.0},
+    ],
+    ids=["partial", "integers", "unknown-dimension"],
+)
+def test_flat_score_weights_read_as_the_rust_reader_reads_them(weights):
+    flat, native = _weights_through_both_readers(weights)
+    assert flat == native
+
+
+@pytest.mark.parametrize(
+    "weights",
+    [
+        "x",
+        None,
+        {"completeness": "high"},
+        {"completeness": True},
+        [1, 2],
+        {"completeness": float("nan")},
+        {"completeness": float("inf")},
+        {"completeness": float("-inf")},
+        {"completeness": 10**400},
+    ],
+    ids=[
+        "string",
+        "null",
+        "string-weight",
+        "bool-weight",
+        "sequence",
+        "nan",
+        "inf",
+        "-inf",
+        "overflowing-int",
+    ],
+)
+def test_malformed_flat_score_weights_are_rejected_not_defaulted(weights):
+    summary = dataprof.profile({"x": [1, None, 3]}).to_dict()
+    summary["quality"]["score_weights"] = weights
+    with pytest.raises(ValueError, match=r"quality\.score_weights"):
+        dataprof.ProfileReport.from_dict(summary)
+
+
+def test_absent_flat_score_weights_are_the_defaults():
+    summary = dataprof.profile({"x": [1, None, 3]}).to_dict()
+    assert "score_weights" not in summary["quality"]
+    flat = dataprof.ProfileReport.from_dict(summary).quality
+    live = dataprof.profile({"x": [1]}).quality
+    assert flat is not None and live is not None
+    assert flat.score_weights == live.score_weights
+
+
 @pytest.mark.parametrize("key", ["data_source", "column_profiles"])
 def test_additive_canonical_key_does_not_reroute_a_flat_summary(key):
     summary = dataprof.profile({"x": [1, 2, None]}).to_dict()
