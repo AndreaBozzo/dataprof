@@ -440,3 +440,21 @@ projection withholding still applies to the requested dimensions. `no_data`
 remains available for an assembler that receives no quality sample, distinct
 from an explicitly supplied empty sample. It no longer denotes a successfully
 analyzed empty source.
+
+## v1 additive change: `score_weights` in the Python dialect
+
+The Python dialect's `quality` object now carries `score_weights`, the relative
+weights behind `overall_score`, with the same rule the Rust dialect applies to
+`quality.metrics.score_weights`: custom weights are written and default weights
+are omitted (#760).
+
+Previously the summary dropped them, so a report assessed with custom weights
+came back from `ProfileReport.from_dict(report.to_dict())` with the default
+weights next to an `overall_score` those defaults did not produce.
+
+The field is additive and not `required`: stored v1 reports remain valid.
+Summaries of reports that use the default weights are unchanged. A summary
+written before this change omits the field whatever weights were used, so there
+its absence does not show that the defaults applied; the loader still reads an
+absent field as the defaults, as it did before. The canonical document from
+`to_json()` or JSON `save()` has kept custom weights since #714.
