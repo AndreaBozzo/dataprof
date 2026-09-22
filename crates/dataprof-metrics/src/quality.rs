@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::errors::DataProfilerError;
 
 /// Completeness metrics (ISO 8000-8).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CompletenessMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub missing_values_ratio: f64,
@@ -24,7 +24,7 @@ pub struct CompletenessMetrics {
 }
 
 /// Consistency metrics (ISO 8000-61).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConsistencyMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub data_type_consistency: f64,
@@ -37,7 +37,7 @@ pub struct ConsistencyMetrics {
 }
 
 /// Uniqueness metrics (ISO 8000-110).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UniquenessMetrics {
     pub duplicate_rows: usize,
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
@@ -88,7 +88,7 @@ pub struct RowCompletenessSummary {
 }
 
 /// Accuracy metrics (ISO 25012).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AccuracyMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub outlier_ratio: f64,
@@ -102,7 +102,7 @@ pub struct AccuracyMetrics {
 }
 
 /// Timeliness metrics (ISO 8000-8).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimelinessMetrics {
     pub future_dates_count: usize,
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
@@ -127,7 +127,7 @@ pub struct TimelinessMetrics {
 }
 
 /// Validity metrics derived from confidently detected semantic patterns.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ValidityMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub valid_values_ratio: f64,
@@ -138,7 +138,7 @@ pub struct ValidityMetrics {
 }
 
 /// Precision metrics for effective decimal-scale consistency.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrecisionMetrics {
     #[serde(serialize_with = "crate::serde_helpers::round_2")]
     pub decimal_places_consistency: f64,
@@ -244,7 +244,7 @@ impl_assessed!(
 );
 
 /// Comprehensive data quality metrics following industry standards.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QualityMetrics {
     #[serde(skip_serializing_if = "is_unassessed")]
     pub completeness: Option<CompletenessMetrics>,
@@ -662,11 +662,119 @@ pub enum MetricConfidence {
     Unrecorded,
 }
 
-/// Wraps quality metrics with confidence information.
+/// Aggregate scores retained alongside rounded metric inputs in saved reports.
+/// Recomputing these from rounded ratios can change a threshold decision.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct QualityScores {
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
+    pub overall_score: Option<f64>,
+    #[serde(serialize_with = "serialize_dimension_scores")]
+    pub dimension_scores: std::collections::BTreeMap<String, Option<f64>>,
+}
+
+fn serialize_dimension_scores<S: serde::Serializer>(
+    scores: &std::collections::BTreeMap<String, Option<f64>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Score(
+        #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")] Option<f64>,
+    );
+    scores
+        .iter()
+        .map(|(name, value)| (name, Score(*value)))
+        .collect::<std::collections::BTreeMap<_, _>>()
+        .serialize(serializer)
+}
+
+impl QualityScores {
+    fn from_metrics(metrics: &QualityMetrics) -> Self {
+        Self {
+            overall_score: metrics.overall_score(),
+            dimension_scores: QualityDimension::all()
+                .into_iter()
+                .map(|dimension| (dimension.to_string(), metrics.dimension_score(dimension)))
+                .collect(),
+        }
+    }
+}
+
+/// Wraps quality metrics with confidence information.
+#[derive(Debug, Clone, schemars::JsonSchema)]
 pub struct QualityAssessment {
     pub metrics: QualityMetrics,
     pub confidence: MetricConfidence,
+    /// Scores from a saved document. Absent on older documents; those derive
+    /// their scores from the metric values they actually recorded.
+    #[schemars(default)]
+    scores: Option<QualityScores>,
+    #[schemars(skip)]
+    score_inputs: Option<Box<QualityMetrics>>,
+}
+
+impl Serialize for QualityAssessment {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Document<'a> {
+            metrics: &'a QualityMetrics,
+            confidence: &'a MetricConfidence,
+            scores: QualityScores,
+        }
+        Document {
+            metrics: &self.metrics,
+            confidence: &self.confidence,
+            scores: self.scores(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for QualityAssessment {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Document {
+            metrics: QualityMetrics,
+            confidence: MetricConfidence,
+            #[serde(default)]
+            scores: Option<QualityScores>,
+        }
+        let document = Document::deserialize(deserializer)?;
+        if let Some(scores) = &document.scores {
+            let valid_score = |score: Option<f64>, assessed: bool| {
+                score.is_some() == assessed
+                    && score.is_none_or(|value| value.is_finite() && (0.0..=100.0).contains(&value))
+            };
+            if !valid_score(
+                scores.overall_score,
+                document.metrics.overall_score().is_some(),
+            ) || QualityDimension::all().into_iter().any(|dimension| {
+                scores
+                    .dimension_scores
+                    .get(&dimension.to_string())
+                    .is_none_or(|score| {
+                        !valid_score(
+                            *score,
+                            document.metrics.dimension_score(dimension).is_some(),
+                        )
+                    })
+            }) {
+                return Err(serde::de::Error::custom(
+                    "quality scores must include every dimension, preserve unassessed scores as null, and lie in 0..=100",
+                ));
+            }
+        }
+        let score_inputs = if document.scores.is_some() {
+            Some(Box::new(document.metrics.clone()))
+        } else {
+            None
+        };
+        Ok(Self {
+            metrics: document.metrics,
+            confidence: document.confidence,
+            scores: document.scores,
+            score_inputs,
+        })
+    }
 }
 
 impl QualityAssessment {
@@ -694,6 +802,8 @@ impl QualityAssessment {
         Self {
             metrics,
             confidence,
+            scores: None,
+            score_inputs: None,
         }
     }
 
@@ -718,7 +828,19 @@ impl QualityAssessment {
     /// Overall quality score, or `None` when no dimension was assessable.
     /// See [`QualityMetrics::overall_score`].
     pub fn score(&self) -> Option<f64> {
-        self.metrics.overall_score()
+        self.scores().overall_score
+    }
+
+    /// Original aggregate scores for unchanged restored metrics; otherwise
+    /// compute from the current metrics. The input snapshot prevents a caller
+    /// mutating public `metrics` from accidentally retaining stale scores.
+    pub fn scores(&self) -> QualityScores {
+        if let (Some(scores), Some(inputs)) = (&self.scores, &self.score_inputs)
+            && &self.metrics == inputs.as_ref()
+        {
+            return scores.clone();
+        }
+        QualityScores::from_metrics(&self.metrics)
     }
 
     /// Labels of the metric components computed from a retained sample of the
@@ -785,6 +907,63 @@ impl From<QualityMetrics> for QualityAssessment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_aggregate_scores_survive_rounding_their_inputs() {
+        let metrics = QualityMetrics {
+            completeness: Some(CompletenessMetrics {
+                missing_values_ratio: 32.77465638193188,
+                complete_records_ratio: 67.22534361806812,
+                null_columns: vec![],
+                total_cells: 100,
+            }),
+            ..QualityMetrics::default()
+        };
+        let assessment = QualityAssessment::exact(metrics);
+        let document = serde_json::to_value(&assessment).unwrap();
+        assert_eq!(document["scores"]["overall_score"], 67.23);
+        let mut restored: QualityAssessment = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(restored.score(), Some(67.23));
+        assert_eq!(
+            restored.scores().dimension_scores["completeness"],
+            Some(67.23)
+        );
+        assert_eq!(serde_json::to_value(&restored).unwrap(), document);
+
+        // Public metrics may be edited by Rust callers, including below the
+        // serialization precision. Any actual edit invalidates retained scores.
+        restored
+            .metrics
+            .completeness
+            .as_mut()
+            .unwrap()
+            .missing_values_ratio += 0.0001;
+        assert_eq!(restored.score(), restored.metrics.overall_score());
+        assert_ne!(restored.score(), Some(67.23));
+    }
+
+    #[test]
+    fn legacy_quality_without_saved_scores_remains_readable() {
+        let assessment = QualityAssessment::exact(perfect_assessed());
+        let mut document = serde_json::to_value(&assessment).unwrap();
+        document.as_object_mut().unwrap().remove("scores");
+        let restored: QualityAssessment = serde_json::from_value(document).unwrap();
+        assert_eq!(restored.score(), restored.metrics.overall_score());
+    }
+
+    #[test]
+    fn saved_scores_cannot_fabricate_assessed_dimensions() {
+        let assessment = QualityAssessment::exact(QualityMetrics::default());
+        let mut document = serde_json::to_value(&assessment).unwrap();
+        document["scores"]["dimension_scores"]["accuracy"] = serde_json::json!(100.0);
+        assert!(serde_json::from_value::<QualityAssessment>(document).is_err());
+        let mut document = serde_json::to_value(&assessment).unwrap();
+        document["scores"]["dimension_scores"]
+            .as_object_mut()
+            .unwrap()
+            .remove("accuracy");
+        assert!(serde_json::from_value::<QualityAssessment>(document).is_err());
+    }
 
     /// Metrics where every dimension has data to assess and a perfect score.
     fn perfect_assessed() -> QualityMetrics {

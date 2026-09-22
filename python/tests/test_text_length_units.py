@@ -113,4 +113,7 @@ def test_the_serialized_report_carries_the_same_lengths(tmp_path) -> None:
     assert emitted["min_length"] == EXPECTED_MIN
     assert emitted["max_length"] == EXPECTED_MAX
     assert emitted["avg_length"] == EXPECTED_AVG
-    assert json.loads(report.to_json())["columns"][0]["stats"]["max_length"] == EXPECTED_MAX
+    assert (
+        json.loads(report.to_json())["column_profiles"][0]["stats"]["Text"]["max_length"]
+        == EXPECTED_MAX
+    )

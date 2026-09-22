@@ -70,6 +70,7 @@ class ProfileReport:
     _MAX_REPR_COLUMNS = 15
 
     def __init__(self, report: _RustProfileReport | _ReportView):
+        self._native_report = None if isinstance(report, _ReportView) else report
         self._report = (
             report if isinstance(report, _ReportView) else _ReportView(_NativeAccessor(report))
         )
@@ -315,10 +316,20 @@ class ProfileReport:
 
         All floating-point values are rounded: 2dp for ``0..100`` percentages,
         4dp for statistics and for ``0..1`` ratios such as ``uniqueness_ratio``.
-        The document carries ``schema_version`` (``dataprof.REPORT_SCHEMA_VERSION``) so
-        saved reports remain readable across releases; see
+        This is the historical flat summary, produced by the Rust runtime.
+        Use :meth:`to_json` or JSON :meth:`save` for the complete persisted
+        document. The summary carries ``schema_version``; see
         :meth:`from_dict` for the compatibility policy.
         """
+        if self._native_report is not None:
+            return _json.loads(self._native_report.summary_json())
+        # Legacy flat documents lack full source and quality provenance, so
+        # they never become a canonical runtime report. Rebuild the summary
+        # from the accessors rather than echoing the input: the export must
+        # agree with what the loader kept, dropped or normalized.
+        return self._legacy_summary()
+
+    def _legacy_summary(self) -> dict[str, _Any]:
         cols = [column_to_dict(col) for col in self._report.column_profiles]
 
         quality_dict = None
@@ -330,23 +341,13 @@ class ProfileReport:
                 "dimension_scores": {
                     name: _r2(score) for name, score in q.dimension_scores().items()
                 },
+                "low_sample_warning": bool(q.low_sample_warning),
             }
-            # Always emit: a non-optional bool (False = "sample was adequate")
-            # so consumers never have to infer absence, and from_dict round-trips
-            # both states. See docs/python/README.md report-schema notes.
-            quality_dict["low_sample_warning"] = bool(q.low_sample_warning)
-            # How the numbers were obtained. Always emitted when there is an
-            # assessment: a score computed from a retained sample must not read
-            # back as one computed over every scanned row.
-            # Absence is preserved: a document loaded from a release that did
-            # not record this must not round-trip as "nothing was sampled".
+            # Absence is preserved: a document from a release that did not
+            # record this must not round-trip as "nothing was sampled".
             sampled = self.quality_sampled_dimensions
             if sampled is not None:
                 quality_dict["sampled_dimensions"] = sampled
-            # The dimension dicts used to be passed through raw while the Rust
-            # serializer rounded every float in them to 2dp, so the two layers
-            # reported different numbers for the same field — 4.833333333333333
-            # here against 4.83 there (#513).
             for dimension in _QUALITY_DIMENSIONS:
                 values = getattr(q, dimension)
                 if values is not None:
@@ -373,27 +374,32 @@ class ProfileReport:
             },
             "columns": cols,
             "quality": quality_dict,
-            # Why `quality` is or is not there. Always emitted: a report whose
-            # quality computation failed must not read back as one that never
-            # asked for quality.
             "quality_status": _quality_status_document(self.quality_status, self.quality_error),
         }
-        # Additive provenance is omitted when the input path did not record it.
+        # Additive provenance is omitted when the document did not record it.
         events = self.recovery_events
         if events is not None:
             _cast(dict[str, _Any], document["execution"])["recovery_events"] = events
         ranges = self.sampled_row_ranges
         if ranges is not None:
             _cast(dict[str, _Any], document["execution"])["sampled_row_ranges"] = ranges
-        # Additive: only present when hints were supplied, so hint-free reports
-        # keep their existing shape.
         bindings = self.semantic_hint_bindings
         if bindings:
             document["semantic_hint_bindings"] = bindings
         return document
 
     def to_json(self, indent: int = 2) -> str:
-        """Export the report as a JSON string."""
+        """Export the canonical Rust report document for lossless persistence.
+
+        Unlike the convenience summary returned by :meth:`to_dict`, this keeps
+        report identity, detailed source metadata and quality confidence.
+        Loaded legacy flat documents retain their original document shape.
+        """
+        if self._native_report is not None:
+            text = self._native_report.to_json()
+            if indent == 2:
+                return text
+            return _json.dumps(_json.loads(text), indent=indent, ensure_ascii=False)
         return _json.dumps(self.to_dict(), indent=indent)
 
     def _records(self) -> list[dict[str, _Any]]:
@@ -594,7 +600,7 @@ class ProfileReport:
         path = _normalize_pathlike(path)
         lower_path = path.lower()
         if lower_path.endswith(".json"):
-            with open(path, "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(self.to_json())
         elif lower_path.endswith(".csv"):
             records = self._records()
@@ -890,7 +896,7 @@ class ProfileReport:
 
     @classmethod
     def from_dict(cls, data: dict[str, _Any]) -> ProfileReport:
-        """Rebuild a read-only ProfileReport from a dict produced by :meth:`to_dict`.
+        """Rebuild a read-only report from a canonical document or :meth:`to_dict` summary.
 
         The reconstructed report uses the same read-only accessors as a live
         report, reading saved values rather than the native engine. All export methods
@@ -921,7 +927,7 @@ class ProfileReport:
         # written before versioning existed may omit it.
         if "schema_version" in data:
             version = data["schema_version"]
-            if version is None or isinstance(version, bool) or not isinstance(version, int):
+            if isinstance(version, bool) or not isinstance(version, int) or version < 0:
                 raise ValueError(
                     f"from_dict(): 'schema_version' must be an integer, got {version!r}."
                 )
@@ -931,6 +937,8 @@ class ProfileReport:
                     f"reads up to version {REPORT_SCHEMA_VERSION}. Upgrade dataprof "
                     "to load it."
                 )
+        if "data_source" in data or "column_profiles" in data:
+            return cls(_RustProfileReport.from_json(_json.dumps(data)))
         if not {"source", "columns", "execution"} <= data.keys():
             raise ValueError(
                 "from_dict() expects a mapping produced by ProfileReport.to_dict() "

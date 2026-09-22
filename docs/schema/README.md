@@ -10,12 +10,49 @@ Schema versions are independent of package versions. The filename and `$id`
 must use the same version as Rust's `REPORT_SCHEMA_VERSION` and Python's
 `dataprof.REPORT_SCHEMA_VERSION`.
 
-Version 1 covers both existing serialization dialects:
+Starting in 0.12, the canonical persisted document is Rust's complete runtime
+report: `data_source`, `column_profiles`, report `id` and `timestamp`, and the
+confidence-wrapped quality assessment. Python `to_json()` and JSON `save()` use
+the same Rust serializer. `ProfileReport::to_json()` sorts object keys recursively
+for byte-stable output; arrays retain their order. Ordinary Rust Serde output
+has the same document values, without a promise about map-key byte order.
+
+### The v1 compatibility decision (#714)
+
+Version 1 deliberately continues to accept two shapes:
 
 - Rust's complete runtime document (`data_source`, `column_profiles`, and the
   confidence-wrapped quality assessment).
-- Python's high-level export document (`source`, `source_type`, `columns`, and
-  its flattened quality summary).
+- The historical Python summary (`source`, `source_type`, `columns`, and its
+  flattened quality summary), still available through Python `to_dict()`.
+
+Both producers now live in Rust, and the summary's producer uses the very types
+that generate its schema. Python no longer builds a parallel serialized report.
+The summary is a convenience projection, not a lossless persistence format;
+`json.loads(report.to_json())` is the full document as a Python dictionary.
+
+Python `from_dict()`, `from_json()` and `load()` accept either shape. A loaded
+flat summary stays flat when resaved: it never recorded report identity, full
+source metadata or quality confidence, so manufacturing those fields would
+misrepresent the original run. Missing legacy version/provenance markers remain
+missing. Rust's `ProfileReport` reader reads the canonical shape; the flat
+compatibility loader remains a Python API.
+
+This preserves the published v1 validation contract instead of silently
+narrowing it. New profiles save only the canonical shape. Consumers of the old
+JSON layout should use `to_dict()` for its summary keys, or migrate to the
+canonical paths above. A future schema v2 may remove the summary branch from
+the persistence schema; that requires an explicit migration for incomplete
+legacy provenance, not relabeling a flat document as a complete runtime report.
+
+The canonical quality block now also retains `scores.overall_score` and
+`scores.dimension_scores`, at the existing two-decimal score precision. These
+are the aggregate values the Python summary already persisted. They must travel
+with the rounded input metrics: deriving them again from rounded ratios can
+change the saved score beyond its documented rounding. Older canonical documents without `scores`
+remain readable and derive scores from the metrics they recorded. Rust callers
+that edit a restored assessment's public metrics invalidate its saved scores;
+subsequent score access and serialization use the edited metrics.
 
 Both dialects accept unknown additive object properties. This matches the v1
 reader policy and lets compatible fields be added without invalidating stored
@@ -61,8 +98,8 @@ history therefore records `flexible`, without claiming an encoding conversion.
 
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
-`to_json()`, and JSON `save()` output. Compare corresponding metrics across
-the two dialects; their document layouts differ.
+`to_json()`, and JSON `save()` output. JSON persistence now uses the same document
+layout; `to_dict()` retains the summary projection described above.
 
 For the same logical values, schema semantics, analysis options and analyzed
 population, serialized metrics must compare exactly, with no additional
@@ -159,7 +196,7 @@ not required by the base `dataprof` wheel.
 
 Because the schema allows unknown additive properties, a successful validation
 confirms required fields and primitive types but does not reject extra keys.
-The Python API writes the `PythonProfileReportDocument` shape, so the examples
+New Python JSON saves write the `ProfileReport` shape, so the examples
 below pin validation to that branch of the versioned schema. This keeps errors
 focused on the fields that matter to Python consumers instead of reporting the
 whole document as failing a top-level `anyOf`.
@@ -189,7 +226,7 @@ else:
     schema = json.loads(Path(schema_source).read_text(encoding="utf-8"))
 
 document_schema = {key: value for key, value in schema.items() if key != "anyOf"}
-document_schema["$ref"] = "#/$defs/PythonProfileReportDocument"
+document_schema["$ref"] = "#/$defs/ProfileReport"
 Draft202012Validator.check_schema(document_schema)
 report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
 validator = Draft202012Validator(document_schema)

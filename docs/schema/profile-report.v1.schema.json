@@ -1957,6 +1957,18 @@
         },
         "metrics": {
           "$ref": "#/$defs/QualityMetrics"
+        },
+        "scores": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualityScores"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Scores from a saved document. Absent on older documents; those derive\ntheir scores from the metric values they actually recorded."
         }
       },
       "required": [
@@ -2096,6 +2108,33 @@
         "timeliness",
         "validity",
         "precision"
+      ],
+      "type": "object"
+    },
+    "QualityScores": {
+      "description": "Aggregate scores retained alongside rounded metric inputs in saved reports.\nRecomputing these from rounded ratios can change a threshold decision.",
+      "properties": {
+        "dimension_scores": {
+          "additionalProperties": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "type": "object"
+        },
+        "overall_score": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "overall_score",
+        "dimension_scores"
       ],
       "type": "object"
     },
@@ -2524,6 +2563,6 @@
       "$ref": "#/$defs/PythonProfileReportDocument"
     }
   ],
-  "description": "Both v1 serialization dialects accepted by dataprof.\n\nRust serializes the complete runtime model. The high-level Python wrapper\npredates that shape and exposes a deliberately flatter document. They share\none schema version and compatibility policy, so the published artifact\ndescribes their union rather than pretending one dialect does not exist.",
+  "description": "The canonical persisted report and the legacy Python compatibility summary.\n\nNew JSON saves in both languages use `ProfileReport`. Python's `to_dict()`\nremains a convenience projection, produced by `PythonProfileReportDocument`\nbelow. Existing flat documents cannot acquire the source/quality provenance\nthey never recorded, so the v1 union remains an intentional compatibility\nsurface for loading and resaving those documents.",
   "title": "ProfileReport"
 }

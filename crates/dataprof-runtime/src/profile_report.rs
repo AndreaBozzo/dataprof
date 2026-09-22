@@ -117,12 +117,13 @@ fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema 
     })
 }
 
-/// Both v1 serialization dialects accepted by dataprof.
+/// The canonical persisted report and the legacy Python compatibility summary.
 ///
-/// Rust serializes the complete runtime model. The high-level Python wrapper
-/// predates that shape and exposes a deliberately flatter document. They share
-/// one schema version and compatibility policy, so the published artifact
-/// describes their union rather than pretending one dialect does not exist.
+/// New JSON saves in both languages use `ProfileReport`. Python's `to_dict()`
+/// remains a convenience projection, produced by `PythonProfileReportDocument`
+/// below. Existing flat documents cannot acquire the source/quality provenance
+/// they never recorded, so the v1 union remains an intentional compatibility
+/// surface for loading and resaving those documents.
 #[allow(dead_code)]
 #[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -132,8 +133,7 @@ enum SerializedProfileReport {
     Python(Box<PythonProfileReportDocument>),
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonProfileReportDocument {
     #[schemars(schema_with = "schema_version_schema")]
     schema_version: u32,
@@ -147,8 +147,7 @@ struct PythonProfileReportDocument {
     semantic_hint_bindings: Vec<SemanticHintBinding>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 enum PythonSourceType {
     File,
@@ -158,8 +157,7 @@ enum PythonSourceType {
     Bytes,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonExecutionDocument {
     engine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,26 +168,30 @@ struct PythonExecutionDocument {
     source_exhausted: bool,
     truncation_reason: Option<String>,
     bytes_consumed: Option<u64>,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     throughput_rows_sec: Option<f64>,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
     memory_peak_mb: Option<f64>,
     error_count: usize,
     ragged_row_count: usize,
     sampling_applied: bool,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     sampling_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_row_ranges: Option<Vec<[u64; 2]>>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonColumnDocument {
     name: String,
     data_type: PythonDataType,
     total_count: usize,
     null_count: usize,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
     null_percentage: Option<f64>,
     unique_count: Option<usize>,
     unique_count_is_approximate: Option<bool>,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     uniqueness_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     invalid_count: Option<usize>,
@@ -206,8 +208,7 @@ struct PythonColumnDocument {
     patterns: Option<Vec<PythonPatternDocument>>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 enum PythonDataType {
     String,
@@ -218,8 +219,7 @@ enum PythonDataType {
     Boolean,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonColumnStatsDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     min: Option<f64>,
@@ -267,19 +267,19 @@ struct PythonColumnStatsDocument {
     true_ratio: Option<f64>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonPatternDocument {
     name: String,
     regex: String,
     match_count: usize,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
     match_percentage: f64,
     category: dataprof_core::PatternCategory,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4")]
     confidence: f64,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonQualityDocument {
     /// Null when no dimension was assessable; `assessed_dimensions` is then
     /// empty and every entry in `dimension_scores` is null.
@@ -310,9 +310,17 @@ struct PythonQualityDocument {
     precision: Option<PrecisionMetrics>,
 }
 
-#[allow(dead_code)]
 #[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 enum PythonQualityDimension {
@@ -325,8 +333,7 @@ enum PythonQualityDimension {
     Precision,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonUniquenessDocument {
     duplicate_rows: usize,
     key_uniqueness: f64,
@@ -334,6 +341,141 @@ struct PythonUniquenessDocument {
     rows_checked: usize,
     key_column: Option<String>,
     duplicate_rows_approximate: bool,
+}
+
+impl PythonProfileReportDocument {
+    fn from_report(report: &ProfileReport) -> serde_json::Result<Self> {
+        use dataprof_core::{ColumnStats, DataType, TruncationReason};
+
+        // Reuse the serialized metric blocks: their Serde implementations own
+        // rounding and omission, rather than repeating those rules in Python.
+        let columns = report
+            .column_profiles
+            .iter()
+            .map(|column| {
+                let stats = match &column.stats {
+                    ColumnStats::Numeric(stats) => Some(serde_json::to_value(stats)?),
+                    ColumnStats::Text(stats) if column.total_count > 0 => {
+                        Some(serde_json::to_value(stats)?)
+                    }
+                    ColumnStats::Boolean(stats) => Some(serde_json::to_value(stats)?),
+                    _ => None,
+                }
+                .map(serde_json::from_value)
+                .transpose()?;
+                Ok(PythonColumnDocument {
+                    name: column.name.clone(),
+                    data_type: match column.data_type {
+                        DataType::String => PythonDataType::String,
+                        DataType::Identifier => PythonDataType::Identifier,
+                        DataType::Integer => PythonDataType::Integer,
+                        DataType::Float => PythonDataType::Float,
+                        DataType::Date => PythonDataType::Date,
+                        DataType::Boolean => PythonDataType::Boolean,
+                    },
+                    total_count: column.total_count,
+                    null_count: column.null_count,
+                    null_percentage: (column.total_count > 0)
+                        .then(|| column.null_count as f64 / column.total_count as f64 * 100.0),
+                    unique_count: column.unique_count,
+                    unique_count_is_approximate: column.unique_count_is_approximate,
+                    uniqueness_ratio: column
+                        .unique_count
+                        .filter(|_| column.total_count > 0)
+                        .map(|count| count as f64 / column.total_count as f64),
+                    invalid_count: column.invalid_count,
+                    type_homogeneity: column.type_homogeneity,
+                    stats,
+                    patterns: column.patterns.as_ref().map(|patterns| {
+                        patterns
+                            .iter()
+                            .map(|pattern| PythonPatternDocument {
+                                name: pattern.name.clone(),
+                                regex: pattern.regex.clone(),
+                                match_count: pattern.match_count,
+                                match_percentage: pattern.match_percentage,
+                                category: pattern.category.clone(),
+                                confidence: pattern.confidence,
+                            })
+                            .collect()
+                    }),
+                })
+            })
+            .collect::<serde_json::Result<Vec<_>>>()?;
+
+        let mut execution = serde_json::to_value(&report.execution)?;
+        execution["truncation_reason"] =
+            serde_json::to_value(report.execution.truncation_reason.as_ref().map(|reason| {
+                match reason {
+                    TruncationReason::MaxRows(n) => format!("max_rows({n})"),
+                    TruncationReason::MaxBytes(n) => format!("max_bytes({n})"),
+                    TruncationReason::MemoryPressure => "memory_pressure".to_string(),
+                    TruncationReason::StopCondition(s) => format!("stop_condition({s})"),
+                    TruncationReason::StreamClosed => "stream_closed".to_string(),
+                    TruncationReason::Timeout => "timeout".to_string(),
+                }
+            }))?;
+
+        let quality = report
+            .quality
+            .as_ref()
+            .map(|assessment| {
+                let metrics = &assessment.metrics;
+                let mut document = serde_json::to_value(metrics)?;
+                let scores = serde_json::to_value(assessment.scores())?;
+                document["overall_score"] = scores["overall_score"].clone();
+                // A document from a later v1 release may retain scores for a
+                // dimension this build does not know. The canonical document
+                // keeps them; the summary lists only the dimensions it types.
+                let known: Vec<String> = dataprof_core::QualityDimension::all()
+                    .into_iter()
+                    .map(|dimension| dimension.to_string())
+                    .collect();
+                document["dimension_scores"] = scores["dimension_scores"]
+                    .as_object()
+                    .expect("dimension scores serialize as an object")
+                    .iter()
+                    .filter(|(name, _)| known.contains(name))
+                    .map(|(name, score)| (name.clone(), score.clone()))
+                    .collect();
+                document["assessed_dimensions"] =
+                    serde_json::to_value(metrics.assessed_dimensions())?;
+                document["low_sample_warning"] =
+                    serde_json::Value::Bool(metrics.low_sample_warning);
+                if let Some(sampled) = assessment.sampled_dimensions() {
+                    document["sampled_dimensions"] = serde_json::to_value(sampled)?;
+                }
+                // The summary has always included this boolean, even when false.
+                if let Some(uniqueness) = document.get_mut("uniqueness") {
+                    uniqueness["duplicate_rows_approximate"] = serde_json::Value::Bool(
+                        metrics
+                            .uniqueness
+                            .as_ref()
+                            .expect("serialized uniqueness is present")
+                            .duplicate_rows_approximate,
+                    );
+                }
+                serde_json::from_value(document)
+            })
+            .transpose()?;
+
+        Ok(Self {
+            schema_version: report.schema_version,
+            source: report.data_source.identifier(),
+            source_type: match report.data_source {
+                DataSource::File { .. } => PythonSourceType::File,
+                DataSource::Query { .. } => PythonSourceType::Query,
+                DataSource::DataFrame { .. } => PythonSourceType::Dataframe,
+                DataSource::Stream { .. } => PythonSourceType::Stream,
+                DataSource::Bytes { .. } => PythonSourceType::Bytes,
+            },
+            execution: serde_json::from_value(execution)?,
+            columns,
+            quality,
+            quality_status: report.quality_status.clone(),
+            semantic_hint_bindings: report.semantic_hint_bindings.clone(),
+        })
+    }
 }
 
 /// Generate the JSON Schema 2020-12 document for the current serialized report.
@@ -410,6 +552,7 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
             "/$defs/PythonQualityDocument/required",
             "sampled_dimensions",
         ),
+        ("/$defs/QualityAssessment/required", "scores"),
     ] {
         if let Some(required) = document
             .pointer_mut(pointer)
@@ -440,6 +583,22 @@ fn allow_additive_properties(value: &mut serde_json::Value) {
 }
 
 impl ProfileReport {
+    /// Serialize the canonical persisted document with deterministic object-key
+    /// order. Array order (columns, patterns, recovery events) is preserved.
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        let mut document = serde_json::to_value(self)?;
+        canonicalize_key_order(&mut document);
+        serde_json::to_string_pretty(&document)
+    }
+
+    /// Serialize Python's historical summary projection. It deliberately omits
+    /// some runtime metadata; use [`Self::to_json`] for lossless persistence.
+    #[doc(hidden)]
+    pub fn summary_json(&self) -> serde_json::Result<String> {
+        let summary = PythonProfileReportDocument::from_report(self)?;
+        serde_json::to_string(&summary)
+    }
+
     /// Create a new ProfileReport with auto-generated id and timestamp
     pub fn new(
         data_source: DataSource,

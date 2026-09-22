@@ -154,8 +154,9 @@ def worker(request: dict) -> dict:
         encoded = report.to_json()
         exported_json = time.perf_counter_ns()
         validate(document, request["expected"], case["rows"])
-        if json.loads(encoded) != document:
-            raise ValueError("JSON export differs from dict export")
+        # to_json() writes the canonical document; it must restore the summary.
+        if dataprof.ProfileReport.from_json(encoded).to_dict() != document:
+            raise ValueError("JSON export does not restore the dict export")
         if evidence["rows"] != case["rows"]:
             raise ValueError("producer was not fully consumed")
         sample = {

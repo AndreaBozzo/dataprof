@@ -94,6 +94,10 @@ report.save("report.json")       # full report, reloadable
 print(report.to_markdown())      # a table for a PR comment or a notebook
 ```
 
+In 0.12, JSON saves use the complete Rust report document in both languages.
+Python `to_dict()` remains the flat convenience summary. Existing flat JSON
+reports still load; see the [persistence migration](docs/schema/README.md#the-v1-compatibility-decision-714).
+
 #### 4. Gate
 
 State a policy as data and get a structured verdict. Nothing is printed and the
