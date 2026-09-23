@@ -415,7 +415,7 @@ Per-column profiling statistics.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Column name |
-| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"` |
+| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"`, `"nested"`. A `nested` column (struct, list or map) reports its counts only: `unique_count`, `type_homogeneity`, `stats` and `patterns` are `None` |
 | `total_count` | `int` | Total number of values |
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |

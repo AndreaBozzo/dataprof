@@ -15,6 +15,12 @@ pub enum DataType {
     Date,
     /// Boolean values.
     Boolean,
+    /// Container values: structs, lists and maps.
+    ///
+    /// Only the counts are analyzed. Every other measurement of a container
+    /// would describe how it was serialised rather than the data, and the
+    /// serialisation differs by input path, so those fields are `None` (#637).
+    Nested,
 }
 
 /// Mutually exclusive lexical form of a single non-null value.

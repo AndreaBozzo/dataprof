@@ -281,6 +281,7 @@ enum PythonDataType {
     Float,
     Date,
     Boolean,
+    Nested,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -442,6 +443,7 @@ impl PythonProfileReportDocument {
                         DataType::Float => PythonDataType::Float,
                         DataType::Date => PythonDataType::Date,
                         DataType::Boolean => PythonDataType::Boolean,
+                        DataType::Nested => PythonDataType::Nested,
                     },
                     total_count: column.total_count,
                     null_count: column.null_count,

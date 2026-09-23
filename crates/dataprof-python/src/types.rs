@@ -245,6 +245,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
                 DataType::Identifier => "identifier".to_string(),
                 DataType::Date => "date".to_string(),
                 DataType::Boolean => "boolean".to_string(),
+                DataType::Nested => "nested".to_string(),
             },
             total_count: profile.total_count,
             null_count: profile.null_count,

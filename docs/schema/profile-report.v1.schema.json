@@ -538,6 +538,11 @@
           "const": "Boolean",
           "description": "Boolean values.",
           "type": "string"
+        },
+        {
+          "const": "Nested",
+          "description": "Container values: structs, lists and maps.\n\nOnly the counts are analyzed. Every other measurement of a container\nwould describe how it was serialised rather than the data, and the\nserialisation differs by input path, so those fields are `None` (#637).",
+          "type": "string"
         }
       ]
     },
@@ -1444,7 +1449,8 @@
         "integer",
         "float",
         "date",
-        "boolean"
+        "boolean",
+        "nested"
       ],
       "type": "string"
     },

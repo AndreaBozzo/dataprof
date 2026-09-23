@@ -669,6 +669,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
                 DataType::Identifier => "identifier",
                 DataType::Date => "date",
                 DataType::Boolean => "boolean",
+                DataType::Nested => "nested",
             })
         })
         .collect();
