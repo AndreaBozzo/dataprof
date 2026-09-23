@@ -1681,4 +1681,47 @@ mod tests {
             "a run-end encoded column profiled differently from the plain one"
         );
     }
+
+    /// List views never survive a Parquet round trip either, so the file-level
+    /// nested suite cannot reach them. A view is a layout of the same lists, so
+    /// it profiles as the list does: counted, and not analyzed (#637).
+    #[test]
+    fn list_views_profile_as_the_nested_list_they_hold() {
+        use arrow::array::{Int32Array, LargeListViewArray, ListArray, ListViewArray};
+        use arrow::buffer::{NullBuffer, OffsetBuffer, ScalarBuffer};
+
+        let item = Arc::new(Field::new("item", ArrowDataType::Int32, true));
+        let values: ArrayRef = Arc::new(Int32Array::from(vec![1, 2, 3]));
+        let nulls = Some(NullBuffer::from(vec![true, false, true]));
+
+        let list: ArrayRef = Arc::new(ListArray::new(
+            Arc::clone(&item),
+            OffsetBuffer::from_lengths([2, 0, 1]),
+            Arc::clone(&values),
+            nulls.clone(),
+        ));
+        let view: ArrayRef = Arc::new(ListViewArray::new(
+            Arc::clone(&item),
+            ScalarBuffer::from(vec![0i32, 2, 2]),
+            ScalarBuffer::from(vec![2i32, 0, 1]),
+            Arc::clone(&values),
+            nulls.clone(),
+        ));
+        let large_view: ArrayRef = Arc::new(LargeListViewArray::new(
+            item,
+            ScalarBuffer::from(vec![0i64, 2, 2]),
+            ScalarBuffer::from(vec![2i64, 0, 1]),
+            values,
+            nulls,
+        ));
+
+        let expected = observable(list);
+        assert!(
+            expected
+                .contains("data_type: Nested, null_count: 1, total_count: 3, unique_count: None"),
+            "{expected}"
+        );
+        assert_eq!(observable(view), expected);
+        assert_eq!(observable(large_view), expected);
+    }
 }

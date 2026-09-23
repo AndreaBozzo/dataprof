@@ -1288,9 +1288,13 @@ fn structure_columns_from_profiles(
             let uniqueness_ratio = profile
                 .unique_count
                 .and_then(|unique| ratio(unique, total_count));
-            let distinct_count_approximate = column_stats
-                .get_column_stats(&profile.name)
-                .map(|stats| stats.unique_count_is_approximate());
+            // The flag qualifies a count, so it is absent with the count: a
+            // nested column is counted but has no distinct count (#637).
+            let distinct_count_approximate = profile.unique_count.and_then(|_| {
+                column_stats
+                    .get_column_stats(&profile.name)
+                    .map(|stats| stats.unique_count_is_approximate())
+            });
 
             StructureColumnSummary {
                 name: profile.name.clone(),

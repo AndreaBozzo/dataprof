@@ -124,3 +124,19 @@ def test_a_sampled_async_stream_keeps_nested_columns_nested():
     for column in ("address", "tags"):
         assert report[column].data_type == "nested"
         assert report[column].total_count == 10
+
+
+def test_structure_summaries_report_no_distinct_count_for_nested_columns(tmp_path):
+    # The approximate flag qualifies a distinct count. A nested column has none,
+    # so the flag is absent with it on the JSON path as it is on Parquet.
+    jsonl = tmp_path / "records.jsonl"
+    jsonl.write_text("".join(json.dumps(record) + "\n" for record in RECORDS), encoding="utf-8")
+    parquet = tmp_path / "records.parquet"
+    pq.write_table(_table(), parquet)
+
+    for source in (jsonl, parquet):
+        columns = {column.name: column for column in dp.analyze_structure(str(source)).columns}
+        for name in ("address", "tags"):
+            assert columns[name].data_type == "nested", source.suffix
+            assert columns[name].unique_count is None, source.suffix
+            assert columns[name].distinct_count_approximate is None, source.suffix

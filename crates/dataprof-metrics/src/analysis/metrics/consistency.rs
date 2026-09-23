@@ -32,8 +32,18 @@ impl ConsistencyCalculator {
     ) -> Result<ConsistencyMetrics, DataProfilerError> {
         let (data_type_consistency, values_checked) =
             Self::calculate_type_consistency(data, column_profiles)?;
-        let format_violations = Self::count_format_violations(data)?;
-        let encoding_issues = Self::detect_encoding_issues(data)?;
+        // A nested column's values are a serialisation of it, so none of these
+        // checks may read them (#637). The report assembler already empties
+        // them; this holds for direct callers of the calculator too.
+        let checked_columns = || {
+            data.iter().filter(|(name, _)| {
+                !column_profiles
+                    .iter()
+                    .any(|profile| &profile.name == *name && profile.data_type == DataType::Nested)
+            })
+        };
+        let format_violations = Self::count_format_violations(checked_columns())?;
+        let encoding_issues = Self::detect_encoding_issues(checked_columns())?;
 
         Ok(ConsistencyMetrics {
             data_type_consistency,
@@ -131,8 +141,8 @@ impl ConsistencyCalculator {
     }
 
     /// Count format violations (malformed dates, inconsistent formats)
-    fn count_format_violations(
-        data: &HashMap<String, Vec<String>>,
+    fn count_format_violations<'a>(
+        data: impl Iterator<Item = (&'a String, &'a Vec<String>)>,
     ) -> Result<usize, DataProfilerError> {
         let mut violations = 0;
 
@@ -227,12 +237,12 @@ impl ConsistencyCalculator {
     ///
     /// Counts each affected value once, even when it shows several symptoms,
     /// so the count stays comparable to `values_checked`.
-    fn detect_encoding_issues(
-        data: &HashMap<String, Vec<String>>,
+    fn detect_encoding_issues<'a>(
+        data: impl Iterator<Item = (&'a String, &'a Vec<String>)>,
     ) -> Result<usize, DataProfilerError> {
         let mut issues = 0;
 
-        for values in data.values() {
+        for (_, values) in data {
             for value in values {
                 // Replacement characters (�) or mojibake artifacts both
                 // indicate the same defect: the value was mis-decoded.
@@ -301,7 +311,10 @@ mod tests {
         let data = HashMap::from([
             (
                 "address".to_string(),
-                vec!["{\"city\":\"Rome\"}".to_string(), "[1,2]".to_string()],
+                vec![
+                    "{\"city\":\"RomÃ©\",\"lat\":41.9}".to_string(),
+                    "[1,2]".to_string(),
+                ],
             ),
             ("code".to_string(), vec!["7".to_string(), "x".to_string()]),
         ]);
@@ -312,6 +325,10 @@ mod tests {
             .expect("consistency metrics should be computed");
         assert_eq!(metrics.values_checked, 2);
         assert_eq!(metrics.data_type_consistency, 50.0);
+        // The first value holds both separators and a mojibake artifact; as a
+        // plain string column it would count one of each.
+        assert_eq!(metrics.format_violations, 0);
+        assert_eq!(metrics.encoding_issues, 0);
     }
 
     /// `junk` non-numeric values padded out to 1000 with integers, the shape
