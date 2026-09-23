@@ -171,6 +171,11 @@ re-read and eyeball two files by hand.
   sample; the flag says `sampled N of M values` when that is the case, and
   summing the counts against `total_count - null_count` tells you directly.
 
+- **A `nested` column was counted, not analyzed.** Structs, lists and maps
+  report `total_count` and `null_count` only; the absent distinct count, stats
+  and patterns mean "not analyzed", not "none found". Say that the column's
+  contents were not profiled rather than reading the absences as findings.
+
 Before interpreting a specific dimension, an approximate count, a detected
 pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).
 It covers what each signal does and does not mean — including the ones that are

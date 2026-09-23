@@ -490,3 +490,25 @@ in a measurement such as `max_length` a difference in the data.
 
 The object is provenance, not a metric, so it is outside the numeric equality
 contract above, and every engine and input path records the same value.
+
+## v1 additive change: `Nested` data type
+
+A column of structs, lists or maps is now typed `Nested` in the Rust dialect and
+`"nested"` in the Python dialect, and reports its counts only: `total_count`,
+`null_count` and `null_percentage`. `unique_count`, `invalid_count`,
+`type_homogeneity`, `stats` and `patterns` are absent, meaning not analyzed
+(#637).
+
+Through 0.11 such a column was typed `String` and measured on a text rendering
+of its values. That rendering was Arrow's display string on the Parquet and
+Arrow paths and compact JSON on the JSON paths, so the same records reported
+different lengths, distinct counts and patterns depending on the file format.
+A JSON column is `Nested` when every non-null value is an object or an array; a
+column mixing containers with scalars has no typed counterpart and stays text.
+
+The enum gains a value, so stored v1 reports remain valid. A reader built
+before this change rejects a report that contains the new value, as it would
+any enum value it does not know. Consumers matching on `data_type` must accept
+`nested`. A nested column typed `String` in a 0.11 report and `nested` in a
+0.12 report is the same data measured under a different definition. Compare
+within a release, or re-profile.

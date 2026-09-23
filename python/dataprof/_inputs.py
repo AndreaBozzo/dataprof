@@ -42,8 +42,23 @@ def _strict_json_loads(text: str) -> _Any:
 # optional strings, which the Rust core types and profiles directly. Keeping
 # these off pandas is what lets the base wheel honour its documented contract.
 
-#: One column handed to the core: its name and its cells, `None` for null.
-_Column = tuple[str, list[str | None]]
+#: One column handed to the core: its name, its cells (`None` for null), and
+#: the ascending row indices of the cells that were a dict or a list. A
+#: container crosses as JSON text; the indices are what tell the core it was
+#: not a string, so a column of containers profiles as ``nested`` (#637).
+_Column = tuple[str, list[str | None], list[int]]
+
+
+def _is_container(value: object) -> bool:
+    """Whether a cell is one `_cell_to_str` renders as a container."""
+    return isinstance(value, (dict, list))
+
+
+def _column(name: str, values: _Any) -> _Column:
+    """Render one column's cells and record which of them were containers."""
+    values = list(values)
+    containers = [row for row, value in enumerate(values) if _is_container(value)]
+    return (name, [_cell_to_str(v) for v in values], containers)
 
 
 def _cell_to_str(value: object) -> str | None:
@@ -61,7 +76,7 @@ def _cell_to_str(value: object) -> str | None:
         return None
     if isinstance(value, str):
         return value
-    if isinstance(value, (dict, list)):
+    if _is_container(value):
         try:
             return _json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         except (TypeError, ValueError):
@@ -88,11 +103,11 @@ def _columns_from_dict(source: dict[_Any, _Any]) -> list[_Column]:
                 f"dict input: column {key!r} must be a list or tuple of cells, "
                 f"got {type(values).__name__}. For a single row, pass [{{...}}]."
             )
-        columns.append((name, [_cell_to_str(v) for v in values]))
+        columns.append(_column(name, values))
 
-    lengths = {len(cells) for _, cells in columns}
+    lengths = {len(cells) for _, cells, _ in columns}
     if len(lengths) > 1:
-        widths = ", ".join(f"{n}={len(c)}" for n, c in columns)
+        widths = ", ".join(f"{n}={len(c)}" for n, c, _ in columns)
         raise ValueError(f"dict input: columns have differing lengths ({widths}).")
     return columns
 
@@ -131,7 +146,7 @@ def _columns_from_records(
         )
 
     columns = [
-        (name, [_cell_to_str(row.get(key)) for row in cell_rows])
+        _column(name, (row.get(key) for row in cell_rows))
         for key, name in zip(keys, normalized_names, strict=True)
     ]
     return columns, len(cell_rows)
@@ -188,7 +203,7 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
             )
         for i, field in enumerate(row):
             cells[i].append(field if field != "" else None)
-    return [(str(name), cells[i]) for i, name in enumerate(header)]
+    return [(str(name), cells[i], []) for i, name in enumerate(header)]
 
 
 def _json_kind(value: object) -> str:

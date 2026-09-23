@@ -36,8 +36,8 @@ const NUMERIC_SAMPLE_CAP: usize = 10_000;
 /// [`ColumnAnalyzer::should_track_date_matches`] all see one type. They used to
 /// hold three lists that had drifted apart.
 ///
-/// Only encodings are stripped. A type whose *values* need a decision of their
-/// own — nested types (#637), binary (#645) — keeps its identity and is decided
+/// Only encodings are stripped. A type that needs a decision of its own —
+/// nested types (#637), binary (#645) — keeps its identity and is decided
 /// there.
 pub fn logical_arrow_type(data_type: &arrow::datatypes::DataType) -> arrow::datatypes::DataType {
     use arrow::datatypes::DataType as ArrowDataType;
@@ -59,7 +59,10 @@ pub fn logical_arrow_type(data_type: &arrow::datatypes::DataType) -> arrow::data
 /// `None` when it has no native arm here and the profile types it from
 /// whatever text reaches the accumulator.
 ///
-/// `None` is not the same claim as "the values decide". It covers three cases
+/// Containers are decided here as [`DataType::Nested`] and never rendered: a
+/// struct, list or map reaches the profile as its counts only (#637).
+///
+/// `None` is not the same claim as "the values decide". It covers the cases
 /// that behave differently, and a caller who cannot read values needs
 /// [`sampling_can_decide_type`] to tell them apart:
 ///
@@ -67,9 +70,8 @@ pub fn logical_arrow_type(data_type: &arrow::datatypes::DataType) -> arrow::data
 ///   re-inference answers and reading a sample can change the answer;
 /// - binary, where the rendering is hex and re-inference is refused outright —
 ///   the profile declares `String` (#645);
-/// - nested containers, where the rendering is a bracketed serialisation, so
-///   re-inference reads the serialisation rather than the data and lands on
-///   `String` for every container shape (#637).
+/// - any other type without an arm, which reaches the profile as Arrow's
+///   display string and is re-inferred from it.
 ///
 /// Both the profiler and `infer_schema()` read this one list, so the fast
 /// schema path and the full profiler cannot name a column's type differently
@@ -96,6 +98,13 @@ pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Opt
         ArrowDataType::Decimal128(_, _) | ArrowDataType::Decimal256(_, _) => Some(DataType::Float),
         ArrowDataType::Duration(_) => Some(DataType::Integer),
         ArrowDataType::Boolean => Some(DataType::Boolean),
+        ArrowDataType::Struct(_)
+        | ArrowDataType::List(_)
+        | ArrowDataType::LargeList(_)
+        | ArrowDataType::ListView(_)
+        | ArrowDataType::LargeListView(_)
+        | ArrowDataType::FixedSizeList(_, _)
+        | ArrowDataType::Map(_, _) => Some(DataType::Nested),
         _ => None,
     }
 }
@@ -106,10 +115,9 @@ pub fn data_type_from_arrow_type(arrow_type: &arrow::datatypes::DataType) -> Opt
 /// the map it refines rather than restated by each caller — the same list in
 /// two places is what #661 removed from the profiler itself.
 ///
-/// True only for text. A native arm needs no values, and the two families
-/// without one reach the profile as a *rendering* of their values — hex for
-/// binary, a bracketed serialisation for a container — which re-inference reads
-/// as text either way, so a read cannot move the answer off `String`.
+/// True only for text. A native arm or a container needs no values, and binary
+/// reaches the profile as hex, which re-inference is never asked to read, so a
+/// read cannot move the answer off `String`.
 ///
 /// Pass a type that has been through [`logical_arrow_type`].
 pub fn sampling_can_decide_type(arrow_type: &arrow::datatypes::DataType) -> bool {
@@ -730,6 +738,10 @@ impl ColumnAnalyzer {
             arrow::datatypes::DataType::Duration(_) => {
                 self.process_duration_array(array)?;
             }
+            // A container is counted above and nothing more: every value-level
+            // measurement of it would be a measurement of Arrow's display
+            // string, which no other input path produces (#637).
+            data_type if data_type_from_arrow_type(data_type) == Some(DataType::Nested) => {}
             _ => {
                 self.process_generic_array(array)?;
             }
@@ -1209,10 +1221,12 @@ impl ColumnAnalyzer {
         locale: Option<Locale>,
         semantic_hints: &SemanticHints,
     ) -> ColumnProfile {
-        let data_type = if semantic_hints.is_identifier_column(&name) {
-            DataType::Identifier
-        } else {
-            self.infer_data_type()
+        let data_type = match self.infer_data_type() {
+            // An identifier hint types text. A container stays a container, or
+            // the hint would bring back the display-string statistics (#637).
+            DataType::Nested => DataType::Nested,
+            _ if semantic_hints.is_identifier_column(&name) => DataType::Identifier,
+            inferred => inferred,
         };
         let avg_length = if self.total_count > self.null_count {
             self.total_length as f64 / (self.total_count - self.null_count) as f64

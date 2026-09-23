@@ -289,18 +289,42 @@ class TestProfileAdHocInputs:
         assert r.columns == 1
         assert r["a"].name == "a"
 
-    def test_nested_container_cells_use_deterministic_compact_json(self):
-        r = dataprof.profile([{"nested": {"b": [2, 3], "a": 1}, "array": [1, 2]}])
-        assert r["nested"].min_length == len('{"a":1,"b":[2,3]}')
-        assert r["array"].min_length == len("[1,2]")
+    def test_container_columns_report_counts_only(self):
+        # A length or pattern over the JSON text of a container measures the
+        # serialisation, not the data (#637).
+        r = dataprof.profile([{"nested": {"b": [2, 3], "a": 1}, "array": [1, 2]}, {}])
+        for name in ("nested", "array"):
+            column = r[name]
+            assert column.data_type == "nested"
+            assert (column.total_count, column.null_count) == (2, 1)
+            assert column.unique_count is None
+            assert column.min_length is None
+            assert column.patterns is None
 
-    def test_container_cell_with_unserialisable_contents_falls_back_to_str(self):
+    def test_a_column_mixing_containers_and_scalars_keeps_compact_json(self):
+        # No typed source can produce this column, so it stays text, and its
+        # containers keep their deterministic sorted-key rendering.
+        r = dataprof.profile([{"c": {"b": [2, 3], "a": 1}}, {"c": "x"}])
+        assert r["c"].data_type == "string"
+        assert r["c"].max_length == len('{"a":1,"b":[2,3]}')
+
+    def test_container_cell_with_unserialisable_contents_does_not_abort(self):
         # A dict/list holding a non-JSON-serialisable value must not abort
-        # profiling; it degrades to str() like any other opaque cell.
+        # profiling. It is still a container.
         cell = {"when": datetime.datetime(2020, 1, 2)}
         r = dataprof.profile([{"c": cell}])
         assert r.rows == 1
-        assert r["c"].min_length == len(str(cell))
+        assert r["c"].data_type == "nested"
+
+    def test_container_columns_are_decided_within_the_row_cap(self):
+        # The records path hands the core one row past the cap to detect
+        # truncation. A scalar in that row must not decide the column.
+        rows = [{"c": {"a": 1}}, {"c": [1]}, {"c": "scalar"}]
+        assert dataprof.profile(rows)["c"].data_type == "string"
+        assert dataprof.profile(rows, max_rows=2)["c"].data_type == "nested"
+        # Nor may a container in that row stand in for a scalar within the cap.
+        rows = [{"c": {"a": 1}}, {"c": "scalar"}, {"c": [1]}]
+        assert dataprof.profile(rows, max_rows=2)["c"].data_type == "string"
 
     def test_bytesio_csv_input(self):
         r = dataprof.profile(io.BytesIO(b"a,b\n1,2\n"), format="csv")
@@ -395,11 +419,20 @@ class TestProfileAdHocInputs:
         from dataprof import _dataprof
 
         with pytest.raises(ValueError, match="same number of cells"):
-            _dataprof.profile_columns([("a", ["1", "2"]), ("b", ["1"])], "x", None, None)
+            _dataprof.profile_columns([("a", ["1", "2"], []), ("b", ["1"], [])], "x", None, None)
 
         # A short *first* column must raise too, not silently truncate the rest.
         with pytest.raises(ValueError, match="same number of cells"):
-            _dataprof.profile_columns([("a", ["1"]), ("b", ["1", "2"])], "x", None, None)
+            _dataprof.profile_columns([("a", ["1"], []), ("b", ["1", "2"], [])], "x", None, None)
+
+    def test_raw_extension_rejects_container_indices_outside_the_rows(self):
+        # Unordered or repeated indices would inflate the container count, and
+        # one past the rows names a cell that does not exist.
+        from dataprof import _dataprof
+
+        for containers in ([1, 0], [0, 0], [2]):
+            with pytest.raises(ValueError, match="container cells"):
+                _dataprof.profile_columns([("a", ["[1]", "[2]"], containers)], "x", None, None)
 
     def test_raw_extension_carries_a_row_count_without_columns(self):
         """`row_count` is how a fieldless-record source states its row count.
@@ -418,7 +451,7 @@ class TestProfileAdHocInputs:
         from dataprof import _dataprof
 
         with pytest.raises(ValueError, match="row_count is 5"):
-            _dataprof.profile_columns([("a", ["1", "2"])], "x", None, None, 0, 5)
+            _dataprof.profile_columns([("a", ["1", "2"], [])], "x", None, None, 0, 5)
 
     def test_list_of_dicts_fills_missing_keys_with_nulls(self):
         r = dataprof.profile([{"a": 1}, {"b": 2}])
@@ -497,7 +530,9 @@ class TestProfileAdHocInputs:
         from dataprof import _dataprof
 
         with pytest.raises(ValueError, match="[Dd]uplicate column name"):
-            _dataprof.profile_columns([("x", ["1", "3"]), ("x", ["2", "4"])], "t", None, None)
+            _dataprof.profile_columns(
+                [("x", ["1", "3"], []), ("x", ["2", "4"], [])], "t", None, None
+            )
 
     def test_json_bytes_accept_columns_or_records(self):
         by_column = dataprof.profile(b'{"a": [1, 2]}', format="json")

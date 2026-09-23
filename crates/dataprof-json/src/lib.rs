@@ -859,17 +859,25 @@ fn json_value_to_string(value: &Value) -> String {
 /// Columns are registered in the order the fields appear in each record, so the
 /// resulting column order is the first record's field order with later-only
 /// fields appended where they were first seen.
+///
+/// `container_counts` tallies, per column, the values that were an object or an
+/// array. It is what [`profile_builder::mark_container_columns`] later reads
+/// to decide which columns hold nothing but containers.
 fn feed_json_object(
     obj: &JsonObject,
     prior_rows: usize,
     known_columns: &mut Vec<String>,
     known_columns_set: &mut HashSet<String>,
     column_stats: &mut StreamingColumnCollection,
+    container_counts: &mut HashMap<String, usize>,
 ) {
-    for key in obj.keys() {
+    for (key, value) in obj {
         if known_columns_set.insert(key.clone()) {
             known_columns.push(key.clone());
             column_stats.init_column_with_missing(key, prior_rows);
+        }
+        if matches!(value, Value::Array(_) | Value::Object(_)) {
+            *container_counts.entry(key.clone()).or_default() += 1;
         }
     }
 
@@ -986,6 +994,7 @@ fn analyze_json_from_reader_full<R: BufRead>(
     let mut column_stats = StreamingColumnCollection::new().with_semantic_hints(semantic_hints);
     let mut known_columns = Vec::new();
     let mut known_columns_set = HashSet::new();
+    let mut container_counts = HashMap::new();
     let mut rows_seen = 0;
 
     let summary = scan_json_from_reader(reader, config, |obj| {
@@ -995,6 +1004,7 @@ fn analyze_json_from_reader_full<R: BufRead>(
             &mut known_columns,
             &mut known_columns_set,
             &mut column_stats,
+            &mut container_counts,
         );
         rows_seen += 1;
     })?;
@@ -1008,12 +1018,15 @@ fn analyze_json_from_reader_full<R: BufRead>(
         column_stats.retain_columns(&selected);
     }
 
-    let profiles = profile_builder::profiles_from_streaming_with_hints(
-        &column_stats,
-        !options.include_statistics(),
-        !options.include_patterns(),
-        options.locale(),
-        semantic_hints,
+    let profiles = profile_builder::mark_container_columns(
+        profile_builder::profiles_from_streaming_with_hints(
+            &column_stats,
+            !options.include_statistics(),
+            !options.include_patterns(),
+            options.locale(),
+            semantic_hints,
+        ),
+        &container_counts,
     );
 
     Ok((

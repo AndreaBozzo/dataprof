@@ -53,6 +53,11 @@ impl ConsistencyCalculator {
         let mut consistent_values = 0;
 
         for profile in column_profiles {
+            // A container has no lexical form of its own to be consistent
+            // with; what reaches here is a serialisation of it (#637).
+            if profile.data_type == DataType::Nested {
+                continue;
+            }
             if let Some(column_data) = data.get(&profile.name) {
                 // Every value conforms to `String`, so scoring a string column
                 // against its own type reports 100% for any mixture of forms and
@@ -105,6 +110,7 @@ impl ConsistencyCalculator {
                             Some(class) => lexical_class(trimmed) == class,
                             None => !is_likely_date_column(&profile.name) || is_date_token(trimmed),
                         },
+                        DataType::Nested => unreachable!("nested columns are skipped above"),
                     };
 
                     if is_consistent {
@@ -283,6 +289,29 @@ mod tests {
         ConsistencyCalculator::calculate(&data, &[profile])
             .expect("consistency metrics should be computed")
             .data_type_consistency
+    }
+
+    /// A caller of the public calculator can hand it a nested column's
+    /// serialised values. They are not the column's values, so they are not
+    /// checked against anything (#637).
+    #[test]
+    fn a_nested_column_is_not_checked_for_type_consistency() {
+        let mut nested = string_profile("address");
+        nested.data_type = DataType::Nested;
+        let data = HashMap::from([
+            (
+                "address".to_string(),
+                vec!["{\"city\":\"Rome\"}".to_string(), "[1,2]".to_string()],
+            ),
+            ("code".to_string(), vec!["7".to_string(), "x".to_string()]),
+        ]);
+        let mut code = string_profile("code");
+        code.data_type = DataType::Integer;
+
+        let metrics = ConsistencyCalculator::calculate(&data, &[nested, code])
+            .expect("consistency metrics should be computed");
+        assert_eq!(metrics.values_checked, 2);
+        assert_eq!(metrics.data_type_consistency, 50.0);
     }
 
     /// `junk` non-numeric values padded out to 1000 with integers, the shape

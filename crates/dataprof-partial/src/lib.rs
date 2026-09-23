@@ -320,9 +320,8 @@ fn parquet_scan(
             Some(decided) => decided,
             // No arm: the profiler types this column from its values. Where the
             // values *are* their rendering the sample below settles it; where
-            // the rendering is an encoding or a container serialisation the
-            // profiler reports `String`, which is what stands here (binary is
-            // #645, nested containers #637).
+            // the rendering is an encoding the profiler reports `String`, which
+            // is what stands here (binary is #645).
             None => {
                 if sampling_can_decide_type(&logical) {
                     text_columns.push(index);

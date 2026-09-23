@@ -406,7 +406,7 @@ def profile_arrow(
     source: Any, name: str, max_rows: int | None, config: ProfilerConfig | None
 ) -> ProfileReport: ...
 def profile_columns(
-    columns: list[tuple[str, list[str | None]]],
+    columns: list[tuple[str, list[str | None], list[int]]],
     name: str,
     max_rows: int | None,
     config: ProfilerConfig | None,

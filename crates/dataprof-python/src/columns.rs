@@ -16,14 +16,20 @@ use dataprof::{
 };
 use dataprof_runtime::{
     ColumnProfileInput, ReportAssembler, RowCompletenessTracker, RowSignature,
-    RowUniquenessTracker, build_column_profile,
+    RowUniquenessTracker, build_column_profile, nested_column_profile,
 };
 
 use super::config::PyProfilerConfig;
 use super::types::PyProfileReport;
 
-/// One column as handed over from Python: a name and its cells, `None` for null.
-pub type PyColumn = (String, Vec<Option<String>>);
+/// One column as handed over from Python: a name, its cells (`None` for null),
+/// and the ascending row indices of the cells that were a dict or a list.
+///
+/// A container reaches Rust as its JSON text, which on its own is
+/// indistinguishable from a string that happens to hold JSON. The indices keep
+/// the difference, so a column of containers is reported as the typed paths
+/// report it (#637).
+pub type PyColumn = (String, Vec<Option<String>>, Vec<usize>);
 
 /// Profile named columns of optional strings.
 ///
@@ -44,7 +50,11 @@ pub type PyColumn = (String, Vec<Option<String>>);
 /// `source_type` is `"bytes"`: the decoded cells are a different size from the
 /// bytes they came out of, so the caller is the only one who knows it.
 ///
-/// Raises `ValueError` when the columns do not all have the same length.
+/// A column whose every non-null cell within the analyzed rows is a container
+/// is profiled as `nested`: its counts, and nothing measured on the JSON text.
+///
+/// Raises `ValueError` when the columns do not all have the same length, or
+/// when a column's container indices are not ascending row indices.
 // One flat parameter per Python keyword argument: the pyo3 signature is the
 // call surface, so grouping them into a struct would only move the list into
 // `#[derive(FromPyObject)]`. Same reasoning as `PyProfilerConfig::new`.
@@ -83,15 +93,24 @@ pub fn profile_columns(
     // so ragged input must raise rather than panic across the FFI boundary --
     // and a short first column must not silently truncate the rest.
     let source_rows = match columns.first() {
-        Some((_, cells)) => cells.len(),
+        Some((_, cells, _)) => cells.len(),
         // No columns: the cells cannot carry a row count, so the caller states it.
         None => row_count.unwrap_or(0),
     };
-    if let Some((name, cells)) = columns.iter().find(|(_, c)| c.len() != source_rows) {
+    if let Some((name, cells, _)) = columns.iter().find(|(_, c, _)| c.len() != source_rows) {
         return Err(PyValueError::new_err(format!(
             "profile_columns: every column must have the same number of cells; \
              column {name:?} has {}, expected {source_rows}",
             cells.len()
+        )));
+    }
+    if let Some((name, _, _)) = columns.iter().find(|(_, _, containers)| {
+        !containers.windows(2).all(|pair| pair[0] < pair[1])
+            || containers.last().is_some_and(|&last| last >= source_rows)
+    }) {
+        return Err(PyValueError::new_err(format!(
+            "profile_columns: column {name:?} lists container cells that are not \
+             ascending row indices below {source_rows}"
         )));
     }
     if let Some(stated) = row_count
@@ -106,7 +125,7 @@ pub fn profile_columns(
     // Backstop: the Python transport wrappers reject collisions with a precise
     // source label, but this entry is reachable directly, so keep the invariant
     // (one profile per name, never merged or shadowed) enforced here too.
-    let column_names: Vec<String> = columns.iter().map(|(n, _)| n.clone()).collect();
+    let column_names: Vec<String> = columns.iter().map(|(n, _, _)| n.clone()).collect();
     dataprof::validate_unique_column_names(&column_names, "columns")
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -115,7 +134,7 @@ pub fn profile_columns(
     // owned transport vector.
     let source_memory_bytes: u64 = columns
         .iter()
-        .flat_map(|(_, cells)| cells.iter())
+        .flat_map(|(_, cells, _)| cells.iter())
         .flatten()
         .map(|value| value.len() as u64)
         .sum();
@@ -153,7 +172,7 @@ pub fn profile_columns(
             for row_index in 0..num_rows {
                 let mut row_signature = RowSignature::default();
                 let mut row_has_null = false;
-                for (_, cells) in &columns {
+                for (_, cells, _) in &columns {
                     let value = cells[row_index].as_deref().unwrap_or("");
                     row_signature.push_field(value);
                     // A missing cell renders empty, which `is_null_like_token`
@@ -166,7 +185,7 @@ pub fn profile_columns(
             }
         }
 
-        for (col_name, cells) in &columns {
+        for (col_name, cells, containers) in &columns {
             let present: Vec<String> = cells[..num_rows]
                 .iter()
                 .flatten()
@@ -174,6 +193,29 @@ pub fn profile_columns(
                 .cloned()
                 .collect();
             let null_count = num_rows - present.len();
+
+            // Counted against the same null rule as `present`, so a container
+            // index on a null cell cannot make a column look fully nested.
+            let analyzed_containers = containers
+                .iter()
+                .take_while(|&&row| row < num_rows)
+                .filter(|&&row| {
+                    cells[row]
+                        .as_deref()
+                        .is_some_and(|cell| !is_null_like_token(cell))
+                })
+                .count();
+            if analyzed_containers > 0 && analyzed_containers == present.len() {
+                profiles.push(nested_column_profile(
+                    col_name.clone(),
+                    num_rows,
+                    null_count,
+                ));
+                if include_quality {
+                    samples.insert(col_name.clone(), Vec::new());
+                }
+                continue;
+            }
             let unique_count = present.iter().collect::<HashSet<_>>().len();
 
             let data_type = if semantic_hints.is_identifier_column(col_name) {
