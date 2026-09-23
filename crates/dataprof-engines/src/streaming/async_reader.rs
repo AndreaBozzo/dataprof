@@ -1220,10 +1220,12 @@ impl AsyncStreamingProfiler {
             let chunk_bytes = chunk.bytes_read;
             let mut rows_consumed = chunk_rows;
             let mut hit_row_limit = false;
-            // Header and CSV chunks carry no container list.
             let mut chunk_containers = chunk.containers.into_iter();
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
+                // decode-audit: no-data — CSV chunks carry no container list,
+                // so their rows have no containers. A JSON chunk's list is
+                // unzipped from its rows and holds exactly one entry per row.
                 let containers = chunk_containers.next().unwrap_or_default();
                 // A cap of zero rows is met before any row is read. The check
                 // below runs after a row is processed, which is right for every
