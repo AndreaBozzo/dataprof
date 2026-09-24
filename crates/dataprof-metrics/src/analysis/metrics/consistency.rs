@@ -19,6 +19,9 @@ pub(crate) struct ConsistencyMetrics {
     pub format_violations: usize,
     pub encoding_issues: usize,
     pub values_checked: usize,
+    /// Checked values that did not conform to their column's type or
+    /// dominant form: the count behind `data_type_consistency`.
+    pub inconsistent_values: usize,
 }
 
 /// Calculator for consistency dimension metrics
@@ -30,7 +33,7 @@ impl ConsistencyCalculator {
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
     ) -> Result<ConsistencyMetrics, DataProfilerError> {
-        let (data_type_consistency, values_checked) =
+        let (data_type_consistency, values_checked, inconsistent_values) =
             Self::calculate_type_consistency(data, column_profiles)?;
         // A nested column's values are a serialisation of it, so none of these
         // checks may read them (#637). The report assembler already empties
@@ -50,15 +53,16 @@ impl ConsistencyCalculator {
             format_violations,
             encoding_issues,
             values_checked,
+            inconsistent_values,
         })
     }
 
-    /// Calculate data type consistency percentage and the number of non-null
-    /// values checked.
+    /// Calculate data type consistency percentage, the number of non-null
+    /// values checked, and how many of them were inconsistent.
     fn calculate_type_consistency(
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<(f64, usize), DataProfilerError> {
+    ) -> Result<(f64, usize, usize), DataProfilerError> {
         let mut total_values = 0;
         let mut consistent_values = 0;
 
@@ -131,11 +135,12 @@ impl ConsistencyCalculator {
         }
 
         if total_values == 0 {
-            Ok((100.0, 0))
+            Ok((100.0, 0, 0))
         } else {
             Ok((
                 (consistent_values as f64 / total_values as f64) * 100.0,
                 total_values,
+                total_values - consistent_values,
             ))
         }
     }

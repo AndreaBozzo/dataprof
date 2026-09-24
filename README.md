@@ -128,7 +128,10 @@ violated, `"pass"` means everything was checked and met, and `"inconclusive"`
 means nothing was violated and something could not be checked -- an unanalyzed
 metric, or a scan that did not read as far as the policy asks about.
 `result.passed` is true only for `"pass"`, so an unanswerable gate never reads
-as a green one.
+as a green one. On a large file that was read in full, quality scores come from
+a bounded sample; the report carries a 99.9% interval for each, and the gate
+decides a score requirement on it, staying inconclusive only when the threshold
+falls inside the interval.
 
 #### 5. Compare
 

@@ -17,6 +17,11 @@ pub(crate) struct AccuracyMetrics {
     pub range_violations: usize,
     pub negative_values_in_positive: usize,
     pub numeric_values_checked: usize,
+    /// Values outside the Tukey fences: the count behind `outlier_ratio`.
+    pub outliers: usize,
+    /// Numeric values in columns with enough of them for an outlier test:
+    /// the denominator of `outlier_ratio`.
+    pub outlier_values_checked: usize,
 }
 
 /// Calculator for accuracy dimension metrics
@@ -45,7 +50,12 @@ impl<'a> AccuracyCalculator<'a> {
         column_profiles: &[ColumnProfile],
         positive_columns: &[String],
     ) -> Result<AccuracyMetrics, DataProfilerError> {
-        let outlier_ratio = self.calculate_outlier_ratio(data, column_profiles)?;
+        let (outliers, outlier_values_checked) = self.count_outliers(data, column_profiles)?;
+        let outlier_ratio = if outlier_values_checked == 0 {
+            0.0
+        } else {
+            (outliers as f64 / outlier_values_checked as f64) * 100.0
+        };
         let (range_violations, numeric_values_checked) = Self::count_range_violations(data)?;
         let negative_values_in_positive =
             Self::count_negative_in_positive_fields(data, positive_columns)?;
@@ -55,15 +65,34 @@ impl<'a> AccuracyCalculator<'a> {
             range_violations,
             negative_values_in_positive,
             numeric_values_checked,
+            outliers,
+            outlier_values_checked,
         })
     }
 
-    /// Calculate percentage of statistical outliers
-    fn calculate_outlier_ratio(
+    /// The most range violations and negative-in-positive findings a single
+    /// value of `column_name` can add, since one value can break several of
+    /// the name-based rules at once.
+    pub fn max_violations_per_value(column_name: &str, positive_columns: &[String]) -> usize {
+        let name_lower = column_name.to_lowercase();
+        let rules = [
+            name_lower.contains("age"),
+            name_lower.contains("percent") || name_lower.contains("rate"),
+            name_lower.contains("count"),
+            name_lower.contains("year"),
+            positive_columns
+                .iter()
+                .any(|candidate| candidate == column_name),
+        ];
+        rules.into_iter().filter(|matched| *matched).count()
+    }
+
+    /// Count statistical outliers and the numeric values they were drawn from.
+    fn count_outliers(
         &self,
         data: &HashMap<String, Vec<String>>,
         column_profiles: &[ColumnProfile],
-    ) -> Result<f64, DataProfilerError> {
+    ) -> Result<(usize, usize), DataProfilerError> {
         let mut total_numeric_values = 0;
         let mut total_outliers = 0;
 
@@ -96,11 +125,7 @@ impl<'a> AccuracyCalculator<'a> {
             }
         }
 
-        if total_numeric_values == 0 {
-            Ok(0.0)
-        } else {
-            Ok((total_outliers as f64 / total_numeric_values as f64) * 100.0)
-        }
+        Ok((total_outliers, total_numeric_values))
     }
 
     /// Count IQR outliers in a pre-parsed numeric vector using the Tukey rule

@@ -71,10 +71,24 @@ impl StreamReservoirSampler {
         }
     }
 
+    /// Keep a uniformly chosen `new_capacity` of the retained values.
+    ///
+    /// A reservoir is a uniform sample as a set, not slot by slot: the values
+    /// that filled it first keep their slots until replaced, so truncating
+    /// kept the head of the stream. Under early memory pressure that made the
+    /// quality sample the first rows of the source. A uniform subset of a
+    /// uniform sample is a uniform sample, and later offers keep it one.
     pub fn shrink_to(&mut self, new_capacity: usize) {
         let new_capacity = new_capacity.max(1);
+        let retained = self.reservoir.len();
+        if retained > new_capacity {
+            for slot in 0..new_capacity {
+                let pick = self.rng.random_range(slot..retained);
+                self.reservoir.swap(slot, pick);
+            }
+            self.reservoir.truncate(new_capacity);
+        }
         self.capacity = new_capacity;
-        self.reservoir.truncate(new_capacity);
         self.reservoir.shrink_to_fit();
     }
 
@@ -1594,6 +1608,33 @@ mod tests {
         }
 
         assert_eq!(left.samples(), right.samples());
+    }
+
+    #[test]
+    fn shrinking_a_reservoir_keeps_a_uniform_subset_not_its_head() {
+        // A full reservoir that has not replaced anything yet holds the stream
+        // in order, so truncating it kept exactly the first values.
+        let mut sampler = StreamReservoirSampler::new(1_000);
+        for value in 0..1_000 {
+            sampler.offer(value.to_string());
+        }
+        sampler.shrink_to(100);
+
+        let retained: Vec<usize> = sampler
+            .samples()
+            .iter()
+            .map(|value| value.parse().unwrap())
+            .collect();
+        assert_eq!(retained.len(), 100);
+        let mean = retained.iter().sum::<usize>() as f64 / retained.len() as f64;
+        assert!(
+            (350.0..650.0).contains(&mean),
+            "mean {mean} of {retained:?}"
+        );
+        let mut distinct = retained.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 100, "a value was kept twice");
     }
 
     #[test]

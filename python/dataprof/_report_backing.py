@@ -208,6 +208,8 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     values["quality_sampled_dimensions"] = (
         quality.get("sampled_dimensions") if isinstance(quality, dict) else None
     )
+    bounds = quality.get("score_bounds") if isinstance(quality, dict) else None
+    values["quality_score_bounds"] = bounds if isinstance(bounds, dict) else None
     values["quality_status"], values["quality_error"] = _read_quality_status(
         document.get("quality_status", _MISSING), values["quality"] is not None
     )

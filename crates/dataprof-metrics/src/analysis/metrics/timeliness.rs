@@ -19,6 +19,24 @@ pub(crate) struct TimelinessMetrics {
     pub invalid_date_values: usize,
     pub date_values_checked: usize,
     pub temporal_pairs_checked: usize,
+    /// Checked values that parsed as dates: the denominator of
+    /// `stale_data_ratio`.
+    pub valid_dates: usize,
+    /// Valid dates older than the freshness policy: the count behind
+    /// `stale_data_ratio`.
+    pub stale_dates: usize,
+    /// Distinct start/end column pairs compared, so the most pairs one row
+    /// can add to `temporal_pairs_checked`.
+    pub temporal_column_pairs: usize,
+}
+
+/// Per-value date counts over the temporal columns.
+struct DateSummary {
+    future_dates: usize,
+    stale_dates: usize,
+    valid_dates: usize,
+    checked: usize,
+    invalid_dates: usize,
 }
 
 /// Calculator for timeliness dimension metrics
@@ -55,18 +73,25 @@ impl<'a> TimelinessCalculator<'a> {
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
     ) -> Result<TimelinessMetrics, DataProfilerError> {
-        let (future_dates_count, stale_data_ratio, date_values_checked, invalid_date_values) =
-            self.calculate_date_summary(data, temporal_columns);
-        let (temporal_violations, temporal_pairs_checked) =
+        let summary = self.calculate_date_summary(data, temporal_columns);
+        let stale_data_ratio = if summary.valid_dates == 0 {
+            0.0
+        } else {
+            (summary.stale_dates as f64 / summary.valid_dates as f64) * 100.0
+        };
+        let (temporal_violations, temporal_pairs_checked, temporal_column_pairs) =
             Self::count_temporal_violations(data, temporal_columns)?;
 
         Ok(TimelinessMetrics {
-            future_dates_count,
+            future_dates_count: summary.future_dates,
             stale_data_ratio,
             temporal_violations,
-            invalid_date_values,
-            date_values_checked,
+            invalid_date_values: summary.invalid_dates,
+            date_values_checked: summary.checked,
             temporal_pairs_checked,
+            valid_dates: summary.valid_dates,
+            stale_dates: summary.stale_dates,
+            temporal_column_pairs,
         })
     }
 
@@ -79,7 +104,7 @@ impl<'a> TimelinessCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
-    ) -> (usize, f64, usize, usize) {
+    ) -> DateSummary {
         let mut future_count = 0;
         let mut stale_dates = 0;
         let mut valid_dates = 0;
@@ -117,12 +142,13 @@ impl<'a> TimelinessCalculator<'a> {
             }
         }
 
-        let stale_ratio = if valid_dates == 0 {
-            0.0
-        } else {
-            (stale_dates as f64 / valid_dates as f64) * 100.0
-        };
-        (future_count, stale_ratio, checked, invalid_dates)
+        DateSummary {
+            future_dates: future_count,
+            stale_dates,
+            valid_dates,
+            checked,
+            invalid_dates,
+        }
     }
 
     /// Count temporal ordering violations (e.g., end_date < start_date);
@@ -132,7 +158,7 @@ impl<'a> TimelinessCalculator<'a> {
     fn count_temporal_violations(
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
-    ) -> Result<(usize, usize), DataProfilerError> {
+    ) -> Result<(usize, usize, usize), DataProfilerError> {
         let mut violations = 0;
         let mut pairs_checked = 0;
 
@@ -205,7 +231,7 @@ impl<'a> TimelinessCalculator<'a> {
             }
         }
 
-        Ok((violations, pairs_checked))
+        Ok((violations, pairs_checked, evaluated.len()))
     }
 }
 

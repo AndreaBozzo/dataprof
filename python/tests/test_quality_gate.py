@@ -229,36 +229,80 @@ def test_quality_sampled_dimensions_round_trips(report):
     assert dp.ProfileReport.from_dict(report.to_dict()).quality_sampled_dimensions == []
 
 
-def test_a_fully_read_large_file_still_has_a_sampled_quality_score(tmp_path: Path):
+def _large_report(tmp_path: Path):
+    path = tmp_path / "wide.csv"
+    rows = "\n".join(f"K-{n},{n % 7}" for n in range(12_000))
+    path.write_text(f"key,bucket\n{rows}\n", encoding="utf-8")
+    return dp.profile_file(path)
+
+
+def test_a_fully_read_large_file_is_gated_on_its_whole_source_interval(tmp_path: Path):
     """The case an execution-metadata-only gate gets wrong.
 
     Quality metrics come from a bounded reservoir (10,000 values per column),
     so a file larger than that carries a sampled score even though the source
     was exhausted and no row sampler ran. ``source_exhausted`` and
     ``sampling_applied`` both say the scan covered everything, and they are
-    both right -- about the scan. A policy about the whole source has to read
-    the metric's own provenance instead.
+    both right -- about the scan. The score is an estimate, so a policy about
+    the whole source is decided on the interval the report records for it.
     """
-    path = tmp_path / "wide.csv"
-    rows = "\n".join(f"K-{n},{n % 7}" for n in range(12_000))
-    path.write_text(f"key,bucket\n{rows}\n", encoding="utf-8")
-
-    report = dp.profile_file(path)
+    report = _large_report(tmp_path)
     assert report.source_exhausted
     assert not report.sampling_applied
     assert report.quality_sampled_dimensions, (
         "the reservoir did not bind; this test no longer reaches the case it guards"
     )
+    bounds = report.quality_score_bounds
+    assert bounds is not None and bounds["confidence_level"] == 0.999
+    interval = bounds["overall_score"]
+    assert interval["lower"] <= report.quality_score <= interval["upper"] < 100.01
 
     result = report.check(min_quality_score=1)
-    assert result.verdict == "inconclusive"
+    assert result.verdict == "pass"
     assert result.evidence == {"coverage": "complete"}
     check = _check(result, "min_quality_score")
+    # Still recorded as sampled: the decision rests on the interval, not on a
+    # claim that every value was measured.
     assert check.evidence == {"coverage": "incomplete", "reason": "quality_sampled"}
-    assert check.reason == {"reason": "evidence_incomplete", "gap": "quality_sampled"}
+    assert check.bounds == {**interval, "confidence_level": 0.999}
 
-    # Asked about what the metrics measured, the same report is decidable.
-    assert report.check(min_quality_score=1, scope="observed").verdict == "pass"
+    inside = report.check(min_quality_score=100)
+    assert inside.verdict == "inconclusive"
+    check = _check(inside, "min_quality_score")
+    assert check.reason == {"reason": "evidence_incomplete", "gap": "quality_sampled"}
+    assert check.bounds is not None
+
+    # Asked about what the metrics measured, the same report decides on the
+    # sampled score itself and records no interval.
+    observed = report.check(min_quality_score=1, scope="observed")
+    assert observed.verdict == "pass"
+    assert _check(observed, "min_quality_score").bounds is None
+
+
+def test_score_bounds_survive_every_saved_form(tmp_path: Path):
+    report = _large_report(tmp_path)
+    bounds = report.quality_score_bounds
+    assert bounds is not None
+
+    assert report.to_dict()["quality"]["score_bounds"] == bounds
+    assert dp.ProfileReport.from_dict(report.to_dict()).quality_score_bounds == bounds
+    saved = tmp_path / "report.json"
+    report.save(saved)
+    reloaded = dp.ProfileReport.load(saved)
+    assert reloaded.quality_score_bounds == bounds
+    policy: dict[str, Any] = {"min_quality_score": 1, "min_dimension_scores": {"consistency": 99}}
+    assert reloaded.check(**policy).to_dict() == report.check(**policy).to_dict()
+
+
+def test_an_exact_report_has_no_score_bounds(report):
+    assert report.quality_score_bounds is None
+    assert "score_bounds" not in report.to_dict()["quality"]
+
+
+def test_score_bounds_are_a_copy(tmp_path: Path):
+    report = _large_report(tmp_path)
+    report.quality_score_bounds["overall_score"]["lower"] = 0.0
+    assert report.quality_score_bounds["overall_score"]["lower"] > 0.0
 
 
 def test_a_duplicate_column_name_resolves_to_the_first_profile(report):

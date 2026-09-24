@@ -86,6 +86,11 @@ class QualityCheck:
     observed: float | int | None = None
     #: Why the check was not evaluated, when it was not.
     reason: dict[str, _Any] | None = None
+    #: Where the whole-source value lies, when ``observed`` came from a
+    #: retained sample and the report bounds it: ``lower``, ``upper`` and
+    #: ``confidence_level``. A ``full_source`` requirement is decided on this
+    #: interval rather than on ``observed``.
+    bounds: dict[str, _Any] | None = None
 
     @property
     def is_violation(self) -> bool:
@@ -104,6 +109,8 @@ class QualityCheck:
             document["observed"] = self.observed
         document["scope"] = self.scope
         document["evidence"] = dict(self.evidence)
+        if self.bounds is not None:
+            document["bounds"] = dict(self.bounds)
         document["status"] = self.status
         if self.reason is not None:
             document.update(self.reason)
@@ -395,16 +402,20 @@ class _Policy:
                     "no quality dimension had anything to assess, so there is no overall score"
                 ),
             )
-        status = self._decide_aggregate(evidence, score >= minimum)
+        bounds = _check_bounds(report, None)
+        status, bounds, message = self._decide_score(
+            evidence, score, minimum, bounds, "the overall quality score"
+        )
         return QualityCheck(
             code="min_quality_score",
             expected=expected,
             observed=_r2(score),
             scope=self.scope,
             evidence=evidence,
+            bounds=bounds,
             status=status,
             reason=_evidence_reason(status, evidence),
-            message=_aggregate_message(status, "the overall quality score"),
+            message=message,
         )
 
     def _dimension_score(
@@ -434,7 +445,10 @@ class _Policy:
                 reason={"reason": "not_assessed"},
                 message="this dimension had nothing to assess in this run",
             )
-        status = self._decide_aggregate(evidence, score >= minimum)
+        bounds = _check_bounds(report, dimension)
+        status, bounds, message = self._decide_score(
+            evidence, score, minimum, bounds, "this dimension's score"
+        )
         return QualityCheck(
             code="min_dimension_score",
             dimension=dimension,
@@ -442,10 +456,43 @@ class _Policy:
             observed=_r2(score),
             scope=self.scope,
             evidence=evidence,
+            bounds=bounds,
             status=status,
             reason=_evidence_reason(status, evidence),
-            message=_aggregate_message(status, "this dimension's score"),
+            message=message,
         )
+
+    def _decide_score(
+        self,
+        evidence: dict[str, _Any],
+        score: float,
+        minimum: float,
+        bounds: dict[str, _Any] | None,
+        subject: str,
+    ) -> tuple[str, dict[str, _Any] | None, str]:
+        """Decide a minimum on a score, on its whole-source interval when the
+        only gap in the evidence is the quality sample and the report bounds
+        the score. The interval settles the requirement when it lies wholly on
+        one side of the minimum; a minimum inside it is left unevaluated.
+
+        Returns the status, the interval the check records, and its message.
+        """
+        sampled = evidence.get("reason") == "quality_sampled"
+        if bounds is not None and self.scope == "full_source" and sampled:
+            if bounds["lower"] >= minimum:
+                status = "passed"
+            elif bounds["upper"] < minimum:
+                status = "failed"
+            else:
+                status = "not_evaluated"
+            recorded = {
+                "lower": _r2(bounds["lower"]),
+                "upper": _r2(bounds["upper"]),
+                "confidence_level": bounds["confidence_level"],
+            }
+            return status, recorded, _bounded_message(status, subject)
+        status = self._decide_aggregate(evidence, score >= minimum)
+        return status, None, _aggregate_message(status, subject)
 
     def _null_percentages(self, report: ProfileReport, scan: dict[str, _Any]) -> list[QualityCheck]:
         """One check per named column in column-name order, then one per
@@ -603,6 +650,43 @@ def _aggregate_message(status: str, subject: str) -> str:
     if status == "failed":
         return f"{subject} is below the required minimum"
     return f"{subject} was computed over part of the source, which bounds nothing about the rest"
+
+
+def _bounded_message(status: str, subject: str) -> str:
+    if status == "passed":
+        return (
+            f"{subject} was computed over a sample, and its whole-source interval meets the "
+            "required minimum"
+        )
+    if status == "failed":
+        return (
+            f"{subject} was computed over a sample, and its whole-source interval is below the "
+            "required minimum"
+        )
+    return (
+        f"{subject} was computed over a sample, and the required minimum lies within its "
+        "whole-source interval"
+    )
+
+
+def _check_bounds(report: ProfileReport, dimension: str | None) -> dict[str, _Any] | None:
+    """The interval a score check decides on, from the report's bounds: the
+    overall score's when ``dimension`` is ``None``, else that dimension's.
+    """
+    bounds = report.quality_score_bounds
+    if bounds is None:
+        return None
+    if dimension is None:
+        interval = bounds.get("overall_score")
+    else:
+        interval = (bounds.get("dimension_scores") or {}).get(dimension)
+    if interval is None:
+        return None
+    return {
+        "lower": interval["lower"],
+        "upper": interval["upper"],
+        "confidence_level": bounds["confidence_level"],
+    }
 
 
 def _evidence_reason(status: str, evidence: dict[str, _Any]) -> dict[str, _Any] | None:

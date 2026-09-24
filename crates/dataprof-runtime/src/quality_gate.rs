@@ -52,7 +52,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::{ColumnProfile, ExecutionMetadata, QualityDimension};
-use dataprof_metrics::QualityAssessment;
+use dataprof_metrics::{QualityAssessment, ScoreBounds, ScoreInterval};
 
 use crate::profile_report::{ProfileReport, QualityAnalysisStatus};
 
@@ -369,6 +369,13 @@ pub struct Check {
     pub scope: PolicyScope,
     /// Whether the data behind `observed` covers the whole source.
     pub evidence: Evidence,
+    /// Where the whole-source value lies, when `observed` came from a retained
+    /// sample and the report bounds it. A full-source requirement is decided
+    /// on this interval rather than on `observed`: it passes when the whole
+    /// interval meets the requirement, fails when none of it does, and is
+    /// otherwise not evaluated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<CheckBounds>,
     /// Passed, failed, or not evaluated.
     #[serde(flatten)]
     pub status: CheckStatus,
@@ -394,6 +401,19 @@ impl Check {
             _ => None,
         }
     }
+}
+
+/// The interval a sampled score was decided on.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct CheckBounds {
+    /// Lowest value the whole-source score can take.
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    pub lower: f64,
+    /// Highest value the whole-source score can take.
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    pub upper: f64,
+    /// Probability that every interval in the report holds at once.
+    pub confidence_level: f64,
 }
 
 /// The overall outcome of a policy.
@@ -667,6 +687,7 @@ impl QualityPolicy {
             observed: None,
             scope: self.scope,
             evidence: Evidence::Complete,
+            bounds: None,
             status: if analyzed {
                 CheckStatus::Passed
             } else {
@@ -690,6 +711,7 @@ impl QualityPolicy {
                 report.quality.as_ref(),
                 Provenance::Overall,
             )),
+            bounds: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -704,8 +726,10 @@ impl QualityPolicy {
             return check;
         };
         check.observed = Some(MetricValue::Percentage(score));
-        check.status = self.decide_aggregate(check.evidence, score >= min);
-        check.message = aggregate_message(&check.status, "the overall quality score");
+        let bounds = quality
+            .score_bounds()
+            .and_then(|bounds| check_bounds(bounds, bounds.overall_score));
+        self.decide_score(&mut check, score, min, bounds, "the overall quality score");
         check
     }
 
@@ -729,6 +753,7 @@ impl QualityPolicy {
                 report.quality.as_ref(),
                 Provenance::Dimension(dimension),
             )),
+            bounds: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -747,9 +772,52 @@ impl QualityPolicy {
             return check;
         };
         check.observed = Some(MetricValue::Percentage(score));
-        check.status = self.decide_aggregate(check.evidence, score >= min);
-        check.message = aggregate_message(&check.status, "this dimension's score");
+        let bounds = quality.score_bounds().and_then(|bounds| {
+            check_bounds(
+                bounds,
+                bounds
+                    .dimension_scores
+                    .get(&dimension.to_string())
+                    .copied()
+                    .flatten(),
+            )
+        });
+        self.decide_score(&mut check, score, min, bounds, "this dimension's score");
         check
+    }
+
+    /// Decide a minimum on a score, on its whole-source interval when the
+    /// only gap in the evidence is the quality sample and the report bounds
+    /// the score. The interval settles the requirement when it lies wholly on
+    /// one side of the minimum; a minimum inside it is left unevaluated.
+    fn decide_score(
+        &self,
+        check: &mut Check,
+        score: f64,
+        min: f64,
+        bounds: Option<CheckBounds>,
+        subject: &str,
+    ) {
+        let sampled = check.evidence.gap() == Some(EvidenceGap::QualitySampled);
+        match bounds {
+            Some(bounds) if self.scope == PolicyScope::FullSource && sampled => {
+                check.bounds = Some(bounds);
+                check.status = if bounds.lower >= min {
+                    CheckStatus::Passed
+                } else if bounds.upper < min {
+                    CheckStatus::Failed
+                } else {
+                    CheckStatus::NotEvaluated(NotEvaluated::EvidenceIncomplete {
+                        gap: EvidenceGap::QualitySampled,
+                    })
+                };
+                check.message = bounded_message(&check.status, subject);
+            }
+            _ => {
+                check.status = self.decide_aggregate(check.evidence, score >= min);
+                check.message = aggregate_message(&check.status, subject);
+            }
+        }
     }
 
     /// One check per named column, in column-name order, then one per
@@ -802,6 +870,7 @@ impl QualityPolicy {
             observed: None,
             scope: self.scope,
             evidence: scan,
+            bounds: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -851,6 +920,7 @@ impl QualityPolicy {
                 report.quality.as_ref(),
                 Provenance::Component("duplicate_rows"),
             )),
+            bounds: None,
             status: CheckStatus::Passed,
             message: String::new(),
         };
@@ -974,6 +1044,32 @@ fn aggregate_message(status: &CheckStatus, subject: &str) -> String {
              the rest"
         ),
     }
+}
+
+fn bounded_message(status: &CheckStatus, subject: &str) -> String {
+    match status {
+        CheckStatus::Passed => format!(
+            "{subject} was computed over a sample, and its whole-source interval meets the \
+             required minimum"
+        ),
+        CheckStatus::Failed => format!(
+            "{subject} was computed over a sample, and its whole-source interval is below the \
+             required minimum"
+        ),
+        CheckStatus::NotEvaluated(_) => format!(
+            "{subject} was computed over a sample, and the required minimum lies within its \
+             whole-source interval"
+        ),
+    }
+}
+
+/// The interval a check decides on, from the report's bounds.
+fn check_bounds(bounds: &ScoreBounds, interval: Option<ScoreInterval>) -> Option<CheckBounds> {
+    interval.map(|interval| CheckBounds {
+        lower: interval.lower,
+        upper: interval.upper,
+        confidence_level: bounds.confidence_level,
+    })
 }
 
 /// The `state` tag the report serializes for its quality status.
@@ -1214,43 +1310,91 @@ mod tests {
     }
 
     #[test]
-    fn a_reservoir_backed_score_does_not_claim_full_source_coverage() {
+    fn a_reservoir_backed_score_is_decided_on_its_whole_source_interval() {
         let report = reservoir_report();
         assert!(report.execution.source_exhausted);
         assert!(!report.execution.sampling_applied);
-        let sampled = report
-            .quality
-            .as_ref()
-            .expect("quality was computed")
+        let quality = report.quality.as_ref().expect("quality was computed");
+        let sampled = quality
             .sampled_dimensions()
             .expect("a profiling run records its provenance");
         assert!(
             !sampled.is_empty(),
-            "the assembler did not bifurcate; this test no longer reaches the \
-             case it guards"
+            "the assembler did not bifurcate; this test no longer reaches the              case it guards"
         );
-
-        let result = QualityPolicy::new()
-            .min_quality_score(1.0)
-            .evaluate(&report)
-            .unwrap();
-
-        assert_eq!(result.verdict, Verdict::Inconclusive);
-        // The scan itself was complete; only the metric's own evidence is not.
-        assert_eq!(result.evidence, Evidence::Complete);
-        let check = check_for(&result, CheckCode::MinQualityScore);
-        assert_eq!(
-            check.evidence,
-            Evidence::Incomplete {
-                reason: EvidenceGap::QualitySampled
-            }
+        let interval = quality
+            .score_bounds()
+            .expect("a sampled assessment carries bounds")
+            .overall_score
+            .expect("every sampled dimension here is bounded");
+        assert!(
+            interval.lower < interval.upper && interval.upper < 100.0,
+            "a five-value sample leaves room on both sides: {interval:?}"
         );
+        let decide = |min: f64| {
+            let result = QualityPolicy::new()
+                .min_quality_score(min)
+                .evaluate(&report)
+                .unwrap();
+            // The scan itself was complete; only the metric's own evidence is
+            // not, and a decision on the interval does not pretend otherwise.
+            assert_eq!(result.evidence, Evidence::Complete);
+            let check = check_for(&result, CheckCode::MinQualityScore).clone();
+            assert_eq!(
+                check.evidence,
+                Evidence::Incomplete {
+                    reason: EvidenceGap::QualitySampled
+                }
+            );
+            assert_eq!(
+                check.bounds.map(|bounds| (bounds.lower, bounds.upper)),
+                Some((interval.lower, interval.upper))
+            );
+            (result.verdict, check)
+        };
+
+        let (verdict, _) = decide(interval.lower);
+        assert_eq!(verdict, Verdict::Pass);
+
+        let (verdict, check) = decide((interval.lower + interval.upper) / 2.0);
+        assert_eq!(verdict, Verdict::Inconclusive);
         assert_eq!(
             check.not_evaluated(),
             Some(&NotEvaluated::EvidenceIncomplete {
                 gap: EvidenceGap::QualitySampled
             })
         );
+
+        let (verdict, _) = decide(interval.upper + 0.01);
+        assert_eq!(verdict, Verdict::Fail);
+    }
+
+    #[test]
+    fn an_observed_scope_decides_on_the_sampled_score_itself() {
+        let report = reservoir_report();
+        let score = report.quality_score().unwrap();
+        let result = QualityPolicy::new()
+            .min_quality_score(score)
+            .scope(PolicyScope::Observed)
+            .evaluate(&report)
+            .unwrap();
+        let check = check_for(&result, CheckCode::MinQualityScore);
+        assert_eq!(result.verdict, Verdict::Pass);
+        assert_eq!(check.bounds, None);
+    }
+
+    #[test]
+    fn a_sampled_score_without_recorded_bounds_stays_unevaluated() {
+        let mut report = reservoir_report();
+        let quality = report.quality.take().unwrap();
+        report.quality = Some(QualityAssessment::new(quality.metrics, quality.confidence));
+
+        let result = QualityPolicy::new()
+            .min_quality_score(1.0)
+            .evaluate(&report)
+            .unwrap();
+        assert_eq!(result.verdict, Verdict::Inconclusive);
+        assert_eq!(check_for(&result, CheckCode::MinQualityScore).bounds, None);
     }
 
     /// Provenance is resolved per component, so a dimension computed from

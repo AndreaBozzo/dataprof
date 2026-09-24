@@ -699,6 +699,67 @@ impl QualityScores {
     }
 }
 
+/// A range a score lies in, on the 0-100 scale.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ScoreInterval {
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    pub lower: f64,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
+    pub upper: f64,
+}
+
+impl ScoreInterval {
+    fn is_valid(&self) -> bool {
+        self.lower.is_finite()
+            && self.upper.is_finite()
+            && 0.0 <= self.lower
+            && self.lower <= self.upper
+            && self.upper <= 100.0
+    }
+}
+
+/// Where the scores over every scanned row lie, for an assessment whose
+/// scores were partly computed over a retained sample of those rows.
+///
+/// The sample fixes each check: a column's type, dominant form and decimal
+/// scale, detected pattern and outlier fences. The intervals cover the scores
+/// those same checks would give over every scanned value, and all of them
+/// hold at once with probability at least `confidence_level`. When the scan
+/// read the whole source, that is the whole source's score, which is the
+/// only case a quality gate decides on them. Intervals
+/// are rounded outward to two decimals, so a saved one still contains what
+/// the computed one did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ScoreBounds {
+    /// Probability that every interval here holds at once.
+    pub confidence_level: f64,
+    /// Interval for the overall score. `None` when there is no overall score,
+    /// or when a sampled dimension behind it has no bound.
+    pub overall_score: Option<ScoreInterval>,
+    /// Interval per dimension, keyed like `QualityScores::dimension_scores`.
+    /// An exactly computed dimension's interval is its score. `None` for a
+    /// dimension that was not assessed, or a sampled one with no bound: an
+    /// estimated key count, a duplicate scan over a sample, or start/end
+    /// ordering between date columns whose samples do not hold the same rows
+    /// (one of them has nulls).
+    pub dimension_scores: std::collections::BTreeMap<String, Option<ScoreInterval>>,
+}
+
+impl ScoreBounds {
+    fn is_valid(&self) -> bool {
+        self.confidence_level.is_finite()
+            && 0.0 < self.confidence_level
+            && self.confidence_level < 1.0
+            && self
+                .overall_score
+                .is_none_or(|interval| interval.is_valid())
+            && self
+                .dimension_scores
+                .values()
+                .all(|interval| interval.is_none_or(|interval| interval.is_valid()))
+    }
+}
+
 /// Wraps quality metrics with confidence information.
 #[derive(Debug, Clone, schemars::JsonSchema)]
 pub struct QualityAssessment {
@@ -710,6 +771,12 @@ pub struct QualityAssessment {
     scores: Option<QualityScores>,
     #[schemars(skip)]
     score_inputs: Option<Box<QualityMetrics>>,
+    /// Bounds on the scores over every scanned row, present only when some score was
+    /// computed over a retained sample.
+    #[schemars(default)]
+    score_bounds: Option<ScoreBounds>,
+    #[schemars(skip)]
+    bounds_inputs: Option<Box<QualityMetrics>>,
 }
 
 impl Serialize for QualityAssessment {
@@ -719,11 +786,14 @@ impl Serialize for QualityAssessment {
             metrics: &'a QualityMetrics,
             confidence: &'a MetricConfidence,
             scores: QualityScores,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            score_bounds: Option<&'a ScoreBounds>,
         }
         Document {
             metrics: &self.metrics,
             confidence: &self.confidence,
             scores: self.scores(),
+            score_bounds: self.score_bounds(),
         }
         .serialize(serializer)
     }
@@ -737,8 +807,19 @@ impl<'de> Deserialize<'de> for QualityAssessment {
             confidence: MetricConfidence,
             #[serde(default)]
             scores: Option<QualityScores>,
+            #[serde(default)]
+            score_bounds: Option<ScoreBounds>,
         }
         let document = Document::deserialize(deserializer)?;
+        if document
+            .score_bounds
+            .as_ref()
+            .is_some_and(|bounds| !bounds.is_valid())
+        {
+            return Err(serde::de::Error::custom(
+                "quality score bounds must lie in 0..=100 with lower <= upper, at a confidence level between 0 and 1",
+            ));
+        }
         if let Some(scores) = &document.scores {
             let in_range = |score: Option<f64>| {
                 score.is_none_or(|value| value.is_finite() && (0.0..=100.0).contains(&value))
@@ -777,11 +858,17 @@ impl<'de> Deserialize<'de> for QualityAssessment {
         } else {
             None
         };
+        let bounds_inputs = document
+            .score_bounds
+            .as_ref()
+            .map(|_| Box::new(document.metrics.clone()));
         Ok(Self {
             metrics: document.metrics,
             confidence: document.confidence,
             scores: document.scores,
             score_inputs,
+            score_bounds: document.score_bounds,
+            bounds_inputs,
         })
     }
 }
@@ -813,6 +900,28 @@ impl QualityAssessment {
             confidence,
             scores: None,
             score_inputs: None,
+            score_bounds: None,
+            bounds_inputs: None,
+        }
+    }
+
+    /// Attach bounds on the scores over every scanned row, computed from the same
+    /// sample as these metrics.
+    pub fn with_score_bounds(mut self, bounds: Option<ScoreBounds>) -> Self {
+        self.bounds_inputs = bounds.as_ref().map(|_| Box::new(self.metrics.clone()));
+        self.score_bounds = bounds;
+        self
+    }
+
+    /// Bounds on the scores over every scanned row, when some score was computed over a
+    /// retained sample and the bounds were recorded.
+    ///
+    /// `None` once `metrics` has been changed: bounds describe the numbers
+    /// they were computed with, and would otherwise vouch for edited ones.
+    pub fn score_bounds(&self) -> Option<&ScoreBounds> {
+        match (&self.score_bounds, &self.bounds_inputs) {
+            (Some(bounds), Some(inputs)) if &self.metrics == inputs.as_ref() => Some(bounds),
+            _ => None,
         }
     }
 
@@ -916,6 +1025,77 @@ impl From<QualityMetrics> for QualityAssessment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_bounds() -> ScoreBounds {
+        let interval = |lower, upper| Some(ScoreInterval { lower, upper });
+        ScoreBounds {
+            confidence_level: 0.999,
+            overall_score: interval(97.25, 99.5),
+            dimension_scores: QualityDimension::all()
+                .into_iter()
+                .map(|dimension| (dimension.to_string(), interval(96.0, 100.0)))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn score_bounds_survive_a_saved_document() {
+        let assessment = QualityAssessment::approximate(perfect_assessed(), 10, Some(100))
+            .with_score_bounds(Some(sample_bounds()));
+        let text = serde_json::to_string(&assessment).unwrap();
+        let restored: QualityAssessment = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(restored.score_bounds(), Some(&sample_bounds()));
+    }
+
+    #[test]
+    fn an_exact_assessment_writes_no_bounds() {
+        let text = serde_json::to_string(&QualityAssessment::exact(perfect_assessed())).unwrap();
+        let document: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(document.get("score_bounds").is_none());
+    }
+
+    #[test]
+    fn edited_metrics_lose_the_bounds_computed_for_the_old_ones() {
+        let mut assessment = QualityAssessment::approximate(perfect_assessed(), 10, Some(100))
+            .with_score_bounds(Some(sample_bounds()));
+        assessment
+            .metrics
+            .consistency
+            .as_mut()
+            .unwrap()
+            .format_violations = 50;
+
+        assert_eq!(assessment.score_bounds(), None);
+        let text = serde_json::to_string(&assessment).unwrap();
+        assert!(!text.contains("score_bounds"));
+    }
+
+    #[test]
+    fn a_document_with_inverted_or_out_of_range_bounds_is_refused() {
+        let assessment = QualityAssessment::approximate(perfect_assessed(), 10, Some(100))
+            .with_score_bounds(Some(sample_bounds()));
+        let document = serde_json::to_value(&assessment).unwrap();
+        for (pointer, value) in [
+            ("/score_bounds/overall_score/lower", serde_json::json!(99.9)),
+            (
+                "/score_bounds/overall_score/upper",
+                serde_json::json!(100.5),
+            ),
+            ("/score_bounds/confidence_level", serde_json::json!(1.0)),
+            (
+                "/score_bounds/dimension_scores/validity/lower",
+                serde_json::json!(-1.0),
+            ),
+        ] {
+            let mut broken = document.clone();
+            *broken.pointer_mut(pointer).unwrap() = value;
+            assert!(
+                serde_json::from_value::<QualityAssessment>(broken).is_err(),
+                "{pointer} was accepted"
+            );
+        }
+    }
 
     #[test]
     fn saved_aggregate_scores_survive_rounding_their_inputs() {

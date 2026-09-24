@@ -557,8 +557,8 @@
       }
     },
     {
-      "name": "a_sampled_metric_on_a_completely_read_source",
-      "why": "The source was read in full and no row sampler ran, so the scan's own evidence is complete. Quality still came from the bounded reservoir, and the overall score is withheld while completeness, which comes from exact column counters, stays decidable.",
+      "name": "a_sampled_score_is_decided_on_its_whole_source_interval",
+      "why": "The source was read in full and no row sampler ran, so the scan's own evidence is complete. Quality still came from the bounded reservoir; the report bounds each sampled score over the whole source, and a minimum below the whole interval passes. Completeness comes from exact column counters and is decided on its value.",
       "options": {
         "input": "generated"
       },
@@ -570,7 +570,7 @@
         }
       },
       "expected": {
-        "verdict": "inconclusive",
+        "verdict": "pass",
         "scope": "full_source",
         "evidence": {
           "coverage": "complete"
@@ -588,10 +588,13 @@
               "coverage": "incomplete",
               "reason": "quality_sampled"
             },
-            "status": "not_evaluated",
-            "reason": "evidence_incomplete",
-            "gap": "quality_sampled",
-            "message": "the overall quality score was computed over part of the source, which bounds nothing about the rest"
+            "bounds": {
+              "lower": 99.89,
+              "upper": 100.0,
+              "confidence_level": 0.999
+            },
+            "status": "passed",
+            "message": "the overall quality score was computed over a sample, and its whole-source interval meets the required minimum"
           },
           {
             "code": "min_dimension_score",
@@ -621,10 +624,54 @@
               "coverage": "incomplete",
               "reason": "quality_sampled"
             },
+            "bounds": {
+              "lower": 99.68,
+              "upper": 100.0,
+              "confidence_level": 0.999
+            },
+            "status": "passed",
+            "message": "this dimension's score was computed over a sample, and its whole-source interval meets the required minimum"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_minimum_inside_the_interval_is_not_decided",
+      "why": "The same sampled score, against a minimum that falls inside its whole-source interval: the sample cannot settle it either way.",
+      "options": {
+        "input": "generated"
+      },
+      "policy": {
+        "min_quality_score": 100
+      },
+      "expected": {
+        "verdict": "inconclusive",
+        "scope": "full_source",
+        "evidence": {
+          "coverage": "complete"
+        },
+        "checks": [
+          {
+            "code": "min_quality_score",
+            "expected": {
+              "comparison": "at_least",
+              "value": 100.0
+            },
+            "observed": 100.0,
+            "scope": "full_source",
+            "evidence": {
+              "coverage": "incomplete",
+              "reason": "quality_sampled"
+            },
+            "bounds": {
+              "lower": 99.89,
+              "upper": 100.0,
+              "confidence_level": 0.999
+            },
             "status": "not_evaluated",
             "reason": "evidence_incomplete",
             "gap": "quality_sampled",
-            "message": "this dimension's score was computed over part of the source, which bounds nothing about the rest"
+            "message": "the overall quality score was computed over a sample, and the required minimum lies within its whole-source interval"
           }
         ]
       }
