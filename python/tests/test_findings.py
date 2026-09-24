@@ -8,6 +8,7 @@ built by editing a real report's document and reading it back.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +75,8 @@ def test_the_result_has_no_truthiness(report: dp.ProfileReport):
 
 
 def test_thresholds_are_validated_by_name(report: dp.ProfileReport):
-    for value in (0, -5, 100.5, float("nan"), True, "twenty"):
+    # 1e-9 and 0.004 are above zero but apply as 0.00, which reports every column.
+    for value in (0, -5, 100.5, float("nan"), True, "twenty", 1e-9, 0.004):
         # Through a mapping, so the checker lets the wrong types reach the call.
         keywords: dict[str, Any] = {"null_heavy_percentage": value}
         with pytest.raises(ValueError, match="null_heavy_percentage must be a percentage"):
@@ -84,6 +86,19 @@ def test_thresholds_are_validated_by_name(report: dp.ProfileReport):
     # The top of the range is accepted. Only a column whose null share rounds
     # to 100% qualifies there, and a fully null one is `all_null` instead.
     assert "null_heavy" not in {f.code for f in report.findings(null_heavy_percentage=100)}
+
+
+def test_thresholds_apply_at_the_precision_they_are_reported_at(tmp_path: Path):
+    """20.004 applies as 20.00: a 20% column is reported, and says so."""
+    path = tmp_path / "fifth.csv"
+    path.write_text("a,b\n1,x\n2,x\n3,x\n4,x\n,x\n", encoding="utf-8")
+    fifth = dp.profile_file(path)
+    assert fifth["a"].null_percentage == 20.0
+
+    finding = next(
+        f for f in fifth.findings(null_heavy_percentage=20.004) if f.code == "null_heavy"
+    )
+    assert finding.evidence == {"null_percentage": 20.0, "threshold": 20.0}
 
 
 def test_an_estimated_duplicate_count_witnesses_nothing(report: dp.ProfileReport):
@@ -132,3 +147,84 @@ def test_only_confident_personal_or_financial_patterns_are_sensitive(report: dp.
     reported = [f.evidence["pattern"] for f in result if f.column == "order_id"]
     # Ordered by pattern name within the column, not by detection order.
     assert reported == ["Email", "SSN (US)"]
+
+
+DATED = (
+    "id,start_date,end_date\n"
+    "1,2024-01-01,2024-01-05\n"
+    "2,2024-02-01,2024-02-05\n"
+    "3,2024-03-01,2024-03-05\n"
+)
+
+
+@pytest.fixture
+def dated(tmp_path: Path) -> dp.ProfileReport:
+    path = tmp_path / "dated.csv"
+    path.write_text(DATED, encoding="utf-8")
+    return dp.profile_file(path)
+
+
+def _reason(result: dp.FindingsResult, code: str) -> str | None:
+    return next((entry["reason"] for entry in result.not_evaluated if entry["code"] == code), None)
+
+
+def test_a_zero_count_from_the_quality_sample_rules_nothing_out(dated: dp.ProfileReport):
+    """Every row scanned, timeliness from the reservoir: its zeros are not clean."""
+    assert _reason(dated.findings(), "future_dates") is None
+
+    def sampled(document: dict[str, Any]) -> None:
+        document["quality"]["sampled_dimensions"] = ["timeliness"]
+
+    result = _edited(dated, sampled).findings()
+    assert _reason(result, "future_dates") == "sampled"
+    assert _reason(result, "temporal_order_violations") == "sampled"
+    assert _reason(result, "duplicate_rows") is None
+
+    def witnessed(document: dict[str, Any]) -> None:
+        sampled(document)
+        document["quality"]["timeliness"]["future_dates_count"] = 1
+
+    # A witnessed future date stays witnessed, sample or not.
+    result = _edited(dated, witnessed).findings()
+    assert "future_dates" in {finding.code for finding in result}
+    assert _reason(result, "future_dates") is None
+
+
+def test_unrecorded_coverage_does_not_read_as_clean(dated: dp.ProfileReport):
+    def unrecorded(document: dict[str, Any]) -> None:
+        del document["quality"]["sampled_dimensions"]
+
+    result = _edited(dated, unrecorded).findings()
+    for code in ("duplicate_rows", "future_dates", "temporal_order_violations"):
+        assert _reason(result, code) == "unrecorded", code
+
+
+@pytest.mark.parametrize("layout", ["flat", "canonical"])
+def test_a_report_from_before_ragged_counting_does_not_read_as_clean(
+    dated: dp.ProfileReport, layout: str
+):
+    """Ragged rows were first counted in 0.10, with schema versioning.
+
+    A document without a schema version loads with a defaulted zero, through
+    the flat loader and through the Rust reader alike.
+    """
+    document = dated.to_dict() if layout == "flat" else json.loads(dated.to_json())
+    assert _reason(dp.ProfileReport.from_dict(document).findings(), "ragged_rows") is None
+
+    del document["schema_version"]
+    legacy = dp.ProfileReport.from_dict(document)
+    assert legacy.ragged_row_count == 0
+    assert _reason(legacy.findings(), "ragged_rows") == "unrecorded"
+
+
+def test_a_partial_scan_names_its_reason_and_truncation_wins(dated: dp.ProfileReport):
+    def sampled(document: dict[str, Any]) -> None:
+        document["execution"]["sampling_applied"] = True
+
+    def both(document: dict[str, Any]) -> None:
+        sampled(document)
+        document["execution"]["source_exhausted"] = False
+
+    for edit, expected in ((sampled, "sampled"), (both, "truncated")):
+        finding = next(f for f in _edited(dated, edit).findings() if f.code == "partial_scan")
+        assert finding.evidence["reason"] == expected

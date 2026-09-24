@@ -289,6 +289,15 @@ class ProfileReport:
         return self._report.ragged_row_count
 
     @property
+    def _schema_version(self) -> int:
+        """The schema version the report was written with; 0 before 0.10.
+
+        Private: it lets a reader tell a field the writer never recorded from
+        one it recorded as zero.
+        """
+        return self._report.schema_version
+
+    @property
     def sampling_applied(self) -> bool:
         return self._report.sampling_applied
 

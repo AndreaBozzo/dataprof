@@ -113,6 +113,8 @@ class ProfileReport:
     def to_markdown(self) -> str:
         """GitHub-flavored markdown table of the column profiles."""
         ...
+    @property
+    def _schema_version(self) -> int: ...
     def to_llm_context(self, max_tokens: int = 1000, include_samples: bool = False) -> str:
         """Token-bounded, agent-oriented summary: shape, caveats, flags, schema, patterns.
 

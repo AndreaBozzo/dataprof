@@ -830,9 +830,13 @@ names; no finding carries a raw cell value.
 | `partial_scan` | info | The scan stopped early or sampled rows (`reason` is `"truncated"` or `"sampled"`) |
 
 Findings sort by severity, then code, then report-level before column-level,
-then column position. The default thresholds match the flags
-`to_llm_context()` renders. Both thresholds take a percentage above 0 and at
-most 100, and anything else raises `ValueError`:
+then column position. The default thresholds are the ones `to_llm_context()`
+flags at. Findings compare at the report's 2dp precision and the flags do not,
+so a share within rounding of a threshold (4.9992% against 5) can be a
+finding without being a flag. Both thresholds take a percentage above 0 and at
+most 100, and are applied at 2dp, so the evidence states exactly the threshold
+that was compared. Anything else, including a value that rounds to 0, raises
+`ValueError`:
 
 ```python
 report.findings(null_heavy_percentage=50, mixed_types_percentage=10)
@@ -856,6 +860,8 @@ dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
 | `quality_unavailable` | The report carries no quality assessment; `quality_status` says why |
 | `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
 | `estimated` | The duplicate count is an estimate, which witnesses nothing |
+| `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
+| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage before 0.12 |
 | `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
 | `no_values` | The listed `columns` had no values to look at |
 

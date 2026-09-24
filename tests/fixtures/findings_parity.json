@@ -3,7 +3,8 @@
     "orders.csv": "order_id,sku,email,channel,amount,notes,start_date,end_date\nA-1,SKU-1,a@x.com,web,10,,2024-01-01,2024-01-05\nA-2,77,b@y.com,web,20,,2024-02-01,2024-01-05\nA-3,SKU-3,c@z.com,web,abc,,2024-03-01,2999-01-01\nA-3,SKU-3,c@z.com,web,abc,,2024-03-01,2999-01-01\nA-5,SKU-5,d@w.com,web,,,2024-05-01,2024-06-01\n",
     "ragged.csv": "a,b\n1,2\n3,4,5\n6\n",
     "header_only.csv": "a,b\n",
-    "broken.jsonl": "{\"id\": 1, \"kind\": \"a\"}\n{\"id\": 2, \"kind\": \n{\"id\": 3, \"kind\": \"b\"}\n"
+    "broken.jsonl": "{\"id\": 1, \"kind\": \"a\"}\n{\"id\": 2, \"kind\": \n{\"id\": 3, \"kind\": \"b\"}\n",
+    "nested.jsonl": "{\"id\": 1, \"payload\": {\"k\": 1}}\n{\"id\": 2, \"payload\": {\"k\": 2}}\n{\"id\": 3, \"payload\": null}\n"
   },
   "cases": [
     {
@@ -122,6 +123,13 @@
             "columns": [
               "notes"
             ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
           }
         ]
       }
@@ -218,6 +226,13 @@
           },
           {
             "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
             "reason": "no_values",
             "columns": [
               "notes"
@@ -329,6 +344,13 @@
           },
           {
             "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
             "reason": "no_values",
             "columns": [
               "notes"
@@ -548,6 +570,13 @@
             "columns": [
               "notes"
             ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
           }
         ]
       }
@@ -624,6 +653,59 @@
       }
     },
     {
+      "name": "a_nested_column_is_assessed_by_its_counts",
+      "why": "A container column carries counts only, so the value-level rules list it as not computed rather than clean.",
+      "options": {
+        "input": "nested.jsonl"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "null_heavy",
+            "severity": "warning",
+            "column": "payload",
+            "evidence": {
+              "null_percentage": 33.33,
+              "threshold": 20.0
+            },
+            "summary": "this column's null share is at or above the threshold"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "mixed_types",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
       "name": "a_header_only_input_has_nothing_to_assess",
       "why": "Zero rows is not zero percent: column rules list no_values and quality rules not_assessed.",
       "options": {
@@ -667,6 +749,14 @@
           },
           {
             "code": "null_heavy",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
             "reason": "no_values",
             "columns": [
               "a",

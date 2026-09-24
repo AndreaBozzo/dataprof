@@ -74,9 +74,10 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
     """The fixture is the coverage claim, so state what it must contain.
 
     A parity fixture that quietly lost a rule would still pass on both sides
-    while guarding nothing for it. ``estimated`` is the one reason absent: an
-    estimated duplicate count needs more distinct rows than a fixture should
-    carry, so the unit tests cover it instead.
+    while guarding nothing for it. Three reasons are absent: ``estimated`` and
+    ``sampled`` need more rows than a fixture should carry, and ``unrecorded``
+    needs a document from an older release, so the unit tests in both layers
+    cover them instead.
     """
     codes = {finding["code"] for case in cases for finding in case["expected"]["findings"]}
     assert codes == {

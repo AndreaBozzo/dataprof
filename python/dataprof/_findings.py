@@ -69,7 +69,15 @@ _SUMMARY = {
     "temporal_order_violations": "some start dates fall after their paired end dates",
 }
 
-_REASON_ORDER = ("quality_unavailable", "not_assessed", "estimated", "not_computed", "no_values")
+_REASON_ORDER = (
+    "quality_unavailable",
+    "not_assessed",
+    "estimated",
+    "sampled",
+    "unrecorded",
+    "not_computed",
+    "no_values",
+)
 
 
 @_dataclass(frozen=True)
@@ -147,18 +155,24 @@ class FindingsResult:
 
 
 def _threshold(setting: str, value: _Any) -> float:
-    """Accept a percentage in ``(0, 100]``, rejecting anything else by name.
+    """Accept a percentage in ``(0, 100]`` and return it at 2dp.
 
-    Percentages are on the report's 0..100 scale, not 0..1 ratios, and a zero
-    threshold would report every column.
+    The threshold is applied at the precision a percentage is compared and
+    reported at, so the evidence states exactly what was compared. It is
+    checked at that precision too: a value that rounds to 0 would report every
+    column. Percentages are on the report's 0..100 scale, not 0..1 ratios.
     """
     try:
         number = float("nan") if isinstance(value, bool) else float(value)
     except (TypeError, ValueError):
         number = float("nan")
-    if number != number or not 0.0 < number <= 100.0:
-        raise ValueError(f"{setting} must be a percentage above 0 and at most 100, got {value!r}")
-    return number
+    applied = _r2(number)
+    if applied is None or not 0.0 < applied <= 100.0:
+        raise ValueError(
+            f"{setting} must be a percentage above 0 and at most 100 at two decimal "
+            f"places, got {value!r}"
+        )
+    return applied
 
 
 class _Collector:
@@ -223,12 +237,12 @@ class _FindingPolicy:
         mixed_types_percentage: float | None,
     ) -> None:
         self.null_heavy_percentage = (
-            _NULL_HEAVY_PCT
+            _threshold("null_heavy_percentage", _NULL_HEAVY_PCT)
             if null_heavy_percentage is None
             else _threshold("null_heavy_percentage", null_heavy_percentage)
         )
         self.mixed_types_percentage = (
-            _MIXED_TYPE_PCT
+            _threshold("mixed_types_percentage", _MIXED_TYPE_PCT)
             if mixed_types_percentage is None
             else _threshold("mixed_types_percentage", mixed_types_percentage)
         )
@@ -267,7 +281,7 @@ class _FindingPolicy:
                     "null_heavy",
                     {
                         "null_percentage": percentage,
-                        "threshold": _r2(self.null_heavy_percentage),
+                        "threshold": self.null_heavy_percentage,
                     },
                     column=name,
                     index=index,
@@ -288,7 +302,7 @@ class _FindingPolicy:
             )
 
         self._mixed_types(index, column, non_null, out)
-        _sensitive_patterns(index, column, out)
+        _sensitive_patterns(index, column, non_null, out)
 
     def _mixed_types(self, index: int, column: _Any, non_null: int, out: _Collector) -> None:
         name = column.name
@@ -318,7 +332,7 @@ class _FindingPolicy:
             {
                 "dominant_type": dominant,
                 "dominant_percentage": _r2(dominant_count / classified * 100.0),
-                "threshold": _r2(self.mixed_types_percentage),
+                "threshold": self.mixed_types_percentage,
                 # Shares are counted over the values the profiler retained; a
                 # classified count short of the non-null count says they were
                 # sampled.
@@ -330,10 +344,14 @@ class _FindingPolicy:
         )
 
 
-def _sensitive_patterns(index: int, column: _Any, out: _Collector) -> None:
+def _sensitive_patterns(index: int, column: _Any, non_null: int, out: _Collector) -> None:
     patterns = column.patterns
     if patterns is None:
         out.skip("sensitive_pattern", "not_computed", column.name)
+        return
+    if non_null == 0:
+        # Detection ran over nothing, which is no evidence either way.
+        out.skip("sensitive_pattern", "no_values", column.name)
         return
     for pattern in patterns:
         category = pattern.category
@@ -363,7 +381,12 @@ def _scan_findings(report: ProfileReport, out: _Collector) -> None:
         partial = None
     if partial is not None:
         out.add("partial_scan", {"reason": partial, "rows_processed": report.rows})
-    if report.ragged_row_count:
+    if report._schema_version == 0:
+        # Ragged rows were first counted by the release that introduced schema
+        # versioning (0.10, #452). An older document loads with a defaulted
+        # zero that was never measured.
+        out.skip_report("ragged_rows", {"reason": "unrecorded"})
+    elif report.ragged_row_count:
         out.add(
             "ragged_rows",
             {"ragged_row_count": report.ragged_row_count, "rows_processed": report.rows},
@@ -393,6 +416,8 @@ def _quality_findings(report: ProfileReport, out: _Collector) -> None:
                 "rows_checked": int(uniqueness["rows_checked"]),
             },
         )
+    else:
+        _skip_unless_complete(report, out, "duplicate_rows", "duplicate_rows")
 
     timeliness = quality.timeliness
     if not timeliness or not timeliness.get("date_values_checked"):
@@ -405,6 +430,8 @@ def _quality_findings(report: ProfileReport, out: _Collector) -> None:
                 "date_values_checked": int(timeliness["date_values_checked"]),
             },
         )
+    else:
+        _skip_unless_complete(report, out, "future_dates", "timeliness")
     if not timeliness or not timeliness.get("temporal_pairs_checked"):
         out.skip_report("temporal_order_violations", {"reason": "not_assessed"})
     elif timeliness["temporal_violations"] > 0:
@@ -415,3 +442,22 @@ def _quality_findings(report: ProfileReport, out: _Collector) -> None:
                 "temporal_pairs_checked": int(timeliness["temporal_pairs_checked"]),
             },
         )
+    else:
+        _skip_unless_complete(report, out, "temporal_order_violations", "timeliness")
+
+
+def _skip_unless_complete(
+    report: ProfileReport, out: _Collector, code: str, component: str
+) -> None:
+    """A zero count is a clean result only when it covers every scanned row.
+
+    A count from the retained quality sample, or from a report that does not
+    record where its counts came from, rules nothing out for the rows it did
+    not see, so the rule is listed rather than read as clean. The component
+    labels are the ones the quality gate resolves provenance by.
+    """
+    sampled = report.quality_sampled_dimensions
+    if sampled is None:
+        out.skip_report(code, {"reason": "unrecorded"})
+    elif component in sampled:
+        out.skip_report(code, {"reason": "sampled"})

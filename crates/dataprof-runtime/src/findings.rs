@@ -36,7 +36,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use dataprof_core::serde_helpers::rounded_2;
-use dataprof_core::{ColumnProfile, DataType, ExecutionMetadata, PatternCategory};
+use dataprof_core::{ColumnProfile, DataType, PatternCategory};
+use dataprof_metrics::QualityAssessment;
 
 use crate::profile_report::ProfileReport;
 use crate::quality_gate::quality_status_name;
@@ -181,6 +182,7 @@ impl fmt::Display for FindingCode {
 /// whole numbers and are not widened into rounded floats.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum EvidenceValue {
     /// A count of rows or values.
     Count(usize),
@@ -226,6 +228,14 @@ pub enum NotEvaluatedReason {
     /// The number the rule reads is an estimate, which witnesses nothing: an
     /// estimated duplicate count is not evidence that a duplicate exists.
     Estimated,
+    /// The count the rule reads is zero, but it came from the retained quality
+    /// sample rather than every scanned row, so it rules nothing out for the
+    /// rows the sample left behind. A nonzero count is still reported.
+    Sampled,
+    /// The report does not record what the rule needs to tell a zero from an
+    /// unmeasured value: a document written before dataprof recorded it
+    /// (ragged rows before 0.10, quality sample coverage before 0.12).
+    Unrecorded,
     /// The metric the rule reads was not computed for these columns: the
     /// metric pack was not selected, or the column type does not carry it.
     NotComputed,
@@ -240,8 +250,10 @@ impl NotEvaluatedReason {
             Self::QualityUnavailable { .. } => 0,
             Self::NotAssessed => 1,
             Self::Estimated => 2,
-            Self::NotComputed => 3,
-            Self::NoValues => 4,
+            Self::Sampled => 3,
+            Self::Unrecorded => 4,
+            Self::NotComputed => 5,
+            Self::NoValues => 6,
         }
     }
 }
@@ -278,9 +290,9 @@ pub struct FindingsResult {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum FindingPolicyError {
-    /// A threshold fell outside `(0, 100]`, or was not a finite number.
-    /// Percentages are on the report's 0..100 scale, not 0..1 ratios, and a
-    /// zero threshold would report every column.
+    /// A threshold fell outside `(0, 100]` at the 2dp precision it is applied
+    /// at, or was not a finite number. Percentages are on the report's 0..100
+    /// scale, not 0..1 ratios, and a zero threshold would report every column.
     ThresholdOutOfRange {
         /// The setting that carried it.
         setting: &'static str,
@@ -294,7 +306,8 @@ impl fmt::Display for FindingPolicyError {
         match self {
             Self::ThresholdOutOfRange { setting, value } => write!(
                 f,
-                "{setting} must be a percentage above 0 and at most 100, got {value}"
+                "{setting} must be a percentage above 0 and at most 100 at two decimal \
+                 places, got {value}"
             ),
         }
     }
@@ -329,14 +342,16 @@ impl FindingPolicy {
     }
 
     /// Report a column as `null_heavy` when its null percentage, at the
-    /// report's 2dp precision, is at least `percentage`.
+    /// report's 2dp precision, is at least `percentage`. The threshold is
+    /// applied at 2dp too, so the evidence states exactly what was compared.
     pub fn null_heavy_percentage(mut self, percentage: f64) -> Self {
         self.null_heavy_percentage = percentage;
         self
     }
 
     /// Report a column as `mixed_types` when the values outside its dominant
-    /// lexical type make up at least `percentage` of those classified.
+    /// lexical type make up at least `percentage` of those classified, both
+    /// at 2dp.
     pub fn mixed_types_percentage(mut self, percentage: f64) -> Self {
         self.mixed_types_percentage = percentage;
         self
@@ -348,7 +363,8 @@ impl FindingPolicy {
             ("null_heavy_percentage", self.null_heavy_percentage),
             ("mixed_types_percentage", self.mixed_types_percentage),
         ] {
-            if !(value.is_finite() && value > 0.0 && value <= 100.0) {
+            let applied = rounded_2(value);
+            if !(value.is_finite() && applied > 0.0 && applied <= 100.0) {
                 return Err(FindingPolicyError::ThresholdOutOfRange { setting, value });
             }
         }
@@ -363,9 +379,19 @@ impl FindingPolicy {
         Ok(self.collect(report))
     }
 
+    /// The thresholds as applied: at the precision a percentage is compared
+    /// and reported at.
+    fn null_heavy_threshold(&self) -> f64 {
+        rounded_2(self.null_heavy_percentage)
+    }
+
+    fn mixed_types_threshold(&self) -> f64 {
+        rounded_2(self.mixed_types_percentage)
+    }
+
     fn collect(&self, report: &ProfileReport) -> FindingsResult {
         let mut collector = Collector::default();
-        scan_findings(&report.execution, &mut collector);
+        scan_findings(report, &mut collector);
         quality_findings(report, &mut collector);
         for (index, column) in report.column_profiles.iter().enumerate() {
             self.column_findings(index, column, &mut collector);
@@ -395,14 +421,14 @@ impl FindingPolicy {
             // its document lands on the same side of the threshold.
             let null_percentage =
                 rounded_2(column.null_count as f64 / column.total_count as f64 * 100.0);
-            if null_percentage >= self.null_heavy_percentage {
+            if null_percentage >= self.null_heavy_threshold() {
                 out.column(
                     FindingCode::NullHeavy,
                     index,
                     name,
                     [
                         ("null_percentage", percentage(null_percentage)),
-                        ("threshold", percentage(self.null_heavy_percentage)),
+                        ("threshold", percentage(self.null_heavy_threshold())),
                     ],
                 );
             }
@@ -433,7 +459,7 @@ impl FindingPolicy {
         }
 
         self.mixed_types(index, column, non_null, out);
-        sensitive_patterns(index, column, out);
+        sensitive_patterns(index, column, non_null, out);
     }
 
     fn mixed_types(
@@ -467,7 +493,7 @@ impl FindingPolicy {
             return;
         }
         let outside_percentage = rounded_2(outside as f64 / classified as f64 * 100.0);
-        if outside_percentage < self.mixed_types_percentage {
+        if outside_percentage < self.mixed_types_threshold() {
             return;
         }
         out.column(
@@ -480,7 +506,7 @@ impl FindingPolicy {
                     "dominant_percentage",
                     percentage(dominant_count as f64 / classified as f64 * 100.0),
                 ),
-                ("threshold", percentage(self.mixed_types_percentage)),
+                ("threshold", percentage(self.mixed_types_threshold())),
                 // Shares are counted over the values the profiler retained; a
                 // classified count short of the non-null count says they were
                 // sampled.
@@ -501,7 +527,8 @@ impl ProfileReport {
     }
 }
 
-fn scan_findings(execution: &ExecutionMetadata, out: &mut Collector) {
+fn scan_findings(report: &ProfileReport, out: &mut Collector) {
+    let execution = &report.execution;
     let partial = if !execution.source_exhausted || execution.truncation_reason.is_some() {
         Some("truncated")
     } else if execution.sampling_applied {
@@ -521,7 +548,12 @@ fn scan_findings(execution: &ExecutionMetadata, out: &mut Collector) {
             ],
         );
     }
-    if execution.ragged_row_count > 0 {
+    if report.schema_version == 0 {
+        // Ragged rows were first counted by the release that introduced
+        // schema versioning (0.10, #452). An older document reads back with a
+        // defaulted zero that was never measured.
+        out.skip_report(FindingCode::RaggedRows, NotEvaluatedReason::Unrecorded);
+    } else if execution.ragged_row_count > 0 {
         out.report(
             FindingCode::RaggedRows,
             [
@@ -586,7 +618,7 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
                 ),
             ],
         ),
-        Some(_) => {}
+        Some(_) => skip_unless_complete(out, FindingCode::DuplicateRows, quality, "duplicate_rows"),
     }
 
     let timeliness = quality.metrics.timeliness.as_ref();
@@ -605,7 +637,7 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
                 ),
             ],
         ),
-        Some(_) => {}
+        Some(_) => skip_unless_complete(out, FindingCode::FutureDates, quality, "timeliness"),
     }
     match timeliness.filter(|timeliness| timeliness.temporal_pairs_checked > 0) {
         None => out.skip_report(
@@ -625,6 +657,33 @@ fn quality_findings(report: &ProfileReport, out: &mut Collector) {
                 ),
             ],
         ),
+        Some(_) => skip_unless_complete(
+            out,
+            FindingCode::TemporalOrderViolations,
+            quality,
+            "timeliness",
+        ),
+    }
+}
+
+/// A zero count is a clean result only when it covers every scanned row.
+///
+/// A count from the retained quality sample, or from a report that does not
+/// record where its counts came from, rules nothing out for the rows it did
+/// not see, so the rule is listed rather than read as clean. A nonzero count
+/// never reaches here: rows already witnessed stay witnessed. The component
+/// labels are the ones the quality gate resolves provenance by.
+fn skip_unless_complete(
+    out: &mut Collector,
+    code: FindingCode,
+    quality: &QualityAssessment,
+    component: &str,
+) {
+    match quality.sampled_dimensions() {
+        None => out.skip_report(code, NotEvaluatedReason::Unrecorded),
+        Some(sampled) if sampled.iter().any(|label| label == component) => {
+            out.skip_report(code, NotEvaluatedReason::Sampled)
+        }
         Some(_) => {}
     }
 }
@@ -637,7 +696,7 @@ fn is_sensitive(category: &PatternCategory, name: &str) -> bool {
     ) || PERSONAL_IDENTIFIER_PATTERNS.contains(&name)
 }
 
-fn sensitive_patterns(index: usize, column: &ColumnProfile, out: &mut Collector) {
+fn sensitive_patterns(index: usize, column: &ColumnProfile, non_null: usize, out: &mut Collector) {
     let Some(patterns) = column.patterns.as_ref() else {
         out.skip(
             FindingCode::SensitivePattern,
@@ -646,6 +705,15 @@ fn sensitive_patterns(index: usize, column: &ColumnProfile, out: &mut Collector)
         );
         return;
     };
+    if non_null == 0 {
+        // Detection ran over nothing, which is no evidence either way.
+        out.skip(
+            FindingCode::SensitivePattern,
+            NotEvaluatedReason::NoValues,
+            &column.name,
+        );
+        return;
+    }
     for pattern in patterns {
         if pattern.confidence < MIN_PATTERN_CONFIDENCE
             || !is_sensitive(&pattern.category, &pattern.name)
@@ -801,9 +869,12 @@ impl Collector {
 #[cfg(test)]
 mod tests {
     use dataprof_core::{
-        ColumnStats, DataSource, FileFormat, Pattern, TruncationReason, TypeHomogeneity,
+        ColumnStats, DataSource, ExecutionMetadata, FileFormat, Pattern, TruncationReason,
+        TypeHomogeneity,
     };
-    use dataprof_metrics::{QualityAssessment, QualityMetrics, UniquenessMetrics};
+    use dataprof_metrics::{
+        MetricConfidence, QualityAssessment, QualityMetrics, TimelinessMetrics, UniquenessMetrics,
+    };
 
     use super::*;
 
@@ -974,6 +1045,138 @@ mod tests {
             rebuilt
         };
         assert_eq!(result, serialized);
+    }
+
+    fn quality_report(future_dates: usize, confidence: MetricConfidence) -> ProfileReport {
+        let metrics = QualityMetrics {
+            uniqueness: Some(UniquenessMetrics {
+                duplicate_rows: 0,
+                key_uniqueness: 100.0,
+                high_cardinality_warning: false,
+                rows_checked: 60_000,
+                key_column: None,
+                duplicate_rows_approximate: false,
+            }),
+            timeliness: Some(TimelinessMetrics {
+                future_dates_count: future_dates,
+                stale_data_ratio: 0.0,
+                temporal_violations: 0,
+                invalid_date_values: 0,
+                date_values_checked: 10_000,
+                temporal_pairs_checked: 10_000,
+            }),
+            ..QualityMetrics::default()
+        };
+        ProfileReport::new(
+            source(),
+            vec![],
+            ExecutionMetadata::new(60_000, 0, 10),
+            Some(QualityAssessment::new(metrics, confidence)),
+        )
+    }
+
+    fn skipped(result: &FindingsResult, code: FindingCode) -> Option<&NotEvaluatedReason> {
+        result
+            .not_evaluated
+            .iter()
+            .find(|entry| entry.code == code)
+            .map(|entry| &entry.reason)
+    }
+
+    #[test]
+    fn a_zero_count_from_the_quality_sample_rules_nothing_out() {
+        // The ordinary large-file shape: every row scanned, timeliness computed
+        // over the retained reservoir, duplicates over the full stream.
+        let sampled = || MetricConfidence::Mixed {
+            exact_dimensions: vec!["duplicate_rows".to_string()],
+            sampled_dimensions: vec!["timeliness".to_string()],
+            sample_size: 10_000,
+        };
+
+        let clean = quality_report(0, sampled()).findings();
+        assert_eq!(
+            skipped(&clean, FindingCode::FutureDates),
+            Some(&NotEvaluatedReason::Sampled)
+        );
+        assert_eq!(
+            skipped(&clean, FindingCode::TemporalOrderViolations),
+            Some(&NotEvaluatedReason::Sampled)
+        );
+        // Counted over every row, so its zero is a clean result.
+        assert_eq!(skipped(&clean, FindingCode::DuplicateRows), None);
+
+        // A witnessed future date stays witnessed, sample or not.
+        let witnessed = quality_report(3, sampled()).findings();
+        assert!(codes(&witnessed).contains(&(FindingCode::FutureDates, None)));
+        assert_eq!(skipped(&witnessed, FindingCode::FutureDates), None);
+    }
+
+    #[test]
+    fn unrecorded_coverage_does_not_read_as_clean() {
+        let result = quality_report(0, MetricConfidence::Unrecorded).findings();
+        for code in [
+            FindingCode::DuplicateRows,
+            FindingCode::FutureDates,
+            FindingCode::TemporalOrderViolations,
+        ] {
+            assert_eq!(
+                skipped(&result, code),
+                Some(&NotEvaluatedReason::Unrecorded),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_report_from_before_ragged_counting_does_not_read_as_clean() {
+        let mut legacy = report(vec![], ExecutionMetadata::new(5, 0, 10));
+        legacy.schema_version = 0;
+        assert_eq!(
+            skipped(&legacy.findings(), FindingCode::RaggedRows),
+            Some(&NotEvaluatedReason::Unrecorded)
+        );
+
+        let current = report(vec![], ExecutionMetadata::new(5, 0, 10)).findings();
+        assert_eq!(skipped(&current, FindingCode::RaggedRows), None);
+    }
+
+    #[test]
+    fn thresholds_apply_at_the_precision_they_are_reported_at() {
+        // 20.004 is applied as 20.00, so a 20.00% column is reported and the
+        // evidence names the threshold that was compared.
+        let result = FindingPolicy::new()
+            .null_heavy_percentage(20.004)
+            .evaluate(&report(
+                vec![column("fifth", 5, 1)],
+                ExecutionMetadata::new(5, 1, 10),
+            ))
+            .expect("in range");
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.code == FindingCode::NullHeavy)
+            .expect("reported at the applied threshold");
+        assert_eq!(
+            finding.evidence["threshold"],
+            EvidenceValue::Percentage(20.0)
+        );
+
+        // A threshold that rounds to zero would report every column.
+        for value in [1e-9, 0.004] {
+            assert!(
+                FindingPolicy::new()
+                    .null_heavy_percentage(value)
+                    .validate()
+                    .is_err(),
+                "{value} was accepted"
+            );
+        }
+        assert!(
+            FindingPolicy::new()
+                .null_heavy_percentage(0.005)
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]

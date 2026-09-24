@@ -980,6 +980,13 @@ impl PyProfileReport {
         self.inner.execution.ragged_row_count
     }
 
+    /// Version of the report schema the report was written with; `0` for a
+    /// document written before schema versioning (a pre-0.10 report).
+    #[getter]
+    fn schema_version(&self) -> u32 {
+        self.inner.schema_version
+    }
+
     /// Whether sampling was applied
     #[getter]
     fn sampling_applied(&self) -> bool {
