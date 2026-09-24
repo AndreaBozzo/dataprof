@@ -323,7 +323,7 @@ impl ArrowProfiler {
             memory_sampler.sample();
         }
 
-        memory_sampler.sample();
+        memory_sampler.sample_now();
         Ok(CsvDecodeOutcome {
             column_analyzers,
             row_tracker,

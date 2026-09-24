@@ -367,7 +367,7 @@ impl IncrementalProfiler {
             }
         }
 
-        memory_sampler.sample();
+        memory_sampler.sample_now();
         progress_tracker.emit_finished(!source_exhausted);
 
         let options = AnalysisOptions::default()
