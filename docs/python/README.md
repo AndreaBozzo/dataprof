@@ -562,6 +562,11 @@ def on_progress(event):
 report = dp.profile("data.csv", on_progress=on_progress)
 ```
 
+Every file route reports at least a `started` and a `finished` event. A CSV on
+the default or incremental engine also reports `schema_detected` and
+`chunk_processed` events while it reads; the columnar engine, JSON and Parquet
+read without reporting, so they send the two bracketing events only.
+
 Event fields: `kind`, `rows_processed`, `bytes_consumed`, `elapsed_ms`, `processing_speed`, `percentage`, `column_names`, `total_rows`, `total_bytes`, `truncated`, `message`, `estimated_total_rows`, `estimated_total_bytes`.
 
 ## `DataQualityMetrics`

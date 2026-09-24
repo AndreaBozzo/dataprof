@@ -91,13 +91,6 @@ impl ProgressTracker {
     }
 
     fn emit(&self, event: ProgressEvent) {
-        match &self.sink {
-            ProgressSink::None => {}
-            ProgressSink::Callback(cb) => cb(event),
-            #[cfg(feature = "async-streaming")]
-            ProgressSink::Channel(tx) => {
-                let _ = tx.try_send(event);
-            }
-        }
+        self.sink.emit(event);
     }
 }
