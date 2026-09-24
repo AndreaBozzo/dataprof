@@ -19,6 +19,7 @@ from dataclasses import dataclass as _dataclass, field as _field
 from typing import TYPE_CHECKING, Any as _Any, NoReturn as _NoReturn
 
 from ._columns import _homogeneity_counts, _type_mixture
+from ._gate import _real_number
 from ._render import _MIXED_TYPE_PCT, _NULL_HEAVY_PCT
 from ._rounding import _r2
 
@@ -162,11 +163,7 @@ def _threshold(setting: str, value: _Any) -> float:
     checked at that precision too: a value that rounds to 0 would report every
     column. Percentages are on the report's 0..100 scale, not 0..1 ratios.
     """
-    try:
-        number = float("nan") if isinstance(value, bool) else float(value)
-    except (TypeError, ValueError):
-        number = float("nan")
-    applied = _r2(number)
+    applied = _r2(_real_number(value))
     if applied is None or not 0.0 < applied <= 100.0:
         raise ValueError(
             f"{setting} must be a percentage above 0 and at most 100 at two decimal "
