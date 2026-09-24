@@ -228,11 +228,15 @@ def test_row_caps_are_hard_caps(tmp_path, limit):
 
 
 def _first_boundary_at_or_past(data: bytes, budget: int) -> int:
-    """Where a byte cap must stop: the end of the first record reaching it."""
+    """Where a byte cap must stop: the end of the first record reaching it.
+
+    The header counts toward the budget but is not a record, so a budget
+    smaller than the header still reads one record.
+    """
     end = 0
-    for line in data.splitlines(keepends=True):
+    for index, line in enumerate(data.splitlines(keepends=True)):
         end += len(line)
-        if end >= budget:
+        if index > 0 and end >= budget:
             return end
     raise AssertionError("the source is smaller than the budget")
 
