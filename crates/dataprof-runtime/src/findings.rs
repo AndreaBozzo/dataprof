@@ -393,19 +393,16 @@ impl FindingPolicy {
         } else {
             // Compared at the serialized precision, so a report read back from
             // its document lands on the same side of the threshold.
-            let percentage =
+            let null_percentage =
                 rounded_2(column.null_count as f64 / column.total_count as f64 * 100.0);
-            if percentage >= self.null_heavy_percentage {
+            if null_percentage >= self.null_heavy_percentage {
                 out.column(
                     FindingCode::NullHeavy,
                     index,
                     name,
                     [
-                        ("null_percentage", EvidenceValue::Percentage(percentage)),
-                        (
-                            "threshold",
-                            EvidenceValue::Percentage(self.null_heavy_percentage),
-                        ),
+                        ("null_percentage", percentage(null_percentage)),
+                        ("threshold", percentage(self.null_heavy_percentage)),
                     ],
                 );
             }
@@ -481,12 +478,9 @@ impl FindingPolicy {
                 ("dominant_type", EvidenceValue::Text(dominant.to_string())),
                 (
                     "dominant_percentage",
-                    EvidenceValue::Percentage(dominant_count as f64 / classified as f64 * 100.0),
+                    percentage(dominant_count as f64 / classified as f64 * 100.0),
                 ),
-                (
-                    "threshold",
-                    EvidenceValue::Percentage(self.mixed_types_percentage),
-                ),
+                ("threshold", percentage(self.mixed_types_percentage)),
                 // Shares are counted over the values the profiler retained; a
                 // classified count short of the non-null count says they were
                 // sampled.
@@ -669,10 +663,7 @@ fn sensitive_patterns(index: usize, column: &ColumnProfile, out: &mut Collector)
                         "category",
                         EvidenceValue::Text(pattern.category.to_string()),
                     ),
-                    (
-                        "match_percentage",
-                        EvidenceValue::Percentage(pattern.match_percentage),
-                    ),
+                    ("match_percentage", percentage(pattern.match_percentage)),
                 ]),
                 summary: FindingCode::SensitivePattern.summary().to_string(),
             },
@@ -680,6 +671,13 @@ fn sensitive_patterns(index: usize, column: &ColumnProfile, out: &mut Collector)
             pattern.name.clone(),
         );
     }
+}
+
+/// Percentage evidence at the precision it serializes with, so a finding
+/// compares equal to one rebuilt from its own document, and to what the
+/// Python layer holds.
+fn percentage(value: f64) -> EvidenceValue {
+    EvidenceValue::Percentage(rounded_2(value))
 }
 
 fn evidence<const N: usize>(
@@ -939,6 +937,43 @@ mod tests {
                 EvidenceValue::Text("SSN (US)".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn evidence_holds_the_value_it_serializes() {
+        // A percentage kept at full precision in memory and rounded only on
+        // the way out would make two findings that serialize identically
+        // compare unequal, depending on who wrote the document they came from.
+        let mut profile = column("email", 3, 0);
+        profile.type_homogeneity = Some(TypeHomogeneity {
+            numeric: 1,
+            date: 0,
+            boolean: 0,
+            text: 2,
+        });
+        let mut email = pattern("Email", PatternCategory::Contact, 0.8);
+        email.match_percentage = 200.0 / 3.0;
+        profile.patterns = Some(vec![email]);
+        let result = report(vec![profile], ExecutionMetadata::new(3, 1, 10)).findings();
+
+        let serialized: FindingsResult = {
+            let value = serde_json::to_value(&result).expect("serializes");
+            let mut rebuilt = result.clone();
+            for (finding, document) in rebuilt
+                .findings
+                .iter_mut()
+                .zip(value["findings"].as_array().unwrap())
+            {
+                for (name, evidence) in finding.evidence.iter_mut() {
+                    if let EvidenceValue::Percentage(_) = evidence {
+                        *evidence =
+                            EvidenceValue::Percentage(document["evidence"][name].as_f64().unwrap());
+                    }
+                }
+            }
+            rebuilt
+        };
+        assert_eq!(result, serialized);
     }
 
     #[test]

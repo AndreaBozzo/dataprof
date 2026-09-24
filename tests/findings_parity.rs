@@ -125,6 +125,9 @@ fn rust_findings_match_the_shared_fixture() {
             case["expected"],
             "{name}: a report read back from its document derived different findings"
         );
+        // Equal as values too, not only once serialized: evidence holds the
+        // precision it is written with.
+        assert_eq!(fresh, reloaded, "{name}: findings differ in memory");
     }
 }
 
