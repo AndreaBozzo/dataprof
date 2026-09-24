@@ -76,7 +76,9 @@ def test_the_result_has_no_truthiness(report: dp.ProfileReport):
 
 def test_thresholds_are_validated_by_name(report: dp.ProfileReport):
     # 1e-9 and 0.004 are above zero but apply as 0.00, which reports every column.
-    for value in (0, -5, 100.5, float("nan"), True, "twenty", 1e-9, 0.004):
+    # Text is refused even when it spells a number, and an int too large for a
+    # float is a ValueError rather than an OverflowError (#771).
+    for value in (0, -5, 100.5, float("nan"), True, "twenty", "30", 10**400, 1e-9, 0.004):
         # Through a mapping, so the checker lets the wrong types reach the call.
         keywords: dict[str, Any] = {"null_heavy_percentage": value}
         with pytest.raises(ValueError, match="null_heavy_percentage must be a percentage"):

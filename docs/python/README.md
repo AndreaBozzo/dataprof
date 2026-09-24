@@ -907,7 +907,9 @@ Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
-bad extract.
+bad extract. A threshold must be a real number: text is refused even when it
+spells one (`"90"`), and so is a number too large for a float. Numpy scalars,
+`Decimal` and `Fraction` are accepted.
 
 **The verdict has three values, not two.**
 
@@ -1003,7 +1005,8 @@ python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > ve
 ```
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above.
-Commit it alongside the pipeline so threshold changes can be reviewed:
+Thresholds are JSON numbers; a quoted one such as `"90"` is an input error
+(exit 2). Commit it alongside the pipeline so threshold changes can be reviewed:
 
 ```json
 {

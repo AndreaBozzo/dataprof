@@ -7,6 +7,8 @@ result object's accessors, and a report rebuilt from a saved document.
 
 from __future__ import annotations
 
+from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +100,12 @@ def test_result_serializes_to_json(report):
     [
         {"min_quality_score": 101},
         {"min_quality_score": -1},
+        # Text is not a threshold, even when it spells one (#771).
+        {"min_quality_score": "90"},
+        {"max_null_percentage": {"amount": "20"}},
+        {"min_dimension_scores": {"completeness": "90"}},
+        # Too large for a float: a ValueError, not an OverflowError (#771).
+        {"min_quality_score": 10**400},
         {"min_quality_score": float("nan")},
         {"max_null_percentage": {"amount": 200}},
         {"min_dimension_scores": {"completeness": 150}},
@@ -113,6 +121,16 @@ def test_an_unevaluable_policy_raises_rather_than_failing_the_dataset(report, po
     as a 0..1 ratio must not silently become a gate that never fires."""
     with pytest.raises(ValueError):
         report.check(**policy)
+
+
+def test_every_real_number_type_is_a_threshold(report):
+    """Refusing text must not refuse the numeric types callers pass (#771)."""
+    import numpy as np
+
+    for value in (90, 90.0, Decimal("90"), Fraction(90), np.float64(90), np.int64(90)):
+        assert report.check(min_quality_score=value).to_dict() == (
+            report.check(min_quality_score=90).to_dict()
+        ), type(value)
 
 
 def test_an_empty_policy_is_rejected(report):
