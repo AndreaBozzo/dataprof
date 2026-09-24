@@ -85,6 +85,35 @@ fn main() -> Result<(), dataprof::DataProfilerError> {
 }
 ```
 
+## What Deserves Attention: Findings
+
+A report carries every metric; findings say which ones deserve a look. They are
+derived from the metrics already computed, with documented default thresholds,
+and each one names its evidence without echoing a raw value:
+
+```python
+result = report.findings()                     # thresholds are optional keywords
+for finding in result:
+    print(finding.severity, finding.code, finding.column, finding.evidence)
+print(result.not_evaluated)                    # rules that could not look, and why
+```
+
+```rust
+use dataprof::FindingPolicy;
+
+let result = FindingPolicy::new()
+    .null_heavy_percentage(20.0)
+    .evaluate(&report)?;                       // or report.findings() for the defaults
+for finding in &result.findings {
+    println!("{} {} {:?} {:?}", finding.severity, finding.code, finding.column, finding.evidence);
+}
+```
+
+A rule whose input the report does not carry, such as patterns when the
+`patterns` metric pack was not selected, is listed in `not_evaluated` rather
+than reading as clean. The codes, severities and thresholds are listed in the
+[Python API Guide](../python/README.md#findings----what-deserves-attention).
+
 ## Understanding Quality Metrics
 
 dataprof evaluates seven quality dimensions informed by ISO 8000 and ISO/IEC

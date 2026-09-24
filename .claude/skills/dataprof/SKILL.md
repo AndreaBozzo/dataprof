@@ -111,7 +111,13 @@ Structured alternatives:
 ```python
 report.to_markdown()      # markdown table of column profiles
 report.quality_summary()  # single-row quality dict
+report.findings()         # coded findings with evidence, never raw values
 ```
+
+`findings()` lists what deserves attention as data: each finding has a stable
+`code`, a `severity`, the `column`, and the `evidence` behind it. Rules it could
+not evaluate are in `.not_evaluated` with a reason; report those as unchecked,
+not as clean.
 
 `to_dict()` embeds a full per-column entry under `["columns"]`, so it grows with
 table width. Select top-level fields instead of surfacing the whole dict:

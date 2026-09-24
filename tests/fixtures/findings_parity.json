@@ -1,0 +1,774 @@
+{
+  "inputs": {
+    "orders.csv": "order_id,sku,email,channel,amount,notes,start_date,end_date\nA-1,SKU-1,a@x.com,web,10,,2024-01-01,2024-01-05\nA-2,77,b@y.com,web,20,,2024-02-01,2024-01-05\nA-3,SKU-3,c@z.com,web,abc,,2024-03-01,2999-01-01\nA-3,SKU-3,c@z.com,web,abc,,2024-03-01,2999-01-01\nA-5,SKU-5,d@w.com,web,,,2024-05-01,2024-06-01\n",
+    "ragged.csv": "a,b\n1,2\n3,4,5\n6\n",
+    "header_only.csv": "a,b\n",
+    "broken.jsonl": "{\"id\": 1, \"kind\": \"a\"}\n{\"id\": 2, \"kind\": \n{\"id\": 3, \"kind\": \"b\"}\n",
+    "nested.jsonl": "{\"id\": 1, \"payload\": {\"k\": 1}}\n{\"id\": 2, \"payload\": {\"k\": 2}}\n{\"id\": 3, \"payload\": null}\n"
+  },
+  "cases": [
+    {
+      "name": "default_thresholds_on_a_complete_input",
+      "why": "Every rule is evaluated over a fully read source; the future end date is in 2999 so the case does not age.",
+      "options": {},
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "all_null",
+            "severity": "warning",
+            "column": "notes",
+            "evidence": {
+              "null_count": 5,
+              "total_count": 5
+            },
+            "summary": "every value in this column is null"
+          },
+          {
+            "code": "duplicate_rows",
+            "severity": "warning",
+            "evidence": {
+              "duplicate_rows": 1,
+              "rows_checked": 5
+            },
+            "summary": "the source contains exact duplicate rows"
+          },
+          {
+            "code": "future_dates",
+            "severity": "warning",
+            "evidence": {
+              "date_values_checked": 10,
+              "future_dates_count": 2
+            },
+            "summary": "some date values lie in the future"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "sku",
+            "evidence": {
+              "classified_count": 5,
+              "dominant_percentage": 80.0,
+              "dominant_type": "text",
+              "non_null_count": 5,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "classified_count": 4,
+              "dominant_percentage": 50.0,
+              "dominant_type": "numeric",
+              "non_null_count": 4,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "null_heavy",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "null_percentage": 20.0,
+              "threshold": 20.0
+            },
+            "summary": "this column's null share is at or above the threshold"
+          },
+          {
+            "code": "temporal_order_violations",
+            "severity": "warning",
+            "evidence": {
+              "temporal_pairs_checked": 5,
+              "temporal_violations": 1
+            },
+            "summary": "some start dates fall after their paired end dates"
+          },
+          {
+            "code": "constant_column",
+            "severity": "info",
+            "column": "channel",
+            "evidence": {
+              "non_null_count": 5,
+              "unique_count": 1
+            },
+            "summary": "every non-null value in this column is the same"
+          },
+          {
+            "code": "sensitive_pattern",
+            "severity": "info",
+            "column": "email",
+            "evidence": {
+              "category": "contact",
+              "match_percentage": 100.0,
+              "pattern": "Email"
+            },
+            "summary": "values in this column match a pattern for personal or financial data"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "thresholds_come_from_the_policy",
+      "why": "Raising both thresholds drops the 20% null share and the 20% stray SKU, and keeps the 50/50 amount column.",
+      "options": {},
+      "policy": {
+        "null_heavy_percentage": 25,
+        "mixed_types_percentage": 30
+      },
+      "expected": {
+        "findings": [
+          {
+            "code": "all_null",
+            "severity": "warning",
+            "column": "notes",
+            "evidence": {
+              "null_count": 5,
+              "total_count": 5
+            },
+            "summary": "every value in this column is null"
+          },
+          {
+            "code": "duplicate_rows",
+            "severity": "warning",
+            "evidence": {
+              "duplicate_rows": 1,
+              "rows_checked": 5
+            },
+            "summary": "the source contains exact duplicate rows"
+          },
+          {
+            "code": "future_dates",
+            "severity": "warning",
+            "evidence": {
+              "date_values_checked": 10,
+              "future_dates_count": 2
+            },
+            "summary": "some date values lie in the future"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "classified_count": 4,
+              "dominant_percentage": 50.0,
+              "dominant_type": "numeric",
+              "non_null_count": 4,
+              "threshold": 30.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "temporal_order_violations",
+            "severity": "warning",
+            "evidence": {
+              "temporal_pairs_checked": 5,
+              "temporal_violations": 1
+            },
+            "summary": "some start dates fall after their paired end dates"
+          },
+          {
+            "code": "constant_column",
+            "severity": "info",
+            "column": "channel",
+            "evidence": {
+              "non_null_count": 5,
+              "unique_count": 1
+            },
+            "summary": "every non-null value in this column is the same"
+          },
+          {
+            "code": "sensitive_pattern",
+            "severity": "info",
+            "column": "email",
+            "evidence": {
+              "category": "contact",
+              "match_percentage": 100.0,
+              "pattern": "Email"
+            },
+            "summary": "values in this column match a pattern for personal or financial data"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "an_identifier_column_is_exempt_from_mixed_types",
+      "why": "Mixed forms are what an identifier scheme does, so the hinted sku column is not reported.",
+      "options": {
+        "identifier_columns": [
+          "sku"
+        ]
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "all_null",
+            "severity": "warning",
+            "column": "notes",
+            "evidence": {
+              "null_count": 5,
+              "total_count": 5
+            },
+            "summary": "every value in this column is null"
+          },
+          {
+            "code": "duplicate_rows",
+            "severity": "warning",
+            "evidence": {
+              "duplicate_rows": 1,
+              "rows_checked": 5
+            },
+            "summary": "the source contains exact duplicate rows"
+          },
+          {
+            "code": "future_dates",
+            "severity": "warning",
+            "evidence": {
+              "date_values_checked": 10,
+              "future_dates_count": 2
+            },
+            "summary": "some date values lie in the future"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "classified_count": 4,
+              "dominant_percentage": 50.0,
+              "dominant_type": "numeric",
+              "non_null_count": 4,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "null_heavy",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "null_percentage": 20.0,
+              "threshold": 20.0
+            },
+            "summary": "this column's null share is at or above the threshold"
+          },
+          {
+            "code": "temporal_order_violations",
+            "severity": "warning",
+            "evidence": {
+              "temporal_pairs_checked": 5,
+              "temporal_violations": 1
+            },
+            "summary": "some start dates fall after their paired end dates"
+          },
+          {
+            "code": "constant_column",
+            "severity": "info",
+            "column": "channel",
+            "evidence": {
+              "non_null_count": 5,
+              "unique_count": 1
+            },
+            "summary": "every non-null value in this column is the same"
+          },
+          {
+            "code": "sensitive_pattern",
+            "severity": "info",
+            "column": "email",
+            "evidence": {
+              "category": "contact",
+              "match_percentage": 100.0,
+              "pattern": "Email"
+            },
+            "summary": "values in this column match a pattern for personal or financial data"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "unselected_metrics_are_not_evaluated",
+      "why": "Without the quality and patterns packs those rules list why they did not look, rather than reading as clean.",
+      "options": {
+        "metrics": [
+          "schema"
+        ]
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "all_null",
+            "severity": "warning",
+            "column": "notes",
+            "evidence": {
+              "null_count": 5,
+              "total_count": 5
+            },
+            "summary": "every value in this column is null"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "sku",
+            "evidence": {
+              "classified_count": 5,
+              "dominant_percentage": 80.0,
+              "dominant_type": "text",
+              "non_null_count": 5,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "classified_count": 4,
+              "dominant_percentage": 50.0,
+              "dominant_type": "numeric",
+              "non_null_count": 4,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "null_heavy",
+            "severity": "warning",
+            "column": "amount",
+            "evidence": {
+              "null_percentage": 20.0,
+              "threshold": 20.0
+            },
+            "summary": "this column's null share is at or above the threshold"
+          },
+          {
+            "code": "constant_column",
+            "severity": "info",
+            "column": "channel",
+            "evidence": {
+              "non_null_count": 5,
+              "unique_count": 1
+            },
+            "summary": "every non-null value in this column is the same"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "duplicate_rows",
+            "reason": "quality_unavailable",
+            "quality_status": "not_requested"
+          },
+          {
+            "code": "future_dates",
+            "reason": "quality_unavailable",
+            "quality_status": "not_requested"
+          },
+          {
+            "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "not_computed",
+            "columns": [
+              "order_id",
+              "sku",
+              "email",
+              "channel",
+              "amount",
+              "notes",
+              "start_date",
+              "end_date"
+            ]
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "quality_unavailable",
+            "quality_status": "not_requested"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_truncated_scan_is_disclosed",
+      "why": "A capped scan reports partial_scan and still reports what the rows it read show.",
+      "options": {
+        "max_rows": 2
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "all_null",
+            "severity": "warning",
+            "column": "notes",
+            "evidence": {
+              "null_count": 2,
+              "total_count": 2
+            },
+            "summary": "every value in this column is null"
+          },
+          {
+            "code": "mixed_types",
+            "severity": "warning",
+            "column": "sku",
+            "evidence": {
+              "classified_count": 2,
+              "dominant_percentage": 50.0,
+              "dominant_type": "numeric",
+              "non_null_count": 2,
+              "threshold": 5.0
+            },
+            "summary": "this column's values are split across lexical types"
+          },
+          {
+            "code": "temporal_order_violations",
+            "severity": "warning",
+            "evidence": {
+              "temporal_pairs_checked": 2,
+              "temporal_violations": 1
+            },
+            "summary": "some start dates fall after their paired end dates"
+          },
+          {
+            "code": "constant_column",
+            "severity": "info",
+            "column": "channel",
+            "evidence": {
+              "non_null_count": 2,
+              "unique_count": 1
+            },
+            "summary": "every non-null value in this column is the same"
+          },
+          {
+            "code": "constant_column",
+            "severity": "info",
+            "column": "end_date",
+            "evidence": {
+              "non_null_count": 2,
+              "unique_count": 1
+            },
+            "summary": "every non-null value in this column is the same"
+          },
+          {
+            "code": "partial_scan",
+            "severity": "info",
+            "evidence": {
+              "reason": "truncated",
+              "rows_processed": 2
+            },
+            "summary": "only part of the source was read; findings describe the rows that were"
+          },
+          {
+            "code": "sensitive_pattern",
+            "severity": "info",
+            "column": "email",
+            "evidence": {
+              "category": "contact",
+              "match_percentage": 100.0,
+              "pattern": "Email"
+            },
+            "summary": "values in this column match a pattern for personal or financial data"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "notes"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "recovered_rows_are_reported",
+      "why": "Rows whose field count differs from the header were recovered; that is a finding, not a silent repair.",
+      "options": {
+        "input": "ragged.csv"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "null_heavy",
+            "severity": "warning",
+            "column": "b",
+            "evidence": {
+              "null_percentage": 33.33,
+              "threshold": 20.0
+            },
+            "summary": "this column's null share is at or above the threshold"
+          },
+          {
+            "code": "ragged_rows",
+            "severity": "warning",
+            "evidence": {
+              "ragged_row_count": 2,
+              "rows_processed": 3
+            },
+            "summary": "some rows had a different field count from the header and were recovered"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_skipped_record_is_reported",
+      "why": "A JSONL line that cannot become a row is skipped and counted under the default policy; the count is a finding.",
+      "options": {
+        "input": "broken.jsonl"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "records_skipped",
+            "severity": "warning",
+            "evidence": {
+              "error_count": 1
+            },
+            "summary": "errors were counted while reading the source"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_nested_column_is_assessed_by_its_counts",
+      "why": "A container column carries counts only, so the value-level rules list it as not computed rather than clean.",
+      "options": {
+        "input": "nested.jsonl"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "null_heavy",
+            "severity": "warning",
+            "column": "payload",
+            "evidence": {
+              "null_percentage": 33.33,
+              "threshold": 20.0
+            },
+            "summary": "this column's null share is at or above the threshold"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "constant_column",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "mixed_types",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "not_computed",
+            "columns": [
+              "payload"
+            ]
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a_header_only_input_has_nothing_to_assess",
+      "why": "Zero rows is not zero percent: column rules list no_values and quality rules not_assessed.",
+      "options": {
+        "input": "header_only.csv"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [],
+        "not_evaluated": [
+          {
+            "code": "all_null",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "code": "constant_column",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "code": "duplicate_rows",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "mixed_types",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "code": "null_heavy",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "code": "sensitive_pattern",
+            "reason": "no_values",
+            "columns": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    }
+  ]
+}

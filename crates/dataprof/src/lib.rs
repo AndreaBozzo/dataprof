@@ -58,9 +58,11 @@ pub use dataprof_parquet::{
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{
-    Check, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult, MetricSemantics,
-    MetricValue, NotEvaluated, PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus,
-    QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Verdict,
+    Check, CheckCode, CheckStatus, DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE,
+    Evidence, EvidenceGap, EvidenceValue, Expectation, Finding, FindingCode, FindingPolicy,
+    FindingPolicyError, FindingsResult, GateResult, MetricSemantics, MetricValue, NotEvaluated,
+    NotEvaluatedReason, PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus,
+    QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Severity, UnevaluatedRule, Verdict,
 };
 
 #[cfg(feature = "async-streaming")]

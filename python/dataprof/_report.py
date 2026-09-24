@@ -18,6 +18,7 @@ from typing import Any as _Any, cast as _cast
 from ._accessors import ColumnProfile, DataQualityMetrics, _NativeAccessor, _ReportView
 from ._columns import _column_record, _dominant_pattern, column_to_dict
 from ._dataprof import ProfileReport as _RustProfileReport
+from ._findings import FindingsResult as _FindingsResult, _FindingPolicy
 from ._gate import QualityGateResult as _QualityGateResult, _Policy
 from ._paths import _normalize_pathlike
 from ._render import (
@@ -286,6 +287,15 @@ class ProfileReport:
         to "did parsing silently go wrong?" for ragged CSV.
         """
         return self._report.ragged_row_count
+
+    @property
+    def _schema_version(self) -> int:
+        """The schema version the report was written with; 0 before 0.10.
+
+        Private: it lets a reader tell a field the writer never recorded from
+        one it recorded as zero.
+        """
+        return self._report.schema_version
 
     @property
     def sampling_applied(self) -> bool:
@@ -573,6 +583,54 @@ class ProfileReport:
             max_duplicate_rows=max_duplicate_rows,
             require_metrics=require_metrics,
             scope=scope,
+        ).evaluate(self)
+
+    def findings(
+        self,
+        *,
+        null_heavy_percentage: float | None = None,
+        mixed_types_percentage: float | None = None,
+    ) -> _FindingsResult:
+        """Derive structured, prioritized findings from this report.
+
+        Answers "what deserves attention?" without inventing thresholds at the
+        call site::
+
+            for finding in report.findings():
+                print(finding.severity, finding.code, finding.column, finding.evidence)
+
+        Each finding carries a stable ``code``, a ``severity`` (``"warning"``
+        or ``"info"``), the ``column`` it concerns when it concerns one, the
+        ``evidence`` that caused it, and a fixed ``summary`` sentence. No
+        finding carries a raw cell value. Findings are interpretation, not
+        cleaning advice, and they are derived on demand rather than stored, so
+        a loaded report yields the same findings as the one that was saved.
+
+        A rule whose input the report does not carry, such as patterns that
+        were not detected or a quality assessment that was not requested,
+        produces no finding and is listed in ``result.not_evaluated`` with the
+        reason. An empty ``result.findings`` is a clean result only for the
+        rules not listed there, so ``bool(result)`` raises rather than
+        answering.
+
+        Findings describe the rows the report read; a truncated or sampled
+        scan adds a ``partial_scan`` finding instead of withholding the rest.
+        For a pass/fail decision about the whole source, use :meth:`check`.
+
+        Args:
+            null_heavy_percentage: Report a column as ``null_heavy`` when its
+                null percentage is at least this, 0-100 exclusive of 0.
+                Defaults to 20, the threshold ``to_llm_context()`` flags at.
+            mixed_types_percentage: Report a column as ``mixed_types`` when the
+                values outside its dominant lexical type are at least this
+                share of those classified, 0-100 exclusive of 0. Defaults to 5.
+
+        Raises:
+            ValueError: a threshold is not a percentage above 0 and at most 100.
+        """
+        return _FindingPolicy(
+            null_heavy_percentage=null_heavy_percentage,
+            mixed_types_percentage=mixed_types_percentage,
         ).evaluate(self)
 
     def quality_summary(self) -> dict[str, _Any]:

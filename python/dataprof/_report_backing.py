@@ -195,6 +195,9 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     # Only these additive fields have legacy defaults. Unknown measurements
     # stay absent; in particular an unknown history is not an empty history.
     values["ragged_row_count"] = execution.get("ragged_row_count") or 0
+    # Absent means a pre-0.10 document, written before versioning. Callers
+    # that must not read a defaulted field as a measurement branch on it.
+    values["schema_version"] = document.get("schema_version", 0)
     values["sampling_applied"] = bool(execution.get("sampling_applied", False))
     bindings = document.get("semantic_hint_bindings")
     values["semantic_hint_bindings"] = list(bindings) if isinstance(bindings, list) else []

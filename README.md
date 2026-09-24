@@ -87,6 +87,15 @@ age = report["age"]
 print(age.data_type, age.mean, age.null_percentage)
 ```
 
+Or ask the report what deserves attention. Findings carry a stable code, a
+severity and the evidence behind them, never a raw value, and list the rules
+they could not evaluate instead of reading an unanalyzed metric as clean:
+
+```python
+for finding in report.findings():
+    print(finding.severity, finding.code, finding.column, finding.evidence)
+```
+
 #### 3. Export
 
 ```python

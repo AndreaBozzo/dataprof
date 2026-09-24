@@ -83,6 +83,7 @@ Read these before reporting any number. See the trust-signal step in SKILL.md.
 report.to_llm_context(max_tokens=1000, include_samples=False)  # redacting; prefer this
 report.to_markdown()                                           # column table
 report.quality_summary()                                       # single-row dict
+report.findings()                                              # coded findings + evidence; no raw values
 report.to_dict()                                               # full; "columns" grows with width
 report.to_json(indent=2)
 report.to_html()
