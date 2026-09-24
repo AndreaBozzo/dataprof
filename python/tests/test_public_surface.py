@@ -38,6 +38,8 @@ EXPECTED_SURFACE: dict[str, frozenset[str]] = {
             "Capabilities",
             "ColumnProfile",
             "DataQualityMetrics",
+            "Finding",
+            "FindingsResult",
             "ProgressEvent",
             "ProfileReport",
             "Profiler",

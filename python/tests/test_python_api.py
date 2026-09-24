@@ -594,6 +594,8 @@ class TestNamespace:
             "Profiler",
             "ProfileReport",
             "ProfilerConfig",
+            "Finding",
+            "FindingsResult",
             "QualityCheck",
             "QualityGateResult",
             "ColumnProfile",

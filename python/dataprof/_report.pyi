@@ -7,6 +7,7 @@ from os import PathLike
 from typing import Any
 
 from ._accessors import ColumnProfile, DataQualityMetrics
+from ._findings import FindingsResult
 from ._gate import QualityGateResult
 
 class ProfileReport:
@@ -132,6 +133,14 @@ class ProfileReport:
         scope: str = ...,
     ) -> QualityGateResult:
         """Evaluate a quality policy and return the structured result."""
+        ...
+    def findings(
+        self,
+        *,
+        null_heavy_percentage: float | None = ...,
+        mixed_types_percentage: float | None = ...,
+    ) -> FindingsResult:
+        """Structured, prioritized findings, and the rules that could not look."""
         ...
     def compare(self, other: ProfileReport) -> dict[str, Any]:
         """Dict of quality/schema/null deltas versus another report."""

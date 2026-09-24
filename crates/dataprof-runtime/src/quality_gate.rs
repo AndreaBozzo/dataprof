@@ -977,7 +977,7 @@ fn aggregate_message(status: &CheckStatus, subject: &str) -> String {
 }
 
 /// The `state` tag the report serializes for its quality status.
-fn quality_status_name(status: &QualityAnalysisStatus) -> &'static str {
+pub(crate) fn quality_status_name(status: &QualityAnalysisStatus) -> &'static str {
     match status {
         QualityAnalysisStatus::Computed => "computed",
         QualityAnalysisStatus::NotRequested => "not_requested",
