@@ -4,6 +4,12 @@ use std::collections::HashMap;
 
 const SAMPLE_THRESHOLD: usize = 10_000;
 
+/// Seed for the order-statistics reservoir. Fixed so the same values always
+/// yield the same median, quartiles, mode and shape statistics: a profiler
+/// that answers differently on every run for identical input is not
+/// deterministic, and the streaming reservoir is seeded for the same reason.
+const SAMPLE_SEED: u64 = 0xDA7A_900D_F00D_5EED;
+
 pub fn calculate_numeric_stats(data: &[String]) -> ColumnStats {
     ColumnStats::Numeric(compute_numeric_stats(data))
 }
@@ -244,15 +250,17 @@ pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
     Some((sum_fourth / n) - 3.0)
 }
 
-/// Reservoir sampling for large datasets
+/// Reservoir sampling for large datasets, seeded so the sample is the same
+/// on every run for the same values.
 fn reservoir_sample(data: &[f64], k: usize) -> Vec<f64> {
-    use rand::Rng;
+    use rand::rngs::SmallRng;
+    use rand::{Rng, SeedableRng};
 
     if data.len() <= k {
         return data.to_vec();
     }
 
-    let mut rng = rand::rng();
+    let mut rng = SmallRng::seed_from_u64(SAMPLE_SEED);
     let mut reservoir: Vec<f64> = data[0..k].to_vec();
 
     for (i, &value) in data.iter().enumerate().skip(k) {
@@ -268,6 +276,24 @@ fn reservoir_sample(data: &[f64], k: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sampled_statistics_are_the_same_on_every_run() {
+        // Above the threshold the order statistics come from a reservoir; an
+        // unseeded one gave a different median on each call for the same data.
+        let data: Vec<String> = (0..50_000)
+            .map(|n| ((n * 7919) % 50_000).to_string())
+            .collect();
+        let first = compute_numeric_stats(&data);
+        let second = compute_numeric_stats(&data);
+        assert_eq!(first.is_approximate, Some(true));
+        assert_eq!(first.median, second.median);
+        assert_eq!(first.quartiles, second.quartiles);
+        assert_eq!(first.mode, second.mode);
+        assert_eq!(first.skewness, second.skewness);
+        assert_eq!(first.kurtosis, second.kurtosis);
+        assert_eq!(first.outlier_count, second.outlier_count);
+    }
 
     #[test]
     fn test_median_odd_count() {
