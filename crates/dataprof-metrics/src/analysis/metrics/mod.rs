@@ -617,8 +617,20 @@ impl MetricsCalculator {
             // (rows_checked == 0). Full-stream tracker counts are exact
             // until the distinct estimator spills to its HLL sketch, after
             // which they are flagged approximate and filed as non-exact.
-            if u.key_column.is_some() {
-                exact_dimensions.push("key_uniqueness".to_string());
+            // Key uniqueness is the key column's distinct count over its
+            // rows, so it is only as exact as that count: an estimated count
+            // is filed as sampled, and the score says it rests on an estimate
+            // rather than presenting one as a measurement.
+            if let Some(key) = u.key_column.as_deref() {
+                let estimated = column_profiles
+                    .iter()
+                    .find(|profile| profile.name == key)
+                    .is_some_and(|profile| profile.unique_count_is_approximate == Some(true));
+                if estimated {
+                    sampled_dimensions.push("key_uniqueness".to_string());
+                } else {
+                    exact_dimensions.push("key_uniqueness".to_string());
+                }
             }
             if u.rows_checked > 0 {
                 let from_tracker = row_duplicates.is_some_and(|s| s.rows_checked > 0);
@@ -824,6 +836,49 @@ mod tests {
                 .high_cardinality_warning,
             "100 distinct values out of 1,000 rows is not high cardinality"
         );
+    }
+
+    #[test]
+    fn an_estimated_key_count_is_filed_as_sampled() {
+        let key = |approximate: bool| ColumnProfile {
+            name: "order_id".to_string(),
+            data_type: DataType::String,
+            null_count: 0,
+            total_count: 5_000_000,
+            unique_count: Some(4_990_000),
+            unique_count_is_approximate: Some(approximate),
+            invalid_count: None,
+            type_homogeneity: None,
+            stats: ColumnStats::None,
+            patterns: Some(vec![]),
+        };
+        let data = HashMap::from([("order_id".to_string(), vec!["A-1".to_string()])]);
+        let requested = [QualityDimension::Uniqueness];
+
+        for (approximate, filed_as_sampled) in [(true, true), (false, false)] {
+            let result = MetricsCalculator::new()
+                .calculate_bifurcated_metrics_with_positive_columns(
+                    &data,
+                    &[key(approximate)],
+                    Some(&requested),
+                    &[],
+                    None,
+                )
+                .expect("quality metrics");
+            assert_eq!(
+                result
+                    .sampled_dimensions
+                    .contains(&"key_uniqueness".to_string()),
+                filed_as_sampled,
+                "approximate key count: {approximate}"
+            );
+            assert_eq!(
+                result
+                    .exact_dimensions
+                    .contains(&"key_uniqueness".to_string()),
+                !filed_as_sampled
+            );
+        }
     }
 
     #[test]

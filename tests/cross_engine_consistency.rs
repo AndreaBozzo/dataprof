@@ -1016,45 +1016,43 @@ fn test_distinct_count_marked_exact_on_small_data_across_engines() {
     }
 }
 
-/// A high-cardinality column past the estimator threshold is a *legitimate*
-/// approximation, not a semantic mismatch: both engines must flag it
-/// `Some(true)` and land near the true distinct count.
+/// A table-sized key column is counted exactly, and every engine agrees.
+///
+/// Distinct counts used to switch to a HyperLogLog estimate past 10,000
+/// distinct values, so 20,000 unique ids were an approximation on every engine
+/// (and on the incremental engine even a two-value column past its reservoir).
+/// The exact regime now holds fingerprints and reaches a million distinct
+/// values; the sketch past that is covered by the estimator's own tests.
 #[test]
-fn test_high_cardinality_marked_approximate_across_engines() {
+fn test_table_sized_cardinality_is_exact_across_engines() {
     let mut f = NamedTempFile::new().unwrap();
     writeln!(f, "id,category").unwrap();
     let rows = 20_000;
     for i in 0..rows {
-        // `id` is unique per row (past the 10k exact threshold → HLL estimate);
-        // `category` stays tiny.
         writeln!(f, "id-{i},{}", if i % 2 == 0 { "A" } else { "B" }).unwrap();
     }
     f.flush().unwrap();
 
     let std_report = analyze_csv_file(f.path(), &CsvParserConfig::default()).unwrap();
+    let incremental_report = Profiler::new()
+        .engine(EngineType::Incremental)
+        .analyze_file(f.path())
+        .unwrap();
     let arrow_report = Profiler::new()
         .engine(EngineType::Columnar)
         .analyze_file(f.path())
         .unwrap();
 
-    for report in [&std_report, &arrow_report] {
-        let id_col = report
-            .column_profiles
-            .iter()
-            .find(|c| c.name == "id")
-            .expect("id column present");
-
-        assert_eq!(
-            id_col.unique_count_is_approximate,
-            Some(true),
-            "high-cardinality 'id' must be flagged approximate"
-        );
-        let estimate = id_col.unique_count.expect("id unique_count present");
-        let error = (estimate as f64 - rows as f64).abs() / rows as f64;
-        assert!(
-            error < 0.05,
-            "approximate estimate {estimate} should be near {rows} (error {error:.4})"
-        );
+    for report in [&std_report, &incremental_report, &arrow_report] {
+        for (name, distinct) in [("id", rows), ("category", 2)] {
+            let column = report
+                .column_profiles
+                .iter()
+                .find(|c| c.name == name)
+                .expect("column present");
+            assert_eq!(column.unique_count_is_approximate, Some(false), "{name}");
+            assert_eq!(column.unique_count, Some(distinct), "{name}");
+        }
     }
 }
 

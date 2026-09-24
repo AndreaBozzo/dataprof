@@ -353,9 +353,11 @@ def test_small_distinct_count_marked_exact(engine, tmp_path):
 
 
 @pytest.mark.parametrize("engine", ["auto", "columnar", "incremental"])
-def test_high_cardinality_distinct_count_marked_approximate(engine, tmp_path):
-    # 20k comfortably clears the 10k estimator threshold (matches the Rust
-    # parity test) without the IO of a larger file across three engines.
+def test_table_sized_distinct_count_is_exact(engine, tmp_path):
+    # Past the old 10,000 estimator bound, which made these counts an HLL
+    # estimate on every engine (matches the Rust parity test). The exact
+    # regime now reaches a million distinct values; the sketch past it is
+    # covered by the estimator's own tests.
     n_rows = 20_000
     path = tmp_path / "high_card.csv"
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -366,10 +368,8 @@ def test_high_cardinality_distinct_count_marked_approximate(engine, tmp_path):
 
     report = dataprof.profile(str(path), engine=engine)
     col = report["id"]
-    assert col.unique_count_is_approximate is True, (
-        f"{engine}: HLL-estimated count must be flagged approximate, not "
-        f"{col.unique_count_is_approximate!r}"
-    )
+    assert col.unique_count_is_approximate is False, engine
+    assert col.unique_count == n_rows, engine
 
 
 # ── SQLite arm (requires --features python-async,database,sqlite) ──
