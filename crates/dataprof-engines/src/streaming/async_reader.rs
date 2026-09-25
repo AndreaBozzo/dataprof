@@ -39,6 +39,9 @@ struct ReaderOutcome {
     /// CSV records whose field count differed from the header (always 0 for
     /// JSON/JSONL, whose rows are aligned to the column set by construction).
     ragged_rows: usize,
+    /// Whether the CSV source ended inside a quoted field; `None` for JSON and
+    /// for a scan that stopped before the end of its source.
+    unterminated_quote: Option<bool>,
 }
 
 /// Add one row's container fields to the per-column tally.
@@ -422,7 +425,7 @@ impl AsyncStreamingProfiler {
                 Self::json_reader_task(sync_reader, tx, bytes_per_chunk, format, json_error_policy)
                     .map(|malformed_records| ReaderOutcome {
                         malformed_records,
-                        ragged_rows: 0,
+                        ..ReaderOutcome::default()
                     })
             }
             _ => unreachable!(),
@@ -478,6 +481,15 @@ impl AsyncStreamingProfiler {
             }
         };
 
+        // The reader can reach the end of a small source before the processor
+        // stops it, so the answer only stands for a scan that was not cut short.
+        let unterminated_quote = reader_outcome
+            .unterminated_quote
+            .filter(|_| truncation_reason.is_none());
+        if unterminated_quote == Some(true) && !self.csv_flexible {
+            return Err(dataprof_csv::unterminated_quote_error());
+        }
+
         // Build the report
         let column_profiles = profile_builder::mark_container_columns(
             profile_builder::profiles_from_streaming_with_hints(
@@ -525,6 +537,9 @@ impl AsyncStreamingProfiler {
             // Ragged CSV records are recovered, never silently: the count is the
             // same signal the incremental file path reports.
             .with_ragged_row_count(reader_outcome.ragged_rows);
+        if let Some(ended_inside_quotes) = unterminated_quote {
+            execution = execution.with_unterminated_quote(ended_inside_quotes);
+        }
 
         if let Some(reason) = truncation_reason {
             execution = execution.with_truncation(reason);
@@ -584,11 +599,8 @@ impl AsyncStreamingProfiler {
         // A stream cannot be rewound, so detection reads the head into memory
         // and chains it back in front of the rest — the parser still sees the
         // whole source, byte for byte.
-        let source: Box<dyn Read> = match delimiter {
-            Some(delimiter) => {
-                builder.delimiter(delimiter);
-                Box::new(sync_reader)
-            }
+        let (source, delimiter): (Box<dyn Read>, u8) = match delimiter {
+            Some(delimiter) => (Box::new(sync_reader), delimiter),
             None => {
                 let mut preamble = Vec::new();
                 let mut head = sync_reader.take(DELIMITER_SAMPLE_BYTES);
@@ -596,10 +608,15 @@ impl AsyncStreamingProfiler {
                     .map_err(DataProfilerError::from)?;
                 let detected =
                     dataprof_csv::detect_delimiter(std::io::Cursor::new(&preamble)).unwrap_or(b',');
-                builder.delimiter(detected);
-                Box::new(std::io::Cursor::new(preamble).chain(head.into_inner()))
+                (
+                    Box::new(std::io::Cursor::new(preamble).chain(head.into_inner())),
+                    detected,
+                )
             }
         };
+        builder.delimiter(delimiter);
+        let source = dataprof_csv::QuoteTrackingReader::new(source, delimiter, b'"');
+        let quote_outcome = source.outcome();
 
         let mut csv_reader = builder.from_reader(source);
 
@@ -692,6 +709,7 @@ impl AsyncStreamingProfiler {
             let _ = tx.blocking_send(chunk);
         }
 
+        outcome.unterminated_quote = quote_outcome.at_end();
         Ok(outcome)
     }
 

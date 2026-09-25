@@ -11,9 +11,11 @@ use dataprof_runtime::{
 };
 
 mod memmap_reader;
+mod quote_state;
 mod robust_csv;
 
 pub use memmap_reader::MemoryMappedCsvReader;
+pub use quote_state::{QuoteOutcome, QuoteTrackingReader, unterminated_quote_error};
 pub use robust_csv::{
     CsvDiagnostics, CsvParseOutput, EncodingDiagnostic, RobustCsvParser, RobustParseResult,
     diagnose_non_utf8,

@@ -238,6 +238,8 @@ struct PythonExecutionDocument {
     memory_peak_mb: Option<f64>,
     error_count: usize,
     ragged_row_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unterminated_quote: Option<bool>,
     sampling_applied: bool,
     #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     sampling_ratio: Option<f64>,

@@ -88,6 +88,7 @@ report.source_exhausted     # False -> the source was not read to the end
 report.low_sample_warning   # True -> too few rows to trust distributions
 report.error_count          # rows that failed to parse
 report.ragged_row_count     # rows whose field count did not match the header
+report.unterminated_quote   # True: a CSV quote was never closed and swallowed the rows after it
 ```
 
 If any of these is set, say so in the same breath as the numbers.

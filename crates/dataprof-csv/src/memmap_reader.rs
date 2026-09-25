@@ -143,6 +143,24 @@ impl MemoryMappedCsvReader {
         Ok((headers, records, actual_bytes))
     }
 
+    /// Whether the file ends inside a quoted field, scanning from `offset` on.
+    ///
+    /// `offset` must be a record boundary, such as the offset of a chunk
+    /// [`Self::read_csv_chunk`] returned. Passing the last chunk's offset keeps
+    /// the scan to that chunk. The CSV parser accepts a quote that is never
+    /// closed as a field running to the end of the file, so this is the only
+    /// sign of it.
+    pub fn ends_inside_quotes(&self, offset: u64, csv_config: Option<&CsvParserConfig>) -> bool {
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(self.mmap.len());
+        let quote = csv_config.map_or(b'"', |config| config.quote_char);
+        let delimiter = csv_config
+            .and_then(|config| config.delimiter)
+            .unwrap_or(b',');
+        crate::quote_state::ends_inside_quotes(&self.mmap[start..], delimiter, quote, start == 0)
+    }
+
     /// Return a byte boundary that never splits an RFC 4180 record.
     ///
     /// `chunk_size` is a working-set target, not permission to hand a partial

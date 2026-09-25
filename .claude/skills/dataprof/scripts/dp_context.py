@@ -48,6 +48,7 @@ TRUST_SIGNALS = (
     "low_sample_warning",
     "error_count",
     "ragged_row_count",
+    "unterminated_quote",
 )
 
 

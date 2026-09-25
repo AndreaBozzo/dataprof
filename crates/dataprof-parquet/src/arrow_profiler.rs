@@ -31,6 +31,9 @@ struct CsvPreScan {
     /// Whether a record exists past the row cap, which is what makes a profile
     /// truncated rather than merely as long as the file.
     has_more_rows: bool,
+    /// Whether the file ended inside a quoted field, when the pass reached
+    /// the end of the file.
+    unterminated_quote: Option<bool>,
 }
 
 /// Everything one Arrow decode of the file accumulated.
@@ -44,6 +47,9 @@ struct CsvDecodeOutcome {
     /// schema, because Arrow aborts on those instead of counting them.
     padded_rows: usize,
     peak_memory_mb: Option<f64>,
+    /// Whether the file ended inside a quoted field, when the decode reached
+    /// the end of the file. Arrow stops at a row cap, so it may not have.
+    unterminated_quote: Option<bool>,
 }
 
 /// Why an Arrow decode stopped short.
@@ -146,6 +152,16 @@ impl ArrowProfiler {
         (builder, max_rows)
     }
 
+    /// The source wrapped so it reports whether it ended inside a quoted field,
+    /// with the delimiter and quote this profile parses it with.
+    fn quote_tracked(&self, file: File) -> dataprof_csv::QuoteTrackingReader<File> {
+        let (delimiter, quote) = match self.csv_config {
+            Some(ref config) => (config.delimiter.unwrap_or(b','), config.quote_char),
+            None => (b',', b'"'),
+        };
+        dataprof_csv::QuoteTrackingReader::new(file, delimiter, quote)
+    }
+
     /// Read the first record and stop: the header row, or, under
     /// `has_header=false`, the first data row, which is what the column count
     /// and the generated `column_N` names come from. Either way this reads one
@@ -171,7 +187,9 @@ impl ArrowProfiler {
     fn pre_scan(&self, file_path: &Path) -> Result<CsvPreScan, DataProfilerError> {
         let (builder, max_rows) = self.csv_reader_builder();
 
-        let mut reader = builder.from_path(file_path)?;
+        let source = self.quote_tracked(File::open(file_path)?);
+        let quote_outcome = source.outcome();
+        let mut reader = builder.from_reader(source);
         let header_width = reader.headers()?.len();
 
         let mut ragged_row_count = 0;
@@ -200,6 +218,7 @@ impl ArrowProfiler {
             ragged_row_count,
             max_fields,
             has_more_rows,
+            unterminated_quote: quote_outcome.at_end(),
         })
     }
 
@@ -265,8 +284,10 @@ impl ArrowProfiler {
                 .with_quote(config.quote_char)
                 .with_truncated_rows(config.flexible);
         }
+        let source = self.quote_tracked(file);
+        let quote_outcome = source.outcome();
         let mut csv_reader = arrow_builder
-            .build(file)
+            .build(source)
             .map_err(|error| classify_arrow_csv_error(file_path, error))?;
 
         let mut column_analyzers: std::collections::HashMap<String, ColumnAnalyzer> =
@@ -333,6 +354,7 @@ impl ArrowProfiler {
             // flushes, so this is the whole decode's total.
             padded_rows: csv_reader.truncated_row_count(),
             peak_memory_mb: memory_sampler.peak_mb(),
+            unterminated_quote: quote_outcome.at_end(),
         })
     }
 
@@ -431,8 +453,24 @@ impl ArrowProfiler {
             total_rows,
             padded_rows,
             peak_memory_mb,
+            unterminated_quote,
         } = outcome;
         let truncated = scan.as_ref().is_some_and(|scan| scan.has_more_rows);
+        // Either pass that reached the end of the file answers; they read it
+        // with the same quote rules. A capped decode can stop short of the end,
+        // and the pre-scan that runs under every cap reads one record past it.
+        // The answer is withheld for a truncated profile, which never read the
+        // record an unclosed quote swallows.
+        let unterminated_quote = unterminated_quote
+            .or_else(|| scan.as_ref().and_then(|scan| scan.unterminated_quote))
+            .filter(|_| !truncated);
+        let flexible = self
+            .csv_config
+            .as_ref()
+            .is_some_and(|config| config.flexible);
+        if unterminated_quote == Some(true) && !flexible {
+            return Err(dataprof_csv::unterminated_quote_error());
+        }
         // A pre-scan, where one ran, is the authority: it saw the wide records
         // Arrow aborted on, and it honoured the row cap. Where none ran, no
         // record was wider than the header and no cap applied, so every ragged
@@ -469,6 +507,9 @@ impl ArrowProfiler {
         let mut execution = ExecutionMetadata::new(total_rows, num_columns, scan_time_ms)
             .with_engine("columnar")
             .with_ragged_row_count(ragged_row_count);
+        if let Some(ended_inside_quotes) = unterminated_quote {
+            execution = execution.with_unterminated_quote(ended_inside_quotes);
+        }
         if let Some(peak_mb) = peak_memory_mb {
             execution = execution.with_memory_peak_mb(peak_mb);
         }

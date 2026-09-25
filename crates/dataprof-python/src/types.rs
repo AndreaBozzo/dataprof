@@ -980,6 +980,13 @@ impl PyProfileReport {
         self.inner.execution.ragged_row_count
     }
 
+    /// Whether a CSV source ended inside a quoted field, `None` where it was
+    /// not checked (non-CSV input, a scan stopped early, an older report).
+    #[getter]
+    fn unterminated_quote(&self) -> Option<bool> {
+        self.inner.execution.unterminated_quote
+    }
+
     /// Version of the report schema the report was written with; `0` for a
     /// document written before schema versioning (a pre-0.10 report).
     #[getter]

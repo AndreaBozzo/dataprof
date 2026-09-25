@@ -139,7 +139,9 @@ def profile_file(
             async inputs, where True (default) recovers a row whose field count
             differs from the header and counts it in
             ``report.ragged_row_count``, and False raises ValueError on the
-            first such row. CSV bytes are always parsed strictly, and
+            first such row. A source ending inside a quoted field is likewise
+            profiled with ``report.unterminated_quote`` set, or refused under
+            False. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
         jsonl_on_error: How to handle a JSON/JSONL record that cannot become a
             row — malformed JSON, or valid JSON that is not an object and so
@@ -275,7 +277,9 @@ def profile(
             async inputs, where True (default) recovers a row whose field count
             differs from the header and counts it in
             ``report.ragged_row_count``, and False raises ValueError on the
-            first such row. CSV bytes are always parsed strictly, and
+            first such row. A source ending inside a quoted field is likewise
+            profiled with ``report.unterminated_quote`` set, or refused under
+            False. CSV bytes are always parsed strictly, and
             ``engine="columnar"`` does not report the count.
         jsonl_on_error: How to handle a JSON/JSONL record that cannot become a
             row — malformed JSON, or valid JSON that is not an object and so has

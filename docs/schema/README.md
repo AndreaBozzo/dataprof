@@ -512,3 +512,22 @@ any enum value it does not know. Consumers matching on `data_type` must accept
 `nested`. A nested column typed `String` in a 0.11 report and `nested` in a
 0.12 report is the same data measured under a different definition. Compare
 within a release, or re-profile.
+
+## v1 additive change: `execution.unterminated_quote`
+
+Both dialects carry an optional boolean `execution.unterminated_quote` for CSV
+input (#782). `true` means the source ended inside a quoted field: a quote was
+opened and never closed, and the CSV parser read every following row into the
+last field of one record. The report then counts one row where the source held
+several, and nothing else in it shows the difference. `false` means the scan
+reached the end of the source outside any quoted field.
+
+Absence means the check did not run: non-CSV input, a scan that stopped before
+the end of its source (a row cap, a byte budget), or a report written before
+0.12. The quote that swallows the rest of the file is on the last record, so a
+scan that did not reach the end did not read it.
+
+Under `csv_flexible=False` such a source is refused instead, as a ragged row is.
+The field is additive and not `required`, so stored v1 reports remain valid.
+It is provenance about the source, not a metric, and every CSV engine and input
+path (file, bytes, async) reports the same value for the same source.

@@ -730,6 +730,13 @@
             }
           ],
           "description": "If the source was not exhausted, why processing stopped."
+        },
+        "unterminated_quote": {
+          "description": "Whether a CSV source ended inside a quoted field.\n\nA quote that is never closed swallows every following row into the\nlast field of one record, and the parser accepts it. `true` means the\nlast record read may hold several source rows. Absent where it was not\nchecked: non-CSV input, a scan that stopped before the end of the\nsource, and reports written before 0.12.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1550,6 +1557,12 @@
         "truncation_reason": {
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "unterminated_quote": {
+          "type": [
+            "boolean",
             "null"
           ]
         }

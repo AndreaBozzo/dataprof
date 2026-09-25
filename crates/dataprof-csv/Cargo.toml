@@ -16,6 +16,7 @@ dataprof-core = { workspace = true }
 dataprof-runtime = { workspace = true }
 log = { workspace = true }
 memmap2 = { workspace = true }
+memchr = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
