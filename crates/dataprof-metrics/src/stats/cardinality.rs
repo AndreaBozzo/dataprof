@@ -268,15 +268,19 @@ impl CardinalityEstimator {
     }
 
     pub fn memory_usage_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.hll.memory_usage_bytes() + self.exact_bytes()
+    }
+
+    /// Heap held by the exact set alone: what [`Self::spill`] gives back.
+    /// Zero once spilled, and zero for a set that has never held a value.
+    pub fn exact_bytes(&self) -> usize {
         // decode-audit: no-data — once the estimator spills, the exact set is
         // dropped (None), so it genuinely holds zero bytes.
         // A hashbrown table holds one control byte per bucket beside the key.
-        let exact_bytes = self
-            .exact
+        self.exact
             .as_ref()
             .map(|set| set.capacity() * (std::mem::size_of::<u64>() + 1))
-            .unwrap_or(0);
-        std::mem::size_of::<Self>() + self.hll.memory_usage_bytes() + exact_bytes
+            .unwrap_or(0)
     }
 }
 

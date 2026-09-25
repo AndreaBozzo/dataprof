@@ -352,13 +352,10 @@ impl StreamingStatistics {
         self.distinct.spill();
     }
 
-    /// Heap held by the exact distinct set, zero once it has spilled.
+    /// Heap held by the exact distinct set: zero once it has spilled, and zero
+    /// for a column that has seen no value, so spilling it would free nothing.
     pub fn exact_distinct_bytes(&self) -> usize {
-        if self.distinct.is_approximate() {
-            0
-        } else {
-            self.distinct.memory_usage_bytes()
-        }
+        self.distinct.exact_bytes()
     }
 
     pub fn sample_values(&self) -> &[String] {
@@ -522,6 +519,12 @@ impl RowUniquenessTracker {
 
     pub fn memory_usage_bytes(&self) -> usize {
         self.distinct.memory_usage_bytes()
+    }
+
+    /// Answer the duplicate count from the sketch from here on, freeing the
+    /// exact set. For memory pressure; the count is then reported approximate.
+    pub fn spill(&mut self) {
+        self.distinct.spill();
     }
 
     /// Summary for quality metrics, or `None` when no rows were observed
@@ -761,13 +764,17 @@ impl StreamingColumnCollection {
         // largest first, and only while still over the line, so the columns
         // that stay exact are the ones that cost least to keep. Ties go by
         // column order, so the choice does not depend on hash order. The row
-        // tracker is kept: its duplicate count feeds the score.
+        // tracker goes last of the exact sets: its duplicate count feeds the
+        // score, and once spilled it is reported approximate.
         //
         // The reservoirs are shrunk only if spilling was not enough. They are
         // small by comparison, and halving them on every chunk under pressure
         // degrades every sampled statistic, which is too high a price to pay
         // for memory the distinct sets can give back.
         self.spill_distinct_sets_under_pressure();
+        if self.is_memory_pressure() {
+            self.row_tracker.spill();
+        }
         if self.is_memory_pressure() {
             for stats in self.columns.values_mut() {
                 stats.reduce_sample_capacity();
@@ -1169,9 +1176,9 @@ mod row_tracker_tests {
     #[test]
     fn memory_pressure_spills_the_largest_exact_set_first() {
         let headers = vec!["id".to_string(), "flag".to_string()];
-        // 300,000 fingerprints per exact set is ~4.7 MB; the unspillable row
-        // tracker holds as much again. At 8 MB (pressure above 6.4 MB),
-        // spilling `id` alone brings the collection back under the line.
+        // 300,000 fingerprints per exact set is ~4.7 MB; the row tracker
+        // holds as much again. At 8 MB (pressure above 6.4 MB), spilling `id`
+        // alone brings the collection back under the line.
         let mut collection = StreamingColumnCollection::memory_limit(8);
         for id in 0..300_000 {
             let flag = if id % 2 == 0 { "yes" } else { "no" };
@@ -1192,6 +1199,33 @@ mod row_tracker_tests {
         // reservoirs rather than being halved on every chunk under pressure.
         assert_eq!(id.sample_values().len(), 10_000);
         assert_eq!(flag.sample_values().len(), 10_000);
+    }
+
+    #[test]
+    fn memory_pressure_spills_the_row_tracker_before_shrinking_reservoirs() {
+        let headers = vec!["id".to_string(), "flag".to_string(), "blank".to_string()];
+        // At 5 MB (pressure above 4 MB) spilling every column set still
+        // leaves the row tracker's ~4.1 MB plus the reservoirs over the line.
+        let mut collection = StreamingColumnCollection::memory_limit(5);
+        for id in 0..300_000 {
+            let flag = if id % 2 == 0 { "yes" } else { "no" };
+            record(&mut collection, &headers, &[&id.to_string(), flag, ""]);
+        }
+        collection.reduce_memory_usage();
+
+        let rows = collection.row_duplicate_summary().unwrap();
+        assert!(rows.approximate, "the row tracker spills");
+        assert!(!collection.is_memory_pressure());
+        // A column that has seen no value holds no exact set to give back,
+        // so it keeps its exact count of zero.
+        let blank = collection.get_column_stats("blank").unwrap();
+        assert!(!blank.unique_count_is_approximate());
+        assert_eq!(blank.unique_count(), 0);
+        for name in ["id", "flag"] {
+            let stats = collection.get_column_stats(name).unwrap();
+            assert!(stats.unique_count_is_approximate(), "{name} spills first");
+            assert_eq!(stats.sample_values().len(), 10_000, "{name} reservoir kept");
+        }
     }
 
     #[test]
