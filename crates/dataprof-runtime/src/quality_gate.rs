@@ -1320,7 +1320,8 @@ mod tests {
             .expect("a profiling run records its provenance");
         assert!(
             !sampled.is_empty(),
-            "the assembler did not bifurcate; this test no longer reaches the              case it guards"
+            "the assembler did not bifurcate; this test no longer reaches the \
+             case it guards"
         );
         let interval = quality
             .score_bounds()
