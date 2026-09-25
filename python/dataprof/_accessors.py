@@ -237,6 +237,7 @@ class _ReportView(_View):
     metric_semantics = _Field[dict[str, str] | None]()
     quality_score = _Field[float | None]()
     quality_sampled_dimensions = _Field[list[str] | None]()
+    quality_score_bounds = _Field[dict[str, Any] | None]()
     quality_status = _Field[str]()
     quality_error = _Field[str | None]()
 

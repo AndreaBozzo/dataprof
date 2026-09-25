@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import copy as _copy
 import csv as _csv
 import functools as _functools
 import html as _html
@@ -207,6 +208,32 @@ class ProfileReport:
         return None if sampled is None else list(sampled)
 
     @property
+    def quality_score_bounds(self) -> dict[str, _Any] | None:
+        """Where the whole-source quality scores lie, when some were computed
+        over a retained sample of the scanned rows.
+
+        A dict with ``confidence_level``, ``overall_score`` and
+        ``dimension_scores``. Each interval is ``{"lower": ..., "upper": ...}``
+        on the 0-100 scale, or ``None`` for a score with no bound: an estimated
+        key count, a duplicate scan over a sample, or start/end ordering between
+        date columns whose samples do not hold the same rows (one of them has
+        nulls), and an overall score that weighs one of them.
+
+        The sample fixes each check: a column's type, dominant form, detected
+        pattern, decimal scale and outlier fences. The intervals cover the
+        scores those same checks give over every scanned value, and all
+        of them hold at once with probability ``confidence_level``. An exact
+        score's interval is the score itself.
+
+        ``None`` when every score is exact, when there is no assessment, or
+        when the report was loaded from a document that does not record
+        bounds. A ``full_source`` quality gate decides a sampled score on this
+        interval.
+        """
+        bounds = self._report.quality_score_bounds
+        return None if bounds is None else _copy.deepcopy(dict(bounds))
+
+    @property
     def metric_semantics(self) -> dict[str, str] | None:
         """How this report's measurements were defined.
 
@@ -375,6 +402,9 @@ class ProfileReport:
             sampled = self.quality_sampled_dimensions
             if sampled is not None:
                 quality_dict["sampled_dimensions"] = sampled
+            bounds = self.quality_score_bounds
+            if bounds is not None:
+                quality_dict["score_bounds"] = bounds
             # Written as the Rust summary writes it: defaults are omitted.
             weights = q.score_weights
             if weights != _DEFAULT_SCORE_WEIGHTS:

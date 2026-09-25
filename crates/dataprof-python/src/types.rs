@@ -4,8 +4,8 @@ use pyo3::types::PyDict;
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport,
-    QualityAnalysisStatus, QualityAssessment, QualityMetrics, QualityScores, SemanticHintKind,
-    TextLengthUnit, TruncationReason,
+    QualityAnalysisStatus, QualityAssessment, QualityMetrics, QualityScores, ScoreInterval,
+    SemanticHintKind, TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -1085,6 +1085,50 @@ impl PyProfileReport {
             .quality
             .as_ref()
             .and_then(QualityAssessment::sampled_dimensions)
+    }
+
+    /// Where the whole-source quality scores lie, when some were computed
+    /// over a retained sample of the scanned rows.
+    ///
+    /// A dict with ``confidence_level``, ``overall_score`` and
+    /// ``dimension_scores``; each interval is a dict with ``lower`` and
+    /// ``upper`` on the 0-100 scale, or None for a score with no bound. The
+    /// sample fixes each check (a column's type, dominant form, pattern,
+    /// decimal scale and outlier fences); the intervals cover what those same
+    /// checks give over every scanned value, and hold at once with
+    /// probability ``confidence_level``.
+    ///
+    /// None when every score is exact, when there is no assessment, or when
+    /// the report was loaded from a document that does not record bounds.
+    #[getter]
+    fn quality_score_bounds<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(bounds) = self
+            .inner
+            .quality
+            .as_ref()
+            .and_then(QualityAssessment::score_bounds)
+        else {
+            return Ok(None);
+        };
+        let interval = |interval: Option<ScoreInterval>| -> PyResult<Option<Bound<'py, PyDict>>> {
+            interval
+                .map(|interval| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("lower", interval.lower)?;
+                    dict.set_item("upper", interval.upper)?;
+                    Ok(dict)
+                })
+                .transpose()
+        };
+        let dimensions = PyDict::new(py);
+        for (name, dimension) in &bounds.dimension_scores {
+            dimensions.set_item(name, interval(*dimension)?)?;
+        }
+        let dict = PyDict::new(py);
+        dict.set_item("confidence_level", bounds.confidence_level)?;
+        dict.set_item("overall_score", interval(bounds.overall_score)?)?;
+        dict.set_item("dimension_scores", dimensions)?;
+        Ok(Some(dict))
     }
 
     /// The error a failed quality computation reported, else None.

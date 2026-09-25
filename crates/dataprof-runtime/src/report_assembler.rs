@@ -344,7 +344,10 @@ impl ReportAssembler {
                     .clone()
                     .unwrap_or_else(|| self.mixed_confidence(&result));
                 (
-                    Some(QualityAssessment::new(result.metrics, confidence)),
+                    Some(
+                        QualityAssessment::new(result.metrics, confidence)
+                            .with_score_bounds(result.score_bounds),
+                    ),
                     QualityAnalysisStatus::Computed,
                 )
             }

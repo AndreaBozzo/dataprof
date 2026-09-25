@@ -272,6 +272,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_status` | `str` | Why `quality` is or is not there (see below) |
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
+| `quality_score_bounds` | `dict \| None` | Where the scores over every scanned row lie when some were computed over a retained sample: `confidence_level`, `overall_score` and `dimension_scores`, each interval `{"lower", "upper"}` or `None` when unbounded. `None` when every score is exact (see [quality gates](#check----quality-gates)) |
 | `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar"}`; `None` for a report written before 0.12, whose definitions are unknown |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
@@ -960,10 +961,33 @@ source.
 Each check records its own `evidence`, which can be weaker than the scan's:
 `report.quality_sampled_dimensions` names the components computed from a
 retained sample, and a fully read file can still have them. Provenance is
-resolved per component, so a completeness score from exact column counters
-stays decidable while a consistency score from the reservoir does not, and the
-overall score is only withheld when a sampled component actually reaches it
-(a dimension the score weights exclude cannot move the aggregate).
+resolved per component, so a completeness score from exact column counters is
+decided on its value, and the overall score only counts as sampled when a
+sampled component actually reaches it (a dimension the score weights exclude
+cannot move the aggregate).
+
+**Sampled scores on a fully read source (0.12+).** Most quality dimensions are
+computed over a uniform sample of up to 10,000 values per column, so on any
+larger source the scores are estimates. The report bounds them:
+`report.quality_score_bounds` gives an interval per score that holds, all at
+once, with probability `confidence_level` (0.999). The sample fixes each check
+(a column's type, dominant form, detected pattern, decimal scale and outlier
+fences); the interval covers what those same checks give over every value the
+scan read. When the scan read the whole source and the only gap is the
+quality sample, a `min_quality_score` or `min_dimension_scores` requirement is
+decided on that interval: it passes when the whole interval meets the minimum,
+fails when none of it does, and stays `evidence_incomplete` only when the
+minimum falls inside it. The check records the interval it used as `bounds`
+next to `evidence`, which still says `quality_sampled`. On a clean column of
+10,000 sampled values the interval is about 0.15 points wide; at 5% failures,
+about 2 points.
+
+Some sampled components have no bound, and a requirement that reads one stays
+unevaluated as before: an estimated key count (past a million distinct
+values), a duplicate-row scan over a sample, and start/end date ordering
+between columns whose samples do not hold the same rows, which is the case
+when either date column has nulls. `scope="observed"` is unchanged and decides
+on the sampled score itself.
 
 A report loaded from a document written before dataprof recorded this says
 nothing about how its numbers were obtained. Unknown coverage is a third answer
@@ -991,6 +1015,21 @@ what the Rust `QualityPolicy` writes for the same report and policy:
       "message": "this column's null percentage is above the allowance",
     }
   ],
+}
+```
+
+A score decided on its interval also carries `bounds`:
+
+```python
+{
+  "code": "min_quality_score",
+  "expected": {"comparison": "at_least", "value": 90.0},
+  "observed": 97.41,
+  "scope": "full_source",
+  "evidence": {"coverage": "incomplete", "reason": "quality_sampled"},
+  "bounds": {"lower": 96.87, "upper": 97.93, "confidence_level": 0.999},
+  "status": "passed",
+  "message": "the overall quality score was computed over a sample, and its whole-source interval meets the required minimum",
 }
 ```
 

@@ -359,6 +359,11 @@ struct PythonQualityDocument {
     /// Uniqueness appears here as `key_uniqueness` and `duplicate_rows`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_dimensions: Option<Vec<String>>,
+    /// Where the scores over every scanned row lie, when some were computed over a
+    /// retained sample. Additive field, absent when every score is exact and
+    /// on documents written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    score_bounds: Option<dataprof_metrics::ScoreBounds>,
     /// Weights behind `overall_score`. Additive field, written as the
     /// canonical document writes it: default weights are omitted. Summaries
     /// written before the field existed dropped custom weights too, so its
@@ -517,6 +522,9 @@ impl PythonProfileReportDocument {
                 if let Some(sampled) = assessment.sampled_dimensions() {
                     document["sampled_dimensions"] = serde_json::to_value(sampled)?;
                 }
+                if let Some(bounds) = assessment.score_bounds() {
+                    document["score_bounds"] = serde_json::to_value(bounds)?;
+                }
                 // The summary has always included this boolean, even when false.
                 if let Some(uniqueness) = document.get_mut("uniqueness") {
                     uniqueness["duplicate_rows_approximate"] = serde_json::Value::Bool(
@@ -626,6 +634,8 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
             "sampled_dimensions",
         ),
         ("/$defs/QualityAssessment/required", "scores"),
+        // Written only when some score was sampled.
+        ("/$defs/QualityAssessment/required", "score_bounds"),
     ] {
         if let Some(required) = document
             .pointer_mut(pointer)

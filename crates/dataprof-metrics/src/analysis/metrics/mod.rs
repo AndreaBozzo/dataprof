@@ -49,6 +49,7 @@
 //! - MDPI Framework Review: <https://www.mdpi.com/2504-2289/9/4/93>
 
 mod accuracy;
+mod bounds;
 mod completeness;
 mod consistency;
 mod hint_binding;
@@ -61,6 +62,7 @@ pub(crate) mod utils;
 mod validity;
 
 // Re-export public types for backward compatibility
+pub use bounds::SCORE_BOUNDS_CONFIDENCE;
 pub use hint_binding::{compute_value_hint_bindings, value_matches_hint};
 pub use utils::{StatisticalValidation, validate_sample_size};
 
@@ -554,12 +556,17 @@ impl MetricsCalculator {
                 exact_dimensions: vec![],
                 sampled_dimensions: vec![],
                 sample_size: 0,
+                score_bounds: None,
             });
         }
 
         let total_rows = column_profiles.first().map(|p| p.total_count).unwrap_or(0);
         let sample_rows = Self::calculate_sample_size(data).unwrap_or(0);
         let requested = &requested_dimensions;
+        // One calculator, so the score bounds judge dates against the same
+        // reference day as the score.
+        let timeliness_calculator = TimelinessCalculator::new(&self.thresholds);
+        let temporal_columns = Self::effective_temporal_columns(column_profiles, semantic_hints);
 
         let mut exact_dimensions = Vec::new();
         let mut sampled_dimensions = Vec::new();
@@ -590,6 +597,7 @@ impl MetricsCalculator {
                     format_violations: 0,
                     encoding_issues: 0,
                     values_checked: 0,
+                    inconsistent_values: 0,
                 }
             };
             sampled_dimensions.push("consistency".to_string());
@@ -665,6 +673,8 @@ impl MetricsCalculator {
                     range_violations: 0,
                     negative_values_in_positive: 0,
                     numeric_values_checked: 0,
+                    outliers: 0,
+                    outlier_values_checked: 0,
                 }
             };
             sampled_dimensions.push("accuracy".to_string());
@@ -679,10 +689,8 @@ impl MetricsCalculator {
         };
 
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
-            let temporal_columns =
-                Self::effective_temporal_columns(column_profiles, semantic_hints);
             let t = if !data.is_empty() {
-                TimelinessCalculator::new(&self.thresholds).calculate(data, &temporal_columns)?
+                timeliness_calculator.calculate(data, &temporal_columns)?
             } else {
                 timeliness::TimelinessMetrics {
                     future_dates_count: 0,
@@ -691,6 +699,9 @@ impl MetricsCalculator {
                     invalid_date_values: 0,
                     date_values_checked: 0,
                     temporal_pairs_checked: 0,
+                    valid_dates: 0,
+                    stale_dates: 0,
+                    temporal_column_pairs: 0,
                 }
             };
             sampled_dimensions.push("timeliness".to_string());
@@ -751,12 +762,23 @@ impl MetricsCalculator {
             low_sample_warning: !validation.sufficient_sample,
             score_weights: self.thresholds.score_weights,
         };
+        let score_bounds = bounds::score_bounds(
+            &self.thresholds,
+            &timeliness_calculator,
+            data,
+            column_profiles,
+            semantic_hints,
+            &temporal_columns,
+            &metrics,
+            &sampled_dimensions,
+        )?;
 
         Ok(BifurcatedResult {
             metrics,
             exact_dimensions,
             sampled_dimensions,
             sample_size: sample_rows,
+            score_bounds,
         })
     }
 
@@ -786,6 +808,8 @@ pub struct BifurcatedResult {
     pub sampled_dimensions: Vec<String>,
     /// Number of sample rows used for Phase B dimensions
     pub sample_size: usize,
+    /// Where the scores over every scanned row lie, when some dimension was sampled.
+    pub score_bounds: Option<crate::quality::ScoreBounds>,
 }
 
 #[cfg(test)]

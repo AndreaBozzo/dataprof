@@ -43,10 +43,11 @@ pub use dataprof_json::{
 pub use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, MetricsCalculator,
     PatternMetadata, PrecisionMetrics, QualityAssessment, QualityMetrics, QualityScores,
-    TimelinessMetrics, UniquenessMetrics, ValidityMetrics, analyze_column, analyze_column_fast,
-    analyze_column_with_analysis_options, calculate_datetime_stats, calculate_numeric_stats,
-    calculate_text_stats, classify_lexical_forms, detect_patterns, infer_type, is_null_like_token,
-    lexical_class, list_patterns,
+    ScoreBounds, ScoreInterval, TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
+    analyze_column, analyze_column_fast, analyze_column_with_analysis_options,
+    calculate_datetime_stats, calculate_numeric_stats, calculate_text_stats,
+    classify_lexical_forms, detect_patterns, infer_type, is_null_like_token, lexical_class,
+    list_patterns,
 };
 #[cfg(feature = "parquet-async")]
 pub use dataprof_parquet::{HttpParquetReader, analyze_parquet_async_http};
@@ -58,11 +59,12 @@ pub use dataprof_parquet::{
 };
 pub use dataprof_partial::{analyze_structure, infer_schema, quick_row_count};
 pub use dataprof_runtime::{
-    Check, CheckCode, CheckStatus, DEFAULT_MIXED_TYPES_PERCENTAGE, DEFAULT_NULL_HEAVY_PERCENTAGE,
-    Evidence, EvidenceGap, EvidenceValue, Expectation, Finding, FindingCode, FindingPolicy,
-    FindingPolicyError, FindingsResult, GateResult, MetricSemantics, MetricValue, NotEvaluated,
-    NotEvaluatedReason, PolicyError, PolicyScope, ProfileReport, QualityAnalysisStatus,
-    QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Severity, UnevaluatedRule, Verdict,
+    Check, CheckBounds, CheckCode, CheckStatus, DEFAULT_MIXED_TYPES_PERCENTAGE,
+    DEFAULT_NULL_HEAVY_PERCENTAGE, Evidence, EvidenceGap, EvidenceValue, Expectation, Finding,
+    FindingCode, FindingPolicy, FindingPolicyError, FindingsResult, GateResult, MetricSemantics,
+    MetricValue, NotEvaluated, NotEvaluatedReason, PolicyError, PolicyScope, ProfileReport,
+    QualityAnalysisStatus, QualityPolicy, REPORT_SCHEMA_VERSION, RequiredMetric, Severity,
+    UnevaluatedRule, Verdict,
 };
 
 #[cfg(feature = "async-streaming")]

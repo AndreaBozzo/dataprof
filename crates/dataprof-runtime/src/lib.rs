@@ -33,8 +33,8 @@ pub use profile_report::{
     MetricSemantics, ProfileReport, QualityAnalysisStatus, REPORT_SCHEMA_VERSION,
 };
 pub use quality_gate::{
-    Check, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult, MetricValue,
-    NotEvaluated, PolicyError, PolicyScope, QualityPolicy, RequiredMetric, Verdict,
+    Check, CheckBounds, CheckCode, CheckStatus, Evidence, EvidenceGap, Expectation, GateResult,
+    MetricValue, NotEvaluated, PolicyError, PolicyScope, QualityPolicy, RequiredMetric, Verdict,
 };
 pub use report_assembler::ReportAssembler;
 pub use streaming_stats::{

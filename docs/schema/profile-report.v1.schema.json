@@ -1796,6 +1796,17 @@
             "null"
           ]
         },
+        "score_bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScoreBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the scores over every scanned row lie, when some were computed over a\nretained sample. Additive field, absent when every score is exact and\non documents written before it existed."
+        },
         "score_weights": {
           "$ref": "#/$defs/QualityScoreWeights",
           "description": "Weights behind `overall_score`. Additive field, written as the\ncanonical document writes it: default weights are omitted. Summaries\nwritten before the field existed dropped custom weights too, so its\nabsence there does not show the defaults applied."
@@ -1984,6 +1995,18 @@
         },
         "metrics": {
           "$ref": "#/$defs/QualityMetrics"
+        },
+        "score_bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScoreBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Bounds on the scores over every scanned row, present only when some score was\ncomputed over a retained sample."
         },
         "scores": {
           "anyOf": [
@@ -2244,6 +2267,65 @@
         "csv_auto_recovery"
       ],
       "type": "string"
+    },
+    "ScoreBounds": {
+      "description": "Where the scores over every scanned row lie, for an assessment whose\nscores were partly computed over a retained sample of those rows.\n\nThe sample fixes each check: a column's type, dominant form and decimal\nscale, detected pattern and outlier fences. The intervals cover the scores\nthose same checks would give over every scanned value, and all of them\nhold at once with probability at least `confidence_level`. When the scan\nread the whole source, that is the whole source's score, which is the\nonly case a quality gate decides on them. Intervals\nare rounded outward to two decimals, so a saved one still contains what\nthe computed one did.",
+      "properties": {
+        "confidence_level": {
+          "description": "Probability that every interval here holds at once.",
+          "format": "double",
+          "type": "number"
+        },
+        "dimension_scores": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ScoreInterval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Interval per dimension, keyed like `QualityScores::dimension_scores`.\nAn exactly computed dimension's interval is its score. `None` for a\ndimension that was not assessed, or a sampled one with no bound: an\nestimated key count, a duplicate scan over a sample, or start/end\nordering between date columns whose samples do not hold the same rows\n(one of them has nulls).",
+          "type": "object"
+        },
+        "overall_score": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScoreInterval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Interval for the overall score. `None` when there is no overall score,\nor when a sampled dimension behind it has no bound."
+        }
+      },
+      "required": [
+        "confidence_level",
+        "overall_score",
+        "dimension_scores"
+      ],
+      "type": "object"
+    },
+    "ScoreInterval": {
+      "description": "A range a score lies in, on the 0-100 scale.",
+      "properties": {
+        "lower": {
+          "format": "double",
+          "type": "number"
+        },
+        "upper": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lower",
+        "upper"
+      ],
+      "type": "object"
     },
     "SemanticHintBinding": {
       "description": "Per-column evidence of whether a semantic hint actually bound to any value.\n\nA hint expresses user domain knowledge about a column; this records how much\nof the column that knowledge matched. `matched_values` counts the values of\nthe kind the hint expects (numeric for `positive`, date-parseable for\n`temporal`, every non-null value for `identifier`, which coerces the column).\n\n`exact` distinguishes a full-data count from a sampled one: a hint that\nmatched nothing (`matched_values == 0`) is only *proven* inert when the count\ncovers every row. A sampled zero is recorded but never treated as an error,\nbecause absence in a sample is not proof of absence in the data.",

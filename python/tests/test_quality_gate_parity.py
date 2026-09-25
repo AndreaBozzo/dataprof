@@ -125,3 +125,14 @@ def test_every_case_the_ticket_asks_for_is_covered(cases: list[dict[str, Any]]):
         for case in cases
         for check in case["expected"]["checks"]
     )
+
+    # A sampled score decided on its whole-source interval, and one whose
+    # minimum falls inside it. Both layers read the same recorded bounds, so
+    # without these they could disagree on which side of the interval decides.
+    bounded = [
+        check
+        for case in cases
+        for check in case["expected"]["checks"]
+        if "bounds" in check and case["expected"]["scope"] == "full_source"
+    ]
+    assert {check["status"] for check in bounded} >= {"passed", "not_evaluated"}

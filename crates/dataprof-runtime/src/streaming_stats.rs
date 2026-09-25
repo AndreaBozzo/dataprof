@@ -71,10 +71,24 @@ impl StreamReservoirSampler {
         }
     }
 
+    /// Keep a uniformly chosen `new_capacity` of the retained values.
+    ///
+    /// A reservoir is a uniform sample as a set, not slot by slot: the values
+    /// that filled it first keep their slots until replaced, so truncating
+    /// kept the head of the stream. Under early memory pressure that made the
+    /// quality sample the first rows of the source. A uniform subset of a
+    /// uniform sample is a uniform sample, and later offers keep it one.
     pub fn shrink_to(&mut self, new_capacity: usize) {
         let new_capacity = new_capacity.max(1);
+        let retained = self.reservoir.len();
+        if retained > new_capacity {
+            for slot in 0..new_capacity {
+                let pick = self.rng.random_range(slot..retained);
+                self.reservoir.swap(slot, pick);
+            }
+            self.reservoir.truncate(new_capacity);
+        }
         self.capacity = new_capacity;
-        self.reservoir.truncate(new_capacity);
         self.reservoir.shrink_to_fit();
     }
 
@@ -521,6 +535,11 @@ impl RowUniquenessTracker {
         self.distinct.memory_usage_bytes()
     }
 
+    /// Heap held by the exact set of row signatures: what [`Self::spill`] frees.
+    pub fn exact_bytes(&self) -> usize {
+        self.distinct.exact_bytes()
+    }
+
     /// Answer the duplicate count from the sketch from here on, freeing the
     /// exact set. For memory pressure; the count is then reported approximate.
     pub fn spill(&mut self) {
@@ -771,21 +790,29 @@ impl StreamingColumnCollection {
         // small by comparison, and halving them on every chunk under pressure
         // degrades every sampled statistic, which is too high a price to pay
         // for memory the distinct sets can give back.
-        self.spill_distinct_sets_under_pressure();
-        if self.is_memory_pressure() {
+        //
+        // Usage is measured once and each spill subtracts what it frees:
+        // measuring walks every reservoir, too slow to repeat per column.
+        let limit = self.memory_limit_bytes * 80 / 100;
+        let mut usage = self.memory_usage_bytes();
+        if usage <= limit {
+            return;
+        }
+        usage -= self.spill_distinct_sets(usage - limit);
+        if usage > limit {
+            usage -= self.row_tracker.exact_bytes();
             self.row_tracker.spill();
         }
-        if self.is_memory_pressure() {
+        if usage > limit {
             for stats in self.columns.values_mut() {
                 stats.reduce_sample_capacity();
             }
         }
     }
 
-    fn spill_distinct_sets_under_pressure(&mut self) {
-        if !self.is_memory_pressure() {
-            return;
-        }
+    /// Spill column exact sets, largest first, until at least `excess` bytes
+    /// are freed or none is left. Returns the bytes freed.
+    fn spill_distinct_sets(&mut self, excess: usize) -> usize {
         let mut by_size: Vec<(usize, usize)> = self
             .ordered_names
             .iter()
@@ -796,15 +823,18 @@ impl StreamingColumnCollection {
             })
             .collect();
         by_size.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
-        for (position, _) in by_size {
-            if !self.is_memory_pressure() {
+        let mut freed = 0;
+        for (position, bytes) in by_size {
+            if freed >= excess {
                 break;
             }
             let name = &self.ordered_names[position];
             if let Some(stats) = self.columns.get_mut(name) {
                 stats.spill_distinct();
+                freed += bytes;
             }
         }
+        freed
     }
 
     /// Fingerprint of each column's currently inferred data type.
@@ -1594,6 +1624,33 @@ mod tests {
         }
 
         assert_eq!(left.samples(), right.samples());
+    }
+
+    #[test]
+    fn shrinking_a_reservoir_keeps_a_uniform_subset_not_its_head() {
+        // A full reservoir that has not replaced anything yet holds the stream
+        // in order, so truncating it kept exactly the first values.
+        let mut sampler = StreamReservoirSampler::new(1_000);
+        for value in 0..1_000 {
+            sampler.offer(value.to_string());
+        }
+        sampler.shrink_to(100);
+
+        let retained: Vec<usize> = sampler
+            .samples()
+            .iter()
+            .map(|value| value.parse().unwrap())
+            .collect();
+        assert_eq!(retained.len(), 100);
+        let mean = retained.iter().sum::<usize>() as f64 / retained.len() as f64;
+        assert!(
+            (350.0..650.0).contains(&mean),
+            "mean {mean} of {retained:?}"
+        );
+        let mut distinct = retained.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 100, "a value was kept twice");
     }
 
     #[test]
