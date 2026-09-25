@@ -7,6 +7,7 @@ use super::utils::extract_date;
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
+use crate::types::ColumnProfile;
 use chrono::{Datelike, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
 
@@ -28,6 +29,37 @@ pub(crate) struct TimelinessMetrics {
     /// Distinct start/end column pairs compared, so the most pairs one row
     /// can add to `temporal_pairs_checked`.
     pub temporal_column_pairs: usize,
+    /// The start/end columns of each pair compared. A pair whose values do
+    /// not come from the same rows is not compared, so it is not here.
+    pub compared_pairs: Vec<(String, String)>,
+}
+
+/// Whether the values held for two columns line up row by row, so that value
+/// `k` of each came from the same source row.
+///
+/// Values that keep a column's every row, nulls in place, line up by
+/// construction. Engines hand the calculators each column's non-null values
+/// instead, sampled from one seed: two columns without a null are offered one
+/// value per row, make the same choices, and keep the same rows slot by slot.
+/// A column with nulls skips rows, and from its first null on its slots hold
+/// other rows than its partner's (#787).
+pub(crate) fn rows_line_up(
+    first: &ColumnProfile,
+    first_held: usize,
+    second: &ColumnProfile,
+    second_held: usize,
+) -> bool {
+    let every_row = first_held == first.total_count && second_held == second.total_count;
+    let null_free =
+        first.null_count == 0 && second.null_count == 0 && first.total_count == second.total_count;
+    first_held == second_held && (every_row || null_free)
+}
+
+/// Start/end ordering counts over the pairs that could be compared.
+struct TemporalOrdering {
+    violations: usize,
+    pairs_checked: usize,
+    compared_pairs: Vec<(String, String)>,
 }
 
 /// Per-value date counts over the temporal columns.
@@ -72,6 +104,7 @@ impl<'a> TimelinessCalculator<'a> {
         &self,
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
+        column_profiles: &[ColumnProfile],
     ) -> Result<TimelinessMetrics, DataProfilerError> {
         let summary = self.calculate_date_summary(data, temporal_columns);
         let stale_data_ratio = if summary.valid_dates == 0 {
@@ -79,19 +112,19 @@ impl<'a> TimelinessCalculator<'a> {
         } else {
             (summary.stale_dates as f64 / summary.valid_dates as f64) * 100.0
         };
-        let (temporal_violations, temporal_pairs_checked, temporal_column_pairs) =
-            Self::count_temporal_violations(data, temporal_columns)?;
+        let ordering = Self::count_temporal_violations(data, temporal_columns, column_profiles)?;
 
         Ok(TimelinessMetrics {
             future_dates_count: summary.future_dates,
             stale_data_ratio,
-            temporal_violations,
+            temporal_violations: ordering.violations,
             invalid_date_values: summary.invalid_dates,
             date_values_checked: summary.checked,
-            temporal_pairs_checked,
+            temporal_pairs_checked: ordering.pairs_checked,
             valid_dates: summary.valid_dates,
             stale_dates: summary.stale_dates,
-            temporal_column_pairs,
+            temporal_column_pairs: ordering.compared_pairs.len(),
+            compared_pairs: ordering.compared_pairs,
         })
     }
 
@@ -151,14 +184,18 @@ impl<'a> TimelinessCalculator<'a> {
         }
     }
 
-    /// Count temporal ordering violations (e.g., end_date < start_date);
-    /// returns `(violations, pairs compared)`. The pair count is the
-    /// denominator that makes the violation count interpretable — it is not
-    /// bounded by the number of date-typed values.
+    /// Count temporal ordering violations (e.g., end_date < start_date). The
+    /// pair count is the denominator that makes the violation count
+    /// interpretable; it is not bounded by the number of date-typed values.
+    ///
+    /// Only column pairs whose values [line up by row](rows_line_up) are
+    /// compared. Comparing the others would pair a start date from one row
+    /// with an end date from another and count violations nobody made.
     fn count_temporal_violations(
         data: &HashMap<String, Vec<String>>,
         temporal_columns: &[String],
-    ) -> Result<(usize, usize, usize), DataProfilerError> {
+        column_profiles: &[ColumnProfile],
+    ) -> Result<TemporalOrdering, DataProfilerError> {
         let mut violations = 0;
         let mut pairs_checked = 0;
 
@@ -177,6 +214,8 @@ impl<'a> TimelinessCalculator<'a> {
         // two columns are compared once per matching pattern, and every pair and
         // every violation is counted as many times as patterns happened to hit.
         let mut evaluated: HashSet<(&str, &str)> = HashSet::new();
+        let mut compared = Vec::new();
+        let profile = |name: &str| column_profiles.iter().find(|profile| profile.name == name);
 
         for (start_col, end_col) in &temporal_pairs {
             // Resolve ambiguous role matches in the order supplied by the user.
@@ -208,6 +247,19 @@ impl<'a> TimelinessCalculator<'a> {
             if start_name == end_name || !evaluated.insert((start_name, end_name)) {
                 continue;
             }
+            let (Some(start_profile), Some(end_profile)) = (profile(start_name), profile(end_name))
+            else {
+                continue;
+            };
+            if !rows_line_up(
+                start_profile,
+                start_values.len(),
+                end_profile,
+                end_values.len(),
+            ) {
+                continue;
+            }
+            compared.push((start_name.to_string(), end_name.to_string()));
 
             for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
                 if is_null_like_token(start_val.trim()) || is_null_like_token(end_val.trim()) {
@@ -231,13 +283,49 @@ impl<'a> TimelinessCalculator<'a> {
             }
         }
 
-        Ok((violations, pairs_checked, evaluated.len()))
+        Ok(TemporalOrdering {
+            violations,
+            pairs_checked,
+            compared_pairs: compared,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Profiles for columns held whole, nulls in place, as a caller of
+    /// `QualityMetrics::calculate_from_data` passes them: every pair lines up.
+    fn whole(data: &HashMap<String, Vec<String>>) -> Vec<ColumnProfile> {
+        data.iter()
+            .map(|(name, values)| {
+                let nulls = values
+                    .iter()
+                    .filter(|value| is_null_like_token(value.trim()))
+                    .count();
+                super::super::testing::string_profile(name, values.len(), nulls)
+            })
+            .collect()
+    }
+
+    trait Whole {
+        fn calculate_whole(
+            &self,
+            data: &HashMap<String, Vec<String>>,
+            temporal_columns: &[String],
+        ) -> Result<TimelinessMetrics, DataProfilerError>;
+    }
+
+    impl Whole for TimelinessCalculator<'_> {
+        fn calculate_whole(
+            &self,
+            data: &HashMap<String, Vec<String>>,
+            temporal_columns: &[String],
+        ) -> Result<TimelinessMetrics, DataProfilerError> {
+            self.calculate(data, temporal_columns, &whole(data))
+        }
+    }
 
     #[test]
     fn inferred_dates_are_not_assessed_without_explicit_temporal_columns() {
@@ -248,7 +336,7 @@ mod tests {
         let config = IsoQualityConfig::default();
 
         let metrics = TimelinessCalculator::new(&config)
-            .calculate(&data, &[])
+            .calculate_whole(&data, &[])
             .expect("timeliness metrics");
 
         assert_eq!(metrics.date_values_checked, 0);
@@ -265,7 +353,7 @@ mod tests {
         let config = IsoQualityConfig::default();
 
         let metrics = TimelinessCalculator::new(&config)
-            .calculate(&data, &["event_value".to_string()])
+            .calculate_whole(&data, &["event_value".to_string()])
             .expect("timeliness metrics");
 
         assert_eq!(metrics.date_values_checked, 2);
@@ -281,7 +369,7 @@ mod tests {
         let config = IsoQualityConfig::default();
 
         let metrics = TimelinessCalculator::new(&config)
-            .calculate(&data, &["start".to_string(), "end".to_string()])
+            .calculate_whole(&data, &["start".to_string(), "end".to_string()])
             .expect("timeliness metrics");
 
         assert_eq!(metrics.invalid_date_values, 1);
@@ -305,12 +393,12 @@ mod tests {
         let calculator = TimelinessCalculator::new(&config);
 
         let partial = calculator
-            .calculate(&data, &["start".to_string()])
+            .calculate_whole(&data, &["start".to_string()])
             .expect("partial timeliness metrics");
         assert_eq!(partial.temporal_pairs_checked, 0);
 
         let complete = calculator
-            .calculate(&data, &["start".to_string(), "end".to_string()])
+            .calculate_whole(&data, &["start".to_string(), "end".to_string()])
             .expect("complete timeliness metrics");
         assert_eq!(complete.temporal_pairs_checked, 2);
         assert_eq!(complete.temporal_violations, 1);
@@ -330,7 +418,7 @@ mod tests {
         let calculator = TimelinessCalculator::new(&config);
 
         let primary_first = calculator
-            .calculate(
+            .calculate_whole(
                 &data,
                 &[
                     "primary_start".to_string(),
@@ -342,7 +430,7 @@ mod tests {
         assert_eq!(primary_first.temporal_violations, 0);
 
         let secondary_first = calculator
-            .calculate(
+            .calculate_whole(
                 &data,
                 &[
                     "secondary_start".to_string(),
@@ -386,7 +474,7 @@ mod tests {
             .map(|name| name.to_string())
             .collect();
         TimelinessCalculator::with_reference_date(thresholds, reference())
-            .calculate(data, &named)
+            .calculate_whole(data, &named)
             .expect("timeliness metrics")
     }
 

@@ -419,7 +419,7 @@ fn collect_shares(
             ));
         }
         if wants(QualityDimension::Timeliness) && temporal_columns.contains(&profile.name) {
-            let metrics = timeliness.calculate(&single, temporal_columns)?;
+            let metrics = timeliness.calculate(&single, temporal_columns, column_profiles)?;
             stale.push(counts(metrics.stale_dates, metrics.valid_dates, 1));
             // A value is either a date, which may be in the future, or invalid.
             date_failures.push(counts(
@@ -489,35 +489,36 @@ enum Pairs {
 /// Counts for the start/end ordering share, treating each sampled row as one
 /// draw from the source's rows.
 ///
-/// Reservoirs hold non-null values only, and every column's sampler starts
-/// from the same seed. Columns without a null are offered one value per row
-/// and so make the same choices: slot `k` holds the same row in each. A column
-/// with nulls skips rows, and its slots stop matching.
+/// The calculator compares only pairs whose values line up by row (see
+/// [`rows_line_up`](super::timeliness::rows_line_up)), so every compared pair
+/// is a uniform sample of the source's rows. Their counts are pooled, which
+/// needs every compared column to hold the same number of values drawn from
+/// the same number of rows.
 fn temporal_pairs(
     calculator: &TimelinessCalculator<'_>,
     data: &HashMap<String, Vec<String>>,
     column_profiles: &[ColumnProfile],
     temporal_columns: &[String],
 ) -> Result<Pairs, DataProfilerError> {
-    let metrics = calculator.calculate(data, temporal_columns)?;
+    let metrics = calculator.calculate(data, temporal_columns, column_profiles)?;
     if metrics.temporal_pairs_checked == 0 {
         return Ok(Pairs::None);
     }
-    let columns: Vec<(&ColumnProfile, usize)> = column_profiles
+    let sizes: Vec<(usize, usize)> = metrics
+        .compared_pairs
         .iter()
-        .filter(|profile| temporal_columns.contains(&profile.name))
-        .filter_map(|profile| {
-            data.get(&profile.name)
-                .map(|values| (profile, values.len()))
+        .flat_map(|(start, end)| [start, end])
+        .filter_map(|name| {
+            let profile = column_profiles
+                .iter()
+                .find(|profile| &profile.name == name)?;
+            Some((data.get(name)?.len(), profile.total_count))
         })
         .collect();
-    let Some(&(first, sampled)) = columns.first() else {
+    let Some(&(sampled, population)) = sizes.first() else {
         return Ok(Pairs::Unaligned);
     };
-    let aligned = columns.iter().all(|(profile, len)| {
-        profile.null_count == 0 && profile.total_count == first.total_count && *len == sampled
-    });
-    if !aligned {
+    if sizes.iter().any(|&size| size != (sampled, population)) {
         return Ok(Pairs::Unaligned);
     }
     Ok(Pairs::Aligned(ColumnCounts {
@@ -526,7 +527,7 @@ fn temporal_pairs(
         max_failures_per_value: metrics.temporal_column_pairs,
         max_checked_per_value: metrics.temporal_column_pairs,
         sampled,
-        population: first.total_count.max(sampled),
+        population: population.max(sampled),
     }))
 }
 
@@ -851,9 +852,34 @@ mod tests {
     }
 
     #[test]
-    fn temporal_ordering_over_unaligned_reservoirs_leaves_timeliness_unbounded() {
+    fn a_date_column_outside_the_pair_does_not_unbound_its_ordering() {
+        // Only the compared pair has to line up. A third date column with
+        // nulls is in no pair, and used to leave timeliness unbounded.
+        let (starts, ends) = date_pairs(2_000, 40);
+        let observed: Vec<String> = starts.iter().take(1_900).cloned().collect();
+        let retained = HashMap::from([
+            ("start_date".to_string(), starts),
+            ("end_date".to_string(), ends),
+            ("observed_on".to_string(), observed),
+        ]);
+        let profiles = vec![
+            profile("start_date", DataType::Date, 20_000, 0),
+            profile("end_date", DataType::Date, 20_000, 0),
+            profile("observed_on", DataType::Date, 20_000, 1_000),
+        ];
+        let timeliness = bifurcated(&retained, &profiles).metrics.timeliness.unwrap();
+        assert_eq!(timeliness.temporal_pairs_checked, 2_000);
+        assert!(timeliness.temporal_violations > 0);
+        let bounds = bounds_for(&retained, &profiles);
+        assert!(bounds.dimension_scores["timeliness"].is_some());
+    }
+
+    #[test]
+    fn temporal_ordering_over_unaligned_reservoirs_is_not_compared() {
         // A column with nulls skips rows in its reservoir, so its slots stop
-        // holding the same rows as the other column's.
+        // holding the same rows as the other column's. The pair is not
+        // compared (#787), so neither the score nor its bounds read it, and
+        // timeliness is bounded by its per-value shares alone.
         let (starts, ends) = date_pairs(2_000, 40);
         let retained = HashMap::from([
             ("start_date".to_string(), starts),
@@ -863,11 +889,13 @@ mod tests {
             profile("start_date", DataType::Date, 20_000, 500),
             profile("end_date", DataType::Date, 20_000, 0),
         ];
-        let bounds = bounds_for(&retained, &profiles);
+        let timeliness = bifurcated(&retained, &profiles).metrics.timeliness.unwrap();
+        assert_eq!(timeliness.temporal_pairs_checked, 0);
+        assert_eq!(timeliness.temporal_violations, 0);
 
-        assert!(bounds.dimension_scores["timeliness"].is_none());
-        assert!(bounds.overall_score.is_none());
-        assert!(bounds.dimension_scores["consistency"].is_some());
+        let bounds = bounds_for(&retained, &profiles);
+        assert!(bounds.dimension_scores["timeliness"].is_some());
+        assert!(bounds.overall_score.is_some());
     }
 
     #[test]
