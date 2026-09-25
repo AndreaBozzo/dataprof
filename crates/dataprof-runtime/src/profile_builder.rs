@@ -88,6 +88,10 @@ pub struct TextLengths {
 /// pre-computed text lengths; this function handles stats calculation
 /// and pattern detection.
 pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
+    if input.data_type == DataType::Nested {
+        return nested_column_profile(input.name, input.total_count, input.null_count);
+    }
+
     let mut invalid_count = None;
     let stats = if input.skip_statistics {
         ColumnStats::None
@@ -198,6 +202,7 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                     calculate_text_stats(input.sample_values)
                 }
             }
+            DataType::Nested => unreachable!("nested columns return above"),
         }
     };
 
@@ -245,6 +250,60 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
         stats,
         patterns,
     }
+}
+
+/// Build the profile of a container column: structs, lists and maps.
+///
+/// It reports its counts and nothing else. Its lengths, distinct values,
+/// patterns and lexical forms would all be measured on a serialisation, and
+/// every input path serialises containers differently (#637). Absent is "not
+/// analyzed", which is what they are.
+pub fn nested_column_profile(name: String, total_count: usize, null_count: usize) -> ColumnProfile {
+    ColumnProfile {
+        name,
+        data_type: DataType::Nested,
+        null_count,
+        total_count,
+        unique_count: None,
+        unique_count_is_approximate: None,
+        invalid_count: None,
+        type_homogeneity: None,
+        stats: ColumnStats::None,
+        patterns: None,
+    }
+}
+
+/// Report every column whose non-null values were all containers as
+/// [`DataType::Nested`], counts only (#637).
+///
+/// For text-based inputs that know which of their values were containers, as
+/// the JSON readers do. `container_counts` holds, per column name, how many of
+/// the analyzed values were an object or an array.
+///
+/// This matches what a typed source reports for the same records: Parquet and
+/// Arrow carry a struct or list type, and profile such a column the same way.
+/// A column that mixes containers with scalars has no typed twin, and stays
+/// the text column its values make it.
+///
+/// The comparison runs against the profile's own counts, so a container is
+/// weighed against exactly the values the null rule left standing. A container
+/// always renders with a bracket, which the null rule never matches.
+pub fn mark_container_columns(
+    profiles: Vec<ColumnProfile>,
+    container_counts: &HashMap<String, usize>,
+) -> Vec<ColumnProfile> {
+    profiles
+        .into_iter()
+        .map(|profile| {
+            let containers = container_counts.get(&profile.name).copied().unwrap_or(0);
+            let non_null = profile.total_count - profile.null_count;
+            if containers > 0 && containers == non_null {
+                nested_column_profile(profile.name, profile.total_count, profile.null_count)
+            } else {
+                profile
+            }
+        })
+        .collect()
 }
 
 /// Convert all columns in a [`StreamingColumnCollection`] into [`ColumnProfile`]s.

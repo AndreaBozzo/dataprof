@@ -735,7 +735,13 @@ impl QualityPolicy {
         let Some(quality) = report.quality.as_ref() else {
             return unavailable_quality(check, report);
         };
-        let Some(score) = quality.metrics.dimension_score(dimension) else {
+        let Some(score) = quality
+            .scores()
+            .dimension_scores
+            .get(&dimension.to_string())
+            .copied()
+            .flatten()
+        else {
             check.status = CheckStatus::NotEvaluated(NotEvaluated::NotAssessed);
             check.message = "this dimension had nothing to assess in this run".to_string();
             return check;
@@ -971,7 +977,7 @@ fn aggregate_message(status: &CheckStatus, subject: &str) -> String {
 }
 
 /// The `state` tag the report serializes for its quality status.
-fn quality_status_name(status: &QualityAnalysisStatus) -> &'static str {
+pub(crate) fn quality_status_name(status: &QualityAnalysisStatus) -> &'static str {
     match status {
         QualityAnalysisStatus::Computed => "computed",
         QualityAnalysisStatus::NotRequested => "not_requested",

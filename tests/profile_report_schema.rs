@@ -126,6 +126,71 @@ fn committed_schema_is_current_and_valid_draft_2020_12() {
 }
 
 #[test]
+fn canonical_json_and_summary_are_real_producers_for_the_v1_union() {
+    let report: ProfileReport = serde_json::from_value(minimal_v1_document()).unwrap();
+    let canonical = report.to_json().unwrap();
+    let canonical_value: Value = serde_json::from_str(&canonical).unwrap();
+    assert_eq!(canonical_value, serde_json::to_value(&report).unwrap());
+    let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+    assert_valid(&committed_schema(), &canonical_value);
+    assert_valid(&committed_schema(), &summary);
+    assert!(canonical_value.get("column_profiles").is_some());
+    assert!(canonical_value.get("columns").is_none());
+    assert!(summary.get("columns").is_some());
+    assert!(summary.get("column_profiles").is_none());
+    let restored: ProfileReport = serde_json::from_str(&canonical).unwrap();
+    assert_eq!(restored.to_json().unwrap(), canonical);
+}
+
+#[test]
+fn rust_saves_the_shared_canonical_document() {
+    // Python loads and saves this exact artifact too. It includes Unicode,
+    // column ordering, historical frequencies, and absent versus empty metrics.
+    let expected = include_str!("fixtures/canonical_report.json").trim_end();
+    let report: ProfileReport = serde_json::from_str(expected).unwrap();
+    assert_eq!(report.to_json().unwrap(), expected);
+    assert_valid(&committed_schema(), &serde_json::to_value(report).unwrap());
+}
+
+#[test]
+fn canonical_json_sorts_nested_maps_without_reordering_arrays() {
+    let mut document = minimal_v1_document();
+    document["column_profiles"] = json!([
+        {
+            "name": "z", "data_type": "Date", "null_count": 0,
+            "total_count": 3, "unique_count": 3, "patterns": [],
+            "stats": {"DateTime": {
+                "min_datetime": "2024-01-01", "max_datetime": "2025-02-02",
+                "duration_days": 398.0,
+                "year_distribution": {"2025": 1, "2024": 2},
+                "month_distribution": {"2": 1, "1": 2},
+                "day_of_week_distribution": {"Sunday": 1, "Monday": 2}
+            }}
+        },
+        {
+            "name": "a", "data_type": "String", "null_count": 0,
+            "total_count": 3, "unique_count": null, "patterns": null, "stats": "None"
+        }
+    ]);
+    let outputs = (0..10)
+        .map(|_| {
+            let report: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+            report.to_json().unwrap()
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        outputs.len(),
+        1,
+        "randomized HashMaps must not change JSON bytes"
+    );
+    let emitted: Value = serde_json::from_str(outputs.iter().next().unwrap()).unwrap();
+    assert_eq!(emitted["column_profiles"][0]["name"], "z");
+    assert_eq!(emitted["column_profiles"][1]["name"], "a");
+    assert_eq!(emitted["column_profiles"][0]["patterns"], json!([]));
+    assert_eq!(emitted["column_profiles"][1]["patterns"], Value::Null);
+}
+
+#[test]
 fn schema_references_are_self_contained_and_objects_allow_additive_fields() {
     fn inspect(value: &Value) {
         match value {

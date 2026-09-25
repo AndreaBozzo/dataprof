@@ -272,6 +272,7 @@ Returned by `profile()` and all analysis functions.
 | `quality_status` | `str` | Why `quality` is or is not there (see below) |
 | `quality_error` | `str \| None` | The error a failed quality computation reported |
 | `quality_sampled_dimensions` | `list[str] \| None` | Metric components computed from a retained sample rather than every scanned row; `None` when there is no assessment or a loaded document does not record it |
+| `metric_semantics` | `dict[str, str] \| None` | How the measurements were defined, e.g. `{"text_length_unit": "unicode_scalar"}`; `None` for a report written before 0.12, whose definitions are unknown |
 | `execution_time_ms` | `int` | Total processing time |
 | `throughput` | `float \| None` | Rows per second |
 | `memory_peak_mb` | `float \| None` | Peak memory usage |
@@ -345,8 +346,8 @@ len(report)                          # number of columns
 **Export methods:**
 
 ```python
-report.to_dict()                  # nested dict (rounded values)
-report.to_json(indent=2)         # JSON string
+report.to_dict()                  # historical flat summary (rounded values)
+report.to_json(indent=2)         # complete canonical Rust report as JSON
 report.to_dataframe()            # pandas DataFrame -- all stats (requires pandas)
 report.to_polars()               # polars DataFrame -- all stats (requires polars)
 report.to_arrow()                # PyArrow Table -- all stats (requires pyarrow)
@@ -414,7 +415,7 @@ Per-column profiling statistics.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Column name |
-| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"` |
+| `data_type` | `str` | Inferred type: `"string"`, `"identifier"`, `"integer"`, `"float"`, `"date"`, `"boolean"`, `"nested"`. A `nested` column (struct, list or map) reports its counts only: `unique_count`, `type_homogeneity`, `stats` and `patterns` are `None` |
 | `total_count` | `int` | Total number of values |
 | `null_count` | `int` | Number of null/missing values |
 | `unique_count` | `int \| None` | Distinct value count |
@@ -560,6 +561,11 @@ def on_progress(event):
 
 report = dp.profile("data.csv", on_progress=on_progress)
 ```
+
+Every file route reports at least a `started` and a `finished` event. A CSV on
+the default or incremental engine also reports `schema_detected` and
+`chunk_processed` events while it reads; the columnar engine, JSON and Parquet
+read without reporting, so they send the two bracketing events only.
 
 Event fields: `kind`, `rows_processed`, `bytes_consumed`, `elapsed_ms`, `processing_speed`, `percentage`, `column_names`, `total_rows`, `total_bytes`, `truncated`, `message`, `estimated_total_rows`, `estimated_total_bytes`.
 
@@ -778,11 +784,100 @@ consumer. Version 1 includes both the high-level Python export shape and the
 complete Rust serialization shape; see the
 [schema notes](../schema/README.md) for compatibility and regeneration rules.
 
-When quality metrics are present, the `quality` block always carries a
+In 0.12, `to_json()` and JSON `save()` write the complete Rust document, with
+`data_source`, `column_profiles`, `id`, `timestamp`, and `quality.metrics` /
+`quality.confidence`. `to_dict()` keeps the historical summary keys `source`,
+`source_type`, `columns`, and flattened quality scores. It is a convenience
+projection, so `json.loads(report.to_json())` is the way to obtain the complete
+document as a dictionary. All three loaders accept both layouts. An old flat
+document stays flat on resave because its missing provenance cannot be inferred.
+
+When quality metrics are present, the summary's `quality` block always carries a
 `low_sample_warning` boolean (`true` when the profiled sample was below the
 recommended minimum of 10 rows, `false` otherwise). It round-trips through
 `to_dict()`/`from_dict()`; treat `quality_score` and the per-dimension ratios
 as directional rather than reliable whenever it is `true`.
+
+### `findings()` -- what deserves attention
+
+A report holds every metric and says nothing about which ones matter.
+`findings()` turns the metrics already computed into a short, deterministic
+list, so the call site does not have to invent thresholds:
+
+```python
+report = dp.profile("orders.csv")
+result = report.findings()
+
+for finding in result:
+    print(finding.severity, finding.code, finding.column, finding.evidence)
+# warning null_heavy amount {'null_percentage': 25.0, 'threshold': 20.0}
+# info constant_column channel {'non_null_count': 4, 'unique_count': 1}
+# info sensitive_pattern email {'category': 'contact', 'match_percentage': 100.0, 'pattern': 'Email'}
+```
+
+Each finding has a stable `code`, a `severity` (`"warning"` or `"info"`), the
+`column` it concerns (`None` for the whole report), the `evidence` that caused
+it, and a fixed `summary` sentence. Evidence is metric values, thresholds, and
+names; no finding carries a raw cell value.
+
+| Code | Severity | Reported when |
+|---|---|---|
+| `all_null` | warning | Every value of a column is null |
+| `null_heavy` | warning | A column's null percentage is at least `null_heavy_percentage` (default 20) |
+| `mixed_types` | warning | Values outside a column's dominant lexical type are at least `mixed_types_percentage` (default 5) of those classified. `dominant_type` in the evidence says which way the mix leans. Identifier columns are exempt |
+| `duplicate_rows` | warning | The source holds exact duplicate rows |
+| `future_dates` | warning | Date values lie after the time the report was produced |
+| `temporal_order_violations` | warning | Start dates fall after their paired end dates |
+| `ragged_rows` | warning | Rows had a different field count from the header and were recovered |
+| `records_skipped` | warning | Errors were counted while reading, e.g. JSONL lines skipped under `jsonl_on_error="skip"` |
+| `constant_column` | info | Every non-null value of a column is the same one, seen more than once |
+| `sensitive_pattern` | info | A column confidently matches a contact or financial pattern, a US SSN, or an Italian codice fiscale |
+| `partial_scan` | info | The scan stopped early or sampled rows (`reason` is `"truncated"` or `"sampled"`) |
+
+Findings sort by severity, then code, then report-level before column-level,
+then column position. The default thresholds are the ones `to_llm_context()`
+flags at. Findings compare at the report's 2dp precision and the flags do not,
+so a share within rounding of a threshold (4.9992% against 5) can be a
+finding without being a flag. Both thresholds take a percentage above 0 and at
+most 100, and are applied at 2dp, so the evidence states exactly the threshold
+that was compared. Anything else, including a value that rounds to 0, raises
+`ValueError`:
+
+```python
+report.findings(null_heavy_percentage=50, mixed_types_percentage=10)
+```
+
+**Absence is not a clean result.** A rule whose input the report does not
+carry produces no finding and is listed in `result.not_evaluated`, so an empty
+`result.findings` means "looked, found nothing" only for the rules not listed
+there. The result has no `len()`, and `bool(result)` raises `TypeError`, so
+`if not report.findings():` cannot silently read an unevaluated rule as clean.
+
+```python
+dp.profile("orders.csv", metrics=["schema"]).findings().not_evaluated
+# ({'code': 'duplicate_rows', 'reason': 'quality_unavailable', 'quality_status': 'not_requested'},
+#  ...
+#  {'code': 'sensitive_pattern', 'reason': 'not_computed', 'columns': ['order_id', 'email', ...]})
+```
+
+| `reason` | Meaning |
+|---|---|
+| `quality_unavailable` | The report carries no quality assessment; `quality_status` says why |
+| `not_assessed` | Quality was computed, but the dimension the rule reads had nothing to assess |
+| `estimated` | The duplicate count is an estimate, which witnesses nothing |
+| `sampled` | The count is zero, but it came from the retained quality sample, so it rules nothing out for the rows the sample left behind. This is the ordinary state for timeliness on a source larger than the sample. A nonzero count is still reported |
+| `unrecorded` | The document was written before dataprof recorded what the rule needs: ragged rows before 0.10, quality sample coverage before 0.12 |
+| `not_computed` | The metric was not computed for the listed `columns` (pack not selected, or a nested column) |
+| `no_values` | The listed `columns` had no values to look at |
+
+**Findings are derived, not stored.** They are not part of the saved report,
+and a report loaded with `ProfileReport.load()` or `from_dict()` yields the
+same findings as the one that was saved. Findings describe the rows the report
+read: a truncated or sampled scan adds `partial_scan` rather than withholding
+the rest. For a pass/fail decision about the whole source, use `check()`.
+
+`result.to_dict()` / `to_json()` serialize the whole result, identical to what
+the Rust `FindingPolicy` writes for the same report and thresholds.
 
 ### `check()` -- quality gates
 
@@ -817,7 +912,9 @@ Thresholds are percentages on the same 0--100 scale the report reports, not
 0--1 ratios. A policy that cannot be evaluated as written -- a threshold
 outside the range, an unknown dimension, no requirement at all -- raises
 `ValueError` rather than failing the dataset: a misconfigured gate is not a
-bad extract.
+bad extract. A threshold must be a real number: text is refused even when it
+spells one (`"90"`), and so is a number too large for a float. Numpy scalars,
+`Decimal` and `Fraction` are accepted.
 
 **The verdict has three values, not two.**
 
@@ -913,7 +1010,8 @@ python -m dataprof.check daily_drop.csv --policy quality-policy.json --json > ve
 ```
 
 The policy file is a UTF-8 JSON object containing the `check()` keywords above.
-Commit it alongside the pipeline so threshold changes can be reviewed:
+Thresholds are JSON numbers; a quoted one such as `"90"` is an input error
+(exit 2). Commit it alongside the pipeline so threshold changes can be reviewed:
 
 ```json
 {
@@ -998,8 +1096,15 @@ delta = before.compare(after)
 #   "dimensions": {"completeness": {...}, "consistency": {...}, ...},
 #   "columns": {"email": {"null_pct_a": 1.0, "null_pct_b": 6.5, "null_pct_delta": 5.5}, ...},
 #   "schema": {"added": ["phone"], "removed": [], "common": ["id", "email", ...]},
+#   "metric_semantics": {"a": {...}, "b": {...}, "comparable": True},
 # }
 ```
+
+`metric_semantics.comparable` is `True` when both reports record every
+measurement definition this release knows, with the same values, and `None`
+when either side does not, which includes every report written before 0.12. Text lengths counted UTF-8 bytes through 0.11,
+so across that boundary a changed `max_length` on non-ASCII text can be the unit
+rather than the data.
 
 > The `compare()` result shape is provisional and will align with the Rust-side
 > `QualityDelta` type once it lands.

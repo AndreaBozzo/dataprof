@@ -5,7 +5,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "dataprof",
     "pandas==2.3.3",
-    "polars==1.44.1",
+    "polars==1.44.2",
     "pyarrow==25.0.1",
     "ydata-profiling==4.18.4",
     "psutil==7.2.2",

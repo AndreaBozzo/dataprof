@@ -171,6 +171,8 @@ fn analyze_column_with_options(
                     .collect();
                 calculate_text_stats_from_refs(&values)
             }
+            // `infer_type` reads text, and text carries no container type.
+            DataType::Nested => unreachable!("infer_type never answers Nested"),
         }
     };
 

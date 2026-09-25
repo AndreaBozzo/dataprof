@@ -4,7 +4,8 @@ use pyo3::types::PyDict;
 
 use dataprof::{
     ColumnProfile, ColumnStats, DataSource, DataType, Pattern, ProfileReport,
-    QualityAnalysisStatus, QualityAssessment, QualityMetrics, SemanticHintKind, TruncationReason,
+    QualityAnalysisStatus, QualityAssessment, QualityMetrics, QualityScores, SemanticHintKind,
+    TextLengthUnit, TruncationReason,
 };
 
 /// Python wrapper for Pattern metrics
@@ -244,6 +245,7 @@ impl From<&ColumnProfile> for PyColumnProfile {
                 DataType::Identifier => "identifier".to_string(),
                 DataType::Date => "date".to_string(),
                 DataType::Boolean => "boolean".to_string(),
+                DataType::Nested => "nested".to_string(),
             },
             total_count: profile.total_count,
             null_count: profile.null_count,
@@ -316,11 +318,15 @@ impl PyColumnProfile {
 #[derive(Clone)]
 pub struct PyDataQualityMetrics {
     inner: QualityMetrics,
+    scores: Option<QualityScores>,
 }
 
 impl From<&QualityMetrics> for PyDataQualityMetrics {
     fn from(m: &QualityMetrics) -> Self {
-        Self { inner: m.clone() }
+        Self {
+            inner: m.clone(),
+            scores: None,
+        }
     }
 }
 
@@ -738,7 +744,9 @@ impl PyDataQualityMetrics {
     /// which is not the same as scoring zero. `assessed_dimensions()` is
     /// empty for exactly those reports.
     fn overall_quality_score(&self) -> Option<f64> {
-        self.inner.overall_score()
+        self.scores
+            .as_ref()
+            .map_or_else(|| self.inner.overall_score(), |scores| scores.overall_score)
     }
 
     /// Names of the dimensions that had data to assess and contribute to
@@ -754,6 +762,9 @@ impl PyDataQualityMetrics {
     /// Per-dimension scores (0-100). A dimension maps to None when it was
     /// not computed or had nothing to assess.
     fn dimension_scores(&self) -> std::collections::BTreeMap<String, Option<f64>> {
+        if let Some(scores) = &self.scores {
+            return scores.dimension_scores.clone();
+        }
         std::collections::BTreeMap::from([
             ("completeness".to_string(), self.inner.completeness_score()),
             ("consistency".to_string(), self.inner.consistency_score()),
@@ -770,16 +781,15 @@ impl PyDataQualityMetrics {
         // "consistency=100.0%", a reassuring number with nothing behind it.
         // No overall score means no dimension was assessed, so there is
         // nothing below to render either.
-        let Some(score) = self.inner.overall_score() else {
+        // Read through the accessors so a restored report prints the scores
+        // it returns, not ones recomputed from rounded metrics.
+        let Some(score) = self.overall_quality_score() else {
             return "DataQualityMetrics(not assessed)".to_string();
         };
+        let dimension_scores = self.dimension_scores();
         let mut parts = vec![format!("score={score:.1}%")];
-        for (label, value) in [
-            ("completeness", self.inner.completeness_score()),
-            ("consistency", self.inner.consistency_score()),
-            ("uniqueness", self.inner.uniqueness_score()),
-        ] {
-            if let Some(v) = value {
+        for label in ["completeness", "consistency", "uniqueness"] {
+            if let Some(v) = dimension_scores.get(label).copied().flatten() {
                 parts.push(format!("{label}={v:.1}%"));
             }
         }
@@ -798,7 +808,7 @@ impl PyDataQualityMetrics {
             .iter()
             .map(|dimension| dimension.to_string())
             .collect::<Vec<_>>();
-        let score = match self.inner.overall_score() {
+        let score = match self.overall_quality_score() {
             Some(score) => format!("{score:.1}%"),
             None => "n/a".to_string(),
         };
@@ -970,6 +980,13 @@ impl PyProfileReport {
         self.inner.execution.ragged_row_count
     }
 
+    /// Version of the report schema the report was written with; `0` for a
+    /// document written before schema versioning (a pre-0.10 report).
+    #[getter]
+    fn schema_version(&self) -> u32 {
+        self.inner.schema_version
+    }
+
     /// Whether sampling was applied
     #[getter]
     fn sampling_applied(&self) -> bool {
@@ -1011,10 +1028,10 @@ impl PyProfileReport {
     /// the computation failed. Do not read absence as a skip.
     #[getter]
     fn quality(&self) -> Option<PyDataQualityMetrics> {
-        self.inner
-            .quality
-            .as_ref()
-            .map(|q| PyDataQualityMetrics::from(&q.metrics))
+        self.inner.quality.as_ref().map(|q| PyDataQualityMetrics {
+            inner: q.metrics.clone(),
+            scores: Some(q.scores()),
+        })
     }
 
     /// Overall quality score, or None.
@@ -1081,6 +1098,29 @@ impl PyProfileReport {
         }
     }
 
+    /// How this report's measurements were defined, as a dict of named
+    /// definitions such as ``{"text_length_unit": "unicode_scalar"}``.
+    ///
+    /// None for a report loaded from a document written before dataprof
+    /// recorded it: its definitions are unknown, not the current ones. A
+    /// stored report keeps the value it was written with.
+    #[getter]
+    fn metric_semantics<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let Some(semantics) = &self.inner.metric_semantics else {
+            return Ok(None);
+        };
+        let dict = PyDict::new(py);
+        if let Some(unit) = semantics.text_length_unit {
+            dict.set_item(
+                "text_length_unit",
+                match unit {
+                    TextLengthUnit::UnicodeScalar => "unicode_scalar",
+                },
+            )?;
+        }
+        Ok(Some(dict))
+    }
+
     /// Per-column semantic-hint binding evidence.
     ///
     /// Empty unless positive/identifier/temporal hints were supplied. Each entry
@@ -1112,8 +1152,23 @@ impl PyProfileReport {
 
     /// Export as JSON string
     fn to_json(&self) -> PyResult<String> {
-        serde_json::to_string_pretty(&self.inner).map_err(|e| {
+        self.inner.to_json().map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {}", e))
+        })
+    }
+
+    /// Read the canonical Rust document with the runtime's compatibility rules.
+    #[staticmethod]
+    fn from_json(text: &str) -> PyResult<Self> {
+        serde_json::from_str(text).map(Self::new).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid report document: {e}"))
+        })
+    }
+
+    /// Compatibility summary; the runtime owns both its producer and schema.
+    fn summary_json(&self) -> PyResult<String> {
+        self.inner.summary_json().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("JSON serialization failed: {e}"))
         })
     }
 

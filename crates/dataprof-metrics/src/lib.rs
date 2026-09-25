@@ -14,7 +14,7 @@ pub use analysis::{
 };
 pub use quality::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
-    QualityAssessment, QualityMetrics, RowCompletenessSummary, RowDuplicateSummary,
+    QualityAssessment, QualityMetrics, QualityScores, RowCompletenessSummary, RowDuplicateSummary,
     TimelinessMetrics, UniquenessMetrics, ValidityMetrics,
 };
 pub use stats::{

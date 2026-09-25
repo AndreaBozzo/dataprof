@@ -19,6 +19,21 @@
 //!
 //! ASCII is unaffected: for ASCII text all three units agree.
 
+/// The unit a report's text lengths were measured in, as recorded in its
+/// metric semantics.
+///
+/// Only the current unit has a value. Releases that counted UTF-8 bytes
+/// recorded no unit at all, and a report from one reads back with the unit
+/// unknown rather than as a byte count it never declared.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TextLengthUnit {
+    /// Unicode scalar values, as counted by [`char_len`].
+    UnicodeScalar,
+}
+
 /// Number of Unicode scalar values in `value`.
 ///
 /// This is the single definition of "length" behind every text statistic, so

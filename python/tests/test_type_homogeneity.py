@@ -90,7 +90,7 @@ class TestTypeHomogeneity:
         restored = dp.ProfileReport.from_json(report.to_json())
 
         assert restored["v"].type_homogeneity == native
-        assert json.loads(report.to_json())["columns"][0]["type_homogeneity"] == native
+        assert json.loads(report.to_json())["column_profiles"][0]["type_homogeneity"] == native
 
     def test_absence_does_not_read_back_as_zero_counts(self):
         # A document written before this field existed must reload as "not

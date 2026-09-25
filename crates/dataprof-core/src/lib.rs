@@ -61,5 +61,5 @@ pub use source::{
 pub use stop_condition::{
     SchemaStabilityTracker, StopCondition, StopEvaluator, schema_stable_threshold,
 };
-pub use text_units::char_len;
+pub use text_units::{TextLengthUnit, char_len};
 pub use validation::{InputValidator, ValidationError, exit_codes, validate_unique_column_names};

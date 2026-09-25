@@ -45,6 +45,16 @@ fn round_finite(value: f64, scale: f64) -> f64 {
     }
 }
 
+/// The value [`round_2`] would serialize, for code that compares against it.
+///
+/// A threshold compared with a full-precision percentage can answer
+/// differently from the same threshold compared with the serialized one, so a
+/// report read back from its document would disagree with the report that
+/// wrote it. Comparing the rounded value keeps them on the same side.
+pub fn rounded_2(value: f64) -> f64 {
+    round_finite(value, 100.0)
+}
+
 /// Round f64 to 2 decimal places (for `0..100` percentages).
 /// Returns null for NaN or infinite values.
 pub fn round_2<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>

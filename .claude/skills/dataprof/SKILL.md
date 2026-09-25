@@ -111,7 +111,13 @@ Structured alternatives:
 ```python
 report.to_markdown()      # markdown table of column profiles
 report.quality_summary()  # single-row quality dict
+report.findings()         # coded findings with evidence, never raw values
 ```
+
+`findings()` lists what deserves attention as data: each finding has a stable
+`code`, a `severity`, the `column`, and the `evidence` behind it. Rules it could
+not evaluate are in `.not_evaluated` with a reason; report those as unchecked,
+not as clean.
 
 `to_dict()` embeds a full per-column entry under `["columns"]`, so it grows with
 table width. Select top-level fields instead of surfacing the whole dict:
@@ -170,6 +176,11 @@ re-read and eyeball two files by hand.
   profiler retained, so on a large source they describe the 10k reservoir
   sample; the flag says `sampled N of M values` when that is the case, and
   summing the counts against `total_count - null_count` tells you directly.
+
+- **A `nested` column was counted, not analyzed.** Structs, lists and maps
+  report `total_count` and `null_count` only; the absent distinct count, stats
+  and patterns mean "not analyzed", not "none found". Say that the column's
+  contents were not profiled rather than reading the absences as findings.
 
 Before interpreting a specific dimension, an approximate count, a detected
 pattern, or a comparison, read [reference/interpretation.md](reference/interpretation.md).

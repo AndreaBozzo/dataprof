@@ -1,4 +1,7 @@
-use dataprof_core::{ColumnProfile, DataSource, ExecutionMetadata, SemanticHintBinding};
+use dataprof_core::{
+    ColumnProfile, DataSource, ExecutionMetadata, QualityScoreWeights, SemanticHintBinding,
+    TextLengthUnit,
+};
 use dataprof_metrics::{
     AccuracyMetrics, CompletenessMetrics, ConsistencyMetrics, MetricConfidence, PrecisionMetrics,
     QualityAssessment, QualityMetrics, TimelinessMetrics, ValidityMetrics,
@@ -57,6 +60,55 @@ pub enum QualityAnalysisStatus {
     Unrecorded,
 }
 
+/// How the measurements in a report were defined.
+///
+/// `schema_version` answers whether a document validates. It cannot answer
+/// whether two valid documents measured the same way: text lengths counted
+/// UTF-8 bytes through 0.11 and count Unicode scalar values since, with no
+/// change to the document's shape. This records each intentionally changed
+/// definition by name, so a comparison can check exactly the ones both
+/// reports declare.
+///
+/// Every field is optional. A field missing from a stored report means the
+/// release that wrote it did not record that definition: unknown, never the
+/// current one. Later releases add fields, which older readers ignore.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[non_exhaustive]
+pub struct MetricSemantics {
+    /// Unit of `min_length`, `max_length` and `avg_length` on text columns.
+    ///
+    /// Absent means not recorded; an explicit null is malformed, so neither
+    /// the reader nor the schema accepts one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    #[schemars(with = "TextLengthUnit")]
+    pub text_length_unit: Option<TextLengthUnit>,
+}
+
+/// Decode a field that may be absent (serde's `default` covers that) but,
+/// when present, must carry a value: `Option<T>` alone reads `null` as `None`.
+fn present_value<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+impl MetricSemantics {
+    /// The definitions this build measures with.
+    pub fn current() -> Self {
+        Self {
+            text_length_unit: Some(TextLengthUnit::UnicodeScalar),
+        }
+    }
+}
+
 /// Complete profiling report for a data source.
 ///
 /// Contains column-level statistics, execution metadata, and an optional
@@ -107,6 +159,15 @@ pub struct ProfileReport {
     /// evidence was sampled. Additive field — older readers ignore it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub semantic_hint_bindings: Vec<SemanticHintBinding>,
+    /// How this report's measurements were defined; see [`MetricSemantics`].
+    ///
+    /// Every report this build produces records [`MetricSemantics::current`].
+    /// `None` is a document written before dataprof recorded it, and its
+    /// definitions are unknown. Loading and saving keep the value the
+    /// document had rather than the reader's. Additive field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "MetricSemantics")]
+    pub metric_semantics: Option<MetricSemantics>,
 }
 
 fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -117,12 +178,13 @@ fn schema_version_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema 
     })
 }
 
-/// Both v1 serialization dialects accepted by dataprof.
+/// The canonical persisted report and the legacy Python compatibility summary.
 ///
-/// Rust serializes the complete runtime model. The high-level Python wrapper
-/// predates that shape and exposes a deliberately flatter document. They share
-/// one schema version and compatibility policy, so the published artifact
-/// describes their union rather than pretending one dialect does not exist.
+/// New JSON saves in both languages use `ProfileReport`. Python's `to_dict()`
+/// remains a convenience projection, produced by `PythonProfileReportDocument`
+/// below. Existing flat documents cannot acquire the source/quality provenance
+/// they never recorded, so the v1 union remains an intentional compatibility
+/// surface for loading and resaving those documents.
 #[allow(dead_code)]
 #[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
@@ -132,8 +194,7 @@ enum SerializedProfileReport {
     Python(Box<PythonProfileReportDocument>),
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonProfileReportDocument {
     #[schemars(schema_with = "schema_version_schema")]
     schema_version: u32,
@@ -145,10 +206,12 @@ struct PythonProfileReportDocument {
     quality_status: QualityAnalysisStatus,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "MetricSemantics")]
+    metric_semantics: Option<MetricSemantics>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 enum PythonSourceType {
     File,
@@ -158,8 +221,7 @@ enum PythonSourceType {
     Bytes,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonExecutionDocument {
     engine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,26 +232,30 @@ struct PythonExecutionDocument {
     source_exhausted: bool,
     truncation_reason: Option<String>,
     bytes_consumed: Option<u64>,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     throughput_rows_sec: Option<f64>,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
     memory_peak_mb: Option<f64>,
     error_count: usize,
     ragged_row_count: usize,
     sampling_applied: bool,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     sampling_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_row_ranges: Option<Vec<[u64; 2]>>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonColumnDocument {
     name: String,
     data_type: PythonDataType,
     total_count: usize,
     null_count: usize,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2_opt")]
     null_percentage: Option<f64>,
     unique_count: Option<usize>,
     unique_count_is_approximate: Option<bool>,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4_opt")]
     uniqueness_ratio: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     invalid_count: Option<usize>,
@@ -206,8 +272,7 @@ struct PythonColumnDocument {
     patterns: Option<Vec<PythonPatternDocument>>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 enum PythonDataType {
     String,
@@ -216,10 +281,10 @@ enum PythonDataType {
     Float,
     Date,
     Boolean,
+    Nested,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonColumnStatsDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     min: Option<f64>,
@@ -267,19 +332,19 @@ struct PythonColumnStatsDocument {
     true_ratio: Option<f64>,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonPatternDocument {
     name: String,
     regex: String,
     match_count: usize,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_2")]
     match_percentage: f64,
     category: dataprof_core::PatternCategory,
+    #[serde(serialize_with = "dataprof_core::serde_helpers::round_4")]
     confidence: f64,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonQualityDocument {
     /// Null when no dimension was assessable; `assessed_dimensions` is then
     /// empty and every entry in `dimension_scores` is null.
@@ -294,6 +359,12 @@ struct PythonQualityDocument {
     /// Uniqueness appears here as `key_uniqueness` and `duplicate_rows`.
     #[serde(skip_serializing_if = "Option::is_none")]
     sampled_dimensions: Option<Vec<String>>,
+    /// Weights behind `overall_score`. Additive field, written as the
+    /// canonical document writes it: default weights are omitted. Summaries
+    /// written before the field existed dropped custom weights too, so its
+    /// absence there does not show the defaults applied.
+    #[serde(default, skip_serializing_if = "QualityScoreWeights::is_default")]
+    score_weights: QualityScoreWeights,
     #[serde(skip_serializing_if = "Option::is_none")]
     completeness: Option<CompletenessMetrics>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -310,9 +381,17 @@ struct PythonQualityDocument {
     precision: Option<PrecisionMetrics>,
 }
 
-#[allow(dead_code)]
 #[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
 enum PythonQualityDimension {
@@ -325,8 +404,7 @@ enum PythonQualityDimension {
     Precision,
 }
 
-#[allow(dead_code)]
-#[derive(serde::Serialize, schemars::JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 struct PythonUniquenessDocument {
     duplicate_rows: usize,
     key_uniqueness: f64,
@@ -334,6 +412,143 @@ struct PythonUniquenessDocument {
     rows_checked: usize,
     key_column: Option<String>,
     duplicate_rows_approximate: bool,
+}
+
+impl PythonProfileReportDocument {
+    fn from_report(report: &ProfileReport) -> serde_json::Result<Self> {
+        use dataprof_core::{ColumnStats, DataType, TruncationReason};
+
+        // Reuse the serialized metric blocks: their Serde implementations own
+        // rounding and omission, rather than repeating those rules in Python.
+        let columns = report
+            .column_profiles
+            .iter()
+            .map(|column| {
+                let stats = match &column.stats {
+                    ColumnStats::Numeric(stats) => Some(serde_json::to_value(stats)?),
+                    ColumnStats::Text(stats) if column.total_count > 0 => {
+                        Some(serde_json::to_value(stats)?)
+                    }
+                    ColumnStats::Boolean(stats) => Some(serde_json::to_value(stats)?),
+                    _ => None,
+                }
+                .map(serde_json::from_value)
+                .transpose()?;
+                Ok(PythonColumnDocument {
+                    name: column.name.clone(),
+                    data_type: match column.data_type {
+                        DataType::String => PythonDataType::String,
+                        DataType::Identifier => PythonDataType::Identifier,
+                        DataType::Integer => PythonDataType::Integer,
+                        DataType::Float => PythonDataType::Float,
+                        DataType::Date => PythonDataType::Date,
+                        DataType::Boolean => PythonDataType::Boolean,
+                        DataType::Nested => PythonDataType::Nested,
+                    },
+                    total_count: column.total_count,
+                    null_count: column.null_count,
+                    null_percentage: (column.total_count > 0)
+                        .then(|| column.null_count as f64 / column.total_count as f64 * 100.0),
+                    unique_count: column.unique_count,
+                    unique_count_is_approximate: column.unique_count_is_approximate,
+                    uniqueness_ratio: column
+                        .unique_count
+                        .filter(|_| column.total_count > 0)
+                        .map(|count| count as f64 / column.total_count as f64),
+                    invalid_count: column.invalid_count,
+                    type_homogeneity: column.type_homogeneity,
+                    stats,
+                    patterns: column.patterns.as_ref().map(|patterns| {
+                        patterns
+                            .iter()
+                            .map(|pattern| PythonPatternDocument {
+                                name: pattern.name.clone(),
+                                regex: pattern.regex.clone(),
+                                match_count: pattern.match_count,
+                                match_percentage: pattern.match_percentage,
+                                category: pattern.category.clone(),
+                                confidence: pattern.confidence,
+                            })
+                            .collect()
+                    }),
+                })
+            })
+            .collect::<serde_json::Result<Vec<_>>>()?;
+
+        let mut execution = serde_json::to_value(&report.execution)?;
+        execution["truncation_reason"] =
+            serde_json::to_value(report.execution.truncation_reason.as_ref().map(|reason| {
+                match reason {
+                    TruncationReason::MaxRows(n) => format!("max_rows({n})"),
+                    TruncationReason::MaxBytes(n) => format!("max_bytes({n})"),
+                    TruncationReason::MemoryPressure => "memory_pressure".to_string(),
+                    TruncationReason::StopCondition(s) => format!("stop_condition({s})"),
+                    TruncationReason::StreamClosed => "stream_closed".to_string(),
+                    TruncationReason::Timeout => "timeout".to_string(),
+                }
+            }))?;
+
+        let quality = report
+            .quality
+            .as_ref()
+            .map(|assessment| {
+                let metrics = &assessment.metrics;
+                let mut document = serde_json::to_value(metrics)?;
+                let scores = serde_json::to_value(assessment.scores())?;
+                document["overall_score"] = scores["overall_score"].clone();
+                // A document from a later v1 release may retain scores for a
+                // dimension this build does not know. The canonical document
+                // keeps them; the summary lists only the dimensions it types.
+                let known: Vec<String> = dataprof_core::QualityDimension::all()
+                    .into_iter()
+                    .map(|dimension| dimension.to_string())
+                    .collect();
+                document["dimension_scores"] = scores["dimension_scores"]
+                    .as_object()
+                    .expect("dimension scores serialize as an object")
+                    .iter()
+                    .filter(|(name, _)| known.contains(name))
+                    .map(|(name, score)| (name.clone(), score.clone()))
+                    .collect();
+                document["assessed_dimensions"] =
+                    serde_json::to_value(metrics.assessed_dimensions())?;
+                document["low_sample_warning"] =
+                    serde_json::Value::Bool(metrics.low_sample_warning);
+                if let Some(sampled) = assessment.sampled_dimensions() {
+                    document["sampled_dimensions"] = serde_json::to_value(sampled)?;
+                }
+                // The summary has always included this boolean, even when false.
+                if let Some(uniqueness) = document.get_mut("uniqueness") {
+                    uniqueness["duplicate_rows_approximate"] = serde_json::Value::Bool(
+                        metrics
+                            .uniqueness
+                            .as_ref()
+                            .expect("serialized uniqueness is present")
+                            .duplicate_rows_approximate,
+                    );
+                }
+                serde_json::from_value(document)
+            })
+            .transpose()?;
+
+        Ok(Self {
+            schema_version: report.schema_version,
+            source: report.data_source.identifier(),
+            source_type: match report.data_source {
+                DataSource::File { .. } => PythonSourceType::File,
+                DataSource::Query { .. } => PythonSourceType::Query,
+                DataSource::DataFrame { .. } => PythonSourceType::Dataframe,
+                DataSource::Stream { .. } => PythonSourceType::Stream,
+                DataSource::Bytes { .. } => PythonSourceType::Bytes,
+            },
+            execution: serde_json::from_value(execution)?,
+            columns,
+            quality,
+            quality_status: report.quality_status.clone(),
+            semantic_hint_bindings: report.semantic_hint_bindings.clone(),
+            metric_semantics: report.metric_semantics.clone(),
+        })
+    }
 }
 
 /// Generate the JSON Schema 2020-12 document for the current serialized report.
@@ -410,6 +625,7 @@ fn make_compatibility_defaults_optional(document: &mut serde_json::Value) {
             "/$defs/PythonQualityDocument/required",
             "sampled_dimensions",
         ),
+        ("/$defs/QualityAssessment/required", "scores"),
     ] {
         if let Some(required) = document
             .pointer_mut(pointer)
@@ -440,6 +656,22 @@ fn allow_additive_properties(value: &mut serde_json::Value) {
 }
 
 impl ProfileReport {
+    /// Serialize the canonical persisted document with deterministic object-key
+    /// order. Array order (columns, patterns, recovery events) is preserved.
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        let mut document = serde_json::to_value(self)?;
+        canonicalize_key_order(&mut document);
+        serde_json::to_string_pretty(&document)
+    }
+
+    /// Serialize Python's historical summary projection. It deliberately omits
+    /// some runtime metadata; use [`Self::to_json`] for lossless persistence.
+    #[doc(hidden)]
+    pub fn summary_json(&self) -> serde_json::Result<String> {
+        let summary = PythonProfileReportDocument::from_report(self)?;
+        serde_json::to_string(&summary)
+    }
+
     /// Create a new ProfileReport with auto-generated id and timestamp
     pub fn new(
         data_source: DataSource,
@@ -463,6 +695,7 @@ impl ProfileReport {
             },
             quality,
             semantic_hint_bindings: Vec::new(),
+            metric_semantics: Some(MetricSemantics::current()),
         }
     }
 
@@ -563,6 +796,8 @@ struct ProfileReportFields {
     quality_status: Option<QualityAnalysisStatus>,
     #[serde(default)]
     semantic_hint_bindings: Vec<SemanticHintBinding>,
+    #[serde(default)]
+    metric_semantics: Option<MetricSemantics>,
 }
 
 impl From<ProfileReportFields> for ProfileReport {
@@ -585,6 +820,7 @@ impl From<ProfileReportFields> for ProfileReport {
             }),
             quality: fields.quality,
             semantic_hint_bindings: fields.semantic_hint_bindings,
+            metric_semantics: fields.metric_semantics,
         }
     }
 }
@@ -629,6 +865,13 @@ impl<'de> serde::Deserialize<'de> for ProfileReport {
             return Err(D::Error::custom(
                 "report quality_status must be an object; an explicit null is malformed, \
                  not a document written before the field existed",
+            ));
+        }
+        // Same rule: absent is "not recorded", which reads back as unknown;
+        // a null would be a current writer's malformed output.
+        if value.get("metric_semantics") == Some(&serde_json::Value::Null) {
+            return Err(D::Error::custom(
+                "report metric_semantics must be an object; an explicit null is malformed,                  not a document written before the field existed",
             ));
         }
         let report = ProfileReportFields::deserialize(value)
@@ -777,6 +1020,60 @@ mod tests {
         );
     }
 
+    fn summary_value(report: &ProfileReport) -> serde_json::Value {
+        serde_json::from_str(&report.summary_json().unwrap()).unwrap()
+    }
+
+    /// A report built by this crate records how it measured, in both dialects.
+    /// A document written before the field reads back as unknown, and saving
+    /// it again must not stamp it with the reader's definitions.
+    #[test]
+    fn metric_semantics_are_recorded_and_absence_survives_a_roundtrip() {
+        let report = report_without_quality();
+        assert_eq!(report.metric_semantics, Some(MetricSemantics::current()));
+        let mut document = serde_json::to_value(&report).unwrap();
+        let recorded = json!({"text_length_unit": "unicode_scalar"});
+        assert_eq!(document["metric_semantics"], recorded);
+        assert_eq!(summary_value(&report)["metric_semantics"], recorded);
+
+        document.as_object_mut().unwrap().remove("metric_semantics");
+        let legacy: ProfileReport = serde_json::from_value(document).unwrap();
+        assert_eq!(legacy.metric_semantics, None);
+        assert!(
+            serde_json::to_value(&legacy)
+                .unwrap()
+                .get("metric_semantics")
+                .is_none()
+        );
+        assert!(summary_value(&legacy).get("metric_semantics").is_none());
+    }
+
+    #[test]
+    fn malformed_metric_semantics_fail_to_decode() {
+        for value in [
+            serde_json::Value::Null,
+            json!("unicode_scalar"),
+            json!({"text_length_unit": "utf8_byte"}),
+            json!({"text_length_unit": null}),
+        ] {
+            let mut document = serde_json::to_value(report_without_quality()).unwrap();
+            document["metric_semantics"] = value.clone();
+            assert!(
+                serde_json::from_value::<ProfileReport>(document).is_err(),
+                "{value} decoded"
+            );
+        }
+    }
+
+    /// Later releases add definitions; an older reader keeps the ones it knows.
+    #[test]
+    fn unknown_metric_definitions_are_ignored() {
+        let mut document = serde_json::to_value(report_without_quality()).unwrap();
+        document["metric_semantics"]["grapheme_policy"] = json!("extended");
+        let restored: ProfileReport = serde_json::from_value(document).unwrap();
+        assert_eq!(restored.metric_semantics, Some(MetricSemantics::current()));
+    }
+
     #[test]
     fn quality_status_survives_a_json_roundtrip() {
         let report = report_without_quality().with_quality_status(QualityAnalysisStatus::Failed {
@@ -859,6 +1156,51 @@ mod tests {
         assert_eq!(deserialized.execution.rows_processed, 100);
         assert!(deserialized.quality.is_some());
         assert_eq!(deserialized.schema_version, REPORT_SCHEMA_VERSION);
+    }
+
+    /// The weights determine the aggregate score, so a summary that drops
+    /// custom ones reloads with a score its weights no longer produce.
+    #[test]
+    fn summary_keeps_custom_score_weights_and_omits_defaults() {
+        let summary_quality = |weights| {
+            let mut metrics = QualityMetrics::empty();
+            metrics.score_weights = weights;
+            let report = ProfileReport::new(
+                DataSource::File {
+                    path: "test.csv".to_string(),
+                    format: FileFormat::Csv,
+                    size_bytes: 1024,
+                    modified_at: None,
+                    parquet_metadata: None,
+                },
+                vec![],
+                ExecutionMetadata::new(100, 5, 50),
+                Some(QualityAssessment::exact(metrics)),
+            );
+            let summary: serde_json::Value =
+                serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+            summary["quality"].clone()
+        };
+
+        let custom = QualityScoreWeights {
+            completeness: 1.0,
+            consistency: 0.0,
+            uniqueness: 0.0,
+            accuracy: 0.0,
+            timeliness: 0.0,
+            validity: 0.0,
+            precision: 3.0,
+        };
+        assert_eq!(
+            summary_quality(custom)["score_weights"],
+            serde_json::to_value(custom).unwrap()
+        );
+        // Mirrors the canonical document, so default-weight summaries are unchanged.
+        assert!(
+            summary_quality(QualityScoreWeights::default())
+                .get("score_weights")
+                .is_none()
+        );
     }
 
     #[test]

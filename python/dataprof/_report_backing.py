@@ -6,6 +6,7 @@ properties and methods live in _accessors, exactly as for native reports.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from ._accessors import ColumnProfile, _Field, _MappingAccessor, _ReportView
@@ -118,9 +119,72 @@ def _quality_accessor(document: dict[str, Any]) -> _MappingAccessor:
     values["dimension_scores"] = (
         scores if isinstance(scores, dict) else dict.fromkeys(_QUALITY_DIMENSIONS)
     )
-    weights = document.get("score_weights")
-    values["score_weights"] = weights if isinstance(weights, dict) else dict(_DEFAULT_SCORE_WEIGHTS)
+    values["score_weights"] = _read_score_weights(document)
     return _MappingAccessor(values)
+
+
+def _read_score_weights(document: dict[str, Any]) -> dict[str, float]:
+    """Read the weights as the Rust reader reads `QualityScoreWeights`.
+
+    Only a missing key takes the defaults. A mapping fills its missing
+    dimensions from them and ignores unknown ones; anything else is an error,
+    since substituted weights would sit next to a score they did not produce.
+    Weights must be finite: JSON cannot carry NaN or infinity, so the Rust
+    reader never accepts them, and neither does an integer beyond f64 range.
+    """
+    if "score_weights" not in document:
+        return dict(_DEFAULT_SCORE_WEIGHTS)
+    weights = document["score_weights"]
+    if not isinstance(weights, dict):
+        raise ValueError(
+            f"from_dict(): 'quality.score_weights' must be a mapping of numbers, got {weights!r}."
+        )
+    read = {}
+    for name, default in _DEFAULT_SCORE_WEIGHTS.items():
+        value = weights.get(name, default)
+        number = math.nan
+        if not isinstance(value, bool) and isinstance(value, int | float):
+            try:
+                number = float(value)
+            except OverflowError:
+                number = math.inf
+        if not math.isfinite(number):
+            raise ValueError(
+                f"from_dict(): 'quality.score_weights.{name}' must be a finite number, "
+                f"got {value!r}."
+            )
+        read[name] = number
+    return read
+
+
+# Each named metric definition and the values a document may record for it.
+_METRIC_SEMANTICS = {"text_length_unit": ("unicode_scalar",)}
+
+
+def _read_metric_semantics(document: dict[str, Any]) -> dict[str, str] | None:
+    """Read `metric_semantics` as the Rust reader reads `MetricSemantics`.
+
+    A missing key is a document written before dataprof recorded it, so its
+    definitions are unknown: None, never the current ones. Unknown definition
+    names from a later writer are ignored; a malformed value is an error.
+    """
+    if "metric_semantics" not in document:
+        return None
+    semantics = document["metric_semantics"]
+    if not isinstance(semantics, dict):
+        raise ValueError(f"from_dict(): 'metric_semantics' must be a mapping, got {semantics!r}.")
+    read = {}
+    for name, allowed in _METRIC_SEMANTICS.items():
+        if name not in semantics:
+            continue
+        value = semantics[name]
+        if value not in allowed:
+            raise ValueError(
+                f"from_dict(): 'metric_semantics.{name}' must be one of "
+                f"{', '.join(allowed)}, got {value!r}."
+            )
+        read[name] = value
+    return read
 
 
 def _report_from_dict(document: dict[str, Any]) -> _ReportView:
@@ -131,9 +195,13 @@ def _report_from_dict(document: dict[str, Any]) -> _ReportView:
     # Only these additive fields have legacy defaults. Unknown measurements
     # stay absent; in particular an unknown history is not an empty history.
     values["ragged_row_count"] = execution.get("ragged_row_count") or 0
+    # Absent means a pre-0.10 document, written before versioning. Callers
+    # that must not read a defaulted field as a measurement branch on it.
+    values["schema_version"] = document.get("schema_version", 0)
     values["sampling_applied"] = bool(execution.get("sampling_applied", False))
     bindings = document.get("semantic_hint_bindings")
     values["semantic_hint_bindings"] = list(bindings) if isinstance(bindings, list) else []
+    values["metric_semantics"] = _read_metric_semantics(document)
     quality = document.get("quality")
     values["quality"] = _quality_accessor(quality) if isinstance(quality, dict) else None
     values["quality_score"] = quality.get("overall_score") if isinstance(quality, dict) else None

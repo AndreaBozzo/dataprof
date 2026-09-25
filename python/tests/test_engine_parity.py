@@ -182,7 +182,14 @@ def assert_profiles_match(engine: str, report, reference, exceptions) -> None:
     # No approximation or post-export re-rounding here: consumers see these
     # exact numbers, including every optional statistic and absence marker.
     assert report.to_dict()["columns"] == expected_columns, engine
-    assert json.loads(report.to_json())["columns"] == expected_columns, engine
+    # Compare the canonical documents directly too, without re-rounding via
+    # the convenience projection. Source/execution provenance is separate.
+    canonical_columns = json.loads(reference.to_json())["column_profiles"]
+    for column in canonical_columns:
+        for (exception_engine, name, field), value in exceptions.items():
+            if exception_engine == engine and name == column["name"]:
+                column[field] = value.capitalize() if field == "data_type" else value
+    assert json.loads(report.to_json())["column_profiles"] == canonical_columns, engine
     # Quality scores are rounded metrics, not execution provenance, so they are
     # on the contract surface too. Left out, an engine could agree on every
     # column and still report a different overall score.
@@ -259,6 +266,16 @@ def test_serialized_parity_preserves_full_precision_accessors(engine, tmp_path):
 # conversion must not reshuffle it. The fixture keys above are deliberately
 # non-alphabetical (sorting moves all_null to the front and whole to the back),
 # so the JSON paths that used to emit object keys alphabetically fail here.
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_every_input_path_records_the_same_metric_semantics(engine, tmp_path):
+    """Provenance, so identical on every path and in both documents (#675)."""
+    report = build_report(engine, tmp_path)
+    expected = {"text_length_unit": "unicode_scalar"}
+    assert report.metric_semantics == expected
+    assert report.to_dict()["metric_semantics"] == expected
+    assert json.loads(report.to_json())["metric_semantics"] == expected
 
 
 @pytest.mark.parametrize("engine", ENGINES)

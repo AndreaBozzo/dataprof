@@ -32,6 +32,10 @@ from ._dataprof import (
     StructureReport as StructureReport,
     __version__ as __version__,
 )
+from ._findings import (
+    Finding as Finding,
+    FindingsResult as FindingsResult,
+)
 from ._gate import (
     QualityCheck as QualityCheck,
     QualityGateResult as QualityGateResult,
@@ -52,6 +56,8 @@ __all__ = [
     "profile_file",
     "Profiler",
     "ProfileReport",
+    "Finding",
+    "FindingsResult",
     "QualityCheck",
     "QualityGateResult",
     "ProfilerConfig",

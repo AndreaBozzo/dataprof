@@ -69,7 +69,10 @@ def test_both_backings_expose_the_same_public_classes(raw_report, tmp_path, via)
             live.patterns or [], saved.patterns or [], strict=True
         ):
             assert type(live_pattern) is type(saved_pattern)
-    assert restored.to_json() == report.to_json()
+    if via != "dict":
+        assert restored.to_json() == report.to_json()
+    else:
+        assert restored.to_dict() == report.to_dict()
 
 
 @pytest.mark.parametrize("restore", [False, True])

@@ -294,7 +294,7 @@ class TestProfileReport:
     def test_to_json(self, report):
         j = report.to_json()
         parsed = json.loads(j)
-        assert "source" in parsed
+        assert "data_source" in parsed
 
     def test_to_dataframe(self, report):
         pytest.importorskip("pandas")
@@ -324,7 +324,7 @@ class TestProfileReport:
             assert result is report  # fluent API
             with open(path) as f:
                 parsed = json.loads(f.read())
-            assert "source" in parsed
+            assert "data_source" in parsed
         finally:
             os.unlink(path)
 

@@ -7,6 +7,7 @@ from os import PathLike
 from typing import Any
 
 from ._accessors import ColumnProfile, DataQualityMetrics
+from ._findings import FindingsResult
 from ._gate import QualityGateResult
 
 class ProfileReport:
@@ -47,6 +48,8 @@ class ProfileReport:
     @property
     def quality_sampled_dimensions(self) -> list[str] | None: ...
     @property
+    def metric_semantics(self) -> dict[str, str] | None: ...
+    @property
     def semantic_hint_bindings(self) -> list[dict[str, Any]]: ...
     @property
     def low_sample_warning(self) -> bool: ...
@@ -80,8 +83,12 @@ class ProfileReport:
     def __len__(self) -> int: ...
 
     # Export methods
-    def to_dict(self) -> dict[str, Any]: ...
-    def to_json(self, indent: int = 2) -> str: ...
+    def to_dict(self) -> dict[str, Any]:
+        """Historical flat summary projection, produced by Rust."""
+        ...
+    def to_json(self, indent: int = 2) -> str:
+        """Canonical Rust document; loaded legacy summaries retain their shape."""
+        ...
     def to_dataframe(self) -> Any:
         """Column profiles as pandas DataFrame (all stats, rounded). Requires pandas."""
         ...
@@ -106,6 +113,8 @@ class ProfileReport:
     def to_markdown(self) -> str:
         """GitHub-flavored markdown table of the column profiles."""
         ...
+    @property
+    def _schema_version(self) -> int: ...
     def to_llm_context(self, max_tokens: int = 1000, include_samples: bool = False) -> str:
         """Token-bounded, agent-oriented summary: shape, caveats, flags, schema, patterns.
 
@@ -126,6 +135,14 @@ class ProfileReport:
         scope: str = ...,
     ) -> QualityGateResult:
         """Evaluate a quality policy and return the structured result."""
+        ...
+    def findings(
+        self,
+        *,
+        null_heavy_percentage: float | None = ...,
+        mixed_types_percentage: float | None = ...,
+    ) -> FindingsResult:
+        """Structured, prioritized findings, and the rules that could not look."""
         ...
     def compare(self, other: ProfileReport) -> dict[str, Any]:
         """Dict of quality/schema/null deltas versus another report."""

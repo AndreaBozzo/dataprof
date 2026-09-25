@@ -1,18 +1,99 @@
 //! Cross-engine consistency test.
 //!
-//! Profiles the same CSV through the standard CSV engine and Arrow CSV engine,
-//! then asserts exact equality of serialized metrics (#547). Raw numeric
-//! diagnostics allow relative tolerance 1e-9 or absolute tolerance 1e-12.
+//! Profiles the same values through file engines and column analysis (used by
+//! database connectors), then asserts exact equality of serialized metrics (#547).
+//! Raw numeric diagnostics allow relative tolerance 1e-9 or absolute tolerance 1e-12.
 
 use std::io::Write;
 use std::path::Path;
 
-use dataprof::{ChunkSize, EngineType, Profiler};
+use dataprof::{ChunkSize, EngineType, Profiler, StopCondition, TruncationReason};
 use dataprof::{
     ColumnStats, CsvParserConfig, DataType, MetricConfidence, QualityDimension, analyze_csv_file,
 };
 use serde_json::json;
 use tempfile::NamedTempFile;
+
+/// Frequency fields used to be present only on the database column-analysis
+/// path (#709). Comparing file engines alone cannot expose that divergence.
+#[test]
+fn serialized_text_stats_match_column_analysis_and_csv_engines() {
+    for values in [
+        vec!["hello", "world", "test", "hello", "world"],
+        vec!["東京", "café", "e\u{301}", "東京", "", "  ", "NULL"],
+        vec!["", "  ", "NULL"],
+    ] {
+        let data: Vec<String> = values.iter().map(|value| (*value).to_owned()).collect();
+        let mut csv = NamedTempFile::new().unwrap();
+        writeln!(csv, "text,row").unwrap();
+        for (row, value) in values.iter().enumerate() {
+            // A second column keeps empty text cells from becoming blank lines.
+            writeln!(csv, "{value},{row}").unwrap();
+        }
+        csv.flush().unwrap();
+
+        let standard = analyze_csv_file(csv.path(), &CsvParserConfig::default()).unwrap();
+        let expected = serde_json::to_value(&standard.column_profiles[0].stats).unwrap();
+        assert!(expected["Text"].is_object(), "{values:?}");
+        assert!(expected["Text"].get("most_frequent").is_none());
+        assert!(expected["Text"].get("least_frequent").is_none());
+
+        for column in [
+            dataprof::analyze_column("text", &data),
+            dataprof::analyze_column_fast("text", &data),
+            dataprof::analyze_column_with_analysis_options(
+                "text",
+                &data,
+                &dataprof::AnalysisOptions::default(),
+            ),
+        ] {
+            assert_eq!(column.data_type, standard.column_profiles[0].data_type);
+            assert_eq!(column.null_count, standard.column_profiles[0].null_count);
+            assert_eq!(column.total_count, standard.column_profiles[0].total_count);
+            assert_eq!(
+                serde_json::to_value(&column.stats).unwrap(),
+                expected,
+                "column analysis, {values:?}"
+            );
+        }
+
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let report = Profiler::new()
+                .engine(engine)
+                .analyze_file(csv.path())
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&report.column_profiles[0].stats).unwrap(),
+                expected,
+                "{engine:?}, {values:?}"
+            );
+        }
+    }
+}
+
+/// New profiles leave frequencies unassessed, but stored Rust statistics must
+/// retain measurements made by earlier versions, including measured-empty lists.
+#[test]
+fn historical_text_frequencies_survive_rust_round_trip() {
+    for frequencies in [
+        json!([{"value": "hello", "count": 2, "percentage": 100.0}]),
+        json!([]),
+    ] {
+        let document = json!({"Text": {
+            "min_length": 5,
+            "max_length": 5,
+            "avg_length": 5.0,
+            "most_frequent": frequencies,
+            "least_frequent": frequencies,
+        }});
+        let restored: ColumnStats = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), document);
+    }
+}
 
 /// 30k rows of *sorted* values — larger than the 10k per-column sample
 /// reservoirs, so any engine that derives base statistics from its retained
@@ -1356,5 +1437,118 @@ fn type_homogeneity_agrees_across_engines() {
             json!({"numeric": 150, "date": 0, "boolean": 0, "text": 50}),
             "[{engine}] serialized amount counts"
         );
+    }
+}
+
+/// A ragged row past `max_rows` is not part of the profile, so no engine may
+/// fail over one. The columnar engine used to: it decoded a whole batch before
+/// applying the cap, and `arrow-csv` refuses a record wider than its schema
+/// (#753). Strict parsing is the deliberate exception, pinned below.
+#[test]
+fn a_ragged_row_past_the_row_cap_is_ignored_by_every_engine() {
+    for row_past_cap in ["Bob,30", "Bob,30,Milan,extra"] {
+        let mut csv = NamedTempFile::new().unwrap();
+        writeln!(csv, "name,age,city").unwrap();
+        writeln!(csv, "Alice,25,Rome").unwrap();
+        writeln!(csv, "{row_past_cap}").unwrap();
+        csv.flush().unwrap();
+
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let report = Profiler::new()
+                .engine(engine)
+                .csv_flexible(true)
+                .stop_when(StopCondition::MaxRows(1))
+                .analyze_file(csv.path())
+                .unwrap_or_else(|error| {
+                    panic!("{engine:?} failed over a row past the cap ({row_past_cap:?}): {error}")
+                });
+
+            assert_eq!(report.execution.rows_processed, 1, "{engine:?}");
+            assert_eq!(report.execution.ragged_row_count, 0, "{engine:?}");
+            assert!(
+                matches!(
+                    report.execution.truncation_reason,
+                    Some(TruncationReason::MaxRows(1))
+                ),
+                "{engine:?}: {:?}",
+                report.execution.truncation_reason
+            );
+        }
+    }
+}
+
+/// Strict parsing rejects a ragged row past the cap on every engine, because
+/// each one reads past the cap before applying it: the incremental engine
+/// parses a whole chunk, the columnar engine a whole pre-scan record. Whether
+/// that is the right contract is #757; until it is decided, the three must not
+/// drift apart, which is what this pins.
+#[test]
+fn strict_parsing_rejects_a_ragged_row_past_the_row_cap_on_every_engine() {
+    for row_past_cap in ["Bob,30", "Bob,30,Milan,extra"] {
+        let mut csv = NamedTempFile::new().unwrap();
+        writeln!(csv, "name,age,city").unwrap();
+        writeln!(csv, "Alice,25,Rome").unwrap();
+        writeln!(csv, "{row_past_cap}").unwrap();
+        csv.flush().unwrap();
+
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let error = Profiler::new()
+                .engine(engine)
+                .csv_flexible(false)
+                .stop_when(StopCondition::MaxRows(1))
+                .analyze_file(csv.path())
+                .expect_err(&format!("{engine:?} must reject {row_past_cap:?}"));
+
+            // Every engine names both field counts, the `csv` crate's phrasing
+            // rather than Arrow's opaque "incorrect number of fields".
+            let message = error.to_string();
+            assert!(message.contains("fields"), "{engine:?}: {message}");
+            assert!(
+                !message.contains("incorrect number of fields"),
+                "{engine:?}: {message}"
+            );
+        }
+    }
+}
+
+/// A cap the file never reaches is not a truncation, and neither is one it
+/// reaches exactly. The columnar engine reads one record past the cap to tell
+/// the two apart, so the case where there is no such record to read, twice
+/// over, has to hold as well.
+#[test]
+fn a_cap_at_or_beyond_the_file_length_is_not_a_truncation() {
+    let mut csv = NamedTempFile::new().unwrap();
+    writeln!(csv, "name,age,city").unwrap();
+    writeln!(csv, "Alice,25,Rome").unwrap();
+    writeln!(csv, "Bob,30,Milan").unwrap();
+    csv.flush().unwrap();
+
+    for cap in [2u64, 5] {
+        for engine in [
+            EngineType::Auto,
+            EngineType::Incremental,
+            EngineType::Columnar,
+        ] {
+            let report = Profiler::new()
+                .engine(engine)
+                .stop_when(StopCondition::MaxRows(cap))
+                .analyze_file(csv.path())
+                .expect("a cap the file does not exceed should profile the file");
+
+            assert_eq!(report.execution.rows_processed, 2, "{engine:?} cap {cap}");
+            assert!(
+                report.execution.truncation_reason.is_none(),
+                "{engine:?} cap {cap}: {:?}",
+                report.execution.truncation_reason
+            );
+        }
     }
 }

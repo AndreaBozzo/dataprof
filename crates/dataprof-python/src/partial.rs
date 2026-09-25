@@ -15,6 +15,7 @@ fn data_type_name(data_type: &DataType) -> &'static str {
         DataType::Identifier => "identifier",
         DataType::Date => "date",
         DataType::Boolean => "boolean",
+        DataType::Nested => "nested",
     }
 }
 

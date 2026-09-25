@@ -87,12 +87,25 @@ age = report["age"]
 print(age.data_type, age.mean, age.null_percentage)
 ```
 
+Or ask the report what deserves attention. Findings carry a stable code, a
+severity and the evidence behind them, never a raw value, and list the rules
+they could not evaluate instead of reading an unanalyzed metric as clean:
+
+```python
+for finding in report.findings():
+    print(finding.severity, finding.code, finding.column, finding.evidence)
+```
+
 #### 3. Export
 
 ```python
 report.save("report.json")       # full report, reloadable
 print(report.to_markdown())      # a table for a PR comment or a notebook
 ```
+
+In 0.12, JSON saves use the complete Rust report document in both languages.
+Python `to_dict()` remains the flat convenience summary. Existing flat JSON
+reports still load; see the [persistence migration](docs/schema/README.md#the-v1-compatibility-decision-714).
 
 #### 4. Gate
 

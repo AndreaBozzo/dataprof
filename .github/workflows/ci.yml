@@ -415,7 +415,10 @@ jobs:
     # first five minutes. Both languages must agree on the numbers they print.
     name: Examples Smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold, the Rust examples take ~8m and the Python bindings build ~11.5m
+    # (run 35999584206), so 20 was hit during the post-job cache save and left
+    # the next run on that lockfile cold as well.
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v7.0.1

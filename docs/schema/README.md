@@ -10,12 +10,49 @@ Schema versions are independent of package versions. The filename and `$id`
 must use the same version as Rust's `REPORT_SCHEMA_VERSION` and Python's
 `dataprof.REPORT_SCHEMA_VERSION`.
 
-Version 1 covers both existing serialization dialects:
+Starting in 0.12, the canonical persisted document is Rust's complete runtime
+report: `data_source`, `column_profiles`, report `id` and `timestamp`, and the
+confidence-wrapped quality assessment. Python `to_json()` and JSON `save()` use
+the same Rust serializer. `ProfileReport::to_json()` sorts object keys recursively
+for byte-stable output; arrays retain their order. Ordinary Rust Serde output
+has the same document values, without a promise about map-key byte order.
+
+### The v1 compatibility decision (#714)
+
+Version 1 deliberately continues to accept two shapes:
 
 - Rust's complete runtime document (`data_source`, `column_profiles`, and the
   confidence-wrapped quality assessment).
-- Python's high-level export document (`source`, `source_type`, `columns`, and
-  its flattened quality summary).
+- The historical Python summary (`source`, `source_type`, `columns`, and its
+  flattened quality summary), still available through Python `to_dict()`.
+
+Both producers now live in Rust, and the summary's producer uses the very types
+that generate its schema. Python no longer builds a parallel serialized report.
+The summary is a convenience projection, not a lossless persistence format;
+`json.loads(report.to_json())` is the full document as a Python dictionary.
+
+Python `from_dict()`, `from_json()` and `load()` accept either shape. A loaded
+flat summary stays flat when resaved: it never recorded report identity, full
+source metadata or quality confidence, so manufacturing those fields would
+misrepresent the original run. Missing provenance markers stay missing; the
+resave does add `schema_version`, because it is written by a v1 build. Rust's `ProfileReport` reader reads the canonical shape; the flat
+compatibility loader remains a Python API.
+
+This preserves the published v1 validation contract instead of silently
+narrowing it. New profiles save only the canonical shape. Consumers of the old
+JSON layout should use `to_dict()` for its summary keys, or migrate to the
+canonical paths above. A future schema v2 may remove the summary branch from
+the persistence schema; that requires an explicit migration for incomplete
+legacy provenance, not relabeling a flat document as a complete runtime report.
+
+The canonical quality block now also retains `scores.overall_score` and
+`scores.dimension_scores`, at the existing two-decimal score precision. These
+are the aggregate values the Python summary already persisted. They must travel
+with the rounded input metrics: deriving them again from rounded ratios can
+change the saved score beyond its documented rounding. Older canonical documents without `scores`
+remain readable and derive scores from the metrics they recorded. Rust callers
+that edit a restored assessment's public metrics invalidate its saved scores;
+subsequent score access and serialization use the edited metrics.
 
 Both dialects accept unknown additive object properties. This matches the v1
 reader policy and lets compatible fields be added without invalidating stored
@@ -61,8 +98,8 @@ history therefore records `flexible`, without claiming an encoding conversion.
 
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
-`to_json()`, and JSON `save()` output. Compare corresponding metrics across
-the two dialects; their document layouts differ.
+`to_json()`, and JSON `save()` output. JSON persistence now uses the same document
+layout; `to_dict()` retains the summary projection described above.
 
 For the same logical values, schema semantics, analysis options and analyzed
 population, serialized metrics must compare exactly, with no additional
@@ -93,10 +130,19 @@ Rounding alone cannot mathematically guarantee equality for every possible
 floating-point input, especially near rounding boundaries or at large
 magnitudes. A difference that survives serialization remains a parity defect
 to investigate, rather than an allowed raw-precision difference. The known
-nested JSON/Arrow representation mismatch (#637) is one such defect, as is the
-text frequency divergence in #709: `most_frequent` and `least_frequent`
-serialize as absent from the streaming builders and present from
-`analyze_column`, which the database connectors use.
+nested JSON/Arrow representation mismatch (#637) is one such defect.
+
+Text frequencies are unassessed in newly computed profiles (#709):
+`most_frequent` and `least_frequent` are `None` and omitted by Rust Serde on
+every path, including `analyze_column` and the database connectors. Python
+exports already omit these fields. This keeps absence consistent without
+presenting retained-sample frequencies as full-column measurements. The fields
+remain optional in schema v1; Rust deserialization and reserialization preserve
+historical frequency measurements, including measured-empty lists. Callers that
+need explicit frequency analysis can use
+`dataprof_metrics::stats::text::{calculate_most_frequent, calculate_least_frequent}`
+over their chosen population; these helpers count exactly the supplied values,
+so callers choose which null-like values to exclude.
 
 Sampling and approximate statistics must retain their provenance. Different
 row selections or retained samples are different analyzed populations; compare
@@ -150,7 +196,7 @@ not required by the base `dataprof` wheel.
 
 Because the schema allows unknown additive properties, a successful validation
 confirms required fields and primitive types but does not reject extra keys.
-The Python API writes the `PythonProfileReportDocument` shape, so the examples
+New Python JSON saves write the `ProfileReport` shape, so the examples
 below pin validation to that branch of the versioned schema. This keeps errors
 focused on the fields that matter to Python consumers instead of reporting the
 whole document as failing a top-level `anyOf`.
@@ -180,7 +226,7 @@ else:
     schema = json.loads(Path(schema_source).read_text(encoding="utf-8"))
 
 document_schema = {key: value for key, value in schema.items() if key != "anyOf"}
-document_schema["$ref"] = "#/$defs/PythonProfileReportDocument"
+document_schema["$ref"] = "#/$defs/ProfileReport"
 Draft202012Validator.check_schema(document_schema)
 report = json.loads(REPORT_PATH.read_text(encoding="utf-8"))
 validator = Draft202012Validator(document_schema)
@@ -252,7 +298,7 @@ jobs:
           document_schema = {
               key: value for key, value in schema.items() if key != "anyOf"
           }
-          document_schema["$ref"] = "#/$defs/PythonProfileReportDocument"
+          document_schema["$ref"] = "#/$defs/ProfileReport"
           Draft202012Validator.check_schema(document_schema)
           validator = Draft202012Validator(document_schema)
           report_paths = sorted(Path("reports").rglob("*.json"))
@@ -394,3 +440,75 @@ projection withholding still applies to the requested dimensions. `no_data`
 remains available for an assembler that receives no quality sample, distinct
 from an explicitly supplied empty sample. It no longer denotes a successfully
 analyzed empty source.
+
+## v1 additive change: `score_weights` in the Python dialect
+
+The Python dialect's `quality` object now carries `score_weights`, the relative
+weights behind `overall_score`, with the same rule the Rust dialect applies to
+`quality.metrics.score_weights`: custom weights are written and default weights
+are omitted (#760).
+
+Previously the summary dropped them, so a report assessed with custom weights
+came back from `ProfileReport.from_dict(report.to_dict())` with the default
+weights next to an `overall_score` those defaults did not produce.
+
+The field is additive and not `required`: stored v1 reports remain valid.
+Summaries of reports that use the default weights are unchanged. A summary
+written before this change omits the field whatever weights were used, so there
+its absence does not show that the defaults applied; the loader still reads an
+absent field as the defaults, as it did before. The canonical document from
+`to_json()` or JSON `save()` has kept custom weights since #714.
+
+## v1 additive change: `metric_semantics`
+
+Both dialects now carry a top-level `metric_semantics` object naming how the
+report's measurements were defined. It has one field per intentionally changed
+definition:
+
+| field | values | meaning |
+| --- | --- | --- |
+| `text_length_unit` | `"unicode_scalar"` | unit of `min_length`, `max_length` and `avg_length` on text columns |
+
+`schema_version` answers whether a document validates. It cannot answer whether
+two valid documents measured the same way. Text lengths are the case in point:
+they counted UTF-8 bytes through 0.11 and count Unicode scalar values since
+(see above), with no change to the document's shape (#675).
+
+Every report this release produces records the object. It is additive and not
+`required`, so stored v1 reports remain valid. A document without it was written
+before dataprof recorded it: its definitions are **unknown**, not the current
+ones, and loading and saving it keeps the object absent rather than stamping the
+reader's definitions on it. An explicit `null`, for the object or for a
+definition inside it, is malformed: it fails to load in both dialects and the
+schema rejects it. Definition names this build does not know are ignored, so a later
+release can add one; a value this build does not know fails to load.
+
+Python's `compare()` reports both sides and `comparable`: `True` when both
+record every definition this release knows, with the same values, and `None`
+otherwise, including when either side records an empty object. Only `True` makes a difference
+in a measurement such as `max_length` a difference in the data.
+
+The object is provenance, not a metric, so it is outside the numeric equality
+contract above, and every engine and input path records the same value.
+
+## v1 additive change: `Nested` data type
+
+A column of structs, lists or maps is now typed `Nested` in the Rust dialect and
+`"nested"` in the Python dialect, and reports its counts only: `total_count`,
+`null_count` and `null_percentage`. `unique_count`, `invalid_count`,
+`type_homogeneity`, `stats` and `patterns` are absent, meaning not analyzed
+(#637).
+
+Through 0.11 such a column was typed `String` and measured on a text rendering
+of its values. That rendering was Arrow's display string on the Parquet and
+Arrow paths and compact JSON on the JSON paths, so the same records reported
+different lengths, distinct counts and patterns depending on the file format.
+A JSON column is `Nested` when every non-null value is an object or an array; a
+column mixing containers with scalars has no typed counterpart and stays text.
+
+The enum gains a value, so stored v1 reports remain valid. A reader built
+before this change rejects a report that contains the new value, as it would
+any enum value it does not know. Consumers matching on `data_type` must accept
+`nested`. A nested column typed `String` in a 0.11 report and `nested` in a
+0.12 report is the same data measured under a different definition. Compare
+within a release, or re-profile.

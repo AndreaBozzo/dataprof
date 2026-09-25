@@ -176,16 +176,31 @@ class QualityGateResult:
         return _json.dumps(self.to_dict(), indent=indent)
 
 
+def _real_number(value: _Any) -> float:
+    """The value as a float, or NaN when it is not a real number.
+
+    Text is refused even when it spells a number: the Rust layer takes an
+    ``f64``, and a quoted threshold in a policy file is more likely a mistake
+    than an intent. ``bool`` is refused because ``True`` is not a threshold.
+    Every other real number converts, numpy scalars and ``Decimal`` included,
+    and one too large for a float is refused rather than raising
+    ``OverflowError`` past a caller that catches ``ValueError``.
+    """
+    if isinstance(value, (bool, str, bytes, bytearray)):
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError, OverflowError):
+        return float("nan")
+
+
 def _percentage(code: str, subject: str | None, value: _Any) -> float:
     """Accept a 0..=100 threshold, rejecting anything else by name.
 
     An unsatisfiable threshold is a configuration mistake, and reporting it as
     a failed gate would blame the data for it.
     """
-    try:
-        number = float("nan") if isinstance(value, bool) else float(value)
-    except (TypeError, ValueError):
-        number = float("nan")
+    number = _real_number(value)
     if number != number or not 0.0 <= number <= _PERCENTAGE_MAX:
         named = f" for `{subject}`" if subject else ""
         raise ValueError(

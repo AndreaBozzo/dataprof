@@ -301,7 +301,7 @@ def test_a_bytes_source_cannot_be_built_without_the_buffer_length():
 
     with pytest.raises(ValueError, match="source_bytes"):
         profile_columns(
-            [("id", ["1", "2"])],
+            [("id", ["1", "2"], [])],
             "csv_bytes",
             None,
             None,

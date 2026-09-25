@@ -146,14 +146,14 @@ impl PrecisionTracker {
 
 /// A fixed-size uniform sample held in memory until the stream ends.
 #[derive(Debug)]
-struct SampleBuffer {
+struct SampleBuffer<R> {
     capacity: usize,
-    rows: Vec<Vec<String>>,
+    rows: Vec<R>,
     sampler: ReservoirSampler,
     seen: usize,
 }
 
-impl SampleBuffer {
+impl<R> SampleBuffer<R> {
     fn new(capacity: usize) -> Self {
         Self {
             capacity,
@@ -169,7 +169,7 @@ impl SampleBuffer {
     /// row `n` replaces a uniformly chosen member with probability
     /// `capacity / n`. Every row of the stream ends up equally likely to be in
     /// the final sample.
-    fn offer(&mut self, values: Vec<String>) {
+    fn offer(&mut self, values: R) {
         self.seen += 1;
         if self.capacity == 0 {
             return;
@@ -183,7 +183,7 @@ impl SampleBuffer {
         }
     }
 
-    fn take(&mut self) -> Vec<Vec<String>> {
+    fn take(&mut self) -> Vec<R> {
         std::mem::take(&mut self.rows)
     }
 }
@@ -194,12 +194,17 @@ impl SampleBuffer {
 /// A fresh state per row — which is what calling a stateless helper amounts to
 /// — silently disables every stateful strategy, so engines must create one
 /// sampler per scan and keep it for the whole scan.
+///
+/// `R` is what the fixed-size stage holds for each row until the stream ends.
+/// It is the row's field values unless an engine has to keep something about
+/// the row that its values cannot say, and must then get it back with exactly
+/// the rows that were sampled.
 #[derive(Debug)]
-pub struct RowSampler {
+pub struct RowSampler<R = Vec<String>> {
     /// Streaming filters, applied in order; a row must pass all of them.
     filters: Vec<SamplingStrategy>,
     /// Terminal fixed-size stage, if the strategy has one.
-    buffer: Option<SampleBuffer>,
+    buffer: Option<SampleBuffer<R>>,
     state: SamplingState,
     precision: PrecisionTracker,
     /// Rows offered to the sampler, whether or not they were kept.
@@ -214,6 +219,14 @@ impl RowSampler {
     /// Rejects here rather than mid-scan: a caller learns that a strategy is
     /// unusable before the source is read, not after a partial profile exists.
     pub fn new(strategy: &SamplingStrategy) -> Result<Self, DataProfilerError> {
+        Self::for_rows(strategy)
+    }
+}
+
+impl<R> RowSampler<R> {
+    /// As [`RowSampler::new`], for a sampler whose fixed-size stage holds `R`
+    /// for each row rather than its field values alone.
+    pub fn for_rows(strategy: &SamplingStrategy) -> Result<Self, DataProfilerError> {
         let mut filters = Vec::new();
         let mut buffer = None;
         Self::flatten(strategy, &mut filters, &mut buffer)?;
@@ -233,7 +246,7 @@ impl RowSampler {
     fn flatten(
         strategy: &SamplingStrategy,
         filters: &mut Vec<SamplingStrategy>,
-        buffer: &mut Option<SampleBuffer>,
+        buffer: &mut Option<SampleBuffer<R>>,
     ) -> Result<(), DataProfilerError> {
         match strategy {
             SamplingStrategy::None => Ok(()),
@@ -324,7 +337,7 @@ impl RowSampler {
     /// Hand a row that passed [`accept`](Self::accept) to the fixed-size stage.
     ///
     /// Only meaningful when [`is_buffered`](Self::is_buffered) is true.
-    pub fn offer(&mut self, values: Vec<String>) {
+    pub fn offer(&mut self, values: R) {
         if let Some(buffer) = self.buffer.as_mut() {
             buffer.offer(values);
         }
@@ -332,7 +345,7 @@ impl RowSampler {
 
     /// The final sample from the fixed-size stage, ready to fold into the
     /// statistics. Empty for a purely streaming strategy.
-    pub fn take_sample(&mut self) -> Vec<Vec<String>> {
+    pub fn take_sample(&mut self) -> Vec<R> {
         match self.buffer.as_mut() {
             Some(buffer) => {
                 let rows = buffer.take();

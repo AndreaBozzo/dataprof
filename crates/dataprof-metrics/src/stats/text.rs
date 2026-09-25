@@ -2,9 +2,6 @@ use crate::types::{ColumnStats, FrequencyItem, TextStats};
 use dataprof_core::char_len;
 use std::collections::HashMap;
 
-const TOP_N_DEFAULT: usize = 10;
-const BOTTOM_N_DEFAULT: usize = 10;
-
 pub fn calculate_text_stats(data: &[String]) -> ColumnStats {
     ColumnStats::Text(compute_text_stats(data))
 }
@@ -17,7 +14,11 @@ pub fn calculate_text_stats_from_refs(data: &[&String]) -> ColumnStats {
     ColumnStats::Text(compute_text_stats_from_refs(data))
 }
 
-/// Compute text stats and return the inner struct directly.
+/// Compute text length stats and return the inner struct directly.
+///
+/// Frequencies remain unassessed, matching streaming and columnar profiles.
+/// Use [`calculate_most_frequent`] or [`calculate_least_frequent`] explicitly
+/// when the caller has chosen the population to count.
 pub fn compute_text_stats(data: &[String]) -> TextStats {
     let borrowed: Vec<&String> = data.iter().collect();
     compute_text_stats_from_refs(&borrowed)
@@ -55,17 +56,10 @@ pub fn compute_text_stats_from_refs(data: &[&String]) -> TextStats {
         lengths.iter().sum::<usize>() as f64 / lengths.len() as f64
     };
 
-    // NEW: Frequency analysis
-    let most_frequent = calculate_most_frequent(&non_empty, TOP_N_DEFAULT);
-    let least_frequent = calculate_least_frequent(&non_empty, BOTTOM_N_DEFAULT);
-
-    TextStats {
-        min_length,
-        max_length,
-        avg_length,
-        most_frequent,
-        least_frequent,
-    }
+    // Match the streaming builders: absence means frequencies were not
+    // analyzed. Computing them only for in-memory columns breaks the report
+    // contract, while filling them from a reservoir would change the population.
+    TextStats::from_lengths(min_length, max_length, avg_length)
 }
 
 /// Calculate most frequent strings
@@ -169,15 +163,17 @@ mod tests {
     }
 
     #[test]
-    fn test_frequency_ignores_empty() {
+    fn test_text_lengths_ignore_empty() {
         let data = vec!["value".to_string(), "".to_string(), "  ".to_string()];
         let stats = calculate_text_stats(&data);
 
         match stats {
             ColumnStats::Text(t) => {
-                let freq = t.most_frequent.unwrap();
-                assert_eq!(freq.len(), 1);
-                assert_eq!(freq[0].value, "value");
+                assert_eq!(t.min_length, 5);
+                assert_eq!(t.max_length, 5);
+                assert_eq!(t.avg_length, 5.0);
+                assert_eq!(t.most_frequent, None);
+                assert_eq!(t.least_frequent, None);
             }
             _ => panic!("Expected Text stats"),
         }
@@ -194,6 +190,7 @@ mod tests {
                 assert_eq!(t.max_length, 0);
                 assert_eq!(t.avg_length, 0.0);
                 assert_eq!(t.most_frequent, None);
+                assert_eq!(t.least_frequent, None);
             }
             _ => panic!("Expected Text stats"),
         }
@@ -209,7 +206,8 @@ mod tests {
                 assert_eq!(t.min_length, 4); // "test"
                 assert_eq!(t.max_length, 5); // "hello"/"world"
                 assert!((t.avg_length - 4.666666).abs() < 0.01);
-                assert!(t.most_frequent.is_some());
+                assert_eq!(t.most_frequent, None);
+                assert_eq!(t.least_frequent, None);
             }
             _ => panic!("Expected Text stats"),
         }

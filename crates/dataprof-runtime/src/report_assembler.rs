@@ -195,7 +195,8 @@ impl ReportAssembler {
     /// one does, so the report records which of the two happened in
     /// [`ProfileReport::quality_status`] rather than discarding the column
     /// profiles that did compute.
-    pub fn build(self) -> ProfileReport {
+    pub fn build(mut self) -> ProfileReport {
+        self.withhold_container_values();
         let (quality, status) = match &self.skip {
             Some(reason) => (None, reason.clone()),
             None => match &self.quality_data {
@@ -208,6 +209,27 @@ impl ReportAssembler {
         ProfileReport::new(self.source, self.columns, self.execution, quality)
             .with_quality_status(status)
             .with_semantic_hint_bindings(bindings)
+    }
+
+    /// Keep container columns out of every value-level quality check.
+    ///
+    /// Whatever an engine sampled for a [`DataType::Nested`] column is a
+    /// serialisation of its values, different on every input path, so a
+    /// consistency or format check over it would score the serialiser (#637).
+    /// The column keeps its entry, emptied: its nulls still count toward
+    /// completeness through the profile, and an input of only nested columns
+    /// is still an input with columns rather than an empty one.
+    fn withhold_container_values(&mut self) {
+        let Some(data) = self.quality_data.as_mut() else {
+            return;
+        };
+        for column in &self.columns {
+            if column.data_type == DataType::Nested
+                && let Some(values) = data.get_mut(&column.name)
+            {
+                values.clear();
+            }
+        }
     }
 
     /// Measure how each semantic hint bound to the data.

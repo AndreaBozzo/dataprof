@@ -32,8 +32,18 @@ impl ConsistencyCalculator {
     ) -> Result<ConsistencyMetrics, DataProfilerError> {
         let (data_type_consistency, values_checked) =
             Self::calculate_type_consistency(data, column_profiles)?;
-        let format_violations = Self::count_format_violations(data)?;
-        let encoding_issues = Self::detect_encoding_issues(data)?;
+        // A nested column's values are a serialisation of it, so none of these
+        // checks may read them (#637). The report assembler already empties
+        // them; this holds for direct callers of the calculator too.
+        let checked_columns = || {
+            data.iter().filter(|(name, _)| {
+                !column_profiles
+                    .iter()
+                    .any(|profile| &profile.name == *name && profile.data_type == DataType::Nested)
+            })
+        };
+        let format_violations = Self::count_format_violations(checked_columns())?;
+        let encoding_issues = Self::detect_encoding_issues(checked_columns())?;
 
         Ok(ConsistencyMetrics {
             data_type_consistency,
@@ -53,6 +63,11 @@ impl ConsistencyCalculator {
         let mut consistent_values = 0;
 
         for profile in column_profiles {
+            // A container has no lexical form of its own to be consistent
+            // with; what reaches here is a serialisation of it (#637).
+            if profile.data_type == DataType::Nested {
+                continue;
+            }
             if let Some(column_data) = data.get(&profile.name) {
                 // Every value conforms to `String`, so scoring a string column
                 // against its own type reports 100% for any mixture of forms and
@@ -105,6 +120,7 @@ impl ConsistencyCalculator {
                             Some(class) => lexical_class(trimmed) == class,
                             None => !is_likely_date_column(&profile.name) || is_date_token(trimmed),
                         },
+                        DataType::Nested => unreachable!("nested columns are skipped above"),
                     };
 
                     if is_consistent {
@@ -125,8 +141,8 @@ impl ConsistencyCalculator {
     }
 
     /// Count format violations (malformed dates, inconsistent formats)
-    fn count_format_violations(
-        data: &HashMap<String, Vec<String>>,
+    fn count_format_violations<'a>(
+        data: impl Iterator<Item = (&'a String, &'a Vec<String>)>,
     ) -> Result<usize, DataProfilerError> {
         let mut violations = 0;
 
@@ -221,12 +237,12 @@ impl ConsistencyCalculator {
     ///
     /// Counts each affected value once, even when it shows several symptoms,
     /// so the count stays comparable to `values_checked`.
-    fn detect_encoding_issues(
-        data: &HashMap<String, Vec<String>>,
+    fn detect_encoding_issues<'a>(
+        data: impl Iterator<Item = (&'a String, &'a Vec<String>)>,
     ) -> Result<usize, DataProfilerError> {
         let mut issues = 0;
 
-        for values in data.values() {
+        for (_, values) in data {
             for value in values {
                 // Replacement characters (�) or mojibake artifacts both
                 // indicate the same defect: the value was mis-decoded.
@@ -283,6 +299,36 @@ mod tests {
         ConsistencyCalculator::calculate(&data, &[profile])
             .expect("consistency metrics should be computed")
             .data_type_consistency
+    }
+
+    /// A caller of the public calculator can hand it a nested column's
+    /// serialised values. They are not the column's values, so they are not
+    /// checked against anything (#637).
+    #[test]
+    fn a_nested_column_is_not_checked_for_type_consistency() {
+        let mut nested = string_profile("address");
+        nested.data_type = DataType::Nested;
+        let data = HashMap::from([
+            (
+                "address".to_string(),
+                vec![
+                    "{\"city\":\"RomÃ©\",\"lat\":41.9}".to_string(),
+                    "[1,2]".to_string(),
+                ],
+            ),
+            ("code".to_string(), vec!["7".to_string(), "x".to_string()]),
+        ]);
+        let mut code = string_profile("code");
+        code.data_type = DataType::Integer;
+
+        let metrics = ConsistencyCalculator::calculate(&data, &[nested, code])
+            .expect("consistency metrics should be computed");
+        assert_eq!(metrics.values_checked, 2);
+        assert_eq!(metrics.data_type_consistency, 50.0);
+        // The first value holds both separators and a mojibake artifact; as a
+        // plain string column it would count one of each.
+        assert_eq!(metrics.format_violations, 0);
+        assert_eq!(metrics.encoding_issues, 0);
     }
 
     /// `junk` non-numeric values padded out to 1000 with integers, the shape

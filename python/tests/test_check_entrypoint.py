@@ -176,6 +176,9 @@ def test_repeated_policy_flags_match_library(source: Path):
         '{"max_duplicate_rows": -1}',
         '{"min_quality_score": NaN}',
         json.dumps({"min_quality_score": 10**400}),
+        # A quoted number is text, not a threshold (#771).
+        '{"min_quality_score": "90"}',
+        '{"max_null_percentage": {"*": "20"}}',
     ],
 )
 def test_invalid_policy_is_an_input_error(source: Path, tmp_path: Path, policy: str):

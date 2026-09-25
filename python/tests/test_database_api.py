@@ -41,6 +41,29 @@ def _run(async_fn, *args, **kwargs):
     return asyncio.run(_inner())
 
 
+@pytest.mark.database
+def test_helpers_run_under_asyncio_run_directly(sqlite_db):
+    """``asyncio.run(helper(...))`` is how the stubs say to call them.
+
+    The native helpers need a running loop when called, not when awaited, so
+    that form raised "no running event loop" until they were wrapped.
+    """
+    import inspect
+
+    import dataprof as dp
+
+    assert asyncio.run(dp.test_connection_async(sqlite_db)) is True
+    assert asyncio.run(dp.count_table_rows_async(sqlite_db, "test_users")) == 5
+    assert "id" in asyncio.run(dp.get_table_schema_async(sqlite_db, "test_users"))
+    for helper in (
+        dp.test_connection_async,
+        dp.get_table_schema_async,
+        dp.count_table_rows_async,
+        dp.analyze_database_async,
+    ):
+        assert inspect.iscoroutinefunction(helper), helper.__name__
+
+
 @pytest.fixture()
 def sqlite_db(tmp_path):
     """Create a temporary SQLite database with test data."""

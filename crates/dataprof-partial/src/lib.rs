@@ -320,9 +320,8 @@ fn parquet_scan(
             Some(decided) => decided,
             // No arm: the profiler types this column from its values. Where the
             // values *are* their rendering the sample below settles it; where
-            // the rendering is an encoding or a container serialisation the
-            // profiler reports `String`, which is what stands here (binary is
-            // #645, nested containers #637).
+            // the rendering is an encoding the profiler reports `String`, which
+            // is what stands here (binary is #645).
             None => {
                 if sampling_can_decide_type(&logical) {
                     text_columns.push(index);
@@ -1289,9 +1288,13 @@ fn structure_columns_from_profiles(
             let uniqueness_ratio = profile
                 .unique_count
                 .and_then(|unique| ratio(unique, total_count));
-            let distinct_count_approximate = column_stats
-                .get_column_stats(&profile.name)
-                .map(|stats| stats.unique_count_is_approximate());
+            // The flag qualifies a count, so it is absent with the count: a
+            // nested column is counted but has no distinct count (#637).
+            let distinct_count_approximate = profile.unique_count.and_then(|_| {
+                column_stats
+                    .get_column_stats(&profile.name)
+                    .map(|stats| stats.unique_count_is_approximate())
+            });
 
             StructureColumnSummary {
                 name: profile.name.clone(),

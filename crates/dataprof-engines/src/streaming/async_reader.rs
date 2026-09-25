@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -18,6 +19,10 @@ use crate::progress_tracker::ProgressTracker;
 struct ParsedChunk {
     /// Rows of field values (each inner Vec is one row).
     records: Vec<Vec<String>>,
+    /// Per row of `records`, the positions of the fields that were a JSON
+    /// object or array (#637). Empty for a header chunk and for CSV, which has
+    /// no containers; otherwise one entry per row.
+    containers: Vec<Vec<usize>>,
     /// Number of raw bytes consumed to produce this chunk (for progress).
     bytes_read: u64,
 }
@@ -34,6 +39,16 @@ struct ReaderOutcome {
     /// CSV records whose field count differed from the header (always 0 for
     /// JSON/JSONL, whose rows are aligned to the column set by construction).
     ragged_rows: usize,
+}
+
+/// Add one row's container fields to the per-column tally.
+///
+/// Positions index `headers`: a JSON row is never wider than the header, since
+/// the schema is frozen when the header is sent.
+fn count_containers(headers: &[String], positions: &[usize], counts: &mut HashMap<String, usize>) {
+    for &position in positions {
+        *counts.entry(headers[position].clone()).or_default() += 1;
+    }
 }
 
 fn peek_non_whitespace<R: std::io::BufRead>(
@@ -391,6 +406,7 @@ impl AsyncStreamingProfiler {
         // The task reports the structural violations it recovered from, so a
         // report can never describe a repaired scan as a clean one.
         let json_error_policy = self.json_error_policy;
+        let byte_budget = self.stop_condition.max_bytes();
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
         let reader_handle = tokio::task::spawn_blocking(move || match format {
@@ -398,6 +414,7 @@ impl AsyncStreamingProfiler {
                 sync_reader,
                 tx,
                 bytes_per_chunk,
+                byte_budget,
                 csv_flexible,
                 csv_delimiter,
             ),
@@ -418,16 +435,23 @@ impl AsyncStreamingProfiler {
         // a strict-mode malformed record aborts the reader before any data
         // reaches the processor, which would otherwise surface only as a generic
         // "empty input" error and mask the real cause.
-        let (_headers, mut column_stats, total_rows, sampled_rows, total_bytes, truncation_reason) =
-            match process_result {
-                Ok(result) => result,
-                Err(process_err) => {
-                    return match reader_handle.await {
-                        Ok(Err(reader_err)) => Err(reader_err),
-                        _ => Err(process_err),
-                    };
-                }
-            };
+        let (
+            _headers,
+            mut column_stats,
+            total_rows,
+            sampled_rows,
+            total_bytes,
+            truncation_reason,
+            container_counts,
+        ) = match process_result {
+            Ok(result) => result,
+            Err(process_err) => {
+                return match reader_handle.await {
+                    Ok(Err(reader_err)) => Err(reader_err),
+                    _ => Err(process_err),
+                };
+            }
+        };
 
         if let Some(indices) = self.options.column_indices(&column_stats.column_names())? {
             let available = column_stats.column_names();
@@ -455,12 +479,15 @@ impl AsyncStreamingProfiler {
         };
 
         // Build the report
-        let column_profiles = profile_builder::profiles_from_streaming_with_hints(
-            &column_stats,
-            !self.options.include_statistics(),
-            !self.options.include_patterns(),
-            self.options.locale(),
-            self.options.semantic_hints(),
+        let column_profiles = profile_builder::mark_container_columns(
+            profile_builder::profiles_from_streaming_with_hints(
+                &column_stats,
+                !self.options.include_statistics(),
+                !self.options.include_patterns(),
+                self.options.locale(),
+                self.options.semantic_hints(),
+            ),
+            &container_counts,
         );
         let sample_columns = profile_builder::quality_check_samples(&column_stats);
         let scan_time_ms = start.elapsed().as_millis();
@@ -545,6 +572,7 @@ impl AsyncStreamingProfiler {
         >,
         tx: mpsc::Sender<ParsedChunk>,
         bytes_per_chunk: usize,
+        byte_budget: Option<u64>,
         flexible: bool,
         delimiter: Option<u8>,
     ) -> Result<ReaderOutcome, DataProfilerError> {
@@ -590,6 +618,7 @@ impl AsyncStreamingProfiler {
         let mut byte_offset = csv_reader.position().byte();
         let header_chunk = ParsedChunk {
             records: vec![header_fields],
+            containers: Vec::new(),
             bytes_read: byte_offset,
         };
         let mut outcome = ReaderOutcome::default();
@@ -600,6 +629,22 @@ impl AsyncStreamingProfiler {
         // Read data records, emitting a chunk once it holds the configured
         // number of bytes. Chunking by bytes rather than by a row count keeps
         // the working set bounded regardless of how wide the rows are.
+        //
+        // A byte budget sizes each chunk to what is left of it, so the stop
+        // evaluator sees the budget reached at the first record past it rather
+        // than a whole chunk later. `sent` starts at the header, which the
+        // evaluator and `bytes_consumed` both count. `max_bytes` is only set
+        // when reaching it stops the scan, so once it is spent chunks shrink
+        // to one record and the next evaluation stops the stream.
+        let mut sent = byte_offset;
+        let chunk_target = |sent: u64| match byte_budget {
+            Some(budget) => bytes_per_chunk.min(
+                usize::try_from(budget.saturating_sub(sent))
+                    .unwrap_or(usize::MAX)
+                    .max(1),
+            ),
+            None => bytes_per_chunk,
+        };
         let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut bytes_in_chunk: u64 = 0;
         let mut record = csv::StringRecord::new();
@@ -622,11 +667,13 @@ impl AsyncStreamingProfiler {
             let fields: Vec<String> = record.iter().map(|f| f.to_string()).collect();
             current_chunk.push(fields);
 
-            if bytes_in_chunk as usize >= bytes_per_chunk {
+            if bytes_in_chunk as usize >= chunk_target(sent) {
                 let chunk = ParsedChunk {
                     records: std::mem::take(&mut current_chunk),
+                    containers: Vec::new(),
                     bytes_read: bytes_in_chunk,
                 };
+                sent += bytes_in_chunk;
                 bytes_in_chunk = 0;
 
                 if tx.blocking_send(chunk).is_err() {
@@ -639,6 +686,7 @@ impl AsyncStreamingProfiler {
         if !current_chunk.is_empty() {
             let chunk = ParsedChunk {
                 records: current_chunk,
+                containers: Vec::new(),
                 bytes_read: bytes_in_chunk,
             };
             let _ = tx.blocking_send(chunk);
@@ -670,7 +718,9 @@ impl AsyncStreamingProfiler {
         let mut buf_reader =
             dataprof_core::Utf8BomReader::new(buf_reader).map_err(DataProfilerError::from)?;
         let mut known_columns: Vec<String> = Vec::new();
-        let mut current_chunk: Vec<Vec<String>> = Vec::new();
+        // Each row with the positions of its container fields; see
+        // `ParsedChunk::containers`.
+        let mut current_chunk: Vec<(Vec<String>, Vec<usize>)> = Vec::new();
         let mut known_columns_set: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         // The BOM is part of the source and therefore of progress/byte
@@ -680,7 +730,8 @@ impl AsyncStreamingProfiler {
         let mut malformed_records: usize = 0;
         let mut emitted_records: usize = 0;
 
-        // Helper closure: convert a JSON object into a row aligned to known_columns.
+        // Helper closure: convert a JSON object into a row aligned to known_columns,
+        // with the positions of the fields that were an object or an array.
         // New columns are only registered before headers are sent; once headers have
         // been emitted, the schema is frozen to keep rows aligned with the header set.
         // `serde_json/preserve_order` makes `obj.keys()` yield source field order,
@@ -689,7 +740,7 @@ impl AsyncStreamingProfiler {
                               known_cols: &mut Vec<String>,
                               known_cols_set: &mut std::collections::HashSet<String>,
                               is_headers_sent: bool|
-         -> Vec<String> {
+         -> (Vec<String>, Vec<usize>) {
             // Register new columns only while headers have not been sent yet
             if !is_headers_sent {
                 for key in obj.keys() {
@@ -699,7 +750,15 @@ impl AsyncStreamingProfiler {
                 }
             }
             // Build row aligned to known_cols
-            known_cols
+            let containers = known_cols
+                .iter()
+                .enumerate()
+                .filter(|(_, col)| {
+                    matches!(obj.get(*col), Some(Value::Array(_) | Value::Object(_)))
+                })
+                .map(|(position, _)| position)
+                .collect();
+            let row = known_cols
                 .iter()
                 .map(|col| {
                     // decode-audit: no-data — a key absent from this object is
@@ -717,7 +776,8 @@ impl AsyncStreamingProfiler {
                         })
                         .unwrap_or_default()
                 })
-                .collect()
+                .collect();
+            (row, containers)
         };
 
         // Helper closure: send headers (first chunk) and flush accumulated rows.
@@ -729,7 +789,7 @@ impl AsyncStreamingProfiler {
         // record may still introduce the columns these rows are missing. Until
         // then the fieldless rows stay buffered rather than being emitted ahead
         // of the headers, where the receiver would read them *as* the headers.
-        let send_chunk = |chunk: &mut Vec<Vec<String>>,
+        let send_chunk = |chunk: &mut Vec<(Vec<String>, Vec<usize>)>,
                           bytes: &mut u64,
                           cols: &[String],
                           headers_sent: &mut bool,
@@ -739,6 +799,7 @@ impl AsyncStreamingProfiler {
             if !*headers_sent && (!cols.is_empty() || final_flush) {
                 let header_chunk = ParsedChunk {
                     records: vec![cols.to_vec()],
+                    containers: Vec::new(),
                     bytes_read: 0,
                 };
                 if tx.blocking_send(header_chunk).is_err() {
@@ -748,8 +809,10 @@ impl AsyncStreamingProfiler {
             }
 
             if *headers_sent && !chunk.is_empty() {
+                let (records, containers) = std::mem::take(chunk).into_iter().unzip();
                 let data_chunk = ParsedChunk {
-                    records: std::mem::take(chunk),
+                    records,
+                    containers,
                     bytes_read: *bytes,
                 };
                 *bytes = 0;
@@ -799,7 +862,7 @@ impl AsyncStreamingProfiler {
                                 &mut known_columns_set,
                                 headers_sent,
                             );
-                            bytes_in_chunk += row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
+                            bytes_in_chunk += row.0.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                             current_chunk.push(row);
                             emitted_records += 1;
 
@@ -957,7 +1020,7 @@ impl AsyncStreamingProfiler {
                                     headers_sent,
                                 );
                                 bytes_in_chunk +=
-                                    row.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
+                                    row.0.iter().map(|s| s.len() as u64 + 4).sum::<u64>();
                                 current_chunk.push(row);
                                 emitted_records += 1;
 
@@ -1078,7 +1141,11 @@ impl AsyncStreamingProfiler {
 
     /// Receive parsed chunks and feed them into StreamingColumnCollection.
     ///
-    /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read, truncation_reason).
+    /// Returns (headers, column_stats, total_rows, sampled_rows, total_bytes_read,
+    /// truncation_reason, container_counts). `container_counts` is, per column,
+    /// how many of the values folded into `column_stats` were a JSON object or
+    /// array.
+    #[allow(clippy::type_complexity)]
     async fn process_chunks(
         &self,
         mut rx: mpsc::Receiver<ParsedChunk>,
@@ -1091,6 +1158,7 @@ impl AsyncStreamingProfiler {
             usize,
             u64,
             Option<TruncationReason>,
+            HashMap<String, usize>,
         ),
         DataProfilerError,
     > {
@@ -1110,7 +1178,12 @@ impl AsyncStreamingProfiler {
         }
         // Built before any row is read: an unusable strategy must fail before
         // the source is consumed, not after a partial profile exists.
-        let mut sampler = RowSampler::new(&self.sampling_strategy)?;
+        //
+        // A buffered sample holds each row with its container positions, so
+        // the containers are counted over exactly the rows that are folded in.
+        let mut sampler: RowSampler<(Vec<String>, Vec<usize>)> =
+            RowSampler::for_rows(&self.sampling_strategy)?;
+        let mut container_counts: HashMap<String, usize> = HashMap::new();
         let mut schema_tracker = SchemaStabilityTracker::from_condition(&self.stop_condition);
         let mut truncation_reason: Option<TruncationReason> = None;
 
@@ -1124,6 +1197,10 @@ impl AsyncStreamingProfiler {
             })?;
 
         total_bytes += header_chunk.bytes_read;
+        // The header is source bytes read, as the file engine counts it, so a
+        // byte budget is measured against the same total `bytes_consumed`
+        // reports. No row is counted, so only a byte cap can fire here.
+        stop_eval.update(0, header_chunk.bytes_read, 0.0);
 
         if header_chunk.records.is_empty() {
             return Err(DataProfilerError::StreamingError {
@@ -1167,8 +1244,13 @@ impl AsyncStreamingProfiler {
             let chunk_bytes = chunk.bytes_read;
             let mut rows_consumed = chunk_rows;
             let mut hit_row_limit = false;
+            let mut chunk_containers = chunk.containers.into_iter();
 
             for (row_idx, values) in chunk.records.into_iter().enumerate() {
+                // decode-audit: no-data — CSV chunks carry no container list,
+                // so their rows have no containers. A JSON chunk's list is
+                // unzipped from its rows and holds exactly one entry per row.
+                let containers = chunk_containers.next().unwrap_or_default();
                 // A cap of zero rows is met before any row is read. The check
                 // below runs after a row is processed, which is right for every
                 // positive cap but would let `max_rows(0)` return one row — a
@@ -1188,8 +1270,9 @@ impl AsyncStreamingProfiler {
                     // Held rather than folded in: a fixed-size sample is not
                     // final until the stream ends, and statistics cannot be
                     // retracted for a row that is later evicted.
-                    sampler.offer(values);
+                    sampler.offer((values, containers));
                 } else {
+                    count_containers(&headers, &containers, &mut container_counts);
                     column_stats.process_record(&headers, values);
                     sampled_rows += 1;
                 }
@@ -1270,7 +1353,8 @@ impl AsyncStreamingProfiler {
 
         // A fixed-size sample is only final once reading stops, so it is folded
         // in here rather than row by row.
-        for values in sampler.take_sample() {
+        for (values, containers) in sampler.take_sample() {
+            count_containers(&headers, &containers, &mut container_counts);
             column_stats.process_record(&headers, values);
             sampled_rows += 1;
         }
@@ -1284,6 +1368,7 @@ impl AsyncStreamingProfiler {
             sampled_rows,
             total_bytes,
             truncation_reason,
+            container_counts,
         ))
     }
 
@@ -1649,6 +1734,46 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 2);
         assert_eq!(report.execution.rows_processed, 2_000);
+    }
+
+    #[tokio::test]
+    async fn a_byte_budget_stops_the_csv_stream_within_one_record() {
+        // The default chunk (512 KiB) is far larger than these budgets, which
+        // is what let a stream run a whole chunk past its cap.
+        // Varying lengths keep a budget from landing on a record boundary by
+        // construction; fixed-width rows once hid an off-by-the-header miss.
+        let lines: Vec<String> = std::iter::once("id,value,note\n".to_string())
+            .chain((0..200_000).map(|i| format!("{i},{},{}\n", i * 7, "x".repeat(i % 13))))
+            .collect();
+        let data: &'static [u8] = Box::leak(lines.concat().into_bytes().into_boxed_slice());
+
+        for budget in [1_000u64, 4_321, 100_000] {
+            // The first record boundary at or past the budget, counting the
+            // header as the file engine does: the exact place the stream must
+            // stop.
+            let expected = lines
+                .iter()
+                .scan(0u64, |end, line| {
+                    *end += line.len() as u64;
+                    Some(*end)
+                })
+                .find(|&end| end >= budget)
+                .expect("the stream is larger than every budget");
+            let report = AsyncStreamingProfiler::new()
+                .stop_condition(StopCondition::MaxBytes(budget))
+                .analyze_stream(csv_source(data))
+                .await
+                .unwrap();
+            let consumed = report
+                .execution
+                .bytes_consumed
+                .expect("a truncated stream records the bytes it read");
+            assert_eq!(consumed, expected, "budget {budget}");
+            assert!(matches!(
+                report.execution.truncation_reason,
+                Some(TruncationReason::MaxBytes(b)) if b == budget
+            ));
+        }
     }
 
     fn jsonl_source(data: &'static [u8]) -> BytesSource {
