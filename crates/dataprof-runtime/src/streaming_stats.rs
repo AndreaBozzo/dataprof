@@ -331,7 +331,9 @@ impl StreamingStatistics {
         if !self.unique_count_is_approximate() {
             return self.sampler.samples().iter().collect::<HashSet<_>>().len();
         }
-        self.hll.count() as usize
+        // An estimate can exceed the values it was fed; a column cannot hold
+        // more distinct values than values.
+        (self.hll.count() as usize).min(usize::try_from(self.sampler.count).unwrap_or(usize::MAX))
     }
 
     pub fn unique_count_is_approximate(&self) -> bool {
@@ -1086,6 +1088,22 @@ mod row_tracker_tests {
     fn test_no_rows_means_no_summary() {
         let collection = StreamingColumnCollection::new();
         assert!(collection.row_duplicate_summary().is_none());
+    }
+
+    #[test]
+    fn an_approximate_distinct_count_never_exceeds_the_values_seen() {
+        // 50,000 unique ids: the sketch alone answers 50,755, a count no
+        // column of 50,000 values can hold.
+        let mut stats = StreamingStatistics::new();
+        for id in 0..50_000 {
+            stats.update(&id.to_string());
+        }
+        assert!(stats.unique_count_is_approximate());
+        assert!(
+            stats.hll.count() > 50_000,
+            "the sketch no longer overshoots here; this test reaches nothing"
+        );
+        assert_eq!(stats.unique_count(), 50_000);
     }
 
     #[test]

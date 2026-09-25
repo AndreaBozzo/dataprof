@@ -132,6 +132,8 @@ pub struct CardinalityEstimator {
     /// Fed on every insert so the estimate is accurate the moment `exact` is gone.
     hll: HyperLogLog,
     threshold: usize,
+    /// Values inserted, duplicates included: the ceiling on any distinct count.
+    inserted: u64,
 }
 
 impl CardinalityEstimator {
@@ -144,11 +146,13 @@ impl CardinalityEstimator {
             exact: Some(HashSet::new()),
             hll: HyperLogLog::new(),
             threshold,
+            inserted: 0,
         }
     }
 
     #[inline]
     pub fn insert(&mut self, value: &str) {
+        self.inserted += 1;
         self.hll.insert(value);
         if let Some(exact) = self.exact.as_mut() {
             exact.insert(value.to_string());
@@ -162,6 +166,7 @@ impl CardinalityEstimator {
     /// prefer this to avoid a second allocation per row under the threshold.
     #[inline]
     pub fn insert_owned(&mut self, value: String) {
+        self.inserted += 1;
         self.hll.insert(&value);
         if let Some(exact) = self.exact.as_mut() {
             exact.insert(value);
@@ -182,11 +187,15 @@ impl CardinalityEstimator {
         }
     }
 
-    /// Best available distinct count: exact when retained, else the HLL estimate.
+    /// Best available distinct count: exact when retained, else the HLL
+    /// estimate, which is capped at the number of values inserted. The sketch
+    /// can overshoot by its error margin (50,755 for 50,000 unique ids), and a
+    /// count above the values seen is impossible rather than approximate.
     pub fn estimate(&self) -> usize {
         match &self.exact {
             Some(exact) => exact.len(),
-            None => self.hll.count() as usize,
+            None => (self.hll.count() as usize)
+                .min(usize::try_from(self.inserted).unwrap_or(usize::MAX)),
         }
     }
 
@@ -196,6 +205,7 @@ impl CardinalityEstimator {
     }
 
     pub fn merge(&mut self, other: &CardinalityEstimator) {
+        self.inserted += other.inserted;
         self.hll.merge(&other.hll);
         match (self.exact.as_mut(), other.exact.as_ref()) {
             (Some(mine), Some(theirs)) => {
@@ -231,6 +241,22 @@ impl Default for CardinalityEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spilled_estimate_never_exceeds_the_values_inserted() {
+        let est = estimator_over(50_000);
+        assert!(est.is_approximate());
+        assert!(
+            est.hll.count() > 50_000,
+            "the sketch no longer overshoots here; this test reaches nothing"
+        );
+        assert_eq!(est.estimate(), 50_000);
+
+        // Merging adds the sides' inserts, so the cap follows the union.
+        let mut merged = estimator_over(50_000);
+        merged.merge(&estimator_over(50_000));
+        assert!(merged.estimate() <= 100_000);
+    }
 
     fn estimator_over(distinct: usize) -> CardinalityEstimator {
         let mut est = CardinalityEstimator::new();
