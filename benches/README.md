@@ -305,7 +305,7 @@ cache policy is separate and unchanged. The import/setup timer described above
 separates adapter setup from the overall preflight process duration; neither
 should be interpreted as a pure import measurement.
 
-`setuptools==80.9.0` remains pinned because ydata-profiling 4.18.4 imports
+`setuptools==81.0.0` remains pinned because ydata-profiling 4.18.4 imports
 `pkg_resources`, which [setuptools removed in 82.0.0](https://setuptools.pypa.io/en/latest/deprecated/pkg_resources.html).
 Dependabot continues maintaining `/benches`, but ignores setuptools 82 and newer.
 Remove that bound and upgrade the pin together with a ydata version that no
