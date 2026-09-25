@@ -276,12 +276,30 @@ impl CardinalityEstimator {
     pub fn exact_bytes(&self) -> usize {
         // decode-audit: no-data — once the estimator spills, the exact set is
         // dropped (None), so it genuinely holds zero bytes.
-        // A hashbrown table holds one control byte per bucket beside the key.
         self.exact
             .as_ref()
-            .map(|set| set.capacity() * (std::mem::size_of::<u64>() + 1))
-            .unwrap_or(0)
+            .map_or(0, |set| hash_table_bytes::<u64>(set.capacity()))
     }
+}
+
+/// Heap held by a hashbrown table that reports `capacity`.
+///
+/// `capacity` is what the table holds before it grows, not what it allocated:
+/// a power-of-two bucket count with an 7/8 load factor (one empty bucket below
+/// eight), plus a control byte per bucket and one group of trailing control
+/// bytes. Counting `capacity` alone under-reports a large table by about 1/8.
+fn hash_table_bytes<T>(capacity: usize) -> usize {
+    const GROUP_WIDTH: usize = 16;
+    if capacity == 0 {
+        return 0;
+    }
+    let buckets = if capacity < 8 {
+        capacity + 1
+    } else {
+        capacity / 7 * 8
+    }
+    .next_power_of_two();
+    buckets * (std::mem::size_of::<T>() + 1) + GROUP_WIDTH
 }
 
 impl Default for CardinalityEstimator {
@@ -324,6 +342,30 @@ mod tests {
             );
             assert_eq!(est.estimate(), distinct);
         }
+    }
+
+    #[test]
+    fn table_bytes_count_the_buckets_behind_the_capacity() {
+        // Each capacity a growing table reports maps back to its bucket count.
+        let mut set = Fingerprints::default();
+        let mut seen = Vec::new();
+        for value in 0..100_000u64 {
+            set.insert(value);
+            if seen.last() != Some(&set.capacity()) {
+                seen.push(set.capacity());
+            }
+        }
+        for capacity in seen {
+            let buckets = (hash_table_bytes::<u64>(capacity) - 16) / 9;
+            assert!(buckets.is_power_of_two(), "capacity {capacity}");
+            let expected = if buckets < 8 {
+                buckets - 1
+            } else {
+                buckets / 8 * 7
+            };
+            assert_eq!(capacity, expected, "{buckets} buckets");
+        }
+        assert_eq!(hash_table_bytes::<u64>(0), 0);
     }
 
     #[test]

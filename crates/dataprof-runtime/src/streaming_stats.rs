@@ -535,6 +535,11 @@ impl RowUniquenessTracker {
         self.distinct.memory_usage_bytes()
     }
 
+    /// Heap held by the exact set of row signatures: what [`Self::spill`] frees.
+    pub fn exact_bytes(&self) -> usize {
+        self.distinct.exact_bytes()
+    }
+
     /// Answer the duplicate count from the sketch from here on, freeing the
     /// exact set. For memory pressure; the count is then reported approximate.
     pub fn spill(&mut self) {
@@ -785,21 +790,29 @@ impl StreamingColumnCollection {
         // small by comparison, and halving them on every chunk under pressure
         // degrades every sampled statistic, which is too high a price to pay
         // for memory the distinct sets can give back.
-        self.spill_distinct_sets_under_pressure();
-        if self.is_memory_pressure() {
+        //
+        // Usage is measured once and each spill subtracts what it frees:
+        // measuring walks every reservoir, too slow to repeat per column.
+        let limit = self.memory_limit_bytes * 80 / 100;
+        let mut usage = self.memory_usage_bytes();
+        if usage <= limit {
+            return;
+        }
+        usage -= self.spill_distinct_sets(usage - limit);
+        if usage > limit {
+            usage -= self.row_tracker.exact_bytes();
             self.row_tracker.spill();
         }
-        if self.is_memory_pressure() {
+        if usage > limit {
             for stats in self.columns.values_mut() {
                 stats.reduce_sample_capacity();
             }
         }
     }
 
-    fn spill_distinct_sets_under_pressure(&mut self) {
-        if !self.is_memory_pressure() {
-            return;
-        }
+    /// Spill column exact sets, largest first, until at least `excess` bytes
+    /// are freed or none is left. Returns the bytes freed.
+    fn spill_distinct_sets(&mut self, excess: usize) -> usize {
         let mut by_size: Vec<(usize, usize)> = self
             .ordered_names
             .iter()
@@ -810,15 +823,18 @@ impl StreamingColumnCollection {
             })
             .collect();
         by_size.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
-        for (position, _) in by_size {
-            if !self.is_memory_pressure() {
+        let mut freed = 0;
+        for (position, bytes) in by_size {
+            if freed >= excess {
                 break;
             }
             let name = &self.ordered_names[position];
             if let Some(stats) = self.columns.get_mut(name) {
                 stats.spill_distinct();
+                freed += bytes;
             }
         }
+        freed
     }
 
     /// Fingerprint of each column's currently inferred data type.
