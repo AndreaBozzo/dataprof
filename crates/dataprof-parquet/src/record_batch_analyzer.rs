@@ -8,7 +8,7 @@ use dataprof_core::{
     ColumnProfile, DataType, Locale, SemanticHintBinding, SemanticHintKind, SemanticHints, char_len,
 };
 use dataprof_metrics::analysis::inference::is_null_like_token;
-use dataprof_metrics::{CardinalityEstimator, NumericAccumulator};
+use dataprof_metrics::{CardinalityEstimator, NumericAccumulator, spill_largest_exact_sets};
 use dataprof_metrics::{RowCompletenessSummary, RowDuplicateSummary, infer_type};
 use dataprof_runtime::{
     ColumnProfileInput, ExactNumericAggregates, RowCompletenessTracker, RowSignature,
@@ -158,6 +158,26 @@ impl BatchRowTracker {
         }
     }
 
+    /// Heap held by the exact set of row signatures.
+    pub(crate) fn exact_bytes(&self) -> usize {
+        self.tracker.exact_bytes()
+    }
+
+    /// Keep the exact sets, the columns' and then the row tracker's, within
+    /// `budget` bytes, spilling the largest first. See
+    /// [`spill_largest_exact_sets`].
+    pub(crate) fn bound_exact_sets(
+        &mut self,
+        columns: &mut [&mut CardinalityEstimator],
+        budget: usize,
+    ) {
+        let rows = self.tracker.exact_bytes();
+        let held = spill_largest_exact_sets(columns, budget.saturating_sub(rows)) + rows;
+        if held > budget {
+            self.tracker.spill();
+        }
+    }
+
     /// Full-stream row-duplicate counts; `None` when no rows were seen or a
     /// batch could not be signed (partial counts would be misleading).
     pub(crate) fn summary(&self) -> Option<RowDuplicateSummary> {
@@ -176,6 +196,27 @@ impl BatchRowTracker {
         }
         self.completeness.summary()
     }
+}
+
+/// Each column's distinct-count estimator, in column order rather than the
+/// map's hash order, so a tie between equal sets always spills the same one.
+pub(crate) fn in_column_order<'a, A>(
+    analyzers: &'a mut HashMap<String, A>,
+    order: &[String],
+    estimator: impl Fn(&mut A) -> &mut CardinalityEstimator,
+) -> Vec<&'a mut CardinalityEstimator> {
+    let mut columns: Vec<(Option<usize>, &mut CardinalityEstimator)> = analyzers
+        .iter_mut()
+        .map(|(name, analyzer)| {
+            let position = order.iter().position(|column| column == name);
+            (position, estimator(analyzer))
+        })
+        .collect();
+    columns.sort_by_key(|(position, _)| *position);
+    columns
+        .into_iter()
+        .map(|(_, estimator)| estimator)
+        .collect()
 }
 
 /// Fold every row of a batch into the tracker as a canonical signature.
@@ -286,7 +327,16 @@ pub struct RecordBatchAnalyzer {
     total_rows: usize,
     row_tracker: BatchRowTracker,
     semantic_hints: SemanticHints,
+    /// Bytes the exact distinct sets may hold before they spill.
+    exact_sets_budget: usize,
 }
+
+/// What the exact distinct sets of an Arrow-batch profile may hold before they
+/// spill: 80% of 512 MB, the columnar engine's default memory limit. A fully
+/// distinct column holds up to ~19 MB of fingerprints before it spills on its
+/// own, so without a budget a wide table of such columns grows by that much
+/// per column.
+pub(crate) const DEFAULT_EXACT_SETS_BUDGET: usize = 512 * 1024 * 1024 * 80 / 100;
 
 impl RecordBatchAnalyzer {
     pub fn new() -> Self {
@@ -296,6 +346,7 @@ impl RecordBatchAnalyzer {
             total_rows: 0,
             row_tracker: BatchRowTracker::default(),
             semantic_hints: SemanticHints::default(),
+            exact_sets_budget: DEFAULT_EXACT_SETS_BUDGET,
         }
     }
 
@@ -352,6 +403,20 @@ impl RecordBatchAnalyzer {
             analyzer.process_array(column)?;
         }
 
+        let held: usize = self
+            .column_analyzers
+            .values()
+            .map(|analyzer| analyzer.cardinality.exact_bytes())
+            .sum::<usize>()
+            + self.row_tracker.exact_bytes();
+        if held > self.exact_sets_budget {
+            let mut columns =
+                in_column_order(&mut self.column_analyzers, &self.column_order, |analyzer| {
+                    &mut analyzer.cardinality
+                });
+            self.row_tracker
+                .bound_exact_sets(&mut columns, self.exact_sets_budget);
+        }
         Ok(())
     }
 
@@ -1351,6 +1416,64 @@ mod tests {
             .unwrap();
         assert_eq!(profile.total_count, 2);
         assert_eq!(profile.null_count, 0);
+    }
+
+    #[test]
+    fn exact_sets_past_the_budget_spill_the_largest_first() {
+        // Two unique columns of 100,000 values (~1.2 MB of fingerprints each,
+        // as much again for the row tracker) and a two-value one, in two
+        // batches. At 2 MB both unique sets spill, and the row tracker fits.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", ArrowDataType::Int64, false),
+            Field::new("code", ArrowDataType::Utf8, false),
+            Field::new("flag", ArrowDataType::Utf8, false),
+        ]));
+        let batch = |rows: std::ops::Range<i64>| {
+            let ids = Int64Array::from(rows.clone().collect::<Vec<_>>());
+            let codes = StringArray::from(
+                rows.clone()
+                    .map(|row| format!("c{row}"))
+                    .collect::<Vec<_>>(),
+            );
+            let flags = StringArray::from(
+                rows.map(|row| if row % 2 == 0 { "yes" } else { "no" })
+                    .collect::<Vec<_>>(),
+            );
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(ids), Arc::new(codes), Arc::new(flags)],
+            )
+            .unwrap()
+        };
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.exact_sets_budget = 2 * 1024 * 1024;
+        analyzer.process_batch(&batch(0..50_000)).unwrap();
+        analyzer.process_batch(&batch(50_000..100_000)).unwrap();
+
+        let profiles = analyzer.to_profiles(false, false, None);
+        let column = |name: &str| {
+            profiles
+                .iter()
+                .find(|profile| profile.name == name)
+                .unwrap()
+        };
+        assert_eq!(column("id").unique_count_is_approximate, Some(true));
+        assert_eq!(column("code").unique_count_is_approximate, Some(true));
+        assert_eq!(column("flag").unique_count_is_approximate, Some(false));
+        assert_eq!(column("flag").unique_count, Some(2));
+        let rows = analyzer.row_duplicate_summary().unwrap();
+        assert!(!rows.approximate, "the row tracker spills last");
+        assert_eq!(rows.duplicate_rows, 0);
+
+        // The default budget leaves every count exact.
+        let mut analyzer = RecordBatchAnalyzer::new();
+        analyzer.process_batch(&batch(0..100_000)).unwrap();
+        let profiles = analyzer.to_profiles(false, false, None);
+        assert!(
+            profiles
+                .iter()
+                .all(|profile| profile.unique_count_is_approximate == Some(false))
+        );
     }
 
     #[test]

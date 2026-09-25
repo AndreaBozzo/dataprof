@@ -5,7 +5,9 @@ pub mod numeric;
 pub mod text;
 
 pub use accumulator::NumericAccumulator;
-pub use cardinality::{CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog};
+pub use cardinality::{
+    CardinalityEstimator, EXACT_CARDINALITY_THRESHOLD, HyperLogLog, spill_largest_exact_sets,
+};
 pub use datetime::calculate_datetime_stats;
 pub use numeric::calculate_numeric_stats;
 pub use text::{calculate_text_stats, calculate_text_stats_from_refs};
