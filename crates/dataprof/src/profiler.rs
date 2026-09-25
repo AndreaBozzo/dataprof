@@ -319,8 +319,11 @@ impl Profiler {
 
     /// Set a progress sink for receiving structured progress events.
     ///
-    /// Note: Progress events are only emitted by `EngineType::Incremental`.
-    /// With `EngineType::Auto` and `EngineType::Columnar`, the sink is ignored.
+    /// Every run reports at least `Started` and `Finished`. Chunk events come
+    /// from the incremental engine, which a CSV source reaches with
+    /// `EngineType::Incremental` or, when a sink is set, `EngineType::Auto`.
+    /// Other routes (the columnar engine, JSON, Parquet) read without
+    /// reporting, so they are bracketed by `Started` and `Finished` alone.
     pub fn progress_sink(mut self, sink: ProgressSink) -> Self {
         self.progress_sink = sink;
         self
@@ -328,7 +331,8 @@ impl Profiler {
 
     /// Set a synchronous callback for progress events (convenience method).
     ///
-    /// Only effective with `EngineType::Incremental`. Ignored for other engines.
+    /// See [`progress_sink`](Self::progress_sink) for which events each route
+    /// reports.
     pub fn on_progress<F>(mut self, callback: F) -> Self
     where
         F: Fn(ProgressEvent) + Send + Sync + 'static,
@@ -371,6 +375,20 @@ impl Profiler {
             .unwrap_or_else(|| Self::detect_format(path));
         let is_csv = matches!(format, FileFormat::Csv);
 
+        // Only the incremental CSV engine reports progress as it reads; every
+        // other route is bracketed here, so a sink always sees a run start and
+        // finish. A sink on `Auto` routes CSV to the incremental engine.
+        let bracket = self.progress_sink.is_active()
+            && !(is_csv && !matches!(self.config.engine, EngineType::Columnar));
+        let source_bytes = std::fs::metadata(path).ok().map(|meta| meta.len());
+        let started = std::time::Instant::now();
+        if bracket {
+            self.progress_sink.emit(ProgressEvent::Started {
+                estimated_total_rows: None,
+                estimated_total_bytes: source_bytes,
+            });
+        }
+
         let result = match self.config.engine {
             EngineType::Auto => self.run_auto(path, format),
             EngineType::Incremental => self.run_incremental(path, format),
@@ -385,6 +403,24 @@ impl Profiler {
             result?
         };
         self.validate_semantic_hints(&report)?;
+        if bracket {
+            let execution = &report.execution;
+            // These routes do not all record bytes read; a completed scan read
+            // the whole file, and a truncated one without a count reports 0.
+            let total_bytes = execution
+                .bytes_consumed
+                .unwrap_or(if execution.source_exhausted {
+                    source_bytes.unwrap_or(0)
+                } else {
+                    0
+                });
+            self.progress_sink.emit(ProgressEvent::Finished {
+                total_rows: execution.rows_processed,
+                total_bytes,
+                elapsed: started.elapsed(),
+                truncated: !execution.source_exhausted,
+            });
+        }
         Ok(report)
     }
 
@@ -691,9 +727,12 @@ impl Profiler {
                 // `source_exhausted` with no truncation reason).
                 // The same applies to sampling: only the incremental engine
                 // applies a strategy row by row, so a sampled auto run routes
-                // there rather than quietly returning a full profile.
+                // there rather than quietly returning a full profile. And to
+                // progress: only that engine reports while it reads, so a run
+                // with a sink routes there rather than going silent.
                 if !matches!(self.config.stop_condition, StopCondition::Never)
                     || self.has_sampling()
+                    || self.progress_sink.is_active()
                 {
                     self.run_incremental(file_path, format)
                 } else {
