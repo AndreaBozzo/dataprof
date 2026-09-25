@@ -12,12 +12,30 @@ from ._report import ProfileReport
 try:
     from ._dataprof import (  # type: ignore[import-not-found]
         analyze_database_async as _analyze_database_async,
-        count_table_rows_async,
-        get_table_schema_async,
-        test_connection_async,
+        count_table_rows_async as _count_table_rows_async,
+        get_table_schema_async as _get_table_schema_async,
+        test_connection_async as _test_connection_async,
     )
 
     _HAS_DATABASE = True
+
+    # The native helpers return an awaitable that needs a running event loop
+    # when they are *called*, so `asyncio.run(helper(...))` raised "no running
+    # event loop" while the stubs declare coroutine functions. Wrapping them in
+    # `async def` defers the native call until the coroutine runs, as
+    # `analyze_database_async` already does.
+
+    async def test_connection_async(connection_string: str) -> bool:
+        """Return whether ``connection_string`` connects."""
+        return await _test_connection_async(connection_string)
+
+    async def get_table_schema_async(connection_string: str, table_name: str) -> list[str]:
+        """Return the column names of ``table_name``."""
+        return await _get_table_schema_async(connection_string, table_name)
+
+    async def count_table_rows_async(connection_string: str, table_name: str) -> int:
+        """Return the number of rows in ``table_name``."""
+        return await _count_table_rows_async(connection_string, table_name)
 
     async def analyze_database_async(
         connection_string: str,
@@ -64,9 +82,8 @@ except ImportError:
     get_table_schema_async = _database_unavailable("get_table_schema_async")
     test_connection_async = _database_unavailable("test_connection_async")
 
-# The wrapper is Python-owned; the other helpers may be native functions.
+# Every helper is Python-owned, as a wrapper or as a stub.
 analyze_database_async.__module__ = "dataprof"
-if not _HAS_DATABASE:
-    count_table_rows_async.__module__ = "dataprof"
-    get_table_schema_async.__module__ = "dataprof"
-    test_connection_async.__module__ = "dataprof"
+count_table_rows_async.__module__ = "dataprof"
+get_table_schema_async.__module__ = "dataprof"
+test_connection_async.__module__ = "dataprof"
