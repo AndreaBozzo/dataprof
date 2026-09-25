@@ -46,6 +46,25 @@ pub enum ProgressSink {
     Channel(tokio::sync::mpsc::Sender<ProgressEvent>),
 }
 
+impl ProgressSink {
+    /// Whether events go anywhere.
+    pub fn is_active(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    /// Deliver one event. A full channel drops it rather than block profiling.
+    pub fn emit(&self, event: ProgressEvent) {
+        match self {
+            Self::None => {}
+            Self::Callback(callback) => callback(event),
+            #[cfg(feature = "async-streaming")]
+            Self::Channel(tx) => {
+                let _ = tx.try_send(event);
+            }
+        }
+    }
+}
+
 impl fmt::Debug for ProgressSink {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
