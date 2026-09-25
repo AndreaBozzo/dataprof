@@ -7,8 +7,8 @@ use crate::{ValueHintBindingAccumulator, profile_builder::infer_data_type_stream
 use dataprof_core::{SemanticHintBinding, SemanticHintKind, SemanticHints, char_len};
 use dataprof_metrics::analysis::inference::is_null_like_token;
 use dataprof_metrics::{
-    CardinalityEstimator, HyperLogLog, NumericAccumulator, RowCompletenessSummary,
-    RowDuplicateSummary, value_matches_hint,
+    CardinalityEstimator, NumericAccumulator, RowCompletenessSummary, RowDuplicateSummary,
+    value_matches_hint,
 };
 
 /// Incremental statistics computation for streaming data processing.
@@ -17,7 +17,9 @@ use dataprof_metrics::{
 /// - **[`NumericAccumulator`]** for numerically stable mean/variance/stddev
 ///   (O(1) memory), shared with the batch paths so every engine reports the
 ///   same numbers
-/// - **HyperLogLog** for approximate distinct counts (~16 KB fixed registers)
+/// - **CardinalityEstimator** for distinct counts: exact up to
+///   `EXACT_CARDINALITY_THRESHOLD` distinct values, then a HyperLogLog
+///   estimate (~16 KB fixed registers)
 /// - **Reservoir sampling** for unbiased samples (fixed capacity; total memory
 ///   depends on the capacity and the length of sampled strings)
 /// - **Streaming text-length tracking** with min/max/mean/histogram (O(1) memory)
@@ -241,7 +243,10 @@ pub struct StreamingStatistics {
     pub min: f64,
     pub max: f64,
     welford: NumericAccumulator,
-    hll: HyperLogLog,
+    /// Distinct values over every non-null value, independent of the
+    /// reservoir: exact past the reservoir's capacity, the same estimator the
+    /// columnar and in-memory paths use.
+    distinct: CardinalityEstimator,
     sampler: StreamReservoirSampler,
     text_length_tracker: TextLengthStats,
     date_match_count: usize,
@@ -255,7 +260,7 @@ impl StreamingStatistics {
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
             welford: NumericAccumulator::new(),
-            hll: HyperLogLog::new(),
+            distinct: CardinalityEstimator::new(),
             sampler: StreamReservoirSampler::new(10_000),
             text_length_tracker: TextLengthStats::new(),
             date_match_count: 0,
@@ -277,7 +282,7 @@ impl StreamingStatistics {
             return;
         }
 
-        self.hll.insert(value);
+        self.distinct.insert(value);
         self.sampler.offer(value.to_string());
         // Unicode scalar values, not UTF-8 bytes: see `dataprof_core::text_units`.
         self.text_length_tracker.update(char_len(value));
@@ -309,7 +314,7 @@ impl StreamingStatistics {
         }
 
         self.welford.merge(&other.welford);
-        self.hll.merge(&other.hll);
+        self.distinct.merge(&other.distinct);
         self.sampler.merge(&other.sampler);
         self.text_length_tracker.merge(&other.text_length_tracker);
         self.date_match_count += other.date_match_count;
@@ -327,17 +332,30 @@ impl StreamingStatistics {
         self.welford.population_std_dev()
     }
 
+    /// Distinct non-null values, exact until the estimator spills.
+    ///
+    /// This used to count the reservoir when it held every value and fall
+    /// back to a sketch otherwise, so any column longer than the reservoir,
+    /// even one with a single value, reported an approximate count, and a
+    /// different one from the engines that use the shared estimator.
     pub fn unique_count(&self) -> usize {
-        if !self.unique_count_is_approximate() {
-            return self.sampler.samples().iter().collect::<HashSet<_>>().len();
-        }
-        // An estimate can exceed the values it was fed; a column cannot hold
-        // more distinct values than values.
-        (self.hll.count() as usize).min(usize::try_from(self.sampler.count).unwrap_or(usize::MAX))
+        self.distinct.estimate()
     }
 
     pub fn unique_count_is_approximate(&self) -> bool {
-        (self.sampler.samples().len() as u64) < self.sampler.count
+        self.distinct.is_approximate()
+    }
+
+    /// Answer distinct counts from the sketch from here on, freeing the exact
+    /// set. For memory pressure; the count is then reported approximate.
+    pub fn spill_distinct(&mut self) {
+        self.distinct.spill();
+    }
+
+    /// Heap held by the exact distinct set: zero once it has spilled, and zero
+    /// for a column that has seen no value, so spilling it would free nothing.
+    pub fn exact_distinct_bytes(&self) -> usize {
+        self.distinct.exact_bytes()
     }
 
     pub fn sample_values(&self) -> &[String] {
@@ -385,10 +403,10 @@ impl StreamingStatistics {
 
     pub fn memory_usage_bytes(&self) -> usize {
         let struct_size = std::mem::size_of::<Self>();
-        let hll_size = self.hll.memory_usage_bytes();
+        let distinct_size = self.distinct.memory_usage_bytes();
         let reservoir_size = self.sampler.memory_usage_bytes();
 
-        struct_size + hll_size + reservoir_size
+        struct_size + distinct_size + reservoir_size
     }
 }
 
@@ -501,6 +519,12 @@ impl RowUniquenessTracker {
 
     pub fn memory_usage_bytes(&self) -> usize {
         self.distinct.memory_usage_bytes()
+    }
+
+    /// Answer the duplicate count from the sketch from here on, freeing the
+    /// exact set. For memory pressure; the count is then reported approximate.
+    pub fn spill(&mut self) {
+        self.distinct.spill();
     }
 
     /// Summary for quality metrics, or `None` when no rows were observed
@@ -736,8 +760,50 @@ impl StreamingColumnCollection {
     }
 
     pub fn reduce_memory_usage(&mut self) {
-        for stats in self.columns.values_mut() {
-            stats.reduce_sample_capacity();
+        // Exact distinct sets grow with the data and are spilled first: the
+        // largest first, and only while still over the line, so the columns
+        // that stay exact are the ones that cost least to keep. Ties go by
+        // column order, so the choice does not depend on hash order. The row
+        // tracker goes last of the exact sets: its duplicate count feeds the
+        // score, and once spilled it is reported approximate.
+        //
+        // The reservoirs are shrunk only if spilling was not enough. They are
+        // small by comparison, and halving them on every chunk under pressure
+        // degrades every sampled statistic, which is too high a price to pay
+        // for memory the distinct sets can give back.
+        self.spill_distinct_sets_under_pressure();
+        if self.is_memory_pressure() {
+            self.row_tracker.spill();
+        }
+        if self.is_memory_pressure() {
+            for stats in self.columns.values_mut() {
+                stats.reduce_sample_capacity();
+            }
+        }
+    }
+
+    fn spill_distinct_sets_under_pressure(&mut self) {
+        if !self.is_memory_pressure() {
+            return;
+        }
+        let mut by_size: Vec<(usize, usize)> = self
+            .ordered_names
+            .iter()
+            .enumerate()
+            .filter_map(|(position, name)| {
+                let bytes = self.columns.get(name)?.exact_distinct_bytes();
+                (bytes > 0).then_some((position, bytes))
+            })
+            .collect();
+        by_size.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+        for (position, _) in by_size {
+            if !self.is_memory_pressure() {
+                break;
+            }
+            let name = &self.ordered_names[position];
+            if let Some(stats) = self.columns.get_mut(name) {
+                stats.spill_distinct();
+            }
         }
     }
 
@@ -1091,19 +1157,75 @@ mod row_tracker_tests {
     }
 
     #[test]
-    fn an_approximate_distinct_count_never_exceeds_the_values_seen() {
-        // 50,000 unique ids: the sketch alone answers 50,755, a count no
-        // column of 50,000 values can hold.
-        let mut stats = StreamingStatistics::new();
+    fn a_column_longer_than_the_reservoir_keeps_an_exact_count() {
+        // The engine used to go approximate as soon as a column outgrew its
+        // 10,000-value reservoir: a one-value column over 20,000 rows was an
+        // estimate, and 50,000 unique ids read 50,755.
+        let mut constant = StreamingStatistics::new();
+        let mut ids = StreamingStatistics::new();
         for id in 0..50_000 {
-            stats.update(&id.to_string());
+            constant.update("v1");
+            ids.update(&id.to_string());
         }
-        assert!(stats.unique_count_is_approximate());
+        assert!(!constant.unique_count_is_approximate());
+        assert_eq!(constant.unique_count(), 1);
+        assert!(!ids.unique_count_is_approximate());
+        assert_eq!(ids.unique_count(), 50_000);
+    }
+
+    #[test]
+    fn memory_pressure_spills_the_largest_exact_set_first() {
+        let headers = vec!["id".to_string(), "flag".to_string()];
+        // 300,000 fingerprints per exact set is ~4.7 MB; the row tracker
+        // holds as much again. At 8 MB (pressure above 6.4 MB), spilling `id`
+        // alone brings the collection back under the line.
+        let mut collection = StreamingColumnCollection::memory_limit(8);
+        for id in 0..300_000 {
+            let flag = if id % 2 == 0 { "yes" } else { "no" };
+            record(&mut collection, &headers, &[&id.to_string(), flag]);
+        }
         assert!(
-            stats.hll.count() > 50_000,
-            "the sketch no longer overshoots here; this test reaches nothing"
+            collection.is_memory_pressure(),
+            "300,000 exact fingerprints no longer exceed the limit; this test reaches nothing"
         );
-        assert_eq!(stats.unique_count(), 50_000);
+        collection.reduce_memory_usage();
+
+        let id = collection.get_column_stats("id").unwrap();
+        let flag = collection.get_column_stats("flag").unwrap();
+        assert!(id.unique_count_is_approximate(), "the large set spills");
+        assert!(!flag.unique_count_is_approximate(), "the small one is kept");
+        assert_eq!(flag.unique_count(), 2);
+        // Spilling was enough, so the sampled statistics keep their full
+        // reservoirs rather than being halved on every chunk under pressure.
+        assert_eq!(id.sample_values().len(), 10_000);
+        assert_eq!(flag.sample_values().len(), 10_000);
+    }
+
+    #[test]
+    fn memory_pressure_spills_the_row_tracker_before_shrinking_reservoirs() {
+        let headers = vec!["id".to_string(), "flag".to_string(), "blank".to_string()];
+        // At 5 MB (pressure above 4 MB) spilling every column set still
+        // leaves the row tracker's ~4.1 MB plus the reservoirs over the line.
+        let mut collection = StreamingColumnCollection::memory_limit(5);
+        for id in 0..300_000 {
+            let flag = if id % 2 == 0 { "yes" } else { "no" };
+            record(&mut collection, &headers, &[&id.to_string(), flag, ""]);
+        }
+        collection.reduce_memory_usage();
+
+        let rows = collection.row_duplicate_summary().unwrap();
+        assert!(rows.approximate, "the row tracker spills");
+        assert!(!collection.is_memory_pressure());
+        // A column that has seen no value holds no exact set to give back,
+        // so it keeps its exact count of zero.
+        let blank = collection.get_column_stats("blank").unwrap();
+        assert!(!blank.unique_count_is_approximate());
+        assert_eq!(blank.unique_count(), 0);
+        for name in ["id", "flag"] {
+            let stats = collection.get_column_stats(name).unwrap();
+            assert!(stats.unique_count_is_approximate(), "{name} spills first");
+            assert_eq!(stats.sample_values().len(), 10_000, "{name} reservoir kept");
+        }
     }
 
     #[test]
@@ -1348,6 +1470,7 @@ mod row_tracker_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dataprof_metrics::HyperLogLog;
 
     #[test]
     fn test_streaming_statistics() {
@@ -1445,15 +1568,20 @@ mod tests {
     }
 
     #[test]
-    fn test_unique_count_becomes_approximate_only_after_reservoir_truncation() {
+    fn the_distinct_count_does_not_depend_on_the_reservoir() {
+        // The reservoir bounds the sampled statistics, not the distinct count:
+        // a column that outgrows it still counts its distinct values exactly
+        // until the estimator itself spills.
         let mut stats = StreamingStatistics::with_sample_capacity(2);
-        stats.update("a");
-        stats.update("b");
-        assert_eq!(stats.unique_count(), 2);
+        for value in ["a", "b", "c", "a"] {
+            stats.update(value);
+        }
+        assert_eq!(stats.unique_count(), 3);
         assert!(!stats.unique_count_is_approximate());
 
-        stats.update("c");
+        stats.spill_distinct();
         assert!(stats.unique_count_is_approximate());
+        assert_eq!(stats.unique_count(), 3);
     }
 
     #[test]
