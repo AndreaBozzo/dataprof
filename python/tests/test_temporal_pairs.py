@@ -19,7 +19,9 @@ ENGINES = ("auto", "incremental", "columnar")
 
 
 def _pairs(report: dp.ProfileReport) -> tuple[int, int]:
+    assert report.quality is not None
     timeliness = report.quality.timeliness
+    assert timeliness is not None
     return timeliness["temporal_pairs_checked"], timeliness["temporal_violations"]
 
 
