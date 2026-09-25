@@ -280,6 +280,7 @@ Returned by `profile()` and all analysis functions.
 | `truncation_reason` | `str \| None` | Why processing stopped early |
 | `source_exhausted` | `bool` | Whether the entire source was read |
 | `ragged_row_count` | `int` | Rows whose field count differed from the header (`0` = no ragged rows). Reported for file, async and columnar CSV inputs |
+| `unterminated_quote` | `bool \| None` | `True` when a CSV source ended inside a quoted field: a quote was never closed, so the last record holds every row after it. `None` for non-CSV input and for a scan stopped before the end of the source. `csv_flexible=False` refuses such a source, and CSV bytes passed to `profile()` always do |
 | `recovery_events` | `list[dict[str, str]] \| None` | Ordered failed attempts and retries; `[]` means no recovery, `None` means history was not recorded |
 | `sampling_applied` | `bool` | Whether sampling was used |
 | `sampling_ratio` | `float \| None` | Fraction of data sampled |
@@ -830,6 +831,7 @@ names; no finding carries a raw cell value.
 | `future_dates` | warning | Date values lie after the time the report was produced |
 | `temporal_order_violations` | warning | Start dates fall after their paired end dates |
 | `ragged_rows` | warning | Rows had a different field count from the header and were recovered |
+| `unterminated_quote` | warning | A CSV source ended inside a quoted field, so its last record may hold several source rows |
 | `records_skipped` | warning | Errors were counted while reading, e.g. JSONL lines skipped under `jsonl_on_error="skip"` |
 | `constant_column` | info | Every non-null value of a column is the same one, seen more than once |
 | `sensitive_pattern` | info | A column confidently matches a contact or financial pattern, a US SSN, or an Italian codice fiscale |

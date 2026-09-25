@@ -562,6 +562,16 @@ impl DataProfilerError {
         }
     }
 
+    /// Create a CSV parsing error for a structural problem the parser itself
+    /// accepted, so there is no underlying error to keep as its source.
+    pub fn csv_structure(message: impl Into<String>, suggestion: impl Into<String>) -> Self {
+        DataProfilerError::CsvParsingError {
+            message: message.into(),
+            suggestion: suggestion.into(),
+            source: None,
+        }
+    }
+
     /// Create a JSON parsing error with a caller-supplied message that still
     /// retains `original` as its source.
     ///

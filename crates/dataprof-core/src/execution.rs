@@ -90,6 +90,15 @@ pub struct ExecutionMetadata {
     #[serde(default)]
     #[schemars(default)]
     pub ragged_row_count: usize,
+    /// Whether a CSV source ended inside a quoted field.
+    ///
+    /// A quote that is never closed swallows every following row into the
+    /// last field of one record, and the parser accepts it. `true` means the
+    /// last record read may hold several source rows. Absent where it was not
+    /// checked: non-CSV input, a scan that stopped before the end of the
+    /// source, and reports written before 0.12.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unterminated_quote: Option<bool>,
     /// Whether the entire source was consumed.
     pub source_exhausted: bool,
     /// If the source was not exhausted, why processing stopped.
@@ -127,6 +136,7 @@ impl ExecutionMetadata {
             memory_peak_mb: None,
             error_count: 0,
             ragged_row_count: 0,
+            unterminated_quote: None,
             source_exhausted: true,
             truncation_reason: None,
             sampling_applied: false,
@@ -176,6 +186,12 @@ impl ExecutionMetadata {
     /// Set the count of ragged rows (field count != header field count).
     pub fn with_ragged_row_count(mut self, count: usize) -> Self {
         self.ragged_row_count = count;
+        self
+    }
+
+    /// Record whether a checked CSV source ended inside a quoted field.
+    pub fn with_unterminated_quote(mut self, ended_inside_quotes: bool) -> Self {
+        self.unterminated_quote = Some(ended_inside_quotes);
         self
     }
 

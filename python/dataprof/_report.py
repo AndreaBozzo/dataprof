@@ -316,6 +316,17 @@ class ProfileReport:
         return self._report.ragged_row_count
 
     @property
+    def unterminated_quote(self) -> bool | None:
+        """Whether a CSV source ended inside a quoted field.
+
+        ``True`` means a quote was opened and never closed, so the last record
+        read may hold every source row after it in one field. ``None`` means it
+        was not checked: non-CSV input, a scan that stopped before the end of
+        the source, or a report written before 0.12.
+        """
+        return self._report.unterminated_quote
+
+    @property
     def _schema_version(self) -> int:
         """The schema version the report was written with; 0 before 0.10.
 
@@ -444,6 +455,9 @@ class ProfileReport:
         ranges = self.sampled_row_ranges
         if ranges is not None:
             _cast(dict[str, _Any], document["execution"])["sampled_row_ranges"] = ranges
+        unterminated_quote = self.unterminated_quote
+        if unterminated_quote is not None:
+            _cast(dict[str, _Any], document["execution"])["unterminated_quote"] = unterminated_quote
         bindings = self.semantic_hint_bindings
         if bindings:
             document["semantic_hint_bindings"] = bindings

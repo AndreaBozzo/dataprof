@@ -150,6 +150,9 @@ impl IncrementalProfiler {
         let mut analyzed_rows = 0;
         let mut ragged_rows = 0;
         let mut offset = 0u64;
+        // Start of the last chunk read. Chunks start at record boundaries, so
+        // the quote check at the end only needs to scan from here.
+        let mut last_chunk_offset = 0u64;
         let mut source_exhausted = true;
         let mut schema_stopped = false;
 
@@ -183,6 +186,7 @@ impl IncrementalProfiler {
             if records.is_empty() && actual_bytes == 0 {
                 break;
             }
+            last_chunk_offset = offset;
 
             // Store headers from first chunk and initialize column collection
             if headers.is_none() && chunk_headers.is_some() {
@@ -400,6 +404,19 @@ impl IncrementalProfiler {
             column_stats.retain_columns(&selected);
         }
 
+        // An unclosed quote swallows the rest of the file into the last record,
+        // so only a scan that read the whole file has seen it.
+        let unterminated_quote = source_exhausted
+            .then(|| reader.ends_inside_quotes(last_chunk_offset, self.csv_config.as_ref()));
+        if unterminated_quote == Some(true)
+            && self
+                .csv_config
+                .as_ref()
+                .is_some_and(|config| !config.flexible)
+        {
+            return Err(dataprof_csv::unterminated_quote_error());
+        }
+
         // Convert streaming statistics to column profiles
         let effective_packs = options.effective_metric_packs();
         let packs = effective_packs.as_deref();
@@ -429,6 +446,9 @@ impl IncrementalProfiler {
             .with_engine("incremental")
             .with_bytes_consumed(bytes_consumed)
             .with_ragged_row_count(ragged_rows);
+        if let Some(ended_inside_quotes) = unterminated_quote {
+            execution = execution.with_unterminated_quote(ended_inside_quotes);
+        }
 
         if let Some(peak_mb) = memory_sampler.peak_mb() {
             execution = execution.with_memory_peak_mb(peak_mb);

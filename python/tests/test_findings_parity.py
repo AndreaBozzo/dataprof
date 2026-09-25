@@ -92,6 +92,7 @@ def test_every_rule_and_reason_is_covered(cases: list[dict[str, Any]]):
         "records_skipped",
         "sensitive_pattern",
         "temporal_order_violations",
+        "unterminated_quote",
     }
     reasons = {entry["reason"] for case in cases for entry in case["expected"]["not_evaluated"]}
     assert reasons == {"quality_unavailable", "not_assessed", "not_computed", "no_values"}

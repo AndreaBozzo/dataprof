@@ -228,6 +228,7 @@ class _ReportView(_View):
     memory_peak_mb = _Field[float | None]()
     error_count = _Field[int]()
     ragged_row_count = _Field[int]()
+    unterminated_quote = _Field[bool | None]()
     schema_version = _Field[int]()
     sampling_applied = _Field[bool]()
     sampling_ratio = _Field[float | None]()

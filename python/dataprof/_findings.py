@@ -50,6 +50,7 @@ _SEVERITY = {
     "records_skipped": "warning",
     "sensitive_pattern": "info",
     "temporal_order_violations": "warning",
+    "unterminated_quote": "warning",
 }
 _SEVERITY_ORDER = ("warning", "info")
 
@@ -68,6 +69,9 @@ _SUMMARY = {
     "records_skipped": "errors were counted while reading the source",
     "sensitive_pattern": "values in this column match a pattern for personal or financial data",
     "temporal_order_violations": "some start dates fall after their paired end dates",
+    "unterminated_quote": (
+        "the source ends inside a quoted field, so its last record may hold several rows"
+    ),
 }
 
 _REASON_ORDER = (
@@ -388,6 +392,8 @@ def _scan_findings(report: ProfileReport, out: _Collector) -> None:
             "ragged_rows",
             {"ragged_row_count": report.ragged_row_count, "rows_processed": report.rows},
         )
+    if report.unterminated_quote:
+        out.add("unterminated_quote", {"rows_processed": report.rows})
     if report.error_count:
         out.add("records_skipped", {"error_count": report.error_count})
 

@@ -111,6 +111,8 @@ pub enum FindingCode {
     SensitivePattern,
     /// Start dates fall after their paired end dates.
     TemporalOrderViolations,
+    /// A CSV source ended inside a quoted field.
+    UnterminatedQuote,
 }
 
 impl FindingCode {
@@ -124,7 +126,8 @@ impl FindingCode {
             | Self::NullHeavy
             | Self::RaggedRows
             | Self::RecordsSkipped
-            | Self::TemporalOrderViolations => Severity::Warning,
+            | Self::TemporalOrderViolations
+            | Self::UnterminatedQuote => Severity::Warning,
             Self::ConstantColumn | Self::PartialScan | Self::SensitivePattern => Severity::Info,
         }
     }
@@ -153,6 +156,9 @@ impl FindingCode {
                 "values in this column match a pattern for personal or financial data"
             }
             Self::TemporalOrderViolations => "some start dates fall after their paired end dates",
+            Self::UnterminatedQuote => {
+                "the source ends inside a quoted field, so its last record may hold several rows"
+            }
         }
     }
 }
@@ -171,6 +177,7 @@ impl fmt::Display for FindingCode {
             Self::RecordsSkipped => "records_skipped",
             Self::SensitivePattern => "sensitive_pattern",
             Self::TemporalOrderViolations => "temporal_order_violations",
+            Self::UnterminatedQuote => "unterminated_quote",
         };
         write!(f, "{name}")
     }
@@ -566,6 +573,15 @@ fn scan_findings(report: &ProfileReport, out: &mut Collector) {
                     EvidenceValue::Count(execution.rows_processed),
                 ),
             ],
+        );
+    }
+    if execution.unterminated_quote == Some(true) {
+        out.report(
+            FindingCode::UnterminatedQuote,
+            [(
+                "rows_processed",
+                EvidenceValue::Count(execution.rows_processed),
+            )],
         );
     }
     if execution.error_count > 0 {

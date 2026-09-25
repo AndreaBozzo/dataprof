@@ -152,6 +152,29 @@ def _columns_from_records(
     return columns, len(cell_rows)
 
 
+def _unclosed_quote_at(text: str, delimiter: str, quote: str = '"') -> int | None:
+    """Offset of a quote that opens a field and is never closed, if any.
+
+    ``csv.reader`` outside strict mode, like the Rust CSV readers, reads a quote
+    that is never closed as a field running to the end of the input, swallowing
+    every following row (#782). The rules match theirs: a quote opens a field
+    only at the start of one, and a doubled quote inside a field is a literal.
+    Only quote characters are visited.
+    """
+    opened: int | None = None
+    index = text.find(quote)
+    while index >= 0:
+        if opened is not None:
+            if text.startswith(quote, index + 1):
+                index = text.find(quote, index + 2)
+                continue
+            opened = None
+        elif index == 0 or text[index - 1] in (delimiter, "\r", "\n"):
+            opened = index
+        index = text.find(quote, index + 1)
+    return opened
+
+
 def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[_Column]:
     """Parse CSV bytes into columns, treating an empty field as null.
 
@@ -166,6 +189,18 @@ def _columns_from_csv_bytes(buffer: _io.BytesIO, delimiter: str | None) -> list[
             delimiter = _csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
         except _csv.Error:
             delimiter = ","
+    # This reader has no flexible mode to record the problem in, so it refuses,
+    # as it refuses a ragged row.
+    unclosed = _unclosed_quote_at(text, delimiter)
+    if unclosed is not None:
+        before = text[:unclosed]
+        line = before.count("\n") + before.count("\r") - before.count("\r\n") + 1
+        raise ValueError(
+            f"csv bytes: the quote opened on line {line} is never closed, so every "
+            f"row after it would be read into one field. Close the quote, or write "
+            f"the data to a file to use the flexible CSV engine (csv_flexible=True), "
+            f"which profiles it and sets unterminated_quote."
+        )
     reader = _csv.reader(_io.StringIO(text, newline=""), delimiter=delimiter)
     try:
         # Rust's CSV readers ignore blank physical records, including those

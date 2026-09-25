@@ -4,7 +4,8 @@
     "ragged.csv": "a,b\n1,2\n3,4,5\n6\n",
     "header_only.csv": "a,b\n",
     "broken.jsonl": "{\"id\": 1, \"kind\": \"a\"}\n{\"id\": 2, \"kind\": \n{\"id\": 3, \"kind\": \"b\"}\n",
-    "nested.jsonl": "{\"id\": 1, \"payload\": {\"k\": 1}}\n{\"id\": 2, \"payload\": {\"k\": 2}}\n{\"id\": 3, \"payload\": null}\n"
+    "nested.jsonl": "{\"id\": 1, \"payload\": {\"k\": 1}}\n{\"id\": 2, \"payload\": {\"k\": 2}}\n{\"id\": 3, \"payload\": null}\n",
+    "unclosed.csv": "id,text\n1,\"never closed\n2,x\n3,y\n"
   },
   "cases": [
     {
@@ -608,6 +609,36 @@
               "rows_processed": 3
             },
             "summary": "some rows had a different field count from the header and were recovered"
+          }
+        ],
+        "not_evaluated": [
+          {
+            "code": "future_dates",
+            "reason": "not_assessed"
+          },
+          {
+            "code": "temporal_order_violations",
+            "reason": "not_assessed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an_unclosed_quote_is_reported",
+      "why": "A quote that is never closed swallowed the rows after it into one field; the parser accepts that, so the finding is the only sign of it.",
+      "options": {
+        "input": "unclosed.csv"
+      },
+      "policy": {},
+      "expected": {
+        "findings": [
+          {
+            "code": "unterminated_quote",
+            "severity": "warning",
+            "evidence": {
+              "rows_processed": 1
+            },
+            "summary": "the source ends inside a quoted field, so its last record may hold several rows"
           }
         ],
         "not_evaluated": [

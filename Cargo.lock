@@ -905,6 +905,7 @@ dependencies = [
  "dataprof-core",
  "dataprof-runtime",
  "log",
+ "memchr",
  "memmap2",
  "tempfile",
 ]

@@ -47,6 +47,7 @@ csv = "1.4"
 futures = "0.3.31"
 glob = "0.3"
 log = "0.4"
+memchr = "2.7"
 memmap2 = "0.9"
 num_cpus = "1.16"
 parquet = { version = "60.0.0", features = ["arrow"] }
