@@ -83,13 +83,36 @@ fn assert_provenance_consistent(report: &ProfileReport, source_size: u64, label:
 // Controls take effect
 // ---------------------------------------------------------------------------
 
+/// A schema-stability stop is evaluated per chunk, so where it lands shows the
+/// chunk size that reached the engine. A byte cap no longer does: reads are
+/// sized to the budget that remains, whatever the chunk size.
+fn chunk_granular_stop() -> StopCondition {
+    StopCondition::SchemaStable {
+        consecutive_stable_rows: 50,
+    }
+}
+
+/// Where a byte cap must stop: the end of the first record reaching it. The
+/// header counts toward the budget but is not a record, so a budget smaller
+/// than the header still reads one record.
+fn first_boundary_at_or_past(data: &[u8], budget: u64) -> u64 {
+    let mut end = 0u64;
+    for (index, line) in data.split_inclusive(|&byte| byte == b'\n').enumerate() {
+        end += line.len() as u64;
+        if index > 0 && end >= budget {
+            return end;
+        }
+    }
+    panic!("the source is smaller than the budget");
+}
+
 #[test]
-fn chunk_size_changes_where_a_byte_cap_lands() {
-    // With the cap far below any chunk, the stop lands at the first chunk
-    // boundary — so the configured chunk size is directly observable. When it
-    // was ignored, every value produced identical results.
+fn chunk_size_changes_where_a_chunk_granular_stop_lands() {
+    // The stop lands at the first chunk boundary past it, so the configured
+    // chunk size is directly observable. When it was ignored, every value
+    // produced identical results.
     let csv = write_csv(5_000);
-    let cap = StopCondition::MaxBytes(2_048);
+    let cap = chunk_granular_stop();
 
     let small = Profiler::new()
         .engine(EngineType::Incremental)
@@ -118,7 +141,7 @@ fn chunk_size_changes_where_a_byte_cap_lands() {
 #[test]
 fn chunk_size_reaches_the_auto_engine_too() {
     let csv = write_csv(5_000);
-    let cap = StopCondition::MaxBytes(2_048);
+    let cap = chunk_granular_stop();
 
     let small = Profiler::new()
         .chunk_size(ChunkSize::Fixed(4_096))
@@ -317,31 +340,30 @@ fn a_row_cap_equal_to_the_row_count_is_a_complete_scan() {
 }
 
 #[test]
-fn byte_caps_overshoot_by_at_most_one_chunk() {
-    // Byte caps are evaluated at chunk boundaries. That overshoot is allowed,
-    // but it is bounded by the chunk size the caller chose — not unbounded.
+fn byte_caps_stop_at_the_first_record_boundary_past_them() {
+    // Reads are sized to the budget that remains, so the stop lands at the
+    // end of the first record reaching the cap whatever the chunk size. The
+    // adaptive chunk is the case that mattered: sized for throughput, it ran a
+    // whole chunk past the cap.
     let csv = write_csv(5_000);
+    let cap = 2_048u64;
+    let expected = first_boundary_at_or_past(&std::fs::read(csv.path()).unwrap(), cap);
 
-    for chunk in [4_096usize, 16_384, 65_536] {
-        let cap = 2_048u64;
+    for chunk in [
+        ChunkSize::Fixed(4_096),
+        ChunkSize::Fixed(16_384),
+        ChunkSize::Fixed(65_536),
+        ChunkSize::Adaptive,
+    ] {
         let report = Profiler::new()
             .engine(EngineType::Incremental)
-            .chunk_size(ChunkSize::Fixed(chunk))
+            .chunk_size(chunk.clone())
             .stop_when(StopCondition::MaxBytes(cap))
             .analyze_file(csv.path())
             .unwrap();
 
-        let consumed = report.execution.bytes_consumed.unwrap_or(0);
-        assert!(
-            consumed <= cap + chunk as u64,
-            "chunk {chunk}: consumed {consumed} for a {cap}-byte cap, \
-             which exceeds the one-chunk bound"
-        );
-        assert_provenance_consistent(
-            &report,
-            file_size(&csv),
-            &format!("byte cap, chunk {chunk}"),
-        );
+        assert_eq!(report.execution.bytes_consumed, Some(expected), "{chunk:?}");
+        assert_provenance_consistent(&report, file_size(&csv), &format!("byte cap, {chunk:?}"));
     }
 }
 
@@ -427,14 +449,16 @@ mod async_controls {
 
     #[tokio::test]
     async fn async_conditions_met_on_the_final_chunk_are_complete() {
+        let size = csv_bytes(123).len() as u64;
+        // A byte cap equal to the source is spent on its last byte: met at the
+        // end, with nothing left unread.
         for condition in [
-            StopCondition::MaxBytes(1),
+            StopCondition::MaxBytes(size),
             StopCondition::SchemaStable {
                 consecutive_stable_rows: 1,
             },
         ] {
             let data = csv_bytes(123);
-            let size = data.len() as u64;
             let report = Profiler::new()
                 .chunk_size(ChunkSize::Fixed((size as usize) * 2))
                 .stop_when(condition.clone())
@@ -456,10 +480,11 @@ mod async_controls {
     }
 
     #[tokio::test]
-    async fn async_byte_caps_are_chunk_granular() {
+    async fn async_byte_caps_stop_at_the_first_record_past_them() {
         let data = csv_bytes(500);
         let size = data.len() as u64;
         let cap = 1u64;
+        let expected = super::first_boundary_at_or_past(&data, cap);
         let report = Profiler::new()
             .chunk_size(ChunkSize::Fixed(1_024))
             .stop_when(StopCondition::MaxBytes(cap))
@@ -472,9 +497,7 @@ mod async_controls {
             report.execution.truncation_reason,
             Some(dataprof::TruncationReason::MaxBytes(1))
         ));
-        let consumed = report.execution.bytes_consumed.unwrap_or(0);
-        assert!(consumed > cap);
-        assert!(consumed < size);
+        assert_eq!(report.execution.bytes_consumed, Some(expected));
         assert_provenance_consistent(&report, size, "async byte cap");
     }
 

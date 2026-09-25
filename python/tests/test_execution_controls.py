@@ -79,24 +79,30 @@ def _async_bytes(data: bytes, fmt: str = "csv", **kwargs):
 # --- Controls are not decorative --------------------------------------------
 
 
-def test_chunk_size_changes_where_a_byte_cap_lands(tmp_path):
+# A schema-stability stop is evaluated per chunk, so where it lands shows the
+# chunk size that reached the engine. A byte cap no longer does: reads are sized
+# to the remaining budget, whatever the chunk size.
+_CHUNK_GRANULAR_STOP = dp.StopCondition.schema_stable(50)
+
+
+def test_chunk_size_changes_where_a_chunk_granular_stop_lands(tmp_path):
     path = _write_csv(tmp_path, 5_000)
     small = dp.profile(
-        path, engine="incremental", chunk_size=4096, stop_condition=dp.StopCondition.max_bytes(2048)
+        path, engine="incremental", chunk_size=4096, stop_condition=_CHUNK_GRANULAR_STOP
     )
     large = dp.profile(
         path,
         engine="incremental",
         chunk_size=65536,
-        stop_condition=dp.StopCondition.max_bytes(2048),
+        stop_condition=_CHUNK_GRANULAR_STOP,
     )
     assert small.rows < large.rows, "a smaller chunk must stop sooner"
 
 
 def test_chunk_size_reaches_the_default_engine(tmp_path):
     path = _write_csv(tmp_path, 5_000)
-    small = dp.profile(path, chunk_size=4096, stop_condition=dp.StopCondition.max_bytes(2048))
-    large = dp.profile(path, chunk_size=65536, stop_condition=dp.StopCondition.max_bytes(2048))
+    small = dp.profile(path, chunk_size=4096, stop_condition=_CHUNK_GRANULAR_STOP)
+    large = dp.profile(path, chunk_size=65536, stop_condition=_CHUNK_GRANULAR_STOP)
     assert small.rows < large.rows, "engine='auto' must forward chunk_size"
 
 
@@ -221,20 +227,48 @@ def test_row_caps_are_hard_caps(tmp_path, limit):
     _assert_consistent(report, size, f"max_rows({limit})")
 
 
-def test_byte_cap_overshoot_is_bounded_by_one_chunk(tmp_path):
+def _first_boundary_at_or_past(data: bytes, budget: int) -> int:
+    """Where a byte cap must stop: the end of the first record reaching it.
+
+    The header counts toward the budget but is not a record, so a budget
+    smaller than the header still reads one record.
+    """
+    end = 0
+    for index, line in enumerate(data.splitlines(keepends=True)):
+        end += len(line)
+        if index > 0 and end >= budget:
+            return end
+    raise AssertionError("the source is smaller than the budget")
+
+
+def test_byte_cap_stops_at_the_first_record_boundary_past_it(tmp_path):
+    """Reads are sized to the budget left, so no chunk size overshoots it.
+
+    The adaptive chunk (``None``) is the case that mattered: sized for
+    throughput, it ran a whole chunk past the cap, 116 times the budget on a
+    233 MB file.
+    """
     path = _write_csv(tmp_path, 5_000)
     size = Path(path).stat().st_size
+    expected = _first_boundary_at_or_past(Path(path).read_bytes(), 2048)
 
-    for chunk in (4096, 16384, 65536):
+    for chunk in (4096, 16384, 65536, None):
         report = dp.profile(
             path,
             engine="incremental",
             chunk_size=chunk,
             stop_condition=dp.StopCondition.max_bytes(2048),
         )
-        consumed = _bytes_consumed(report)
-        assert consumed <= 2048 + chunk, f"chunk {chunk}: consumed {consumed} for a 2048 cap"
+        assert _bytes_consumed(report) == expected, f"chunk {chunk}"
         _assert_consistent(report, size, f"byte cap, chunk {chunk}")
+
+
+@requires_async
+@pytest.mark.parametrize("budget", [1_000, 4_321, 100_000])
+def test_async_byte_cap_stops_at_the_first_record_boundary_past_it(budget):
+    data = _csv_bytes(20_000)
+    report = _async_bytes(data, stop_condition=dp.StopCondition.max_bytes(budget))
+    assert _bytes_consumed(report) == _first_boundary_at_or_past(data, budget)
 
 
 # --- Async paths ------------------------------------------------------------

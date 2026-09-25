@@ -155,13 +155,27 @@ impl IncrementalProfiler {
 
         // Extract the max_rows limit (if any) for per-row stop checking
         let row_limit = Self::extract_max_rows(&self.stop_condition);
+        // A byte budget sizes each read to what is left of it, so the scan
+        // stops at the first record boundary past it instead of at the end of
+        // a chunk sized for throughput (~5% of the file). `max_bytes` is only
+        // set when reaching it stops the scan, so a spent budget never leaves
+        // one-record reads running.
+        let byte_limit = self.stop_condition.max_bytes();
 
         // Process file in chunks using true streaming
         loop {
             let first_chunk = headers.is_none();
+            let read_size = match byte_limit {
+                Some(limit) => chunk_size_bytes.min(
+                    usize::try_from(limit.saturating_sub(offset))
+                        .unwrap_or(usize::MAX)
+                        .max(1),
+                ),
+                None => chunk_size_bytes,
+            };
             let (chunk_headers, records, actual_bytes) = reader.read_csv_chunk(
                 offset,
-                chunk_size_bytes,
+                read_size,
                 first_chunk && source_has_header,
                 self.csv_config.as_ref(),
             )?;
@@ -725,6 +739,57 @@ mod tests {
             Some(TruncationReason::MaxRows(100))
         ));
 
+        Ok(())
+    }
+
+    #[test]
+    fn a_byte_budget_stops_within_one_record_of_the_limit() -> Result<()> {
+        // 200,000 variable-length records, ~4 MB: the adaptive chunk for a file
+        // this size is far larger than the budget, which is what let the scan
+        // run a whole chunk past it. Varying lengths keep a budget from
+        // landing on a record boundary by construction.
+        let lines: Vec<String> = std::iter::once(
+            "id,value,note
+"
+            .to_string(),
+        )
+        .chain((0..200_000).map(|i| {
+            format!(
+                "{i},{},{}
+",
+                i * 7,
+                "x".repeat(i % 13)
+            )
+        }))
+        .collect();
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(lines.concat().as_bytes())?;
+        temp_file.flush()?;
+
+        for budget in [1_000u64, 4_321, 100_000] {
+            // The first record boundary at or past the budget, counting the
+            // header as the engine does: the exact place the scan must stop.
+            let expected = lines
+                .iter()
+                .scan(0u64, |end, line| {
+                    *end += line.len() as u64;
+                    Some(*end)
+                })
+                .find(|&end| end >= budget)
+                .expect("the file is larger than every budget");
+            let report = IncrementalProfiler::new()
+                .stop_condition(StopCondition::MaxBytes(budget))
+                .analyze_file(temp_file.path())?;
+            let consumed = report
+                .execution
+                .bytes_consumed
+                .expect("the incremental engine records bytes consumed");
+            assert_eq!(consumed, expected, "budget {budget}");
+            assert!(matches!(
+                report.execution.truncation_reason,
+                Some(TruncationReason::MaxBytes(b)) if b == budget
+            ));
+        }
         Ok(())
     }
 

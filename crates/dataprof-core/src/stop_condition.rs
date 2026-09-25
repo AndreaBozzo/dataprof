@@ -16,9 +16,11 @@ pub enum StopCondition {
     MaxRows(u64),
     /// Stop after consuming this many bytes from the source.
     ///
-    /// The budget is evaluated after whole data chunks. `bytes_consumed`
-    /// reports every source byte read, including headers, so it can exceed the
-    /// requested value; configure smaller chunks for a tighter bound.
+    /// The CSV streaming engines, file and async, size each read to the
+    /// budget that remains, so they stop at the end of the first record at or
+    /// past the limit: `bytes_consumed` counts every source byte read,
+    /// including the header, and exceeds the value by less than one record.
+    /// The async JSON reader still evaluates it after whole chunks.
     MaxBytes(u64),
     /// Stop when column types have not changed for approximately N rows
     /// (accumulated across chunks).
@@ -97,6 +99,32 @@ impl StopCondition {
                 conditions
                     .iter()
                     .map(StopCondition::max_rows)
+                    .try_fold(0u64, |acc, cap| Some(acc.max(cap?)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The byte count at which this condition can first trigger on bytes
+    /// alone, if any: the byte counterpart of [`max_rows`](Self::max_rows),
+    /// with the same `Any`/`All` rules.
+    ///
+    /// The incremental engine sizes its reads to the budget that remains
+    /// under it, so the scan stops at a record boundary rather than at the end
+    /// of a large chunk.
+    pub fn max_bytes(&self) -> Option<u64> {
+        match self {
+            StopCondition::MaxBytes(n) => Some(*n),
+            StopCondition::Any(conditions) => {
+                conditions.iter().filter_map(StopCondition::max_bytes).min()
+            }
+            StopCondition::All(conditions) => {
+                if conditions.is_empty() {
+                    return None;
+                }
+                conditions
+                    .iter()
+                    .map(StopCondition::max_bytes)
                     .try_fold(0u64, |acc, cap| Some(acc.max(cap?)))
             }
             _ => None,
@@ -361,6 +389,29 @@ impl SchemaStabilityTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_bytes_follows_the_any_and_all_rules() {
+        assert_eq!(StopCondition::MaxBytes(10).max_bytes(), Some(10));
+        assert_eq!(StopCondition::MaxRows(10).max_bytes(), None);
+        let any = StopCondition::Any(vec![
+            StopCondition::MaxBytes(20),
+            StopCondition::MaxRows(5),
+            StopCondition::MaxBytes(10),
+        ]);
+        assert_eq!(any.max_bytes(), Some(10));
+        let all = StopCondition::All(vec![
+            StopCondition::MaxBytes(10),
+            StopCondition::MaxBytes(20),
+        ]);
+        assert_eq!(all.max_bytes(), Some(20));
+        // A child bytes cannot trigger leaves an `All` unbounded by bytes, so
+        // the engine keeps full-size reads once the budget is spent.
+        let mixed =
+            StopCondition::All(vec![StopCondition::MaxBytes(10), StopCondition::MaxRows(5)]);
+        assert_eq!(mixed.max_bytes(), None);
+        assert_eq!(StopCondition::All(vec![]).max_bytes(), None);
+    }
 
     #[test]
     fn test_max_rows_leaf_and_never() {

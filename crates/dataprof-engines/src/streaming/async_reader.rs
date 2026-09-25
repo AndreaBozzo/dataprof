@@ -406,6 +406,7 @@ impl AsyncStreamingProfiler {
         // The task reports the structural violations it recovered from, so a
         // report can never describe a repaired scan as a clean one.
         let json_error_policy = self.json_error_policy;
+        let byte_budget = self.stop_condition.max_bytes();
         let csv_flexible = self.csv_flexible;
         let csv_delimiter = self.csv_delimiter;
         let reader_handle = tokio::task::spawn_blocking(move || match format {
@@ -413,6 +414,7 @@ impl AsyncStreamingProfiler {
                 sync_reader,
                 tx,
                 bytes_per_chunk,
+                byte_budget,
                 csv_flexible,
                 csv_delimiter,
             ),
@@ -570,6 +572,7 @@ impl AsyncStreamingProfiler {
         >,
         tx: mpsc::Sender<ParsedChunk>,
         bytes_per_chunk: usize,
+        byte_budget: Option<u64>,
         flexible: bool,
         delimiter: Option<u8>,
     ) -> Result<ReaderOutcome, DataProfilerError> {
@@ -626,6 +629,22 @@ impl AsyncStreamingProfiler {
         // Read data records, emitting a chunk once it holds the configured
         // number of bytes. Chunking by bytes rather than by a row count keeps
         // the working set bounded regardless of how wide the rows are.
+        //
+        // A byte budget sizes each chunk to what is left of it, so the stop
+        // evaluator sees the budget reached at the first record past it rather
+        // than a whole chunk later. `sent` starts at the header, which the
+        // evaluator and `bytes_consumed` both count. `max_bytes` is only set
+        // when reaching it stops the scan, so once it is spent chunks shrink
+        // to one record and the next evaluation stops the stream.
+        let mut sent = byte_offset;
+        let chunk_target = |sent: u64| match byte_budget {
+            Some(budget) => bytes_per_chunk.min(
+                usize::try_from(budget.saturating_sub(sent))
+                    .unwrap_or(usize::MAX)
+                    .max(1),
+            ),
+            None => bytes_per_chunk,
+        };
         let mut current_chunk: Vec<Vec<String>> = Vec::new();
         let mut bytes_in_chunk: u64 = 0;
         let mut record = csv::StringRecord::new();
@@ -648,12 +667,13 @@ impl AsyncStreamingProfiler {
             let fields: Vec<String> = record.iter().map(|f| f.to_string()).collect();
             current_chunk.push(fields);
 
-            if bytes_in_chunk as usize >= bytes_per_chunk {
+            if bytes_in_chunk as usize >= chunk_target(sent) {
                 let chunk = ParsedChunk {
                     records: std::mem::take(&mut current_chunk),
                     containers: Vec::new(),
                     bytes_read: bytes_in_chunk,
                 };
+                sent += bytes_in_chunk;
                 bytes_in_chunk = 0;
 
                 if tx.blocking_send(chunk).is_err() {
@@ -1177,6 +1197,10 @@ impl AsyncStreamingProfiler {
             })?;
 
         total_bytes += header_chunk.bytes_read;
+        // The header is source bytes read, as the file engine counts it, so a
+        // byte budget is measured against the same total `bytes_consumed`
+        // reports. No row is counted, so only a byte cap can fire here.
+        stop_eval.update(0, header_chunk.bytes_read, 0.0);
 
         if header_chunk.records.is_empty() {
             return Err(DataProfilerError::StreamingError {
@@ -1710,6 +1734,46 @@ mod tests {
 
         assert_eq!(report.column_profiles.len(), 2);
         assert_eq!(report.execution.rows_processed, 2_000);
+    }
+
+    #[tokio::test]
+    async fn a_byte_budget_stops_the_csv_stream_within_one_record() {
+        // The default chunk (512 KiB) is far larger than these budgets, which
+        // is what let a stream run a whole chunk past its cap.
+        // Varying lengths keep a budget from landing on a record boundary by
+        // construction; fixed-width rows once hid an off-by-the-header miss.
+        let lines: Vec<String> = std::iter::once("id,value,note\n".to_string())
+            .chain((0..200_000).map(|i| format!("{i},{},{}\n", i * 7, "x".repeat(i % 13))))
+            .collect();
+        let data: &'static [u8] = Box::leak(lines.concat().into_bytes().into_boxed_slice());
+
+        for budget in [1_000u64, 4_321, 100_000] {
+            // The first record boundary at or past the budget, counting the
+            // header as the file engine does: the exact place the stream must
+            // stop.
+            let expected = lines
+                .iter()
+                .scan(0u64, |end, line| {
+                    *end += line.len() as u64;
+                    Some(*end)
+                })
+                .find(|&end| end >= budget)
+                .expect("the stream is larger than every budget");
+            let report = AsyncStreamingProfiler::new()
+                .stop_condition(StopCondition::MaxBytes(budget))
+                .analyze_stream(csv_source(data))
+                .await
+                .unwrap();
+            let consumed = report
+                .execution
+                .bytes_consumed
+                .expect("a truncated stream records the bytes it read");
+            assert_eq!(consumed, expected, "budget {budget}");
+            assert!(matches!(
+                report.execution.truncation_reason,
+                Some(TruncationReason::MaxBytes(b)) if b == budget
+            ));
+        }
     }
 
     fn jsonl_source(data: &'static [u8]) -> BytesSource {
