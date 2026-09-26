@@ -27,6 +27,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Full debug info is most of what a debug target directory holds, and CI
+  # caches those directories. Line tables keep file and line numbers in
+  # panics and backtraces, which is all a failing CI run needs.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 permissions:
   contents: read
@@ -232,6 +237,8 @@ jobs:
         with:
           prefix-key: rust-msrv
           shared-key: "v4"
+          # As in setup-rust: a PR-scoped cache only evicts master's.
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       # pyo3's build script needs an interpreter to configure the extension
       # crate arm of the matrix.
@@ -301,10 +308,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
 
+      # One cache for every interpreter, written by the oldest. Only pyo3 and
+      # the extension crate differ between interpreters; the ~400 crates under
+      # them are identical, and five copies of them filled the cache quota.
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          cache-prefix: rust-python-${{ matrix.python }}
+          cache-prefix: rust-python
+          save-cache: ${{ matrix.python == fromJSON(needs.python-interpreters.outputs.versions)[0] }}
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -319,11 +330,17 @@ jobs:
             pyproject.toml
             uv.lock
 
+      # Plain `uv run maturin develop` syncs the project first, which builds
+      # the extension through the PEP 517 backend, and then maturin compiles
+      # the whole tree again: ~6 minutes, then 7m13s, on run 36228290605.
+      # Every later `uv run` needs --no-sync, or it would build it once more.
       - name: Build Python bindings
-        run: uv run maturin develop
+        run: |
+          uv sync --no-install-project
+          uv run --no-sync maturin develop
 
       - name: Run Python tests
-        run: uv run pytest python/tests/ -v -ra
+        run: uv run --no-sync pytest python/tests/ -v -ra
 
   python-wheel-smoke:
     # The pytest job runs against an editable build inside the dev environment,
@@ -362,11 +379,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           token: ${{ github.token }}
 
+      # One cache per OS, written by the oldest interpreter. Each pair builds
+      # a different extension, but only pyo3 and the extension crate differ.
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          # Each OS/interpreter pair builds a different extension artifact.
-          cache-prefix: rust-wheel-smoke-${{ matrix.os }}-${{ matrix.python }}
+          cache-prefix: rust-wheel-smoke-${{ matrix.os }}
+          save-cache: ${{ matrix.python == fromJSON(needs.python-interpreters.outputs.versions)[0] }}
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -450,14 +469,17 @@ jobs:
           cargo run --example etl_quality_gate
           cargo run --example before_after_cleaning
 
+      # Sync without the project, then build it once; see python-tests.
       - name: Build Python bindings
-        run: uv run maturin develop
+        run: |
+          uv sync --no-install-project
+          uv run --no-sync maturin develop
 
       - name: Run Python examples
         run: |
-          uv run python python/examples/messy_csv_inspection.py
-          uv run python python/examples/etl_quality_gate.py
-          uv run python python/examples/before_after_cleaning.py
+          uv run --no-sync python python/examples/messy_csv_inspection.py
+          uv run --no-sync python python/examples/etl_quality_gate.py
+          uv run --no-sync python python/examples/before_after_cleaning.py
 
   python-async-url-tests:
     name: Python Async URL Tests (${{ matrix.variant }})
@@ -496,11 +518,14 @@ jobs:
             pyproject.toml
             uv.lock
 
+      # Sync without the project, then build it once; see python-tests.
       - name: Build Python bindings
-        run: uv run maturin develop --features "${{ matrix.features }}"
+        run: |
+          uv sync --no-install-project
+          uv run --no-sync maturin develop --features "${{ matrix.features }}"
 
       - name: Run async URL tests
-        run: uv run pytest python/tests/test_async_url_api.py -v -ra
+        run: uv run --no-sync pytest python/tests/test_async_url_api.py -v -ra
 
   db-integration-tests:
     name: Database Integration Tests
@@ -602,8 +627,11 @@ jobs:
             pyproject.toml
             uv.lock
 
+      # Sync without the project, then build it once; see python-tests.
       - name: Build Python bindings with database support
-        run: uv run maturin develop --features "python,python-async,sqlite"
+        run: |
+          uv sync --no-install-project
+          uv run --no-sync maturin develop --features "python,python-async,sqlite"
 
       - name: Require SQLite database support
         run: |
