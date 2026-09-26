@@ -482,7 +482,9 @@ enum Pairs {
     /// Ordering was compared on reservoirs holding the same rows slot by
     /// slot, so the compared rows are a uniform sample of the source's rows.
     Aligned(ColumnCounts),
-    /// Ordering was compared on reservoirs that do not hold the same rows.
+    /// Ordering was compared on pairs that each line up by row but hold
+    /// samples of different sizes, so their counts cannot be pooled as one
+    /// sample.
     Unaligned,
 }
 
