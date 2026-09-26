@@ -987,10 +987,10 @@ about 2 points.
 Some sampled components have no bound, and a requirement that reads one stays
 unevaluated as before: an estimated key count (past a million distinct
 values) and a duplicate-row scan over a sample. Start/end date ordering is
-compared only between columns whose samples hold the same rows. A pair where
-either date column has nulls is not compared, and its
-`temporal_order_violations` finding reads `not_assessed`. `scope="observed"`
-is unchanged and decides on the sampled score itself.
+compared only between columns whose samples hold the same rows, so a pair
+where either date column has nulls is not compared. When no pair is compared,
+the `temporal_order_violations` finding reads `not_assessed`.
+`scope="observed"` is unchanged and decides on the sampled score itself.
 
 A report loaded from a document written before dataprof recorded this says
 nothing about how its numbers were obtained. Unknown coverage is a third answer

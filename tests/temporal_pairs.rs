@@ -7,9 +7,13 @@
 //! the findings report as not assessed. A pair of null-free columns still is,
 //! because both columns' samplers keep the same rows.
 
+use std::collections::HashMap;
 use std::io::Write;
 
-use dataprof::{EngineType, FindingCode, Profiler};
+use dataprof::{
+    ColumnProfile, ColumnStats, DataType, EngineType, FindingCode, Profiler, QualityMetrics,
+    TextStats,
+};
 
 const ENGINES: [EngineType; 3] = [
     EngineType::Auto,
@@ -66,6 +70,49 @@ fn a_pair_with_nulls_is_not_compared_on_any_engine() {
             "{engine:?} must say the ordering was not assessed"
         );
     }
+}
+
+#[test]
+fn whole_columns_with_nulls_in_place_are_still_compared() {
+    // A caller of `calculate_from_data` passes every row, nulls in place, so
+    // value `k` of each column is row `k` even with nulls. Rows with a null on
+    // either side are skipped; the others are compared.
+    let column = |name: &str, values: &[&str]| {
+        (
+            name.to_string(),
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let data = HashMap::from([
+        column(
+            "start_date",
+            &["2023-06-01", "", "2023-01-01", "2023-02-01"],
+        ),
+        column("end_date", &["2023-01-01", "", "2023-06-01", ""]),
+    ]);
+    let profile = |name: &str, nulls: usize| ColumnProfile {
+        name: name.to_string(),
+        data_type: DataType::Date,
+        null_count: nulls,
+        total_count: 4,
+        unique_count: None,
+        unique_count_is_approximate: None,
+        invalid_count: None,
+        type_homogeneity: None,
+        stats: ColumnStats::Text(TextStats::from_lengths(10, 10, 10.0)),
+        patterns: None,
+    };
+    let metrics = QualityMetrics::calculate_from_data(
+        &data,
+        &[profile("start_date", 1), profile("end_date", 2)],
+    )
+    .unwrap();
+    let timeliness = metrics.timeliness.expect("timeliness assessed");
+    assert_eq!(timeliness.temporal_pairs_checked, 2);
+    assert_eq!(timeliness.temporal_violations, 1);
 }
 
 #[test]
