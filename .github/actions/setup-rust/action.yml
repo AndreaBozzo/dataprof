@@ -13,6 +13,10 @@ inputs:
     description: 'Additional Rust targets to install (e.g., "aarch64-unknown-linux-gnu")'
     required: false
     default: ''
+  save-cache:
+    description: 'Whether this job writes the cache. Pull request runs never do.'
+    required: false
+    default: 'true'
 
 runs:
   using: composite
@@ -46,11 +50,17 @@ runs:
           rustup target add $(echo "${{ inputs.targets }}" | tr ',' ' ')
         fi
 
+    # Pull request runs restore the cache but never write it. A cache written
+    # on a PR is scoped to that PR's ref, so no other branch can read it, yet
+    # it counts against the repository's 10 GB. One PR run wrote 8.4 GB of
+    # them, which evicted master's caches, so every other PR started cold.
+    # Caches written on master, tags and schedules are readable by every PR.
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:
         prefix-key: ${{ inputs.cache-prefix }}
         shared-key: "v4"
+        save-if: ${{ github.event_name != 'pull_request' && inputs.save-cache == 'true' }}
 
     - name: Verify Rust installation
       shell: bash
