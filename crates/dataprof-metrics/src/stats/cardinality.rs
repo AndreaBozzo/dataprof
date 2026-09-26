@@ -302,6 +302,41 @@ fn hash_table_bytes<T>(capacity: usize) -> usize {
     buckets * (std::mem::size_of::<T>() + 1) + GROUP_WIDTH
 }
 
+/// Spill exact sets, the largest first, until those left hold at most
+/// `budget` bytes. Returns the bytes they still hold.
+///
+/// Ties go by position, so pass the estimators in column order and the choice
+/// does not depend on hash order. A spilled count is reported approximate.
+/// This is the order the incremental engine spills in under memory pressure;
+/// a caller with a row tracker spills it only if this was not enough.
+pub fn spill_largest_exact_sets(
+    estimators: &mut [&mut CardinalityEstimator],
+    budget: usize,
+) -> usize {
+    let mut held: usize = estimators
+        .iter()
+        .map(|estimator| estimator.exact_bytes())
+        .sum();
+    if held <= budget {
+        return held;
+    }
+    let mut by_size: Vec<(usize, usize)> = estimators
+        .iter()
+        .map(|estimator| estimator.exact_bytes())
+        .enumerate()
+        .filter(|&(_, bytes)| bytes > 0)
+        .collect();
+    by_size.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+    for (position, bytes) in by_size {
+        if held <= budget {
+            break;
+        }
+        estimators[position].spill();
+        held -= bytes;
+    }
+    held
+}
+
 impl Default for CardinalityEstimator {
     fn default() -> Self {
         Self::new()
@@ -342,6 +377,38 @@ mod tests {
             );
             assert_eq!(est.estimate(), distinct);
         }
+    }
+
+    #[test]
+    fn the_largest_sets_spill_first_and_only_until_under_budget() {
+        let mut small = estimator_over(1_000);
+        let mut large = estimator_over(50_000);
+        let mut tied_first = estimator_over(20_000);
+        let mut tied_second = estimator_over(20_000);
+        let large_bytes = large.exact_bytes();
+        let tie_bytes = tied_first.exact_bytes();
+        let small_bytes = small.exact_bytes();
+        assert!(large_bytes > tie_bytes && tie_bytes > small_bytes);
+
+        // Room for one tied set and the small one: the large set goes, then
+        // the first of the tie by position.
+        let budget = tie_bytes + small_bytes;
+        let held = spill_largest_exact_sets(
+            &mut [&mut small, &mut large, &mut tied_first, &mut tied_second],
+            budget,
+        );
+        assert_eq!(held, budget);
+        assert!(large.is_approximate());
+        assert!(tied_first.is_approximate());
+        assert!(!tied_second.is_approximate());
+        assert!(!small.is_approximate());
+        assert_eq!(small.estimate(), 1_000);
+
+        // Under budget, nothing spills.
+        let mut kept = estimator_over(1_000);
+        let bytes = kept.exact_bytes();
+        assert_eq!(spill_largest_exact_sets(&mut [&mut kept], bytes), bytes);
+        assert!(!kept.is_approximate());
     }
 
     #[test]

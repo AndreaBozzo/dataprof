@@ -1,4 +1,4 @@
-use crate::record_batch_analyzer::BatchRowTracker;
+use crate::record_batch_analyzer::{BatchRowTracker, in_column_order};
 use arrow::array::{Array, StringArray};
 use arrow::csv::ReaderBuilder;
 use arrow::datatypes::{Field, Schema};
@@ -306,6 +306,9 @@ impl ArrowProfiler {
         let mut hint_bindings = ValueHintBindingAccumulator::new(&self.semantic_hints);
 
         let mut memory_sampler = PeakMemorySampler::new();
+        // The share of the memory limit the exact distinct sets may hold, the
+        // same share the incremental engine treats as memory pressure.
+        let exact_sets_budget = self.memory_limit_mb.saturating_mul(1024 * 1024) / 100 * 80;
 
         for batch_result in csv_reader.by_ref() {
             let mut batch =
@@ -336,6 +339,21 @@ impl ArrowProfiler {
                         }
                     }
                 }
+            }
+
+            // The exact distinct sets are what grows with the data; keep them
+            // within the memory limit, as the incremental engine does.
+            let held: usize = column_analyzers
+                .values()
+                .map(|analyzer| analyzer.cardinality.exact_bytes())
+                .sum::<usize>()
+                + row_tracker.exact_bytes();
+            if held > exact_sets_budget {
+                let mut columns =
+                    in_column_order(&mut column_analyzers, projected_header_names, |analyzer| {
+                        &mut analyzer.cardinality
+                    });
+                row_tracker.bound_exact_sets(&mut columns, exact_sets_budget);
             }
 
             // Sample after processing, while the batch and the analyzer state

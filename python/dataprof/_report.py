@@ -215,9 +215,10 @@ class ProfileReport:
         A dict with ``confidence_level``, ``overall_score`` and
         ``dimension_scores``. Each interval is ``{"lower": ..., "upper": ...}``
         on the 0-100 scale, or ``None`` for a score with no bound: an estimated
-        key count, a duplicate scan over a sample, or start/end ordering between
-        date columns whose samples do not hold the same rows (one of them has
-        nulls), and an overall score that weighs one of them.
+        key count or a duplicate scan over a sample, and an overall score that
+        weighs one of them. Start/end ordering is compared only between date
+        columns whose samples hold the same rows, so a pair where either
+        column has nulls is not compared.
 
         The sample fixes each check: a column's type, dominant form, detected
         pattern, decimal scale and outlier fences. The intervals cover the

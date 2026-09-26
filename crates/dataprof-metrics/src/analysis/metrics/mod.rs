@@ -332,8 +332,11 @@ impl MetricsCalculator {
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
             let temporal_columns =
                 Self::effective_temporal_columns(column_profiles, semantic_hints);
-            let t =
-                TimelinessCalculator::new(&self.thresholds).calculate(data, &temporal_columns)?;
+            let t = TimelinessCalculator::new(&self.thresholds).calculate(
+                data,
+                &temporal_columns,
+                column_profiles,
+            )?;
             Some(TimelinessMetrics {
                 future_dates_count: t.future_dates_count,
                 stale_data_ratio: t.stale_data_ratio,
@@ -690,7 +693,7 @@ impl MetricsCalculator {
 
         let timeliness = if Self::is_requested(requested, QualityDimension::Timeliness) {
             let t = if !data.is_empty() {
-                timeliness_calculator.calculate(data, &temporal_columns)?
+                timeliness_calculator.calculate(data, &temporal_columns, column_profiles)?
             } else {
                 timeliness::TimelinessMetrics {
                     future_dates_count: 0,
@@ -702,6 +705,7 @@ impl MetricsCalculator {
                     valid_dates: 0,
                     stale_dates: 0,
                     temporal_column_pairs: 0,
+                    compared_pairs: Vec::new(),
                 }
             };
             sampled_dimensions.push("timeliness".to_string());
