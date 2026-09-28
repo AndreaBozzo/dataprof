@@ -674,8 +674,16 @@ fn test_standard_vs_arrow_csv_numeric_stats() {
                 ("min", a.min, b.min),
                 ("max", a.max, b.max),
                 ("mean", a.mean, b.mean),
-                ("std_dev", a.std_dev, b.std_dev),
-                ("variance", a.variance, b.variance),
+                (
+                    "std_dev",
+                    a.std_dev.expect("finite spread"),
+                    b.std_dev.expect("finite spread"),
+                ),
+                (
+                    "variance",
+                    a.variance.expect("finite spread"),
+                    b.variance.expect("finite spread"),
+                ),
             ] {
                 let tolerance = (1e-9 * left.abs().max(right.abs())).max(1e-12);
                 assert!(

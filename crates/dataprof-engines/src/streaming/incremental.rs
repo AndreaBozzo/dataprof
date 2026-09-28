@@ -583,7 +583,7 @@ mod tests {
         // Verify advanced numeric stats are computed
         match &age_column.stats {
             ColumnStats::Numeric(n) => {
-                assert!(n.std_dev > 0.0, "std_dev should be positive");
+                assert!(n.std_dev.unwrap() > 0.0, "std_dev should be positive");
                 assert!(n.median.is_some(), "median should be computed");
                 assert!(n.skewness.is_some(), "skewness should be computed");
                 assert!(n.kurtosis.is_some(), "kurtosis should be computed");

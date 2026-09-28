@@ -18,7 +18,8 @@
 use std::io::Write;
 
 use dataprof::{
-    ColumnStats, CsvParserConfig, EngineType, NumericStats, Profiler, analyze_csv_file,
+    ColumnStats, CsvParserConfig, EngineType, NumericStats, ProfileReport, Profiler,
+    analyze_csv_file,
 };
 use serde_json::Value;
 use tempfile::NamedTempFile;
@@ -36,13 +37,9 @@ fn csv_with(values: &[f64]) -> NamedTempFile {
     file
 }
 
-/// The numeric stats every CSV engine reports for `values`, each paired with
-/// the same column as the report serializes it.
-fn stats_per_engine(values: &[f64]) -> Vec<(&'static str, NumericStats, Value)> {
-    let file = csv_with(values);
-    let path = file.path();
-
-    let reports = vec![
+/// The report every CSV engine produces for the file at `path`.
+fn reports_per_engine(path: &std::path::Path) -> Vec<(&'static str, ProfileReport)> {
+    vec![
         (
             "standard",
             analyze_csv_file(path, &CsvParserConfig::default()).expect("standard analysis"),
@@ -68,9 +65,15 @@ fn stats_per_engine(values: &[f64]) -> Vec<(&'static str, NumericStats, Value)> 
                 .analyze_file(path)
                 .expect("columnar analysis"),
         ),
-    ];
+    ]
+}
 
-    reports
+/// The numeric stats every CSV engine reports for `values`, each paired with
+/// the same column as the report serializes it.
+fn stats_per_engine(values: &[f64]) -> Vec<(&'static str, NumericStats, Value)> {
+    let file = csv_with(values);
+
+    reports_per_engine(file.path())
         .into_iter()
         .map(|(engine, report)| {
             let serialized = serde_json::to_value(&report).expect("report serializes");
@@ -123,13 +126,13 @@ fn variance_survives_a_large_offset_on_every_engine() {
             assert_exact(
                 engine,
                 "variance",
-                stats.variance,
+                stats.variance.expect("finite variance"),
                 CONSECUTIVE_FOUR_VARIANCE,
             );
             assert_exact(
                 engine,
                 "std_dev",
-                stats.std_dev,
+                stats.std_dev.expect("finite standard deviation"),
                 CONSECUTIVE_FOUR_VARIANCE.sqrt(),
             );
             // Rounding cannot rescue this: 0.0 and 2.6667 round to themselves.
@@ -149,8 +152,8 @@ fn variance_survives_a_large_offset_on_every_engine() {
 fn a_constant_column_still_reports_zero_variance() {
     for value in [0.0, 1.0, 1e9] {
         for (engine, stats, column) in stats_per_engine(&[value; 4]) {
-            assert_eq!(stats.variance, 0.0, "{engine} at value {value}");
-            assert_eq!(stats.std_dev, 0.0, "{engine} at value {value}");
+            assert_eq!(stats.variance, Some(0.0), "{engine} at value {value}");
+            assert_eq!(stats.std_dev, Some(0.0), "{engine} at value {value}");
             assert_eq!(stats.mean, value, "{engine} at value {value}");
             assert_eq!(
                 serialized(&column, "variance", engine),
@@ -158,6 +161,48 @@ fn a_constant_column_still_reports_zero_variance() {
                 "{engine} at value {value}"
             );
         }
+    }
+}
+
+#[test]
+fn overflowing_variance_is_null_and_round_trips_on_every_csv_engine() {
+    let values = [1e308, -1e308, 5.0, 0.5, 5.0, 7.0];
+    let file = csv_with(&values);
+    let schema: Value =
+        serde_json::from_str(include_str!("../docs/schema/profile-report.v1.schema.json")).unwrap();
+    let validator = jsonschema::draft202012::options().build(&schema).unwrap();
+
+    for (engine, report) in reports_per_engine(file.path()) {
+        // A `Some(NaN)` would also serialize as null, so check the value in
+        // memory as well as the document.
+        let ColumnStats::Numeric(numeric) = &report.column_profiles[0].stats else {
+            panic!("{engine} reported {:?}", report.column_profiles[0].stats);
+        };
+        assert_eq!(numeric.variance, None, "{engine}");
+        assert_eq!(numeric.std_dev, None, "{engine}");
+        assert_eq!(numeric.coefficient_of_variation, None, "{engine}");
+        assert_eq!(numeric.skewness, None, "{engine}");
+        assert_eq!(numeric.kurtosis, None, "{engine}");
+        let document = serde_json::to_value(&report).unwrap();
+        let stats = &document["column_profiles"][0]["stats"]["Numeric"];
+        assert_eq!(stats["variance"], Value::Null, "{engine}");
+        assert_eq!(stats["std_dev"], Value::Null, "{engine}");
+        assert_eq!(stats["coefficient_of_variation"], Value::Null, "{engine}");
+        assert_eq!(stats["skewness"], Value::Null, "{engine}");
+        assert_eq!(stats["kurtosis"], Value::Null, "{engine}");
+        assert_eq!(stats["mean"], 2.9167, "{engine}");
+        let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        assert_eq!(summary["columns"][0]["stats"]["variance"], Value::Null);
+        assert_eq!(summary["columns"][0]["stats"]["std_dev"], Value::Null);
+        assert!(summary["columns"][0]["stats"].get("variance").is_some());
+        assert!(summary["columns"][0]["stats"].get("std_dev").is_some());
+        assert!(validator.is_valid(&document), "{engine}");
+        let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            document,
+            "{engine}"
+        );
     }
 }
 
@@ -201,7 +246,13 @@ fn stability_holds_past_the_simd_threshold() {
 
     for (engine, stats, column) in stats_per_engine(&values) {
         assert_close(engine, "mean", stats.mean, 1e9 + 1.5, 1e-6);
-        assert_close(engine, "variance", stats.variance, expected_variance, 1e-6);
+        assert_close(
+            engine,
+            "variance",
+            stats.variance.unwrap(),
+            expected_variance,
+            1e-6,
+        );
         assert_close(
             engine,
             "serialized variance",
@@ -263,8 +314,8 @@ mod parquet_path {
                 stats.mean
             );
             assert!(
-                (stats.variance - expected_variance).abs() < 1e-6,
-                "batch size {batch_size} reported variance {}",
+                (stats.variance.unwrap() - expected_variance).abs() < 1e-6,
+                "batch size {batch_size} reported variance {:?}",
                 stats.variance
             );
         }
@@ -281,5 +332,19 @@ mod parquet_path {
 
         let overflowing = parquet_stats(&[1e308, 1e308], 1);
         assert_eq!(overflowing.mean, 1e308);
+    }
+
+    #[test]
+    fn parquet_overflowing_spread_is_absent_across_row_groups() {
+        let values = [1e308, -1e308, 5.0, 0.5, 5.0, 7.0];
+        for batch_size in [1, 2, 6] {
+            let stats = parquet_stats(&values, batch_size);
+            assert_eq!(stats.variance, None, "batch size {batch_size}");
+            assert_eq!(stats.std_dev, None, "batch size {batch_size}");
+            assert_eq!(
+                stats.coefficient_of_variation, None,
+                "batch size {batch_size}"
+            );
+        }
     }
 }

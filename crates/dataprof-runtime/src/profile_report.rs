@@ -294,10 +294,22 @@ struct PythonColumnStatsDocument {
     max: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mean: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    std_dev: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    variance: Option<f64>,
+    // Outer None means this statistic does not apply to the column. An inner
+    // None is a numeric spread that overflowed: keep its explicit JSON null.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_stat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<f64>")]
+    std_dev: Option<Option<f64>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable_stat",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "Option<f64>")]
+    variance: Option<Option<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     median: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -332,6 +344,15 @@ struct PythonColumnStatsDocument {
     false_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     true_ratio: Option<f64>,
+}
+
+fn deserialize_present_nullable_stat<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<f64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer).map(Some)
 }
 
 #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]

@@ -117,10 +117,15 @@ pub fn build_column_profile(input: ColumnProfileInput<'_>) -> ColumnProfile {
                     numeric.min = exact.min;
                     numeric.max = exact.max;
                     numeric.mean = exact.mean;
-                    numeric.std_dev = exact.std_dev;
-                    numeric.variance = exact.variance;
-                    numeric.coefficient_of_variation =
-                        calculate_coefficient_of_variation(exact.std_dev, exact.mean);
+                    numeric.std_dev = exact.std_dev.is_finite().then_some(exact.std_dev);
+                    numeric.variance = exact.variance.is_finite().then_some(exact.variance);
+                    numeric.coefficient_of_variation = numeric
+                        .std_dev
+                        .and_then(|value| calculate_coefficient_of_variation(value, exact.mean));
+                    if numeric.std_dev.is_none() {
+                        numeric.skewness = None;
+                        numeric.kurtosis = None;
+                    }
                     // Order statistics (median, quartiles, mode, skewness,
                     // kurtosis, outliers) still come from the retained sample;
                     // disclose that whenever the sample no longer covers every
@@ -645,6 +650,51 @@ mod tests {
                 other => panic!("expected measured zero statistics, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn an_overflowing_exact_spread_clears_the_sample_shape() {
+        // The bounded sample missed the extreme values, so on its own it has a
+        // finite spread; the full stream does not (#784).
+        let samples: Vec<String> = ["5", "0.5", "5", "7", "3"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
+        let profile = build_column_profile(ColumnProfileInput {
+            name: "x".to_string(),
+            data_type: DataType::Float,
+            total_count: 20_000,
+            null_count: 0,
+            unique_count: None,
+            unique_count_is_approximate: None,
+            sample_values: &samples,
+            text_lengths: None,
+            boolean_counts: None,
+            skip_statistics: false,
+            skip_patterns: true,
+            locale: None,
+            exact_numeric: Some(ExactNumericAggregates {
+                min: -1e308,
+                max: 1e308,
+                mean: 2.9167,
+                std_dev: f64::NAN,
+                variance: f64::NAN,
+                count: 20_000,
+            }),
+            exact_date_matches: None,
+        });
+
+        let ColumnStats::Numeric(stats) = profile.stats else {
+            panic!("expected numeric statistics, got {:?}", profile.stats);
+        };
+        assert_eq!(stats.variance, None);
+        assert_eq!(stats.std_dev, None);
+        assert_eq!(stats.coefficient_of_variation, None);
+        assert_eq!(stats.skewness, None);
+        assert_eq!(stats.kurtosis, None);
+        // Order statistics still describe the retained sample.
+        assert_eq!(stats.median, Some(5.0));
+        assert_eq!(stats.is_approximate, Some(true));
     }
 
     #[test]

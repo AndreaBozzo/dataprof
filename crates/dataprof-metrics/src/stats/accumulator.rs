@@ -174,7 +174,12 @@ impl NumericAccumulator {
         if self.count < 2 {
             return 0.0;
         }
-        (self.m2 / (self.count - 1) as f64).max(0.0)
+        let variance = self.m2 / (self.count - 1) as f64;
+        if variance.is_nan() {
+            variance
+        } else {
+            variance.max(0.0)
+        }
     }
 
     /// Standard deviation derived from [`sample_variance`](Self::sample_variance).
@@ -187,7 +192,12 @@ impl NumericAccumulator {
         if self.count < 2 {
             return 0.0;
         }
-        (self.m2 / self.count as f64).max(0.0)
+        let variance = self.m2 / self.count as f64;
+        if variance.is_nan() {
+            variance
+        } else {
+            variance.max(0.0)
+        }
     }
 
     /// Standard deviation derived from [`population_variance`](Self::population_variance).
@@ -270,6 +280,14 @@ mod tests {
         let accumulator = accumulate(&[1e308, 1e308]);
         assert_eq!(accumulator.mean(), 1e308);
         assert_eq!(accumulator.sample_variance(), 0.0);
+    }
+
+    #[test]
+    fn overflowing_spread_is_not_reported_as_zero() {
+        let accumulator = accumulate(&[1e308, -1e308, 5.0, 0.5, 5.0, 7.0]);
+        assert!(!accumulator.sample_variance().is_finite());
+        assert!(!accumulator.sample_std_dev().is_finite());
+        assert!(!accumulator.population_variance().is_finite());
     }
 
     #[test]

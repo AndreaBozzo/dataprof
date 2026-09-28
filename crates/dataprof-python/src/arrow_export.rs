@@ -727,8 +727,8 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let mins = numeric_field!(profiles, min);
     let maxs = numeric_field!(profiles, max);
     let means = numeric_field!(profiles, mean);
-    let std_devs = numeric_field!(profiles, std_dev);
-    let variances = numeric_field!(profiles, variance);
+    let std_devs = numeric_opt_field!(profiles, std_dev);
+    let variances = numeric_opt_field!(profiles, variance);
     let medians = numeric_opt_field!(profiles, median);
     let modes = numeric_opt_field!(profiles, mode);
     let skewnesses = numeric_opt_field!(profiles, skewness);
