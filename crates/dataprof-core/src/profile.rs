@@ -96,10 +96,12 @@ pub struct NumericStats {
     pub max: f64,
     #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub mean: f64,
-    /// `None` when the spread exceeds the finite `f64` range.
+    /// `None` when the spread of the values exceeds the finite `f64` range.
+    /// A constant column is `Some(0.0)`, so `None` never means "no spread".
     #[serde(serialize_with = "crate::serde_helpers::round_4_opt")]
     pub std_dev: Option<f64>,
-    /// `None` when the spread exceeds the finite `f64` range.
+    /// `None` when the spread of the values exceeds the finite `f64` range.
+    /// A constant column is `Some(0.0)`, so `None` never means "no spread".
     #[serde(serialize_with = "crate::serde_helpers::round_4_opt")]
     pub variance: Option<f64>,
     #[serde(

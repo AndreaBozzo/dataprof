@@ -961,7 +961,7 @@
           ]
         },
         "std_dev": {
-          "description": "`None` when the spread exceeds the finite `f64` range.",
+          "description": "`None` when the spread of the values exceeds the finite `f64` range.\nA constant column is `Some(0.0)`, so `None` never means \"no spread\".",
           "format": "double",
           "type": [
             "number",
@@ -969,7 +969,7 @@
           ]
         },
         "variance": {
-          "description": "`None` when the spread exceeds the finite `f64` range.",
+          "description": "`None` when the spread of the values exceeds the finite `f64` range.\nA constant column is `Some(0.0)`, so `None` never means \"no spread\".",
           "format": "double",
           "type": [
             "number",

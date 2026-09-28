@@ -37,13 +37,9 @@ fn csv_with(values: &[f64]) -> NamedTempFile {
     file
 }
 
-/// The numeric stats every CSV engine reports for `values`, each paired with
-/// the same column as the report serializes it.
-fn stats_per_engine(values: &[f64]) -> Vec<(&'static str, NumericStats, Value)> {
-    let file = csv_with(values);
-    let path = file.path();
-
-    let reports = vec![
+/// The report every CSV engine produces for the file at `path`.
+fn reports_per_engine(path: &std::path::Path) -> Vec<(&'static str, ProfileReport)> {
+    vec![
         (
             "standard",
             analyze_csv_file(path, &CsvParserConfig::default()).expect("standard analysis"),
@@ -69,9 +65,15 @@ fn stats_per_engine(values: &[f64]) -> Vec<(&'static str, NumericStats, Value)> 
                 .analyze_file(path)
                 .expect("columnar analysis"),
         ),
-    ];
+    ]
+}
 
-    reports
+/// The numeric stats every CSV engine reports for `values`, each paired with
+/// the same column as the report serializes it.
+fn stats_per_engine(values: &[f64]) -> Vec<(&'static str, NumericStats, Value)> {
+    let file = csv_with(values);
+
+    reports_per_engine(file.path())
         .into_iter()
         .map(|(engine, report)| {
             let serialized = serde_json::to_value(&report).expect("report serializes");
@@ -170,34 +172,36 @@ fn overflowing_variance_is_null_and_round_trips_on_every_csv_engine() {
         serde_json::from_str(include_str!("../docs/schema/profile-report.v1.schema.json")).unwrap();
     let validator = jsonschema::draft202012::options().build(&schema).unwrap();
 
-    for engine in [
-        EngineType::Auto,
-        EngineType::Incremental,
-        EngineType::Columnar,
-    ] {
-        let report = Profiler::new()
-            .engine(engine)
-            .analyze_file(file.path())
-            .unwrap();
+    for (engine, report) in reports_per_engine(file.path()) {
+        // A `Some(NaN)` would also serialize as null, so check the value in
+        // memory as well as the document.
+        let ColumnStats::Numeric(numeric) = &report.column_profiles[0].stats else {
+            panic!("{engine} reported {:?}", report.column_profiles[0].stats);
+        };
+        assert_eq!(numeric.variance, None, "{engine}");
+        assert_eq!(numeric.std_dev, None, "{engine}");
+        assert_eq!(numeric.coefficient_of_variation, None, "{engine}");
+        assert_eq!(numeric.skewness, None, "{engine}");
+        assert_eq!(numeric.kurtosis, None, "{engine}");
         let document = serde_json::to_value(&report).unwrap();
         let stats = &document["column_profiles"][0]["stats"]["Numeric"];
-        assert_eq!(stats["variance"], Value::Null, "{engine:?}");
-        assert_eq!(stats["std_dev"], Value::Null, "{engine:?}");
-        assert_eq!(stats["coefficient_of_variation"], Value::Null, "{engine:?}");
-        assert_eq!(stats["skewness"], Value::Null, "{engine:?}");
-        assert_eq!(stats["kurtosis"], Value::Null, "{engine:?}");
-        assert_eq!(stats["mean"], 2.9167, "{engine:?}");
+        assert_eq!(stats["variance"], Value::Null, "{engine}");
+        assert_eq!(stats["std_dev"], Value::Null, "{engine}");
+        assert_eq!(stats["coefficient_of_variation"], Value::Null, "{engine}");
+        assert_eq!(stats["skewness"], Value::Null, "{engine}");
+        assert_eq!(stats["kurtosis"], Value::Null, "{engine}");
+        assert_eq!(stats["mean"], 2.9167, "{engine}");
         let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
         assert_eq!(summary["columns"][0]["stats"]["variance"], Value::Null);
         assert_eq!(summary["columns"][0]["stats"]["std_dev"], Value::Null);
         assert!(summary["columns"][0]["stats"].get("variance").is_some());
         assert!(summary["columns"][0]["stats"].get("std_dev").is_some());
-        assert!(validator.is_valid(&document), "{engine:?}");
+        assert!(validator.is_valid(&document), "{engine}");
         let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(restored).unwrap(),
             document,
-            "{engine:?}"
+            "{engine}"
         );
     }
 }
