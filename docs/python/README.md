@@ -435,7 +435,7 @@ Per-column profiling statistics.
 | `skewness` | `float \| None` | Skewness |
 | `kurtosis` | `float \| None` | Kurtosis |
 | `coefficient_of_variation` | `float \| None` | CV |
-| `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}` |
+| `quartiles` | `dict \| None` | `{"q1", "q2", "q3", "iqr"}`; `iqr` is `None` when `q3 - q1` overflows `f64` |
 | `is_approximate` | `bool \| None` | Whether stats were estimated from a sample |
 | `min_length` | `int \| None` | Shortest value, in Unicode scalar values (0.11: UTF-8 bytes) |
 | `max_length` | `int \| None` | Longest value, in Unicode scalar values (0.11: UTF-8 bytes) |

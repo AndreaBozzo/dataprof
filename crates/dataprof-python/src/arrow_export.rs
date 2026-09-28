@@ -759,7 +759,7 @@ fn profiles_to_record_batch(profiles: &[ColumnProfile]) -> anyhow::Result<Record
     let iqrs: Float64Array = profiles
         .iter()
         .map(|p| match &p.stats {
-            ColumnStats::Numeric(n) => n.quartiles.as_ref().map(|q| q.iqr),
+            ColumnStats::Numeric(n) => n.quartiles.as_ref().and_then(|q| q.iqr),
             _ => None,
         })
         .collect();

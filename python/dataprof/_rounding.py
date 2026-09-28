@@ -59,11 +59,13 @@ def _r4(v: float | None) -> float | None:
     return _half_up(v, 4)
 
 
-def _round_quartiles(q: dict[str, float] | None) -> dict[str, float] | None:
-    """Round quartile values to 2 decimal places."""
+def _round_quartiles(
+    q: dict[str, float | None] | None,
+) -> dict[str, float | None] | None:
+    """Round quartile values to 2 decimal places. An unrepresentable IQR is None."""
     if q is None:
         return None
-    return {k: _half_up(v, 2) for k, v in q.items()}
+    return {k: None if v is None else _half_up(v, 2) for k, v in q.items()}
 
 
 def _round_dimension(values: dict[str, _Any]) -> dict[str, _Any]:

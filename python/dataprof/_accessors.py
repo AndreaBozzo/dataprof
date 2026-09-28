@@ -130,7 +130,7 @@ class ColumnProfile(_View):
     skewness = _Field[float | None](section="stats")
     kurtosis = _Field[float | None](section="stats")
     coefficient_of_variation = _Field[float | None](section="stats")
-    quartiles = _Field[dict[str, float] | None](section="stats")
+    quartiles = _Field[dict[str, float | None] | None](section="stats")
     is_approximate = _Field[bool | None](section="stats")
     outlier_count = _Field[int | None](section="stats")
     min_length = _Field[int | None](section="stats")

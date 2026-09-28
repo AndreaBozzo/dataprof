@@ -207,6 +207,42 @@ fn overflowing_variance_is_null_and_round_trips_on_every_csv_engine() {
 }
 
 #[test]
+fn overflowing_iqr_is_null_and_round_trips_on_every_csv_engine() {
+    let file = csv_with(&[-1e308, 1e308, -1e308, 1e308]);
+    let schema: Value =
+        serde_json::from_str(include_str!("../docs/schema/profile-report.v1.schema.json")).unwrap();
+    let validator = jsonschema::draft202012::options().build(&schema).unwrap();
+
+    for (engine, report) in reports_per_engine(file.path()) {
+        let ColumnStats::Numeric(numeric) = &report.column_profiles[0].stats else {
+            panic!("{engine} reported {:?}", report.column_profiles[0].stats);
+        };
+        let quartiles = numeric.quartiles.as_ref().expect("four values");
+        assert_eq!(
+            (quartiles.q1, quartiles.q3, quartiles.iqr),
+            (-1e308, 1e308, None),
+            "{engine}"
+        );
+        // Fences beyond the `f64` range leave no finite value outside them.
+        assert_eq!(numeric.outlier_count, Some(0), "{engine}");
+
+        let document = serde_json::to_value(&report).unwrap();
+        let serialized = &document["column_profiles"][0]["stats"]["Numeric"]["quartiles"];
+        assert_eq!(serialized.get("iqr"), Some(&Value::Null), "{engine}");
+        let summary: Value = serde_json::from_str(&report.summary_json().unwrap()).unwrap();
+        let summarized = &summary["columns"][0]["stats"]["quartiles"];
+        assert_eq!(summarized.get("iqr"), Some(&Value::Null), "{engine}");
+        assert!(validator.is_valid(&document), "{engine}");
+        let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            document,
+            "{engine}"
+        );
+    }
+}
+
+#[test]
 fn mean_survives_cancelling_values_in_any_order() {
     // The unit contribution is what a naive sum drops; the order decides
     // whether it is dropped, so both permutations run.
@@ -345,6 +381,16 @@ mod parquet_path {
                 stats.coefficient_of_variation, None,
                 "batch size {batch_size}"
             );
+        }
+    }
+
+    #[test]
+    fn parquet_overflowing_iqr_is_absent_across_row_groups() {
+        for batch_size in [1, 2, 4] {
+            let stats = parquet_stats(&[-1e308, 1e308, -1e308, 1e308], batch_size);
+            let quartiles = stats.quartiles.expect("four values");
+            assert_eq!(quartiles.iqr, None, "batch size {batch_size}");
+            assert_eq!(stats.outlier_count, Some(0), "batch size {batch_size}");
         }
     }
 }
