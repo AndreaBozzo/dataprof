@@ -106,8 +106,13 @@ fn count_outliers_iqr(
         return None;
     }
     let q = quartiles?;
-    let lower = q.q1 - 1.5 * q.iqr;
-    let upper = q.q3 + 1.5 * q.iqr;
+    // An IQR beyond the `f64` range puts both fences beyond it too, so no
+    // finite value can fall outside them.
+    let Some(iqr) = q.iqr else {
+        return Some(0);
+    };
+    let lower = q.q1 - 1.5 * iqr;
+    let upper = q.q3 + 1.5 * iqr;
     Some(values.iter().filter(|&&v| v < lower || v > upper).count())
 }
 
@@ -144,7 +149,12 @@ pub fn calculate_quartiles(sorted_data: &[f64]) -> Option<Quartiles> {
 
     let iqr = q3 - q1;
 
-    Some(Quartiles { q1, q2, q3, iqr })
+    Some(Quartiles {
+        q1,
+        q2,
+        q3,
+        iqr: iqr.is_finite().then_some(iqr),
+    })
 }
 
 /// Calculate percentile using Type 7 linear interpolation (R/Excel/pandas default)
@@ -338,7 +348,7 @@ mod tests {
         assert!((q.q1 - 2.0).abs() < 0.01);
         assert_eq!(q.q2, 3.0);
         assert!((q.q3 - 4.0).abs() < 0.01);
-        assert!((q.iqr - 2.0).abs() < 0.01);
+        assert!((q.iqr.unwrap() - 2.0).abs() < 0.01);
     }
 
     #[test]
@@ -473,6 +483,26 @@ mod tests {
         assert_eq!(stats.skewness, None);
         assert_eq!(stats.kurtosis, None);
         assert!(stats.mean.is_finite());
+    }
+
+    /// `q3 - q1` can overflow while both quartiles are representable (#802).
+    #[test]
+    fn quartiles_report_an_overflowing_iqr_as_absent() {
+        let q = calculate_quartiles(&[-1e308, -1e308, 1e308, 1e308]).unwrap();
+        assert_eq!((q.q1, q.q2, q.q3, q.iqr), (-1e308, 0.0, 1e308, None));
+        assert_eq!(calculate_quartiles(&[2.0; 4]).unwrap().iqr, Some(0.0));
+
+        // The extremes lie outside [q1, q3], but not outside fences that are
+        // themselves beyond the `f64` range: no value is an outlier.
+        let cells: Vec<String> = [-1.7e308, -1e308, -1e308, 1e308, 1e308, 1.7e308]
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
+        let stats = compute_numeric_stats(&cells);
+        let quartiles = stats.quartiles.unwrap();
+        assert_eq!((quartiles.q1, quartiles.q3), (-1e308, 1e308));
+        assert_eq!(quartiles.iqr, None);
+        assert_eq!(stats.outlier_count, Some(0));
     }
 
     #[test]

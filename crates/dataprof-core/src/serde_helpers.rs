@@ -131,8 +131,8 @@ pub mod quartiles {
                     q2: f64,
                     #[serde(serialize_with = "round_2")]
                     q3: f64,
-                    #[serde(serialize_with = "round_2")]
-                    iqr: f64,
+                    #[serde(serialize_with = "round_2_opt")]
+                    iqr: Option<f64>,
                 }
 
                 let rounded = RoundedQuartiles {
@@ -260,7 +260,7 @@ mod tests {
                 q1: 1.234,
                 q2: 2.345,
                 q3: 3.456,
-                iqr: 2.222,
+                iqr: Some(2.222),
             }),
         };
         let json = serde_json::to_value(value).unwrap();

@@ -2213,8 +2213,12 @@
       "description": "Quartile statistics for numeric distributions.",
       "properties": {
         "iqr": {
+          "description": "`q3 - q1`, or `None` when that difference exceeds the finite `f64`\nrange; the quartiles themselves are still reported. Equal quartiles\ngive `Some(0.0)`, so `None` never means \"no spread\".",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "q1": {
           "format": "double",

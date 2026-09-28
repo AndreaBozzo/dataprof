@@ -107,7 +107,7 @@ pub struct PyColumnProfile {
     #[pyo3(get)]
     pub coefficient_of_variation: Option<f64>,
     #[pyo3(get)]
-    pub quartiles: Option<std::collections::BTreeMap<String, f64>>,
+    pub quartiles: Option<std::collections::BTreeMap<String, Option<f64>>>,
     #[pyo3(get)]
     pub is_approximate: Option<bool>,
     #[pyo3(get)]
@@ -167,9 +167,9 @@ impl From<&ColumnProfile> for PyColumnProfile {
             ColumnStats::Numeric(n) => {
                 let q_map = n.quartiles.as_ref().map(|q| {
                     let mut m = std::collections::BTreeMap::new();
-                    m.insert("q1".to_string(), q.q1);
-                    m.insert("q2".to_string(), q.q2);
-                    m.insert("q3".to_string(), q.q3);
+                    m.insert("q1".to_string(), Some(q.q1));
+                    m.insert("q2".to_string(), Some(q.q2));
+                    m.insert("q3".to_string(), Some(q.q3));
                     m.insert("iqr".to_string(), q.iqr);
                     m
                 });

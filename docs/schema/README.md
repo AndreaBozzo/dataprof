@@ -100,8 +100,12 @@ For numeric columns, `std_dev` and `variance` remain required fields in the
 canonical report. They are `null` when the spread of finite input values cannot
 be represented as a finite `f64`; a true constant column reports `0.0`.
 Statistics derived from an unrepresentable standard deviation, including the
-coefficient of variation, skewness and kurtosis, are absent. This distinction
-survives report save/load and applies to the Python summary as well.
+coefficient of variation, skewness and kurtosis, are absent. The same rule
+covers `quartiles.iqr`: it stays required and is `null` when `q3 - q1` cannot be
+represented, while `q1`, `q2` and `q3` are still reported. `outlier_count` is
+then `0`, which is exact: fences beyond the `f64` range leave no finite value
+outside them. This distinction survives report save/load and applies to the
+Python summary as well.
 
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,

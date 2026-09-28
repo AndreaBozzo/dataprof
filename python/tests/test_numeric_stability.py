@@ -136,6 +136,25 @@ def test_overflowing_variance_is_absent_and_survives_save_load(tmp_path, route):
 
 
 @pytest.mark.parametrize("route", ROUTES)
+def test_overflowing_iqr_is_absent_and_survives_save_load(tmp_path, route):
+    report = _profile(route, [-1e308, 1e308, -1e308, 1e308], tmp_path)
+    column, serialized = _stats(report)
+
+    assert column.quartiles == {"q1": -1e308, "q2": 0.0, "q3": 1e308, "iqr": None}
+    # Fences beyond the f64 range leave no finite value outside them.
+    assert column.outlier_count == 0
+    assert serialized["quartiles"]["iqr"] is None
+    assert "iqr" in serialized["quartiles"]
+    assert report.describe()["x"]["75%"] == 1e308
+
+    saved = tmp_path / f"iqr-{route}.json"
+    report.save(saved)
+    loaded = dp.ProfileReport.load(saved)
+    assert loaded["x"].quartiles == column.quartiles
+    assert loaded.to_dict()["columns"][0]["stats"] == serialized
+
+
+@pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize(
     "values",
     [

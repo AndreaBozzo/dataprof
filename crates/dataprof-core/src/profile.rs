@@ -72,7 +72,10 @@ pub struct Quartiles {
     pub q1: f64,
     pub q2: f64,
     pub q3: f64,
-    pub iqr: f64,
+    /// `q3 - q1`, or `None` when that difference exceeds the finite `f64`
+    /// range; the quartiles themselves are still reported. Equal quartiles
+    /// give `Some(0.0)`, so `None` never means "no spread".
+    pub iqr: Option<f64>,
 }
 
 /// A value and its frequency count within a column.
@@ -288,7 +291,7 @@ mod tests {
                     q1: 25.0,
                     q2: 50.0,
                     q3: 75.0,
-                    iqr: 50.0,
+                    iqr: Some(50.0),
                 }),
                 mode: Some(42.0),
                 coefficient_of_variation: Some(57.17),

@@ -187,7 +187,7 @@ class ColumnProfile:
     skewness: float | None
     kurtosis: float | None
     coefficient_of_variation: float | None
-    quartiles: dict[str, float] | None
+    quartiles: dict[str, float | None] | None
     is_approximate: bool | None
     outlier_count: int | None
     #: Shortest value in Unicode scalar values, not UTF-8 bytes and not
