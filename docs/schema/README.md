@@ -105,7 +105,8 @@ covers `quartiles.iqr`: it stays required and is `null` when `q3 - q1` cannot be
 represented, while `q1`, `q2` and `q3` are still reported. `outlier_count` is
 then `0`, which is exact: fences beyond the `f64` range leave no finite value
 outside them. This distinction survives report save/load and applies to the
-Python summary as well.
+Python summary as well. A document that omits any of the three keys is
+malformed and fails to load; it is not read as `null`.
 
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,

@@ -75,6 +75,7 @@ pub struct Quartiles {
     /// `q3 - q1`, or `None` when that difference exceeds the finite `f64`
     /// range; the quartiles themselves are still reported. Equal quartiles
     /// give `Some(0.0)`, so `None` never means "no spread".
+    #[serde(deserialize_with = "crate::serde_helpers::required_nullable")]
     pub iqr: Option<f64>,
 }
 
@@ -101,11 +102,17 @@ pub struct NumericStats {
     pub mean: f64,
     /// `None` when the spread of the values exceeds the finite `f64` range.
     /// A constant column is `Some(0.0)`, so `None` never means "no spread".
-    #[serde(serialize_with = "crate::serde_helpers::round_4_opt")]
+    #[serde(
+        serialize_with = "crate::serde_helpers::round_4_opt",
+        deserialize_with = "crate::serde_helpers::required_nullable"
+    )]
     pub std_dev: Option<f64>,
     /// `None` when the spread of the values exceeds the finite `f64` range.
     /// A constant column is `Some(0.0)`, so `None` never means "no spread".
-    #[serde(serialize_with = "crate::serde_helpers::round_4_opt")]
+    #[serde(
+        serialize_with = "crate::serde_helpers::round_4_opt",
+        deserialize_with = "crate::serde_helpers::required_nullable"
+    )]
     pub variance: Option<f64>,
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -268,6 +275,47 @@ pub enum ColumnStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `std_dev`, `variance` and `quartiles.iqr` are nullable but required: a
+    /// `null` is a spread that overflowed `f64`, a missing key a malformed
+    /// document. Serde reads a missing `Option` as `None`, which conflates them.
+    #[test]
+    fn nullable_spread_fields_are_still_required() {
+        let stats = NumericStats {
+            std_dev: None,
+            variance: None,
+            quartiles: Some(Quartiles {
+                q1: 1.0,
+                q2: 2.0,
+                q3: 3.0,
+                iqr: None,
+            }),
+            ..NumericStats::empty()
+        };
+        let document = serde_json::to_value(&stats).unwrap();
+        let restored: NumericStats = serde_json::from_value(document.clone()).unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), document);
+
+        for (parent, key) in [
+            (None, "std_dev"),
+            (None, "variance"),
+            (Some("quartiles"), "iqr"),
+        ] {
+            let mut malformed = document.clone();
+            let object = match parent {
+                Some(parent) => &mut malformed[parent],
+                None => &mut malformed,
+            };
+            object.as_object_mut().unwrap().remove(key).unwrap();
+            let error = serde_json::from_value::<NumericStats>(malformed).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("missing field `{key}`")),
+                "{key}: {error}"
+            );
+        }
+    }
 
     #[test]
     fn test_column_profile_json_roundtrip() {

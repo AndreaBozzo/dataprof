@@ -109,6 +109,17 @@ where
     }
 }
 
+/// Read a field that is nullable but required: `null` becomes `None`, and a
+/// missing key is an error. Any `deserialize_with` turns off serde's rule that
+/// a missing `Option` field reads as `None`, which would otherwise let a
+/// malformed document pass as an unrepresentable value.
+pub fn required_nullable<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(deserializer)
+}
+
 /// Round Quartiles fields to 2 decimal places: distribution landmarks are
 /// read as approximate positions, not as exact values.
 pub mod quartiles {

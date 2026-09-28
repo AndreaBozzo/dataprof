@@ -154,6 +154,21 @@ def test_overflowing_iqr_is_absent_and_survives_save_load(tmp_path, route):
     assert loaded.to_dict()["columns"][0]["stats"] == serialized
 
 
+@pytest.mark.parametrize("field", ["std_dev", "variance", "iqr"])
+def test_a_missing_spread_key_is_malformed_not_null(tmp_path, field):
+    # null is a spread that overflowed f64; a missing key is a broken document.
+    report = _profile("csv", [-1e308, 1e308, -1e308, 1e308], tmp_path)
+    saved = tmp_path / "report.json"
+    report.save(saved)
+    document = json.loads(saved.read_text(encoding="utf-8"))
+    stats = document["column_profiles"][0]["stats"]["Numeric"]
+    del (stats["quartiles"] if field == "iqr" else stats)[field]
+    saved.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"missing field `{field}`"):
+        dp.ProfileReport.load(saved)
+
+
 @pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize(
     "values",
