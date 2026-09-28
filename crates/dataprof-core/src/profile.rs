@@ -96,10 +96,12 @@ pub struct NumericStats {
     pub max: f64,
     #[serde(serialize_with = "crate::serde_helpers::round_4")]
     pub mean: f64,
-    #[serde(serialize_with = "crate::serde_helpers::round_4")]
-    pub std_dev: f64,
-    #[serde(serialize_with = "crate::serde_helpers::round_4")]
-    pub variance: f64,
+    /// `None` when the spread exceeds the finite `f64` range.
+    #[serde(serialize_with = "crate::serde_helpers::round_4_opt")]
+    pub std_dev: Option<f64>,
+    /// `None` when the spread exceeds the finite `f64` range.
+    #[serde(serialize_with = "crate::serde_helpers::round_4_opt")]
+    pub variance: Option<f64>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "crate::serde_helpers::round_4_opt"
@@ -148,8 +150,8 @@ impl NumericStats {
             min: 0.0,
             max: 0.0,
             mean: 0.0,
-            std_dev: 0.0,
-            variance: 0.0,
+            std_dev: Some(0.0),
+            variance: Some(0.0),
             median: None,
             quartiles: None,
             mode: None,
@@ -277,8 +279,8 @@ mod tests {
                 min: 1.0,
                 max: 100.0,
                 mean: 50.5,
-                std_dev: 28.87,
-                variance: 833.25,
+                std_dev: Some(28.87),
+                variance: Some(833.25),
                 median: Some(50.0),
                 quartiles: Some(Quartiles {
                     q1: 25.0,

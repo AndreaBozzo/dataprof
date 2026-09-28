@@ -96,6 +96,13 @@ history therefore records `flexible`, without claiming an encoding conversion.
 
 ## Numeric equality contract
 
+For numeric columns, `std_dev` and `variance` remain required fields in the
+canonical report. They are `null` when the spread of finite input values cannot
+be represented as a finite `f64`; a true constant column reports `0.0`.
+Statistics derived from an unrepresentable standard deviation, including the
+coefficient of variation, skewness and kurtosis, are absent. This distinction
+survives report save/load and applies to the Python summary as well.
+
 The cross-engine identical-numbers contract governs **serialized, rounded
 metric values** (#547): Rust's Serde report and Python's `to_dict()`,
 `to_json()`, and JSON `save()` output. JSON persistence now uses the same document

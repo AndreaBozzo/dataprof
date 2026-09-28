@@ -961,12 +961,20 @@
           ]
         },
         "std_dev": {
+          "description": "`None` when the spread exceeds the finite `f64` range.",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "variance": {
+          "description": "`None` when the spread exceeds the finite `f64` range.",
           "format": "double",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [

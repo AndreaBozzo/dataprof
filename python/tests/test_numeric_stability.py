@@ -113,6 +113,29 @@ def test_a_constant_column_still_reports_no_spread(tmp_path, route):
 
 
 @pytest.mark.parametrize("route", ROUTES)
+def test_overflowing_variance_is_absent_and_survives_save_load(tmp_path, route):
+    values = [1e308, -1e308, 5.0, 0.5, 5.0, 7.0]
+    report = _profile(route, values, tmp_path)
+    column, serialized = _stats(report)
+
+    assert column.variance is None
+    assert column.std_dev is None
+    assert column.coefficient_of_variation is None
+    assert column.skewness is None
+    assert column.kurtosis is None
+    assert serialized["variance"] is None
+    assert serialized["std_dev"] is None
+    assert serialized["mean"] == 2.9167
+
+    saved = tmp_path / f"overflow-{route}.json"
+    report.save(saved)
+    loaded = dp.ProfileReport.load(saved)
+    assert loaded["x"].variance is None
+    assert loaded["x"].std_dev is None
+    assert loaded.to_dict()["columns"][0]["stats"] == serialized
+
+
+@pytest.mark.parametrize("route", ROUTES)
 @pytest.mark.parametrize(
     "values",
     [

@@ -1551,8 +1551,8 @@ mod tests {
                 assert!((stats.min - 1.5).abs() < 1e-9);
                 assert!((stats.max - 3.25).abs() < 1e-9);
                 assert!((stats.mean - 2.375).abs() < 1e-9);
-                assert!(stats.std_dev.is_finite());
-                assert!(stats.std_dev > 0.0);
+                assert!(stats.std_dev.unwrap().is_finite());
+                assert!(stats.std_dev.unwrap() > 0.0);
             }
             _ => panic!("Expected Numeric stats for value column"),
         }
@@ -1671,7 +1671,7 @@ mod tests {
                 assert!((stats.min - 10.0).abs() < 0.01);
                 assert!((stats.max - 80.0).abs() < 0.01);
                 assert!((stats.mean - 45.0).abs() < 0.01);
-                assert!(stats.std_dev > 0.0);
+                assert!(stats.std_dev.unwrap() > 0.0);
                 assert!(stats.median.is_some());
                 assert!(stats.skewness.is_some());
                 assert!(stats.kurtosis.is_some());

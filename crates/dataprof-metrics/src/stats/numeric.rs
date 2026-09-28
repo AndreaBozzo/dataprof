@@ -44,8 +44,10 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     let min = base.min().expect("accumulator covers a non-empty column");
     let max = base.max().expect("accumulator covers a non-empty column");
     let mean = base.mean();
-    let variance = base.sample_variance();
-    let std_dev = base.sample_std_dev();
+    let raw_variance = base.sample_variance();
+    let raw_std_dev = base.sample_std_dev();
+    let variance = raw_variance.is_finite().then_some(raw_variance);
+    let std_dev = raw_std_dev.is_finite().then_some(raw_std_dev);
 
     // Determine if we need sampling for large datasets
     let (sample_data, is_approximate) = if numbers.len() > SAMPLE_THRESHOLD {
@@ -61,11 +63,12 @@ pub fn compute_numeric_stats_with_parsed_count(data: &[String]) -> (NumericStats
     let median = calculate_median(&sorted_data);
     let quartiles = calculate_quartiles(&sorted_data);
     let mode = calculate_mode(&sample_data);
-    let coefficient_of_variation = calculate_coefficient_of_variation(std_dev, mean);
+    let coefficient_of_variation =
+        std_dev.and_then(|value| calculate_coefficient_of_variation(value, mean));
 
     // Advanced metrics
-    let skewness = calculate_skewness(&sample_data, mean, std_dev);
-    let kurtosis = calculate_kurtosis(&sample_data, mean, std_dev);
+    let skewness = std_dev.and_then(|value| calculate_skewness(&sample_data, mean, value));
+    let kurtosis = std_dev.and_then(|value| calculate_kurtosis(&sample_data, mean, value));
 
     // Per-column outlier count using the same Tukey IQR rule as the global
     // accuracy.outlier_ratio dimension (k = 1.5). Returns `None` for tiny
@@ -204,17 +207,21 @@ pub fn calculate_mode(data: &[f64]) -> Option<f64> {
 
 /// Calculate coefficient of variation (CV)
 pub fn calculate_coefficient_of_variation(std_dev: f64, mean: f64) -> Option<f64> {
-    if mean.abs() < 0.001 {
-        // Avoid division by zero
+    // A near-zero mean would divide by zero, and an infinite one would divide
+    // any spread down to 0.0. A non-finite spread fails the result check.
+    if !mean.is_finite() || mean.abs() < 0.001 {
         None
     } else {
-        Some((std_dev / mean.abs()) * 100.0)
+        let value = (std_dev / mean.abs()) * 100.0;
+        value.is_finite().then_some(value)
     }
 }
 
 /// Calculate skewness (Pearson's moment coefficient)
 pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> {
-    if data.len() < 3 || std_dev < 1e-10 {
+    // An infinite std_dev would standardize every value to 0.0; a non-finite
+    // mean fails the result check below.
+    if data.len() < 3 || !std_dev.is_finite() || std_dev < 1e-10 {
         return None;
     }
 
@@ -227,12 +234,14 @@ pub fn calculate_skewness(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
         })
         .sum();
 
-    Some(sum_cubed / n)
+    let value = sum_cubed / n;
+    value.is_finite().then_some(value)
 }
 
 /// Calculate kurtosis (excess kurtosis)
 pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> {
-    if data.len() < 4 || std_dev < 1e-10 {
+    // Same guards as `calculate_skewness`.
+    if data.len() < 4 || !std_dev.is_finite() || std_dev < 1e-10 {
         return None;
     }
 
@@ -247,7 +256,8 @@ pub fn calculate_kurtosis(data: &[f64], mean: f64, std_dev: f64) -> Option<f64> 
         .sum();
 
     // Excess kurtosis (subtract 3 for normal distribution)
-    Some((sum_fourth / n) - 3.0)
+    let value = (sum_fourth / n) - 3.0;
+    value.is_finite().then_some(value)
 }
 
 /// Reservoir sampling for large datasets, seeded so the sample is the same
@@ -410,8 +420,8 @@ mod tests {
             let stats = column(&[base, base + 1.0, base + 2.0, base + 3.0]);
             // Equality, not a tolerance: four values accumulate to the
             // correctly rounded answer at every offset here.
-            assert_eq!(stats.variance, 5.0 / 3.0, "offset {base}");
-            assert_eq!(stats.std_dev, (5.0f64 / 3.0).sqrt(), "offset {base}");
+            assert_eq!(stats.variance, Some(5.0 / 3.0), "offset {base}");
+            assert_eq!(stats.std_dev, Some((5.0f64 / 3.0).sqrt()), "offset {base}");
             assert_eq!(stats.mean, base + 1.5, "offset {base}");
         }
 
@@ -423,8 +433,8 @@ mod tests {
             / (many.len() as f64 - 1.0);
         let stats = column(&many);
         assert!(
-            (stats.variance - expected_variance).abs() < 1e-6,
-            "500 values reported variance {}",
+            (stats.variance.unwrap() - expected_variance).abs() < 1e-6,
+            "500 values reported variance {:?}",
             stats.variance
         );
 
@@ -443,9 +453,44 @@ mod tests {
 
         // And a genuinely constant column still reports no spread at all.
         let constant = column(&[1e9; 4]);
-        assert_eq!(constant.variance, 0.0);
-        assert_eq!(constant.std_dev, 0.0);
+        assert_eq!(constant.variance, Some(0.0));
+        assert_eq!(constant.std_dev, Some(0.0));
         assert_eq!(constant.mean, 1e9);
+    }
+
+    /// The batch path has no exact aggregates to fall back on, so a spread
+    /// that overflows `f64` must be absent here, not a number (#784).
+    #[test]
+    fn batch_stats_report_an_overflowing_spread_as_absent() {
+        let cells: Vec<String> = [1e308, -1e308, 5.0, 0.5, 5.0, 7.0]
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
+        let stats = compute_numeric_stats(&cells);
+        assert_eq!(stats.variance, None);
+        assert_eq!(stats.std_dev, None);
+        assert_eq!(stats.coefficient_of_variation, None);
+        assert_eq!(stats.skewness, None);
+        assert_eq!(stats.kurtosis, None);
+        assert!(stats.mean.is_finite());
+    }
+
+    #[test]
+    fn shape_helpers_reject_a_non_finite_spread() {
+        let data = [1.0, 2.0, 3.0, 4.0];
+        // An infinite std_dev would standardize every value to 0.0.
+        assert_eq!(calculate_skewness(&data, 2.5, f64::INFINITY), None);
+        assert_eq!(calculate_kurtosis(&data, 2.5, f64::INFINITY), None);
+        assert_eq!(calculate_coefficient_of_variation(f64::NAN, 2.5), None);
+        // An infinite mean would divide any spread down to 0.0.
+        assert_eq!(calculate_coefficient_of_variation(1.0, f64::INFINITY), None);
+        // Finite arguments whose result overflows.
+        assert_eq!(calculate_skewness(&[1e200, -1e200, 0.0], 0.0, 1e-10), None);
+        assert_eq!(
+            calculate_kurtosis(&[1e200, -1e200, 0.0, 0.0], 0.0, 1e-10),
+            None
+        );
+        assert_eq!(calculate_coefficient_of_variation(1e307, 0.01), None);
     }
 
     #[test]
@@ -458,7 +503,7 @@ mod tests {
                 assert_eq!(n.min, 10.0);
                 assert_eq!(n.max, 30.0);
                 assert_eq!(n.mean, 20.0);
-                assert!(n.std_dev > 0.0);
+                assert!(n.std_dev.unwrap() > 0.0);
                 assert_eq!(n.median, Some(20.0));
             }
             _ => panic!("Expected Numeric stats"),
