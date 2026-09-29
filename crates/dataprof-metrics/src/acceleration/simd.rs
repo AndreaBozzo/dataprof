@@ -23,6 +23,9 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
     // One count for all four lanes: every step feeds every lane, and the tail
     // goes through the scalar path below.
     let mut count = 0u64;
+    // One shift for every lane, as `NumericAccumulator::update` would pick.
+    let shift = values.first().copied().unwrap_or(0.0);
+    let lane_shift = f64x4::splat(shift);
     let mut mean = f64x4::splat(0.0);
     let mut m2 = f64x4::splat(0.0);
     let mut sum = f64x4::splat(0.0);
@@ -34,9 +37,10 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
         let value = f64x4::new(*chunk);
         count += 1;
 
-        let delta = value - mean;
+        let shifted = value - lane_shift;
+        let delta = shifted - mean;
         mean += delta / f64x4::splat(count as f64);
-        m2 += delta * (value - mean);
+        m2 += delta * (shifted - mean);
 
         // Knuth's two-sum, lane-wise.
         let total = sum + value;
@@ -59,6 +63,7 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
     for lane in 0..LANES {
         stats.merge(&NumericAccumulator::from_lane_state(
             count,
+            shift,
             mean[lane],
             m2[lane],
             sum[lane],
@@ -150,6 +155,28 @@ mod tests {
         let stats = compute_stats_simd(&cancelling);
         assert_eq!(stats.count(), 101);
         assert!((stats.mean() - 1.0 / 101.0).abs() < 1e-12);
+    }
+
+    /// Lanes shift their values like the scalar path. Unshifted, Welford
+    /// resolves its running mean only to the offset's precision and missed
+    /// this variance by 2e-8 relative at 1e12, 1.7e-6 at 1e14 (#783).
+    #[test]
+    fn simd_variance_on_a_large_offset_matches_the_exact_value() {
+        let spread: Vec<i64> = (0..20_001).map(|i: i64| (i * 7919) % 2001 - 1000).collect();
+        let n = spread.len() as i128;
+        let sum: i128 = spread.iter().map(|&k| k as i128).sum();
+        let squares: i128 = spread.iter().map(|&k| (k as i128) * (k as i128)).sum();
+        // Both terms are below 2^53: exact conversions, correctly rounded quotient.
+        let expected = (n * squares - sum * sum) as f64 / (n * (n - 1)) as f64;
+
+        for offset in [1e12, 1e14] {
+            let values: Vec<f64> = spread.iter().map(|&k| offset + k as f64).collect();
+            let variance = compute_stats_simd(&values).sample_variance();
+            assert!(
+                (variance - expected).abs() <= expected * 1e-13,
+                "offset {offset}: variance {variance}, exact {expected}"
+            );
+        }
     }
 
     /// Every lane sees `1e308` twice in a row, so every lane sum overflows.

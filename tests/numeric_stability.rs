@@ -146,6 +146,50 @@ fn variance_survives_a_large_offset_on_every_engine() {
     }
 }
 
+/// A spread of about 580 on a large offset: 20,000 integers `offset + k`,
+/// `k` in -1000..=1000. Their exact sample variance, from integer sums, is
+/// 333678.53178752685.
+fn large_offset_column(offset: f64) -> Vec<f64> {
+    (0..20_000i64)
+        .map(|i| offset + ((i * 7919) % 2001 - 1000) as f64)
+        .collect()
+}
+
+const LARGE_OFFSET_VARIANCE: f64 = 333_678.531_787_526_85;
+
+/// Welford on the raw values resolves its running mean only to the offset's
+/// precision: the standard deviation came back 2e-8 relative off at 1e12 and
+/// 1.7e-6 at 1e14, differently on different paths, which moved the serialized
+/// fourth decimal (#783).
+#[test]
+fn spread_on_a_large_offset_matches_the_exact_value_on_every_engine() {
+    for offset in [1e12, 1e14] {
+        for (engine, stats, column) in stats_per_engine(&large_offset_column(offset)) {
+            let engine = &format!("{engine} at offset {offset}");
+            assert_close(
+                engine,
+                "variance",
+                stats.variance.expect("finite variance"),
+                LARGE_OFFSET_VARIANCE,
+                LARGE_OFFSET_VARIANCE * 1e-12,
+            );
+            assert_close(
+                engine,
+                "std_dev",
+                stats.std_dev.expect("finite standard deviation"),
+                LARGE_OFFSET_VARIANCE.sqrt(),
+                LARGE_OFFSET_VARIANCE.sqrt() * 1e-12,
+            );
+            assert_exact(
+                engine,
+                "serialized std_dev",
+                serialized(&column, "std_dev", engine),
+                577.6491,
+            );
+        }
+    }
+}
+
 /// A genuinely constant column must still report zero variance — the half a
 /// stability fix could get wrong by inventing spread out of rounding noise.
 #[test]
@@ -203,6 +247,18 @@ fn overflowing_variance_is_null_and_round_trips_on_every_csv_engine() {
             document,
             "{engine}"
         );
+    }
+}
+
+/// Two values whose difference overflows. Before the shifted accumulation
+/// every engine reported a variance of 0.0 here, a constant column (#783).
+#[test]
+fn an_overflowing_pair_reports_a_null_variance_on_every_csv_engine() {
+    let big = 0.9 * f64::MAX;
+    for (engine, stats, column) in stats_per_engine(&[big, -big]) {
+        assert_eq!(stats.variance, None, "{engine}");
+        assert_eq!(stats.std_dev, None, "{engine}");
+        assert_eq!(column["variance"], Value::Null, "{engine}");
     }
 }
 
@@ -395,6 +451,19 @@ mod parquet_path {
                 (stats.variance.unwrap() - expected_variance).abs() < 1e-6,
                 "batch size {batch_size} reported variance {:?}",
                 stats.variance
+            );
+        }
+    }
+
+    #[test]
+    fn parquet_spread_on_a_large_offset_matches_the_exact_value() {
+        let values = super::large_offset_column(1e14);
+        let expected = super::LARGE_OFFSET_VARIANCE;
+        for batch_size in [20_000, 4_096, 7] {
+            let variance = parquet_stats(&values, batch_size).variance.unwrap();
+            assert!(
+                (variance - expected).abs() <= expected * 1e-12,
+                "batch size {batch_size} reported variance {variance}, exact {expected}"
             );
         }
     }

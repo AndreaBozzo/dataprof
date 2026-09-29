@@ -19,7 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import random
 import statistics
+import sys
+from fractions import Fraction
 
 import pytest
 
@@ -101,6 +105,28 @@ def test_variance_survives_a_large_offset(tmp_path, route, base):
 
 
 @pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("offset", [1e12, 1e14])
+def test_spread_on_a_large_offset_matches_the_exact_value(tmp_path, route, offset):
+    """Welford on raw values near 1e12 was 2e-8 relative off (#783).
+
+    Enough to move the serialized fourth decimal, and different routes rounded
+    differently, so the same data serialized two ways.
+    """
+    rng = random.Random(783)
+    values = [offset + rng.uniform(-1000, 1000) for _ in range(20_000)]
+    exact = [Fraction(value) for value in values]
+    mean = sum(exact) / len(exact)
+    variance = float(sum((value - mean) ** 2 for value in exact) / (len(exact) - 1))
+    std_dev = math.sqrt(variance)
+
+    column, serialized = _stats(_profile(route, values, tmp_path))
+
+    assert column.variance == pytest.approx(variance, rel=1e-12)
+    assert column.std_dev == pytest.approx(std_dev, rel=1e-12)
+    assert serialized["std_dev"] == round(std_dev, 4)
+
+
+@pytest.mark.parametrize("route", ROUTES)
 def test_a_constant_column_still_reports_no_spread(tmp_path, route):
     """The half a stability fix can get wrong: inventing spread out of noise."""
     column, serialized = _stats(_profile(route, [1e9] * 4, tmp_path))
@@ -133,6 +159,17 @@ def test_overflowing_variance_is_absent_and_survives_save_load(tmp_path, route):
     assert loaded["x"].variance is None
     assert loaded["x"].std_dev is None
     assert loaded.to_dict()["columns"][0]["stats"] == serialized
+
+
+@pytest.mark.parametrize("route", ROUTES)
+def test_an_overflowing_pair_is_not_a_constant_column(tmp_path, route):
+    """Two values whose difference overflows reported a variance of 0.0."""
+    big = 0.9 * sys.float_info.max
+    column, serialized = _stats(_profile(route, [big, -big], tmp_path))
+
+    assert column.variance is None
+    assert column.std_dev is None
+    assert serialized["variance"] is None
 
 
 @pytest.mark.parametrize("route", ROUTES)

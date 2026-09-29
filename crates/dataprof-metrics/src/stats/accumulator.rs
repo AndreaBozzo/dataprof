@@ -9,6 +9,13 @@
 ///   `sum_squares - n * mean²` loses every significant digit of a small spread
 ///   sitting on a large offset: four consecutive integers near 1e9 came back
 ///   with a variance of exactly 0.0, describing a varying column as constant.
+///   Welford alone still rounds at the scale of the offset: its running mean
+///   near 1e12 is only resolved to ~1e-4, which left a standard deviation of
+///   ~575 wrong by 2e-8 relative (1.7e-6 at 1e14), enough to change the fourth
+///   decimal and to differ between input paths. So Welford runs on
+///   `value - shift`, where `shift` is the first value seen: for values within
+///   a factor of two of it the subtraction is exact (Sterbenz), and the
+///   recurrence then works at the scale of the spread.
 /// - **A compensated (Knuth two-sum) running sum** gives a mean that survives
 ///   cancellation. Welford's running mean rounds `[1e16, 1.0, -1e16]` to 0.0
 ///   because the unit contribution disappears into the intermediate mean; the
@@ -27,8 +34,11 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericAccumulator {
     count: u64,
-    /// Welford's running mean, the reference point for `m2`. Not overflow-proof,
-    /// so the reported mean comes from `sum` instead.
+    /// The first value accumulated. Welford's recurrence runs on values minus
+    /// this shift.
+    shift: f64,
+    /// Welford's running mean of the shifted values, the reference point for
+    /// `m2`. Not overflow-proof, so the reported mean comes from `sum` instead.
     running_mean: f64,
     /// Welford's sum of squared deviations from the running mean.
     m2: f64,
@@ -69,6 +79,7 @@ impl NumericAccumulator {
     pub fn new() -> Self {
         Self {
             count: 0,
+            shift: 0.0,
             running_mean: 0.0,
             m2: 0.0,
             sum: 0.0,
@@ -85,10 +96,14 @@ impl NumericAccumulator {
     pub fn update(&mut self, value: f64) {
         debug_assert!(value.is_finite());
         self.count += 1;
+        if self.count == 1 {
+            self.shift = value;
+        }
 
-        let delta = value - self.running_mean;
+        let shifted = value - self.shift;
+        let delta = shifted - self.running_mean;
         self.running_mean += delta / self.count as f64;
-        self.m2 += delta * (value - self.running_mean);
+        self.m2 += delta * (shifted - self.running_mean);
 
         self.add_to_sum(value, 0.0, false);
 
@@ -106,6 +121,7 @@ impl NumericAccumulator {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_lane_state(
         count: u64,
+        shift: f64,
         running_mean: f64,
         m2: f64,
         sum: f64,
@@ -115,6 +131,7 @@ impl NumericAccumulator {
     ) -> Self {
         Self {
             count,
+            shift,
             running_mean,
             m2,
             sum,
@@ -169,10 +186,12 @@ impl NumericAccumulator {
             return;
         }
 
-        // Chan's parallel form of Welford's update.
+        // Chan's parallel form of Welford's update, in this accumulator's
+        // shifted frame. The difference of the shifts is taken first: forming
+        // either unshifted mean would round it at the scale of the offset.
         let (a, b) = (self.count as f64, other.count as f64);
         let combined = a + b;
-        let delta = other.running_mean - self.running_mean;
+        let delta = (other.shift - self.shift) + (other.running_mean - self.running_mean);
         self.running_mean += delta * (b / combined);
         self.m2 += other.m2 + delta * delta * (a * b / combined);
         self.count += other.count;
@@ -390,6 +409,53 @@ mod tests {
         assert!(!accumulator.population_variance().is_finite());
     }
 
+    /// Exact sample variance of integers, from integer sums: the reference a
+    /// floating-point accumulation is measured against.
+    fn exact_integer_variance(values: &[i64]) -> f64 {
+        let n = values.len() as i128;
+        let sum: i128 = values.iter().map(|&v| v as i128).sum();
+        let squares: i128 = values.iter().map(|&v| (v as i128) * (v as i128)).sum();
+        // Both terms are below 2^53, so each converts exactly and the quotient
+        // is correctly rounded.
+        (n * squares - sum * sum) as f64 / (n * (n - 1)) as f64
+    }
+
+    /// A spread of about 580 on offsets up to 1e14. Welford on the raw values
+    /// resolves its running mean only to the offset's precision and was 2e-8
+    /// relative off at 1e12, 1.7e-6 at 1e14 (#783).
+    #[test]
+    fn variance_on_a_large_offset_matches_the_exact_value() {
+        let spread: Vec<i64> = (0..20_000).map(|i: i64| (i * 7919) % 2001 - 1000).collect();
+        let expected = exact_integer_variance(&spread);
+        for offset in [1e9, 1e12, 1e14] {
+            let values: Vec<f64> = spread.iter().map(|&k| offset + k as f64).collect();
+            let single = accumulate(&values);
+            let mut merged = accumulate(&values[..7_001]);
+            merged.merge(&accumulate(&values[7_001..]));
+            for (path, accumulator) in [("single", single), ("merged", merged)] {
+                let variance = accumulator.sample_variance();
+                assert!(
+                    (variance - expected).abs() <= expected * 1e-13,
+                    "{path} at offset {offset}: variance {variance}, exact {expected}"
+                );
+            }
+        }
+    }
+
+    /// Unshifted, the second value's `delta` overflowed to -inf while M2 was
+    /// still 0.0, M2 became -inf, and the clamp at zero reported a constant
+    /// column. Shifted, the first delta is exactly zero and an overflowing
+    /// difference turns M2 into NaN, which reports as overflowed.
+    #[test]
+    fn an_overflowing_pair_is_not_reported_as_zero_variance() {
+        let big = 0.9 * f64::MAX;
+        for values in [[big, -big], [-big, big]] {
+            let accumulator = accumulate(&values);
+            assert!(!accumulator.sample_variance().is_finite(), "{values:?}");
+            assert!(!accumulator.population_variance().is_finite(), "{values:?}");
+        }
+    }
+
     #[test]
     fn merge_matches_a_single_pass() {
         let values: Vec<f64> = (0..97).map(|i| 1e9 + (i % 7) as f64).collect();
@@ -402,10 +468,11 @@ mod tests {
             assert_eq!(merged.count(), single.count());
             assert_eq!(merged.min(), single.min());
             assert_eq!(merged.max(), single.max());
-            // Relative, not exact: combining two means near 1e9 rounds, so a
-            // merge is never bit-identical to a single pass. It is still three
-            // orders tighter than the error this fix is about — the naive
-            // sum-of-squares reported 0.0 for this column.
+            // Relative, not exact: a merge combines two rounded means, so it
+            // is not bit-identical to a single pass. Both work on values
+            // shifted to the scale of the spread, so they agree to rounding
+            // there; unshifted they differed by 1e-8 at this offset (#783), and
+            // the naive sum-of-squares reported 0.0 for this column.
             assert!(
                 (merged.mean() - single.mean()).abs() <= single.mean().abs() * 1e-12,
                 "split {split} mean {} vs {}",
@@ -414,7 +481,7 @@ mod tests {
             );
             assert!(
                 (merged.sample_variance() - single.sample_variance()).abs()
-                    <= single.sample_variance() * 1e-7,
+                    <= single.sample_variance() * 1e-13,
                 "split {split} variance {} vs {}",
                 merged.sample_variance(),
                 single.sample_variance()
