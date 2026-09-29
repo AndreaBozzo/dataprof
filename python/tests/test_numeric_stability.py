@@ -37,7 +37,18 @@ except ImportError:
 
 from dataprof.asyncio import _HAS_ASYNC
 
-ROUTES = ("dict", "csv", "columnar", "json", "jsonl", "bytes", "async", "arrow", "parquet")
+ROUTES = (
+    "dict",
+    "csv",
+    "columnar",
+    "json",
+    "jsonl",
+    "bytes",
+    "async",
+    "pandas",
+    "arrow",
+    "parquet",
+)
 
 
 def _profile(route, values, tmp_path):
@@ -69,6 +80,10 @@ def _profile(route, values, tmp_path):
                 "'python,python-async,async-streaming'"
             )
         return asyncio.run(dp.asyncio.profile_bytes(f"x\n{text}\n".encode(), format="csv"))
+
+    if route == "pandas":
+        pd = pytest.importorskip("pandas")
+        return dp.profile(pd.DataFrame({"x": [float(value) for value in values]}))
 
     pa = pytest.importorskip("pyarrow")
     table = pa.table({"x": [float(value) for value in values]})
