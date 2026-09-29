@@ -14,10 +14,12 @@
 ///   because the unit contribution disappears into the intermediate mean; the
 ///   compensated sum keeps it and returns 1/3.
 ///
-/// The compensated sum can still overflow where the mean itself is
-/// representable (`[1e308, 1e308]`), so [`mean`](Self::mean) falls back to
-/// Welford's running mean — which cannot overflow — whenever the sum is not
-/// finite.
+/// The sum can overflow where the mean itself is representable
+/// (`[1e308, 1e308]`, or `[1e308, 1e308, -1e308, -1e308]` whose mean is 0.0).
+/// When an addition would overflow, the sum and its compensation are rescaled
+/// by [`OVERFLOW_SCALE`] and every later value is added at that scale. Welford's
+/// running mean is no fallback: its `value - running_mean` overflows once the
+/// two sit near opposite ends of the range, and turns the mean into NaN.
 ///
 /// [`merge`](Self::merge) combines accumulators computed over disjoint parts of
 /// a column, so chunked, batched and SIMD-lane accumulation report what a
@@ -25,13 +27,16 @@
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericAccumulator {
     count: u64,
-    /// Welford's running mean: overflow-proof, used when `sum` is not finite.
+    /// Welford's running mean, the reference point for `m2`. Not overflow-proof,
+    /// so the reported mean comes from `sum` instead.
     running_mean: f64,
     /// Welford's sum of squared deviations from the running mean.
     m2: f64,
-    /// Running sum, with `compensation` carrying the bits it rounded away.
+    /// Running sum, with `compensation` carrying the bits it rounded away. Both
+    /// are multiplied by [`OVERFLOW_SCALE`] once `scaled` is set.
     sum: f64,
     compensation: f64,
+    scaled: bool,
     min: f64,
     max: f64,
 }
@@ -41,6 +46,14 @@ impl Default for NumericAccumulator {
         Self::new()
     }
 }
+
+/// Factor the running sum is rescaled by once it would overflow: 2^-64.
+///
+/// A power of two, so rescaling is exact except for bits below 2^-1074 after
+/// scaling (2^-1010 before), which only matter to a column already holding
+/// values near the top of the range. Small enough that the scaled sum of 2^64
+/// values at `f64::MAX` still fits.
+const OVERFLOW_SCALE: f64 = 1.0 / 18_446_744_073_709_551_616.0;
 
 /// Knuth's two-sum: the rounded sum of `a + b` and the exact rounding error,
 /// with no branch and no wider type. `err` is exact whenever `a + b` is finite.
@@ -60,6 +73,7 @@ impl NumericAccumulator {
             m2: 0.0,
             sum: 0.0,
             compensation: 0.0,
+            scaled: false,
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
         }
@@ -76,9 +90,7 @@ impl NumericAccumulator {
         self.running_mean += delta / self.count as f64;
         self.m2 += delta * (value - self.running_mean);
 
-        let (sum, err) = two_sum(self.sum, value);
-        self.sum = sum;
-        self.compensation += err;
+        self.add_to_sum(value, 0.0, false);
 
         self.min = self.min.min(value);
         self.max = self.max.max(value);
@@ -89,6 +101,8 @@ impl NumericAccumulator {
     /// Used by the SIMD accumulation in [`crate::acceleration::simd`], which
     /// runs these same recurrences over four lanes at once and then merges the
     /// lanes back together. Nothing else should reach past [`Self::update`].
+    /// Lane sums are never scaled: the SIMD path falls back to scalar
+    /// accumulation when a lane sum overflows.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_lane_state(
         count: u64,
@@ -105,9 +119,44 @@ impl NumericAccumulator {
             m2,
             sum,
             compensation,
+            scaled: false,
             min,
             max,
         }
+    }
+
+    /// Add `sum + compensation`, expressed at `OVERFLOW_SCALE` when `scaled`, to
+    /// the running sum, rescaling the running sum first if the addition would
+    /// overflow it.
+    #[inline]
+    fn add_to_sum(&mut self, sum: f64, compensation: f64, scaled: bool) {
+        if scaled && !self.scaled {
+            self.rescale_sum();
+        }
+        let unit = if self.scaled && !scaled {
+            OVERFLOW_SCALE
+        } else {
+            1.0
+        };
+        let (total, err) = two_sum(self.sum, sum * unit);
+        if total.is_finite() {
+            self.sum = total;
+            self.compensation += err + compensation * unit;
+            return;
+        }
+        // Only an unscaled sum can get here: a scaled one would need 2^64
+        // values at `f64::MAX` to overflow.
+        self.rescale_sum();
+        let (total, err) = two_sum(self.sum, sum * OVERFLOW_SCALE);
+        self.sum = total;
+        self.compensation += err + compensation * OVERFLOW_SCALE;
+    }
+
+    fn rescale_sum(&mut self) {
+        debug_assert!(!self.scaled, "the running sum is rescaled at most once");
+        self.sum *= OVERFLOW_SCALE;
+        self.compensation *= OVERFLOW_SCALE;
+        self.scaled = true;
     }
 
     /// Fold in an accumulator built over a disjoint set of values.
@@ -128,9 +177,7 @@ impl NumericAccumulator {
         self.m2 += other.m2 + delta * delta * (a * b / combined);
         self.count += other.count;
 
-        let (sum, err) = two_sum(self.sum, other.sum);
-        self.sum = sum;
-        self.compensation += err + other.compensation;
+        self.add_to_sum(other.sum, other.compensation, other.scaled);
 
         self.min = self.min.min(other.min);
         self.max = self.max.max(other.max);
@@ -159,14 +206,17 @@ impl NumericAccumulator {
         if self.count == 0 {
             return 0.0;
         }
-        // `compensation` is NaN once the sum overflows, which fails this test
-        // just as an infinite sum does.
-        let total = self.sum + self.compensation;
-        if total.is_finite() {
-            total / self.count as f64
-        } else {
-            self.running_mean
+        let count = self.count as f64;
+        if !self.scaled {
+            let total = self.sum + self.compensation;
+            if total.is_finite() {
+                return total / count;
+            }
         }
+        // The sum is scaled, or it and its compensation are each finite but
+        // their total is not: take the mean at the reduced scale, where it fits.
+        let unit = if self.scaled { 1.0 } else { OVERFLOW_SCALE };
+        (self.sum * unit + self.compensation * unit) / count / OVERFLOW_SCALE
     }
 
     /// Unbiased sample variance (n-1 denominator).
@@ -280,6 +330,56 @@ mod tests {
         let accumulator = accumulate(&[1e308, 1e308]);
         assert_eq!(accumulator.mean(), 1e308);
         assert_eq!(accumulator.sample_variance(), 0.0);
+    }
+
+    /// The sum overflows at the second value and the true mean is 0.0. Welford's
+    /// running mean reaches `-inf` at the third value and NaN at the fourth.
+    #[test]
+    fn mean_survives_an_overflowing_sum_that_cancels() {
+        for values in [
+            [1e308, 1e308, -1e308, -1e308],
+            [-1e308, -1e308, 1e308, 1e308],
+            [1e308, 1e308, -1e308, -1e308].map(|value| value * 1.7),
+        ] {
+            let accumulator = accumulate(&values);
+            assert_eq!(accumulator.mean(), 0.0, "{values:?}");
+            // The spread still overflows, and still reports as such (#784).
+            assert!(!accumulator.sample_variance().is_finite(), "{values:?}");
+        }
+
+        let accumulator = accumulate(&[1e308, 1e308, -1e308, -1e308, 3.0]);
+        assert_eq!(accumulator.mean(), 3.0 / 5.0);
+    }
+
+    /// Each addition rounds back to `f64::MAX`, so the sum itself never
+    /// overflows; the compensation collects the two halves that do.
+    #[test]
+    fn mean_survives_a_compensation_that_overflows_the_total() {
+        let small = 9e291;
+        let accumulator = accumulate(&[f64::MAX, small, small]);
+        assert_eq!(accumulator.sum, f64::MAX);
+        assert!(!accumulator.scaled);
+        let expected = f64::MAX / 3.0 + small * 2.0 / 3.0;
+        assert!(
+            (accumulator.mean() - expected).abs() <= expected * 1e-15,
+            "reported mean {}",
+            accumulator.mean()
+        );
+    }
+
+    #[test]
+    fn merge_rescales_a_sum_that_overflows_across_parts() {
+        let values = [1e308, 1e308, -1e308, -1e308, 3.0];
+        for split in 1..values.len() {
+            let (left, right) = values.split_at(split);
+            let mut merged = accumulate(left);
+            merged.merge(&accumulate(right));
+            assert_eq!(merged.mean(), 3.0 / 5.0, "split {split}");
+
+            let mut reversed = accumulate(right);
+            reversed.merge(&accumulate(left));
+            assert_eq!(reversed.mean(), 3.0 / 5.0, "reversed split {split}");
+        }
     }
 
     #[test]

@@ -13,6 +13,10 @@ const LANES: usize = 4;
 /// accumulators are merged at the end. Accumulating a naive `sum` and
 /// `sum_squares` here would vectorize just as well and lose the small spread of
 /// a large-offset column entirely, which is what this path used to do.
+///
+/// A lane sum that overflows falls back to [`compute_stats_fallback`] over the
+/// whole slice: the scalar accumulator rescales its sum before it overflows,
+/// and an infinite lane sum has already lost what it would need.
 pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
     let (chunks, remainder) = values.as_chunks::<LANES>();
 
@@ -46,6 +50,9 @@ pub fn compute_stats_simd(values: &[f64]) -> NumericAccumulator {
 
     let (mean, m2) = (mean.to_array(), m2.to_array());
     let (sum, compensation) = (sum.to_array(), compensation.to_array());
+    if !sum.iter().all(|lane| lane.is_finite()) {
+        return compute_stats_fallback(values);
+    }
     let (min, max) = (min.to_array(), max.to_array());
 
     let mut stats = NumericAccumulator::new();
@@ -143,6 +150,33 @@ mod tests {
         let stats = compute_stats_simd(&cancelling);
         assert_eq!(stats.count(), 101);
         assert!((stats.mean() - 1.0 / 101.0).abs() < 1e-12);
+    }
+
+    /// Every lane sees `1e308` twice in a row, so every lane sum overflows.
+    #[test]
+    fn overflowing_lane_sums_fall_back_to_the_scalar_accumulation() {
+        let mut values = vec![1e308; 2 * LANES];
+        values.extend([-1e308; 2 * LANES]);
+        let values = values.repeat(5);
+        let stats = compute_stats_simd(&values);
+        assert_eq!(stats.count(), 80);
+        assert_eq!(stats.mean(), 0.0);
+        assert_eq!(stats.min(), Some(-1e308));
+        assert_eq!(stats.max(), Some(1e308));
+    }
+
+    /// Each lane sum stays finite and only their merge overflows.
+    #[test]
+    fn lane_sums_that_overflow_when_merged_keep_a_finite_mean() {
+        let mut values = vec![1e308; LANES];
+        for _ in 0..8 {
+            values.extend([-1e308; LANES]);
+            values.extend([1e308; LANES]);
+        }
+        let stats = compute_stats_simd(&values);
+        assert_eq!(stats.count(), 68);
+        assert_eq!(stats.mean(), compute_stats_fallback(&values).mean());
+        assert!((stats.mean() - 1e308 / 17.0).abs() <= stats.mean() * 1e-15);
     }
 
     #[test]
