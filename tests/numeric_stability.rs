@@ -242,6 +242,48 @@ fn overflowing_iqr_is_null_and_round_trips_on_every_csv_engine() {
     }
 }
 
+/// The sum overflows at the second value and the mean is 0.0. Welford's
+/// running mean, the old fallback, turned NaN here, which serialized as null
+/// and made the report fail to load (#801). A hundred values reach the SIMD
+/// accumulation, whose lane sums overflow too.
+#[test]
+fn overflowing_sum_that_cancels_reports_its_mean_on_every_csv_engine() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../docs/schema/profile-report.v1.schema.json")).unwrap();
+    let validator = jsonschema::draft202012::options().build(&schema).unwrap();
+    let cancelling = [1e308, 1e308, -1e308, -1e308];
+
+    for values in [cancelling.to_vec(), cancelling.repeat(25)] {
+        let file = csv_with(&values);
+        for (engine, report) in reports_per_engine(file.path()) {
+            let engine = &format!("{engine} over {} values", values.len());
+            let ColumnStats::Numeric(numeric) = &report.column_profiles[0].stats else {
+                panic!("{engine} reported {:?}", report.column_profiles[0].stats);
+            };
+            assert_exact(engine, "mean", numeric.mean, 0.0);
+            // The spread still exceeds the `f64` range (#784).
+            assert_eq!(numeric.variance, None, "{engine}");
+            assert_eq!(numeric.std_dev, None, "{engine}");
+
+            let document = serde_json::to_value(&report).unwrap();
+            let stats = &document["column_profiles"][0]["stats"]["Numeric"];
+            assert_exact(
+                engine,
+                "serialized mean",
+                serialized(stats, "mean", engine),
+                0.0,
+            );
+            assert!(validator.is_valid(&document), "{engine}");
+            let restored: ProfileReport = serde_json::from_value(document.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(restored).unwrap(),
+                document,
+                "{engine}"
+            );
+        }
+    }
+}
+
 #[test]
 fn mean_survives_cancelling_values_in_any_order() {
     // The unit contribution is what a naive sum drops; the order decides
@@ -368,6 +410,15 @@ mod parquet_path {
 
         let overflowing = parquet_stats(&[1e308, 1e308], 1);
         assert_eq!(overflowing.mean, 1e308);
+    }
+
+    #[test]
+    fn parquet_mean_survives_an_overflowing_sum_across_row_groups() {
+        for batch_size in [1, 2, 4] {
+            let stats = parquet_stats(&[1e308, 1e308, -1e308, -1e308], batch_size);
+            assert_eq!(stats.mean, 0.0, "batch size {batch_size}");
+            assert_eq!(stats.variance, None, "batch size {batch_size}");
+        }
     }
 
     #[test]

@@ -200,6 +200,31 @@ def test_mean_stays_finite_when_the_naive_sum_overflows(tmp_path, route):
 
 
 @pytest.mark.parametrize("route", ROUTES)
+@pytest.mark.parametrize("repeat", [1, 25], ids=["four-values", "past-simd-threshold"])
+def test_mean_of_an_overflowing_sum_that_cancels(tmp_path, route, repeat):
+    """The sum overflows at the second value; the mean is 0.0 (#801).
+
+    Welford's running mean, the old fallback, turned NaN here. NaN serialized
+    as null and ``ProfileReport.load`` then rejected the report.
+    """
+    values = [1e308, 1e308, -1e308, -1e308] * repeat
+    report = _profile(route, values, tmp_path)
+    column, serialized = _stats(report)
+
+    assert column.mean == 0.0
+    assert serialized["mean"] == 0.0
+    # The spread still exceeds the f64 range (#784).
+    assert column.variance is None
+    assert column.std_dev is None
+
+    saved = tmp_path / f"mean-{route}.json"
+    report.save(saved)
+    loaded = dp.ProfileReport.load(saved)
+    assert loaded["x"].mean == 0.0
+    assert loaded.to_dict()["columns"][0]["stats"] == serialized
+
+
+@pytest.mark.parametrize("route", ROUTES)
 def test_stability_holds_past_the_simd_threshold(tmp_path, route):
     """Long enough to reach the four-lane accumulation, on a large offset."""
     values = [1e9 + (index % 4) for index in range(1000)]

@@ -96,7 +96,9 @@ history therefore records `flexible`, without claiming an encoding conversion.
 
 ## Numeric equality contract
 
-For numeric columns, `std_dev` and `variance` remain required fields in the
+For numeric columns, `mean` is always a finite number, including when the sum
+of the input values overflows `f64`: the mean of finite values lies between
+their minimum and maximum. `std_dev` and `variance` remain required fields in the
 canonical report. They are `null` when the spread of finite input values cannot
 be represented as a finite `f64`; a true constant column reports `0.0`.
 Statistics derived from an unrepresentable standard deviation, including the
