@@ -3,7 +3,8 @@ use dataprof_core::AnalysisOptions;
 use crate::types::{ColumnProfile, ColumnStats, DataType, Locale};
 
 use crate::analysis::inference::{
-    classify_lexical_forms, infer_type, is_null_like_token, parse_strict_boolean_token,
+    classify_lexical_forms, count_locale_numbers, infer_type, is_null_like_token,
+    parse_strict_boolean_token,
 };
 use crate::analysis::patterns::detect_patterns;
 use crate::stats::numeric::compute_numeric_stats_with_parsed_count;
@@ -209,6 +210,7 @@ fn analyze_column_with_options(
         // selection: which forms a column holds is schema-level evidence like
         // the inferred type itself, not a statistic derived from a pack.
         type_homogeneity: Some(classify_lexical_forms(data)),
+        locale_number_count: Some(count_locale_numbers(data)),
         stats,
         patterns,
     }

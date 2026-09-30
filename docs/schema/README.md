@@ -569,3 +569,23 @@ day-first and reported wrong minimums, month distributions and timeliness
 counts. Dates, statistics and timeliness checks derived from slash dates in
 0.12 reports can differ from 0.11 reports of the same data. The field is
 additive and not `required`, so stored v1 reports remain valid.
+
+## v1 additive change: `locale_number_count`
+
+Both dialects carry an optional integer `locale_number_count` on each column
+(#433). Of the values `type_homogeneity` counted as `text`, it is how many are
+numbers written with a decimal comma or digit-group separators: `10,50`,
+`1.234,56`, `1,234.56`, `12,34,567`, `1'234.56`, `1 234,56`. dataprof does not
+parse these as numbers, so they are in no numeric statistic. A column made of
+them is typed `string`, and a numeric column counts them in `invalid_count`.
+The count does not decide which convention a value follows: `1,234` is a
+thousand in one locale and a fraction in another.
+
+It is counted over the same values as `type_homogeneity` and is present
+whenever that field is. Absence means the count did not run: a `nested` column,
+or a report written before 0.12. `0` means the column was checked and none were
+found. The `locale_numbers` finding reads it, and lists a column from an older
+report as `unrecorded` rather than clean.
+
+The field is additive and not `required`, so stored v1 reports remain valid.
+Every engine and input path reports the same count for the same values.

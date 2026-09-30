@@ -107,6 +107,10 @@ def column_to_dict(col: ColumnProfile | _NativeColumn) -> dict[str, _Any]:
     homogeneity = _homogeneity_counts(col.type_homogeneity)
     if homogeneity is not None:
         col_data["type_homogeneity"] = homogeneity
+    # Omitted when absent too: a report written before the count existed must
+    # not read back as "counted, found none".
+    if col.locale_number_count is not None:
+        col_data["locale_number_count"] = col.locale_number_count
     if col.min is not None:
         col_data["stats"] = {
             k: v
@@ -200,6 +204,7 @@ def _column_record(col: ColumnProfile) -> dict[str, _Any]:
         # 4dp for the same reason as in column_to_dict() — see the note there.
         "uniqueness_ratio": _r4(col.uniqueness_ratio),
         "invalid_count": col.invalid_count,
+        "locale_number_count": col.locale_number_count,
         "dominant_type": dominant_type,
         "dominant_type_share": dominant_type_share,
         "min": _r4(col.min),

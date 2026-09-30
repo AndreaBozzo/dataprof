@@ -169,6 +169,11 @@ and the column had nothing to classify. The counts cover the values the profiler
 retained, so compare their sum against `total_count - null_count` to see whether
 they describe the whole column or the engine's reservoir sample.
 
+Numbers written with a decimal comma or digit grouping, such as `1.234,56` from
+a European spreadsheet export, are not parsed as numbers and land in `text`.
+`locale_number_count` says how many of the text values they are, and the
+`locale_numbers` finding names a column where they are at least half of them.
+
 ### Uniqueness
 
 Measures duplication in the data.

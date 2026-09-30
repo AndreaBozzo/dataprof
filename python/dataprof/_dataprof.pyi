@@ -175,6 +175,12 @@ class ColumnProfile:
     #: against ``total_count - null_count`` to tell an exact count from one
     #: bounded by the engine's reservoir sample.
     type_homogeneity: dict[str, int] | None
+    #: Of the ``text`` values in ``type_homogeneity``, how many are numbers
+    #: written with a decimal comma or digit-group separators (``10,50``,
+    #: ``1.234,56``, ``1,234.56``). They are in no numeric statistic. ``None``
+    #: means the count did not run, including a report written before dataprof
+    #: recorded it; ``0`` means none were found.
+    locale_number_count: int | None
     null_percentage: float | None
     uniqueness_ratio: float | None
     min: float | None

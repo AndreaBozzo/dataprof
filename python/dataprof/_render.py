@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from ._accessors import ColumnProfile
-from ._columns import _dominant_pattern, _type_mixture
+from ._columns import _dominant_pattern, _homogeneity_counts, _type_mixture
 from ._rounding import _r2, _r4
 
 
@@ -179,6 +179,38 @@ def _mixed_type_flag(col: ColumnProfile) -> tuple[float, str] | None:
     return (outside_pct, f"{name}: mixed types ({shares}{scope})")
 
 
+def _locale_number_flag(col: ColumnProfile) -> tuple[float, str] | None:
+    """Flag a column at least half of whose text values are locale-formatted numbers.
+
+    The rule of the ``locale_numbers`` finding: at least half of the text
+    values are numbers such as ``1.234,56`` or ``1,234.56``, which no numeric
+    statistic includes (#433). Ranked by their share of the classified values,
+    so a ``string`` column made of them outranks a float column missing a few.
+    Identifier columns are exempt, as they are from ``mixed types``.
+    """
+    if col.data_type == "identifier":
+        return None
+    counts = _homogeneity_counts(col.type_homogeneity)
+    if counts is None:
+        return None
+    locale = col.locale_number_count
+    if not locale or locale * 2 < counts["text"]:
+        return None
+    # Nonzero: the locale numbers are among the classified values.
+    classified = sum(counts.values())
+    name = _one_line(col.name)
+    # The counts cover the values the profiler retained; say so when that is a
+    # sample, as the mixed types flag does, so "10,000 of 10,000" does not read
+    # as a fact about a column of a million.
+    non_null = (col.total_count or 0) - (col.null_count or 0)
+    scope = f" (sampled {classified:,} of {non_null:,} values)" if classified < non_null else ""
+    return (
+        100.0 * locale / classified,
+        f"{name}: {locale:,} of {classified:,} values are numbers with a decimal comma "
+        f"or digit grouping, left out of numeric stats{scope}",
+    )
+
+
 def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     """Derive ``(severity, text)`` quality flags for one column.
 
@@ -214,6 +246,10 @@ def _column_flags(col: ColumnProfile) -> list[tuple[float, str]]:
     mixed = _mixed_type_flag(col)
     if mixed is not None:
         flags.append(mixed)
+
+    locale_numbers = _locale_number_flag(col)
+    if locale_numbers is not None:
+        flags.append(locale_numbers)
 
     return flags
 

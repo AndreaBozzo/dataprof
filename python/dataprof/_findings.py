@@ -43,6 +43,7 @@ _SEVERITY = {
     "constant_column": "info",
     "duplicate_rows": "warning",
     "future_dates": "warning",
+    "locale_numbers": "warning",
     "mixed_types": "warning",
     "null_heavy": "warning",
     "partial_scan": "info",
@@ -62,6 +63,10 @@ _SUMMARY = {
     "constant_column": "every non-null value in this column is the same",
     "duplicate_rows": "the source contains exact duplicate rows",
     "future_dates": "some date values lie in the future",
+    "locale_numbers": (
+        "at least half of the text values in this column are numbers written with a "
+        "decimal comma or digit grouping, so no numeric statistic includes them"
+    ),
     "mixed_types": "this column's values are split across lexical types",
     "null_heavy": "this column's null share is at or above the threshold",
     "partial_scan": "only part of the source was read; findings describe the rows that were",
@@ -302,6 +307,7 @@ class _FindingPolicy:
                 index=index,
             )
 
+        _locale_numbers(index, column, out)
         self._mixed_types(index, column, non_null, out)
         _sensitive_patterns(index, column, non_null, out)
 
@@ -343,6 +349,50 @@ class _FindingPolicy:
             column=name,
             index=index,
         )
+
+
+def _locale_numbers(index: int, column: _Any, out: _Collector) -> None:
+    """Report a column at least half of whose text values are locale-formatted numbers.
+
+    Measured against the text values, so it covers a ``1.234,56`` column
+    typed ``string`` and a numeric column whose decimal-comma values were
+    counted invalid alike. At least half, so a stray ``1,5`` in free text is
+    not reported.
+    """
+    name = column.name
+    # The exemption ``mixed_types`` makes: ``1.234.567`` in an identifier
+    # scheme is a code, not an amount.
+    if column.data_type == "identifier":
+        return
+    counts = _homogeneity_counts(column.type_homogeneity)
+    if counts is None:
+        out.skip("locale_numbers", "not_computed", name)
+        return
+    locale_numbers = column.locale_number_count
+    # Classified, but by a release that did not count these yet.
+    if locale_numbers is None:
+        out.skip("locale_numbers", "unrecorded", name)
+        return
+    classified = sum(counts.values())
+    if classified == 0:
+        out.skip("locale_numbers", "no_values", name)
+        return
+    text = counts["text"]
+    if locale_numbers == 0 or locale_numbers * 2 < text:
+        return
+    out.add(
+        "locale_numbers",
+        {
+            "locale_number_count": locale_numbers,
+            "text_count": text,
+            # Counted over the values the profiler retained, as in
+            # ``mixed_types``.
+            "classified_count": classified,
+            "non_null_count": max(column.total_count - column.null_count, 0),
+        },
+        column=name,
+        index=index,
+    )
 
 
 def _sensitive_patterns(index: int, column: _Any, non_null: int, out: _Collector) -> None:

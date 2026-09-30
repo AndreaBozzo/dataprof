@@ -73,6 +73,15 @@
             "null"
           ]
         },
+        "locale_number_count": {
+          "description": "Of the values `type_homogeneity` counted as `text`, how many are\nnumbers written with a decimal comma or with digit-group separators:\n`10,50`, `1.234,56`, `1,234.56`, `1'234.56`, `1 234,56` (#433).\n\ndataprof does not parse these as numbers, so they are in no numeric\nstatistic: a column of them is typed `string`, and a numeric column\ncounts them in `invalid_count`. The count does not say which\nconvention they follow; `1,234` is a thousand in one and a fraction in\nanother.\n\nCounted over the same values as `type_homogeneity`, and present\nwhenever it is. `None` means the count did not run, including a report\nwritten before dataprof recorded it; `Some(0)` means none were found.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
         },
@@ -1229,6 +1238,14 @@
           "$ref": "#/$defs/PythonDataType"
         },
         "invalid_count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "locale_number_count": {
           "format": "uint",
           "minimum": 0,
           "type": [

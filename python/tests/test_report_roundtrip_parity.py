@@ -369,6 +369,7 @@ def test_all_null_flag_requires_exact_counts():
         outlier_count=0,
         # Classified, and there was nothing to classify.
         type_homogeneity={"numeric": 0, "date": 0, "boolean": 0, "text": 0},
+        locale_number_count=0,
     )
     assert [
         text for _, text in _column_flags(cast(dataprof.ColumnProfile, genuinely_all_null))
