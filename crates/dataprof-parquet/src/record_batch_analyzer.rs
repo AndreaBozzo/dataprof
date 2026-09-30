@@ -1139,14 +1139,31 @@ impl ColumnAnalyzer {
         Ok(())
     }
 
+    /// A decimal's stored integer is its value times `10^scale`: `1234.56` in a
+    /// `decimal128(10, 2)` column is stored as `123456`. Feeding that integer
+    /// to the statistics reported every scaled decimal column `10^scale` times
+    /// too large, and a `decimal256` column never read its values at all.
+    ///
+    /// Arrow's own rendering applies the scale, negative scales included, so
+    /// each value is read through it: the number parsed from it is correctly
+    /// rounded, and the text it leaves for samples and distinct counts is the
+    /// one a CSV of the same data holds.
+    fn process_decimal_value(&mut self, rendered: String) -> Result<()> {
+        let value: f64 = rendered.parse().map_err(|error| {
+            anyhow::anyhow!("decimal value {rendered:?} did not parse as a number: {error}")
+        })?;
+        // Every decimal Arrow stores is finite in f64: `decimal256` holds at
+        // most 76 digits, far inside the f64 range.
+        self.update_numeric_stats(value);
+        self.cardinality.insert(&rendered);
+        self.offer_sample(rendered);
+        Ok(())
+    }
+
     fn process_decimal128_array(&mut self, array: &Decimal128Array) -> Result<()> {
         for index in 0..array.len() {
             if !array.is_null(index) {
-                let decimal_value = array.value(index);
-                self.update_numeric_stats(decimal_value as f64);
-                let decimal_str = format!("dec128:{}", decimal_value);
-                self.cardinality.insert(&decimal_str);
-                self.offer_sample(decimal_str);
+                self.process_decimal_value(array.value_as_string(index))?;
             }
         }
         Ok(())
@@ -1155,10 +1172,7 @@ impl ColumnAnalyzer {
     fn process_decimal256_array(&mut self, array: &Decimal256Array) -> Result<()> {
         for index in 0..array.len() {
             if !array.is_null(index) {
-                let decimal_str = format!("dec256:value_{}", index);
-                self.update_text_stats(&decimal_str);
-                self.cardinality.insert(&decimal_str);
-                self.offer_sample(decimal_str);
+                self.process_decimal_value(array.value_as_string(index))?;
             }
         }
         Ok(())
