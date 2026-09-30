@@ -1,250 +1,249 @@
-# Pending 0.12.0 changes
-
-- **Breaking (Rust text statistics):** Newly computed text profiles leave
-  `most_frequent` and `least_frequent` as `None` on every input path (#709).
-  Database connectors and `analyze_column` previously populated these fields
-  while streaming and columnar profiles omitted them, violating serialized
-  metric parity. Rust callers needing frequencies can explicitly use
-  `dataprof_metrics::stats::text::{calculate_most_frequent, calculate_least_frequent}`
-  over their chosen values. Existing saved Rust frequency fields still round-trip;
-  Python exports and schema v1 are unchanged. See the
-  [metric contract](schema/README.md#numeric-equality-contract).
-
-- The optional benchmark suite now measures Python/Arrow producer preparation,
-  combined import/profiling, and report export separately (#698). It validates
-  exact serialized metric parity across PyArrow, pandas, Polars and lazy C Stream
-  inputs, records chunk/offset cases and memory evidence, and publishes raw
-  fresh/warm samples with the existing benchmark artifacts. The bounded
-  [recorded experiment](../benches/evidence/698/README.md) identifies the combined
-  import/profiling boundary as the largest warm stage on its host; it makes no
-  general speed or constant-memory claim and changes no profiling behavior.
-
-- The benchmark harness can collect host energy and process peak memory with
-  `--resources` (#440). Results retain raw powercap readings, paired idle
-  baselines, wraparound checks and per-worker RSS high-water marks. Missing
-  counters remain unavailable. Resource tables report repeated-worker median
-  and IQR; warm-worker totals include warmups and are not per-operation costs.
-  CI smoke-tests collection without making energy-efficiency claims. See the
-  [resource measurement protocol](../benches/README.md#energy-and-peak-memory).
-
-- Python reports now use shared read-only column, pattern, and quality views
-  over native or restored values (#516). `report.profiles` and `report.quality`
-  expose the same public classes after `from_dict()`, `from_json()`, or `load()`.
-  Native floats retain full precision; saved reports retain serialized precision
-  and missing metrics remain `None`. The document schema and exported values are
-  unchanged. Use the public `dataprof.ColumnProfile` and
-  `dataprof.DataQualityMetrics` types for type checks; private extension types
-  remain available internally but are no longer the public report's view classes.
-
-- A reproducible Python tool-comparison harness (#401) joins the existing Rust
-  suites under `benches/`, using a separate locked environment. It records fresh
-  process and warm timings, raw samples, median/IQR, fixture and binary hashes,
-  and host metadata. Both suites publish through the existing benchmark workflow
-  and website, with interactive timing charts, dispersion, workload details and
-  reproduction instructions. Rust scenarios now live in separate modules with
-  isolated deterministic fixtures; existing benchmark IDs and links are preserved.
-  Workload differences and cache conditions remain explicit. See
-  the [benchmark protocol](../benches/README.md).
-
-- Engine fallback now records the failed engine, error and retry target in
-  `execution.recovery_events` (#716), exposed as `report.recovery_events` in
-  Python. The successful engine remains in `execution.engine`. New reports
-  record `[]` when no recovery occurred; older reports retain unknown history
-  (`None` / absent). This is additive to schema v1 and changes no metrics or
-  recovery policy. **Breaking (lower-level Rust CSV API):**
-  `RobustCsvParser::parse_csv()` and `parse_csv_with_recovery()` now return
-  `CsvParseOutput { headers, records, recovery_events }` instead of a tuple,
-  preserving strict-to-flexible and auto-recovery attempts alongside the data.
-
-- **Breaking (Python):** Remove the 16 flat `DataQualityMetrics` accessors in
-  **0.12** (#509), following their deprecation in 0.9. During beta, with no
-  downstream dependents, the nested dimension API replaces them now. Native and
-  restored reports raise `AttributeError` naming the exact replacement key;
-  the old names no longer appear in `dir()` or the type stubs. Use the nested
-  dimension only after checking it is not
-  `None`; an unassessed dimension must not become a fabricated zero or perfect
-  score. For example:
-
-  ```python
-  quality = report.quality
-  completeness = quality.completeness if quality is not None else None
-  missing_ratio = (
-      completeness["missing_values_ratio"] if completeness is not None else None
-  )
-  ```
-
-  | Dimension | Removed flat names (replacement keys) |
-  | --- | --- |
-  | `completeness` | `missing_values_ratio`, `complete_records_ratio`, `null_columns` |
-  | `consistency` | `data_type_consistency`, `format_violations`, `encoding_issues` |
-  | `uniqueness` | `duplicate_rows`, `key_uniqueness`, `high_cardinality_warning` |
-  | `accuracy` | `outlier_ratio`, `range_violations`, `negative_values_in_positive` |
-  | `timeliness` | `future_dates_count`, `stale_data_ratio`, `temporal_violations`, `invalid_date_values` |
-
-  Nested values, report serialization, and the report schema version are
-  unchanged. Existing saved reports still load through the nested API.
-
-- `python -m dataprof.check` evaluates a local file against the batch quality-gate
-  API (#710). It accepts JSON policy files and threshold flags, writes the gate
-  result to stdout with `--json`, and sends human summaries to stderr. Exit codes
-  are `0` for pass, `1` for a proven violation, and `2` for inconclusive results or
-  input errors. Baseline comparisons remain unsupported by the gate API;
-  `--baseline` explicitly exits `2`. See the
-  [CI entrypoint guide](python/README.md#python--m-dataprofcheck----ci-entrypoint-012).
-
-- Empty inputs now consistently carry an empty quality assessment with
-  `quality_status: computed`, no score and no assessed dimensions (#723).
-  Empty CSV files previously withheld quality while buffers and other formats
-  emitted the assessment. Header-only sources follow the same rule; deselecting
-  quality still reports `not_requested`. Regenerate stored empty-input baselines
-  to compare across transports. The report schema remains v1.
-  Async empty CSV and zero-column Arrow RecordBatch inputs now produce reports
-  instead of errors.
-
-- Capped Parquet profiling (`max_rows`) now selects up to 32 contiguous ranges
-  spread across the file instead of its prefix (#639). Files, byte buffers and
-  HTTP reads use the same selection; HTTP reads now honor the cap. Re-baseline
-  comparisons that used capped Parquet input: their analyzed population changes.
-  `execution.sampled_row_ranges` records exact zero-based, half-open row ranges,
-  alongside `sampling_applied`, `sampling_ratio` and the existing `max_rows`
-  truncation reason. This optional field is additive to report schema v1; older
-  reports without it retain unknown selection provenance. Metrics describe the
-  selected rows, including duplicates across ranges, not the whole source.
-
-# dataprof 0.11.0 — The documented API, and metrics that earn their scores
+# dataprof 0.12.0 · Profile, then gate
 
 <!-- release-body:start -->
 
-0.11.0 closes two gaps that had the same shape: something dataprof published
-did not match what it actually did.
+0.12.0 turns dataprof from something you run once on unfamiliar data into a
+checkpoint that stays in the pipeline. A report can now say what deserves
+attention (`findings()`), and a declared policy turns it into a verdict
+(`check()`, `QualityPolicy`, and `python -m dataprof.check` for CI). The verdict
+has three values, and `inconclusive` is a real answer: a sampled or partial scan
+never passes a claim about the whole source. On a large file read in full,
+sampled quality scores now carry an interval, and the gate decides on it.
 
-The first was distribution. `dataprof.asyncio`, `profile_url_async` and remote
-Parquet were documented, tested, and absent from every published wheel, because
-the release job built `--features python` and that feature was empty. `pip
-install dataprof` now reaches the async API, URL profiling and remote Parquet
-without a Rust toolchain.
+A gate is only as good as the numbers under it, so most of this release is
+about the numbers. Of more than a hundred commits, 48 are fixes, many found by profiling real
+files and checking the output against something independent: a CSV of the same
+values, the previous release, or the planted truth. Several were silent and
+plausible, which is the worst failure for a profiler: polars and Arrow-backed
+pandas frames profiled from their first chunk only, Parquet decimal columns
+reported 10^scale times too large, a small spread on a large offset reported
+the wrong standard deviation, and a US date column was read day-first value by
+value. Each is fixed, and the same data now gives the same serialized numbers on
+every engine and input path.
 
-The second was measurement. Four quality metrics returned confident numbers
-that were wrong in ways no error surfaced: a file dated entirely in the future
-scored a perfect timeliness, a column of clean ISO datetimes scored zero
-consistency, adding junk to a numeric column *raised* its score, and record
-completeness collapsed to 0% whenever nulls co-occurred. Each is now measured
-the way it is described.
-
-Both strands change numbers. That is the point, and the upgrade checklist below
-says where.
+Numbers move because of that, and some APIs changed shape. The upgrade
+checklist below says where, and what to re-baseline.
 
 ## Install
 
 ```bash
 # Python
-pip install --upgrade dataprof==0.11.0
+pip install --upgrade dataprof==0.12.0
 
 # Rust
-cargo add dataprof@0.11.0
+cargo add dataprof@0.12.0
 ```
 
-Python 3.10+ and Rust 1.96+ remain the supported minimums. dataprof 0.11.0
+Wheels cover standard CPython 3.10 to 3.14 on Linux, macOS and Windows, with no
+Python dependencies. Rust 1.96 remains the minimum supported version. dataprof
 ships libraries and Python packages; there is no CLI binary.
+
+## Highlights
+
+- **A quality gate, in Rust, Python and CI** (#725, #732). State a policy as
+  data and get `pass`, `fail` or `inconclusive`, with the evidence behind each
+  check. `python -m dataprof.check data.csv --min-quality 90` exits 0, 1 or 2.
+- **Findings** (#770). `report.findings()` lists what deserves attention, each
+  with a stable code, a severity and its evidence, never a raw value, and lists
+  the rules it could not evaluate instead of reading them as clean.
+- **Gates that decide on large files** (#789, #820). When quality was computed
+  over the retained sample, the report carries a 99.9% interval per score, and
+  the gate passes or fails on it. Past a million distinct rows, uniqueness is
+  bounded with certainty from what the exact counts held.
+- **Column projection** (#655). Profile only the columns you name, on every
+  input path; Parquet skips the unselected column chunks entirely.
+- **Arrow C Stream inputs** (#706). `profile()` accepts PyArrow
+  `RecordBatchReader` objects and DuckDB relations without collecting a table.
+- **Reports that record how they were made.** `quality_status` says why a
+  report has no quality assessment (#722), `recovery_events` records engine
+  fallback (#735), `metric_semantics` records the definitions in force (#765),
+  and JSON saves carry the complete report in both languages (#759).
+- **Honest about what it cannot read.** Numbers written as `1.234,56` or
+  `10,50` are counted and reported (#807), a CSV that ends inside an open quote
+  is reported (#791), and nested columns report their counts instead of
+  statistics about a display string (#769).
 
 ## Upgrade checklist
 
 | If you rely on… | What changed | What to do |
 | --- | --- | --- |
-| a source build for async or URL profiling | `python-async`, `async-streaming` and `parquet-async` now ship in the published wheel. It grows 3.72 → 5.25 MiB on Linux x86_64, still with no Python dependencies. | Drop the source-build step. `capabilities()` reports what the installed build supports. |
-| database helpers from a wheel | Database connectors stay out of the wheel deliberately, not accidentally: `#365` records DECIMAL, temporal, UUID and BLOB columns as null. | Keep the source build with `--features database,<driver>`, and track `#365` before trusting those columns. |
-| `timeliness` counts or scores | `future_dates_count` compared calendar years, so nothing inside the current year was ever future — a blind window up to 364 days wide. Ordering compared raw strings, which only holds for ISO, so day-first inputs hid real inversions and invented others. Overlapping role patterns counted every pair twice. | Re-baseline timeliness gates. Files with near-future dates, non-ISO date formats, or `start_date`/`end_date` pairs move the most. |
-| `complete_records_ratio` | It was derived from per-column null totals, which assumes no two nulls share a record. It understated completeness whenever nulls co-occurred and collapsed to 0% once null cells outnumbered rows. It is now counted on rows. | Expect this figure to rise on data with correlated nulls. Re-baseline any gate built on it. |
-| `data_type_consistency` on `string` columns | A column that fell below the inference thresholds became `string` and reported a perfect 100 however mixed it was, so adding junk raised the score. Columns with no inferred type are now scored on the share held by their largest lexical class. | Mixed columns score lower and continuously across the old boundary. Read `type_homogeneity` beside the score for the direction of the mix. |
-| `data_type_consistency` on `date` columns | Inference and validation used different regex sets, so a column typed `Date` on a form the validating set rejected failed every value in it. Clean ISO datetimes and dotted dates scored 0.0. | Date columns that were wrongly penalised now score correctly. Re-baseline. |
-| `locale=` tags | An unrecognised tag was accepted and silently suppressed every locale-specific pattern, so `locale="it-IT"` returned fewer patterns than passing nothing. The tag is now a closed set. | Handle `ValueError` for an unknown tag. `IT`, `ITA`, `it-IT` and `it_IT` all normalise to the same locale. |
-| names reachable from `dataprof.*` | The package declared 28 names in `__all__` while 40 were reachable, including `dataprof.os`, `dataprof.json` and `dataprof.pathlib`. Internal imports are now private. | Import standard-library modules directly rather than through `dataprof`. |
-| exact float values in reports | Rust and Python rounded the same fields to different precisions. Precision now follows what the number is: 2dp for 0–100 percentages, 4dp for statistics, data values and 0–1 ratios, quartiles at 2dp. | `min`, `max`, `median`, `mode` and `avg_length` gain precision in Rust. Compare reports across languages rather than assuming either was canonical. |
-| `Error::source()` on `DataProfilerError` | Six variants now retain the originating error instead of flattening it into a string, and the cause reaches Python as `__cause__`. | Walk the source chain instead of parsing message text. |
+| flat Python quality accessors (`quality.missing_values_ratio`, …) | The 16 accessors deprecated in 0.9 are removed (#733). Reading one raises `AttributeError` naming its nested replacement. | Read the nested dimension, after checking it is not `None`: `quality.completeness["missing_values_ratio"]`. |
+| the layout of `to_json()` / JSON `save()` | Both write the complete canonical report, the same document Rust serializes: `data_source`, `column_profiles`, quality under `quality.metrics` (#759). `to_dict()` keeps the flat summary. | Parse `to_dict()` if you consumed the flat layout. Loaders accept both layouts. |
+| `overall_quality_score()` / `overall_score` | A report where nothing was assessed returns `None` (serialized `null`), not `0.0` (#629). Rust `overall_score()` and `QualityAssessment::score()` return `Option<f64>`; `MetricConfidence` gains `NotAssessed`. | Decide what an unassessable report means for you; branch on `assessed_dimensions()`. |
+| dimension evidence dicts (`quality.validity`, …) | A dimension that assessed nothing returns `None` and is omitted from serialized output, instead of ratios computed from zero inputs (#640). | Check for `None` before reading keys. |
+| `variance`, `std_dev`, `quartiles.iqr` | A spread that overflows `f64` is `null`, not `0.0` or `inf` (#800, #803). Rust fields are `Option<f64>`. | Treat `null` as "too large to represent", not "no spread". |
+| text lengths | `min_length`, `max_length`, `avg_length` count Unicode scalar values, not UTF-8 bytes (#641): `"東京"` is 2, not 6. ASCII is unchanged. Saved reports record this as `metric_semantics.text_length_unit` (#765). | Re-profile non-ASCII text rather than comparing across the 0.11/0.12 boundary. |
+| struct, list and map columns | Typed `nested` (`DataType::Nested`) with counts only; no length statistics, distinct count or patterns (#769). | Add a `Nested` arm to exhaustive matches; compare nested columns within a release. |
+| text `most_frequent` / `least_frequent` (Rust) | Newly computed profiles leave them `None` on every path (#758). | Compute them explicitly with `dataprof_metrics::stats::text::{calculate_most_frequent, calculate_least_frequent}`. |
+| Rust struct literals | `QualityAssessment` is built with `new`, `exact` or `approximate` (#759). Public structs gain public fields: `ProfileReport` gains `quality_status` (#722) and `metric_semantics` (#765); `ExecutionMetadata` gains `recovery_events` (#735), `sampled_row_ranges` (#721) and `unterminated_quote` (#791); `ColumnProfile` gains `locale_number_count` (#807) and `unique_count_lower_bound` (#820); `DateTimeStats` gains `slash_date_order` (#817); `RowDuplicateSummary` gains `max_duplicate_rows` (#820). Lower-level `BifurcatedResult` and `ColumnProfileInput` gain `score_bounds` and `unique_count_lower_bound`. | Use the constructors (`ProfileReport::new`, `ExecutionMetadata::new`), or add the new fields to literals. |
+| `RobustCsvParser::parse_csv()` / `parse_csv_with_recovery()` (Rust) | Return `CsvParseOutput { headers, records, recovery_events }` instead of a tuple (#735). | Read the named fields. |
+| Python interpreters | Wheels are published for standard, GIL-enabled CPython 3.10 to 3.14 only (#707). PyPy, preview and free-threaded wheels are no longer built. | Use a supported CPython. |
+| quoted policy thresholds | `check()` and `findings()` reject strings and booleans as thresholds; a quoted number in a policy file is an input error (#772). | Write thresholds as numbers. |
+| hand-edited flat documents | `from_dict()` rejects a malformed `quality.score_weights` instead of substituting defaults (#764). | Fix the document. |
 
-## Release highlights
+## Numbers that move
 
-- **The wheel is the product.** Async, URL profiling and remote Parquet ship by
-  default. `pyproject.toml` is the single declaration of the shipped feature
-  set, and a test fails if the release job disagrees with it.
-- **Four quality metrics stopped flattering the data.** Timeliness, record
-  completeness, string-column consistency, and date-column validity each
-  returned a confident wrong number; each now measures what it documents.
-- **Arrow interoperability is honest about what it accepts.** Chunked Tables
-  profile every batch, any Arrow PyCapsule producer is accepted, and data
-  imported over the C Data Interface is validated instead of trusted.
-- **Reports carry a versioned, published JSON schema.** Mapping fields
-  serialize in a deterministic order, and a byte-buffer input reports a `bytes`
-  source type rather than pretending to be a file.
-- **Errors are walkable.** A decode failure keeps the error that caused it,
-  in Rust and in Python.
+Re-baseline stored reports and gates that read these.
+
+- **Rows and everything after them, on chunked DataFrames** (#662). Multi-chunk
+  polars frames and Arrow-backed pandas frames profiled their first chunk only.
+- **Parquet and Arrow decimals** (#828): statistics were `10^scale` times too
+  large, and `decimal256` columns had no statistics and a fabricated distinct
+  count.
+- **Variance and standard deviation** (#677, #806): values on a large offset
+  (IDs, epoch timestamps, `1e12 + x`) lost precision; the mean of values whose
+  sum overflows is now reported (#804).
+- **Distinct counts** are exact up to a million values on every engine, and an
+  estimate never exceeds the values seen (#786, #779). Duplicate rows are exact
+  up to a million distinct rows, including JSON records whose keys appear late
+  (#658).
+- **Timeliness**: start/end pairs are compared only within the same row (#792),
+  and a US date column is read month-first as a whole (#817). Offsets in RFC 3339
+  timestamps normalize to UTC (#660), and timestamps in named time zones profile
+  instead of failing (#669).
+- **Patterns**: ten-digit IDs and epoch seconds are no longer reported as US
+  phone numbers or flagged sensitive (#818).
+- **Whitespace-padded numbers** enter numeric statistics (#628); columns with no
+  parsed value report no statistics rather than zeros (#682).
+- **Capped Parquet profiles** (`max_rows`) sample 32 ranges across the file
+  instead of its prefix (#721), recorded in `execution.sampled_row_ranges`.
+- **Empty inputs** report an empty quality assessment on every path (#724).
+- **In-memory profiles** of the same data are deterministic (#774).
+- **Parquet schema inference** (`infer_schema()`, `analyze_structure()`) types
+  text columns from their values, as `profile()` does (#699).
 
 ## Known limitations
 
-Shipping with these, tracked for 0.12:
+Shipping with these; each has an issue.
 
-- **An unassessable report's aggregate is `0.0`, not `None`** (`#571`). Every
-  dimension correctly reports `None`, and `report.quality_score` returns `None`,
-  but `overall_quality_score()` and the serialized `overall_score` aggregate the
-  empty set to zero. A zero-row input reads as "terrible" rather than "nothing
-  to assess".
-- **Dimension evidence accessors report ratios from zero inputs** (`#622`).
-  `quality.validity` returns `valid_values_ratio: 100.0` with
-  `values_checked: 0` when validity was never assessed. `assessed_dimensions()`,
-  `dimension_scores()`, `quality_summary()` and `to_llm_context()` are all
-  correct; only the raw evidence dicts fabricate.
-- **Text lengths are UTF-8 byte counts under names that say nothing about
-  encoding** (`#627`). `min_length`, `max_length` and `avg_length` measure
-  encoded bytes on every engine, so `"東京"` reports 6 and `"🙂"` reports 4.
-  0.12 changes the unit to Unicode scalar values, which reports 2 and 1 for the
-  same values. **ASCII is unaffected; a non-ASCII text column profiled under
-  0.11 and under 0.12 is not comparable**, and the report schema version does
-  not move because nothing about validation changes. Re-profile rather than
-  comparing across the boundary.
-- **`std_dev` differs in the last ULP between engines** (`#547`). The
-  incremental accumulator and the Arrow path compute it differently. Serialized
-  reports round to 4dp and agree; the raw attribute does not.
-- **Locale-aware value parsing is not implemented** (`#433`). `locale=` tunes
-  pattern detection, not number or date parsing, so a European export with
-  decimal commas still profiles those columns as text.
+- **Common null markers are values** (#813). Only empty, `null` and `nan` are
+  null, so `NA`, `N/A`, `#N/A`, `\N` and `None` count as values and completeness
+  can read 100% on data that is mostly missing.
+- **Zero-padded codes are numbers** (#814). `00123` and `20240115` are typed
+  `integer` and averaged.
+- **Locale-formatted numbers are reported, not parsed** (#433). `locale=` still
+  tunes pattern detection only. `10,50` can also match the `Geographic
+  Coordinates` pattern (#808), and amounts with a currency or percent sign are
+  not counted (#809).
+- **Very large sources can stay inconclusive** (#830). The certain uniqueness
+  bound widens with row count; past about ten million rows a high
+  `min_quality_score` may not be decidable.
+- **Sensitive-data coverage is narrow** (#790): two national IDs and two phone
+  formats. International and E.164 phone numbers are not detected.
+- **`--baseline` is not supported yet** (#749); the flag exits 2.
+- **Database connectors need a source build** (#588); they are not in the wheel.
+- **Durations** report statistics in their storage unit, which the report does
+  not name (#823).
 
 <!-- release-body:end -->
 
-## Planned for 0.12: numeric equality surface
+## Detailed changes
 
-The cross-engine identical-numbers contract applies to serialized, rounded
-metrics: Rust Serde reports and Python `to_dict()`/`to_json()`/JSON `save()`
-exports. Native float attributes retain full precision and can differ in their
-last digits with accumulation order. Compare serialized metrics for the same
-data and analysis options; execution provenance such as timing and memory can
-differ. Loading preserves the saved precision. The contract itself changes no
-rounding rule and no schema version (#547).
+The generated [changelog](CHANGELOG.md) lists every commit. This section groups
+the user-visible ones.
 
-Enforcing it did surface one real violation. Text statistics reported by the
-database connectors counted null-like tokens (`NULL`, `NaN`, in any case) as
-text values, while every file and in-memory engine excluded them. Database
-profiles of string columns containing those tokens now report the same
-`min_length`, `max_length` and `avg_length` as every other path. Text frequency
-fields are now consistently unassessed across paths (#709), as described above.
+### Quality gate and findings
 
-Agent-facing thresholds should read serialized precision, and `all-null` remains
-an exact count-based claim (#526). One consumer does not yet follow that rule —
-`_dominant_pattern` thresholds on the native pattern confidence — so a value
-just under the boundary can survive a round trip differently. See the
-[numeric contract](schema/README.md#numeric-equality-contract) for the full
-scope and the remaining open defects.
+- `ProfileReport.check()` (Python) and `QualityPolicy` (Rust) evaluate minimum
+  quality and dimension scores, per-column null limits, a duplicate-row limit
+  and required metrics, with `scope="full_source"` (default) or `"observed"`.
+  Each check records what it expected, what it observed, the evidence and why it
+  could not be evaluated when it could not (#725).
+- `python -m dataprof.check` wraps the gate for CI: JSON policy files and
+  threshold flags, `--json` to stdout, human summaries to stderr, exit codes
+  0/1/2 (#732). See the
+  [CI entrypoint guide](python/README.md#python--m-dataprofcheck----ci-entrypoint-012).
+- `findings()` reports `all_null`, `null_heavy`, `mixed_types`,
+  `duplicate_rows`, `future_dates`, `temporal_order_violations`, `ragged_rows`,
+  `unterminated_quote`, `records_skipped`, `locale_numbers`, `constant_column`,
+  `sensitive_pattern` and `partial_scan`, identically in Rust and Python (#770,
+  #791, #807).
+- `quality.score_bounds` / `report.quality_score_bounds`: a 99.9% interval per
+  sampled score, and the gate's decision rule on it (#789). Uniqueness gets a
+  certain interval past a million distinct rows (#820).
 
-## Planned for 0.12: explicit Python interpreter support
+### Correctness
 
-Release wheels will support standard, GIL-enabled CPython 3.10–3.14 on the
-existing Linux, macOS and Windows targets. The 0.11 runner-dependent PyPy,
-preview Python and free-threaded artifacts are not part of this supported set.
-Package metadata will declare `>=3.10,<3.15` and CPython classifiers through
-3.14; use a supported CPython interpreter for 0.12 until support for other
-interpreters is explicitly added and tested.
+- One stable numeric accumulator for every path: Welford on shifted values and a
+  compensated sum (#677, #806); overflow reported as `null` (#800, #803); the
+  mean of an overflowing sum (#804).
+- Exact distinct counts to a million on every engine, using 64-bit fingerprints;
+  exact sets spill under memory pressure on the incremental, columnar and Arrow
+  batch paths, and the columnar engine honours `memory_limit_mb` (#786, #792).
+- Accumulator merge produces the single-pass profile, including one-sided
+  columns, completeness and reservoir weighting (#650).
+- Parquet columns are profiled by value, not physical encoding (dictionary,
+  run-end and view types), and an unreadable column is an error rather than a
+  fabricated full-cardinality profile (#661).
+- Memory-mapped CSV chunks end on record boundaries; headerless configuration is
+  honoured by both CSV engines (#628). CSV decoding stops at the row cap (#755),
+  and `max_bytes` stops at the first record past the budget (#776).
+- Slash dates are read in one day/month order per column, recorded as
+  `DateTimeStats::slash_date_order` (#817).
 
-The same interpreter declaration drives the Python test and wheel smoke
-matrices. Every release build must contain exactly one wheel per declared
-interpreter with matching archive tags and Python requirements before upload.
-See the [contributor policy](CONTRIBUTING.md#python-interpreters-and-release-wheels)
-for the declaration and checks (#649).
+### Python
+
+- Every chunk of a pandas or polars DataFrame is profiled (#662); zero-row Arrow
+  sources profile over their declared columns (#666).
+- Arrow C Stream producers, including DuckDB relations, are accepted (#706).
+- Native and restored reports share one set of read-only views (#746), and the
+  bindings are split into private modules behind a small facade (#705).
+- The async database helpers are coroutine functions (#778); engine aliases are
+  documented (#680); progress callbacks hear from every file route (#777).
+
+### Removed flat quality accessors
+
+The 16 flat `DataQualityMetrics` accessors deprecated in 0.9 are gone (#733).
+Reading one raises `AttributeError` naming its replacement; the names no longer
+appear in `dir()` or the type stubs. Read the nested dimension only after
+checking it is not `None`, since an unassessed dimension must not become a
+fabricated zero or perfect score:
+
+```python
+quality = report.quality
+completeness = quality.completeness if quality is not None else None
+missing_ratio = completeness["missing_values_ratio"] if completeness is not None else None
+```
+
+| Dimension | Removed flat names (replacement keys) |
+| --- | --- |
+| `completeness` | `missing_values_ratio`, `complete_records_ratio`, `null_columns` |
+| `consistency` | `data_type_consistency`, `format_violations`, `encoding_issues` |
+| `uniqueness` | `duplicate_rows`, `key_uniqueness`, `high_cardinality_warning` |
+| `accuracy` | `outlier_ratio`, `range_violations`, `negative_values_in_positive` |
+| `timeliness` | `future_dates_count`, `stale_data_ratio`, `temporal_violations`, `invalid_date_values` |
+
+Nested values, report serialization and the schema version are unchanged, and
+saved reports still load through the nested API.
+
+### Reports and schema
+
+- JSON saves write the canonical report; `to_dict()` stays the flat summary
+  (#759). The report schema stays v1: every new field is optional.
+- New fields: `quality_status` (#722), `execution.recovery_events` (#735),
+  `metric_semantics` (#765), `execution.sampled_row_ranges` (#721),
+  `execution.unterminated_quote` (#791), `quality.score_bounds` (#789),
+  `locale_number_count` (#807), `DateTimeStats::slash_date_order` (#817), and the
+  `nested` data type (#769). See the [schema guide](schema/README.md).
+- The cross-engine numeric equality contract is scoped to serialized, rounded
+  metrics and enforced by comparing complete serialized column documents (#708).
+
+### Structure, Parquet and databases
+
+- `analyze_structure()` reports whole-file counters for Parquet from the footer
+  (#702), types text columns from their values (#699), and refuses duplicate
+  column names (#701).
+- Database connectors decode temporal, decimal, UUID and unsigned columns
+  (#642) and MySQL `TIME` as a time of day (#646).
+- `AgentGuard.llm_context()` redacts host paths (#703).
+
+### Performance and benchmarks
+
+- Peak-memory sampling is throttled, so small chunk sizes no longer pay a
+  process-table walk per chunk (#775); the columnar engine reads its ragged-row
+  count from arrow-csv instead of pre-scanning (#754).
+- The benchmark suites share one home, one CI artifact and one page, with a
+  locked four-tool comparison (dataprof, pandas, polars, ydata-profiling),
+  energy and peak-memory collection, and Python/Arrow boundary costs (#736,
+  #747, #748, #750). The page reports what each run measured and does not claim
+  a general ranking.

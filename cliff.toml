@@ -51,6 +51,8 @@ split_commits = false
 commit_preprocessors = [
     { pattern = '^Implement Python 0\.9 quality metrics breaking pass', replace = "feat(python)!: nested DataQualityMetrics semantics and Python 3.10 floor" },
     { pattern = '^Add minimal analyze_structure API', replace = "feat(python): analyze_structure() for lightweight structural profiling" },
+    # A 0.12 squash merge (#646) landed with a plain subject.
+    { pattern = '^Fix MySQL TIME columns decoding as duration instead of time of day', replace = "fix(database): decode MySQL TIME columns as a time of day, not a duration" },
 ]
 
 commit_parsers = [

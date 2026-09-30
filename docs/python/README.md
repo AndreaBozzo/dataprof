@@ -1,10 +1,10 @@
 # Python API Guide
 
-Complete reference for the `dataprof` Python package (v0.11.0).
+Complete reference for the `dataprof` Python package (v0.12.0).
 
 For upgrade-sensitive changes to sampling, execution controls, quality scores,
 parser behavior, semantic hints, and exception types, read the
-[0.11.0 release notes and migration guide](../release-notes.md).
+[0.12.0 release notes and migration guide](../release-notes.md).
 
 The Python API is built for quick inspection and follow-up analysis: point it at a file, DataFrame, Arrow batch, ad-hoc notebook data, or database query and get back a report you can slice, export, and wire into notebooks or checks.
 
@@ -621,7 +621,7 @@ score either.
 Flat `DataQualityMetrics` accessors, deprecated in 0.9, are removed in 0.12.
 The old names raise `AttributeError` naming the replacement key. Use nested
 dimensions so skipped dimensions are explicit (see the
-[migration table](../release-notes.md#pending-0120-changes)):
+[migration table](../release-notes.md#removed-flat-quality-accessors)):
 
 ```python
 if q.completeness is not None:

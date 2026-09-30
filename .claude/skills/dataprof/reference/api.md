@@ -154,7 +154,7 @@ meaning the computation was asked for and broke, with the message in
 
 Flat evidence accessors were removed in 0.12 and raise `AttributeError`.
 Read the nested dimension dicts listed above, checking for `None` first.
-See the [migration table](../../../../docs/release-notes.md#pending-0120-changes).
+See the [migration table](../../../../docs/release-notes.md#removed-flat-quality-accessors).
 
 </details>
 

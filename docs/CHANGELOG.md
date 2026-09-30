@@ -6,17 +6,231 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 For the user-oriented overview, upgrade checklist, and migration details, read
-the [0.11.0 release notes](release-notes.md).
+the [0.12.0 release notes](release-notes.md).
 
-## [Unreleased]
+## [0.12.0] - 2026-09-30
 
-### Removed
+### Added
 
-- Python: Remove all 16 flat `DataQualityMetrics` accessors in **0.12** (#509).
-  Native and restored reports raise `AttributeError` naming the exact nested
-  replacement key. Type stubs and introspection expose only the nested API;
-  persisted reports and metric values are unchanged. See the
-  [migration table](release-notes.md#pending-0120-changes).
+- Report numbers written with a decimal comma or digit grouping (#807) by @AndreaBozzo
+
+- Decide sampled quality scores on a 99.9% interval over the scan (#789) by @AndreaBozzo
+
+- Add structured findings to ProfileReport (#770) by @AndreaBozzo
+
+- Record metric semantics in saved reports (#765) by @AndreaBozzo
+
+- **Benchmarks**: Measure energy and peak memory (#748) by @AndreaBozzo
+
+- **Benchmarks**: Unify suites and publish reproducible evidence (#736) by @AndreaBozzo
+
+- Record engine and CSV recovery provenance (#735) by @AndreaBozzo
+
+- **Python**: Remove flat quality accessors (#733) by @AndreaBozzo
+
+- **Python**: Add quality gate module entrypoint (#732) by @AndreaBozzo
+
+- Add a batch quality-gate API with structured results (#725) by @AndreaBozzo
+
+- **Python**: Accept Arrow C Stream inputs (#706) by @AndreaBozzo
+
+- **Partial**: Report whole-file counters in a Parquet structural report (#702) by @AndreaBozzo
+
+- Add column projection across profiling paths (#655) by @QinXi-ai
+
+### Changed
+
+- Stop PR runs from evicting master's caches and building the extension twice (#795) by @AndreaBozzo
+
+- Throttle per-chunk peak memory sampling (#775) by @AndreaBozzo
+
+- Raise the Examples Smoke timeout to 30 minutes (#773) by @AndreaBozzo
+
+- **Columnar**: Read the ragged-row count from arrow-csv (#754) by @AndreaBozzo
+
+- Measure Python and Arrow boundary costs (#750) by @AndreaBozzo
+
+- Distinguish benchmark startup, first use, and steady state (#747) by @AndreaBozzo
+
+- **Python**: Unify native and restored report accessors (#746) by @AndreaBozzo
+
+- **Fuzz**: Add bounded parser and report fuzz targets (#734) by @AndreaBozzo
+
+- Update rustls by @AndreaBozzo
+
+- **Python**: Split bindings into private modules (#705) by @AndreaBozzo
+
+- **Tests**: Split Python API test suite (#704) by @AndreaBozzo
+
+- Compile the advertised MSRV feature graphs on 1.96 (#684) by @AndreaBozzo
+
+- Run omitted database regression suites (#683) by @AndreaBozzo
+
+- **Arrow**: Remove unreachable CSV dispatch (#679) by @AndreaBozzo
+
+- **Metrics**: Compute numeric aggregates with a stable accumulator (#677) by @AndreaBozzo
+
+### Dependencies
+
+- **Deps**: Bump jsonschema from 0.56.0 to 0.57.0 (#796) by @dependabot[bot]
+
+- **Deps**: Bump benchmark setuptools to 81.0.0 by @dependabot[bot]
+
+- **Deps**: Bump benchmark polars to 1.44.2 by @dependabot[bot]
+
+- **Deps**: Bump ty to 0.0.81 by @dependabot[bot]
+
+- **Deps**: Bump polars to 1.44.2 by @dependabot[bot]
+
+- **Deps**: Bump ruff to 0.16.7 by @dependabot[bot]
+
+- **Deps**: Bump uuid to 1.26.1 by @dependabot[bot]
+
+- **Deps**: Bump wide to 1.7.1 by @dependabot[bot]
+
+- **Deps**: Bump toml to 1.1.6 by @dependabot[bot]
+
+- **Deps**: Bump arrow and parquet to 60.0.0 (#751) by @AndreaBozzo
+
+- **Deps**: Bump github/codeql-action from 4.37.9 to 4.38.0 (#745) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.55.1 to 0.56.0 (#726) by @dependabot[bot]
+
+- **Deps**: Bump toml from 1.1.4+spec-1.1.0 to 1.1.5+spec-1.1.0 (#687) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.52.1 to 0.55.0 (#688) by @dependabot[bot]
+
+- **Deps-dev**: Bump polars from 1.43.2 to 1.44.1 (#689) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.75 to 0.0.78 (#690) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.16.5 to 0.16.6 (#691) by @dependabot[bot]
+
+- **Deps**: Bump github/codeql-action from 4.37.8 to 4.37.9 (#659) by @dependabot[bot]
+
+- **Deps-dev**: Bump ty from 0.0.71 to 0.0.75 (#634) by @dependabot[bot]
+
+- **Deps-dev**: Bump maturin from 1.14.1 to 1.15.0 (#635) by @dependabot[bot]
+
+- **Deps-dev**: Bump ruff from 0.16.3 to 0.16.5 (#636) by @dependabot[bot]
+
+- **Deps**: Bump log from 0.4.33 to 0.4.34 (#633) by @dependabot[bot]
+
+- **Deps**: Bump wide from 1.6.1 to 1.7.0 (#632) by @dependabot[bot]
+
+- **Deps**: Bump jsonschema from 0.49.9 to 0.52.0 (#631) by @dependabot[bot]
+
+- **Deps**: Bump uuid from 1.24.0 to 1.26.0 (#630) by @dependabot[bot]
+
+- **Deps**: Bump github/codeql-action from 4.37.3 to 4.37.8 (#616) by @dependabot[bot]
+
+### Documentation
+
+- Terse README, 0.12 landing page, and a readable benchmark page (#831) by @AndreaBozzo
+
+- **Python**: Document column projection (#695) by @AndreaBozzo
+
+- **Ci**: Explain contributor decode audit (#681) by @AndreaBozzo
+
+### Fixed
+
+- Profile decimal columns at their value, not their unscaled integer (#828) by @AndreaBozzo
+
+- Bound uniqueness with certainty past a million distinct rows (#820) by @AndreaBozzo
+
+- Validate US phone numbers against the numbering plan (#818) by @AndreaBozzo
+
+- Read a column's slash dates in one day/month order (#817) by @AndreaBozzo
+
+- Run Welford on shifted values so a large offset keeps the spread exact (#806) by @AndreaBozzo
+
+- Report the mean of values whose sum overflows f64, not NaN (#804) by @AndreaBozzo
+
+- Report an IQR that overflows f64 as null, not inf (#803) by @AndreaBozzo
+
+- Report a variance that overflows f64 as null, not 0.0 (#800) by @AndreaBozzo
+
+- Compare start and end dates only when they come from the same row (#792) by @AndreaBozzo
+
+- Report CSV sources that end inside a quoted field (#791) by @AndreaBozzo
+
+- Count distinct values exactly up to a million on every engine (#786) by @AndreaBozzo
+
+- Cap approximate distinct counts at the values seen (#779) by @AndreaBozzo
+
+- Report progress on every file route, including the default engine (#777) by @AndreaBozzo
+
+- **Python**: Make the async database helpers coroutine functions (#778) by @AndreaBozzo
+
+- Stop byte-capped CSV scans at the first record past the budget (#776) by @AndreaBozzo
+
+- Seed the numeric reservoir so in-memory profiles are deterministic (#774) by @AndreaBozzo
+
+- **Python**: Refuse text and overflowing numbers as policy thresholds (#772) by @AndreaBozzo
+
+- Profile nested columns by their counts, not a display string (#769) by @AndreaBozzo
+
+- **Python**: Reject malformed score weights in flat summaries (#764) by @AndreaBozzo
+
+- **Python**: Keep custom score weights in the flat summary (#761) by @AndreaBozzo
+
+- Persist one canonical report document (#759) by @AndreaBozzo
+
+- **Metrics**: Align text frequency absence across input paths (#758) by @AndreaBozzo
+
+- **Columnar**: Stop the CSV decode at the row cap (#755) by @AndreaBozzo
+
+- **Benchmarks**: Preserve evidence on failure (#740) by @AndreaBozzo
+
+- Align empty-source quality across input paths (#724) by @AndreaBozzo
+
+- **Runtime**: Record why a report carries no quality assessment (#722) by @AndreaBozzo
+
+- **Parquet**: Spread capped samples across files (#721) by @AndreaBozzo
+
+- **Metrics**: Scope and enforce the cross-engine numeric equality contract (#708) by @AndreaBozzo
+
+- **Ci**: Enforce published Python interpreters (#707) by @AndreaBozzo
+
+- **Agent**: Redact host paths in model context (#703) by @AndreaBozzo
+
+- **Partial**: Refuse duplicate Parquet column names, and name the type's source (#701) by @AndreaBozzo
+
+- **Partial**: Type Parquet text columns from their values, not the metadata (#699) by @AndreaBozzo
+
+- **Streaming**: Preserve EOF metadata for async stops (#696) by @atirna
+
+- Omit statistics when no values parsed (#682) by @AndreaBozzo
+
+- **Python**: Document supported engine aliases (#680) by @AndreaBozzo
+
+- Harden numeric statistics and Python input boundaries (#672) by @AndreaBozzo
+
+- **Metrics**: Profile timestamp columns in named time zones (#669) by @AndreaBozzo
+
+- **Python**: Profile a zero-row Arrow source over its declared columns (#666) by @AndreaBozzo
+
+- **Python**: Profile every chunk of a pandas or polars DataFrame (#662) by @AndreaBozzo
+
+- **Parquet**: Profile a column by its values, not its physical encoding (#661) by @AndreaBozzo
+
+- **Metrics**: Accept RFC 3339 offsets, on one date grammar for every engine (#660) by @AndreaBozzo
+
+- **Metrics**: Count identical JSON records as duplicates across a late key (#658) by @AndreaBozzo
+
+- **Runtime**: Make accumulator merge produce the single-pass profile (#650) by @AndreaBozzo
+
+- **Database**: Decode MySQL TIME columns as a time of day, not a duration (#644) (#646) by @AnandkumarMall
+
+- **Database**: Decode temporal, decimal, UUID and unsigned columns (#642) by @AndreaBozzo
+
+- **Metrics**: Count text lengths in Unicode scalar values, not UTF-8 bytes (#641) by @AndreaBozzo
+
+- **Metrics**: Withhold evidence for dimensions that assessed nothing (#640) by @AndreaBozzo
+
+- **Metrics**: Report no overall quality score when nothing was assessed (#629) by @AndreaBozzo
+
+- Preserve numeric and CSV profiling correctness (#628) by @AndreaBozzo
 
 ## [0.11.0] - 2026-08-25
 
