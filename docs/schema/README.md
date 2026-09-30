@@ -545,3 +545,27 @@ Under `csv_flexible=False` such a source is refused instead, as a ragged row is.
 The field is additive and not `required`, so stored v1 reports remain valid.
 It is provenance about the source, not a metric, and every CSV engine and input
 path (file, bytes, async) reports the same value for the same source.
+
+## v1 additive change: `slash_date_order`
+
+The Rust dialect's `DateTime` statistics carry an optional `slash_date_order`
+(#811). It records how the column's `NN/NN/YYYY` values were read, decided once
+per column from its own values:
+
+- `month_first`: some values only parse month-first (`12/31/2024`) and none
+  only day-first, so `01/02/2024` is 2 January.
+- `day_first`: the reverse.
+- `assumed_day_first`: every value parses both ways, so nothing decides it; the
+  values were read day-first.
+- `mixed`: values that only parse day-first and values that only parse
+  month-first are both present. Each was read in the order it parses, and the
+  dates cannot all be right.
+
+Absence means the column holds no slash dates, or the report predates 0.12.
+
+Through 0.11 each value was parsed on its own: month-first when day-first
+failed, day-first otherwise. A US column therefore read its ambiguous values
+day-first and reported wrong minimums, month distributions and timeliness
+counts. Dates, statistics and timeliness checks derived from slash dates in
+0.12 reports can differ from 0.11 reports of the same data. The field is
+additive and not `required`, so stored v1 reports remain valid.

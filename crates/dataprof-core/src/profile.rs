@@ -237,6 +237,33 @@ pub struct DateTimeStats {
     pub day_of_week_distribution: HashMap<String, usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hour_distribution: Option<HashMap<u32, usize>>,
+    /// How the column's `NN/NN/YYYY` values were read (#811).
+    ///
+    /// Decided once per column from its own values, so `01/02/2024` is read
+    /// the same way as the `12/31/2024` beside it. `None` when the column
+    /// holds no slash dates, or the report predates the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slash_date_order: Option<SlashDateOrder>,
+}
+
+/// The day/month order a column's slash dates were read in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SlashDateOrder {
+    /// Some values only parse day-first (`31/12/2024`) and none only
+    /// month-first.
+    DayFirst,
+    /// Some values only parse month-first (`12/31/2024`) and none only
+    /// day-first.
+    MonthFirst,
+    /// Every value parses both ways, so nothing in the column decides it; the
+    /// values were read day-first.
+    AssumedDayFirst,
+    /// Values that only parse day-first and values that only parse
+    /// month-first are both present. The column contradicts itself: each value
+    /// was read in the order it parses, day-first where both do, and the dates
+    /// cannot all be right.
+    Mixed,
 }
 
 impl DateTimeStats {
@@ -249,6 +276,7 @@ impl DateTimeStats {
             month_distribution: HashMap::new(),
             day_of_week_distribution: HashMap::new(),
             hour_distribution: None,
+            slash_date_order: None,
         }
     }
 }

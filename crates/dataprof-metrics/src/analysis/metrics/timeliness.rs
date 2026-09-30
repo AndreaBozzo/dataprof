@@ -7,6 +7,7 @@ use super::utils::extract_date;
 use crate::analysis::inference::is_null_like_token;
 use crate::core::config::IsoQualityConfig;
 use crate::core::errors::DataProfilerError;
+use crate::stats::datetime::resolve_slash_order;
 use crate::types::ColumnProfile;
 use chrono::{Datelike, NaiveDate, Utc};
 use std::collections::{HashMap, HashSet};
@@ -150,13 +151,15 @@ impl<'a> TimelinessCalculator<'a> {
             let Some(column_data) = data.get(column_name) else {
                 continue;
             };
+            // Read the column's slash dates in one order, as its statistics do.
+            let order = resolve_slash_order(column_data);
             for value in column_data {
                 if is_null_like_token(value.trim()) {
                     continue;
                 }
                 checked += 1;
 
-                if let Some(date) = extract_date(value) {
+                if let Some(date) = extract_date(value, order) {
                     valid_dates += 1;
                     // Compare the whole date, not its year. A year-only test
                     // cannot see any future date inside the current calendar
@@ -260,6 +263,10 @@ impl<'a> TimelinessCalculator<'a> {
                 continue;
             }
             compared.push((start_name.to_string(), end_name.to_string()));
+            // Each column in its own order: a US start column paired with a
+            // European end column is read correctly on both sides.
+            let start_order = resolve_slash_order(start_values);
+            let end_order = resolve_slash_order(end_values);
 
             for (start_val, end_val) in start_values.iter().zip(end_values.iter()) {
                 if is_null_like_token(start_val.trim()) || is_null_like_token(end_val.trim()) {
@@ -268,9 +275,10 @@ impl<'a> TimelinessCalculator<'a> {
 
                 // Invalid calendar values are already reported by
                 // `invalid_date_values` and cannot form a meaningful pair.
-                let (Some(start_date), Some(end_date)) =
-                    (extract_date(start_val), extract_date(end_val))
-                else {
+                let (Some(start_date), Some(end_date)) = (
+                    extract_date(start_val, start_order),
+                    extract_date(end_val, end_order),
+                ) else {
                     continue;
                 };
                 pairs_checked += 1;
@@ -644,6 +652,40 @@ mod tests {
             "March 2022 to January 2023 runs forwards"
         );
         assert_eq!(metrics.temporal_pairs_checked, 1);
+    }
+
+    #[test]
+    fn a_month_first_column_dates_its_ambiguous_values_month_first() {
+        // #811: `12/31/2025` makes the column month-first, so `07/01/2026` is
+        // 1 July, after the 15 June reference. Read day-first, as each value
+        // used to be, it was 7 January and not in the future.
+        let data = column("event_date", &["12/31/2025", "07/01/2026"]);
+        let metrics = metrics_for(&config(), &data, &["event_date"]);
+
+        assert_eq!(metrics.future_dates_count, 1);
+        assert_eq!(metrics.date_values_checked, 2);
+        assert_eq!(metrics.invalid_date_values, 0);
+    }
+
+    #[test]
+    fn month_first_pairs_are_compared_in_their_own_order() {
+        // #811: both columns are month-first and every pair runs forwards.
+        // Value by value, `01/10/2026` became 1 October and `02/01/2026`
+        // became 2 January, inventing a violation.
+        let data = HashMap::from([
+            (
+                "start_date".to_string(),
+                vec!["12/31/2025".to_string(), "01/10/2026".to_string()],
+            ),
+            (
+                "end_date".to_string(),
+                vec!["01/13/2026".to_string(), "02/01/2026".to_string()],
+            ),
+        ]);
+        let metrics = metrics_for(&config(), &data, &["start_date", "end_date"]);
+
+        assert_eq!(metrics.temporal_violations, 0);
+        assert_eq!(metrics.temporal_pairs_checked, 2);
     }
 
     #[test]

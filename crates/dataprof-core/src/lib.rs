@@ -45,7 +45,7 @@ pub use partial::{
 pub use pattern::Pattern;
 pub use profile::{
     BooleanStats, ColumnProfile, ColumnStats, DateTimeStats, FrequencyItem, NumericStats,
-    Quartiles, TextStats,
+    Quartiles, SlashDateOrder, TextStats,
 };
 pub use progress::{ProgressEvent, ProgressSink};
 pub use quality::{MetricPack, QualityDimension};
